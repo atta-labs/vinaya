@@ -1,17 +1,25 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parseIteration } from './parse-iteration'
+import { parseTranche } from './parse-tranche'
 
 const FIXTURES = join(__dirname, 'fixtures')
 const heraldMd = readFileSync(join(FIXTURES, 'herald-onto-engine.md'), 'utf8')
 const aegUiMd = readFileSync(join(FIXTURES, 'aeg-ui-v1.md'), 'utf8')
 
-describe('parseIteration: herald-onto-engine', () => {
-  const iter = parseIteration(heraldMd)
+describe('parseTranche: herald-onto-engine', () => {
+  const iter = parseTranche(heraldMd)
 
-  it('extracts the iteration name from the H1', () => {
+  it('extracts the tranche name from the H1', () => {
     expect(iter.name).toBe('herald-onto-engine')
+  })
+
+  it('still reads the superseded `# Iteration:` H1 — history and adopter files keep it', () => {
+    // The rename cannot reach into git history, and an adopter's own topology
+    // files are not ours to migrate. A refused marker would surface as a
+    // nameless tranche, not an error — silence is why this is pinned.
+    expect(parseTranche('# Iteration: aeg-forge-state-v1 — June 2026\n').name).toBe('aeg-forge-state-v1')
+    expect(parseTranche('# Tranche: aeg-forge-state-v1 — June 2026\n').name).toBe('aeg-forge-state-v1')
   })
 
   it('defaults to active when the lifecycle marker is absent (pre-§11 file)', () => {
@@ -73,10 +81,10 @@ describe('parseIteration: herald-onto-engine', () => {
   })
 })
 
-describe('parseIteration: aeg-ui-v1', () => {
-  const iter = parseIteration(aegUiMd)
+describe('parseTranche: aeg-ui-v1', () => {
+  const iter = parseTranche(aegUiMd)
 
-  it('extracts the iteration name', () => {
+  it('extracts the tranche name', () => {
     expect(iter.name).toBe('aeg-ui-v1')
   })
 
@@ -105,24 +113,24 @@ describe('parseIteration: aeg-ui-v1', () => {
   })
 })
 
-describe('parseIteration: lifecycle marker', () => {
+describe('parseTranche: lifecycle marker', () => {
   it('reads Lifecycle: complete', () => {
     const md =
-      '# Iteration: x — June 2026\n\nLifecycle: complete\n\n## Tasks (topology)\n\n| # | Task | Issue | Project(s) | Depends-on | Conflicts-with |\n|---|------|-------|-----------|------------|----------------|\n'
-    expect(parseIteration(md).lifecycle).toBe('complete')
+      '# Tranche: x — June 2026\n\nLifecycle: complete\n\n## Tasks (topology)\n\n| # | Task | Issue | Project(s) | Depends-on | Conflicts-with |\n|---|------|-------|-----------|------------|----------------|\n'
+    expect(parseTranche(md).lifecycle).toBe('complete')
   })
 
   it('reads a bold-wrapped Lifecycle marker', () => {
     const md =
-      '# Iteration: x — June 2026\n\n**Lifecycle:** complete\n\n## Tasks (topology)\n\n| # | Task | Issue | Project(s) | Depends-on | Conflicts-with |\n|---|------|-------|-----------|------------|----------------|\n'
-    expect(parseIteration(md).lifecycle).toBe('complete')
+      '# Tranche: x — June 2026\n\n**Lifecycle:** complete\n\n## Tasks (topology)\n\n| # | Task | Issue | Project(s) | Depends-on | Conflicts-with |\n|---|------|-------|-----------|------------|----------------|\n'
+    expect(parseTranche(md).lifecycle).toBe('complete')
   })
 })
 
-describe('parseIteration: optional backlog section', () => {
+describe('parseTranche: optional backlog section', () => {
   it('captures bullets under ## Backlog when present (per §4 template)', () => {
     const md =
-      '# Iteration: x — June 2026\n\nLifecycle: active\n\n## Tasks (topology)\n\n| # | Task | Issue | Project(s) | Depends-on | Conflicts-with |\n|---|------|-------|-----------|------------|----------------|\n| 1 | t | #1 | x | — | — |\n\n## Backlog (this iteration, not yet ready to dispatch)\n- Item one (issue #91)\n- Item two\n'
-    expect(parseIteration(md).backlog).toEqual(['Item one (issue #91)', 'Item two'])
+      '# Tranche: x — June 2026\n\nLifecycle: active\n\n## Tasks (topology)\n\n| # | Task | Issue | Project(s) | Depends-on | Conflicts-with |\n|---|------|-------|-----------|------------|----------------|\n| 1 | t | #1 | x | — | — |\n\n## Backlog (this tranche, not yet ready to dispatch)\n- Item one (issue #91)\n- Item two\n'
+    expect(parseTranche(md).backlog).toEqual(['Item one (issue #91)', 'Item two'])
   })
 })
