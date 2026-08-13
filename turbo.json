@@ -1,0 +1,33 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": ["**/.env.*local"],
+  "globalPassThroughEnv": ["BASE_SHA", "HEAD_SHA"],
+  "tasks": {
+    "check": {
+      "dependsOn": ["typecheck"]
+    },
+    "build": {
+      "dependsOn": ["typecheck", "^build"],
+      "outputs": ["dist/**"]
+    },
+    "dev": {
+      "dependsOn": ["generate"],
+      "cache": false,
+      "persistent": true
+    },
+    "generate": {
+      "cache": false,
+      "dependsOn": []
+    },
+    "typecheck": {
+      "dependsOn": ["generate", "^typecheck"]
+    },
+    "test": {
+      "dependsOn": ["typecheck"],
+      "env": ["GH_TOKEN", "GITHUB_TOKEN"]
+    },
+    "clean": {
+      "cache": false
+    }
+  }
+}
