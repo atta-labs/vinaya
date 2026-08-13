@@ -1,0 +1,23 @@
+{
+  "name": "vinaya",
+  "private": true,
+  "packageManager": "bun@1.2.14",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo build",
+    "typecheck": "turbo typecheck",
+    "lint": "biome lint .",
+    "format": "biome format .",
+    "format-and-lint": "biome check .",
+    "test": "turbo test",
+    "clean": "turbo clean"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "turbo": "^2.4.0",
+    "typescript": "^5.7.0"
+  }
+}
