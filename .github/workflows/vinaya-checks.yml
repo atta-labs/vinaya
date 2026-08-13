@@ -1,0 +1,36 @@
+# Managed by Vinaya — created by `vinaya init`. `vinaya upgrade` regenerates it; `vinaya eject` removes it.
+#
+# The deterministic gate suite. Runs every registered vinaya check over the
+# pull request's diff. This is the guarantee: a PR cannot merge red.
+name: Vinaya Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  vinaya-checks:
+    name: vinaya check --all --diff-only
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run checks
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # PR_BODY is what makes test-plan/closes-n EVALUATE: neither check
+          # fetches the body itself (both read `process.env.PR_BODY` only) —
+          # without it they read "no body — nothing to check" and pass
+          # vacuously regardless of the PR's real content, on every run.
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BRANCH: ${{ github.head_ref }}
+        run: npx --yes @attalabs/vinaya check --all --diff-only

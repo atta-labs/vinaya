@@ -1,0 +1,43 @@
+# Managed by Vinaya — created by `vinaya init`. `vinaya upgrade` regenerates it; `vinaya eject` removes it.
+#
+# The required review gate — pull_request events only. The verdict-comment
+# half lives in its own workflow (vinaya-review-verdict.yml): a new PR
+# comment fires a different GitHub event that this pull_request-only
+# workflow structurally cannot receive — and keeping the comment path in a
+# separate FILE means this workflow's runs never list permanently-skipped
+# comment jobs on the PR's checks panel. When a clean final verdict lands,
+# the verdict workflow re-runs this one, so the required check below goes
+# green natively with no manual rerun.
+name: Vinaya Review Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  vinaya-review:
+    name: vinaya review gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # This job executes repo content; don't leave the token in
+          # .git/config for scripts to read.
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Review gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PR_NUMBER is what makes the review-gate check EVALUATE: without
+          # it the adapter reads "no PR yet — local dev" and exits 0, and
+          # the gate is green regardless of review state.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.head_ref }}
+        run: npx --yes @attalabs/vinaya check review-gate

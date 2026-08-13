@@ -1,0 +1,70 @@
+{
+  "rings": {
+    "ring1_forgeWriteInterception": false,
+    "ring2_asyncAudits": false
+  },
+  "checks": {},
+  "briefSchema": {
+    "pr": {
+      "sections": [
+        {
+          "builtin": "tier"
+        },
+        {
+          "builtin": "testPlan"
+        },
+        {
+          "builtin": "testPlanExclusivity"
+        },
+        {
+          "builtin": "closesN"
+        },
+        {
+          "builtin": "project"
+        }
+      ]
+    },
+    "issue": {
+      "sections": [
+        {
+          "builtin": "issueRationale"
+        },
+        {
+          "builtin": "project"
+        }
+      ]
+    }
+  },
+  "managed": {
+    "version": 1,
+    "files": [
+      ".github/workflows/vinaya-checks.yml",
+      ".github/workflows/vinaya-review.yml",
+      ".github/workflows/vinaya-review-verdict.yml",
+      ".github/workflows/vinaya-archivist.yml",
+      "vinaya.config.json",
+      "VINAYA.md",
+      ".vinaya/doc-owners"
+    ],
+    "blocks": [
+      {
+        "path": ".git/hooks/pre-commit",
+        "marker": "pre-commit",
+        "comment": "hash"
+      },
+      {
+        "path": ".git/hooks/pre-push",
+        "marker": "pre-push",
+        "comment": "hash"
+      }
+    ],
+    "labels": [
+      "vinaya/tier:0",
+      "vinaya/tier:1",
+      "vinaya/tier:3",
+      "vinaya/needs:execution-input",
+      "vinaya/needs:strategy-input",
+      "vinaya/needs:principal-input"
+    ]
+  }
+}
