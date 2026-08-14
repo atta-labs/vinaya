@@ -64,9 +64,20 @@ function isSafeRelPath(p: string): boolean {
     // directory `v1.2` is legitimate and already matches SAFE_PATH.
     if (s === '.' || s === '..') return false
     // A leading `-` reaches `node`/`bun` in argument position, where a segment
-    // named `-e` or `--eval` is read as an option rather than a path. Not
-    // known to be executable (both reject a detached value), but it turns a
-    // working repo's CI into a parse error, and no real directory needs it.
+    // named `-e` or `--eval` is read as an option rather than a path.
+    //
+    // It is not executable *in the shape this generator emits*, and the reason
+    // is worth stating exactly, because it is the opposite of the intuitive
+    // one. `node` ACCEPTS a detached value — `node -e 'code'` runs the code —
+    // and REJECTS an attached one: `node -e/dist/index.js` is `node: bad
+    // option`. The interpolated path is always a single argv token, so it can
+    // only ever take the attached form, which dies. Were the invocation ever
+    // rewritten to pass the path as a separate argument, this would become
+    // arbitrary code execution rather than a parse error.
+    //
+    // So: rejected because no real directory needs it, and because the thing
+    // standing between a parse error and `-e` is a property of the emitted
+    // command that nothing else enforces.
     return !s.startsWith('-')
   })
 }

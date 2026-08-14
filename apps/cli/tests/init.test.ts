@@ -630,14 +630,23 @@ describe('detectVendoredVinaya', () => {
     expect(performance.now() - started).toBeLessThan(500)
   })
 
-  it('a pathological wildcard pattern returns promptly instead of hanging', () => {
-    // Adjacent `[^/]*` groups backtrack exponentially; 8 stars against a
-    // non-matching name took seconds before the bound.
-    writeFileSync(join(root, 'package.json'), `{ "name": "v", "workspaces": ["apps/${'a*'.repeat(8)}b"] }\n`)
-    mkdirSync(join(root, `apps/${'a'.repeat(37)}`), { recursive: true })
-    const started = performance.now()
+  it('refuses a segment with more stars than the bound allows', () => {
+    // Deliberately behavioural rather than timed. A wall-clock assertion here
+    // passed with the bound disabled — 8 stars against a 37-char name is only
+    // ~69ms unguarded, well under any threshold loose enough to survive a
+    // loaded runner. This pair discriminates on the bound itself: same
+    // directory, same match, one star either side of MAX_SEGMENT_STARS.
+    const vendor = () => {
+      mkdirSync(join(root, 'apps/aaaaab'), { recursive: true })
+      writeFileSync(join(root, 'apps/aaaaab/package.json'), '{ "name": "@attalabs/vinaya" }\n')
+    }
+
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/a*a*a*a*a*b"] }\n') // 5
+    vendor()
     expect(detectVendoredVinaya(root)).toBeNull()
-    expect(performance.now() - started).toBeLessThan(500)
+
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/a*a*a*a*b"] }\n') // 4
+    expect(detectVendoredVinaya(root)).toEqual({ dir: 'apps/aaaaab', bin: 'apps/aaaaab/dist/index.js' })
   })
 
   it('still accepts the ordinary paths the guard must not break', () => {
