@@ -86,11 +86,26 @@ jobs:
           BRANCH: ${{ steps.pr.outputs.branch }}
         run: node apps/cli/dist/index.js check review-gate
 
-  # Executes nothing; consumes only the evaluator's outputs. Fires only on a
-  # clean evaluation — a failed one leaves the standing red untouched.
+  # Executes nothing; consumes only the evaluator's outputs.
+  #
+  # Fires on EITHER verdict, and that is the whole point. The required check
+  # stores a conclusion, and that stored conclusion — not this job's result —
+  # is what guards the merge button. An earlier form ran only on a clean
+  # evaluation, reasoning that a failed one should "leave the standing red
+  # untouched". But the standing state is not always red: once an APPROVE has
+  # turned the required check green, a later REQUEST CHANGES failed here and
+  # re-ran nothing, so the check kept reporting green and the PR stayed
+  # mergeable until someone happened to push. Measured on this repo's own PR:
+  # 52 minutes green after the verdict landed, bounded by nothing.
+  #
+  # So the gate was one-way — it could open, but not close. Re-running on both
+  # verdicts costs one no-op job when the news is good and closes the case
+  # that matters. `steps.pr` resolves `branch` before any repo content is
+  # checked out, so the output this consumes exists even when the evaluation
+  # step below it fails.
   retrigger:
     name: vinaya review gate (retrigger)
-    if: needs.evaluate.result == 'success'
+    if: ${{ !cancelled() && needs.evaluate.result != 'skipped' }}
     needs: evaluate
     runs-on: ubuntu-latest
     permissions:

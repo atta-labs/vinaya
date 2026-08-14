@@ -451,6 +451,22 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
   })
 
+  it('the verdict retrigger fires on BOTH verdicts — the gate must close, not only open', async () => {
+    // The required check stores a conclusion, and that stored conclusion
+    // guards the merge button. Gating the retrigger on a clean evaluation
+    // made it one-way: an APPROVE turned the check green, and a later
+    // REQUEST CHANGES re-ran nothing, so it kept reporting green while the
+    // PR stayed mergeable. Measured on this repo's own PR #6 — 52 minutes.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const verdict = generated().get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
+
+    expect(verdict).not.toContain("needs.evaluate.result == 'success'")
+    expect(verdict).toContain("!cancelled() && needs.evaluate.result != 'skipped'")
+    // The output it consumes must be resolved before any repo content is
+    // checked out, or a failed evaluation would leave it empty.
+    expect(verdict.indexOf('id: pr')).toBeLessThan(verdict.indexOf('actions/checkout@v4'))
+  })
+
   it('ordinary adopter: gains the credential opt-out, and nothing else', async () => {
     // The adopter output was byte-identical to the pre-detection generator
     // until the security round. `persist-credentials: false` is a DELIBERATE
