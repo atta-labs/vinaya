@@ -55,6 +55,30 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      # Pinned to a commit, not the mutable `v2` tag. This is the first
+      # THIRD-PARTY action this generator writes into an adopter's repository,
+      # and it runs in the same job that then builds and executes pull-request
+      # code. A repoint of `v2` would execute new upstream code in every
+      # adopter on the next run, with no diff anywhere to review.
+      # Resolved from the `v2` tag on 2026-08-14. Bun's own version still
+      # comes from the repo's `packageManager` field, not from this pin.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      # This repo declares the `@attalabs/vinaya` workspace package itself, so
+      # `npx @attalabs/vinaya` resolves to that local member instead of the
+      # registry and dies on its unbuilt `bin`. Build and run this repo's own
+      # CLI — which also makes CI exercise the code in the pull request rather
+      # than a published copy predating it.
+      #
+      # `--ignore-scripts` blocks the PR-controlled surface, which is not
+      # the obvious one: bun already declines an untrusted DEPENDENCY's
+      # postinstall (measured, 1.2.14). What this stops is the repo's own
+      # root and workspace lifecycle scripts, plus anything the pull request
+      # adds to `trustedDependencies` — all of it editable in the same PR
+      # this job is checking. The build needs the packages, not the hooks.
+      - name: Build the vendored Vinaya CLI
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun run --cwd apps/cli build
       - name: Review gate (verdict evaluation)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -62,13 +86,18 @@ jobs:
           # the adapter evaluate instead of no-op'ing as "local dev".
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           BRANCH: ${{ steps.pr.outputs.branch }}
-        run: npx --yes @attalabs/vinaya check review-gate
+        run: node apps/cli/dist/index.js check review-gate
 
-  # Executes nothing; consumes only the evaluator's outputs. Fires only on a
-  # clean evaluation — a failed one leaves the standing red untouched.
+  # Executes nothing; consumes only the evaluator's outputs.
+  #
+  # Fires on EITHER verdict. The required check stores a conclusion, and that
+  # stored conclusion — not this job's result — is what guards the merge
+  # button. Running only on a clean evaluation makes the gate one-way: it can
+  # turn the check green on an approval but never turn it red again on a
+  # later rejection, leaving a stale green until someone pushes.
   retrigger:
     name: vinaya review gate (retrigger)
-    if: needs.evaluate.result == 'success'
+    if: ${{ !cancelled() && needs.evaluate.result != 'skipped' }}
     needs: evaluate
     runs-on: ubuntu-latest
     permissions:
@@ -79,6 +108,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: ${{ needs.evaluate.outputs.branch }}
         run: |
+          # `--branch ""` is NOT a no-op: gh drops the filter and lists runs
+          # across every branch, so the rerun would land on an unrelated PR's
+          # gate. Reachable now that this job runs on a failed evaluation —
+          # `Resolve PR head` is the only producer of this output, and its
+          # failure used to be unreachable from here.
+          if [ -z "$BRANCH" ]; then
+            echo "No branch resolved (the evaluate job failed before resolving it) - nothing to re-run."
+            exit 0
+          fi
           RUN_ID=$(gh run list --repo "${{ github.repository }}" \
             --workflow vinaya-review.yml --branch "$BRANCH" \
             --status completed \

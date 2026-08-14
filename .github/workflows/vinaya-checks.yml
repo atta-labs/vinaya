@@ -20,9 +20,37 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # The job builds and runs code from this checkout, and the default
+          # writes GITHUB_TOKEN into .git/config as an http extraheader —
+          # readable by anything the build executes. Nothing here pushes.
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      # Pinned to a commit, not the mutable `v2` tag. This is the first
+      # THIRD-PARTY action this generator writes into an adopter's repository,
+      # and it runs in the same job that then builds and executes pull-request
+      # code. A repoint of `v2` would execute new upstream code in every
+      # adopter on the next run, with no diff anywhere to review.
+      # Resolved from the `v2` tag on 2026-08-14. Bun's own version still
+      # comes from the repo's `packageManager` field, not from this pin.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      # This repo declares the `@attalabs/vinaya` workspace package itself, so
+      # `npx @attalabs/vinaya` resolves to that local member instead of the
+      # registry and dies on its unbuilt `bin`. Build and run this repo's own
+      # CLI — which also makes CI exercise the code in the pull request rather
+      # than a published copy predating it.
+      #
+      # `--ignore-scripts` blocks the PR-controlled surface, which is not
+      # the obvious one: bun already declines an untrusted DEPENDENCY's
+      # postinstall (measured, 1.2.14). What this stops is the repo's own
+      # root and workspace lifecycle scripts, plus anything the pull request
+      # adds to `trustedDependencies` — all of it editable in the same PR
+      # this job is checking. The build needs the packages, not the hooks.
+      - name: Build the vendored Vinaya CLI
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun run --cwd apps/cli build
       - name: Run checks
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -33,4 +61,4 @@ jobs:
           # vacuously regardless of the PR's real content, on every run.
           PR_BODY: ${{ github.event.pull_request.body }}
           BRANCH: ${{ github.head_ref }}
-        run: npx --yes @attalabs/vinaya check --all --diff-only
+        run: node apps/cli/dist/index.js check --all --diff-only

