@@ -46,7 +46,13 @@ with three further rules on each segment: `.` and `..` are rejected as whole seg
 
 `@` is permitted because npm scopes are ordinary directory names — a member at `packages/@attalabs/vinaya` is legitimate, and excluding it would silently degrade exactly the repo this feature exists for into the invocation already known broken there. It is inert in all three layers of the emitted context: it is a YAML indicator only at the start of a plain scalar, which it can never reach (the invocation is always prefixed by `node `, and the `--cwd` line sits inside a literal block); it is a non-globbing literal to `sh`, `bash` and `zsh`; and no Actions expression can form, since `$` and `{` remain excluded.
 
-A leading `-` is refused for the opposite reason: it reaches `node` and `bun` in argument position, where a segment named `-e` or `--eval` is read as an option rather than a path. Neither is known to execute a detached value, so this is a broken CI run rather than an injection — but no real directory needs it.
+A leading `-` is refused for the opposite reason: it reaches `node` and `bun` in argument position, where a segment named `-e` or `--eval` is read as an option rather than a path.
+
+**State the reason precisely, because the intuitive version is backwards.** Both runtimes *execute* a detached value — `node -e 'code'` and `bun -e 'code'` both run the code. What they reject is the attached form: `node -e/dist/index.js` and `node -e=/dist/index.js` are both `node: bad option`. The emitted `node <bin>` invocation is safe only because the interpolated path is always a single argv token, and `=` is outside the allowed charset — two separate exclusions, not one.
+
+That invariant does not hold everywhere the values are emitted. `bun run --cwd <dir> build` **already passes the path as its own token**, and bun binds it to `--cwd` unconditionally: with the directory present, `--cwd -e`, `--cwd --eval`, `--cwd --help` all simply build there. That case is safe for a different reason — bun treats the token as a value, not an option — so the leading-`-` rule is what keeps both emissions honest rather than an optimisation on either.
+
+The refusal is therefore not "this would be harmless anyway". It is: no real directory needs a leading `-`, and the property standing between a parse error and `-e` is one nothing else enforces.
 
 Allowlist rather than escaping, for two reasons. Escaping must be correct against every metacharacter, in a `run:` block that is simultaneously YAML, shell, and a GitHub Actions expression context — three layers, each with its own evaluation rules. And a value outside this charset has no legitimate use as a workspace path, so refusing costs nothing real.
 

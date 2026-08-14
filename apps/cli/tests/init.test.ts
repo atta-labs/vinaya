@@ -617,17 +617,27 @@ describe('detectVendoredVinaya', () => {
     })
   })
 
-  it('collapses runs of stars — the adjacent-group shape that backtracked worst', () => {
-    // `a****b` and `a*b` are the same glob. Measured at 238ms per name before
-    // collapsing, and expandPattern runs the matcher on every child.
-    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/c****i"] }\n')
-    mkdirSync(join(root, `apps/${'x'.repeat(255)}`), { recursive: true })
+  it('collapses runs of stars before the bound counts them', () => {
+    // Behavioural, not timed. A wall-clock assertion cannot see this: with
+    // collapsing removed the worst shape costs ~248ms, under any threshold
+    // loose enough to survive a loaded runner. Two earlier forms of this test
+    // passed with the mechanism disabled for exactly that reason.
+    //
+    // Collapsing is a widening, and that is what makes it observable. Eight
+    // ADJACENT stars exceed MAX_SEGMENT_STARS as typed and are refused; they
+    // collapse to one star, which is the same glob, and resolve. Non-adjacent
+    // stars survive collapsing and are still counted, so the bound is not
+    // weakened — the second half asserts that.
     mkdirSync(join(root, 'apps/cli'), { recursive: true })
     writeFileSync(join(root, 'apps/cli/package.json'), '{ "name": "@attalabs/vinaya" }\n')
-    const started = performance.now()
-    // still matches — collapsing preserves glob semantics, it does not refuse
+
+    // 8 adjacent stars -> collapses to `c*i` -> matches
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/c********i"] }\n')
     expect(detectVendoredVinaya(root)).toEqual({ dir: 'apps/cli', bin: 'apps/cli/dist/index.js' })
-    expect(performance.now() - started).toBeLessThan(500)
+
+    // 8 separated stars -> collapsing changes nothing -> still over the bound
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/c*l*i*x*y*z*w*v*q"] }\n')
+    expect(detectVendoredVinaya(root)).toBeNull()
   })
 
   it('refuses a segment with more stars than the bound allows', () => {

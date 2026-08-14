@@ -84,7 +84,9 @@ So `init` detects that case and generates a different shape for it: install, bui
 
 A repo on the vendored shape runs the CLI **from its own working tree**, so its CI exercises the code in the pull request rather than a published copy predating it. The consequence is worth stating plainly: a pull request that edits this package's check sources changes the checks that judge it.
 
-The generated command embeds the member's directory and `bin` path. Both come from the target repo's `package.json`, so both are restricted to `[A-Za-z0-9._-]` path segments; anything else — a shell metacharacter, a newline, a `..` segment — is refused, and generation falls back to the published `npx` shape rather than emitting it.
+The generated command embeds the member's directory and `bin` path. Both come from the target repo's `package.json`, so both are restricted to `[A-Za-z0-9@._-]` path segments, none of which may be `.`, `..`, or begin with `-`, up to 255 characters total. Anything else — a shell metacharacter, a newline, a `..` segment — is refused, and generation falls back to the published `npx` shape rather than emitting it.
+
+`@` is permitted so an npm-scoped member such as `packages/@attalabs/vinaya` resolves normally; it carries no meaning to the shell, to YAML at the position it appears, or to an Actions expression.
 
 ## Known limits
 
