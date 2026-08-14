@@ -356,22 +356,26 @@ export function resolvePrincipalAllowlist(config: VinayaConfig | null): string[]
  * **This raises the bar; it is not, by itself, the boundary.** A PR can still
  * edit its own copy of the generated workflow to delete this step, `exit 0`,
  * or otherwise not run the gate at all. **GitHub branch protection with this
- * check marked as a required status check** is the necessary next step — that
- * rule lives in repository settings, outside any PR's reach — but state what
- * it buys precisely. A required status check is satisfied by a success
- * conclusion reported under its name; it does not certify that the conclusion
- * came from running the real check. Only removing the job or the workflow
- * outright produces the never-reports case that blocks a merge; a deleted
- * step still leaves the job reporting green, and `exit 0` reports success
- * having run nothing. The trust boundary is who controls the workflow
- * definition that produces the required check, and under a `pull_request`
- * trigger that is the PR author, whatever the check is packaged as.
+ * check marked as a required status check** is the necessary next step — it
+ * lives in repository settings, outside any PR's reach — but do not write that
+ * it makes review enforcement unbypassable, because it does not. A required
+ * status check is satisfied by a conclusion reported under its name; it does
+ * not certify that the conclusion came from running the real check. Deleting
+ * this *step* still leaves the *job* reporting green, and a step edited to
+ * `exit 0` reports success having run nothing — only removing the job or the
+ * workflow outright produces the never-reports case that blocks the merge.
+ * The trust boundary is who controls the workflow definition producing the
+ * required check, and under a `pull_request` trigger that is the PR author,
+ * whatever the check is packaged as; packaging decides only the blast radius
+ * (a repo vendoring this CLI also hands the PR the check sources, the build
+ * script, and the dependency lifecycle scripts the install step runs).
  * `vinaya init` prints the branch-protection recommendation and `vinaya
  * doctor` reports when it is missing; an adopter setting `principals` without
- * branch protection has a useful convention rather than a security control,
- * and one setting it with branch protection has closed merge-without-a-report
- * and nothing further. The docs must never imply otherwise in either
- * direction.
+ * branch protection has a useful convention, not a security control, and one
+ * setting it *with* branch protection has closed merge-without-a-report and
+ * nothing further — the reviewer closes the rest. The docs must never imply
+ * otherwise in either direction. See `aeg-root/enforcement.md`'s ring-0
+ * "Spawning a check" row for the full statement.
  */
 export type TrustAnchorFetcher = () => string
 
