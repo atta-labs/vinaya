@@ -475,13 +475,12 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
   })
 
   it('ordinary adopter: gains the credential opt-out, and no vendored token', async () => {
-    // The adopter output was byte-identical to the pre-detection generator
-    // until the security round. It gains 4 new `persist-credentials: false`
-    // emissions (2 of the 6 predate this branch) — a DELIBERATE break: the default writes GITHUB_TOKEN into
-    // .git/config, and no generated job pushes, so every adopter is better
-    // off. Recorded as a test because the invariant it replaces was the
-    // load-bearing promise of this change — an adopter regenerates these
-    // files on `upgrade`, and a silent drift here reaches everyone.
+    // The adopter shape emits `persist-credentials: false` on all 6 of its
+    // checkouts and nothing vendored. The opt-out is deliberate rather than
+    // incidental: the checkout default writes GITHUB_TOKEN into .git/config,
+    // and no generated job pushes, so no job needs it. Asserted here because
+    // an adopter regenerates these files on `upgrade` — a silent change to
+    // the adopter shape reaches every install.
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
