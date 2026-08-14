@@ -23,6 +23,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: oven-sh/setup-bun@v2
+      - name: Build vendored Vinaya CLI
+        run: |
+          bun install --frozen-lockfile
+          bun run --cwd apps/cli build
       - name: Run checks
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -33,4 +38,4 @@ jobs:
           # vacuously regardless of the PR's real content, on every run.
           PR_BODY: ${{ github.event.pull_request.body }}
           BRANCH: ${{ github.head_ref }}
-        run: npx --yes @attalabs/vinaya check --all --diff-only
+        run: node apps/cli/dist/index.js check --all --diff-only
