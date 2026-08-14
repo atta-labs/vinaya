@@ -1,6 +1,6 @@
 # Self-hosting — how Vinaya governs a repo that contains Vinaya
 
-Status: ratified
+Status: draft
 
 The generated CI shape for a repo whose own workspaces declare `@attalabs/vinaya`, why it must differ, and what it costs. This repo is the first such adopter; the rules below are the product's, not this repo's.
 

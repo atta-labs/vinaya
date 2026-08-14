@@ -596,6 +596,37 @@ describe('detectVendoredVinaya', () => {
     }
   })
 
+  it('refuses a member directory whose name starts with a dash', () => {
+    // `-e` / `--eval` reach `node` in argument position. Not known to execute
+    // (both reject a detached value) but it breaks CI with no diagnostic.
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/*"] }\n')
+    mkdirSync(join(root, 'apps/-e'), { recursive: true })
+    writeFileSync(join(root, 'apps/-e/package.json'), '{ "name": "@attalabs/vinaya" }\n')
+    expect(detectVendoredVinaya(root)).toBeNull()
+  })
+
+  it('accepts a scoped member directory — the shape this feature exists for', () => {
+    // `@` is an ordinary directory character and means nothing to the shell.
+    // Refusing it would degrade a scoped member into the broken `npx` shape.
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["packages/*/*"] }\n')
+    mkdirSync(join(root, 'packages/@attalabs/vinaya'), { recursive: true })
+    writeFileSync(join(root, 'packages/@attalabs/vinaya/package.json'), '{ "name": "@attalabs/vinaya" }\n')
+    expect(detectVendoredVinaya(root)).toEqual({
+      dir: 'packages/@attalabs/vinaya',
+      bin: 'packages/@attalabs/vinaya/dist/index.js'
+    })
+  })
+
+  it('a pathological wildcard pattern returns promptly instead of hanging', () => {
+    // Adjacent `[^/]*` groups backtrack exponentially; 8 stars against a
+    // non-matching name took seconds before the bound.
+    writeFileSync(join(root, 'package.json'), `{ "name": "v", "workspaces": ["apps/${'a*'.repeat(8)}b"] }\n`)
+    mkdirSync(join(root, `apps/${'a'.repeat(37)}`), { recursive: true })
+    const started = performance.now()
+    expect(detectVendoredVinaya(root)).toBeNull()
+    expect(performance.now() - started).toBeLessThan(500)
+  })
+
   it('still accepts the ordinary paths the guard must not break', () => {
     writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["packages/*"] }\n')
     mkdirSync(join(root, 'packages/vinaya-cli.v2'), { recursive: true })

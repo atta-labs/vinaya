@@ -49,15 +49,26 @@ const MAX_CANDIDATE_DIRS = 2000
 //
 // `null` — the ordinary-adopter shape — is the safe default, so a rejected
 // value degrades to the published `npx` invocation instead of failing `init`.
-const SAFE_PATH = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/
+// `@` is included because npm scopes are ordinary directory names: a member at
+// `packages/@attalabs/vinaya` is legitimate, and `@` has no meaning to the
+// shell. Excluding it would silently degrade exactly the repo this feature
+// exists for, into the shape already known broken there.
+const SAFE_PATH = /^[A-Za-z0-9@._-]+(?:\/[A-Za-z0-9@._-]+)*$/
 
 /** True iff `p` is a repo-relative POSIX path safe to emit into a shell word. */
 function isSafeRelPath(p: string): boolean {
   if (p.length === 0 || p.length > 255) return false
   if (!SAFE_PATH.test(p)) return false
-  // `.` and `..` are rejected as whole segments only — a file named `..foo` or
-  // a directory `v1.2` is legitimate and matches SAFE_PATH already.
-  return !p.split('/').some((s) => s === '.' || s === '..')
+  return p.split('/').every((s) => {
+    // `.` and `..` rejected as whole segments only — a file named `..foo` or a
+    // directory `v1.2` is legitimate and already matches SAFE_PATH.
+    if (s === '.' || s === '..') return false
+    // A leading `-` reaches `node`/`bun` in argument position, where a segment
+    // named `-e` or `--eval` is read as an option rather than a path. Not
+    // known to be executable (both reject a detached value), but it turns a
+    // working repo's CI into a parse error, and no real directory needs it.
+    return !s.startsWith('-')
+  })
 }
 
 export type VendoredVinaya = {
@@ -111,12 +122,22 @@ function childDirs(absolute: string): string[] {
   }
 }
 
+// Adjacent `[^/]*` groups make the compiled pattern backtrack exponentially in
+// the number of stars: a segment like `a*a*a*…*b` against a non-matching name
+// takes seconds by 6 stars and minutes beyond. Real workspace patterns use one
+// star, occasionally two. Detection is local-only, so this is a hang in
+// `vinaya init` rather than a CI exposure — but a hang with no diagnostic is
+// still the worst failure mode available, and the bound costs nothing.
+const MAX_SEGMENT_STARS = 4
+
 function segmentMatcher(segment: string): (name: string) => boolean {
   if (segment === '*' || segment === '**') return () => true
-  const source = segment
-    .split('*')
-    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('[^/]*')
+  const parts = segment.split('*')
+  // Refuse rather than risk the hang. A pattern this shaped is not a workspace
+  // declaration anyone wrote by hand, and matching nothing degrades to the
+  // ordinary-adopter shape — the same safe default the path guard uses.
+  if (parts.length - 1 > MAX_SEGMENT_STARS) return () => false
+  const source = parts.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')
   const re = new RegExp(`^${source}$`)
   return (name) => re.test(name)
 }
