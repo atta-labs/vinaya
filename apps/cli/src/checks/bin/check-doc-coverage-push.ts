@@ -18,7 +18,7 @@
  *      every check identically (`runner.ts`'s own no-privileged-API
  *      invariant); the only way two checks can behave differently is to be
  *      two different executables.
- *   2. `apps/vinaya/cli/src/lib/artifacts.ts` (the `vinaya init` hook/
+ *   2. `apps/cli/src/lib/artifacts.ts` (the `vinaya init` hook/
  *      workflow generator) is out of this task's surface — its generated
  *      pre-push hook body is `npx --no-install @attalabs/vinaya check --all`
  *      unconditionally, with no mode flag or env differentiation between a
