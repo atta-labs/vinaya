@@ -86,15 +86,28 @@ function readAll(paths: string[]): ProseSourceFile[] {
  * "archive absent, class dormant" from "archive present, empty" so the
  * dormancy is visible in the check's own output rather than indistinguishable
  * from a real, exercised pass.
+ *
+ * `existsSync` is the common-case short-circuit; `readdirSync` is still
+ * wrapped so an unexpected read failure (permissions, a TOCTOU race between
+ * the two calls) degrades to dormant with a warning rather than throwing
+ * uncaught out of `main()` — this check's own contract is report-only,
+ * exit code always 0, and an uncaught exception would break that.
  */
 function legacySlugs(): { slugs: string[]; dormant: boolean } {
   const dir = join(REPO_ROOT, 'aeg-root/tranches/completed')
   if (!existsSync(dir)) return { slugs: [], dormant: true }
-  const slugs = readdirSync(dir)
-    .filter((f) => f.endsWith('.md') && !f.endsWith('.tokens.md'))
-    .map((f) => f.slice(0, -3))
-    .filter((slug) => !/-v[0-9]+$/.test(slug))
-  return { slugs, dormant: false }
+  try {
+    const slugs = readdirSync(dir)
+      .filter((f) => f.endsWith('.md') && !f.endsWith('.tokens.md'))
+      .map((f) => f.slice(0, -3))
+      .filter((slug) => !/-v[0-9]+$/.test(slug))
+    return { slugs, dormant: false }
+  } catch (err) {
+    console.error(
+      `${CHECK_NAME}: could not read ${dir} (${err instanceof Error ? err.message : String(err)}) — legacy-slug class treated as dormant.`
+    )
+    return { slugs: [], dormant: true }
+  }
 }
 
 function main(): void {
@@ -106,10 +119,10 @@ function main(): void {
   const glossaryTerms = parseGlossaryTerms(readFileSync(join(REPO_ROOT, 'aeg-root/glossary.md'), 'utf8'))
   const { slugs, dormant: legacySlugsDormant } = legacySlugs()
 
-  // No reader-facing surface in this repo (see READER_FACING_ROOT) — a
-  // prefix no swept path can ever start with, so classifyProseFile's
-  // reader-facing branch never matches. The `ships` class still runs.
-  const readerFacingPrefix = READER_FACING_ROOT !== null ? `${READER_FACING_ROOT}/` : 'no-reader-facing-surface/'
+  // When READER_FACING_ROOT is null, readerFacingPaths above is already
+  // [] — no swept file can ever be classified reader-facing regardless of
+  // this prefix's value, so it is inert rather than load-bearing here.
+  const readerFacingPrefix = READER_FACING_ROOT !== null ? `${READER_FACING_ROOT}/` : '(inert — no reader-facing root)'
 
   const findings = checkReaderResolvableProse(files, glossaryTerms, readerFacingPrefix, READER_FACING_SUFFIX, slugs)
 

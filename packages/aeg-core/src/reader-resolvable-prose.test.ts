@@ -28,6 +28,7 @@ function legacySlugs(): string[] {
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)
+    .filter((slug) => !/-v[0-9]+$/.test(slug))
 }
 
 const REAL_GLOSSARY = readFileSync(join(REPO_ROOT, 'aeg-root/glossary.md'), 'utf8')
