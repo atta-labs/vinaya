@@ -23,6 +23,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: oven-sh/setup-bun@v2
+      # This repo declares the `@attalabs/vinaya` workspace package itself, so
+      # `npx @attalabs/vinaya` resolves to that local member instead of the
+      # registry and dies on its unbuilt `bin`. Build and run this repo's own
+      # CLI — which also makes CI exercise the code in the pull request rather
+      # than a published copy predating it.
+      - name: Build the vendored Vinaya CLI
+        run: |
+          bun install --frozen-lockfile
+          bun run --cwd apps/cli build
       - name: Run checks
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -33,4 +43,4 @@ jobs:
           # vacuously regardless of the PR's real content, on every run.
           PR_BODY: ${{ github.event.pull_request.body }}
           BRANCH: ${{ github.head_ref }}
-        run: npx --yes @attalabs/vinaya check --all --diff-only
+        run: node apps/cli/dist/index.js check --all --diff-only

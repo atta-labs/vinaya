@@ -32,6 +32,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: oven-sh/setup-bun@v2
+      # This repo declares the `@attalabs/vinaya` workspace package itself, so
+      # `npx @attalabs/vinaya` resolves to that local member instead of the
+      # registry and dies on its unbuilt `bin`. Build and run this repo's own
+      # CLI — which also makes CI exercise the code in the pull request rather
+      # than a published copy predating it.
+      - name: Build the vendored Vinaya CLI
+        run: |
+          bun install --frozen-lockfile
+          bun run --cwd apps/cli build
       - name: Review gate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -40,4 +50,4 @@ jobs:
           # the gate is green regardless of review state.
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BRANCH: ${{ github.head_ref }}
-        run: npx --yes @attalabs/vinaya check review-gate
+        run: node apps/cli/dist/index.js check review-gate

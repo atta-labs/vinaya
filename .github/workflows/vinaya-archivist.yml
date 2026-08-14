@@ -29,10 +29,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: oven-sh/setup-bun@v2
+      # This repo declares the `@attalabs/vinaya` workspace package itself, so
+      # `npx @attalabs/vinaya` resolves to that local member instead of the
+      # registry and dies on its unbuilt `bin`. Build and run this repo's own
+      # CLI — which also makes CI exercise the code in the pull request rather
+      # than a published copy predating it.
+      - name: Build the vendored Vinaya CLI
+        run: |
+          bun install --frozen-lockfile
+          bun run --cwd apps/cli build
       - name: Run vinaya archive
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx --yes @attalabs/vinaya archive --merge-sha=${{ github.sha }}
+        run: node apps/cli/dist/index.js archive --merge-sha=${{ github.sha }}
 
   daily-drift:
     name: Daily Drift Check (dead-branch pushes)
@@ -49,11 +59,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: oven-sh/setup-bun@v2
+      # This repo declares the `@attalabs/vinaya` workspace package itself, so
+      # `npx @attalabs/vinaya` resolves to that local member instead of the
+      # registry and dies on its unbuilt `bin`. Build and run this repo's own
+      # CLI — which also makes CI exercise the code in the pull request rather
+      # than a published copy predating it.
+      - name: Build the vendored Vinaya CLI
+        run: |
+          bun install --frozen-lockfile
+          bun run --cwd apps/cli build
       - name: Run vinaya audit --only=dead-branches
         continue-on-error: true # never-red — this job is a notification channel, not a gate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx --yes @attalabs/vinaya audit --only=dead-branches
+        run: node apps/cli/dist/index.js audit --only=dead-branches
 
   direct-main-push-detection:
     name: Direct-Main-Push Detection
@@ -70,7 +90,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: oven-sh/setup-bun@v2
+      # This repo declares the `@attalabs/vinaya` workspace package itself, so
+      # `npx @attalabs/vinaya` resolves to that local member instead of the
+      # registry and dies on its unbuilt `bin`. Build and run this repo's own
+      # CLI — which also makes CI exercise the code in the pull request rather
+      # than a published copy predating it.
+      - name: Build the vendored Vinaya CLI
+        run: |
+          bun install --frozen-lockfile
+          bun run --cwd apps/cli build
       - name: Run vinaya audit --only=direct-push
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx --yes @attalabs/vinaya audit --only=direct-push --sha=${{ github.sha }}
+        run: node apps/cli/dist/index.js audit --only=direct-push --sha=${{ github.sha }}
