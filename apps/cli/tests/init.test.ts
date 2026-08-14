@@ -635,7 +635,12 @@ describe('detectVendoredVinaya', () => {
     writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/c********i"] }\n')
     expect(detectVendoredVinaya(root)).toEqual({ dir: 'apps/cli', bin: 'apps/cli/dist/index.js' })
 
-    // 8 separated stars -> collapsing changes nothing -> still over the bound
+    // 8 separated stars -> collapsing changes nothing -> still over the bound.
+    // The pattern MUST be one that would otherwise match: `c*l*i*x*y*z*w*v*q`
+    // matches no directory either way, so it could not observe the bound.
+    mkdirSync(join(root, 'apps/clixyzwvq'), { recursive: true })
+    writeFileSync(join(root, 'apps/clixyzwvq/package.json'), '{ "name": "@attalabs/vinaya" }\n')
+    rmSync(join(root, 'apps/cli'), { recursive: true, force: true })
     writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/c*l*i*x*y*z*w*v*q"] }\n')
     expect(detectVendoredVinaya(root)).toBeNull()
   })
