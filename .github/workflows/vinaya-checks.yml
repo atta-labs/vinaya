@@ -41,10 +41,12 @@ jobs:
       # CLI — which also makes CI exercise the code in the pull request rather
       # than a published copy predating it.
       #
-      # `--ignore-scripts`: the install runs with the pull request's own
-      # dependency manifest, so a lifecycle script from any dependency it
-      # declares would execute here. The build below needs the packages, not
-      # their install hooks.
+      # `--ignore-scripts` blocks the PR-controlled surface, which is not
+      # the obvious one: bun already declines an untrusted DEPENDENCY's
+      # postinstall (measured, 1.2.14). What this stops is the repo's own
+      # root and workspace lifecycle scripts, plus anything the pull request
+      # adds to `trustedDependencies` — all of it editable in the same PR
+      # this job is checking. The build needs the packages, not the hooks.
       - name: Build the vendored Vinaya CLI
         run: |
           bun install --frozen-lockfile --ignore-scripts
