@@ -451,6 +451,33 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
   })
 
+  it('ordinary adopter: gains the credential opt-out, and nothing else', async () => {
+    // The adopter output was byte-identical to the pre-detection generator
+    // until the security round. `persist-credentials: false` is a DELIBERATE
+    // break of that invariant: the default writes GITHUB_TOKEN into
+    // .git/config, and no generated job pushes, so every adopter is better
+    // off. Recorded as a test because the invariant it replaces was the
+    // load-bearing promise of this change — an adopter regenerates these
+    // files on `upgrade`, and a silent drift here reaches everyone.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+
+    for (const [path, content] of files) {
+      if (!content.includes('actions/checkout@v4')) continue
+      const checkouts = content.split('actions/checkout@v4').length - 1
+      const optOuts = content.split('persist-credentials: false').length - 1
+      expect(`${path}: ${optOuts}/${checkouts}`).toBe(`${path}: ${checkouts}/${checkouts}`)
+    }
+
+    // Everything the vendored shape adds stays absent — the adopter still
+    // pays nothing for a problem it does not have.
+    for (const content of files.values()) {
+      expect(content).not.toContain('setup-bun')
+      expect(content).not.toContain('--ignore-scripts')
+      expect(content).not.toContain('Build the vendored Vinaya CLI')
+    }
+  })
+
   it('vendoring repo: the build job is hardened — pinned action, no scripts, no creds', async () => {
     // Each of these is a security review finding, and each is invisible to a
     // test that only checks the invocation moved.

@@ -55,15 +55,27 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - uses: oven-sh/setup-bun@v2
+      # Pinned to a commit, not the mutable `v2` tag. This is the first
+      # THIRD-PARTY action this generator writes into an adopter's repository,
+      # and it runs in the same job that then builds and executes pull-request
+      # code. A repoint of `v2` would execute new upstream code in every
+      # adopter on the next run, with no diff anywhere to review.
+      # Resolved from the `v2` tag on 2026-08-14. Bun's own version still
+      # comes from the repo's `packageManager` field, not from this pin.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
       # This repo declares the `@attalabs/vinaya` workspace package itself, so
       # `npx @attalabs/vinaya` resolves to that local member instead of the
       # registry and dies on its unbuilt `bin`. Build and run this repo's own
       # CLI — which also makes CI exercise the code in the pull request rather
       # than a published copy predating it.
+      #
+      # `--ignore-scripts`: the install runs with the pull request's own
+      # dependency manifest, so a lifecycle script from any dependency it
+      # declares would execute here. The build below needs the packages, not
+      # their install hooks.
       - name: Build the vendored Vinaya CLI
         run: |
-          bun install --frozen-lockfile
+          bun install --frozen-lockfile --ignore-scripts
           bun run --cwd apps/cli build
       - name: Review gate (verdict evaluation)
         env:
