@@ -247,6 +247,14 @@ export function detectVendoredVinaya(repoRoot: string): VendoredVinaya | null {
         if (!isSafeRelPath(dir) || !isSafeRelPath(bin)) return null
         // Textual safety is not containment: a literal workspace segment that
         // is a symlink out of the repo yields a clean relative path.
+        //
+        // Applied to `dir` and NOT to `bin`, and the asymmetry is forced
+        // rather than chosen: at generation time the bin does not exist yet
+        // — it is built in CI — so resolving it would throw, degrade to
+        // `false`, and refuse every legitimate vendoring repo. Do not
+        // "complete" this check without moving detection after the build.
+        // The gap it leaves is narrow: an actor able to commit a symlinked
+        // bin can already commit the build script the job runs first.
         if (!resolvesInsideRepo(repoRoot, dir)) return null
         return { dir, bin }
       }
