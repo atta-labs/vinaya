@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -10,9 +11,20 @@ import { join } from 'node:path'
  * the error contract").
  */
 
-const REPO_ROOT = join(import.meta.dir, '../../../../..')
-const CHECK_BIN = join(REPO_ROOT, 'apps/vinaya/cli/src/checks/bin/check-brief-shape.ts')
+// tests/checks -> tests -> cli -> apps -> repo root. This was `../../../../..`
+// and pointed at `apps/vinaya/cli/...`: both correct in attalabs, where this
+// file sat one directory deeper, and both stale after the extraction. A wrong
+// path makes `bun <missing-file>` exit 1, which is why the bad-body case above
+// kept passing — on a missing file rather than on the check's verdict.
+const REPO_ROOT = join(import.meta.dir, '../../../..')
+const CHECK_BIN = join(REPO_ROOT, 'apps/cli/src/checks/bin/check-brief-shape.ts')
 const VERIFY_BRIEF = join(REPO_ROOT, 'packages/aeg-core/bin/verify-brief.ts')
+
+// A stale path is invisible to an exit-code comparison, so assert the targets
+// exist before comparing verdicts.
+for (const target of [CHECK_BIN, VERIFY_BRIEF]) {
+  if (!existsSync(target)) throw new Error(`core-parity: target does not exist: ${target}`)
+}
 
 async function runExit(cmd: string[], env: Record<string, string>): Promise<number> {
   const proc = Bun.spawn(cmd, {
