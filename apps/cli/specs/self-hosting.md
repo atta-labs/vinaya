@@ -39,10 +39,14 @@ Generation-time detection is also what keeps `doctor` honest. `doctor` diffs reg
 The member's directory and its `bin` path are interpolated into a workflow `run:` scalar as **bare, unquoted shell words**, and both originate in the *target repo's* `package.json` — content the CLI does not control. This generator writes CI configuration into other people's repositories, so the values it embeds are constrained rather than sanitized:
 
 ```
-^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$
+^[A-Za-z0-9@._-]+(?:/[A-Za-z0-9@._-]+)*$
 ```
 
-with `.` and `..` rejected as whole path segments. Anything outside it makes detection return `null`.
+with three further rules on each segment: `.` and `..` are rejected as whole segments, and no segment may begin with `-`. Anything outside this makes detection return `null`.
+
+`@` is permitted because npm scopes are ordinary directory names — a member at `packages/@attalabs/vinaya` is legitimate, and excluding it would silently degrade exactly the repo this feature exists for into the invocation already known broken there. It is inert in all three layers of the emitted context: it is a YAML indicator only at the start of a plain scalar, which it can never reach (the invocation is always prefixed by `node `, and the `--cwd` line sits inside a literal block); it is a non-globbing literal to `sh`, `bash` and `zsh`; and no Actions expression can form, since `$` and `{` remain excluded.
+
+A leading `-` is refused for the opposite reason: it reaches `node` and `bun` in argument position, where a segment named `-e` or `--eval` is read as an option rather than a path. Neither is known to execute a detached value, so this is a broken CI run rather than an injection — but no real directory needs it.
 
 Allowlist rather than escaping, for two reasons. Escaping must be correct against every metacharacter, in a `run:` block that is simultaneously YAML, shell, and a GitHub Actions expression context — three layers, each with its own evaluation rules. And a value outside this charset has no legitimate use as a workspace path, so refusing costs nothing real.
 

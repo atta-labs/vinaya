@@ -122,17 +122,25 @@ function childDirs(absolute: string): string[] {
   }
 }
 
-// Adjacent `[^/]*` groups make the compiled pattern backtrack exponentially in
-// the number of stars: a segment like `a*a*a*…*b` against a non-matching name
-// takes seconds by 6 stars and minutes beyond. Real workspace patterns use one
-// star, occasionally two. Detection is local-only, so this is a hang in
-// `vinaya init` rather than a CI exposure — but a hang with no diagnostic is
-// still the worst failure mode available, and the bound costs nothing.
+// Adjacent `[^/]*` groups make the compiled pattern backtrack badly: measured,
+// `a****b` against a 255-char name costs 238ms, and `expandPattern` runs the
+// matcher on every child before the candidate slice — a hundred siblings turn
+// that into ~24s, a nested pattern into minutes. Detection is local-only (no
+// registered check reaches this file), so it is a hang in `vinaya init`
+// against a hostile clone rather than CI exposure. Still the worst failure
+// mode available: no output, no diagnostic.
+//
+// Two defences, because the cap alone left the worst shape permitted. Runs of
+// stars collapse first — `a****b` and `a*b` are the same glob, so collapsing
+// is free and removes the adjacent-group case entirely. The cap then bounds
+// what remains, where each group is separated by a literal that anchors the
+// match. Real workspace patterns use one star, occasionally two.
 const MAX_SEGMENT_STARS = 4
 
 function segmentMatcher(segment: string): (name: string) => boolean {
-  if (segment === '*' || segment === '**') return () => true
-  const parts = segment.split('*')
+  const collapsed = segment.replace(/\*+/g, '*')
+  if (collapsed === '*') return () => true
+  const parts = collapsed.split('*')
   // Refuse rather than risk the hang. A pattern this shaped is not a workspace
   // declaration anyone wrote by hand, and matching nothing degrades to the
   // ordinary-adopter shape — the same safe default the path guard uses.

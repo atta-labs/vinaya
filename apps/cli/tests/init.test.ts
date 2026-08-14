@@ -617,6 +617,19 @@ describe('detectVendoredVinaya', () => {
     })
   })
 
+  it('collapses runs of stars — the adjacent-group shape that backtracked worst', () => {
+    // `a****b` and `a*b` are the same glob. Measured at 238ms per name before
+    // collapsing, and expandPattern runs the matcher on every child.
+    writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/c****i"] }\n')
+    mkdirSync(join(root, `apps/${'x'.repeat(255)}`), { recursive: true })
+    mkdirSync(join(root, 'apps/cli'), { recursive: true })
+    writeFileSync(join(root, 'apps/cli/package.json'), '{ "name": "@attalabs/vinaya" }\n')
+    const started = performance.now()
+    // still matches — collapsing preserves glob semantics, it does not refuse
+    expect(detectVendoredVinaya(root)).toEqual({ dir: 'apps/cli', bin: 'apps/cli/dist/index.js' })
+    expect(performance.now() - started).toBeLessThan(500)
+  })
+
   it('a pathological wildcard pattern returns promptly instead of hanging', () => {
     // Adjacent `[^/]*` groups backtrack exponentially; 8 stars against a
     // non-matching name took seconds before the bound.
