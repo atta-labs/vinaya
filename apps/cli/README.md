@@ -82,13 +82,18 @@ Every machine-readable (`--json`) output is wrapped in `{ schema: 1, data: ... }
 
 So `init` detects that case and generates a different shape for it: install, build the vendored member, and invoke its built `bin` by path. The detection is exact — a workspace member whose `package.json` `name` is `@attalabs/vinaya`, which is precisely the condition npm itself branches on. Every other repo keeps the published invocation unchanged.
 
+Two things that shape puts into your CI, stated plainly because this is the only place you can read them:
+
+- **A third-party action.** `oven-sh/setup-bun`, pinned to a commit rather than a mutable tag, is added to the jobs that build. It is the only non-`actions/*` action this tool writes into a repository, and it is emitted **only** in the vendored shape — an ordinary adopter's workflows contain none.
+- **`bun install --ignore-scripts`.** The install runs against your pull request's own manifest, so the flag blocks the PR-controlled surface: your repo's root and workspace lifecycle scripts, plus anything a PR adds to `trustedDependencies`. If your install genuinely needs those scripts, this shape will fail at the build step rather than run them.
+
 A repo on the vendored shape runs the CLI **from its own working tree**, so its CI exercises the code in the pull request rather than a published copy predating it. The consequence is worth stating plainly: a pull request that edits this package's check sources changes the checks that judge it.
 
 The generated command embeds the member's directory and `bin` path. Both come from the target repo's `package.json`, so both are restricted to `[A-Za-z0-9@._-]` path segments, none of which may be `.`, `..`, or begin with `-`, up to 255 characters total. Anything else — a shell metacharacter, a newline, a `..` segment — is refused, and generation falls back to the published `npx` shape rather than emitting it.
 
 `@` is permitted so an npm-scoped member such as `packages/@attalabs/vinaya` resolves normally; it carries no meaning to the shell, to YAML at the position it appears, or to an Actions expression. The path must also resolve inside the repository, which a textual `..` rule cannot guarantee on its own.
 
-Branch protection is worth enabling and does not make this unbypassable — a required status check is satisfied by a conclusion reported under its name, and under a `pull_request` trigger the workflow definition comes from the PR. That is true whether CI runs the published package or a vendored build; vendoring widens what the PR controls, it does not open the hole. The full statement, including where the shape degrades silently, is in [`specs/self-hosting.md`](./specs/self-hosting.md) in the source repository — it is not part of the published tarball.
+Branch protection is worth enabling, and it does not make the generated review gate unbypassable — a required status check is satisfied by a conclusion reported under its name, and under a `pull_request` trigger the workflow definition comes from the PR. That is true whether CI runs the published package or a vendored build; vendoring widens what the PR controls, it does not open the hole. The full statement, including where the shape degrades silently, is in [`specs/self-hosting.md`](./specs/self-hosting.md) in the source repository — it is not part of the published tarball.
 
 ## Known limits
 

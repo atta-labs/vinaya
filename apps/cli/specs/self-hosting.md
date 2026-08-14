@@ -25,10 +25,10 @@ Detection runs at **generation time** — `init`, `upgrade` and `doctor` all hol
 |---|---|---|
 | detection | no workspace member named `@attalabs/vinaya` | such a member exists |
 | setup | `actions/setup-node` | `actions/setup-node` + `oven-sh/setup-bun` |
-| build | none | `bun install --frozen-lockfile`, `bun run --cwd <member> build` |
+| build | none | `bun install --frozen-lockfile --ignore-scripts`, `bun run --cwd <member> build` |
 | invocation | `npx --yes @attalabs/vinaya <cmd>` | `node <member>/<bin> <cmd>` |
 
-The ordinary-adopter output is **byte-identical to the pre-detection generator**. This is the load-bearing property: the overwhelming majority of adopters have no local copy to build and must not pay for a problem they do not have.
+The ordinary adopter gains **no build step and no third-party action** — the overwhelming majority of adopters have no local copy to build and must not pay for a problem they do not have. That is the load-bearing property, and it is narrower than byte-identity: the adopter shape is *not* byte-identical to the pre-detection generator, because the credential opt-out and the verdict-retrigger fix below are security corrections that belong to every adopter, not only to a vendoring one. What must never leak into it is the vendored machinery.
 
 **The predicate is exactly the misresolution condition** — a workspace member whose `package.json` `name` is `@attalabs/vinaya` — and deliberately nothing more. Not "has a build script", not "is called `apps/cli`". A repo that declares the name is one where `npx` is already broken; narrowing further would hand it an invocation that cannot work, and widening it would give an ordinary adopter a build step it does not need.
 
@@ -70,6 +70,8 @@ Every refusal returns `null`, which emits the published shape. For an ordinary a
 - **`**` is matched as exactly one level**, so a member at `packages/a/b` under `workspaces: ["packages/**"]` is not found.
 - **A member reached through a symlink out of the repo** is refused, as above.
 
+`--ignore-scripts` adds one more, of a different kind: a vendoring repo whose install genuinely depends on its own root or workspace lifecycle scripts gets a build that fails rather than one that silently degrades. That is the intended direction — those scripts are PR-editable, which is the whole reason the flag is there — but it is a real constraint on such a repo, and it fails loudly at the build step rather than at detection.
+
 Two assumptions are deliberately outside the predicate, and they fail later rather than at detection: the vendored shape runs `bun`, and it runs the member's `build` script. A vendoring repo on npm or pnpm workspaces, or one whose member declares no `build`, gets a generated workflow that fails at the build step. Both were left out on purpose — the predicate is exactly npm's own misresolution condition (§ The two shapes) and narrowing it further would hand such a repo the `npx` line that cannot work either. Neither case is diagnosed today; `vinaya doctor` reporting a refused-but-present member is the natural home for it.
 
 ## What self-hosting costs, stated plainly
@@ -80,7 +82,7 @@ The cost is on the same fact. **A pull request that edits this package's check s
 
 **State the branch-protection guarantee correctly, because the intuitive version is too strong — in both shapes.** A required status check is satisfied by a **success conclusion reported under the required name**. Under a `pull_request` trigger the workflow definition comes from the PR, so a PR can delete the gate's step and leave the job reporting green, or edit it to `exit 0` and report green. That is true for an ordinary adopter running the published artifact exactly as it is for a repo that vendors the CLI. Branch protection makes a *missing* report unmergeable; it does not make a *dishonest* one impossible.
 
-So vendoring **widens the blast radius, it does not open the hole**. What the published shape still gives you is narrower and worth naming precisely: the check's own logic is an immutable artifact, so a PR that leaves the invocation intact cannot change what the check concludes. It can still remove or neuter the invocation. **`aeg-root/enforcement.md` is not yet corrected, and it ships.** Its ring-0 "Spawning a check" row still ends with the stronger claim — that branch protection with the check required makes review enforcement unbypassable. That correction is `atta-labs/vinaya#7`, open at the time of writing. Until it lands, this section is the accurate account and the ring-0 row is not; do not read the row as authority for this claim.
+So vendoring **widens the blast radius, it does not open the hole**. What the published shape still gives you is narrower and worth naming precisely: the check's own logic is an immutable artifact, so a PR that leaves the invocation intact cannot change what the check concludes. It can still remove or neuter the invocation. **Where `aeg-root/enforcement.md` disagrees, this section is right.** Its ring-0 "Spawning a check" row ends on the stronger claim — that branch protection with the check required makes review enforcement *unbypassable*. That is the claim corrected above, and it is wrong for the same reason in every packaging: a required check is satisfied by a conclusion reported under its name, and under `pull_request` the PR authors the workflow that reports it. Whichever text survives, the rule is the one stated here; when the row no longer contains the word *unbypassable*, this paragraph has nothing left to correct and should go.
 
 Which way that asymmetry cuts matters: `aeg-root/` is in this package's `files` array and reaches every adopter in the tarball, while `specs/` is not published at all. So the wrong statement is the one an adopter can read and the right one is not. `README.md` carries a short form of the corrected claim for exactly that reason, and #7 closes the gap properly.
 

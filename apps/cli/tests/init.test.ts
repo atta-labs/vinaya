@@ -476,8 +476,8 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
 
   it('ordinary adopter: gains the credential opt-out, and no vendored token', async () => {
     // The adopter output was byte-identical to the pre-detection generator
-    // until the security round. `persist-credentials: false` is a DELIBERATE
-    // break of that invariant: the default writes GITHUB_TOKEN into
+    // until the security round. It gains 4 new `persist-credentials: false`
+    // emissions (2 of the 6 predate this branch) — a DELIBERATE break: the default writes GITHUB_TOKEN into
     // .git/config, and no generated job pushes, so every adopter is better
     // off. Recorded as a test because the invariant it replaces was the
     // load-bearing promise of this change — an adopter regenerates these
@@ -675,8 +675,11 @@ describe('detectVendoredVinaya', () => {
   })
 
   it('refuses a member directory whose name starts with a dash', () => {
-    // `-e` / `--eval` reach `node` in argument position. Not known to execute
-    // (both reject a detached value) but it breaks CI with no diagnostic.
+    // `-e` / `--eval` reach `node` in argument position. Node ACCEPTS a
+    // detached value (`node -e 'code'` runs it) and rejects the attached
+    // form, which is the only form the emitted single-token path can take —
+    // see self-host.ts. So this breaks CI rather than executing, and the
+    // property keeping it that way is not enforced anywhere else.
     writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/*"] }\n')
     mkdirSync(join(root, 'apps/-e'), { recursive: true })
     writeFileSync(join(root, 'apps/-e/package.json'), '{ "name": "@attalabs/vinaya" }\n')
