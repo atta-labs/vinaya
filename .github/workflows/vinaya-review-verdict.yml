@@ -90,21 +90,11 @@ jobs:
 
   # Executes nothing; consumes only the evaluator's outputs.
   #
-  # Fires on EITHER verdict, and that is the whole point. The required check
-  # stores a conclusion, and that stored conclusion — not this job's result —
-  # is what guards the merge button. An earlier form ran only on a clean
-  # evaluation, reasoning that a failed one should "leave the standing red
-  # untouched". But the standing state is not always red: once an APPROVE has
-  # turned the required check green, a later REQUEST CHANGES failed here and
-  # re-ran nothing, so the check kept reporting green and the PR stayed
-  # mergeable until someone happened to push. Measured on this repo's own PR:
-  # 52 minutes green after the verdict landed, bounded by nothing.
-  #
-  # So the gate was one-way — it could open, but not close. Re-running on both
-  # verdicts costs one no-op job when the news is good and closes the case
-  # that matters. `steps.pr` resolves `branch` before any repo content is
-  # checked out, so the output this consumes exists even when the evaluation
-  # step below it fails.
+  # Fires on EITHER verdict. The required check stores a conclusion, and that
+  # stored conclusion — not this job's result — is what guards the merge
+  # button. Running only on a clean evaluation makes the gate one-way: it can
+  # turn the check green on an approval but never turn it red again on a
+  # later rejection, leaving a stale green until someone pushes.
   retrigger:
     name: vinaya review gate (retrigger)
     if: ${{ !cancelled() && needs.evaluate.result != 'skipped' }}
@@ -118,6 +108,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: ${{ needs.evaluate.outputs.branch }}
         run: |
+          # `--branch ""` is NOT a no-op: gh drops the filter and lists runs
+          # across every branch, so the rerun would land on an unrelated PR's
+          # gate. Reachable now that this job runs on a failed evaluation —
+          # `Resolve PR head` is the only producer of this output, and its
+          # failure used to be unreachable from here.
+          if [ -z "$BRANCH" ]; then
+            echo "No branch resolved (the evaluate job failed before resolving it) - nothing to re-run."
+            exit 0
+          fi
           RUN_ID=$(gh run list --repo "${{ github.repository }}" \
             --workflow vinaya-review.yml --branch "$BRANCH" \
             --status completed \

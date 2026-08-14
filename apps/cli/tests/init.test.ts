@@ -465,9 +465,16 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // The output it consumes must be resolved before any repo content is
     // checked out, or a failed evaluation would leave it empty.
     expect(verdict.indexOf('id: pr')).toBeLessThan(verdict.indexOf('actions/checkout@v4'))
+
+    // ...and it can still be empty, because running on a failed evaluation
+    // makes `Resolve PR head`'s own failure reachable here for the first
+    // time. `gh run list --branch ""` drops the filter and matches every
+    // branch, so an unguarded rerun lands on an unrelated PR's gate.
+    expect(verdict).toContain('if [ -z "$BRANCH" ]')
+    expect(verdict.indexOf('if [ -z "$BRANCH" ]')).toBeLessThan(verdict.indexOf('gh run list'))
   })
 
-  it('ordinary adopter: gains the credential opt-out, and nothing else', async () => {
+  it('ordinary adopter: gains the credential opt-out, and no vendored token', async () => {
     // The adopter output was byte-identical to the pre-detection generator
     // until the security round. `persist-credentials: false` is a DELIBERATE
     // break of that invariant: the default writes GITHUB_TOKEN into
