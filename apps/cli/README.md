@@ -76,6 +76,16 @@ Full field-by-field reference: [vinaya.attalabs.dev/docs/cli](https://vinaya.att
 
 Every machine-readable (`--json`) output is wrapped in `{ schema: 1, data: ... }`. The `schema` field is a public-surface commitment — no code path in this package emits unversioned machine output.
 
+## Generated CI in a repo that vendors this CLI
+
+`init` and `upgrade` normally generate workflows that invoke the published package, `npx --yes @attalabs/vinaya`. In a repo whose own `workspaces` include a member named `@attalabs/vinaya`, that invocation cannot work: npm matches the name against the workspace member *before* reading any version spec, resolves that member's `bin`, and execs a file nothing has built — `sh: vinaya: command not found`. Pinning a version does not help, because the name is matched first.
+
+So `init` detects that case and generates a different shape for it: install, build the vendored member, and invoke its built `bin` by path. The detection is exact — a workspace member whose `package.json` `name` is `@attalabs/vinaya`, which is precisely the condition npm itself branches on. Every other repo keeps the published invocation unchanged.
+
+A repo on the vendored shape runs the CLI **from its own working tree**, so its CI exercises the code in the pull request rather than a published copy predating it. The consequence is worth stating plainly: a pull request that edits this package's check sources changes the checks that judge it.
+
+The generated command embeds the member's directory and `bin` path. Both come from the target repo's `package.json`, so both are restricted to `[A-Za-z0-9._-]` path segments; anything else — a shell metacharacter, a newline, a `..` segment — is refused, and generation falls back to the published `npx` shape rather than emitting it.
+
 ## Known limits
 
 The five core AEG checks (`coherence`, `dispatch-readiness`, and siblings) are bound to the Vinaya development repository — they read governance documents relative to it. Outside a Vinaya workspace, `vinaya check --all` reports those checks as `status: 'error'` rather than crashing.
