@@ -21,12 +21,29 @@ Two consequences follow, and both have been measured rather than reasoned about:
 
 Detection runs at **generation time** — `init`, `upgrade` and `doctor` all hold the repo root — so the emitted YAML carries no branching logic of its own.
 
+`init` writes **six** invocations of the tool into an adopter repo: four in generated workflows, two in generated git hooks. Both surfaces branch on the same predicate, and both are described below — the hook half was omitted when the workflow half first shipped, and in a vendoring repo that omission blocked every commit and push.
+
+### CI workflows
+
 | | ordinary adopter | vendoring repo |
 |---|---|---|
 | detection | no workspace member named `@attalabs/vinaya` | such a member exists |
 | setup | `actions/setup-node` | `actions/setup-node` + `oven-sh/setup-bun` |
 | build | none | `bun install --frozen-lockfile --ignore-scripts`, `bun run --cwd <member> build` |
 | invocation | `npx --yes @attalabs/vinaya <cmd>` | `node <member>/<bin> <cmd>` |
+
+### Git hooks — `pre-commit`, `pre-push`
+
+| | ordinary adopter | vendoring repo |
+|---|---|---|
+| detection | same predicate | same predicate |
+| build | none | none — the hook requires a build, it never performs one |
+| guard | none | `[ ! -f <member>/<bin> ]` → message naming `bun run --cwd <member> build`, then exit 1 |
+| invocation | `npx --yes @attalabs/vinaya@<exact-version> <cmd>` | `node <member>/<bin> <cmd>` |
+
+The hook's published form carries an **exact-version pin** the workflow form does not: npx's cache is keyed by the invoked spec, and an entry written by one spec does not satisfy a lookup for a different one — without the pin, the first commit after `init` died on npx's non-interactive cancel. That pin is about cache keys, not about resolution, and this branch leaves it untouched.
+
+Two alternatives to the guard were rejected. **Auto-building inside the hook** spends an unannounced build on someone's commit and hides staleness. **Skipping the checks when the build is missing** converts a loud breakage into an absent ring 0 with nothing saying so — and since `dist/` is generated and git-ignored, it is legitimately absent in a fresh clone and in every new worktree, which makes the skip the common case rather than the rare one. Failing with the command to run is the only shape that keeps the gate honest.
 
 The ordinary adopter gains **no build step and no third-party action** — the overwhelming majority of adopters have no local copy to build and must not pay for a problem they do not have. That is the load-bearing property, and it is narrower than byte-identity: the adopter shape is *not* byte-identical to the pre-detection generator, because the credential opt-out and the verdict-retrigger fix below are security corrections that belong to every adopter, not only to a vendoring one. What must never leak into it is the vendored machinery.
 

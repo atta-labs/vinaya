@@ -14,6 +14,7 @@ import {
   SETUP_BUN_SHA,
   starterConfig
 } from '../src/lib/artifacts.js'
+import type { VendoredVinaya } from '../src/lib/self-host.js'
 import { detectVendoredVinaya } from '../src/lib/self-host.js'
 import type { InitDeps } from '../src/commands/init.js'
 import { runInit, runInitProduct } from '../src/commands/init.js'
@@ -581,14 +582,21 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
   })
 
-  it('the hook stubs keep their own version-pinned npx — a different, still-live fix', async () => {
-    // The hooks pin `@<version>` for the npx cache-key regression, which this
-    // change does not touch. A vendoring repo's hooks stay exactly as they are.
+  it('the hook stubs resolve the vendored bin too (atta-labs/attalabs#935 corrects this case)', async () => {
+    // This test previously asserted the opposite — "a vendoring repo's hooks
+    // stay exactly as they are" — which was #929's stated scope: workflows
+    // only. That scope left the two hook emitters on the published spec, and
+    // in a vendoring repo the published spec cannot resolve: npm matches the
+    // package NAME against the local member and execs its unbuilt bin, so
+    // `|| exit 1` blocked every commit and push. #935 is that remainder.
+    // The version pin the old assertion protected is unrelated to this, and
+    // still holds for the ordinary adopter — asserted below and in the two
+    // `selfHost: null` hook tests above.
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
-    const pkg = JSON.parse(readFileSync(join(import.meta.dir, '..', 'package.json'), 'utf-8')) as { version: string }
     const hook = readFileSync(join(root, '.husky/pre-commit'), 'utf-8')
-    expect(hook).toContain(`npx --yes @attalabs/vinaya@${pkg.version} check`)
+    expect(hook).toContain('node apps/cli/dist/index.js check')
+    expect(hook).not.toContain('npx --yes')
   })
 })
 
@@ -771,6 +779,57 @@ describe('detectVendoredVinaya', () => {
       dir: 'packages/vinaya-cli.v2',
       bin: 'packages/vinaya-cli.v2/dist/index.js'
     })
+  })
+})
+
+// atta-labs/attalabs#935. #929 fixed the four generated WORKFLOWS and left the two
+// hook emitters on the published `npx @attalabs/vinaya@<version>` spec — which
+// in a vendoring repo resolves to that repo's own unbuilt member and blocks
+// every commit and push with `sh: vinaya: command not found`. Both shapes are
+// asserted here for the same reason the workflow block asserts both: a test
+// that only pinned the published string was pinning the defect.
+describe('generated git hooks: published vs vendored invocation (atta-labs/attalabs#935)', () => {
+  const VENDORED: VendoredVinaya = { dir: 'apps/cli', bin: 'apps/cli/dist/index.js' }
+
+  function hookBodies(selfHost: VendoredVinaya | null): string[] {
+    return buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky', selfHost })
+      .filter((op) => op.kind === 'managed-block' && /pre-(commit|push)/.test(op.path))
+      .map((op) => (op.kind === 'managed-block' ? op.body : ''))
+  }
+
+  it('vendored repo: both hooks run the built bin, never npx', () => {
+    const bodies = hookBodies(VENDORED)
+    expect(bodies.length).toBe(2)
+    for (const body of bodies) {
+      expect(body).toContain(`node ${VENDORED.bin} check`)
+      // The generated comment names `npx` to explain why it isn't used; what
+      // must be absent is an npx INVOCATION.
+      expect(body).not.toContain('npx --yes')
+      expect(body).toContain('--local')
+    }
+    // The two hooks keep their distinct scopes: staged diff vs whole branch.
+    expect(bodies.filter((b) => b.includes('--diff-only')).length).toBe(1)
+  })
+
+  it('vendored repo: a missing build fails the hook loudly — never a silent skip', () => {
+    // `dist/` is generated and git-ignored, so it is legitimately absent in a
+    // fresh clone and in every new worktree. Skipping the checks there would
+    // turn a loud breakage into an absent ring 0, with nothing saying so.
+    for (const body of hookBodies(VENDORED)) {
+      expect(body).toContain(`if [ ! -f ${VENDORED.bin} ]`)
+      expect(body).toContain(`bun run --cwd ${VENDORED.dir} build`)
+      expect(body).toContain('exit 1')
+    }
+  })
+
+  it('ordinary adopter: byte-for-byte the published shape, with no build guard', () => {
+    // The constraint #929 established for workflows, applied here: an adopter
+    // with no local copy must not pay for a problem they do not have.
+    for (const body of hookBodies(null)) {
+      expect(body).toContain('npx --yes @attalabs/vinaya@')
+      expect(body).not.toContain('node ')
+      expect(body).not.toContain('if [ ! -f')
+    }
   })
 })
 
