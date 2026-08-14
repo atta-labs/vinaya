@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { DOC_OWNERS_PATH } from '@atta/aeg-core'
@@ -11,6 +11,7 @@ import {
   DOCTRINE_POINTER_PATH,
   REVIEW_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
+  SETUP_BUN_SHA,
   starterConfig
 } from '../src/lib/artifacts.js'
 import { detectVendoredVinaya } from '../src/lib/self-host.js'
@@ -383,13 +384,13 @@ describe('workflows', () => {
   })
 })
 
-// #929. In a repo whose workspaces glob reaches a member named
+// atta-labs/attalabs#929. In a repo whose workspaces glob reaches a member named
 // `@attalabs/vinaya`, npm resolves `npx --yes @attalabs/vinaya` to that local
 // member — the decision is made on the package NAME, before any version spec is
 // read — and execs its unbuilt `bin`, so every generated job died with `sh:
 // vinaya: command not found`. Both shapes are asserted here: a test that only
 // asserted the old string was asserting the defect.
-describe('generated workflows: published vs vendored invocation (#929)', () => {
+describe('generated workflows: published vs vendored invocation (atta-labs/attalabs#929)', () => {
   const WORKFLOWS = [CHECKS_WORKFLOW_PATH, REVIEW_WORKFLOW_PATH, REVIEW_VERDICT_WORKFLOW_PATH, ARCHIVIST_WORKFLOW_PATH]
   const VENDORED_BIN = 'node apps/cli/dist/index.js'
 
@@ -450,6 +451,33 @@ describe('generated workflows: published vs vendored invocation (#929)', () => {
     }
   })
 
+  it('vendoring repo: the build job is hardened — pinned action, no scripts, no creds', async () => {
+    // Each of these is a security review finding, and each is invisible to a
+    // test that only checks the invocation moved.
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+
+    // The first THIRD-PARTY action this generator writes into an adopter repo,
+    // in the job that then builds and runs PR code: pinned to a commit, so a
+    // repoint of the mutable tag cannot execute new upstream code everywhere.
+    expect(occurrences(files, 'oven-sh/setup-bun@v2')).toBe(0)
+    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(6)
+
+    // The install runs against the PR's own dependency manifest.
+    expect(occurrences(files, 'bun install --frozen-lockfile --ignore-scripts')).toBe(6)
+    expect(occurrences(files, 'bun install --frozen-lockfile\n')).toBe(0)
+
+    // Default checkout writes GITHUB_TOKEN into .git/config as an http
+    // extraheader — in the same workspace the build then executes.
+    for (const [path, content] of files) {
+      if (!content.includes('actions/checkout@v4')) continue
+      const checkouts = content.split('actions/checkout@v4').length - 1
+      const optOuts = content.split('persist-credentials: false').length - 1
+      expect(`${path}: ${optOuts}/${checkouts}`).toBe(`${path}: ${checkouts}/${checkouts}`)
+    }
+  })
+
   it('vendoring repo: builds and invokes its OWN CLI by path, never npx', async () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
@@ -459,7 +487,7 @@ describe('generated workflows: published vs vendored invocation (#929)', () => {
     expect(occurrences(files, 'npx --yes @attalabs/vinaya')).toBe(0)
     expect(occurrences(files, VENDORED_BIN)).toBe(6)
     // Every job carrying an invocation first builds the member it invokes.
-    expect(occurrences(files, 'oven-sh/setup-bun@v2')).toBe(6)
+    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(6)
     expect(occurrences(files, 'bun run --cwd apps/cli build')).toBe(6)
 
     // Per-file: the exact subcommands, in the built-binary shape.
@@ -662,6 +690,22 @@ describe('detectVendoredVinaya', () => {
 
     writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["apps/a*a*a*a*b"] }\n') // 4
     expect(detectVendoredVinaya(root)).toEqual({ dir: 'apps/aaaaab', bin: 'apps/aaaaab/dist/index.js' })
+  })
+
+  it('refuses a literal workspace segment that symlinks outside the repo', () => {
+    // The `..` rule is textual and cannot see this: `vendored` is a clean
+    // relative path. The wildcard route is already safe (Dirent.isDirectory()
+    // is false for a symlink); this is the literal route.
+    const outside = join(root, '..', `outside-${Date.now()}`)
+    mkdirSync(outside, { recursive: true })
+    writeFileSync(join(outside, 'package.json'), '{ "name": "@attalabs/vinaya" }\n')
+    try {
+      symlinkSync(outside, join(root, 'vendored'))
+      writeFileSync(join(root, 'package.json'), '{ "name": "v", "workspaces": ["vendored"] }\n')
+      expect(detectVendoredVinaya(root)).toBeNull()
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
   })
 
   it('still accepts the ordinary paths the guard must not break', () => {

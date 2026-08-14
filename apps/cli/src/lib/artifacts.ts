@@ -35,7 +35,7 @@ export type InitContext = {
   hookDir: HookDir
   /**
    * The workspace member declaring `@attalabs/vinaya`, when the repo being
-   * written into vendors the CLI itself (#929) — `null` for the ordinary
+   * written into vendors the CLI itself (atta-labs/attalabs#929) — `null` for the ordinary
    * adopter, which is everyone else. Callers get it from
    * `detectVendoredVinaya(repoRoot)`; see lib/self-host.ts for why the
    * published `npx` invocation cannot work in such a repo.
@@ -97,7 +97,7 @@ export function starterConfig(): VinayaConfig {
 // Workflow files (four, all refuse-if-foreign, all vinaya-prefixed)
 //
 // How the CI jobs reach the vinaya binary has TWO shapes, chosen at generation
-// time from `ctx.selfHost` (#929):
+// time from `ctx.selfHost` (atta-labs/attalabs#929):
 //
 //   - ordinary adopter (`selfHost: null`) — `npx --yes @attalabs/vinaya`, no
 //     build step. Unchanged, and deliberately so: an adopter has no local copy
@@ -114,21 +114,40 @@ export function starterConfig(): VinayaConfig {
 // ---------------------------------------------------------------------------
 
 /**
+ * `oven-sh/setup-bun` pinned by commit rather than by its `v2` tag. Emitted
+ * only in the vendored shape; the ordinary adopter's workflows contain no
+ * third-party action at all.
+ */
+export const SETUP_BUN_SHA = '0c5077e51419868618aeaa5fe8019c62421857d6'
+
+/**
  * The steps that make the vinaya binary available, emitted directly after
  * `setup-node` at 6-space step indentation. Empty for the ordinary adopter —
  * `npx` needs no preparation.
  */
 function vinayaSetupSteps(selfHost: VendoredVinaya | null): string {
   if (!selfHost) return ''
-  return `      - uses: oven-sh/setup-bun@v2
+  return `      # Pinned to a commit, not the mutable \`v2\` tag. This is the first
+      # THIRD-PARTY action this generator writes into an adopter's repository,
+      # and it runs in the same job that then builds and executes pull-request
+      # code. A repoint of \`v2\` would execute new upstream code in every
+      # adopter on the next run, with no diff anywhere to review.
+      # Resolved from the \`v2\` tag on 2026-08-14. Bun's own version still
+      # comes from the repo's \`packageManager\` field, not from this pin.
+      - uses: oven-sh/setup-bun@${SETUP_BUN_SHA}
       # This repo declares the \`@attalabs/vinaya\` workspace package itself, so
       # \`npx @attalabs/vinaya\` resolves to that local member instead of the
       # registry and dies on its unbuilt \`bin\`. Build and run this repo's own
       # CLI — which also makes CI exercise the code in the pull request rather
       # than a published copy predating it.
+      #
+      # \`--ignore-scripts\`: the install runs with the pull request's own
+      # dependency manifest, so a lifecycle script from any dependency it
+      # declares would execute here. The build below needs the packages, not
+      # their install hooks.
       - name: Build the vendored Vinaya CLI
         run: |
-          bun install --frozen-lockfile
+          bun install --frozen-lockfile --ignore-scripts
           bun run --cwd ${selfHost.dir} build
 `
 }
@@ -161,6 +180,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # The job builds and runs code from this checkout, and the default
+          # writes GITHUB_TOKEN into .git/config as an http extraheader —
+          # readable by anything the build executes. Nothing here pushes.
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -356,6 +379,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # The job builds and runs code from this checkout, and the default
+          # writes GITHUB_TOKEN into .git/config as an http extraheader —
+          # readable by anything the build executes. Nothing here pushes.
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -376,6 +403,10 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya archive
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # The job builds and runs code from this checkout, and the default
+          # writes GITHUB_TOKEN into .git/config as an http extraheader —
+          # readable by anything the build executes. Nothing here pushes.
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -397,6 +428,10 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=dead-branches
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # The job builds and runs code from this checkout, and the default
+          # writes GITHUB_TOKEN into .git/config as an http extraheader —
+          # readable by anything the build executes. Nothing here pushes.
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20

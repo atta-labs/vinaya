@@ -42,7 +42,9 @@ The member's directory and its `bin` path are interpolated into a workflow `run:
 ^[A-Za-z0-9@._-]+(?:/[A-Za-z0-9@._-]+)*$
 ```
 
-with three further rules on each segment: `.` and `..` are rejected as whole segments, and no segment may begin with `-`. Anything outside this makes detection return `null`.
+with three further rules on each segment — `.` and `..` are rejected as whole segments, and no segment may begin with `-` — and a whole-path bound of 255 characters. Anything outside this makes detection return `null`.
+
+The path is also required to **resolve inside the repository**. The `..` rule is textual, so it does not see a literal (non-wildcard) workspace segment that is a symlink pointing out of the tree: `workspaces: ["vendored"]` with `vendored -> /elsewhere` yields the clean relative path `vendored`. Detection resolves the member directory and refuses anything landing outside the root. The wildcard route never had this hole — a symlink is not a directory to `readdir`.
 
 `@` is permitted because npm scopes are ordinary directory names — a member at `packages/@attalabs/vinaya` is legitimate, and excluding it would silently degrade exactly the repo this feature exists for into the invocation already known broken there. It is inert in all three layers of the emitted context: it is a YAML indicator only at the start of a plain scalar, which it can never reach (the invocation is always prefixed by `node `, and the `--cwd` line sits inside a literal block); it is a non-globbing literal to `sh`, `bash` and `zsh`; and no Actions expression can form, since `$` and `{` remain excluded.
 
@@ -60,14 +62,24 @@ Allowlist rather than escaping, for two reasons. Escaping must be correct agains
 
 Detection never throws. A missing, unreadable or malformed root `package.json` degrades to `null`; a broken manifest must not take down `vinaya init`. Glob expansion skips `node_modules` and dot-directories, sorts children for determinism, and caps candidate directories.
 
+### Where it degrades silently, and what that costs
+
+Every refusal returns `null`, which emits the published shape. For an ordinary adopter that is correct. For a repo that really does vendor the CLI it is the invocation already known broken there — so these are the cases where a vendoring repo gets a workflow that dies at `vinaya: command not found` with nothing explaining why:
+
+- **A segment with more than four stars after collapsing** is refused outright, to bound glob backtracking.
+- **`**` is matched as exactly one level**, so a member at `packages/a/b` under `workspaces: ["packages/**"]` is not found.
+- **A member reached through a symlink out of the repo** is refused, as above.
+
+Two assumptions are deliberately outside the predicate, and they fail later rather than at detection: the vendored shape runs `bun`, and it runs the member's `build` script. A vendoring repo on npm or pnpm workspaces, or one whose member declares no `build`, gets a generated workflow that fails at the build step. Both were left out on purpose — the predicate is exactly npm's own misresolution condition (§ The two shapes) and narrowing it further would hand such a repo the `npx` line that cannot work either. Neither case is diagnosed today; `vinaya doctor` reporting a refused-but-present member is the natural home for it.
+
 ## What self-hosting costs, stated plainly
 
 A repo on the vendored shape runs the CLI **from its own working tree**. Its CI therefore exercises the code in the pull request rather than a published copy predating it — normally an improvement, and the reason to prefer this shape even where `npx` would work.
 
-The cost is on the same fact. **A pull request that edits this package's check sources changes the checks that judge it** — and the surface is wider than those sources. `bun install --frozen-lockfile` runs PR-supplied dependency lifecycle scripts, and the `issue_comment`-triggered `evaluate` job in `vinaya-review-verdict.yml` reaches the same build from any comment containing `VERDICT`, so the reachable population is everyone who can comment rather than everyone who can push. That job holds only read scopes and `persist-credentials: false`, and `GH_TOKEN` is confined to the two steps that need it — but the final step does run PR-authored code with a token in its environment.
+The cost is on the same fact. **A pull request that edits this package's check sources changes the checks that judge it** — and the surface is wider than those sources. the install step runs against the pull request's own dependency manifest — emitted with `--ignore-scripts` precisely so a lifecycle script from a dependency the PR declares does not execute — and the `issue_comment`-triggered `evaluate` job in `vinaya-review-verdict.yml` reaches the same build from any comment containing `VERDICT`, so the reachable population is everyone who can comment rather than everyone who can push. That job holds only read scopes and `persist-credentials: false`, and `GH_TOKEN` is confined to the two steps that need it — but the final step does run PR-authored code with a token in its environment.
 
 **State the branch-protection guarantee correctly, because the intuitive version is too strong — in both shapes.** A required status check is satisfied by a **success conclusion reported under the required name**. Under a `pull_request` trigger the workflow definition comes from the PR, so a PR can delete the gate's step and leave the job reporting green, or edit it to `exit 0` and report green. That is true for an ordinary adopter running the published artifact exactly as it is for a repo that vendors the CLI. Branch protection makes a *missing* report unmergeable; it does not make a *dishonest* one impossible.
 
-So vendoring **widens the blast radius, it does not open the hole**. What the published shape still gives you is narrower and worth naming precisely: the check's own logic is an immutable artifact, so a PR that leaves the invocation intact cannot change what the check concludes. It can still remove or neuter the invocation. `enforcement.md`'s ring-1 account is being corrected to match.
+So vendoring **widens the blast radius, it does not open the hole**. What the published shape still gives you is narrower and worth naming precisely: the check's own logic is an immutable artifact, so a PR that leaves the invocation intact cannot change what the check concludes. It can still remove or neuter the invocation. `aeg-root/enforcement.md`'s ring-0 "Spawning a check" row is the authority for the full statement; where the two disagree, the stronger claim is the wrong one.
 
 The mitigation is not technical, and it is the same in both shapes. A repo governing itself has the reviewer as its last line — check-source changes are reviewed as governance changes, not as ordinary code — and in every shape, the workflow files themselves are part of that review surface.

@@ -86,7 +86,9 @@ A repo on the vendored shape runs the CLI **from its own working tree**, so its 
 
 The generated command embeds the member's directory and `bin` path. Both come from the target repo's `package.json`, so both are restricted to `[A-Za-z0-9@._-]` path segments, none of which may be `.`, `..`, or begin with `-`, up to 255 characters total. Anything else — a shell metacharacter, a newline, a `..` segment — is refused, and generation falls back to the published `npx` shape rather than emitting it.
 
-`@` is permitted so an npm-scoped member such as `packages/@attalabs/vinaya` resolves normally; it carries no meaning to the shell, to YAML at the position it appears, or to an Actions expression.
+`@` is permitted so an npm-scoped member such as `packages/@attalabs/vinaya` resolves normally; it carries no meaning to the shell, to YAML at the position it appears, or to an Actions expression. The path must also resolve inside the repository, which a textual `..` rule cannot guarantee on its own.
+
+Branch protection is worth enabling and does not make this unbypassable — a required status check is satisfied by a conclusion reported under its name, and under a `pull_request` trigger the workflow definition comes from the PR. That is true whether CI runs the published package or a vendored build; vendoring widens what the PR controls, it does not open the hole. The full statement, including where the shape degrades silently, is in [`specs/self-hosting.md`](./specs/self-hosting.md) in the source repository — it is not part of the published tarball.
 
 ## Known limits
 

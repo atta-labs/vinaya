@@ -1,7 +1,8 @@
 // Self-hosting detection — "does the repo we are writing into vendor the
 // vinaya CLI itself?"
 //
-// The failure this exists for (#929): in a repo whose root `package.json`
+// The failure this exists for (atta-labs/attalabs#929): in a repo whose root
+// `package.json`
 // `workspaces` glob reaches a member declaring the name `@attalabs/vinaya`,
 // `npx --yes @attalabs/vinaya <cmd>` never contacts the registry. npm sees the
 // name is satisfiable from the workspace and resolves that member's declared
@@ -25,8 +26,8 @@
 // `doctor`'s drift comparison needs — the same repo always regenerates the
 // same bytes.
 
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readdirSync, readFileSync, realpathSync } from 'node:fs'
+import { join, sep } from 'node:path'
 
 /** The published name whose presence in the workspace is what breaks `npx`. */
 export const VINAYA_PACKAGE_NAME = '@attalabs/vinaya'
@@ -189,6 +190,31 @@ function expandPattern(repoRoot: string, pattern: string): string[] {
   return dirs
 }
 
+/**
+ * True iff `rel` resolves, through symlinks, to somewhere inside `repoRoot`.
+ *
+ * The `..`-segment rule in `isSafeRelPath` only rejects traversal spelled out
+ * in the path. It does not see a LITERAL (non-wildcard) workspace segment that
+ * is a symlink pointing outside the repo — `workspaces: ["vendored"]` with
+ * `vendored -> /elsewhere` produces the clean relative path `vendored`, which
+ * passes every textual check while naming a directory the repo does not
+ * contain. The wildcard path is already safe (`Dirent.isDirectory()` is false
+ * for a symlink), so this closes the one remaining route.
+ *
+ * Failure to resolve — a broken link, a missing directory, a permissions
+ * error — is treated as "not contained", matching the module's fail-closed
+ * default rather than trusting an unreadable path.
+ */
+function resolvesInsideRepo(repoRoot: string, rel: string): boolean {
+  try {
+    const root = realpathSync(repoRoot)
+    const target = realpathSync(join(repoRoot, rel))
+    return target === root || target.startsWith(`${root}${sep}`)
+  } catch {
+    return false
+  }
+}
+
 /** Resolve the member's `vinaya` bin path, relative to the member's own dir. */
 function binPath(pkg: PackageJson): string {
   const bin = pkg.bin
@@ -219,6 +245,9 @@ export function detectVendoredVinaya(repoRoot: string): VendoredVinaya | null {
         // `npx` shape is wrong for this repo but harmless, which is the right
         // way round.
         if (!isSafeRelPath(dir) || !isSafeRelPath(bin)) return null
+        // Textual safety is not containment: a literal workspace segment that
+        // is a symlink out of the repo yields a clean relative path.
+        if (!resolvesInsideRepo(repoRoot, dir)) return null
         return { dir, bin }
       }
     }
