@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -14,13 +14,20 @@ import {
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..')
 
-/** Same derivation `retired-vocabulary.test.ts` uses: read live, never guessed. */
+/**
+ * `aeg-root/tranches/completed` is legitimately absent in this repo (task
+ * 4's ratified boundary — attalabs' operational archive, not doctrine).
+ * These tests' subject is the pattern's matching behavior — fires on a
+ * legacy slug, does not fire on a substring inside a longer token, reports
+ * only the slug — not this repo's own archive contents, so the corpus is a
+ * committed fixture instead of a live directory read. Same fixture
+ * `retired-vocabulary.test.ts` uses.
+ */
 function legacySlugs(): string[] {
-  const dir = join(REPO_ROOT, 'aeg-root/tranches/completed')
-  return readdirSync(dir)
-    .filter((f) => f.endsWith('.md') && !f.endsWith('.tokens.md'))
-    .map((f) => f.slice(0, -3))
-    .filter((slug) => !/-v[0-9]+$/.test(slug))
+  return readFileSync(join(__dirname, 'fixtures/legacy-tranche-slugs.txt'), 'utf8')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
 }
 
 const REAL_GLOSSARY = readFileSync(join(REPO_ROOT, 'aeg-root/glossary.md'), 'utf8')

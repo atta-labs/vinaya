@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readdirSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -57,16 +57,22 @@ import { describe, expect, it } from 'vitest'
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..')
 
 /**
- * Real archived tranche slugs that predate the `-vN` naming convention,
- * read live from the one place they're authoritative: the completed-tranche
- * archive itself. Slugs `TRANCHE_SLUG_VN_PATTERN` already sees are excluded
- * — no point banning the same string with two patterns.
+ * Legacy-style tranche slugs that predate the `-vN` naming convention.
+ * `aeg-root/tranches/completed` — the archive these would normally be read
+ * live from — is legitimately absent in this repo (task 4's ratified
+ * boundary — attalabs' operational archive, not doctrine). This suite's
+ * subject is whether `LEGACY_SLUG_PATTERN` catches the class the `-vN`
+ * pattern is blind to, not this repo's own archive contents, so the corpus
+ * is a committed fixture instead of a live directory read. Same fixture
+ * `reader-resolvable-prose.test.ts` uses. Slugs `TRANCHE_SLUG_VN_PATTERN`
+ * already sees are excluded — no point banning the same string with two
+ * patterns.
  */
 function legacySlugs(): string[] {
-  const dir = join(REPO_ROOT, 'aeg-root/tranches/completed')
-  return readdirSync(dir)
-    .filter((f) => f.endsWith('.md') && !f.endsWith('.tokens.md'))
-    .map((f) => f.slice(0, -3))
+  return readFileSync(join(__dirname, 'fixtures/legacy-tranche-slugs.txt'), 'utf8')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
     .filter((slug) => !/-v[0-9]+$/.test(slug))
 }
 
@@ -184,24 +190,23 @@ const RETIRED_IN_PRODUCT = [
  */
 const PATTERN_SCOPE: Record<string, string[]> = {
   [FORGE_NUMBER_PATTERN]: ['aeg-root'],
+  // This repo's layout (task 2's graft): `apps/vinaya/cli` -> `apps/cli`,
+  // `apps/vinaya/sources` -> `packages/sources`. The old product-umbrella
+  // paths (a root `CLAUDE.md`, `apps/vinaya/CLAUDE.md`/`README.md`,
+  // `apps/vinaya/specs`, and the whole `apps/vinaya/web` tree) do not exist
+  // in this repo at all — there is no `apps/vinaya` umbrella folder, no
+  // `CLAUDE.md` anywhere, and no web app — so they are dropped rather than
+  // grep'd against a path that can never resolve here.
   [TRANCHE_SLUG_VN_PATTERN]: [
     'aeg-root',
-    'apps/vinaya/cli/src',
-    '.claude/skills',
+    'apps/cli/src',
     '.github/workflows',
     '.vinaya',
-    'CLAUDE.md',
-    // Vinaya's own prose doctrine — CLAUDE.md/README/specs, never src or
-    // test/fixture dirs (those hold functional tranche-slug handling and
-    // legitimate test data, the same false-positive class ['.'] produced).
-    'apps/vinaya/CLAUDE.md',
-    'apps/vinaya/README.md',
-    'apps/vinaya/cli/README.md',
-    'apps/vinaya/sources/README.md',
-    'apps/vinaya/specs',
-    'apps/vinaya/web/CLAUDE.md',
-    'apps/vinaya/web/README.md',
-    'apps/vinaya/web/design'
+    // Vinaya's own prose doctrine — README, never src or test/fixture dirs
+    // (those hold functional tranche-slug handling and legitimate test
+    // data, the same false-positive class ['.'] produced).
+    'apps/cli/README.md',
+    'packages/sources/README.md'
   ],
   // LEGACY_SLUG_PATTERN stays aeg-root-only, deliberately not widened with the
   // VN pattern above: every slug it can ever match is, by construction,
