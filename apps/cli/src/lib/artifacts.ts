@@ -471,6 +471,14 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=direct-push
 // and no YES option". The exact-version pin makes the cache key stable
 // (one download at most, offline afterwards) and pins the gate's version
 // to the installer that wrote the hook; `vinaya upgrade` re-pins it.
+//
+// In a repo that vendors the CLI (`selfHost`), that same spec resolves to the
+// local workspace member instead — npm matches the package NAME before reading
+// any version spec — and execs its unbuilt `bin`, so the hook dies on `sh:
+// vinaya: command not found` and `|| exit 1` blocks every commit and push.
+// atta-labs/attalabs#929 fixed this for the four generated workflows and left
+// the two hook emitters on the published spec; #935 is that remainder. Same
+// predicate, same shape: run the built file directly, never `npx`.
 // ---------------------------------------------------------------------------
 const HOOK_PREAMBLE = '#!/usr/bin/env sh\n'
 
@@ -487,15 +495,46 @@ function ownVersion(): string {
 // pushing the branch is what makes one *possible*, not what creates it. CI's
 // `vinaya-checks.yml` runs on the `pull_request` event and omits `--local`,
 // so both checks run for real, against the real PR body, once one exists.
-function preCommitBody(): string {
-  return `# Vinaya commit-time gate. Runs the deterministic checks over your staged
-# diff before the commit lands.
-npx --yes @attalabs/vinaya@${ownVersion()} check --all --diff-only --local || exit 1`
+/**
+ * The command a generated hook runs, in whichever shape applies — the hook
+ * analogue of `vinayaRun` (which the workflows use). It differs in exactly two
+ * ways, both deliberate: the published form pins the exact version (the npx
+ * cache-key regression above), and the vendored form guards on the built file
+ * being present.
+ *
+ * That guard is the whole reason this is not a one-line branch. A hook that
+ * silently skipped when the build is missing would turn a loud breakage into
+ * an absent gate — ring 0 gone, with nothing saying so. `dist/` is generated
+ * and git-ignored, so it is legitimately absent in a fresh clone and in every
+ * new worktree; the hook says which command builds it and fails until it is
+ * run. Deliberately not auto-building: a hook that silently spends a build on
+ * someone's commit is worse than one that tells them what to run.
+ */
+function hookRun(selfHost: VendoredVinaya | null, args: string): string {
+  if (!selfHost) return `npx --yes @attalabs/vinaya@${ownVersion()} ${args} || exit 1`
+  return `# This repo vendors the CLI, so \`npx @attalabs/vinaya\` resolves to its own
+# unbuilt workspace member (atta-labs/attalabs#935). Run the built file instead.
+if [ ! -f ${selfHost.bin} ]; then
+  echo "vinaya: ${selfHost.bin} is missing — run \\\`bun run --cwd ${selfHost.dir} build\\\`" >&2
+  exit 1
+fi
+node ${selfHost.bin} ${args} || exit 1`
 }
 
-function prePushBody(): string {
+// `--local` skips every `requiresOpenPr` check (closes-n, test-plan): neither
+// hook can ever satisfy them — a PR doesn't exist yet at commit time, and
+// pushing the branch is what makes one *possible*, not what creates it. CI's
+// `vinaya-checks.yml` runs on the `pull_request` event and omits `--local`,
+// so both checks run for real, against the real PR body, once one exists.
+function preCommitBody(selfHost: VendoredVinaya | null): string {
+  return `# Vinaya commit-time gate. Runs the deterministic checks over your staged
+# diff before the commit lands.
+${hookRun(selfHost, 'check --all --diff-only --local')}`
+}
+
+function prePushBody(selfHost: VendoredVinaya | null): string {
   return `# Vinaya pre-push gate. Runs branch/dispatch checks before the push leaves.
-npx --yes @attalabs/vinaya@${ownVersion()} check --all --local || exit 1`
+${hookRun(selfHost, 'check --all --local')}`
 }
 
 // ---------------------------------------------------------------------------
@@ -664,7 +703,7 @@ export function buildInitOps(ctx: InitContext): Op[] {
     kind: 'managed-block',
     path: `${ctx.hookDir}/pre-commit`,
     marker: 'pre-commit',
-    body: preCommitBody(),
+    body: preCommitBody(ctx.selfHost),
     comment: 'hash',
     hostPreamble: HOOK_PREAMBLE,
     mode: hookMode,
@@ -674,7 +713,7 @@ export function buildInitOps(ctx: InitContext): Op[] {
     kind: 'managed-block',
     path: `${ctx.hookDir}/pre-push`,
     marker: 'pre-push',
-    body: prePushBody(),
+    body: prePushBody(ctx.selfHost),
     comment: 'hash',
     hostPreamble: HOOK_PREAMBLE,
     mode: hookMode,
