@@ -1,0 +1,46 @@
+# On every push to main, changesets/action checks for pending changeset
+# files and, if any exist, opens/updates a "Version Packages" PR that runs
+# `changeset version` — see apps/cli/specs/self-hosting.md § How the
+# published version is produced for why @changesets/config's `fixed` group
+# is what makes that plan bump @attalabs/vinaya alongside an engine package,
+# something Changesets' default devDependency-blind cascade cannot do.
+#
+# No `publish` input is given, so the action only ever opens that PR — it
+# never runs `npm publish`. Publishing (the `publish` command and the npm
+# token this job would need) is a separate, later addition.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  version:
+    name: Version Packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Pinned to a commit, not the mutable `v1` tag — this action runs with
+      # `contents: write` on pushes to main, the same third-party-action
+      # trust bar `oven-sh/setup-bun` is held to elsewhere in this repo's
+      # workflows. Resolved from the `v1.9.0` tag on 2026-08-15.
+      - name: Open/update the Version Packages PR
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d
+        with:
+          version: bun run changeset:version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
