@@ -6,9 +6,8 @@
 // precisely because a doctor that "fixes" silently destroys the support
 // story; `vinaya upgrade` is the only sanctioned path back to a clean state.
 
-import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
+import { join } from 'node:path'
 import type { CheckSpec } from '../checks/contract.js'
 import { coreCheckRegistry } from '../checks/registry.js'
 import { bareKeyNextMinorWarning, overriddenNextMinorWarning, resolveChecks } from '../checks/resolver.js'
@@ -34,7 +33,7 @@ import {
 } from '../lib/detect.js'
 import { printJson } from '../lib/envelope.js'
 import { checksMissingEnvDeclaration, envDeclarationWarning } from '../lib/env-lint.js'
-import { markerLines, renderBlock } from '../lib/ops.js'
+import { markerLines, renderBlock, resolveManagedBlockPath } from '../lib/ops.js'
 import { packageRoot } from '../lib/package-root.js'
 
 export type DoctorDeps = {
@@ -105,33 +104,6 @@ function labelForPath(path: string): string {
   if (path === CONFIG_PATH) return 'config'
   if (path === DOCTRINE_POINTER_PATH) return 'doctrine-pointer'
   return 'workflows'
-}
-
-/**
- * A raw git hook's real on-disk path — resolved through `git rev-parse
- * --git-common-dir` rather than a literal `join(repoRoot, '.git/hooks/…')`.
- * Hooks are never per-worktree: every linked worktree shares the main
- * checkout's hooks directory, and in a linked worktree `<repoRoot>/.git` is a
- * FILE (a gitdir pointer), not a directory, so the naive join resolves
- * nothing and always reports the hook missing. Found live: `roles/developer.md`
- * requires every Developer to work in a linked worktree, and the hooks do
- * fire there correctly — only this probe was wrong, misleadingly recommending
- * `vinaya upgrade` (which would install a *second*, redundant hook one layer
- * up, not fix anything). `.husky/*` paths are untouched: husky's directory is
- * a real, git-tracked directory present in every worktree checkout, so the
- * naive join is already correct there.
- */
-function resolveManagedBlockPath(repoRoot: string, opPath: string): string {
-  if (!opPath.startsWith('.git/')) return join(repoRoot, opPath)
-  try {
-    const commonDir = execFileSync('git', ['-C', repoRoot, 'rev-parse', '--git-common-dir'], {
-      encoding: 'utf8'
-    }).trim()
-    const gitDir = isAbsolute(commonDir) ? commonDir : join(repoRoot, commonDir)
-    return join(gitDir, opPath.slice('.git/'.length))
-  } catch {
-    return join(repoRoot, opPath)
-  }
 }
 
 // ---------------------------------------------------------------------------

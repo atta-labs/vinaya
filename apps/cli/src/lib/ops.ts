@@ -16,8 +16,9 @@
 // clobbered (append a marker-delimited managed block instead); an existing
 // label is never modified, and no label is ever auto-deleted.
 
+import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import type { ManagedBlockRecord, ManagedManifest } from './config.js'
 import { MANAGED_MANIFEST_VERSION } from './config.js'
 
@@ -90,6 +91,33 @@ function abs(repoRoot: string, relPath: string): string {
 }
 
 /**
+ * A raw git hook's real on-disk path — resolved through `git rev-parse
+ * --git-common-dir` rather than a literal `join(repoRoot, '.git/hooks/…')`.
+ * Hooks are never per-worktree: every linked worktree shares the main
+ * checkout's hooks directory, and in a linked worktree `<repoRoot>/.git` is a
+ * FILE (a gitdir pointer), not a directory, so the naive join resolves
+ * nothing. The single source of truth for every managed-block (hook) path —
+ * `doctor.ts` (reads), `upgrade.ts` (reads + writes), and this file's own
+ * `appendBlock`/`createHost`/`planInstall` (init's writes) all call this
+ * instead of each re-deriving the rule, so it can't drift between them again.
+ * `.husky/*` paths are untouched: husky's directory is a real, git-tracked
+ * directory present in every worktree checkout, so the naive join is already
+ * correct there — this only special-cases the `.git/`-prefixed form.
+ */
+export function resolveManagedBlockPath(repoRoot: string, opPath: string): string {
+  if (!opPath.startsWith('.git/')) return join(repoRoot, opPath)
+  try {
+    const commonDir = execFileSync('git', ['-C', repoRoot, 'rev-parse', '--git-common-dir'], {
+      encoding: 'utf8'
+    }).trim()
+    const gitDir = isAbsolute(commonDir) ? commonDir : join(repoRoot, commonDir)
+    return join(gitDir, opPath.slice('.git/'.length))
+  } catch {
+    return join(repoRoot, opPath)
+  }
+}
+
+/**
  * Resolve `relPath` under `repoRoot` and return the absolute path ONLY if it
  * stays inside the repo — never the repo root itself, never anything above it.
  * Returns null for any escape (`..`, absolute path). This is the runtime half
@@ -104,8 +132,9 @@ export function containedAbs(repoRoot: string, relPath: string): string | null {
   return target === root || target.startsWith(root + sep) ? target : null
 }
 
+/** Only ever called with a managed-block (hook) path — see `planInstall`. */
 function fileContains(repoRoot: string, relPath: string, needle: string): boolean {
-  const p = abs(repoRoot, relPath)
+  const p = resolveManagedBlockPath(repoRoot, relPath)
   if (!existsSync(p)) return false
   return readFileSync(p, 'utf-8').includes(needle)
 }
@@ -156,7 +185,7 @@ export function planInstall(ops: Op[], repoRoot: string, ownedFiles: Set<string>
         const { begin } = markerLines(op.marker, op.comment)
         let action: BlockAction
         if (fileContains(repoRoot, op.path, begin)) action = 'skip-present'
-        else if (existsSync(abs(repoRoot, op.path))) action = 'append'
+        else if (existsSync(resolveManagedBlockPath(repoRoot, op.path))) action = 'append'
         else action = 'create-host'
         entries.push({ kind: 'managed-block', op, action })
         break
@@ -255,7 +284,7 @@ function writeFileWithDirs(target: string, content: string, mode?: number): void
 }
 
 function appendBlock(repoRoot: string, op: ManagedBlockOp): void {
-  const target = abs(repoRoot, op.path)
+  const target = resolveManagedBlockPath(repoRoot, op.path)
   const existing = readFileSync(target, 'utf-8')
   const sep = existing.endsWith('\n') ? '\n' : '\n\n'
   writeFileSync(target, `${existing}${sep}${renderBlock(op)}\n`, 'utf-8')
@@ -263,7 +292,7 @@ function appendBlock(repoRoot: string, op: ManagedBlockOp): void {
 }
 
 function createHost(repoRoot: string, op: ManagedBlockOp): void {
-  const target = abs(repoRoot, op.path)
+  const target = resolveManagedBlockPath(repoRoot, op.path)
   writeFileWithDirs(target, `${op.hostPreamble ?? ''}${renderBlock(op)}\n`, op.mode)
 }
 
