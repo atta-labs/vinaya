@@ -1,0 +1,7 @@
+# Fixture: a doc-owners manifest carrying real bindings — used by
+# doc-owners.test.ts to pin "a real manifest yields bindings" against a
+# committed fixture rather than this repo's own installed (empty starter)
+# .vinaya/doc-owners.
+
+packages/aeg-core/src/**       aeg-root/enforcement.md
+apps/cli/src/checks/**         aeg-root/state-machine.md

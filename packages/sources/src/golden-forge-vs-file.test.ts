@@ -1,65 +1,63 @@
-import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { parseTranche } from '@atta/aeg-core'
-import { deriveTrancheFromForge, resolveGithubToken } from '@atta/aeg-forge-state'
-import type { Task } from '@atta/aeg-types'
 import { describe, expect, it } from 'bun:test'
 
 /**
- * Golden comparison (brief §1 Context point 3, §9 Part C1): proves the
- * forge-backed and file-backed StateSource designs produce equivalent
- * `Tranche` shapes for the same real tranche, `aeg-forge-state-v1`.
+ * Golden comparison (brief §1 Context point 3, §9 Part C1): originally
+ * proved the forge-backed and file-backed StateSource designs produce
+ * equivalent `Tranche` shapes for the same real tranche (attalabs'
+ * `aeg-forge-state-v1`), by `git show`-ing a pinned attalabs commit and
+ * comparing it against a live `deriveTrancheFromForge(...)` call against
+ * attalabs' own forge.
  *
- * `aeg-root/iterations/completed/aeg-forge-state-v1.md` was deleted today by
- * PR #521 (part of the archived-tranche-reads-migrate-to-forge work) — the
- * live working-tree path has nothing to parse. The file's last content
- * before deletion is recoverable from git history and is still a genuine
- * real-data comparison: deleting the `.md` file didn't touch the Milestone
- * or Issues it was derived from, which still exist on GitHub.
+ * Neither half of that comparison can run in this repo without
+ * reintroducing an attalabs dependency (vinaya-extraction-v1 task 3):
+ *   - the pinned commit SHA does not exist after `git filter-repo` rewrote
+ *     every hash, and the file's directory (`aeg-root/iterations/`) is
+ *     retired vocabulary;
+ *   - `deriveTrancheFromForge` (`@atta/aeg-forge-state`) has no
+ *     fixture-injection seam — it always does a real `owner`/`repo`/`slug`
+ *     GitHub Milestone+Issues lookup, see its own doc comment — and this
+ *     repo's own forge has no comparable real tranche yet (no
+ *     `vinaya/tranche:*`-labeled Issues exist in `atta-labs/vinaya` at the
+ *     time of this task). Adding a fixture seam to `deriveTrancheFromForge`
+ *     is an engine-behaviour change out of this task's surface; pointing
+ *     this test back at attalabs' forge would reintroduce exactly the
+ *     dependency this task exists to remove.
+ *
+ * What's kept: `parseTranche`'s coverage against a real-shaped tranche file
+ * — the topology table, per-task rationale blocks, and the backlog section
+ * — pinned against a committed fixture this repo owns
+ * (`fixtures/golden-tranche-snapshot.md`) instead of attalabs' history.
+ *
+ * What's dropped: the forge-derivation half of the golden comparison. This
+ * is a real coverage gap, not a silent skip — flagged here (loud `it.skip`,
+ * not a hidden `describe.skipIf`) and in the PR body as a finding: this test
+ * can be restored in full once `atta-labs/vinaya` has its own real
+ * forge-tracked tranche to derive from.
  */
 
-const OWNER = 'atta-labs'
-const REPO = 'attalabs'
-const SLUG = 'aeg-forge-state-v1'
-const PINNED_COMMIT = '8112a295'
-// A HISTORICAL path, read out of commit 8112a295 — not a live one. The
-// directory was `aeg-root/iterations/` at that commit and the tranche rename
-// cannot reach backwards into git history, so this string must keep the old
-// name or `git show` resolves nothing.
-const PINNED_PATH = 'aeg-root/iterations/completed/aeg-forge-state-v1.md'
+const FIXTURE_PATH = fileURLToPath(new URL('fixtures/golden-tranche-snapshot.md', import.meta.url))
 
-/** Fields that matter to the pure evaluators (`deriveTranche`, `sumLedger`
- * consumers): id, title, issue, projects, and the dependency graph.
- * `rationaleMarkdown` is excluded — the two sources capture it from
- * genuinely different raw text (topology-file `### Task N` block vs. the
- * live Issue body, including its Planner amendments) and no pure evaluator
- * reads it, only display surfaces do. */
-function comparableTask(task: Task) {
-  const { rationaleMarkdown: _rationaleMarkdown, ...rest } = task
-  return rest
-}
+describe('golden comparison — aeg-forge-state-v1 (forge half dropped, see file doc comment)', () => {
+  it('parseTranche reads a real-shaped tranche file: topology, rationale blocks, backlog', () => {
+    const fileContent = readFileSync(FIXTURE_PATH, 'utf-8')
+    const tranche = parseTranche(fileContent)
 
-function sortById(tasks: Task[]) {
-  return [...tasks].sort((a, b) => a.id.localeCompare(b.id))
-}
-
-// Soft-skip when no GitHub auth is available in the environment (matches
-// `resolveGithubToken`'s own resolution order — explicit / env / `gh auth
-// token`) — no existing test in this repo hits the live forge, so there is
-// no established gating pattern to follow; `describe.skipIf` is bun:test's
-// native mechanism for this.
-const token = await resolveGithubToken()
-
-describe.skipIf(!token)('golden forge-vs-file comparison — aeg-forge-state-v1', () => {
-  it('produces equivalent Tranche shapes from the pinned file snapshot and the live forge', async () => {
-    const fileContent = execFileSync('git', ['show', `${PINNED_COMMIT}:${PINNED_PATH}`], {
-      encoding: 'utf-8'
-    })
-    const fileTranche = parseTranche(fileContent)
-    const forgeTranche = await deriveTrancheFromForge(OWNER, REPO, SLUG)
-
-    expect(forgeTranche.name).toBe(fileTranche.name)
-    expect(forgeTranche.lifecycle).toBe(fileTranche.lifecycle)
-    expect(forgeTranche.goal).toBe(fileTranche.goal)
-    expect(sortById(forgeTranche.tasks).map(comparableTask)).toEqual(sortById(fileTranche.tasks).map(comparableTask))
+    expect(tranche.name).toBe('golden-snapshot-example')
+    expect(tranche.lifecycle).toBe('complete')
+    expect(tranche.goal).toContain('parseTranche')
+    expect(tranche.tasks).toHaveLength(2)
+    expect(tranche.tasks[0]).toMatchObject({ id: '1', issue: 1, dependsOn: [] })
+    expect(tranche.tasks[1]).toMatchObject({ id: '2', issue: 2, dependsOn: ['1'] })
+    expect(tranche.tasks[0]?.rationaleMarkdown).toContain('Boundary')
+    expect(tranche.backlog).toHaveLength(1)
   })
+
+  it.skip(
+    'forge-derived half of the golden comparison — no fixture seam in deriveTrancheFromForge, ' +
+      'and no comparable real tranche in this repo’s own forge yet (see file doc comment)',
+    () => {}
+  )
 })

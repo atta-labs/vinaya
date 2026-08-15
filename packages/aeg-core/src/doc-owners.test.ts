@@ -405,13 +405,30 @@ describe('evaluateC5 — the Doc-neutral two-sided verification story (task 677/
 describe('the real manifest resolves at its configured path', () => {
   // Review finding: a missing or misresolved `doc-owners` path returns silent
   // success ("dormant — no bindings"), so a relocation that breaks it would
-  // pass every gate. This asserts the real file, at the real path, parses.
-  it('parses .vinaya/doc-owners with real bindings', async () => {
+  // pass every gate. The parser's subject is "a real manifest yields
+  // bindings" — that claim is about the parser, not about this repo's own
+  // file, so it is pinned against a committed fixture manifest that carries
+  // real bindings rather than this repo's installed one.
+  it('parses a real manifest carrying bindings', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const raw = readFileSync(join(__dirname, 'fixtures/doc-owners-with-bindings'), 'utf8')
+    const { bindings, errors } = parseDocOwners(raw)
+    expect(errors).toEqual([])
+    expect(bindings.length).toBeGreaterThan(0)
+  })
+
+  // This repo's own installed manifest is a separate, weaker claim: it ships
+  // as the empty starter (comments only, zero bindings) — that is correct
+  // for a freshly-extracted repo, not a parser regression. Asserts it still
+  // parses cleanly and is dormant, rather than blurring this with the claim
+  // above.
+  it("this repo's own .vinaya/doc-owners parses cleanly and is dormant (starter manifest, zero bindings)", async () => {
     const { readFileSync } = await import('node:fs')
     const { join } = await import('node:path')
     const raw = readFileSync(join(__dirname, '../../..', DOC_OWNERS_PATH), 'utf8')
     const { bindings, errors } = parseDocOwners(raw)
     expect(errors).toEqual([])
-    expect(bindings.length).toBeGreaterThan(0)
+    expect(bindings).toEqual([])
   })
 })

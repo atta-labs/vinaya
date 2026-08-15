@@ -3,13 +3,13 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { COMMANDS } from './commands'
 
-// The reverse direction of `apps/vinaya/cli/tests/commands.test.ts` (which
+// The reverse direction of `apps/cli/tests/commands.test.ts` (which
 // proves every COMMANDS row is dispatched). THIS test proves the opposite:
 // every name the router actually dispatches has a COMMANDS row — the
 // failure mode that test can't see is a NEW `case` landing in `index.ts`
 // with no matching registry entry (silently undocumented, never
 // `printHelp()`-visible, never on the web `/docs/cli` reference).
-const INDEX_PATH = fileURLToPath(new URL('../../cli/src/index.ts', import.meta.url))
+const INDEX_PATH = fileURLToPath(new URL('../../../apps/cli/src/index.ts', import.meta.url))
 const INDEX_SOURCE = readFileSync(INDEX_PATH, 'utf-8')
 
 /**

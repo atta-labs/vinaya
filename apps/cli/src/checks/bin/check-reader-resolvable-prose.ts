@@ -24,23 +24,29 @@
  * public site, not the PR's own diff.
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkReaderResolvableProse, parseGlossaryTerms, type ProseSourceFile } from '@atta/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../../../..')
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../../..')
 process.chdir(REPO_ROOT)
 
 const CHECK_NAME = 'reader-resolvable-prose'
 
 /**
- * This adopter's own reader-facing surface — attalabs' public site's pages.
- * `aeg-core`'s `classifyProseFile`/`checkReaderResolvableProse` are generic;
- * this repo-specific shape is supplied here, not baked into the package.
+ * This adopter's own reader-facing surface. `aeg-core`'s
+ * `classifyProseFile`/`checkReaderResolvableProse` are generic; this
+ * repo-specific shape is supplied here, not baked into the package.
+ *
+ * This repo (`atta-labs/vinaya`) has no public site — no `apps/<name>/web` — so
+ * there is no reader-facing surface to sweep. `READER_FACING_ROOT` is `null`
+ * to make that an explicit, named no-op rather than a prefix literal that
+ * would silently match nothing; the `ships` class (`aeg-root/**`) still runs
+ * either way.
  */
-const READER_FACING_PREFIX = 'apps/vinaya/web/src/app/(site)/'
+const READER_FACING_ROOT: string | null = null
 const READER_FACING_SUFFIX = '/page.tsx'
 
 /** Recursively collects repo-relative paths under `dir` whose name passes `match`. */
@@ -73,27 +79,61 @@ function readAll(paths: string[]): ProseSourceFile[] {
   return paths.map((p) => ({ path: p, content: readFileSync(p, 'utf8') }))
 }
 
-function legacySlugs(): string[] {
+/**
+ * Legacy-slug list, derived from `aeg-root/tranches/completed/*.md` filenames.
+ * That archive is legitimately absent in this repo (task 4's ratified
+ * boundary — attalabs' operational history, not doctrine). Distinguishes
+ * "archive absent, class dormant" from "archive present, empty" so the
+ * dormancy is visible in the check's own output rather than indistinguishable
+ * from a real, exercised pass.
+ *
+ * `existsSync` is the common-case short-circuit; `readdirSync` is still
+ * wrapped so an unexpected read failure (permissions, a TOCTOU race between
+ * the two calls) degrades to dormant with a warning rather than throwing
+ * uncaught out of `main()` — this check's own contract is report-only,
+ * exit code always 0, and an uncaught exception would break that.
+ */
+function legacySlugs(): { slugs: string[]; dormant: boolean } {
   const dir = join(REPO_ROOT, 'aeg-root/tranches/completed')
+  if (!existsSync(dir)) return { slugs: [], dormant: true }
   try {
-    return readdirSync(dir)
+    const slugs = readdirSync(dir)
       .filter((f) => f.endsWith('.md') && !f.endsWith('.tokens.md'))
       .map((f) => f.slice(0, -3))
       .filter((slug) => !/-v[0-9]+$/.test(slug))
-  } catch {
-    return []
+    return { slugs, dormant: false }
+  } catch (err) {
+    console.error(
+      `${CHECK_NAME}: could not read ${dir} (${err instanceof Error ? err.message : String(err)}) — legacy-slug class treated as dormant.`
+    )
+    return { slugs: [], dormant: true }
   }
 }
 
 function main(): void {
   const shipsPaths = collect('aeg-root', (name) => name.endsWith('.md'))
-  const readerFacingPaths = collect('apps/vinaya/web/src/app/(site)', (name) => name === 'page.tsx')
+  const readerFacingPaths =
+    READER_FACING_ROOT !== null ? collect(READER_FACING_ROOT, (name) => name === 'page.tsx') : []
 
   const files = readAll([...shipsPaths, ...readerFacingPaths])
   const glossaryTerms = parseGlossaryTerms(readFileSync(join(REPO_ROOT, 'aeg-root/glossary.md'), 'utf8'))
-  const slugs = legacySlugs()
+  const { slugs, dormant: legacySlugsDormant } = legacySlugs()
 
-  const findings = checkReaderResolvableProse(files, glossaryTerms, READER_FACING_PREFIX, READER_FACING_SUFFIX, slugs)
+  // When READER_FACING_ROOT is null, no path this file ever collects can
+  // start with '/' — `collect()` only ever `join()`s from a relative root
+  // ('aeg-root' above, or READER_FACING_ROOT itself), and `join()` never
+  // produces a leading slash from relative inputs. A leading-slash prefix
+  // is therefore structurally unmatchable here, not merely coincidentally
+  // safe because readerFacingPaths also happens to be [].
+  const readerFacingPrefix = READER_FACING_ROOT !== null ? `${READER_FACING_ROOT}/` : '/no-reader-facing-surface'
+
+  const findings = checkReaderResolvableProse(files, glossaryTerms, readerFacingPrefix, READER_FACING_SUFFIX, slugs)
+
+  console.error(
+    `${CHECK_NAME}: reader-facing class ${READER_FACING_ROOT !== null ? 'ran' : 'dormant — no reader-facing surface (e.g. apps/*/web) in this repo'}; ` +
+      `legacy-slug class ${legacySlugsDormant ? 'dormant — aeg-root/tranches/completed is absent in this repo' : `ran (${slugs.length} slug(s))`}; ` +
+      `${findings.length} finding(s)`
+  )
 
   for (const finding of findings) {
     emitCheckError({

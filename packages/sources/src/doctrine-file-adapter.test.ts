@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { createFileDoctrineSource } from './doctrine-file-adapter'
 
-const REPO_ROOT = join(import.meta.dir, '../../../..')
+const REPO_ROOT = join(import.meta.dir, '../../..')
 
 describe('createFileDoctrineSource — configured root', () => {
   let tmpRoot: string
