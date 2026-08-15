@@ -1,0 +1,37 @@
+# This repo's own ring-1 typecheck/test gate — hand-written, not
+# vinaya-generated, not vinaya-managed, invisible to `doctor` by design.
+# The four vinaya-*.yml workflows in this directory run `vinaya check` /
+# `archive` / `audit`; none of them ever ran a test or a typecheck (#933).
+#
+# Runs unscoped (no --affected, no --filter): the suite is ~1-2 minutes and
+# scoping has hidden failures here before.
+
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  typecheck-and-test:
+    name: Typecheck + test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bunx turbo typecheck
+
+      - name: Test
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bunx turbo test
