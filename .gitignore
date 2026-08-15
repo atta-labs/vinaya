@@ -7,6 +7,11 @@ build/
 out/
 **/.turbo/
 
+# bundle-doctrine.ts copies the repo-root aeg-root/ (source of truth, tracked)
+# into apps/cli/aeg-root/ at pack time so the doctrine ships in the tarball.
+# That copy is a build artifact, not a second source of truth.
+/apps/cli/aeg-root/
+
 # Environment
 .env
 .env.local
