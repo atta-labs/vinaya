@@ -241,12 +241,6 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
-    name: 'studio',
-    description:
-      'Launch local Vinaya Studio against this repo — works standalone via npx, not just inside a Vinaya workspace checkout',
-    status: 'shipped'
-  },
-  {
     name: 'quickstart',
     description: 'Guided wizard: init, doc-owners, project, commit, demo break, doctor, push — one command',
     details: [

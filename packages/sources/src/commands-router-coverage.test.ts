@@ -52,7 +52,6 @@ describe('router -> COMMANDS coverage', () => {
       new Set([
         'help',
         'version',
-        'studio',
         'init',
         'init product',
         'eject',

@@ -18,7 +18,7 @@ import { cpSync, existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 const pkgRoot = join(import.meta.dir, '..')
-const monorepoRoot = join(pkgRoot, '..', '..', '..')
+const monorepoRoot = join(pkgRoot, '..', '..')
 const sourceRoot = join(monorepoRoot, 'aeg-root')
 const targetRoot = join(pkgRoot, 'aeg-root')
 

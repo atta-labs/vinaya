@@ -217,12 +217,6 @@ const EXEMPTIONS: Record<string, string> = {
     '`audit` is a ring-2 scheduled mechanism: dead-branch drift and direct-main-push detection both derive ' +
     'from live forge state (`gh` branch/PR reads) UNCONDITIONALLY — no offline path exists. Same forge/' +
     'credential boundary as `archive` above; exempt for the same reason as `issue edit`.',
-  studio:
-    '`studio` now (since Studio standalone shipped) starts a real, long-running Next server when it finds a ' +
-    "real target — it never exits on its own. This script's `run()` helper is `spawnSync`, which blocks until " +
-    'the child exits, so calling it for real here would hang the whole prover forever. Exercising it safely ' +
-    'would need an async spawn-then-probe-then-kill harness this script does not have; a harness rewrite for ' +
-    'one command is out of scope for a coverage fix. Manually verified separately outside this script.',
   'issue edit':
     "`issue edit` fetches the target Issue's real labels from the forge (`gh issue view`) UNCONDITIONALLY, " +
     'even under --validate-only — there is no code path that skips it. Exercising it genuinely would require a ' +
