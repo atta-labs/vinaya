@@ -119,10 +119,13 @@ function main(): void {
   const glossaryTerms = parseGlossaryTerms(readFileSync(join(REPO_ROOT, 'aeg-root/glossary.md'), 'utf8'))
   const { slugs, dormant: legacySlugsDormant } = legacySlugs()
 
-  // When READER_FACING_ROOT is null, readerFacingPaths above is already
-  // [] — no swept file can ever be classified reader-facing regardless of
-  // this prefix's value, so it is inert rather than load-bearing here.
-  const readerFacingPrefix = READER_FACING_ROOT !== null ? `${READER_FACING_ROOT}/` : '(inert — no reader-facing root)'
+  // When READER_FACING_ROOT is null, no path this file ever collects can
+  // start with '/' — `collect()` only ever `join()`s from a relative root
+  // ('aeg-root' above, or READER_FACING_ROOT itself), and `join()` never
+  // produces a leading slash from relative inputs. A leading-slash prefix
+  // is therefore structurally unmatchable here, not merely coincidentally
+  // safe because readerFacingPaths also happens to be [].
+  const readerFacingPrefix = READER_FACING_ROOT !== null ? `${READER_FACING_ROOT}/` : '/no-reader-facing-surface'
 
   const findings = checkReaderResolvableProse(files, glossaryTerms, readerFacingPrefix, READER_FACING_SUFFIX, slugs)
 
