@@ -103,7 +103,9 @@ Changesets' default cascade cannot see that. `@changesets/assemble-release-plan`
 
 The four engine packages stay `private: true` — the extraction's entire point — and `privatePackages: { version: true, tag: false }` keeps it that way: `version: true` lets Changesets assign them a version at all (an unversioned private package cannot participate in the group's highest-version calculation or its own release entry), while `tag: false` means `changeset publish` never tags or publishes them. Their version numbers are internal bookkeeping shared with the CLI's, nothing more.
 
-`.github/workflows/release.yml` opens a "Version Packages" PR from pending changesets on push to `main`, running the same version-plan logic described above. It carries no `publish` step and no publish credentials, so it can only ever propose the version bump — publishing is a separate, later addition.
+`.github/workflows/release.yml` opens a "Version Packages" PR from pending changesets on push to `main`, running the same version-plan logic described above. It carries no `publish` step and no publish credentials, so it can only ever propose the version bump.
+
+Publishing itself is `bun run changeset:publish` (`changeset publish`), run by hand with npm credentials rather than wired into `release.yml`. Two reasons, not one: no `NPM_TOKEN` secret is provisioned for this repo's Actions runner yet, and even once it is, a human-triggered publish is the more defensible default for a package whose releases are still infrequent and each one is irreversible on the registry. Automatic publish-on-merge is a later, separate decision — not a gap in this pipeline.
 
 ## What self-hosting costs, stated plainly
 
