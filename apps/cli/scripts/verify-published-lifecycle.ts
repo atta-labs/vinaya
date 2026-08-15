@@ -516,6 +516,7 @@ async function main(): Promise<void> {
       'issue create',
       'doctor',
       'upgrade',
+      'doctrine',
       'demo break',
       'waiver'
     ]) {
@@ -542,7 +543,18 @@ async function main(): Promise<void> {
 
     printReport(results)
 
-    const anyFail = [...results.values()].some((o) => o.status === 'fail')
+    // `coverageCheck()` proves every shipped command has an EXERCISES/
+    // EXEMPTIONS/HANDLED_INLINE key; this proves each one actually RAN. A key
+    // that exists but is missing from the run-order list above would
+    // otherwise be silently unaccounted — report green while never executing
+    // (exactly how a well-built `doctrine` exercise shipped as dead code).
+    const unaccounted = COMMANDS.filter((c) => c.status === 'shipped' && !results.has(c.name)).map((c) => c.name)
+    if (unaccounted.length > 0) {
+      process.stdout.write(
+        `✗ unaccounted shipped command(s) — covered by coverageCheck but never run: ${unaccounted.join(', ')}\n`
+      )
+    }
+    const anyFail = [...results.values()].some((o) => o.status === 'fail') || unaccounted.length > 0
     process.exitCode = anyFail ? 1 : 0
   } finally {
     if (keep) {
