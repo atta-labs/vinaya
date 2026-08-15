@@ -210,7 +210,6 @@ async function runOne(spec: CheckSpec, timeoutMs: number, callerEnv: NodeJS.Proc
     }
   }
 
-  // Same `node:child_process` shape as `spawnDev` in src/commands/studio.ts.
   // `env` is the constructed baseline+allowlist object (`buildCheckEnv`),
   // the spawn default since the flip (task 3, #776) — the child no longer
   // inherits the full parent environment. `detached: true` puts the child

@@ -16,7 +16,6 @@ npx @attalabs/vinaya init        # or: pnpm dlx / yarn dlx / bunx
 |---------|-------------|
 | `vinaya help` | Usage text |
 | `vinaya version` | Print the installed CLI version (`--json` for the enveloped machine form) |
-| `vinaya studio` | Launch local Vinaya Studio against the current repo |
 | `vinaya check <name> \| --all` | Run one check, or every registered check (core + `vinaya.config.json`-registered). `--json` for the enveloped `{ checks: CheckOutcome[] }` form; `--diff-only` scopes `scope: 'diff'` checks to changed files; `--parallel[=n]` caps concurrency (default: cpu-derived). Findings always print as the check contract's JSON lines on stderr, regardless of `--json`. Exit 0 iff every check passed. |
 | `vinaya new check <name>` | Scaffold a self-contained custom check into `./scripts/vinaya-checks/<name>.ts`, ready to register in `vinaya.config.json` |
 

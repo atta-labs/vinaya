@@ -373,7 +373,6 @@ export async function runQuickstart(_args: string[], deps: QuickstartDeps): Prom
     }
 
     process.stdout.write(`\n${bold('Next steps:')}\n`)
-    process.stdout.write('  vinaya studio\n')
     if (!ranDemoBreak) process.stdout.write('  vinaya demo break\n')
     process.stdout.write('  vinaya check --all\n')
     if (!pushed) process.stdout.write('  git push\n')
