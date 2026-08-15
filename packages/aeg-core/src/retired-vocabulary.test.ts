@@ -338,20 +338,22 @@ const PRODUCT = ['.']
 /**
  * Everything an agent in this repo reads.
  *
- * `.aeg` is here because `.aeg/packages` is live config — `checkBlastRadiusScope`
- * reads it — and it was the one governance artifact in neither list, which is
- * how it came to cite a doc that had been renamed out from under it.
+ * Repo-wide (`['.']`), not an enumerated list — same defect and same fix as
+ * `PRODUCT` above: an enumerated surface has the exact blind-spot shape that
+ * lets a new path go unwatched, and it drifted concretely here. The prior
+ * 8-path list (`.aeg`, `aeg-root`, `.claude`, `.github`, `.vinaya`,
+ * `packages/aeg-core`, `apps/vinaya`, `packages/aeg-forge-state`) named three
+ * paths this repo doesn't have (`.aeg`, `.claude`, `apps/vinaya` — leftovers
+ * from the attalabs layout this suite was copied from) and one tool's own
+ * directory (`.claude`) that has no business in an agent-agnostic product's
+ * test. GNU grep exits non-zero on a missing path, which `grep()` below reads
+ * as a real failure — so every pattern using this scope failed outright on a
+ * clean Linux checkout, while passing locally wherever a leftover directory
+ * happened to still exist. `['.']` is self-maintaining and layout-agnostic:
+ * every current and future surface is covered by construction, no path to
+ * remember to add.
  */
-const SCOPE = [
-  '.aeg',
-  'aeg-root',
-  '.claude',
-  '.github',
-  '.vinaya',
-  'packages/aeg-core',
-  'apps/vinaya',
-  'packages/aeg-forge-state'
-]
+const SCOPE = ['.']
 
 function grep(pattern: string, scope: string[] = SCOPE): string[] {
   try {
