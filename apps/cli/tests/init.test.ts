@@ -452,6 +452,40 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
   })
 
+  it('the PR-triggered workflows carry a concurrency group — one run per PR', async () => {
+    // `vinaya pr create` opens the PR and applies its tranche label straight
+    // after, so `opened` and `labeled` arrive together and GitHub starts TWO
+    // runs of the same workflow. Both report under one check name and the
+    // merge box counts both, so one can go green while its twin holds a
+    // stale red that no later verdict clears — measured live on
+    // atta-labs/vinaya#18, two runs in the same second, one of each.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+
+    for (const path of [CHECKS_WORKFLOW_PATH, REVIEW_WORKFLOW_PATH]) {
+      const wf = files.get(path) ?? ''
+      expect(`${path}: ${wf.includes('concurrency:')}`).toBe(`${path}: true`)
+      expect(wf).toContain('cancel-in-progress: true')
+      // Keyed per PR, not per workflow — a global group would serialize
+      // unrelated pull requests.
+      expect(wf).toContain('github.event.pull_request.number')
+    }
+  })
+
+  it('the verdict retrigger re-runs EVERY matching run, not just the first', async () => {
+    // Re-running only `[0]` cannot heal a repo that already carries duplicate
+    // runs from before the concurrency group existed: the twin keeps a stale
+    // red forever, because each run only ever re-evaluates itself.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const verdict = generated().get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
+
+    expect(verdict).not.toContain('][0].databaseId')
+    expect(verdict).toContain('.[].databaseId')
+    expect(verdict).toContain('for RUN_ID in $RUN_IDS')
+    // The empty-branch guard must still precede the query.
+    expect(verdict.indexOf('if [ -z "$BRANCH" ]')).toBeLessThan(verdict.indexOf('gh run list'))
+  })
+
   it('the verdict retrigger fires on BOTH verdicts — the gate must close, not only open', async () => {
     // The required check stores a conclusion, and that stored conclusion
     // guards the merge button. Gating the retrigger on a clean evaluation
