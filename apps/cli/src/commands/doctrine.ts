@@ -9,12 +9,12 @@
 // answer stays machine-correct.
 
 import { existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { printJson } from '../lib/envelope.js'
 import { packageRoot } from '../lib/package-root.js'
 
 /** The doctrine's front door, relative to its `aeg-root/`. */
-const ENTRY_SEGMENTS = ['skills', 'aeg', 'SKILL.md'] as const
+export const ENTRY_SEGMENTS = ['skills', 'aeg', 'SKILL.md'] as const
 
 /**
  * Candidate doctrine roots, in resolution order:
@@ -26,10 +26,20 @@ const ENTRY_SEGMENTS = ['skills', 'aeg', 'SKILL.md'] as const
  *    so in a monorepo that vendors the CLI the live doctrine is the monorepo
  *    root's own `aeg-root/` — the exact directory `bundle-doctrine` copies
  *    from, reached by the same `../..` relation that script encodes.
+ *
+ * The fallback is tried only when the CLI does NOT sit inside a
+ * `node_modules` tree: an npm-installed copy always carries its own bundled
+ * `aeg-root/`, so on such an install the fallback could only ever fire on a
+ * broken artifact — and there it would walk into the adopter's dependency
+ * tree, where a package that happens to be named `aeg-root` would be served
+ * as doctrine to agents told to read and follow it.
+ *
+ * `pkg` is injectable for tests; every real caller takes the default.
  */
-function resolveDoctrineRoot(): string | null {
-  const pkg = packageRoot(import.meta.url)
-  for (const root of [join(pkg, 'aeg-root'), join(dirname(dirname(pkg)), 'aeg-root')]) {
+export function resolveDoctrineRoot(pkg: string = packageRoot(import.meta.url)): string | null {
+  const candidates = [join(pkg, 'aeg-root')]
+  if (!pkg.split(sep).includes('node_modules')) candidates.push(join(dirname(dirname(pkg)), 'aeg-root'))
+  for (const root of candidates) {
     if (existsSync(join(root, ...ENTRY_SEGMENTS))) return root
   }
   return null

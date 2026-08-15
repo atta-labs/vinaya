@@ -1,0 +1,5 @@
+---
+"@attalabs/vinaya": minor
+---
+
+Add `vinaya doctrine` — prints the absolute path of the bundled doctrine's front door (`aeg-root/skills/aeg/SKILL.md`), resolved at read time on the caller's own machine (`--json` for the enveloped `{ root, entry }` form) — and make the committed `VINAYA.md` doctrine pointer machine-independent: it now names the `@attalabs/vinaya` package and hands the reader that command, instead of interpolating the installing machine's absolute install path into committed content. The old shape broke for every clone but the installer's (and for the installer on their next upgrade, since npx's cache key rotates with the version), published the installing user's home directory into the repo, and made `doctor` report drift on every machine except the one that ran `init`. Existing adopters see one-time managed-file drift on `VINAYA.md` at their next `doctor`, and a rewrite on their next `upgrade` — the drift being reported is the machine-local path this release removes.

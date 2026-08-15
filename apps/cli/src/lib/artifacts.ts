@@ -608,7 +608,7 @@ function ownVersion(): string {
 function hookRun(selfHost: VendoredVinaya | null, args: string): string {
   if (!selfHost) return `npx --yes @attalabs/vinaya@${ownVersion()} ${args} || exit 1`
   return `# This repo vendors the CLI, so \`npx @attalabs/vinaya\` resolves to its own
-# unbuilt workspace member (atta-labs/attalabs#935). Run the built file instead.
+# unbuilt workspace member. Run the built file instead.
 if [ ! -f ${selfHost.bin} ]; then
   echo "vinaya: ${selfHost.bin} is missing — run \\\`bun run --cwd ${selfHost.dir} build\\\`" >&2
   exit 1
@@ -655,7 +655,8 @@ export function doctrinePointer(selfHost: VendoredVinaya | null): string {
   const resolveCmd = selfHost ? `node ${selfHost.bin} doctrine` : 'npx --yes @attalabs/vinaya doctrine'
   const resolveNote = selfHost
     ? `   It prints the front door's absolute path on this machine (build the
-   CLI first if that file is missing: \`bun run --cwd ${selfHost.dir} build\`);
+   CLI first if that file is missing:
+   \`bun install --frozen-lockfile && bun run --cwd ${selfHost.dir} build\`);
    the \`aeg-root/\` directory above it is the full doctrine.`
     : `   It prints the front door's absolute path on this machine, installing
    the package first if it has to; the \`aeg-root/\` directory above it is

@@ -17,7 +17,8 @@ An agent working in this repo follows the governed flow by reading two things:
        node apps/cli/dist/index.js doctrine
 
    It prints the front door's absolute path on this machine (build the
-   CLI first if that file is missing: `bun run --cwd apps/cli build`);
+   CLI first if that file is missing:
+   `bun install --frozen-lockfile && bun run --cwd apps/cli build`);
    the `aeg-root/` directory above it is the full doctrine.
 2. **`vinaya.config.json`** — the ruleset the gates enforce: rings, custom checks,
    and the brief schema a PR/Issue body must satisfy.

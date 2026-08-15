@@ -18,7 +18,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { COMMANDS } from '@atta/vinaya-sources'
 
 const PACKAGE_SPEC = '@attalabs/vinaya@0.4.6'
@@ -371,6 +371,32 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome> = {
     const r = run(bin, ['upgrade', '--yes'], fixtureDir)
     const ok = r.status === 0 && /already current/i.test(r.stdout)
     return { status: ok ? 'pass' : 'fail', detail: `exit ${r.status}: ${r.stdout.trim()}` }
+  },
+
+  doctrine: ({ bin, fixtureDir }) => {
+    // The published-tarball resolution shape, for real: the scratch install's
+    // own bundled `aeg-root/` (in the `files` array) is what must resolve —
+    // exactly the path the committed VINAYA.md pointer hands every reader.
+    const plain = run(bin, ['doctrine'], fixtureDir)
+    const printed = plain.stdout.trim()
+    const entrySuffix = join('aeg-root', 'skills', 'aeg', 'SKILL.md')
+    const plainOk = plain.status === 0 && isAbsolute(printed) && printed.endsWith(entrySuffix) && existsSync(printed)
+    const json = run(bin, ['doctrine', '--json'], fixtureDir)
+    let jsonOk = false
+    try {
+      const parsed = JSON.parse(json.stdout) as { schema?: number; data?: { root?: string; entry?: string } }
+      jsonOk =
+        parsed.schema === 1 &&
+        typeof parsed.data?.root === 'string' &&
+        parsed.data?.entry === join(parsed.data.root, 'skills', 'aeg', 'SKILL.md') &&
+        existsSync(parsed.data.entry)
+    } catch {
+      jsonOk = false
+    }
+    return {
+      status: plainOk && jsonOk ? 'pass' : 'fail',
+      detail: `exit ${plain.status}, printed entry exists: ${plainOk}, --json root/entry coherent: ${jsonOk}`
+    }
   },
 
   'demo break': ({ bin, fixtureDir }) => {
