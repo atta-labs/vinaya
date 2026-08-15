@@ -14,13 +14,22 @@ on:
 
 jobs:
   typecheck-and-test:
-    name: Typecheck + test
+    name: Vinaya CI
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
+          # Full history: several aeg-core tests (the coherence oracle's
+          # golden-comparison and origin/main diffing) resolve `origin/main`
+          # as a real ref — the default shallow, single-branch checkout
+          # never fetches it, and those tests fail with "origin/main does
+          # not resolve" even though they pass locally. Unrelated to
+          # --affected (this job stays unscoped) — needed regardless.
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
