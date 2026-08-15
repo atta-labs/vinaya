@@ -472,16 +472,19 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
   })
 
-  it('the verdict retrigger re-runs EVERY matching run, not just the first', async () => {
-    // Re-running only `[0]` cannot heal a repo that already carries duplicate
-    // runs from before the concurrency group existed: the twin keeps a stale
-    // red forever, because each run only ever re-evaluates itself.
+  it('the verdict retrigger re-runs ONE run — re-running all fights the concurrency group', async () => {
+    // Re-running every matching run puts them all in one concurrency group at
+    // once; `cancel-in-progress` then kills all but the last, and cancelled
+    // runs report red. Measured on PR #21: one verdict re-ran four runs, three
+    // were cancelled, and a PR with a clean APPROVE showed three reds.
+    // The concurrency group prevents duplicates; this step only has to tell
+    // the one surviving run that a verdict landed.
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const verdict = generated().get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
 
-    expect(verdict).not.toContain('][0].databaseId')
-    expect(verdict).toContain('.[].databaseId')
-    expect(verdict).toContain('for RUN_ID in $RUN_IDS')
+    expect(verdict).not.toContain('for RUN_ID in')
+    expect(verdict).not.toContain('RUN_IDS')
+    expect(verdict).toContain('][0].databaseId')
     // The empty-branch guard must still precede the query.
     expect(verdict.indexOf('if [ -z "$BRANCH" ]')).toBeLessThan(verdict.indexOf('gh run list'))
   })

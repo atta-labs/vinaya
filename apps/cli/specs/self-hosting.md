@@ -16,7 +16,9 @@ This is not tuning. Several of the `types:` each workflow listens for can fire i
 
 The `issue_comment`-triggered verdict workflow deliberately has **no** concurrency group. It is not a source of duplicate runs, and serializing it would delay the retrigger that exists to clear a red gate promptly.
 
-That retrigger re-runs **every** completed `pull_request` run of the review workflow, not the newest. A repo whose generated workflows predate this concurrency group can still be carrying duplicates, and re-running only one leaves its twin red forever. Re-running is idempotent — a run already reflecting the current verdicts reaches the same conclusion again.
+That retrigger re-runs the **newest** completed `pull_request` run of the review workflow, and only that one. Re-running every match is actively harmful once the concurrency group exists: completed runs accumulate normally across pushes, so re-running all of them puts several into one group at once and `cancel-in-progress` kills all but the last — cancelled runs report red. Measured: one verdict re-ran four runs, three were cancelled, and a pull request holding a clean approval showed three reds.
+
+The division of labour is the point. The **concurrency group** guarantees one live run per pull request; the **retrigger** only has to tell that one run a verdict landed. Older runs belong to earlier commits, and a check run is scoped to the commit it ran on, so they do not gate the current head.
 
 **What deliberately does not change: the gate still fails when no verdict exists.** "Nobody has reviewed this" must block a merge; reporting it as neutral would let an unreviewed pull request through, which is the thing the gate exists to prevent. The defect was never the failure — it was that a second run could not be told the news.
 

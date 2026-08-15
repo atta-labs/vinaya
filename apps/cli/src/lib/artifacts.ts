@@ -380,29 +380,28 @@ ${vinayaSetupSteps(selfHost)}      - name: Review gate (verdict evaluation)
             echo "No branch resolved (the evaluate job failed before resolving it) - nothing to re-run."
             exit 0
           fi
-          # EVERY completed pull_request run, not just the newest. A repo
-          # whose workflows predate the \`concurrency\` group can carry more
-          # than one run under the same check name; re-running only the first
-          # leaves its twin holding a stale red that no verdict ever clears,
-          # and the merge box counts both. Re-running all of them is
-          # idempotent — a run already reflecting the current verdicts simply
-          # reaches the same conclusion again.
-          RUN_IDS=$(gh run list --repo "\${{ github.repository }}" \\
+          # The NEWEST completed run only. An earlier form re-ran every
+          # matching run, to heal repos carrying duplicates from before the
+          # concurrency group above existed. That was actively harmful once
+          # the group landed: re-running N runs puts N runs in one
+          # concurrency group at once, \`cancel-in-progress\` kills all but the
+          # last, and cancelled runs report red. Measured on PR #21 — one
+          # verdict re-ran four runs, three were cancelled, and a PR with a
+          # clean APPROVE showed three reds.
+          #
+          # The concurrency group is what prevents duplicates; this step only
+          # has to tell the one surviving run that a verdict landed.
+          RUN_ID=$(gh run list --repo "\${{ github.repository }}" \\
             --workflow vinaya-review.yml --branch "$BRANCH" \\
             --status completed \\
             --json databaseId,event \\
-            --jq '[.[] | select(.event=="pull_request")] | .[].databaseId')
-          if [ -z "$RUN_IDS" ]; then
+            --jq '[.[] | select(.event=="pull_request")][0].databaseId // empty')
+          if [ -z "$RUN_ID" ]; then
             echo "No completed pull_request run of vinaya-review.yml for branch $BRANCH - nothing to re-run."
             exit 0
           fi
-          for RUN_ID in $RUN_IDS; do
-            echo "Re-running vinaya-review.yml run $RUN_ID"
-            # A run already re-running is not an error worth failing the job
-            # over: the point is that every run ends up re-evaluated, and one
-            # already in flight will be.
-            gh run rerun "$RUN_ID" --repo "\${{ github.repository }}" || true
-          done
+          echo "Re-running vinaya-review.yml run $RUN_ID"
+          gh run rerun "$RUN_ID" --repo "\${{ github.repository }}"
 `
 }
 
