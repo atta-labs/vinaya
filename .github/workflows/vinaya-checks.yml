@@ -8,6 +8,23 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
 
+# One run per pull request, always. Several `types:` above can fire in the
+# same instant — `vinaya pr create` opens the PR and applies its tranche
+# label immediately after, so `opened` and `labeled` arrive together and
+# GitHub starts TWO runs of this workflow. Both then report under the same
+# check name, and the merge box counts both: one can go green while its twin
+# holds a stale red, which no later verdict clears because each run only ever
+# re-evaluates itself. Measured live on atta-labs/vinaya#18 — two runs created
+# in the same second, one success, one failure, PR blocked with both reviews
+# already approved.
+#
+# `cancel-in-progress` is safe here and not merely tolerable: the job is a
+# pure re-evaluation of forge state that takes seconds, so a cancelled run had
+# nothing to lose and the survivor reads strictly fresher state.
+concurrency:
+  group: vinaya-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   vinaya-checks:
     name: vinaya check --all --diff-only

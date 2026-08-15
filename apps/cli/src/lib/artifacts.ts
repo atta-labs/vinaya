@@ -170,6 +170,23 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
 
+# One run per pull request, always. Several \`types:\` above can fire in the
+# same instant — \`vinaya pr create\` opens the PR and applies its tranche
+# label immediately after, so \`opened\` and \`labeled\` arrive together and
+# GitHub starts TWO runs of this workflow. Both then report under the same
+# check name, and the merge box counts both: one can go green while its twin
+# holds a stale red, which no later verdict clears because each run only ever
+# re-evaluates itself. Measured live on atta-labs/vinaya#18 — two runs created
+# in the same second, one success, one failure, PR blocked with both reviews
+# already approved.
+#
+# \`cancel-in-progress\` is safe here and not merely tolerable: the job is a
+# pure re-evaluation of forge state that takes seconds, so a cancelled run had
+# nothing to lose and the survivor reads strictly fresher state.
+concurrency:
+  group: vinaya-checks-\${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   vinaya-checks:
     name: vinaya check --all --diff-only
@@ -219,6 +236,23 @@ name: Vinaya Review Gate
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
+
+# One run per pull request, always. Several \`types:\` above can fire in the
+# same instant — \`vinaya pr create\` opens the PR and applies its tranche
+# label immediately after, so \`opened\` and \`labeled\` arrive together and
+# GitHub starts TWO runs of this workflow. Both then report under the same
+# check name, and the merge box counts both: one can go green while its twin
+# holds a stale red, which no later verdict clears because each run only ever
+# re-evaluates itself. Measured live on atta-labs/vinaya#18 — two runs created
+# in the same second, one success, one failure, PR blocked with both reviews
+# already approved.
+#
+# \`cancel-in-progress\` is safe here and not merely tolerable: the job is a
+# pure re-evaluation of forge state that takes seconds, so a cancelled run had
+# nothing to lose and the survivor reads strictly fresher state.
+concurrency:
+  group: vinaya-review-\${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   vinaya-review:
@@ -346,16 +380,29 @@ ${vinayaSetupSteps(selfHost)}      - name: Review gate (verdict evaluation)
             echo "No branch resolved (the evaluate job failed before resolving it) - nothing to re-run."
             exit 0
           fi
-          RUN_ID=$(gh run list --repo "\${{ github.repository }}" \\
+          # EVERY completed pull_request run, not just the newest. A repo
+          # whose workflows predate the \`concurrency\` group can carry more
+          # than one run under the same check name; re-running only the first
+          # leaves its twin holding a stale red that no verdict ever clears,
+          # and the merge box counts both. Re-running all of them is
+          # idempotent — a run already reflecting the current verdicts simply
+          # reaches the same conclusion again.
+          RUN_IDS=$(gh run list --repo "\${{ github.repository }}" \\
             --workflow vinaya-review.yml --branch "$BRANCH" \\
             --status completed \\
             --json databaseId,event \\
-            --jq '[.[] | select(.event=="pull_request")][0].databaseId // empty')
-          if [ -z "$RUN_ID" ]; then
+            --jq '[.[] | select(.event=="pull_request")] | .[].databaseId')
+          if [ -z "$RUN_IDS" ]; then
             echo "No completed pull_request run of vinaya-review.yml for branch $BRANCH - nothing to re-run."
             exit 0
           fi
-          gh run rerun "$RUN_ID" --repo "\${{ github.repository }}"
+          for RUN_ID in $RUN_IDS; do
+            echo "Re-running vinaya-review.yml run $RUN_ID"
+            # A run already re-running is not an error worth failing the job
+            # over: the point is that every run ends up re-evaluated, and one
+            # already in flight will be.
+            gh run rerun "$RUN_ID" --repo "\${{ github.repository }}" || true
+          done
 `
 }
 

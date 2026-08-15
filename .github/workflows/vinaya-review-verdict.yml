@@ -117,13 +117,26 @@ jobs:
             echo "No branch resolved (the evaluate job failed before resolving it) - nothing to re-run."
             exit 0
           fi
-          RUN_ID=$(gh run list --repo "${{ github.repository }}" \
+          # EVERY completed pull_request run, not just the newest. A repo
+          # whose workflows predate the `concurrency` group can carry more
+          # than one run under the same check name; re-running only the first
+          # leaves its twin holding a stale red that no verdict ever clears,
+          # and the merge box counts both. Re-running all of them is
+          # idempotent — a run already reflecting the current verdicts simply
+          # reaches the same conclusion again.
+          RUN_IDS=$(gh run list --repo "${{ github.repository }}" \
             --workflow vinaya-review.yml --branch "$BRANCH" \
             --status completed \
             --json databaseId,event \
-            --jq '[.[] | select(.event=="pull_request")][0].databaseId // empty')
-          if [ -z "$RUN_ID" ]; then
+            --jq '[.[] | select(.event=="pull_request")] | .[].databaseId')
+          if [ -z "$RUN_IDS" ]; then
             echo "No completed pull_request run of vinaya-review.yml for branch $BRANCH - nothing to re-run."
             exit 0
           fi
-          gh run rerun "$RUN_ID" --repo "${{ github.repository }}"
+          for RUN_ID in $RUN_IDS; do
+            echo "Re-running vinaya-review.yml run $RUN_ID"
+            # A run already re-running is not an error worth failing the job
+            # over: the point is that every run ends up re-evaluated, and one
+            # already in flight will be.
+            gh run rerun "$RUN_ID" --repo "${{ github.repository }}" || true
+          done
