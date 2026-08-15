@@ -15,7 +15,8 @@
     "test": "turbo test",
     "clean": "turbo clean",
     "changeset": "changeset",
-    "changeset:version": "changeset version"
+    "changeset:version": "changeset version",
+    "changeset:publish": "changeset publish"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
