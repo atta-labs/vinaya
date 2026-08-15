@@ -32,6 +32,7 @@ jobs:
       issues: read
     outputs:
       branch: ${{ steps.pr.outputs.branch }}
+      sha: ${{ steps.pr.outputs.sha }}
     steps:
       # issue_comment payloads carry no PR head SHA/branch — resolve them
       # before checkout, and check out that exact commit (the event's default
@@ -107,6 +108,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: ${{ needs.evaluate.outputs.branch }}
+          HEAD_SHA: ${{ needs.evaluate.outputs.sha }}
         run: |
           # `--branch ""` is NOT a no-op: gh drops the filter and lists runs
           # across every branch, so the rerun would land on an unrelated PR's
@@ -117,25 +119,44 @@ jobs:
             echo "No branch resolved (the evaluate job failed before resolving it) - nothing to re-run."
             exit 0
           fi
-          # The NEWEST completed run only. An earlier form re-ran every
-          # matching run, to heal repos carrying duplicates from before the
-          # concurrency group above existed. That was actively harmful once
-          # the group landed: re-running N runs puts N runs in one
-          # concurrency group at once, `cancel-in-progress` kills all but the
-          # last, and cancelled runs report red. Measured on PR #21 — one
-          # verdict re-ran four runs, three were cancelled, and a PR with a
-          # clean APPROVE showed three reds.
-          #
-          # The concurrency group is what prevents duplicates; this step only
-          # has to tell the one surviving run that a verdict landed.
-          RUN_ID=$(gh run list --repo "${{ github.repository }}" \
-            --workflow vinaya-review.yml --branch "$BRANCH" \
-            --status completed \
-            --json databaseId,event \
-            --jq '[.[] | select(.event=="pull_request")][0].databaseId // empty')
-          if [ -z "$RUN_ID" ]; then
-            echo "No completed pull_request run of vinaya-review.yml for branch $BRANCH - nothing to re-run."
+          # Same guard, same producer: an empty SHA would make the selection
+          # below match nothing and silently skip the rerun a verdict just
+          # earned. Say so instead.
+          if [ -z "$HEAD_SHA" ]; then
+            echo "No head SHA resolved (the evaluate job failed before resolving it) - nothing to re-run."
             exit 0
           fi
-          echo "Re-running vinaya-review.yml run $RUN_ID"
-          gh run rerun "$RUN_ID" --repo "${{ github.repository }}"
+          # Select by HEAD SHA, never by recency. "Newest completed" looks
+          # right and is not: `--status completed` excludes a run that is
+          # currently re-running but INCLUDES cancelled ones, so a verdict
+          # arriving while the current head's run is still in flight can
+          # select a stale cancelled sibling, rerun it, and — because the
+          # review workflow's concurrency group is keyed per pull request —
+          # cancel the live evaluation it was supposed to refresh.
+          #
+          # The run for this head SHA is the only one whose conclusion gates
+          # the merge; runs for earlier commits are scoped to those commits
+          # and never gate the current head. Cancelled runs are excluded
+          # because re-running one produces another cancellation, not a
+          # verdict.
+          RUN_ID=$(gh run list --repo "${{ github.repository }}" \
+            --workflow vinaya-review.yml --branch "$BRANCH" \
+            --json databaseId,event,headSha,status,conclusion \
+            --jq --arg sha "$HEAD_SHA" '[.[]
+                 | select(.event=="pull_request")
+                 | select(.headSha==$sha)
+                 | select(.status=="completed")
+                 | select(.conclusion!="cancelled")]
+               | .[0].databaseId // empty')
+          if [ -z "$RUN_ID" ]; then
+            echo "No completed, non-cancelled pull_request run of vinaya-review.yml for $HEAD_SHA - nothing to re-run."
+            exit 0
+          fi
+          echo "Re-running vinaya-review.yml run $RUN_ID for $HEAD_SHA"
+          # Two verdict comments landing together run two retriggers in
+          # parallel (this workflow has no concurrency group, deliberately —
+          # a queued retrigger is a delayed one). Both can select the same
+          # run, and the loser gets "already queued". That is the mechanism
+          # working, not a failure worth reddening the step over; a real
+          # 403 or an expired run still surfaces in the log.
+          gh run rerun "$RUN_ID" --repo "${{ github.repository }}" || echo "rerun declined (already queued, or run too old) - the other verdict's retrigger covers it"

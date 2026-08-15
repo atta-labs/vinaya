@@ -484,7 +484,14 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
 
     expect(verdict).not.toContain('for RUN_ID in')
     expect(verdict).not.toContain('RUN_IDS')
-    expect(verdict).toContain('][0].databaseId')
+    expect(verdict).toContain('.[0].databaseId')
+    // Selected by head SHA, not recency: --status completed EXCLUDES a run
+    // that is re-running but INCLUDES cancelled ones, so "newest" can pick a
+    // stale cancelled sibling and cancel the live evaluation.
+    expect(verdict).toContain('select(.headSha==$sha)')
+    expect(verdict).toContain('select(.conclusion!="cancelled")')
+    expect(verdict).toContain('HEAD_SHA: ${{ needs.evaluate.outputs.sha }}')
+    expect(verdict.indexOf('if [ -z "$HEAD_SHA" ]')).toBeLessThan(verdict.indexOf('gh run list'))
     // The empty-branch guard must still precede the query.
     expect(verdict.indexOf('if [ -z "$BRANCH" ]')).toBeLessThan(verdict.indexOf('gh run list'))
   })
