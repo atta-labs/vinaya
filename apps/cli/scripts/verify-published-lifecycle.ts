@@ -13,16 +13,35 @@
  * (the 0.1.0-era run of this script caught exactly that four ways at once:
  * `demo break`/`waiver` missing, a stale check count, and a missing
  * `.vinaya/doc-owners` — all one root cause, source ahead of publish).
+ *
+ * `--local-pack` runs the same lifecycle against an `npm pack` of THIS
+ * working tree instead of the registry spec (the tarball's `prepack` builds
+ * the bundle and copies the doctrine, so it is the exact artifact a publish
+ * would ship). This is the pre-publish leg: source that is ahead of the
+ * registry is *supposed* to print red rows in the default mode, and this
+ * flag is how to prove those rows go green before any version is published.
+ * One boundary stays as-is: the fixture's generated git hooks pin
+ * `npx @attalabs/vinaya@<version>`, so in this mode `demo break` still
+ * exercises the registry copy of that version if one exists — the hooks'
+ * cache-key pin is itself the behavior under test, not something this
+ * script rewires.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { COMMANDS } from '@atta/vinaya-sources'
 
 const PACKAGE_SPEC = '@attalabs/vinaya@0.4.6'
 const PUBLISHED_VERSION = PACKAGE_SPEC.slice(PACKAGE_SPEC.lastIndexOf('@') + 1)
+
+// What the run is actually testing — the registry spec by default, or the
+// locally packed tarball under `--local-pack`. Set once in `main` before any
+// exercise runs; the `version` exercise and the report header read these.
+let specLabel = PACKAGE_SPEC
+let expectedVersion = PUBLISHED_VERSION
 
 // ---------------------------------------------------------------------------
 // Workspace-root guard — the whole point is testing the PUBLISHED artifact in
@@ -242,11 +261,11 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome> = {
     let jsonOk = false
     try {
       const parsed = JSON.parse(json.stdout) as { schema?: number; data?: { version?: string } }
-      jsonOk = parsed.schema === 1 && parsed.data?.version === PUBLISHED_VERSION
+      jsonOk = parsed.schema === 1 && parsed.data?.version === expectedVersion
     } catch {
       jsonOk = false
     }
-    const ok = plain.status === 0 && plain.stdout.trim() === PUBLISHED_VERSION && json.status === 0 && jsonOk
+    const ok = plain.status === 0 && plain.stdout.trim() === expectedVersion && json.status === 0 && jsonOk
     return { status: ok ? 'pass' : 'fail', detail: `plain: "${plain.stdout.trim()}", --json schema/version: ${jsonOk}` }
   },
 
@@ -456,6 +475,7 @@ async function main(): Promise<void> {
   coverageCheck()
 
   const keep = process.argv.includes('--keep')
+  const localPack = process.argv.includes('--local-pack')
   const root = mkdtempSync(join(tmpdir(), 'vinaya-verify-'))
 
   try {
@@ -466,9 +486,28 @@ async function main(): Promise<void> {
     mkdirSync(installDir, { recursive: true })
     mkdirSync(fixtureDir, { recursive: true })
 
-    process.stdout.write(`Installing ${PACKAGE_SPEC} from the public npm registry into ${installDir}…\n`)
+    // The registry spec by default; under --local-pack, a tarball of this
+    // working tree packed into the scratch root (never into the repo). npm
+    // runs `prepack` (build + bundle-doctrine), so the tarball is the exact
+    // artifact `npm publish` would ship from this tree.
+    let installSource = PACKAGE_SPEC
+    if (localPack) {
+      const cliDir = fileURLToPath(new URL('..', import.meta.url))
+      process.stdout.write(`--local-pack: packing ${cliDir} (prepack: build + bundle-doctrine)…\n`)
+      const packStdout = execFileSync('npm', ['pack', '--pack-destination', root], {
+        cwd: cliDir,
+        encoding: 'utf8'
+      }).trim()
+      const tarball = packStdout.split('\n').at(-1) ?? ''
+      if (!tarball.endsWith('.tgz')) throw new Error(`npm pack did not report a tarball filename (got: "${tarball}")`)
+      installSource = join(root, tarball)
+      expectedVersion = (JSON.parse(readFileSync(join(cliDir, 'package.json'), 'utf-8')) as { version: string }).version
+      specLabel = `local pack ${tarball} (working tree, v${expectedVersion})`
+    }
+
+    process.stdout.write(`Installing ${specLabel} into ${installDir}…\n`)
     execFileSync('npm', ['init', '-y', '--silent'], { cwd: installDir, stdio: 'ignore' })
-    execFileSync('npm', ['install', PACKAGE_SPEC, '--no-audit', '--no-fund', '--silent'], {
+    execFileSync('npm', ['install', installSource, '--no-audit', '--no-fund', '--silent'], {
       cwd: installDir,
       stdio: 'inherit'
     })
@@ -566,7 +605,7 @@ async function main(): Promise<void> {
 }
 
 function printReport(results: Map<string, Outcome>): void {
-  process.stdout.write(`\nvinaya verify-published-lifecycle — against ${PACKAGE_SPEC}\n\n`)
+  process.stdout.write(`\nvinaya verify-published-lifecycle — against ${specLabel}\n\n`)
 
   let pass = 0
   let fail = 0
