@@ -12,7 +12,7 @@ describe('sumLedger', () => {
     const totals = sumLedger(parseLedger(aegUiTokensMd))
     // Two terminal Developer rows: 184327+2150 in, 12502+320 out, 3.4781+0.0512 cost.
     // Two claude.ai rows (Planner, Brief Author) contribute zero — null cells do not inflate.
-    expect(totals.tokensIn).toBe(999999999) // task 11 (#933) CI red-proof — reverted next commit
+    expect(totals.tokensIn).toBe(186477)
     expect(totals.tokensOut).toBe(12822)
     expect(totals.cost).toBeCloseTo(3.5293, 4)
     expect(totals.rows).toBe(4)
