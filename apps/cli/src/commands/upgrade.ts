@@ -27,6 +27,7 @@ import {
   type ManagedBlockOp,
   type Op,
   renderBlock,
+  resolveManagedBlockPath,
   stripBlockFromContent,
   writeFileWithDirs
 } from '../lib/ops.js'
@@ -148,7 +149,7 @@ export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManife
       }
       entries.push({ kind: 'create-file', op, action })
     } else if (op.kind === 'managed-block') {
-      const abs = join(repoRoot, op.path)
+      const abs = resolveManagedBlockPath(repoRoot, op.path)
       const owned = ownedBlocks.has(blockKey(op.path, op.marker))
       let action: BlockAction
       if (!owned) {
@@ -247,7 +248,7 @@ export function renderUpgradeDiff(plan: UpgradePlan): string {
 // Apply
 // ---------------------------------------------------------------------------
 function regenerateBlock(repoRoot: string, op: ManagedBlockOp): void {
-  const abs = join(repoRoot, op.path)
+  const abs = resolveManagedBlockPath(repoRoot, op.path)
   const content = readFileSync(abs, 'utf-8')
   const stripped = stripBlockFromContent(content, op.marker, op.comment)
   if (stripped !== null) {

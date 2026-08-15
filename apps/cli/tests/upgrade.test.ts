@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DOC_OWNERS_PATH } from '@atta/aeg-core'
-import type { DoctorDeps } from '../src/commands/doctor.js'
+import type { DoctorDeps, Finding } from '../src/commands/doctor.js'
 import { runDoctor } from '../src/commands/doctor.js'
 import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
@@ -230,4 +231,107 @@ describe('vinaya upgrade', () => {
     expect(rc).toBe(0)
     expect(readFileSync(join(root, CHECKS_WORKFLOW_PATH), 'utf-8')).toBe('name: hand-edited\n')
   })
+})
+
+// Regression coverage for the ENOTDIR crash found live (task 9, #881): every
+// AEG Developer works in a linked git worktree (`roles/developer.md`), where
+// `<repoRoot>/.git` is a FILE (a gitdir pointer), not a directory. `upgrade`'s
+// managed-block (hook) classification and writes used a bare
+// `join(repoRoot, '.git/hooks/…')`, which — unlike a missing-file miss —
+// `mkdir`s *under a file* and throws `ENOTDIR`, aborting the whole apply
+// before any later op (e.g. VINAYA.md) ever runs. `doctor.ts` already carried
+// the fix (`resolveManagedBlockPath`, `git rev-parse --git-common-dir`);
+// `upgrade` never got it. Fixed by lifting that resolver into `lib/ops.ts` as
+// the single shared implementation doctor, upgrade, init (via
+// `appendBlock`/`createHost`/`planInstall`) and `demo break` all now call.
+describe('vinaya upgrade — raw git hooks inside a linked worktree', () => {
+  function git(cwd: string, args: string[]): string {
+    return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+  }
+
+  async function runDoctorJson(overrides: Partial<DoctorDeps> = {}): Promise<{ findings: Finding[] }> {
+    const original = process.stdout.write.bind(process.stdout)
+    let buf = ''
+    process.stdout.write = ((chunk: string) => {
+      buf += chunk
+      return true
+    }) as typeof process.stdout.write
+    try {
+      await runDoctor(['--json'], doctorDeps(overrides))
+    } finally {
+      process.stdout.write = original
+    }
+    return JSON.parse(buf).data
+  }
+
+  it('completes from a linked worktree, writing hooks into the shared common dir — and from the primary checkout, both landing in the same place — confirmed by `doctor` from the worktree', async () => {
+    git(root, ['init', '-q', '-b', 'main'])
+    git(root, ['config', 'user.email', 'test@example.com'])
+    git(root, ['config', 'user.name', 'Test'])
+    git(root, ['add', 'README.md'])
+    git(root, ['commit', '-q', '-m', 'Chore: initial commit'])
+
+    await runInit(['--yes'], initDeps({ hookDirFor: () => '.git/hooks' }))
+    git(root, ['add', '-A'])
+    // --no-verify: same reasoning as doctor.test.ts's sibling test — the real
+    // hook shells to a network-dependent `npx`; irrelevant to what this test
+    // verifies (upgrade's own path resolution).
+    git(root, ['commit', '-q', '-m', 'Chore: install Vinaya', '--no-verify'])
+
+    // Drift both hooks so `upgrade` has real work to do, not a no-op.
+    writeFileSync(join(root, '.git/hooks/pre-commit'), '#!/usr/bin/env sh\necho stale\n')
+    writeFileSync(join(root, '.git/hooks/pre-push'), '#!/usr/bin/env sh\necho stale\n')
+
+    const wtRoot = join(tmpdir(), `vinaya-upgrade-wt-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    git(root, ['worktree', 'add', wtRoot, '-b', 'task/demo/1'])
+
+    try {
+      // Proof 1 — from the linked worktree: no longer crashes, hooks land in
+      // the shared common dir (the worktree's OWN `.git` is a gitlink file).
+      let wtRc = -1
+      await captureStdout(async () => {
+        wtRc = await runUpgrade(
+          ['--yes'],
+          upgradeDeps({
+            detectRepo: async () => ({ repoRoot: wtRoot, owner: 'acme', repo: 'widget' }),
+            hookDirFor: () => '.git/hooks'
+          })
+        )
+      })
+      expect(wtRc).toBe(0)
+      // The stale content had no vinaya markers, so this is a fresh append
+      // (an adopter's own lines are never clobbered) — the proof here is that
+      // the managed block landed at all (in the SHARED common dir, not
+      // nowhere / not thrown), which a pre-fix ENOTDIR crash would prevent.
+      const hookFromWt = readFileSync(join(root, '.git/hooks/pre-commit'), 'utf-8')
+      expect(hookFromWt).toContain('echo stale')
+      expect(hookFromWt).toContain('vinaya:managed:pre-commit')
+
+      // Proof 2 — from the primary checkout: still works, same destination.
+      writeFileSync(join(root, '.git/hooks/pre-push'), '#!/usr/bin/env sh\necho stale-again\n')
+      let mainRc = -1
+      await captureStdout(async () => {
+        mainRc = await runUpgrade(['--yes'], upgradeDeps({ hookDirFor: () => '.git/hooks' }))
+      })
+      expect(mainRc).toBe(0)
+      const hookFromMain = readFileSync(join(root, '.git/hooks/pre-push'), 'utf-8')
+      expect(hookFromMain).toContain('vinaya:managed:pre-push')
+
+      // Proof 3 — `doctor`, probed FROM THE WORKTREE, reports both hooks
+      // present and matching (not "missing" — the false-negative the naive
+      // join would otherwise still report even after a successful write from
+      // the primary checkout, since doctor's own read path is separately
+      // worktree-aware).
+      const report = await runDoctorJson({
+        detectRepo: async () => ({ repoRoot: wtRoot, owner: 'acme', repo: 'widget' }),
+        hookDirFor: () => '.git/hooks'
+      })
+      const hookFindings = report.findings.filter((f) => f.check === 'hooks')
+      expect(hookFindings.length).toBeGreaterThan(0)
+      expect(hookFindings.some((f) => f.message.includes('is missing'))).toBe(false)
+      expect(hookFindings.every((f) => f.severity === 'ok')).toBe(true)
+    } finally {
+      git(root, ['worktree', 'remove', '--force', wtRoot])
+    }
+  }, 20_000) // real `runInit` + `worktree add` + two `runUpgrade`s + `runDoctor` — bun's 5s default is too tight on a cold CI runner
 })

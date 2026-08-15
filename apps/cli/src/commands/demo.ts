@@ -20,6 +20,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { detectGitRepo, resolveHookDir } from '../lib/detect.js'
+import { resolveManagedBlockPath } from '../lib/ops.js'
 
 const DEMO_BRANCH_PREFIX = 'vinaya/demo-break-'
 const FIXTURE_PATH = '.vinaya-demo-brief.md'
@@ -216,7 +217,7 @@ export async function runDemoBreak(repoRoot: string, args: string[]): Promise<nu
   const keep = args.includes('--keep')
 
   const hookDir = resolveHookDir(repoRoot)
-  const hookPath = join(repoRoot, hookDir, 'pre-commit')
+  const hookPath = resolveManagedBlockPath(repoRoot, `${hookDir}/pre-commit`)
   if (!existsSync(hookPath)) {
     console.error('Vinaya hooks are not installed in this repo. Run `vinaya init` first.')
     return 1
