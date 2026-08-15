@@ -164,7 +164,8 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'doctrine',
-    description: "Print the absolute path of the bundled doctrine's front door (aeg-root/skills/aeg/SKILL.md) on this machine",
+    description:
+      "Print the absolute path of the bundled doctrine's front door (aeg-root/skills/aeg/SKILL.md) on this machine",
     flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1) — `{ root, entry }`' }],
     details: [
       'The committed root `VINAYA.md` pointer names the `@attalabs/vinaya` package, never a filesystem path — where the package sits is a property of each machine, not of the repo, and the pointer is committed for every clone. This command is the read-time resolution step the pointer hands the reader: it resolves the installed package\'s own bundled `aeg-root/` wherever the CLI physically sits and prints the front door\'s absolute path, so `cat "$(vinaya doctrine)"` opens the doctrine on any machine at any version.',

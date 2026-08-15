@@ -3,24 +3,26 @@
 
 This repo is governed by Vinaya. The full, canonical doctrine (roles,
 contracts, the state machine, the ring gates) ships inside the installed
-`@attalabs/vinaya` npm package itself — no in-repo copy to drift, and
-`vinaya upgrade` regenerates this pointer if the install location changes.
+`@attalabs/vinaya` npm package itself — no in-repo copy to drift. This
+pointer names that package, never a filesystem path: where a package sits
+is a property of one machine, and this file is committed for every clone.
 
 An agent working in this repo follows the governed flow by reading two things:
 
 1. **This pointer** — the tool-agnostic entry point at the conventional
-   reading-order path (repo root). It names where the doctrine lives.
-   Start at `/Users/daniboomerang/.npm/_npx/219b91b79de1fca0/node_modules/@attalabs/vinaya/aeg-root/skills/aeg/SKILL.md` — the doctrine's own
-   front door, read first every session regardless of role.
+   reading-order path (repo root). The doctrine's own front door is
+   `aeg-root/skills/aeg/SKILL.md` inside that package — read first every
+   session regardless of role. Resolve it on this machine with:
+
+       node apps/cli/dist/index.js doctrine
+
+   It prints the front door's absolute path on this machine (build the
+   CLI first if that file is missing: `bun run --cwd apps/cli build`);
+   the `aeg-root/` directory above it is the full doctrine.
 2. **`vinaya.config.json`** — the ruleset the gates enforce: rings, custom checks,
    and the brief schema a PR/Issue body must satisfy.
 
 Live task status is derived from the forge (Issues, labels, comments) via
 `vinaya check` — it is never written into a file here.
-
-To read the doctrine text, it is bundled at this install's own resolved
-path:
-
-    /Users/daniboomerang/.npm/_npx/219b91b79de1fca0/node_modules/@attalabs/vinaya/aeg-root
 
 `vinaya doctor` reports what is installed in this repo.

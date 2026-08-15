@@ -16,6 +16,7 @@ npx @attalabs/vinaya init        # or: pnpm dlx / yarn dlx / bunx
 |---------|-------------|
 | `vinaya help` | Usage text |
 | `vinaya version` | Print the installed CLI version (`--json` for the enveloped machine form) |
+| `vinaya doctrine` | Print the absolute path of the bundled doctrine's front door (`aeg-root/skills/aeg/SKILL.md`) on this machine. The committed root `VINAYA.md` pointer names the package, never a filesystem path — this command is the read-time resolution step it hands the reader. `--json` for the enveloped `{ root, entry }` form. |
 | `vinaya check <name> \| --all` | Run one check, or every registered check (core + `vinaya.config.json`-registered). `--json` for the enveloped `{ checks: CheckOutcome[] }` form; `--diff-only` scopes `scope: 'diff'` checks to changed files; `--parallel[=n]` caps concurrency (default: cpu-derived). Findings always print as the check contract's JSON lines on stderr, regardless of `--json`. Exit 0 iff every check passed. |
 | `vinaya new check <name>` | Scaffold a self-contained custom check into `./scripts/vinaya-checks/<name>.ts`, ready to register in `vinaya.config.json` |
 
