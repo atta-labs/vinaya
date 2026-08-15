@@ -19,7 +19,7 @@ AEG "init" is not software — it is a **state the repo is in**. A repo is runni
 2. **The living-state layer** — forge-native. State only, never the model: active/blocked/next is derived from Issue/branch/PR state, and completed-work history, lessons, per-project operational state, and ratification items live in `git log`/PR history, pinned Issues, and the `needs:principal-input` label respectively.
 3. **The enforcement layer (referenced by the model, so it must travel with it):**
    - `.aeg/packages` — the static collision-domain list (conflicts are package-level, `tranche-model.md` §5).
-   - the `verify-docs` script (`packages/aeg-core/bin/verify-docs.ts`), run as a step of the `aeg-gate-suite` job in `.github/workflows/forge-lifecycle.yml` — the doc-tier CI gate. The standalone `verify-docs.yml` workflow it once had was consolidated into that job and deleted.
+   - the `verify-docs` script (`packages/aeg-core/bin/verify-docs.ts`) — the doc-tier gate. In this repo it runs at authoring time (`open-pr.ts` / `bun run verify-docs --pr`); the CI-side counterparts are the `brief-shape`/`doc-coverage` checks in `.github/workflows/vinaya-checks.yml`. (In the attalabs reference implementation it ran as a step of that repo's consolidated gate job.)
    - the Issue template restricting Issues to deps / conflicts / project label / ticket link, and the CI check rejecting forbidden planning fields (`tranche-model.md` §9.3).
    - the generated agent-surface skill view (e.g. `.claude/skills/`) — derived from `aeg-root/skills/`.
 4. At least one tranche file exists, and the role docs are reachable.

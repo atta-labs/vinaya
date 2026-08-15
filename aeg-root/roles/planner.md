@@ -260,7 +260,7 @@ Once an Issue is assigned (`todo`), a Developer picks it up: reads the rationale
 
 ## Step 0 — creating the tranche itself needs no worktree, no PR, no commit
 
-**Creating a Milestone and cutting labeled Issues are forge actions, not repo-file changes — there is nothing to commit.** The old requirement to open a `plan/<tranche>` worktree + PR existed because the topology file was a repo file, and every repo-file change reaches `main` through a worktree branch + PR + green merge, same as a Developer's. That still applies **only if this planning act also writes an actual repo file** — most commonly a spec change. If your plan produces no repo-file change at all (the common case — Milestone + Issues only), skip this section entirely: no worktree, no plan PR, nothing for `.husky` or `check-pr-green.sh` to gate.
+**Creating a Milestone and cutting labeled Issues are forge actions, not repo-file changes — there is nothing to commit.** The old requirement to open a `plan/<tranche>` worktree + PR existed because the topology file was a repo file, and every repo-file change reaches `main` through a worktree branch + PR + green merge, same as a Developer's. That still applies **only if this planning act also writes an actual repo file** — most commonly a spec change. If your plan produces no repo-file change at all (the common case — Milestone + Issues only), skip this section entirely: no worktree, no plan PR, nothing for the git hooks or a merge gate to gate.
 
 When a plan **does** write a repo file — a spec change, most often — open it the same way any doc change does: a worktree off the main branch, commit, pull request:
 
@@ -268,7 +268,7 @@ When a plan **does** write a repo file — a spec change, most often — open it
 git worktree add .worktrees/plan/<tranche> -b plan/<tranche> origin/main && cd .worktrees/plan/<tranche> && bun install --frozen-lockfile --silent
 ```
 
-The `.husky/pre-commit` / `pre-push` guards refuse a direct commit or push to `main`, and the merge-gate hook (`.claude/hooks/check-pr-green.sh`) refuses a red merge — so this is enforced, not merely asked, for the cases where a file is actually being written.
+In the attalabs reference implementation, pre-commit/pre-push guards refuse a direct commit or push to `main` and a session merge-gate hook refuses a red merge. This repo has neither local guard: a direct push to `main` is detected after the fact by the ring-2 `direct-main-push` audit, and a red merge is held by the required review-gate check plus branch protection — detected-and-gated on the forge side rather than refused locally.
 
 **Only one open plan PR per tranche, at a time — mechanically enforced (task 19), for the case where a plan PR exists at all.** Two concurrent plan PRs for the same tranche, each cut from `origin/main` before the other merged, is the race that produced two competing plan PRs for the same tranche. `packages/aeg-core/bin/open-pr.ts`'s single-plan-PR guard (`checkSinglePlanPr`) still refuses outright to open or edit a plan PR whose diff touches a tranche's topology file while another OPEN PR's diff already touches it — relevant now mainly to the historical `completed/*.md` files, since new tranches no longer have a live topology file to race on.
 
