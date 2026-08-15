@@ -93,6 +93,18 @@ Every refusal returns `null`, which emits the published shape. For an ordinary a
 
 Two assumptions are deliberately outside the predicate, and they fail later rather than at detection: the vendored shape runs `bun`, and it runs the member's `build` script. A vendoring repo on npm or pnpm workspaces, or one whose member declares no `build`, gets a generated workflow that fails at the build step. Both were left out on purpose — the predicate is exactly npm's own misresolution condition (§ The two shapes) and narrowing it further would hand such a repo the `npx` line that cannot work either. Neither case is diagnosed today; `vinaya doctor` reporting a refused-but-present member is the natural home for it.
 
+## How the published version is produced
+
+`@attalabs/vinaya`'s version is not decided by this package's own changes alone. The build **inlines** the engine — `bun run --cwd apps/cli build` produces a `dist/index.js` with zero `@atta/aeg-core` references, because the engine's source is bundled into it rather than required at runtime. So an engine-only commit changes the CLI's shipped bytes exactly as much as a commit inside `apps/cli` does, even though `@atta/aeg-core`, `@atta/vinaya-sources` and `@atta/typescript-config` sit in `apps/cli/package.json`'s `devDependencies`, not `dependencies` — that placement is deliberate (they are a build-time input, not a runtime one) and does not change.
+
+Changesets' default cascade cannot see that. `@changesets/assemble-release-plan` hard-codes every `devDependencies` edge to bump type `"none"` regardless of range or config — `updateInternalDependents: "always"` does not affect this, and no `dependencies`/`peerDependencies` edge exists to carry it instead. Left at the default, a changeset against `@atta/aeg-types` would bump the engine packages and never touch `@attalabs/vinaya`, silently shipping an inlined-bytes change under an unchanged version number.
+
+`.changeset/config.json` closes the gap with a `fixed` group — `@atta/aeg-types`, `@atta/aeg-forge-state`, `@atta/aeg-core`, `@atta/vinaya-sources`, `@attalabs/vinaya` — which is a membership relation, not a dependency-graph traversal: `matchFixedConstraint` adds every group member to the release plan, at the group's current-highest version, the moment *any* member is releasing, independent of `dependencies` vs `devDependencies`. `@atta/typescript-config` is left out of the group and out of the released set entirely (`ignore`) — it is a devDependency of every package here but contributes no bytes to any bundle, so folding it in would bump the CLI on pure tooling noise.
+
+The four engine packages stay `private: true` — the extraction's entire point — and `privatePackages: { version: true, tag: false }` keeps it that way: `version: true` lets Changesets assign them a version at all (an unversioned private package cannot participate in the group's highest-version calculation or its own release entry), while `tag: false` means `changeset publish` never tags or publishes them. Their version numbers are internal bookkeeping shared with the CLI's, nothing more.
+
+`.github/workflows/release.yml` opens a "Version Packages" PR from pending changesets on push to `main`, running the same version-plan logic described above. It carries no `publish` step and no publish credentials, so it can only ever propose the version bump — publishing is a separate, later addition.
+
 ## What self-hosting costs, stated plainly
 
 A repo on the vendored shape runs the CLI **from its own working tree**. Its CI therefore exercises the code in the pull request rather than a published copy predating it — normally an improvement, and the reason to prefer this shape even where `npx` would work.
