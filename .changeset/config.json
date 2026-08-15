@@ -1,0 +1,23 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "fixed": [
+    [
+      "@atta/aeg-types",
+      "@atta/aeg-forge-state",
+      "@atta/aeg-core",
+      "@atta/vinaya-sources",
+      "@attalabs/vinaya"
+    ]
+  ],
+  "linked": [],
+  "access": "restricted",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": ["@atta/typescript-config"],
+  "privatePackages": {
+    "version": true,
+    "tag": false
+  }
+}
