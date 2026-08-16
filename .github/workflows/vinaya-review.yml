@@ -14,7 +14,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
-# One run per pull request, always. Several `types:` above can fire in the
+# One run per pull request COMMIT, always. Several `types:` above can fire in the
 # same instant — `vinaya pr create` opens the PR and applies its tranche
 # label immediately after, so `opened` and `labeled` arrive together and
 # GitHub starts TWO runs of this workflow. Both then report under the same
@@ -24,11 +24,20 @@ on:
 # in the same second, one success, one failure, PR blocked with both reviews
 # already approved.
 #
+# The key carries the head SHA as well as the PR number, and that second half
+# is load-bearing. Keyed on the PR alone, every run for that PR shares one
+# group — including a rerun of an EARLIER commit's run, which the verdict
+# retrigger performs. Measured on PR #22: re-running the old commit's run
+# (attempt 4) cancelled the current commit's run after one second, so a push
+# appeared to produce a cancelled gate. Runs for different commits must not be
+# able to cancel each other; runs for the SAME commit still collapse, which is
+# the duplicate this group exists to remove.
+#
 # `cancel-in-progress` is safe here and not merely tolerable: the job is a
 # pure re-evaluation of forge state that takes seconds, so a cancelled run had
 # nothing to lose and the survivor reads strictly fresher state.
 concurrency:
-  group: vinaya-review-${{ github.event.pull_request.number || github.ref }}
+  group: vinaya-review-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:

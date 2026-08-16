@@ -469,19 +469,38 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       // Keyed per PR, not per workflow — a global group would serialize
       // unrelated pull requests.
       expect(wf).toContain('github.event.pull_request.number')
+      // The SHA half is load-bearing: keyed on the PR alone, a rerun of an
+      // EARLIER commit's run (which the verdict retrigger performs) lands in
+      // the same group and cancels the CURRENT commit's run. Measured on
+      // PR #22 — the current run was cancelled after one second.
+      expect(wf).toContain('github.event.pull_request.head.sha')
     }
   })
 
-  it('the verdict retrigger re-runs EVERY matching run, not just the first', async () => {
-    // Re-running only `[0]` cannot heal a repo that already carries duplicate
-    // runs from before the concurrency group existed: the twin keeps a stale
-    // red forever, because each run only ever re-evaluates itself.
+  it('the verdict retrigger re-runs ONE run — re-running all fights the concurrency group', async () => {
+    // Re-running every matching run puts them all in one concurrency group at
+    // once; `cancel-in-progress` then kills all but the last, and cancelled
+    // runs report red. Measured on PR #21: one verdict re-ran four runs, three
+    // were cancelled, and a PR with a clean APPROVE showed three reds.
+    // The concurrency group prevents duplicates; this step only has to tell
+    // the one surviving run that a verdict landed.
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const verdict = generated().get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
 
-    expect(verdict).not.toContain('][0].databaseId')
-    expect(verdict).toContain('.[].databaseId')
-    expect(verdict).toContain('for RUN_ID in $RUN_IDS')
+    expect(verdict).not.toContain('for RUN_ID in')
+    expect(verdict).not.toContain('RUN_IDS')
+    expect(verdict).toContain('.[0].databaseId')
+    // Selected by head SHA, not recency: --status completed EXCLUDES a run
+    // that is re-running but INCLUDES cancelled ones, so "newest" can pick a
+    // stale cancelled sibling and cancel the live evaluation.
+    expect(verdict).toContain('--commit "$HEAD_SHA"')
+    // gh's --jq is a single-expression flag, NOT a jq passthrough: --arg is
+    // swallowed as the expression and gh exits 1, killing the step under
+    // bash -e before the empty-RUN_ID no-op can run.
+    expect(verdict).not.toContain('--arg')
+    expect(verdict).toContain('select(.conclusion!="cancelled")')
+    expect(verdict).toContain('HEAD_SHA: ${{ needs.evaluate.outputs.sha }}')
+    expect(verdict.indexOf('if [ -z "$HEAD_SHA" ]')).toBeLessThan(verdict.indexOf('gh run list'))
     // The empty-branch guard must still precede the query.
     expect(verdict.indexOf('if [ -z "$BRANCH" ]')).toBeLessThan(verdict.indexOf('gh run list'))
   })

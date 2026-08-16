@@ -170,7 +170,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
 
-# One run per pull request, always. Several \`types:\` above can fire in the
+# One run per pull request COMMIT, always. Several \`types:\` above can fire in the
 # same instant — \`vinaya pr create\` opens the PR and applies its tranche
 # label immediately after, so \`opened\` and \`labeled\` arrive together and
 # GitHub starts TWO runs of this workflow. Both then report under the same
@@ -180,11 +180,20 @@ on:
 # in the same second, one success, one failure, PR blocked with both reviews
 # already approved.
 #
+# The key carries the head SHA as well as the PR number, and that second half
+# is load-bearing. Keyed on the PR alone, every run for that PR shares one
+# group — including a rerun of an EARLIER commit's run, which the verdict
+# retrigger performs. Measured on PR #22: re-running the old commit's run
+# (attempt 4) cancelled the current commit's run after one second, so a push
+# appeared to produce a cancelled gate. Runs for different commits must not be
+# able to cancel each other; runs for the SAME commit still collapse, which is
+# the duplicate this group exists to remove.
+#
 # \`cancel-in-progress\` is safe here and not merely tolerable: the job is a
 # pure re-evaluation of forge state that takes seconds, so a cancelled run had
 # nothing to lose and the survivor reads strictly fresher state.
 concurrency:
-  group: vinaya-checks-\${{ github.event.pull_request.number || github.ref }}
+  group: vinaya-checks-\${{ github.event.pull_request.number || github.ref }}-\${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -237,7 +246,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
-# One run per pull request, always. Several \`types:\` above can fire in the
+# One run per pull request COMMIT, always. Several \`types:\` above can fire in the
 # same instant — \`vinaya pr create\` opens the PR and applies its tranche
 # label immediately after, so \`opened\` and \`labeled\` arrive together and
 # GitHub starts TWO runs of this workflow. Both then report under the same
@@ -247,11 +256,20 @@ on:
 # in the same second, one success, one failure, PR blocked with both reviews
 # already approved.
 #
+# The key carries the head SHA as well as the PR number, and that second half
+# is load-bearing. Keyed on the PR alone, every run for that PR shares one
+# group — including a rerun of an EARLIER commit's run, which the verdict
+# retrigger performs. Measured on PR #22: re-running the old commit's run
+# (attempt 4) cancelled the current commit's run after one second, so a push
+# appeared to produce a cancelled gate. Runs for different commits must not be
+# able to cancel each other; runs for the SAME commit still collapse, which is
+# the duplicate this group exists to remove.
+#
 # \`cancel-in-progress\` is safe here and not merely tolerable: the job is a
 # pure re-evaluation of forge state that takes seconds, so a cancelled run had
 # nothing to lose and the survivor reads strictly fresher state.
 concurrency:
-  group: vinaya-review-\${{ github.event.pull_request.number || github.ref }}
+  group: vinaya-review-\${{ github.event.pull_request.number || github.ref }}-\${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -319,6 +337,7 @@ jobs:
       issues: read
     outputs:
       branch: \${{ steps.pr.outputs.branch }}
+      sha: \${{ steps.pr.outputs.sha }}
     steps:
       # issue_comment payloads carry no PR head SHA/branch — resolve them
       # before checkout, and check out that exact commit (the event's default
@@ -370,6 +389,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Review gate (verdict evaluation)
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           BRANCH: \${{ needs.evaluate.outputs.branch }}
+          HEAD_SHA: \${{ needs.evaluate.outputs.sha }}
         run: |
           # \`--branch ""\` is NOT a no-op: gh drops the filter and lists runs
           # across every branch, so the rerun would land on an unrelated PR's
@@ -380,29 +400,57 @@ ${vinayaSetupSteps(selfHost)}      - name: Review gate (verdict evaluation)
             echo "No branch resolved (the evaluate job failed before resolving it) - nothing to re-run."
             exit 0
           fi
-          # EVERY completed pull_request run, not just the newest. A repo
-          # whose workflows predate the \`concurrency\` group can carry more
-          # than one run under the same check name; re-running only the first
-          # leaves its twin holding a stale red that no verdict ever clears,
-          # and the merge box counts both. Re-running all of them is
-          # idempotent — a run already reflecting the current verdicts simply
-          # reaches the same conclusion again.
-          RUN_IDS=$(gh run list --repo "\${{ github.repository }}" \\
-            --workflow vinaya-review.yml --branch "$BRANCH" \\
-            --status completed \\
-            --json databaseId,event \\
-            --jq '[.[] | select(.event=="pull_request")] | .[].databaseId')
-          if [ -z "$RUN_IDS" ]; then
-            echo "No completed pull_request run of vinaya-review.yml for branch $BRANCH - nothing to re-run."
+          # Same guard, same producer: an empty SHA would make the selection
+          # below match nothing and silently skip the rerun a verdict just
+          # earned. Say so instead.
+          if [ -z "$HEAD_SHA" ]; then
+            echo "No head SHA resolved (the evaluate job failed before resolving it) - nothing to re-run."
             exit 0
           fi
-          for RUN_ID in $RUN_IDS; do
-            echo "Re-running vinaya-review.yml run $RUN_ID"
-            # A run already re-running is not an error worth failing the job
-            # over: the point is that every run ends up re-evaluated, and one
-            # already in flight will be.
-            gh run rerun "$RUN_ID" --repo "\${{ github.repository }}" || true
-          done
+          # Select by HEAD SHA, never by recency. "Newest completed" looks
+          # right and is not: \`--status completed\` excludes a run that is
+          # currently re-running but INCLUDES cancelled ones, so a verdict
+          # arriving while the current head's run is still in flight can
+          # select a stale cancelled sibling, rerun it, and — because the
+          # review workflow's concurrency group is keyed per pull request —
+          # cancel the live evaluation it was supposed to refresh.
+          #
+          # The run for this head SHA is the only one whose conclusion gates
+          # the merge; runs for earlier commits are scoped to those commits
+          # and never gate the current head. Cancelled runs are excluded for
+          # the same reason, not a mechanical one — a rerun with nothing else
+          # in its group completes normally. A cancellation here means the
+          # \`opened\`+\`labeled\` collapse discarded that run in favour of a
+          # sibling on the same commit, and it is the survivor whose
+          # conclusion the merge box reads.
+          # \`--commit\` filters server-side, deliberately. gh's \`--jq\` is a
+          # single-expression flag of its own, NOT a passthrough to jq, so jq's
+          # variable-binding flag cannot be used with it: pflag swallows that
+          # flag as the expression and gh exits 1 on the stray token — which
+          # under \`bash -e\` kills the step before the empty-RUN_ID no-op can
+          # run, so every verdict reddens and nothing reruns. Filter on the
+          # server and keep the jq expression free of variables.
+          RUN_ID=$(gh run list --repo "\${{ github.repository }}" \\
+            --workflow vinaya-review.yml --branch "$BRANCH" \\
+            --commit "$HEAD_SHA" \\
+            --json databaseId,event,status,conclusion \\
+            --jq '[.[]
+                 | select(.event=="pull_request")
+                 | select(.status=="completed")
+                 | select(.conclusion!="cancelled")]
+               | .[0].databaseId // empty')
+          if [ -z "$RUN_ID" ]; then
+            echo "No completed, non-cancelled pull_request run of vinaya-review.yml for $HEAD_SHA - nothing to re-run."
+            exit 0
+          fi
+          echo "Re-running vinaya-review.yml run $RUN_ID for $HEAD_SHA"
+          # Two verdict comments landing together run two retriggers in
+          # parallel (this workflow has no concurrency group, deliberately —
+          # a queued retrigger is a delayed one). Both can select the same
+          # run, and the loser gets "already queued". That is the mechanism
+          # working, not a failure worth reddening the step over; a real
+          # 403 or an expired run still surfaces in the log.
+          gh run rerun "$RUN_ID" --repo "\${{ github.repository }}" || echo "rerun declined (already queued, or run too old) - the other verdict's retrigger covers it"
 `
 }
 

@@ -8,15 +8,19 @@ This repo's CI is three pieces, not just the generated one below: the four `vina
 
 ## One run per pull request
 
-Both `pull_request`-triggered workflows (`vinaya-checks`, `vinaya-review`) carry a `concurrency` group keyed on the pull request number, with `cancel-in-progress: true`.
+Both `pull_request`-triggered workflows (`vinaya-checks`, `vinaya-review`) carry a `concurrency` group keyed on the pull request number **and its head commit**, with `cancel-in-progress: true`.
 
 This is not tuning. Several of the `types:` each workflow listens for can fire in the same instant — `vinaya pr create` opens the pull request and applies its tranche label immediately after, so `opened` and `labeled` arrive together and GitHub starts **two runs of the same workflow**. Both report under the same check name, and the merge box counts both, so one can go green while its twin holds a stale red. No later verdict clears it: each run only ever re-evaluates itself. Measured on `atta-labs/vinaya#18` — two runs created in the same second, one success and one failure, the pull request blocked with both reviews already approved.
+
+The head commit belongs in the key, and leaving it out is a live failure rather than a missed optimisation. Keyed on the pull request alone, every run for that pull request shares one group — including a rerun of an **earlier** commit's run, which the verdict retrigger performs. Measured: re-running the previous commit's run cancelled the current commit's run one second after it started, so a push appeared to produce a cancelled gate. Runs for different commits must not be able to cancel each other; runs for the same commit still collapse, which is the duplicate this group exists to remove.
 
 `cancel-in-progress` is safe here rather than merely tolerable: these jobs are pure re-evaluations of forge state that take seconds, so a cancelled run had nothing to lose and the survivor reads strictly fresher state.
 
 The `issue_comment`-triggered verdict workflow deliberately has **no** concurrency group. It is not a source of duplicate runs, and serializing it would delay the retrigger that exists to clear a red gate promptly.
 
-That retrigger re-runs **every** completed `pull_request` run of the review workflow, not the newest. A repo whose generated workflows predate this concurrency group can still be carrying duplicates, and re-running only one leaves its twin red forever. Re-running is idempotent — a run already reflecting the current verdicts reaches the same conclusion again.
+That retrigger re-runs exactly one run of the review workflow: **the one for the pull request's current head commit**, excluding cancelled runs. Selecting by recency instead is subtly wrong — `--status completed` excludes a run that is currently re-running but *includes* cancelled ones, so a verdict arriving while the head's run is still in flight can select a stale cancelled sibling, rerun it, and have the concurrency group cancel the live evaluation it meant to refresh. Re-running every match is actively harmful once the concurrency group exists: completed runs accumulate normally across pushes, so re-running all of them puts several into one group at once and `cancel-in-progress` kills all but the last — cancelled runs report red. Measured: one verdict re-ran four runs, three were cancelled, and a pull request holding a clean approval showed three reds.
+
+The division of labour is the point. The **concurrency group** guarantees one live run per pull request; the **retrigger** only has to tell that one run a verdict landed. Older runs belong to earlier commits, and a check run is scoped to the commit it ran on, so they do not gate the current head.
 
 **What deliberately does not change: the gate still fails when no verdict exists.** "Nobody has reviewed this" must block a merge; reporting it as neutral would let an unreviewed pull request through, which is the thing the gate exists to prevent. The defect was never the failure — it was that a second run could not be told the news.
 
