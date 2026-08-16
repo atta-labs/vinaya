@@ -189,6 +189,13 @@ export async function fetchForgeFacts(input: FetchForgeFactsInput): Promise<Forg
  * The branch-based _prs query is kept as a fallback for in-flight tasks whose
  * PR is on the conventionally-named branch but the issue is still open.
  *
+ * The same ClosedEvent node also carries `actor { login }` — the GitHub user
+ * who performed the close, independent of `closer` (which is null on a
+ * manual close). This is the sole anchor for recognizing a hand-closed
+ * dependency as a resolved one (task `vinaya-engine-v1` 21, #99); fetched in
+ * the same batched query rather than a second round-trip per task, same
+ * discipline as every other fact here.
+ *
  * Costs ~3 nodes per task. For 8 tasks that's ~24 nodes / 1 HTTP call;
  * comfortably under GitHub's per-hour points budget (default 5000).
  */
@@ -209,6 +216,7 @@ function buildBatchQuery(tranche: string, tasks: Array<TaskRef & { issue: number
       timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) {
         nodes {
           ... on ClosedEvent {
+            actor { login }
             closer {
               ... on PullRequest {
                 number
@@ -274,7 +282,7 @@ type IssueNode = {
    * `first`/`last`, so `last: 1`'s single result still lands at `nodes[0]`.
    */
   timelineItems: {
-    nodes: Array<{ closer: PrCloserNode }>
+    nodes: Array<{ closer: PrCloserNode; actor: { login: string } | null }>
   }
 } | null
 
@@ -310,7 +318,8 @@ function extractRawFromResponse(repository: NonNullable<BatchResponse['repositor
   // Commit, in which case the `... on PullRequest` fragment yields an empty
   // object, not `null`. Guard on `number`/`url` (same shape-check `prRefs`
   // below already applies) so that empty object doesn't win over `branchPr`.
-  const rawCloser = issue?.timelineItems?.nodes?.[0]?.closer ?? null
+  const timelineNode = issue?.timelineItems?.nodes?.[0]
+  const rawCloser = timelineNode?.closer ?? null
   const closingPr =
     rawCloser && typeof rawCloser.number === 'number' && typeof rawCloser.url === 'string' ? rawCloser : null
   const branchPr = prs && prs.nodes.length > 0 && prs.nodes[0] ? prs.nodes[0] : null
@@ -326,7 +335,8 @@ function extractRawFromResponse(repository: NonNullable<BatchResponse['repositor
         }
       : null,
     refExists: Boolean(ref && ref.name.length > 0),
-    pullRequest: closingPr ?? branchPr
+    pullRequest: closingPr ?? branchPr,
+    closedByActor: timelineNode?.actor?.login ?? null
   }
 }
 

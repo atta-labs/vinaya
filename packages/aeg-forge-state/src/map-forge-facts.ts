@@ -21,6 +21,10 @@
  *                    Drives honest terminal derivation: a closed-no-
  *                    merge issue derives `dropped` (not_planned) or
  *                    `incoherent` (completed / null), never `todo`.
+ *   closedByActor  ← raw.closedByActor, passed through unchanged. Never
+ *                    interpreted here — recognizing a hand-closed dependency
+ *                    is a consumer-side judgement (`dispatch-gate.ts`,
+ *                    `coherence-checks.ts` A1), not a mapping concern.
  *
  * Missing issue → return `null` (caller omits the task from the map, which
  * `deriveTranche` treats as `todo` — tranche tasks are minimum `todo`).
@@ -48,7 +52,8 @@ export function mapForgeFacts(raw: RawTaskFacts): ForgeFacts | null {
     reviewDecision: mapReviewDecision(raw.pullRequest?.reviewDecision),
     stateReason: mapStateReason(raw.issue.stateReason),
     closedAt: raw.issue.closedAt ?? null,
-    mergedAt: raw.pullRequest?.mergedAt ?? null
+    mergedAt: raw.pullRequest?.mergedAt ?? null,
+    closedByActor: raw.closedByActor ?? null
   }
 }
 
