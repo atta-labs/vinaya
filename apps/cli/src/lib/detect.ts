@@ -4,12 +4,12 @@
 // into a command line.
 
 import { execFile } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { type HookDir, TRACKED_HOOK_DIR } from './artifacts.js'
 import type { ManagedManifest } from './config.js'
-import { type LabelGateway, resolveManagedBlockPath } from './ops.js'
+import { blockStripLeavesEmpty, type LabelGateway, resolveManagedBlockPath, stripBlockFromContent } from './ops.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -86,19 +86,86 @@ export async function branchProtectionConfigured(owner: string, repo: string): P
 }
 
 /**
- * Non-sample hook files in the repo's REAL hooks directory (resolved through
- * `resolveManagedBlockPath`, so a linked worktree probes the shared common
- * dir, not its gitdir-pointer file). These are hooks that fire today; routing
- * `core.hooksPath` elsewhere would silently disable every one of them.
+ * The hook names git actually invokes (githooks(5)). Anything else in
+ * `.git/hooks` — an editor backup, a stray `husky.sh`, a subdirectory — never
+ * fires and must not flip the install to the legacy layout or block a
+ * migration with a false "active raw hook" refusal.
+ */
+const KNOWN_GIT_HOOKS = new Set([
+  'applypatch-msg',
+  'pre-applypatch',
+  'post-applypatch',
+  'pre-commit',
+  'pre-merge-commit',
+  'prepare-commit-msg',
+  'commit-msg',
+  'post-commit',
+  'pre-rebase',
+  'post-checkout',
+  'post-merge',
+  'pre-push',
+  'pre-receive',
+  'update',
+  'proc-receive',
+  'post-receive',
+  'post-update',
+  'reference-transaction',
+  'push-to-checkout',
+  'pre-auto-gc',
+  'post-rewrite',
+  'sendemail-validate',
+  'fsmonitor-watchman',
+  'p4-changelist',
+  'p4-prepare-changelist',
+  'p4-post-changelist',
+  'p4-pre-submit',
+  'post-index-change'
+])
+
+/**
+ * Hook files git would actually RUN from the repo's real hooks directory
+ * (resolved through `resolveManagedBlockPath`, so a linked worktree probes
+ * the shared common dir, not its gitdir-pointer file): a known githooks(5)
+ * name, a regular file, executable — git's own firing conditions. These are
+ * hooks that fire today; routing `core.hooksPath` elsewhere would silently
+ * disable every one of them.
  */
 export function activeRawHooks(repoRoot: string): string[] {
   const dir = resolveManagedBlockPath(repoRoot, '.git/hooks')
   if (!existsSync(dir)) return []
   try {
-    return readdirSync(dir).filter((f) => !f.endsWith('.sample'))
+    return readdirSync(dir).filter((f) => {
+      if (!KNOWN_GIT_HOOKS.has(f)) return false
+      try {
+        const st = statSync(join(dir, f))
+        return st.isFile() && (st.mode & 0o111) !== 0
+      } catch {
+        return false
+      }
+    })
   } catch {
     return []
   }
+}
+
+/**
+ * `activeRawHooks` minus hosts that are entirely vinaya's own — a stale
+ * legacy host whose only content is the marker-delimited managed block named
+ * after the hook (upgrade's residue sweep deletes exactly these). What
+ * remains is the set arming `core.hooksPath` would genuinely disable; both
+ * `upgrade`'s already-migrated arm guard and `doctor`'s inert-clone message
+ * read THIS list, from one implementation, so the two cannot drift apart.
+ */
+export function foreignRawHooks(repoRoot: string): string[] {
+  return activeRawHooks(repoRoot).filter((f) => {
+    const abs = resolveManagedBlockPath(repoRoot, `.git/hooks/${f}`)
+    try {
+      const stripped = stripBlockFromContent(readFileSync(abs, 'utf-8'), f, 'hash')
+      return stripped === null || !blockStripLeavesEmpty(stripped)
+    } catch {
+      return true
+    }
+  })
 }
 
 /**

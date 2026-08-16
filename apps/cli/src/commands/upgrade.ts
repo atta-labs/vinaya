@@ -20,6 +20,7 @@ import { MANAGED_MANIFEST_VERSION, type ManagedManifest, VinayaConfigSchema } fr
 import {
   activeRawHooks,
   detectGitRepo,
+  foreignRawHooks,
   hookDirFromManifest,
   readCoreHooksPath,
   type RepoInfo,
@@ -127,6 +128,10 @@ function writeManifestVersion(repoRoot: string, manifest: ManagedManifest): void
 // own: an adopter's own lines in a hook host, a host at a manifest path with
 // no vinaya block, or any other active raw hook in `.git/hooks`. Same
 // refuse-if-foreign ethos as init — never trade the adopter's hooks for ours.
+// The already-migrated branch carries the SAME arm guard: the manifest saying
+// "tracked" records the migrating machine's situation, not this machine's,
+// and raw hooks never travel with a clone — so arming here still refuses
+// while `foreignRawHooks` is non-empty (reviewer finding, PR #24 round 1).
 // ---------------------------------------------------------------------------
 type HookStrip = { path: string; marker: string; comment: CommentStyle; present: boolean; removesHost: boolean }
 
@@ -169,7 +174,29 @@ export function planHookRouting(
       .filter((b) => b.path.startsWith(`${TRACKED_HOOK_DIR}/`))
       .map((b) => stripFor(repoRoot, `.git/hooks/${b.marker}`, b.marker, b.comment))
       .filter((s) => s.present)
-    return { ...none, strips, arm: hooksPathValue !== TRACKED_HOOK_DIR }
+    if (hooksPathValue === TRACKED_HOOK_DIR) return { ...none, strips }
+    // Arming is subject to the SAME refuse-if-foreign guard as the migration
+    // branch below — the manifest saying "tracked" was another machine's
+    // situation, not this one's. A teammate whose `.git/hooks` holds their
+    // own active hooks (raw hooks never travel with a clone, so the machine
+    // that migrated could not see them) must not have them silently disabled
+    // by pulling the migration commit and running upgrade. `foreignRawHooks`
+    // already excludes vinaya's own stale legacy hosts — the sweep above
+    // removes exactly those, so they cannot block the arm they make way for.
+    const foreign = foreignRawHooks(repoRoot)
+    if (foreign.length > 0) {
+      return {
+        ...none,
+        strips,
+        blockedReason:
+          `${foreign.map((f) => `.git/hooks/${f}`).join(', ')} ` +
+          `${foreign.length === 1 ? 'is an active raw hook' : 'are active raw hooks'} vinaya does not manage, and ` +
+          `arming core.hooksPath would silently disable ${foreign.length === 1 ? 'it' : 'them'} — move ` +
+          `${foreign.length === 1 ? 'it' : 'them'} into ${TRACKED_HOOK_DIR}/ (and commit) or remove ` +
+          `${foreign.length === 1 ? 'it' : 'them'}, then re-run \`vinaya upgrade\``
+      }
+    }
+    return { ...none, strips, arm: true }
   }
 
   // recorded === '.git/hooks' — attempt the migration.
@@ -309,10 +336,15 @@ export function renderUpgradeDiff(plan: UpgradePlan): string {
   if (r.blockedReason || r.arm || r.migratesManifest || r.strips.length > 0) {
     lines.push('── Hook location ─────────────────────────────')
     if (r.blockedReason) {
-      lines.push(`  · keep      hooks at .git/hooks — migration to ${TRACKED_HOOK_DIR} skipped: ${r.blockedReason}`)
-      lines.push(
-        '              (git never tracks .git/hooks, so fresh clones have no ring-0 hooks; `vinaya doctor` keeps reporting this)'
-      )
+      if (r.target === TRACKED_HOOK_DIR) {
+        lines.push(`  ✖ NOT armed core.hooksPath left unset — ${r.blockedReason}`)
+        lines.push('              (ring 0 stays inert in this working copy; `vinaya doctor` keeps reporting this)')
+      } else {
+        lines.push(`  · keep      hooks at .git/hooks — migration to ${TRACKED_HOOK_DIR} skipped: ${r.blockedReason}`)
+        lines.push(
+          '              (git never tracks .git/hooks, so fresh clones have no ring-0 hooks; `vinaya doctor` keeps reporting this)'
+        )
+      }
     }
     if (r.migratesManifest) {
       lines.push(
@@ -479,8 +511,11 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
     // say why, every run, until the blocker is resolved.
     if (routing.blockedReason) {
       process.stdout.write(
-        `Note: hooks stay at .git/hooks — migration to ${TRACKED_HOOK_DIR} skipped: ${routing.blockedReason}.\n` +
-          '(git never tracks .git/hooks, so fresh clones have no ring-0 hooks; `vinaya doctor` keeps reporting this.)\n'
+        routing.target === TRACKED_HOOK_DIR
+          ? `Note: core.hooksPath NOT armed — ${routing.blockedReason}.\n` +
+              '(ring 0 stays inert in this working copy; `vinaya doctor` keeps reporting this.)\n'
+          : `Note: hooks stay at .git/hooks — migration to ${TRACKED_HOOK_DIR} skipped: ${routing.blockedReason}.\n` +
+              '(git never tracks .git/hooks, so fresh clones have no ring-0 hooks; `vinaya doctor` keeps reporting this.)\n'
       )
     }
     process.stdout.write('vinaya upgrade — already current. Nothing to do.\n')

@@ -26,7 +26,9 @@ import { runUpgrade, translateHookPaths } from '../src/commands/upgrade.js'
 import { CONFIG_PATH, TRACKED_HOOK_DIR } from '../src/lib/artifacts.js'
 import type { ManagedManifest } from '../src/lib/config.js'
 import {
+  activeRawHooks,
   customHooksPath,
+  foreignRawHooks,
   hookDirFromManifest,
   readCoreHooksPath,
   resolveHookDir,
@@ -170,6 +172,35 @@ describe('hook-dir resolution', () => {
       labels: []
     }
     expect(hookDirFromManifest(manifest, '.husky')).toBe(TRACKED_HOOK_DIR)
+  })
+
+  it('activeRawHooks counts only what git would fire — known name, regular file, executable', () => {
+    gitInit(root)
+    const hooks = join(root, '.git/hooks')
+    // None of these ever fire; none may flip the layout or block a migration.
+    writeFileSync(join(hooks, 'husky.sh'), '#!/bin/sh\n', { mode: 0o755 }) // unknown name
+    writeFileSync(join(hooks, 'pre-commit.bak'), '#!/bin/sh\n', { mode: 0o755 }) // editor backup
+    writeFileSync(join(hooks, 'pre-push'), '#!/bin/sh\n', { mode: 0o644 }) // known name, not executable
+    mkdirSync(join(hooks, 'post-checkout')) // subdirectory squatting a hook name
+    expect(activeRawHooks(root)).toEqual([])
+    expect(resolveHookDir(root)).toBe(TRACKED_HOOK_DIR)
+    // A real one still counts.
+    writeFileSync(join(hooks, 'pre-commit'), '#!/bin/sh\necho theirs\n', { mode: 0o755 })
+    expect(activeRawHooks(root)).toEqual(['pre-commit'])
+    expect(resolveHookDir(root)).toBe('.git/hooks')
+  })
+
+  it("foreignRawHooks excludes a host that is entirely vinaya's own stale managed block", () => {
+    gitInit(root)
+    const hooks = join(root, '.git/hooks')
+    writeFileSync(
+      join(hooks, 'pre-commit'),
+      '#!/usr/bin/env sh\n# >>> vinaya:managed:pre-commit >>>\necho vinaya\n# <<< vinaya:managed:pre-commit <<<\n',
+      { mode: 0o755 }
+    )
+    writeFileSync(join(hooks, 'post-checkout'), '#!/bin/sh\necho theirs\n', { mode: 0o755 })
+    expect(activeRawHooks(root).sort()).toEqual(['post-checkout', 'pre-commit'])
+    expect(foreignRawHooks(root)).toEqual(['post-checkout'])
   })
 
   it("customHooksPath does not refuse vinaya's own tracked dir", async () => {
@@ -382,6 +413,57 @@ describe('upgrade migrates a legacy .git/hooks install', () => {
     expect(git(root, ['config', '--get', 'core.hooksPath'])).toBe(TRACKED_HOOK_DIR)
     expect(existsSync(join(root, '.git/hooks/pre-commit'))).toBe(false)
     expect(existsSync(join(root, TRACKED_HOOK_DIR, 'pre-commit'))).toBe(true)
+  }, 20_000)
+
+  it('the post-merge arm guard: on an already-migrated manifest, refuses to arm while a foreign raw hook would be disabled — then arms once it is gone', async () => {
+    // The round-1 reviewer's reproduction: machine A has its own active raw
+    // hook; machine B (which cannot see it — raw hooks never travel with a
+    // clone) migrates and merges. A pulls and runs upgrade — arming must
+    // refuse exactly like the migration branch would have on A.
+    await legacyInstall()
+    await captureStdout(async () =>
+      runUpgrade(
+        ['--yes'],
+        realishUpgradeDeps(() => root)
+      )
+    ) // migrate (machine B's act)
+    await unsetCoreHooksPath(root) // machine A's clone state: manifest tracked, config unarmed
+    writeFileSync(join(root, '.git/hooks/post-checkout'), '#!/bin/sh\necho theirs\n', { mode: 0o755 })
+    // ...plus a stale vinaya-only legacy host, which must NOT block the arm
+    // by itself (the sweep removes it) but must still be swept this run.
+    const tracked = readFileSync(join(root, TRACKED_HOOK_DIR, 'pre-commit'), 'utf-8')
+    writeFileSync(join(root, '.git/hooks/pre-commit'), tracked, { mode: 0o755 })
+
+    let rc = -1
+    const out = await captureStdout(async () => {
+      rc = await runUpgrade(
+        ['--yes'],
+        realishUpgradeDeps(() => root)
+      )
+    })
+    expect(rc).toBe(0)
+    expect(out).toContain('NOT armed')
+    expect(out).toContain('.git/hooks/post-checkout')
+    // Refused the arm; adopter's hook untouched and still firing; sweep still ran.
+    expect(await readCoreHooksPath(root)).toBeNull()
+    expect(readFileSync(join(root, '.git/hooks/post-checkout'), 'utf-8')).toContain('echo theirs')
+    expect(existsSync(join(root, '.git/hooks/pre-commit'))).toBe(false)
+
+    // doctor must not hand out the arming command either — it names the hook
+    // arming would disable.
+    const report = await doctorJson(realishDoctorDeps(() => root))
+    const inert = report.findings.find((f) => f.check === 'hooks' && f.severity === 'error')
+    expect(inert?.message).toContain('arming it would silently disable .git/hooks/post-checkout')
+
+    // Adopter resolves (removes their hook) — the very next upgrade arms.
+    rmSync(join(root, '.git/hooks/post-checkout'))
+    await captureStdout(async () =>
+      runUpgrade(
+        ['--yes'],
+        realishUpgradeDeps(() => root)
+      )
+    )
+    expect(git(root, ['config', '--get', 'core.hooksPath'])).toBe(TRACKED_HOOK_DIR)
   }, 20_000)
 })
 

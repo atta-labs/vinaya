@@ -34,6 +34,7 @@ import {
   detectGitRepo,
   ghAuthStatus,
   type GhAuthStatus,
+  foreignRawHooks,
   hookDirFromManifest,
   readCoreHooksPath,
   type RepoInfo,
@@ -251,6 +252,25 @@ async function diagnoseHookRouting(
     const value = await readHooksPath(repoRoot)
     if (value === TRACKED_HOOK_DIR) {
       return [ok('hooks', `core.hooksPath routes git at the tracked ${TRACKED_HOOK_DIR} directory — ring 0 is armed.`)]
+    }
+    // Never hand the user an arming command that would silently disable
+    // their own hooks: arming makes git ignore `.git/hooks` entirely, and
+    // this machine may hold active raw hooks the migrating machine could not
+    // see (raw hooks never travel with a clone). Same `foreignRawHooks` list
+    // `upgrade`'s arm guard refuses on, so the two surfaces cannot disagree.
+    const foreign = foreignRawHooks(repoRoot)
+    if (foreign.length > 0) {
+      return [
+        error(
+          'hooks',
+          `ring 0 is INERT in this working copy — hooks are tracked at ${TRACKED_HOOK_DIR} but core.hooksPath is ` +
+            `${value ? `set to '${value}'` : 'not set'}, AND arming it would silently disable ` +
+            `${foreign.map((f) => `.git/hooks/${f}`).join(', ')} (active raw hook${foreign.length === 1 ? '' : 's'} ` +
+            'vinaya does not manage — git runs ONLY the core.hooksPath directory once it is set). Move ' +
+            `${foreign.length === 1 ? 'it' : 'them'} into ${TRACKED_HOOK_DIR}/ (and commit) or remove ` +
+            `${foreign.length === 1 ? 'it' : 'them'} first, then run \`git config core.hooksPath ${TRACKED_HOOK_DIR}\`.`
+        )
+      ]
     }
     return [
       error(
