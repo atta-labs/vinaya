@@ -469,6 +469,11 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       // Keyed per PR, not per workflow — a global group would serialize
       // unrelated pull requests.
       expect(wf).toContain('github.event.pull_request.number')
+      // The SHA half is load-bearing: keyed on the PR alone, a rerun of an
+      // EARLIER commit's run (which the verdict retrigger performs) lands in
+      // the same group and cancels the CURRENT commit's run. Measured on
+      // PR #22 — the current run was cancelled after one second.
+      expect(wf).toContain('github.event.pull_request.head.sha')
     }
   })
 
