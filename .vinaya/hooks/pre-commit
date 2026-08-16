@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+# >>> vinaya:managed:pre-commit >>>
+# Vinaya commit-time gate. Runs the deterministic checks over your staged
+# diff before the commit lands.
+# This repo vendors the CLI, so `npx @attalabs/vinaya` resolves to its own
+# unbuilt workspace member. Run the built file instead.
+if [ ! -f apps/cli/dist/index.js ]; then
+  echo "vinaya: apps/cli/dist/index.js is missing — run \`bun run --cwd apps/cli build\`" >&2
+  exit 1
+fi
+node apps/cli/dist/index.js check --all --diff-only --local || exit 1
+# <<< vinaya:managed:pre-commit <<<
