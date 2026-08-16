@@ -4,6 +4,12 @@
   "publishConfig": {
     "access": "public"
   },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/atta-labs/vinaya.git",
+    "directory": "packages/sources"
+  },
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
