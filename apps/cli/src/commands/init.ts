@@ -9,7 +9,14 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildInitOps, buildInitProductOps, CONFIG_PATH, type HookDir, type InitContext } from '../lib/artifacts.js'
+import {
+  buildInitOps,
+  buildInitProductOps,
+  CONFIG_PATH,
+  type HookDir,
+  type InitContext,
+  TRACKED_HOOK_DIR
+} from '../lib/artifacts.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import { type ManagedManifest, VinayaConfigSchema } from '../lib/config.js'
 import {
@@ -18,7 +25,8 @@ import {
   detectGitRepo,
   ghLabelGateway,
   type RepoInfo,
-  resolveHookDir
+  resolveHookDir,
+  setCoreHooksPath
 } from '../lib/detect.js'
 import { applyInstall, type LabelGateway, planInstall, renderInstallDiff } from '../lib/ops.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
@@ -30,6 +38,7 @@ export type InitDeps = {
   labelGateway: (repoRoot: string) => LabelGateway
   hookDirFor: (repoRoot: string) => HookDir
   customHooksPath: (repoRoot: string) => Promise<string | null>
+  setHooksPath: (repoRoot: string, dir: string) => Promise<void>
   confirm: (question: string) => Promise<boolean>
 }
 
@@ -40,6 +49,7 @@ function realDeps(): InitDeps {
     labelGateway: ghLabelGateway,
     hookDirFor: resolveHookDir,
     customHooksPath,
+    setHooksPath: setCoreHooksPath,
     confirm: async (q) => {
       const yes = await promptYesNo(q, false)
       closeStdin()
@@ -159,6 +169,15 @@ export async function runInit(args: string[], deps: InitDeps): Promise<number> {
     writeManifest(repo.repoRoot, m)
   )
   writeManifest(repo.repoRoot, manifest)
+
+  // Tracked-hook installs are armed here, AFTER the hooks are on disk: the
+  // config routes git at the tracked directory, so setting it first would
+  // open a window where hooks are routed at nothing. The shared (non
+  // --worktree) config covers every linked worktree of this clone; each
+  // FRESH clone re-runs this one line (doctor names it until it has been run).
+  if (ctx.hookDir === TRACKED_HOOK_DIR) {
+    await deps.setHooksPath(repo.repoRoot, TRACKED_HOOK_DIR)
+  }
 
   process.stdout.write('\nVinaya installed. Next: run `vinaya demo break` to see a refusal-then-fix in action.\n')
   return 0

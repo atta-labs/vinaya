@@ -12,7 +12,14 @@ import type { CheckSpec } from '../checks/contract.js'
 import { coreCheckRegistry } from '../checks/registry.js'
 import { bareKeyNextMinorWarning, overriddenNextMinorWarning, resolveChecks } from '../checks/resolver.js'
 import { DOC_OWNERS_PATH } from '@atta/aeg-core'
-import { buildInitOps, CONFIG_PATH, DOCTRINE_POINTER_PATH, type HookDir, type InitContext } from '../lib/artifacts.js'
+import {
+  buildInitOps,
+  CONFIG_PATH,
+  DOCTRINE_POINTER_PATH,
+  type HookDir,
+  type InitContext,
+  TRACKED_HOOK_DIR
+} from '../lib/artifacts.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import {
   GLOBAL_CONFIG_PATH,
@@ -28,6 +35,7 @@ import {
   ghAuthStatus,
   type GhAuthStatus,
   hookDirFromManifest,
+  readCoreHooksPath,
   type RepoInfo,
   resolveHookDir
 } from '../lib/detect.js'
@@ -41,6 +49,7 @@ export type DoctorDeps = {
   ghAuthStatus: () => Promise<GhAuthStatus>
   branchProtectionConfigured: (owner: string, repo: string) => Promise<boolean | null>
   hookDirFor: (repoRoot: string) => HookDir
+  readHooksPath: (repoRoot: string) => Promise<string | null>
   nodeVersion: () => string
   bunVersion: () => string | null
   packageVersion: () => string
@@ -57,6 +66,7 @@ function realDeps(): DoctorDeps {
     ghAuthStatus,
     branchProtectionConfigured,
     hookDirFor: resolveHookDir,
+    readHooksPath: readCoreHooksPath,
     nodeVersion: () => process.version,
     bunVersion: () => (typeof Bun === 'undefined' ? null : Bun.version),
     packageVersion: readVersion
@@ -220,6 +230,50 @@ function diagnoseInstall(
   }
 
   return { findings, hasDrift }
+}
+
+// ---------------------------------------------------------------------------
+// Hook routing — does ring 0 actually FIRE in this working copy?
+// `diagnoseInstall` above answers "are the hook files present and current";
+// this answers the orthogonal question of whether git is wired to run them.
+// A tracked-hooks install is exactly where the two diverge: the files survive
+// every clone (they are committed), but `core.hooksPath` is per-clone git
+// config that git cannot version — a fresh clone has current hook files and
+// zero enforcement until the one arming command is run. Legacy `.git/hooks`
+// installs get the inverse warning: wired here, absent everywhere else.
+// ---------------------------------------------------------------------------
+async function diagnoseHookRouting(
+  repoRoot: string,
+  hookDir: HookDir,
+  readHooksPath: (repoRoot: string) => Promise<string | null>
+): Promise<Finding[]> {
+  if (hookDir === TRACKED_HOOK_DIR) {
+    const value = await readHooksPath(repoRoot)
+    if (value === TRACKED_HOOK_DIR) {
+      return [ok('hooks', `core.hooksPath routes git at the tracked ${TRACKED_HOOK_DIR} directory — ring 0 is armed.`)]
+    }
+    return [
+      error(
+        'hooks',
+        `ring 0 is INERT in this working copy — hooks are tracked at ${TRACKED_HOOK_DIR} but core.hooksPath is ` +
+          `${value ? `set to '${value}'` : 'not set'} (git config is never cloned). ` +
+          `Run \`git config core.hooksPath ${TRACKED_HOOK_DIR}\` once per clone (or \`vinaya upgrade\`) to arm them.`
+      )
+    ]
+  }
+  if (hookDir === '.git/hooks') {
+    return [
+      warn(
+        'hooks',
+        `this repo's ring 0 is installed at .git/hooks, which git does not track — teammates, fresh clones ` +
+          `and their worktrees have no hooks until they run \`vinaya init\` or \`vinaya upgrade\`. ` +
+          `Run \`vinaya upgrade\` to migrate hooks to the tracked ${TRACKED_HOOK_DIR} directory.`
+      )
+    ]
+  }
+  // `.husky` — the adopter's own hook manager owns per-clone wiring (its
+  // `prepare` script); vinaya has nothing to diagnose beyond file presence.
+  return []
 }
 
 // ---------------------------------------------------------------------------
@@ -415,6 +469,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
     const install = diagnoseInstall(repo.repoRoot, ctx, manifest)
     findings.push(...install.findings)
     hasDrift = install.hasDrift
+    findings.push(...(await diagnoseHookRouting(repo.repoRoot, hookDir, deps.readHooksPath)))
     findings.push(...diagnoseCustomChecks(repo.repoRoot, configRead.config))
   }
 

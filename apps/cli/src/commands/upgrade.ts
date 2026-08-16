@@ -11,18 +11,28 @@
 // left exactly alone — upgrade regenerates what init already owns, it does
 // not perform a fresh install.
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DOC_OWNERS_PATH } from '@atta/aeg-core'
-import { buildInitOps, CONFIG_PATH, type HookDir, type InitContext } from '../lib/artifacts.js'
+import { buildInitOps, CONFIG_PATH, type HookDir, type InitContext, TRACKED_HOOK_DIR } from '../lib/artifacts.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import { MANAGED_MANIFEST_VERSION, type ManagedManifest, VinayaConfigSchema } from '../lib/config.js'
-import { detectGitRepo, hookDirFromManifest, type RepoInfo, resolveHookDir } from '../lib/detect.js'
+import {
+  activeRawHooks,
+  detectGitRepo,
+  hookDirFromManifest,
+  readCoreHooksPath,
+  type RepoInfo,
+  resolveHookDir,
+  setCoreHooksPath
+} from '../lib/detect.js'
 import {
   appendBlock,
+  blockStripLeavesEmpty,
   createHost,
   indent,
   markerLines,
+  type CommentStyle,
   type CreateFileOp,
   type ManagedBlockOp,
   type Op,
@@ -36,6 +46,8 @@ import { closeStdin, promptYesNo } from '../lib/prompt.js'
 export type UpgradeDeps = {
   detectRepo: () => Promise<RepoInfo | null>
   hookDirFor: (repoRoot: string) => HookDir
+  readHooksPath: (repoRoot: string) => Promise<string | null>
+  setHooksPath: (repoRoot: string, dir: string) => Promise<void>
   confirm: (question: string) => Promise<boolean>
 }
 
@@ -43,6 +55,8 @@ function realDeps(): UpgradeDeps {
   return {
     detectRepo: detectGitRepo,
     hookDirFor: resolveHookDir,
+    readHooksPath: readCoreHooksPath,
+    setHooksPath: setCoreHooksPath,
     confirm: async (q) => {
       const yes = await promptYesNo(q, false)
       closeStdin()
@@ -98,6 +112,104 @@ function writeManifestVersion(repoRoot: string, manifest: ManagedManifest): void
 }
 
 // ---------------------------------------------------------------------------
+// Hook routing — where this upgrade regenerates hooks, and what that implies.
+//
+// A `.git/hooks` install is the atta-labs/attalabs#927 defect: git never
+// versions `.git/`, so the manifest survives every clone while the hooks do
+// not — the installing machine has ring 0, everyone who clones has none,
+// silently. Upgrade is the sanctioned migration path, so it is where a legacy
+// install moves to the tracked `.vinaya/hooks` layout: tracked copies land
+// first, the legacy blocks are stripped, `core.hooksPath` is armed, and the
+// manifest's block paths are rewritten.
+//
+// The migration REFUSES (keeps `.git/hooks`, `doctor` keeps warning) whenever
+// arming `core.hooksPath` would silently disable something vinaya does not
+// own: an adopter's own lines in a hook host, a host at a manifest path with
+// no vinaya block, or any other active raw hook in `.git/hooks`. Same
+// refuse-if-foreign ethos as init — never trade the adopter's hooks for ours.
+// ---------------------------------------------------------------------------
+type HookStrip = { path: string; marker: string; comment: CommentStyle; present: boolean; removesHost: boolean }
+
+export type HookRouting = {
+  /** the hook dir this upgrade's ops regenerate into */
+  target: HookDir
+  /** legacy `.git/hooks` vinaya blocks to strip once tracked copies exist */
+  strips: HookStrip[]
+  /** set `core.hooksPath .vinaya/hooks` as part of apply */
+  arm: boolean
+  /** manifest block paths are rewritten `.git/hooks/` → `.vinaya/hooks/` */
+  migratesManifest: boolean
+  /** why a wanted migration was refused — printed, and doctor keeps warning */
+  blockedReason: string | null
+}
+
+function stripFor(repoRoot: string, path: string, marker: string, comment: CommentStyle): HookStrip {
+  const abs = resolveManagedBlockPath(repoRoot, path)
+  if (!existsSync(abs)) return { path, marker, comment, present: false, removesHost: false }
+  const stripped = stripBlockFromContent(readFileSync(abs, 'utf-8'), marker, comment)
+  if (stripped === null) return { path, marker, comment, present: false, removesHost: false }
+  return { path, marker, comment, present: true, removesHost: blockStripLeavesEmpty(stripped) }
+}
+
+export function planHookRouting(
+  repoRoot: string,
+  manifest: ManagedManifest,
+  recorded: HookDir,
+  hooksPathValue: string | null
+): HookRouting {
+  const none: HookRouting = { target: recorded, strips: [], arm: false, migratesManifest: false, blockedReason: null }
+  if (recorded === '.husky') return none
+
+  if (recorded === TRACKED_HOOK_DIR) {
+    // Already migrated. Two per-machine residues can remain: an unarmed
+    // `core.hooksPath` (e.g. a fresh clone, or a machine that merged the
+    // migration commit without running it), and stale legacy blocks still
+    // sitting in this machine's `.git/hooks` from before the migration.
+    const strips = manifest.blocks
+      .filter((b) => b.path.startsWith(`${TRACKED_HOOK_DIR}/`))
+      .map((b) => stripFor(repoRoot, `.git/hooks/${b.marker}`, b.marker, b.comment))
+      .filter((s) => s.present)
+    return { ...none, strips, arm: hooksPathValue !== TRACKED_HOOK_DIR }
+  }
+
+  // recorded === '.git/hooks' — attempt the migration.
+  const legacy = manifest.blocks.filter((b) => b.path.startsWith('.git/hooks/'))
+  const blocked: string[] = []
+  for (const b of legacy) {
+    const abs = resolveManagedBlockPath(repoRoot, b.path)
+    if (!existsSync(abs)) continue // nothing on disk (fresh-clone shape) — nothing arming could disable
+    const stripped = stripBlockFromContent(readFileSync(abs, 'utf-8'), b.marker, b.comment)
+    if (stripped === null) blocked.push(`${b.path} exists without vinaya's managed block`)
+    else if (!blockStripLeavesEmpty(stripped)) blocked.push(`${b.path} carries your own lines alongside the managed block`)
+  }
+  const legacyNames = new Set(legacy.map((b) => b.path.slice('.git/hooks/'.length)))
+  for (const f of activeRawHooks(repoRoot)) {
+    if (!legacyNames.has(f)) blocked.push(`.git/hooks/${f} is an active raw hook vinaya does not manage`)
+  }
+  if (blocked.length > 0) return { ...none, blockedReason: blocked.join('; ') }
+
+  return {
+    target: TRACKED_HOOK_DIR,
+    strips: legacy.map((b) => stripFor(repoRoot, b.path, b.marker, b.comment)).filter((s) => s.present),
+    arm: hooksPathValue !== TRACKED_HOOK_DIR,
+    migratesManifest: true,
+    blockedReason: null
+  }
+}
+
+/** The migrated manifest: block paths rewritten `.git/hooks/` → `.vinaya/hooks/`. */
+export function translateHookPaths(manifest: ManagedManifest): ManagedManifest {
+  return {
+    ...manifest,
+    blocks: manifest.blocks.map((b) =>
+      b.path.startsWith('.git/hooks/')
+        ? { ...b, path: `${TRACKED_HOOK_DIR}/${b.path.slice('.git/hooks/'.length)}` }
+        : b
+    )
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Plan
 // ---------------------------------------------------------------------------
 type FileAction = 'current' | 'regenerate' | 'recreate' | 'refuse-foreign' | 'not-installed' | 'keep'
@@ -109,14 +221,15 @@ type UpgradeEntry =
 
 export type UpgradePlan = {
   entries: UpgradeEntry[]
+  routing: HookRouting
   /** null when the manifest is already at the package's current version. */
   versionMigration: { from: number; to: number } | null
   hasChanges: boolean
 }
 
-export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManifest): UpgradePlan {
+export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManifest, routing: HookRouting): UpgradePlan {
   const entries: UpgradeEntry[] = []
-  let hasChanges = false
+  let hasChanges = routing.arm || routing.migratesManifest || routing.strips.some((s) => s.present)
   const ownedFiles = new Set(manifest.files)
   const blockKey = (path: string, marker: string) => `${path}::${marker}`
   const ownedBlocks = new Set(manifest.blocks.map((b) => blockKey(b.path, b.marker)))
@@ -178,7 +291,7 @@ export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManife
 
   const versionMigration =
     manifest.version === MANAGED_MANIFEST_VERSION ? null : { from: manifest.version, to: MANAGED_MANIFEST_VERSION }
-  return { entries, versionMigration, hasChanges: hasChanges || versionMigration !== null }
+  return { entries, routing, versionMigration, hasChanges: hasChanges || versionMigration !== null }
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +303,32 @@ export function renderUpgradeDiff(plan: UpgradePlan): string {
   if (plan.versionMigration) {
     lines.push('── Manifest ─────────────────────────────')
     lines.push(`  ~ migrate manifest version ${plan.versionMigration.from} → ${plan.versionMigration.to}`)
+    lines.push('')
+  }
+
+  const r = plan.routing
+  if (r.blockedReason || r.arm || r.migratesManifest || r.strips.length > 0) {
+    lines.push('── Hook location ─────────────────────────────')
+    if (r.blockedReason) {
+      lines.push(`  · keep      hooks at .git/hooks — migration to ${TRACKED_HOOK_DIR} skipped: ${r.blockedReason}`)
+      lines.push(
+        '              (git never tracks .git/hooks, so fresh clones have no ring-0 hooks; `vinaya doctor` keeps reporting this)'
+      )
+    }
+    if (r.migratesManifest) {
+      lines.push(`  ~ migrate   hooks to the tracked ${TRACKED_HOOK_DIR}/ directory (commit them — they travel with the repo)`)
+    }
+    for (const s of r.strips) {
+      lines.push(
+        `  - strip     vinaya-managed block from ${s.path} (legacy untracked location` +
+          `${s.removesHost ? '; vinaya-created host is deleted' : '; your other lines are kept'})`
+      )
+    }
+    if (r.arm) {
+      lines.push(
+        `  ~ arm       git config core.hooksPath ${TRACKED_HOOK_DIR} (shared config — this clone and all its linked worktrees)`
+      )
+    }
     lines.push('')
   }
 
@@ -269,6 +408,20 @@ export function applyUpgrade(plan: UpgradePlan, repoRoot: string): void {
       else if (e.action === 'regenerate-block') regenerateBlock(repoRoot, e.op)
     }
   }
+
+  // Legacy `.git/hooks` strips run AFTER the tracked copies above are on
+  // disk, so there is no instant with neither location holding the hooks.
+  // Resolved through `resolveManagedBlockPath` (linked-worktree `.git` is a
+  // gitdir-pointer file, not a directory) like every other hook touch here.
+  for (const s of plan.routing.strips) {
+    if (!s.present) continue
+    const abs = resolveManagedBlockPath(repoRoot, s.path)
+    if (!existsSync(abs)) continue
+    const stripped = stripBlockFromContent(readFileSync(abs, 'utf-8'), s.marker, s.comment)
+    if (stripped === null) continue
+    if (blockStripLeavesEmpty(stripped)) rmSync(abs, { force: true })
+    else writeFileSync(abs, stripped.endsWith('\n') ? stripped : `${stripped}\n`, 'utf-8')
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -304,15 +457,20 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
     return 1
   }
 
-  const hookDir = hookDirFromManifest(manifest, deps.hookDirFor(repo.repoRoot))
+  const recorded = hookDirFromManifest(manifest, deps.hookDirFor(repo.repoRoot))
+  const routing = planHookRouting(repo.repoRoot, manifest, recorded, await deps.readHooksPath(repo.repoRoot))
+  // Plan (and later persist) against the MIGRATED manifest when hooks move:
+  // ownership is keyed by path, so the tracked-path ops only classify as
+  // owned once the recorded `.git/hooks/*` paths are rewritten.
+  const planManifest = routing.migratesManifest ? translateHookPaths(manifest) : manifest
   const ctx: InitContext = {
     owner: repo.owner,
     repo: repo.repo,
-    hookDir,
+    hookDir: routing.target,
     selfHost: detectVendoredVinaya(repo.repoRoot)
   }
   const ops = buildInitOps(ctx)
-  const plan = planUpgrade(ops, repo.repoRoot, manifest)
+  const plan = planUpgrade(ops, repo.repoRoot, planManifest, routing)
 
   if (!plan.hasChanges) {
     process.stdout.write('vinaya upgrade — already current. Nothing to do.\n')
@@ -336,7 +494,9 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
   }
 
   applyUpgrade(plan, repo.repoRoot)
-  writeManifestVersion(repo.repoRoot, manifest)
+  // Arm AFTER the tracked hooks are on disk — never route git at nothing.
+  if (routing.arm) await deps.setHooksPath(repo.repoRoot, TRACKED_HOOK_DIR)
+  writeManifestVersion(repo.repoRoot, planManifest)
 
   process.stdout.write('\nVinaya upgraded.\n')
   return 0

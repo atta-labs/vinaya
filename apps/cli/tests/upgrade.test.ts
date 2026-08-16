@@ -28,6 +28,7 @@ function initDeps(overrides: Partial<InitDeps> = {}): InitDeps {
     labelGateway: () => labels,
     hookDirFor: () => '.husky',
     customHooksPath: async () => null,
+    setHooksPath: async () => {},
     confirm: async () => true,
     ...overrides
   }
@@ -37,6 +38,8 @@ function upgradeDeps(overrides: Partial<UpgradeDeps> = {}): UpgradeDeps {
   return {
     detectRepo: async () => ({ repoRoot: root, owner: 'acme', repo: 'widget' }),
     hookDirFor: () => '.husky',
+    readHooksPath: async () => null,
+    setHooksPath: async () => {},
     confirm: async () => true,
     ...overrides
   }
@@ -48,6 +51,7 @@ function doctorDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
     ghAuthStatus: async () => ({ authenticated: true, detail: 'ok' }),
     branchProtectionConfigured: async () => null,
     hookDirFor: () => '.husky',
+    readHooksPath: async () => null,
     nodeVersion: () => 'v99.0.0',
     bunVersion: () => null,
     packageVersion: () => '0.1.0-test',
@@ -329,7 +333,14 @@ describe('vinaya upgrade — raw git hooks inside a linked worktree', () => {
       const hookFindings = report.findings.filter((f) => f.check === 'hooks')
       expect(hookFindings.length).toBeGreaterThan(0)
       expect(hookFindings.some((f) => f.message.includes('is missing'))).toBe(false)
-      expect(hookFindings.every((f) => f.severity === 'ok')).toBe(true)
+      // Every file-level finding is ok; the ONE non-ok is the deliberate
+      // clone-gap routing warn a `.git/hooks` install now always carries
+      // (atta-labs/attalabs#927) — git never tracks `.git/hooks`, so this
+      // install shape leaves every fresh clone without ring 0.
+      const nonOk = hookFindings.filter((f) => f.severity !== 'ok')
+      expect(nonOk.length).toBe(1)
+      expect(nonOk[0]?.severity).toBe('warn')
+      expect(nonOk[0]?.message).toContain('which git does not track')
     } finally {
       git(root, ['worktree', 'remove', '--force', wtRoot])
     }

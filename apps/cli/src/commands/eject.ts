@@ -15,20 +15,24 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONFIG_PATH } from '../lib/artifacts.js'
+import { CONFIG_PATH, TRACKED_HOOK_DIR } from '../lib/artifacts.js'
 import { type ManagedManifest, VinayaConfigSchema } from '../lib/config.js'
-import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
+import { detectGitRepo, readCoreHooksPath, type RepoInfo, unsetCoreHooksPath } from '../lib/detect.js'
 import { applyEject, planEject, renderEjectDiff } from '../lib/ops.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
 
 export type EjectDeps = {
   detectRepo: () => Promise<RepoInfo | null>
+  readHooksPath: (repoRoot: string) => Promise<string | null>
+  unsetHooksPath: (repoRoot: string) => Promise<void>
   confirm: (question: string) => Promise<boolean>
 }
 
 function realDeps(): EjectDeps {
   return {
     detectRepo: detectGitRepo,
+    readHooksPath: readCoreHooksPath,
+    unsetHooksPath: unsetCoreHooksPath,
     confirm: async (q) => {
       const yes = await promptYesNo(q, false)
       closeStdin()
@@ -96,6 +100,13 @@ export async function runEject(args: string[], deps: EjectDeps): Promise<number>
 
   const plan = planEject(read.manifest, repo.repoRoot)
 
+  // A tracked-hooks install also armed `core.hooksPath` — its inverse is
+  // unsetting it, but ONLY when the value is still vinaya's own (an adopter
+  // who re-pointed it since owns that config now).
+  const unarm =
+    read.manifest.blocks.some((b) => b.path.startsWith(`${TRACKED_HOOK_DIR}/`)) &&
+    (await deps.readHooksPath(repo.repoRoot)) === TRACKED_HOOK_DIR
+
   // A recorded path that resolves outside the repo means the manifest is
   // corrupt or hostile — refuse the whole eject rather than run a partial
   // destructive pass (Section 10: never a destructive guess). Belt-and-
@@ -112,6 +123,9 @@ export async function runEject(args: string[], deps: EjectDeps): Promise<number>
 
   process.stdout.write('vinaya eject — the full diff of every removal:\n\n')
   process.stdout.write(`${renderEjectDiff(plan)}\n`)
+  if (unarm) {
+    process.stdout.write(`  ~ unset core.hooksPath (currently ${TRACKED_HOOK_DIR} — vinaya's own tracked-hooks routing)\n`)
+  }
 
   if (parsed.dryRun) {
     process.stdout.write('\n--dry-run: nothing was removed.\n')
@@ -127,6 +141,7 @@ export async function runEject(args: string[], deps: EjectDeps): Promise<number>
   }
 
   const { removedLabelsToReport } = applyEject(plan, repo.repoRoot)
+  if (unarm) await deps.unsetHooksPath(repo.repoRoot)
 
   process.stdout.write('\nVinaya ejected.\n')
   if (removedLabelsToReport.length > 0) {
