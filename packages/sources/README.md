@@ -1,17 +1,17 @@
-# @atta/vinaya-sources
+# @attalabs/vinaya-sources
 
 The I/O boundary for Vinaya's aeg-core source contracts — the only package in
 these seams allowed file/forge reads. Implements `StateSource` and
-`DoctrineSource`, both defined I/O-free in `@atta/aeg-core`.
+`DoctrineSource`, both defined I/O-free in `@attalabs/aeg-core`.
 
 ## StateSource adapters
 
 - **`createForgeSource`** (`src/forge-adapter.ts`) — primary design. Wires
-  `@atta/aeg-forge-state`'s `deriveTrancheFromForge` behind the contract.
+  `@attalabs/aeg-forge-state`'s `deriveTrancheFromForge` behind the contract.
   Imported as a workspace dependency, not re-homed — see the rationale in
   `src/forge-adapter.ts`'s docstring.
 - **`createFileSource`** (`src/file-adapter.ts`) — transitional. Wraps
-  `@atta/aeg-core`'s `parseTranche` over a configurable governance root
+  `@attalabs/aeg-core`'s `parseTranche` over a configurable governance root
   (`FileSourceConfig.root`, default `aeg-root`). Deliberate throwaway,
   deleted once every consumer of `StateSource` is forge-backed.
 
@@ -21,7 +21,7 @@ zod-validated config object.
 ## DoctrineSource adapter
 
 - **`createFileDoctrineSource`** (`src/doctrine-file-adapter.ts`) — file-backed
-  `DoctrineSource` for `deriveDiagramModel` (`@atta/aeg-core`, #506). Reads
+  `DoctrineSource` for `deriveDiagramModel` (`@attalabs/aeg-core`, #506). Reads
   `<root>/enforcement.md`,
   `<root>/roles/*.md`, and `<root>/contracts/*.md` over a configurable root
   (`DoctrineFileSourceConfig.root`, default `DEFAULT_GOVERNANCE_ROOT`), never a

@@ -1,6 +1,6 @@
-# @atta/aeg-forge-state
+# @attalabs/aeg-forge-state
 
-A generic, repo-parameterized adapter that derives an `@atta/aeg-core` `Tranche`
+A generic, repo-parameterized adapter that derives an `@attalabs/aeg-core` `Tranche`
 purely from GitHub forge objects — no topology file required:
 
 - a Milestone titled exactly `<slug>` → `goal` (description) + `lifecycle`
