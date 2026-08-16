@@ -38,6 +38,7 @@
   "scripts": {
     "build": "bun scripts/build.ts",
     "bundle-doctrine": "bun scripts/bundle-doctrine.ts",
+    "bundle-studio": "bun scripts/bundle-studio.ts",
     "prepack": "bun scripts/build.ts && bun scripts/bundle-doctrine.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",

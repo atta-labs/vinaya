@@ -252,6 +252,16 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'studio',
+    description:
+      'Launch Vinaya Studio — runs the Studio dev app when its source (apps/vinaya/web) is in a checkout above the current directory; published installs refuse with a clear message, since no published build bundles the Studio app yet',
+    details: [
+      "Resolution happens in this order: a workspace checkout carrying `apps/vinaya/web` (Studio's source, which lives in the attalabs monorepo — not this repository) runs the dev app directly; an install whose package root carries a `studio-standalone/` bundle would run that bundled server; anything else gets an explicit refusal and exit 1 rather than a silent no-op.",
+      'No published `@attalabs/vinaya` build ships the `studio-standalone/` bundle today — producing and shipping it is the Studio-packaging work, tracked separately. Until it lands, this command is honest about the shapes it cannot serve instead of pretending to serve them.'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'quickstart',
     description: 'Guided wizard: init, doc-owners, project, commit, demo break, doctor, push — one command',
     details: [
