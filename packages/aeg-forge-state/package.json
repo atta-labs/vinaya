@@ -1,7 +1,9 @@
 {
   "name": "@atta/aeg-forge-state",
   "version": "0.7.0",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {

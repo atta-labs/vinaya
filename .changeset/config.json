@@ -10,6 +10,6 @@
   "ignore": ["@atta/typescript-config"],
   "privatePackages": {
     "version": true,
-    "tag": false
+    "tag": true
   }
 }
