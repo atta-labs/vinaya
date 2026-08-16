@@ -531,6 +531,25 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome> = {
     }
   },
 
+  studio: ({ bin, fixtureDir }) => {
+    // The published artifact ships no Studio bundle — `studio-standalone/` is
+    // not in the `files` allowlist and `bundle-studio` is not part of
+    // `prepack` — so the shipped behavior for a published install IS the
+    // refusal path: exit 1 with a message naming the package. Exercised for
+    // real rather than exempted: this proves the command is routed in the
+    // published artifact AND that it refuses clearly instead of crashing or
+    // exiting 0 over nothing (a `studio` that silently does nothing is the
+    // defect shape this command was recovered against). When Studio
+    // packaging (#43) ships a real bundle, this exercise must flip to
+    // asserting a real launch.
+    const r = run(bin, ['studio'], fixtureDir)
+    const refused = r.status === 1 && /Vinaya Studio isn't available in this install/.test(r.stderr)
+    return {
+      status: refused ? 'pass' : 'fail',
+      detail: `exit ${r.status} (expected 1), honest refusal on stderr: ${refused}`
+    }
+  },
+
   waiver: ({ bin, fixtureDir }) => {
     // --print-only executes nothing — it prints the `gh` commands a human
     // would run. A real, network-free exercise of the command's whole
@@ -666,6 +685,7 @@ async function main(): Promise<void> {
       'upgrade',
       'doctrine',
       'demo break',
+      'studio',
       'waiver'
     ]) {
       const exercise = EXERCISES[name]

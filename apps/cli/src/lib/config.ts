@@ -261,12 +261,28 @@ const LOCAL_CONFIG_FILENAME = 'vinaya.config.json'
 
 /**
  * Walk up from cwd looking for vinaya.config.json. Returns null if not found.
+ *
+ * The walk never crosses the enclosing repository's own root (`.git` is a
+ * directory in a primary checkout, a gitlink file in a linked worktree —
+ * existsSync covers both). "Repo-local" is this file's own trust boundary —
+ * `checks`/`principals` are stripped from the GLOBAL config precisely
+ * because trust must come from the reviewed, committed repo file — but the
+ * unbounded walk didn't enforce it: a planted vinaya.config.json in a
+ * world-writable ancestor (`/tmp`) would register `checks.*.run` commands
+ * that the check engine then executes, in every generated pre-commit hook
+ * (security review, PR #94, same class as studio.ts's walk). Outside any
+ * git repository the walk still reaches the filesystem root, unchanged —
+ * that keeps `vinaya check` usable in non-git trees; the bound bites only
+ * where a repository boundary exists to honor. A config that sits ABOVE the
+ * repo it governs no longer resolves — that shape was never "repo-local",
+ * and the global-config fallback in `configPath()` still applies.
  */
 function findLocalConfig(): string | null {
   let dir = process.cwd()
   while (true) {
     const candidate = join(dir, LOCAL_CONFIG_FILENAME)
     if (existsSync(candidate)) return candidate
+    if (existsSync(join(dir, '.git'))) return null
     const parent = dirname(dir)
     if (parent === dir) return null
     dir = parent

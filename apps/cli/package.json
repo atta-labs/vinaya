@@ -38,6 +38,7 @@
   "scripts": {
     "build": "bun scripts/build.ts",
     "bundle-doctrine": "bun scripts/bundle-doctrine.ts",
+    "bundle-studio": "bun scripts/bundle-studio.ts",
     "prepack": "bun scripts/build.ts && bun scripts/bundle-doctrine.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
@@ -50,6 +51,7 @@
   },
   "devDependencies": {
     "@atta/aeg-core": "workspace:*",
+    "@atta/aeg-forge-state": "workspace:*",
     "@atta/typescript-config": "workspace:*",
     "@atta/vinaya-sources": "workspace:*",
     "@types/bun": "latest",

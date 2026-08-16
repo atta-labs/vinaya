@@ -15,6 +15,7 @@ import { issueCreateCommand, issueEditCommand } from './commands/issue.js'
 import { newCheckCommand } from './commands/new-check.js'
 import { prCreateCommand, prEditCommand } from './commands/pr.js'
 import { quickstartCommand } from './commands/quickstart.js'
+import { runStudio } from './commands/studio.js'
 import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
 import { printJson } from './lib/envelope.js'
@@ -43,6 +44,11 @@ try {
       } else {
         process.stdout.write(`${version}\n`)
       }
+      break
+    }
+    case 'studio': {
+      const code = await runStudio(process.cwd(), args)
+      process.exit(code)
       break
     }
     case 'init': {

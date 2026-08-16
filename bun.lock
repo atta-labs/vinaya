@@ -12,7 +12,7 @@
     },
     "apps/cli": {
       "name": "@attalabs/vinaya",
-      "version": "0.4.6",
+      "version": "0.7.1",
       "bin": {
         "vinaya": "./dist/index.js",
       },
@@ -22,6 +22,7 @@
       },
       "devDependencies": {
         "@atta/aeg-core": "workspace:*",
+        "@atta/aeg-forge-state": "workspace:*",
         "@atta/typescript-config": "workspace:*",
         "@atta/vinaya-sources": "workspace:*",
         "@types/bun": "latest",
@@ -30,10 +31,10 @@
     },
     "packages/aeg-core": {
       "name": "@atta/aeg-core",
-      "version": "0.0.1",
+      "version": "0.7.1",
       "dependencies": {
-        "@atta/aeg-forge-state": "workspace:*",
-        "@atta/aeg-types": "workspace:*",
+        "@atta/aeg-forge-state": "0.7.1",
+        "@atta/aeg-types": "0.7.1",
         "gray-matter": "^4.0.3",
       },
       "devDependencies": {
@@ -44,9 +45,9 @@
     },
     "packages/aeg-forge-state": {
       "name": "@atta/aeg-forge-state",
-      "version": "0.0.1",
+      "version": "0.7.1",
       "dependencies": {
-        "@atta/aeg-types": "workspace:*",
+        "@atta/aeg-types": "0.7.1",
         "@octokit/graphql": "^8.1.1",
       },
       "devDependencies": {
@@ -57,7 +58,7 @@
     },
     "packages/aeg-types": {
       "name": "@atta/aeg-types",
-      "version": "0.0.1",
+      "version": "0.7.1",
       "devDependencies": {
         "@atta/typescript-config": "workspace:*",
         "typescript": "^5.7.0",
@@ -65,11 +66,11 @@
     },
     "packages/sources": {
       "name": "@atta/vinaya-sources",
-      "version": "0.0.1",
+      "version": "0.7.1",
       "dependencies": {
-        "@atta/aeg-core": "workspace:*",
-        "@atta/aeg-forge-state": "workspace:*",
-        "@atta/aeg-types": "workspace:*",
+        "@atta/aeg-core": "0.7.1",
+        "@atta/aeg-forge-state": "0.7.1",
+        "@atta/aeg-types": "0.7.1",
         "zod": "3.25.76",
       },
       "devDependencies": {

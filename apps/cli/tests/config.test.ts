@@ -121,6 +121,39 @@ describe('config', () => {
     }
   })
 
+  it('configPath does not resolve a config planted above the enclosing git repository', () => {
+    // Security review, PR #94: the upward walk must stop at the enclosing
+    // repo's root. A vinaya.config.json planted in an ancestor OUTSIDE the
+    // repo (e.g. world-writable /tmp) registers checks.*.run commands the
+    // check engine executes in every generated hook — it must never resolve.
+    writeFileSync(join(tmpDir, 'vinaya.config.json'), JSON.stringify(TEST_CONFIG), 'utf-8')
+
+    const innerRepo = join(tmpDir, 'inner-repo')
+    const nestedCwd = join(innerRepo, 'deep', 'dir')
+    mkdirSync(nestedCwd, { recursive: true })
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: innerRepo })
+    process.chdir(nestedCwd)
+
+    const result = configPath()
+    // Either null or the machine's global config — never the planted ancestor file.
+    if (result !== null) {
+      expect(realpathSync(result)).not.toContain(realpathSync(tmpDir))
+    }
+  })
+
+  it('configPath still resolves a repo-root config from a nested cwd', () => {
+    const repoRoot = join(tmpDir, 'repo')
+    const nestedCwd = join(repoRoot, 'deep', 'dir')
+    mkdirSync(nestedCwd, { recursive: true })
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repoRoot })
+    const localPath = join(repoRoot, 'vinaya.config.json')
+    writeFileSync(localPath, JSON.stringify(TEST_CONFIG), 'utf-8')
+    process.chdir(nestedCwd)
+
+    const result = configPath()
+    expect(result ? realpathSync(result) : null).toBe(realpathSync(localPath))
+  })
+
   it('writeConfig("local") creates vinaya.config.json in cwd', () => {
     writeConfig('local', TEST_CONFIG)
     const localPath = join(tmpDir, 'vinaya.config.json')

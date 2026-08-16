@@ -20,6 +20,15 @@ import { fileURLToPath } from 'node:url'
 export function packageRoot(moduleUrl: string): string {
   let dir = dirname(fileURLToPath(moduleUrl))
   while (!existsSync(join(dir, 'package.json'))) {
+    // Never walk past the enclosing repository's root (`.git` — directory in
+    // a primary checkout, gitlink file in a linked worktree). Every real
+    // resolution (workspace `src/`, a bundle's `dist/`, an installed
+    // package) finds its `package.json` well before any `.git`; only the
+    // pathological no-package.json walk ever reached ancestors outside the
+    // repo, where a planted `package.json` could redirect the resolved
+    // install root (security review, PR #94 — same class as studio.ts's and
+    // config.ts's walks).
+    if (existsSync(join(dir, '.git'))) break
     const parent = dirname(dir)
     if (parent === dir) break
     dir = parent
