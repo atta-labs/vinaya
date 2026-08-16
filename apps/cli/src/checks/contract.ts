@@ -79,6 +79,22 @@ export type CheckSpec = {
    * only ever runs after a PR is open) always runs these for real.
    */
   requiresOpenPr?: boolean
+  /**
+   * True for a check a DEDICATED workflow already reports, so running it a
+   * second time inside `check --all` can only produce a duplicate the refresh
+   * path cannot reach. `review-gate` is the one example: its verdict comes
+   * from PR comments that arrive AFTER a push, so the generated
+   * `vinaya-review.yml` is re-run by the verdict workflow when a verdict
+   * lands. Nothing re-runs `vinaya-checks.yml`, so its copy freezes at
+   * whatever the verdicts were at push time and stays red forever after an
+   * approval — measured on `atta-labs/vinaya#21`: the dedicated job reported
+   * success at 02:32Z off the 02:31Z approval while the `--all` copy still
+   * reported the 02:29Z failure, same PR, same verdict, two answers.
+   *
+   * `--all` therefore omits these. Run one by name to evaluate it directly;
+   * its own workflow is what gates the merge.
+   */
+  ownWorkflow?: boolean
 }
 
 /**

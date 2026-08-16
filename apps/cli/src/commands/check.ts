@@ -217,7 +217,14 @@ export async function checkCommand(args: string[]): Promise<void> {
   const { specs: customSpecs, errorOutcome, checks: configChecks } = customSpecsFromConfig()
   const allSpecs = [...coreCheckRegistry(), ...customSpecs]
 
-  const specsToRun = allRequested ? allSpecs : allSpecs.filter((s) => s.name === requestedName)
+  // `--all` omits a check whose own workflow already reports it. Running it
+  // twice produces a second conclusion nothing can refresh: `review-gate`'s
+  // verdicts arrive as PR comments AFTER a push, and only the dedicated
+  // `vinaya-review.yml` is re-run when one lands. Naming the check
+  // explicitly still runs it — this narrows `--all`, never the check itself.
+  const specsToRun = allRequested
+    ? allSpecs.filter((s) => !s.ownWorkflow)
+    : allSpecs.filter((s) => s.name === requestedName)
   if (!allRequested && specsToRun.length === 0) {
     console.error(`Unknown check: ${requestedName}`)
     process.exit(2)
