@@ -6,13 +6,26 @@
  * local source. The coverage set is derived from `@atta/vinaya-sources`'
  * `COMMANDS` registry (current source), not hand-maintained here.
  *
- * `PACKAGE_SPEC` pins the version under test — bump it as part of each
- * publish's release discipline, then run this script green before calling
- * the release verified. A red row here after a version bump means the
- * published artifact genuinely diverges from what current source promises
- * (the 0.1.0-era run of this script caught exactly that four ways at once:
- * `demo break`/`waiver` missing, a stale check count, and a missing
- * `.vinaya/doc-owners` — all one root cause, source ahead of publish).
+ * The version under test is READ FROM `apps/cli/package.json`, not pinned
+ * here. It was a hand-maintained constant, and the failure mode of that was
+ * silent in the worst direction: the constant sat at `0.4.6` while the
+ * registry moved to `0.6.0`, so a green run certified an artifact three
+ * releases old and said nothing about the one actually shipping. A stale pin
+ * cannot fail loudly, because the version it names is a real published
+ * version that really does pass — the run is honest about the wrong subject.
+ *
+ * Deriving it means the script always targets the version `main` currently
+ * claims to be. A red row after a version bump means the published artifact
+ * genuinely diverges from what current source promises (the 0.1.0-era run of
+ * this script caught exactly that four ways at once: `demo break`/`waiver`
+ * missing, a stale check count, and a missing `.vinaya/doc-owners` — all one
+ * root cause, source ahead of publish).
+ *
+ * The one ordering constraint this creates is worth stating, because it is
+ * the normal release sequence rather than an edge case: between merging the
+ * Version Packages PR and running `changeset publish`, `package.json` names
+ * a version the registry does not have yet, so the default mode cannot pass.
+ * That window is exactly what `--local-pack` is for.
  *
  * `--local-pack` runs the same lifecycle against an `npm pack` of THIS
  * working tree instead of the registry spec (the tarball's `prepack` builds
@@ -43,9 +56,19 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { COMMANDS } from '@atta/vinaya-sources'
+// Current source's registry, read to derive the expectation the published
+// artifact is measured against — the same "derive, never hand-maintain"
+// discipline this script already applies to the command coverage set.
+import { coreCheckRegistry } from '../src/checks/registry.js'
 
-const PACKAGE_SPEC = '@attalabs/vinaya@0.4.6'
-const PUBLISHED_VERSION = PACKAGE_SPEC.slice(PACKAGE_SPEC.lastIndexOf('@') + 1)
+// `..` from `apps/cli/scripts/` is the package root — the same derivation
+// `--local-pack` already uses to find the tree it packs, so both modes read
+// their version from one source and cannot disagree about what is under test.
+const CLI_PKG_DIR = fileURLToPath(new URL('..', import.meta.url))
+const PUBLISHED_VERSION = (
+  JSON.parse(readFileSync(join(CLI_PKG_DIR, 'package.json'), 'utf-8')) as { name: string; version: string }
+).version
+const PACKAGE_SPEC = `@attalabs/vinaya@${PUBLISHED_VERSION}`
 
 // What the run is actually testing — the registry spec by default, or the
 // locally packed tarball under `--local-pack`. Set once in `main` before any
@@ -102,11 +125,51 @@ function sha256(buf: Buffer): string {
 }
 
 /**
+ * Every hook directory `resolveHookDir` can choose: the tracked default, the
+ * `.husky` deferral, and the legacy raw-hooks shape. Ordered as that function
+ * decides, so this list reads against it.
+ */
+const HOOK_DIRS = ['.vinaya/hooks', '.husky', '.git/hooks'] as const
+
+/**
+ * How many checks `check --all` should report — derived from CURRENT source's
+ * registry, minus the own-workflow checks `--all` deliberately skips (a check
+ * with its own workflow would otherwise be evaluated twice and report under
+ * two names). This was the literal `15`, and it was wrong for the same reason
+ * the version pin was: `review-gate` gained `ownWorkflow` and dropped out of
+ * `--all`, so the published artifact correctly reported 14 while the script
+ * called that a regression. A hand-maintained count cannot distinguish
+ * "published is stale" — the thing this row exists to catch — from "the
+ * expectation is stale", and it silently blames the artifact either way.
+ */
+const EXPECTED_ALL_CHECK_COUNT = coreCheckRegistry().filter((c) => !c.ownWorkflow).length
+
+/**
+ * Did `init` install a ring-0 hook, in ANY of the shapes it legitimately
+ * chooses between? Asserting one directory is what broke this script: two
+ * copies of the probe both named `.git/hooks` alone, which stopped being
+ * where a fresh install writes when hooks became tracked. Neither copy could
+ * notice, because the version under test was pinned to a release predating
+ * the move — so the pin and the probe went stale together and each hid the
+ * other. One function now, called from both places, for that reason.
+ */
+function hookInstalledIn(fixtureDir: string): boolean {
+  return HOOK_DIRS.some((d) => existsSync(join(fixtureDir, ...d.split('/'), 'pre-commit')))
+}
+
+/**
  * Walks `root` recursively. `.git` is skipped except `.git/hooks` — the one
- * `.git`-internal path `vinaya init`/`eject` ever touches (the raw-hooks
- * fallback when no `.husky` is present); everything else under `.git`
+ * `.git`-internal path `vinaya init`/`eject` ever touches, and only on the
+ * legacy shape (a repo whose `.git/hooks` already holds active raw hooks).
+ * The tracked `.vinaya/hooks` and `.husky` shapes are ordinary working-tree
+ * directories and are walked like anything else. Everything else under `.git`
  * (objects, index, refs) churns for reasons unrelated to vinaya and would
  * make the diff noisy rather than meaningful.
+ *
+ * `.git/config` is deliberately NOT walked, which is worth knowing when
+ * reading an eject diff: arming and unsetting `core.hooksPath` is invisible
+ * to this snapshot, so the hook ROUTING is not what these rows compare — only
+ * the files.
  */
 function walk(dir: string, relBase: string, out: Snapshot): void {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -282,7 +345,7 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome> = {
   init: ({ bin, fixtureDir }) => {
     const r = run(bin, ['init', '--yes'], fixtureDir)
     const coreWritten = CORE_INIT_ARTIFACTS.every((p) => existsSync(join(fixtureDir, p)))
-    const hookInstalled = existsSync(join(fixtureDir, '.git', 'hooks', 'pre-commit'))
+    const hookInstalled = hookInstalledIn(fixtureDir)
     const docOwnersWritten = existsSync(join(fixtureDir, DOC_OWNERS_PATH))
     const coreOk = r.status === 0 && coreWritten && hookInstalled
     return {
@@ -318,10 +381,10 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome> = {
     } catch {
       count = -1
     }
-    const ok = count === 15
+    const ok = count === EXPECTED_ALL_CHECK_COUNT
     return {
       status: ok ? 'pass' : 'fail',
-      detail: `expected 15 registered core checks (reader-resolvable-prose excluded), published reports ${count}`
+      detail: `expected ${EXPECTED_ALL_CHECK_COUNT} checks under --all (current source's registry, own-workflow checks excluded), published reports ${count}`
     }
   },
 
@@ -507,16 +570,17 @@ async function main(): Promise<void> {
     // exact artifact `npm publish` would ship from this tree.
     let installSource = PACKAGE_SPEC
     if (localPack) {
-      const cliDir = fileURLToPath(new URL('..', import.meta.url))
-      process.stdout.write(`--local-pack: packing ${cliDir} (prepack: build + bundle-doctrine)…\n`)
+      process.stdout.write(`--local-pack: packing ${CLI_PKG_DIR} (prepack: build + bundle-doctrine)…\n`)
       const packStdout = execFileSync('npm', ['pack', '--pack-destination', root], {
-        cwd: cliDir,
+        cwd: CLI_PKG_DIR,
         encoding: 'utf8'
       }).trim()
       const tarball = packStdout.split('\n').at(-1) ?? ''
       if (!tarball.endsWith('.tgz')) throw new Error(`npm pack did not report a tarball filename (got: "${tarball}")`)
       installSource = join(root, tarball)
-      expectedVersion = (JSON.parse(readFileSync(join(cliDir, 'package.json'), 'utf-8')) as { version: string }).version
+      // `expectedVersion` already holds this package's version — both modes
+      // now read it from the same `package.json`, so there is nothing to
+      // re-derive here and no way for the two to drift apart.
       specLabel = `local pack ${tarball} (working tree, v${expectedVersion})`
     }
 
@@ -550,8 +614,7 @@ async function main(): Promise<void> {
     // missing is the known, tracked gap and must not block the rest of the run.
     const initOutcome = EXERCISES.init?.(ctx)
     const coreArtifactsOk =
-      CORE_INIT_ARTIFACTS.every((p) => existsSync(join(fixtureDir, p))) &&
-      existsSync(join(fixtureDir, '.git', 'hooks', 'pre-commit'))
+      CORE_INIT_ARTIFACTS.every((p) => existsSync(join(fixtureDir, p))) && hookInstalledIn(fixtureDir)
     if (!initOutcome || !coreArtifactsOk) {
       throw new Error(
         `\`vinaya init\` did not write its core artifacts against the published artifact — cannot proceed: ${initOutcome?.detail}`
