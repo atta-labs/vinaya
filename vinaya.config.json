@@ -36,7 +36,7 @@
     }
   },
   "managed": {
-    "version": 1,
+    "version": 2,
     "files": [
       ".github/workflows/vinaya-checks.yml",
       ".github/workflows/vinaya-review.yml",
@@ -48,12 +48,12 @@
     ],
     "blocks": [
       {
-        "path": ".git/hooks/pre-commit",
+        "path": ".vinaya/hooks/pre-commit",
         "marker": "pre-commit",
         "comment": "hash"
       },
       {
-        "path": ".git/hooks/pre-push",
+        "path": ".vinaya/hooks/pre-push",
         "marker": "pre-push",
         "comment": "hash"
       }

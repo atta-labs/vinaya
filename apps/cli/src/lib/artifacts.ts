@@ -26,7 +26,18 @@ import type { CreateLabelOp, Op } from './ops.js'
 import { packageRoot } from './package-root.js'
 import type { VendoredVinaya } from './self-host.js'
 
-export type HookDir = '.husky' | '.git/hooks'
+/**
+ * The tracked hook directory — the default install target since
+ * atta-labs/attalabs#927. Unlike `.git/hooks` (which git never versions, so a
+ * fresh clone silently has NO ring-0 enforcement), files here are committed
+ * and travel with the repo; `core.hooksPath` (relative, shared config) routes
+ * git at them in the primary checkout and every linked worktree alike. The
+ * irreducible per-clone residue is one `git config core.hooksPath
+ * .vinaya/hooks` — `doctor` reports it whenever it is missing.
+ */
+export const TRACKED_HOOK_DIR = '.vinaya/hooks'
+
+export type HookDir = '.husky' | '.git/hooks' | typeof TRACKED_HOOK_DIR
 
 export type InitContext = {
   owner: string
@@ -859,6 +870,17 @@ export function buildInitOps(ctx: InitContext): Op[] {
     mode: hookMode,
     group: 'Git hooks'
   })
+  if (ctx.hookDir === TRACKED_HOOK_DIR) {
+    ops.push({
+      kind: 'print',
+      message:
+        `Hooks are installed into the TRACKED ${TRACKED_HOOK_DIR}/ directory — commit them so they\n` +
+        'travel with the repo. This working copy is armed via `git config core.hooksPath\n' +
+        `${TRACKED_HOOK_DIR}\` (shared config — covers every linked worktree). Each fresh clone\n` +
+        'runs that one command once; `vinaya doctor` reports it whenever it is missing.',
+      group: 'Git hooks'
+    })
+  }
 
   // Config (refuse-if-foreign). Content is the seed WITHOUT `managed`; the
   // installer rewrites it with the ownership manifest injected after apply.

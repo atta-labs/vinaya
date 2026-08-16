@@ -40,6 +40,7 @@ function makeDeps(overrides: Partial<InitDeps> = {}): InitDeps {
     labelGateway: () => labels,
     hookDirFor: () => '.husky',
     customHooksPath: async () => null,
+    setHooksPath: async () => {},
     confirm: async () => true,
     ...overrides
   }
@@ -48,6 +49,8 @@ function makeDeps(overrides: Partial<InitDeps> = {}): InitDeps {
 function ejectDeps(overrides: Partial<EjectDeps> = {}): EjectDeps {
   return {
     detectRepo: async () => ({ repoRoot: root, owner: 'acme', repo: 'widget' }),
+    readHooksPath: async () => null,
+    unsetHooksPath: async () => {},
     confirm: async () => true,
     ...overrides
   }
@@ -157,7 +160,7 @@ describe('vinaya init', () => {
     const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
     expect(cfg.checks).toEqual({})
     // manifest recorded in config
-    expect(cfg.managed.version).toBe(1)
+    expect(cfg.managed.version).toBe(2)
     expect(cfg.managed.files).toContain(CHECKS_WORKFLOW_PATH)
     expect(cfg.managed.files).toContain(DOCTRINE_POINTER_PATH)
     expect(cfg.managed.blocks.some((b: { path: string }) => b.path === '.husky/pre-commit')).toBe(true)
@@ -1036,6 +1039,8 @@ describe('eject path-traversal safety (security finding 1)', () => {
     )
     const rc = await runEject(['--yes'], {
       detectRepo: async () => ({ repoRoot: localRoot, owner: 'acme', repo: 'widget' }),
+      readHooksPath: async () => null,
+      unsetHooksPath: async () => {},
       confirm: async () => true
     })
     expect(rc).toBe(1)

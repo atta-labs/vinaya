@@ -19,6 +19,7 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
+import { TRACKED_HOOK_DIR } from '../lib/artifacts.js'
 import { detectGitRepo, resolveHookDir } from '../lib/detect.js'
 import { resolveManagedBlockPath } from '../lib/ops.js'
 
@@ -221,6 +222,24 @@ export async function runDemoBreak(repoRoot: string, args: string[]): Promise<nu
   if (!existsSync(hookPath)) {
     console.error('Vinaya hooks are not installed in this repo. Run `vinaya init` first.')
     return 1
+  }
+  // Tracked hooks are only real once `core.hooksPath` routes git at them —
+  // in an unarmed working copy (a fresh clone) the demo's commit would sail
+  // through and "demonstrate" a gate that never fired.
+  if (hookDir === TRACKED_HOOK_DIR) {
+    let armed = false
+    try {
+      armed = gitCapture(repoRoot, ['config', '--get', 'core.hooksPath']) === TRACKED_HOOK_DIR
+    } catch {
+      armed = false
+    }
+    if (!armed) {
+      console.error(
+        `Vinaya hooks are tracked at ${TRACKED_HOOK_DIR} but core.hooksPath is not set in this working copy — ` +
+          `ring 0 is inert. Run \`git config core.hooksPath ${TRACKED_HOOK_DIR}\` first.`
+      )
+      return 1
+    }
   }
 
   const statePath = join(gitDirAbs(repoRoot), STATE_FILENAME)

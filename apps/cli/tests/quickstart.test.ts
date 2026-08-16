@@ -96,6 +96,7 @@ function makeDeps(
     labelGateway: () => labels,
     hookDirFor: () => '.git/hooks',
     customHooksPath: async () => null,
+    setHooksPath: async () => {},
     confirm: async (q) => {
       questions.push(q)
       return next().toLowerCase().startsWith('y')
@@ -106,6 +107,7 @@ function makeDeps(
     ghAuthStatus: async () => ({ authenticated: true, detail: 'ok' }),
     branchProtectionConfigured: async () => null,
     hookDirFor: () => '.git/hooks',
+    readHooksPath: async () => null,
     nodeVersion: () => 'v99.0.0',
     bunVersion: () => 'test-bun',
     packageVersion: () => '0.1.0-test'

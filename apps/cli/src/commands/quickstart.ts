@@ -36,8 +36,10 @@ import {
   detectGitRepo,
   ghAuthStatus,
   ghLabelGateway,
+  readCoreHooksPath,
   resolveHookDir,
-  type RepoInfo
+  type RepoInfo,
+  setCoreHooksPath
 } from '../lib/detect.js'
 import { packageRoot } from '../lib/package-root.js'
 import { closeStdin, prompt as promptAsk, promptYesNo } from '../lib/prompt.js'
@@ -207,6 +209,7 @@ function realDeps(): QuickstartDeps {
       labelGateway: ghLabelGateway,
       hookDirFor: resolveHookDir,
       customHooksPath,
+      setHooksPath: setCoreHooksPath,
       // No closeStdin here — see this file's header comment.
       confirm: async (q) => promptYesNo(q, false)
     },
@@ -215,6 +218,7 @@ function realDeps(): QuickstartDeps {
       ghAuthStatus,
       branchProtectionConfigured,
       hookDirFor: resolveHookDir,
+      readHooksPath: readCoreHooksPath,
       nodeVersion: () => process.version,
       bunVersion: () => (typeof Bun === 'undefined' ? null : Bun.version),
       packageVersion: readPackageVersion

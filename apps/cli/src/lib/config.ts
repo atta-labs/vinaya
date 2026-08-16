@@ -168,7 +168,24 @@ export type BriefSchema = z.infer<typeof BriefSchemaSchema>
 // `labels` are the forge labels vinaya created-if-absent. Paths are
 // repo-root-relative, forward-slashed. If this manifest is absent or corrupt
 // at eject time, eject refuses rather than guessing at ownership.
-export const MANAGED_MANIFEST_VERSION = 1
+//
+// Version history:
+//   1 — original shape; hooks recorded at `.husky/*` or `.git/hooks/*`.
+//   2 — written by a package that understands the tracked-hooks layout
+//       (atta-labs/attalabs#927: non-husky installs record hooks at
+//       `.vinaya/hooks/*`, routed via `core.hooksPath`). The SHAPE is
+//       unchanged, and 2 does NOT attest that THIS repo uses tracked hooks —
+//       `upgrade` also writes 2 for husky installs and for installs whose
+//       migration was refused; never key behavior off the version alone,
+//       read the recorded block paths. What the bump buys is narrow: an
+//       older package's `upgrade` (the only command with a version guard,
+//       `manifest.version > MANAGED_MANIFEST_VERSION`) refuses a newer
+//       manifest loudly instead of regenerating against locations it
+//       half-understands. Released `doctor`/`eject` have no such guard — an
+//       old-package eject of a migrated install removes the tracked hook
+//       files but leaves `core.hooksPath` set (dangling but harmless: git
+//       finds no hooks there and runs none).
+export const MANAGED_MANIFEST_VERSION = 2
 
 // A recorded ownership path must be a repo-root-relative path that cannot
 // escape the repo — no absolute path, no `..` segment. This is the parse-layer

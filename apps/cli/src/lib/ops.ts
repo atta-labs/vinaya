@@ -407,7 +407,7 @@ export type EjectPlan = {
 }
 
 /** Does removing this managed block leave a file vinaya effectively created? */
-function blockStripLeavesEmpty(body: string): boolean {
+export function blockStripLeavesEmpty(body: string): boolean {
   // Only whitespace and a lone shebang line remain → vinaya created the host.
   const rest = body
     .split('\n')
