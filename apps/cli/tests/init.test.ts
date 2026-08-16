@@ -493,7 +493,11 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // Selected by head SHA, not recency: --status completed EXCLUDES a run
     // that is re-running but INCLUDES cancelled ones, so "newest" can pick a
     // stale cancelled sibling and cancel the live evaluation.
-    expect(verdict).toContain('select(.headSha==$sha)')
+    expect(verdict).toContain('--commit "$HEAD_SHA"')
+    // gh's --jq is a single-expression flag, NOT a jq passthrough: --arg is
+    // swallowed as the expression and gh exits 1, killing the step under
+    // bash -e before the empty-RUN_ID no-op can run.
+    expect(verdict).not.toContain('--arg')
     expect(verdict).toContain('select(.conclusion!="cancelled")')
     expect(verdict).toContain('HEAD_SHA: ${{ needs.evaluate.outputs.sha }}')
     expect(verdict.indexOf('if [ -z "$HEAD_SHA" ]')).toBeLessThan(verdict.indexOf('gh run list'))

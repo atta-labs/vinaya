@@ -139,12 +139,19 @@ jobs:
           # and never gate the current head. Cancelled runs are excluded
           # because re-running one produces another cancellation, not a
           # verdict.
+          # `--commit` filters server-side, deliberately. gh's `--jq` is a
+          # single-expression flag of its own, NOT a passthrough to jq, so jq's
+          # variable-binding flag cannot be used with it: pflag swallows that
+          # flag as the expression and gh exits 1 on the stray token — which
+          # under `bash -e` kills the step before the empty-RUN_ID no-op can
+          # run, so every verdict reddens and nothing reruns. Filter on the
+          # server and keep the jq expression free of variables.
           RUN_ID=$(gh run list --repo "${{ github.repository }}" \
             --workflow vinaya-review.yml --branch "$BRANCH" \
-            --json databaseId,event,headSha,status,conclusion \
-            --jq --arg sha "$HEAD_SHA" '[.[]
+            --commit "$HEAD_SHA" \
+            --json databaseId,event,status,conclusion \
+            --jq '[.[]
                  | select(.event=="pull_request")
-                 | select(.headSha==$sha)
                  | select(.status=="completed")
                  | select(.conclusion!="cancelled")]
                | .[0].databaseId // empty')
