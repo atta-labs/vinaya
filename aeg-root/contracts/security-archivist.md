@@ -67,7 +67,7 @@ Every item the Security Reviewer produces in the verdict (left) has exactly one 
 
 - The verdict line is written bare, on its own line, in the exact format specified by `roles/security.md`: `VERDICT: PASS | FAIL`. No heading, no blockquote, no code span — the machine readers are line-anchored, and a decorated verdict reads as missing.
 - Every finding must carry a severity tag (`CRITICAL`, `HIGH`, `MEDIUM`, or `LOW`). Any `CRITICAL` or `HIGH` means the verdict is `FAIL` — this contract records that grammar, it does not define it; `roles/security.md` does.
-- The `CONFIG SCAN:` and `SECRETS:` lines must be stated explicitly, even when the answer is `not applicable` or `none found`. An unstated scan is indistinguishable from an unrun one.
+- The `CONFIG SCAN:` and `SECRETS:` lines must be stated explicitly, even when the answer is `not applicable` or `none found`. An unstated scan is indistinguishable from an unrun one — and the `SECRETS:` line is evidence-backed, not asserted: the secret scanner's pasted output must appear in the verdict comment above it (`roles/security.md`, check 1).
 - No discovered secret is quoted in full — file, line, and enough characters to identify it. The verdict comment becomes a permanent record at merge; a full value in it is the second leak.
 - The comment closes with the one-line token report (`roles/security.md` § turn-end).
 - A re-pass after the Developer's fixes posts a **new** verdict comment, never edits the prior one — most-recent-wins is how the record tells a resolved fail from a contradiction.
