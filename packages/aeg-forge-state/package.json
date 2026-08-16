@@ -17,7 +17,7 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@atta/aeg-types": "workspace:*",
+    "@atta/aeg-types": "0.7.0",
     "@octokit/graphql": "^8.1.1"
   },
   "devDependencies": {

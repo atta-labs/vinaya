@@ -18,8 +18,8 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@atta/aeg-forge-state": "workspace:*",
-    "@atta/aeg-types": "workspace:*",
+    "@atta/aeg-forge-state": "0.7.0",
+    "@atta/aeg-types": "0.7.0",
     "gray-matter": "^4.0.3"
   },
   "devDependencies": {

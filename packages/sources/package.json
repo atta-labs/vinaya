@@ -16,9 +16,9 @@
     "lint": "biome check src"
   },
   "dependencies": {
-    "@atta/aeg-core": "workspace:*",
-    "@atta/aeg-forge-state": "workspace:*",
-    "@atta/aeg-types": "workspace:*",
+    "@atta/aeg-core": "0.7.0",
+    "@atta/aeg-forge-state": "0.7.0",
+    "@atta/aeg-types": "0.7.0",
     "zod": "3.25.76"
   },
   "devDependencies": {
