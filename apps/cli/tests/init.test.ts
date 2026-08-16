@@ -1165,6 +1165,16 @@ describe('adopter-declared CI setup (ci.setup)', () => {
     }
   })
 
+  it('a first line carrying extra leading whitespace cannot break the block scalar (reviewer finding)', () => {
+    // YAML derives a `|` scalar's indentation from its first non-empty
+    // line; without normalization, `"  a\nb"` would set it to 12 and the
+    // 10-column `b` line would de-dent out of the scalar, producing an
+    // invalid workflow. trimStart() pins the reference to column 10.
+    const content = workflowContent('  npm ci\necho done', CHECKS_WORKFLOW_PATH)
+    expect(content).toContain('          npm ci\n          echo done')
+    expect(content).not.toContain('            npm ci')
+  })
+
   it('multi-command values chained with && land verbatim on one run line', () => {
     const cmd = 'npm install -g bun && bun install --frozen-lockfile --ignore-scripts'
     const content = workflowContent(cmd, CHECKS_WORKFLOW_PATH)

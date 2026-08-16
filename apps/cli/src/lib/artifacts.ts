@@ -202,7 +202,17 @@ function vinayaRun(selfHost: VendoredVinaya | null, args: string): string {
  */
 function adopterSetupStep(ciSetup: string | null): string {
   if (!ciSetup) return ''
+  // trimStart() is load-bearing, not cosmetic: YAML takes a `|` block
+  // scalar's indentation from its FIRST non-empty line, so a value whose
+  // first line carries extra leading whitespace would set the reference
+  // deeper than a later line and de-dent that line out of the scalar —
+  // an invalid workflow from valid-looking config (both reviewers flagged
+  // it). Leading whitespace before a shell command is semantically inert,
+  // so stripping it changes nothing the adopter declared. Later lines may
+  // be MORE indented than the first (heredocs, continuations) — that is
+  // always inside the scalar and stays untouched.
   const indented = ciSetup
+    .trimStart()
     .split('\n')
     .map((line) => (line.length > 0 ? `          ${line}` : line))
     .join('\n')
