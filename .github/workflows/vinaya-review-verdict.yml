@@ -136,9 +136,12 @@ jobs:
           #
           # The run for this head SHA is the only one whose conclusion gates
           # the merge; runs for earlier commits are scoped to those commits
-          # and never gate the current head. Cancelled runs are excluded
-          # because re-running one produces another cancellation, not a
-          # verdict.
+          # and never gate the current head. Cancelled runs are excluded for
+          # the same reason, not a mechanical one — a rerun with nothing else
+          # in its group completes normally. A cancellation here means the
+          # `opened`+`labeled` collapse discarded that run in favour of a
+          # sibling on the same commit, and it is the survivor whose
+          # conclusion the merge box reads.
           # `--commit` filters server-side, deliberately. gh's `--jq` is a
           # single-expression flag of its own, NOT a passthrough to jq, so jq's
           # variable-binding flag cannot be used with it: pflag swallows that
