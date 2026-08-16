@@ -12,7 +12,7 @@
     },
     "apps/cli": {
       "name": "@attalabs/vinaya",
-      "version": "0.7.1",
+      "version": "0.8.0",
       "bin": {
         "vinaya": "./dist/index.js",
       },
@@ -21,20 +21,20 @@
         "zod": "3.25.76",
       },
       "devDependencies": {
-        "@atta/aeg-core": "workspace:*",
-        "@atta/aeg-forge-state": "workspace:*",
         "@atta/typescript-config": "workspace:*",
-        "@atta/vinaya-sources": "workspace:*",
+        "@attalabs/aeg-core": "workspace:*",
+        "@attalabs/aeg-forge-state": "workspace:*",
+        "@attalabs/vinaya-sources": "workspace:*",
         "@types/bun": "latest",
         "typescript": "^5.5.0",
       },
     },
     "packages/aeg-core": {
-      "name": "@atta/aeg-core",
-      "version": "0.7.1",
+      "name": "@attalabs/aeg-core",
+      "version": "0.8.0",
       "dependencies": {
-        "@atta/aeg-forge-state": "0.7.1",
-        "@atta/aeg-types": "0.7.1",
+        "@attalabs/aeg-forge-state": "0.8.0",
+        "@attalabs/aeg-types": "0.8.0",
         "gray-matter": "^4.0.3",
       },
       "devDependencies": {
@@ -44,10 +44,10 @@
       },
     },
     "packages/aeg-forge-state": {
-      "name": "@atta/aeg-forge-state",
-      "version": "0.7.1",
+      "name": "@attalabs/aeg-forge-state",
+      "version": "0.8.0",
       "dependencies": {
-        "@atta/aeg-types": "0.7.1",
+        "@attalabs/aeg-types": "0.8.0",
         "@octokit/graphql": "^8.1.1",
       },
       "devDependencies": {
@@ -57,20 +57,20 @@
       },
     },
     "packages/aeg-types": {
-      "name": "@atta/aeg-types",
-      "version": "0.7.1",
+      "name": "@attalabs/aeg-types",
+      "version": "0.8.0",
       "devDependencies": {
         "@atta/typescript-config": "workspace:*",
         "typescript": "^5.7.0",
       },
     },
     "packages/sources": {
-      "name": "@atta/vinaya-sources",
-      "version": "0.7.1",
+      "name": "@attalabs/vinaya-sources",
+      "version": "0.8.0",
       "dependencies": {
-        "@atta/aeg-core": "0.7.1",
-        "@atta/aeg-forge-state": "0.7.1",
-        "@atta/aeg-types": "0.7.1",
+        "@attalabs/aeg-core": "0.8.0",
+        "@attalabs/aeg-forge-state": "0.8.0",
+        "@attalabs/aeg-types": "0.8.0",
         "zod": "3.25.76",
       },
       "devDependencies": {
@@ -85,17 +85,17 @@
     },
   },
   "packages": {
-    "@atta/aeg-core": ["@atta/aeg-core@workspace:packages/aeg-core"],
-
-    "@atta/aeg-forge-state": ["@atta/aeg-forge-state@workspace:packages/aeg-forge-state"],
-
-    "@atta/aeg-types": ["@atta/aeg-types@workspace:packages/aeg-types"],
-
     "@atta/typescript-config": ["@atta/typescript-config@workspace:packages/typescript-config"],
 
-    "@atta/vinaya-sources": ["@atta/vinaya-sources@workspace:packages/sources"],
+    "@attalabs/aeg-core": ["@attalabs/aeg-core@workspace:packages/aeg-core"],
+
+    "@attalabs/aeg-forge-state": ["@attalabs/aeg-forge-state@workspace:packages/aeg-forge-state"],
+
+    "@attalabs/aeg-types": ["@attalabs/aeg-types@workspace:packages/aeg-types"],
 
     "@attalabs/vinaya": ["@attalabs/vinaya@workspace:apps/cli"],
+
+    "@attalabs/vinaya-sources": ["@attalabs/vinaya-sources@workspace:packages/sources"],
 
     "@biomejs/biome": ["@biomejs/biome@2.5.8", "", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "2.5.8", "@biomejs/cli-darwin-x64": "2.5.8", "@biomejs/cli-linux-arm64": "2.5.8", "@biomejs/cli-linux-arm64-musl": "2.5.8", "@biomejs/cli-linux-x64": "2.5.8", "@biomejs/cli-linux-x64-musl": "2.5.8", "@biomejs/cli-win32-arm64": "2.5.8", "@biomejs/cli-win32-x64": "2.5.8" }, "bin": { "biome": "bin/biome" } }, "sha512-aeAeeJB9fSDc7Gq+2GqpQxA0qBj6gj1k2R6L1cYqGePKP/baIq1WX8y6B+D+nRsO5ViQL22K/8IwbqERW0q1nw=="],
 
