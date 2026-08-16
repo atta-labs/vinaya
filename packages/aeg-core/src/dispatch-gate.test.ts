@@ -143,6 +143,105 @@ describe('checkDispatchReadiness', () => {
     expect(result.ready).toBe(true)
   })
 
+  // ---- hand-closed dependency recognition (task vinaya-engine-v1 21, #99) --
+
+  it('passes a depends-on edge hand-closed by a recognized Principal (real incident shape: #890)', () => {
+    const result = checkDispatchReadiness(
+      makeInput({
+        dependsOn: [
+          {
+            id: '1',
+            issue: 890,
+            merged: false,
+            issueState: 'closed',
+            stateReason: 'completed',
+            closedByActor: 'daniboomerang'
+          }
+        ]
+      })
+    )
+    expect(result.ready).toBe(true)
+  })
+
+  it('blocks a depends-on edge closed by a non-recognized actor', () => {
+    const result = checkDispatchReadiness(
+      makeInput({
+        dependsOn: [
+          {
+            id: '1',
+            issue: 890,
+            merged: false,
+            issueState: 'closed',
+            stateReason: 'completed',
+            closedByActor: 'some-rando'
+          }
+        ]
+      })
+    )
+    expect(result.ready).toBe(false)
+    expect(result.blockers[0]).toContain('depends-on')
+  })
+
+  it('blocks a depends-on edge closed NOT_PLANNED even by a recognized Principal (abandoned, not resolved)', () => {
+    const result = checkDispatchReadiness(
+      makeInput({
+        dependsOn: [
+          {
+            id: '1',
+            issue: 890,
+            merged: false,
+            issueState: 'closed',
+            stateReason: 'not_planned',
+            closedByActor: 'daniboomerang'
+          }
+        ]
+      })
+    )
+    expect(result.ready).toBe(false)
+  })
+
+  it('blocks an open depends-on edge even with a recognized closedByActor set (issueState must be closed)', () => {
+    const result = checkDispatchReadiness(
+      makeInput({
+        dependsOn: [
+          {
+            id: '1',
+            issue: 890,
+            merged: false,
+            issueState: 'open',
+            stateReason: null,
+            closedByActor: 'daniboomerang'
+          }
+        ]
+      })
+    )
+    expect(result.ready).toBe(false)
+  })
+
+  it('respects an overridden principalAllowlist over the hardcoded default', () => {
+    const result = checkDispatchReadiness(
+      makeInput({
+        dependsOn: [
+          {
+            id: '1',
+            issue: 890,
+            merged: false,
+            issueState: 'closed',
+            stateReason: 'completed',
+            closedByActor: 'adopter-principal'
+          }
+        ],
+        principalAllowlist: ['adopter-principal']
+      })
+    )
+    expect(result.ready).toBe(true)
+  })
+
+  it('still blocks an unresolved edge with no hand-close facts (unchanged pre-task-21 behavior)', () => {
+    const result = checkDispatchReadiness(makeInput({ dependsOn: [{ id: '5', issue: 266, merged: false }] }))
+    expect(result.ready).toBe(false)
+  })
+
   it('accumulates multiple independent blockers in one call', () => {
     const result = checkDispatchReadiness(
       makeInput({

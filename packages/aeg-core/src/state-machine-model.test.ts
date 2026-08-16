@@ -20,6 +20,7 @@ function facts(overrides: Partial<ForgeFacts> = {}): ForgeFacts {
     stateReason: null,
     closedAt: null,
     mergedAt: null,
+    closedByActor: null,
     ...overrides
   }
 }
@@ -37,7 +38,8 @@ describe('FORGE_FACT_INPUTS — the model names every input it reads', () => {
       'blockedLabel',
       'stateReason',
       'closedAt',
-      'mergedAt'
+      'mergedAt',
+      'closedByActor'
     ]
     const described = FORGE_FACT_INPUTS.map((i) => i.fact)
     expect(described.slice().sort()).toEqual(expected.slice().sort())

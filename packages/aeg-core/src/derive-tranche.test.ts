@@ -38,6 +38,7 @@ function facts(overrides: Partial<ForgeFacts> = {}): ForgeFacts {
     stateReason: null,
     closedAt: null,
     mergedAt: null,
+    closedByActor: null,
     ...overrides
   }
 }
@@ -277,7 +278,8 @@ describe('deriveTranche: live herald-onto-engine.md + today’s forge snapshot',
         blockedLabel: false,
         stateReason: 'completed',
         closedAt: null,
-        mergedAt: null
+        mergedAt: null,
+        closedByActor: null
       }
     ]
     // Tasks 2, 3b, 4, 5, 6, 7a, 7b absent → todo (no forge facts = minimum todo).

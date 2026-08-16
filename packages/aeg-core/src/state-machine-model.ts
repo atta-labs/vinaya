@@ -98,6 +98,12 @@ export const FORGE_FACT_INPUTS: ForgeFactInput[] = [
     fact: 'mergedAt',
     readsFrom: 'PullRequest.mergedAt',
     meaning: 'Timestamp for the coherence oracle grandfather cutoff. No derivation rule reads it.'
+  },
+  {
+    fact: 'closedByActor',
+    readsFrom: 'ClosedEvent.actor.login (most recent timeline CLOSED_EVENT)',
+    meaning:
+      'GitHub login that hand-closed the Issue. No task-status derivation rule reads it — it is consumed by dispatch-gate.ts/coherence-checks.ts A1 to recognize a hand-closed dependency as resolved (task vinaya-engine-v1 21, #99), not by this status model.'
   }
 ]
 

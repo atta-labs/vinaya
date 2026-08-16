@@ -20,6 +20,7 @@
  */
 
 import type { Task } from './types'
+import { isPrincipal, PRINCIPAL_ALLOWLIST } from './waiver-label'
 
 export type DispatchIssueFact = { number: number; state: 'open' | 'closed' } | null
 
@@ -30,7 +31,46 @@ export type DispatchEdgeFact = {
   issue: number | null
 }
 
-export type DispatchDependsOnFact = DispatchEdgeFact & { merged: boolean }
+export type DispatchDependsOnFact = DispatchEdgeFact & {
+  merged: boolean
+  /**
+   * Hand-close recognition facts (task `vinaya-engine-v1` 21, #99) — a
+   * second, narrower path alongside `merged` for a dependency Issue closed
+   * directly by a recognized Principal, with a stated `COMPLETED` reason,
+   * rather than via a merged PR. All three are `null`/absent when the edge
+   * is unresolvable or the target issue is open/has no close event — in
+   * which case this path never fires and only `merged` matters, same as
+   * before this task.
+   */
+  issueState?: 'open' | 'closed' | null
+  stateReason?: 'completed' | 'not_planned' | null
+  closedByActor?: string | null
+}
+
+/**
+ * True when a dependency Issue was closed directly by a recognized Principal
+ * with a stated `COMPLETED` reason — the second, narrower "done" path this
+ * task adds alongside `merged`. Deliberately conjunctive and centralized
+ * here (not duplicated per caller): the trap this task exists to avoid is
+ * "any closed Issue with a comment counts," so every condition below is a
+ * real forge fact, not a prose claim —
+ *   - `issueState === 'closed'`: the Issue is actually closed.
+ *   - `stateReason === 'completed'`: GitHub's own close reason says resolved,
+ *     not `not_planned` (abandoned — the opposite of resolved).
+ *   - `closedByActor` is the GitHub login that performed the CLOSED_EVENT
+ *     (not a claim in a comment body) and is a member of the recognized
+ *     Principal allowlist.
+ */
+function isHandClosedByRecognizedPrincipal(
+  dep: Pick<DispatchDependsOnFact, 'issueState' | 'stateReason' | 'closedByActor'>,
+  principalAllowlist: string[]
+): boolean {
+  return (
+    dep.issueState === 'closed' &&
+    dep.stateReason === 'completed' &&
+    isPrincipal(dep.closedByActor ?? null, principalAllowlist)
+  )
+}
 
 export type DispatchConflictsWithFact = DispatchEdgeFact & { openOrInFlight: boolean }
 
@@ -77,6 +117,17 @@ export type DispatchGateInput = {
   priorTask: DispatchPriorTaskFact | null
   /** One entry per project named in `task.projects`. */
   priorTrancheArchival: DispatchPriorTrancheFact[]
+  /**
+   * Overrides `PRINCIPAL_ALLOWLIST` for hand-close recognition when
+   * provided — an adopter repo's own `vinaya.config.json` `principals`
+   * field, resolved by the CLI bin before calling in (never read from here;
+   * this stays pure). Defaults to `PRINCIPAL_ALLOWLIST` when omitted, same
+   * pattern as `checkReviewGate`'s `principalAllowlist` (`review-gate.ts`) —
+   * hardcoding this repo's own principal made that gate unpassable on any
+   * adopter repo; the same mistake here would silently do the same to the
+   * hand-close path.
+   */
+  principalAllowlist?: string[]
 }
 
 export type DispatchResult = { ready: boolean; blockers: string[] }
@@ -84,6 +135,7 @@ export type DispatchResult = { ready: boolean; blockers: string[] }
 export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult {
   const { trancheSlug, task } = input
   const taskLabel = `task ${task.id} (tranche ${trancheSlug})`
+  const principalAllowlist = input.principalAllowlist ?? PRINCIPAL_ALLOWLIST
   const blockers: string[] = []
 
   // Issue-existence — the topology row itself has no Issue number.
@@ -105,9 +157,11 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
     )
   }
 
-  // Depends-on merged.
+  // Depends-on merged — OR hand-closed by a recognized Principal (task
+  // `vinaya-engine-v1` 21, #99): a second, narrower path for a dependency
+  // Issue closed directly rather than via a merged PR.
   for (const dep of input.dependsOn) {
-    if (!dep.merged) {
+    if (!dep.merged && !isHandClosedByRecognizedPrincipal(dep, principalAllowlist)) {
       const issueStr = dep.issue !== null ? ` (#${dep.issue})` : ''
       blockers.push(
         `dispatch-gate depends-on: ${taskLabel} depends on ${dep.id}${issueStr}, whose PR is not merged yet — not dispatchable, it serializes behind it.`
