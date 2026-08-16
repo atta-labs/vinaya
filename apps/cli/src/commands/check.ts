@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { emitCheckError, type CheckError, type CheckOutcome, type CheckSpec } from '../checks/contract'
-import { coreCheckRegistry } from '../checks/registry'
+import { coreCheckRegistry, runsUnderAll } from '../checks/registry'
 import {
   bareKeyNextMinorWarning,
   overriddenNextMinorWarning,
@@ -222,9 +222,7 @@ export async function checkCommand(args: string[]): Promise<void> {
   // verdicts arrive as PR comments AFTER a push, and only the dedicated
   // `vinaya-review.yml` is re-run when one lands. Naming the check
   // explicitly still runs it — this narrows `--all`, never the check itself.
-  const specsToRun = allRequested
-    ? allSpecs.filter((s) => !s.ownWorkflow)
-    : allSpecs.filter((s) => s.name === requestedName)
+  const specsToRun = allRequested ? allSpecs.filter(runsUnderAll) : allSpecs.filter((s) => s.name === requestedName)
   if (!allRequested && specsToRun.length === 0) {
     console.error(`Unknown check: ${requestedName}`)
     process.exit(2)

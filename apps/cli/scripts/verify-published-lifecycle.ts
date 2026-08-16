@@ -59,7 +59,7 @@ import { COMMANDS } from '@atta/vinaya-sources'
 // Current source's registry, read to derive the expectation the published
 // artifact is measured against — the same "derive, never hand-maintain"
 // discipline this script already applies to the command coverage set.
-import { coreCheckRegistry } from '../src/checks/registry.js'
+import { coreCheckRegistry, runsUnderAll } from '../src/checks/registry.js'
 import { resolveHookDir } from '../src/lib/detect.js'
 
 // `..` from `apps/cli/scripts/` is the package root — the same derivation
@@ -131,16 +131,19 @@ function sha256(buf: Buffer): string {
 
 /**
  * How many checks `check --all` should report — derived from CURRENT source's
- * registry, minus the own-workflow checks `--all` deliberately skips (a check
- * with its own workflow would otherwise be evaluated twice and report under
- * two names). This was the literal `15`, and it was wrong for the same reason
- * the version pin was: `review-gate` gained `ownWorkflow` and dropped out of
- * `--all`, so the published artifact correctly reported 14 while the script
- * called that a regression. A hand-maintained count cannot distinguish
+ * registry, filtered by the SAME `runsUnderAll` predicate `check.ts` ships (a
+ * check with its own workflow would otherwise be evaluated twice and report
+ * under two names). This was the literal `15`, and it was wrong for the same
+ * reason the version pin was: `review-gate` gained `ownWorkflow` and dropped
+ * out of `--all`, so the published artifact correctly reported 14 while the
+ * script called that a regression. A hand-maintained count cannot distinguish
  * "published is stale" — the thing this row exists to catch — from "the
  * expectation is stale", and it silently blames the artifact either way.
+ * Importing the predicate rather than re-deriving `!ownWorkflow` here closes
+ * the same gap one level down: a second selection condition added to `--all`
+ * reaches this expectation automatically instead of turning it stale.
  */
-const EXPECTED_ALL_CHECK_COUNT = coreCheckRegistry().filter((c) => !c.ownWorkflow).length
+const EXPECTED_ALL_CHECK_COUNT = coreCheckRegistry().filter(runsUnderAll).length
 
 /**
  * Where CURRENT source says this fixture's hook belongs, and whether the
