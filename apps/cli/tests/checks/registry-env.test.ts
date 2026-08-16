@@ -101,7 +101,10 @@ describe('registry env declarations', () => {
       'include',
       'timeoutMs',
       'env',
-      'requiresOpenPr'
+      'requiresOpenPr',
+      // Expressible in config (CheckEntrySchema) and documented in
+      // CONFIG_REFERENCE, so it is not a privileged core-only field.
+      'ownWorkflow'
     ])
     for (const spec of specs) {
       const extra = (Object.keys(spec) as Array<keyof CheckSpec>).filter((k) => !ALLOWED_KEYS.has(k))

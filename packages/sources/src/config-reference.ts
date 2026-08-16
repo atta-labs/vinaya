@@ -120,6 +120,15 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "requiresOpenPr": true }`
   },
   {
+    key: 'checks.ownWorkflow',
+    type: 'boolean (optional)',
+    semantics: [
+      'Marks a check that a dedicated workflow of your own already reports. `vinaya check --all` omits it, so the same check is never evaluated twice under two different job names. Naming the check directly (`vinaya check <name>`) still runs it.',
+      "Use it when a check's answer can change AFTER a push — for example one that reads pull-request comments. Such a check needs its own workflow that something re-runs when the input changes; a second copy inside `--all` is never re-run, so it freezes at push-time state and reports a stale result forever. The core `review-gate` check is exactly this shape and carries this flag."
+    ],
+    example: `{ "ownWorkflow": true }`
+  },
+  {
     key: 'checks.env',
     type: 'Record<string, EnvEntry> (optional)',
     semantics: [

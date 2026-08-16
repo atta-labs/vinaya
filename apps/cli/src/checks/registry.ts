@@ -217,6 +217,12 @@ export function coreCheckRegistry(): CheckSpec[] {
       run: bin('check-review-gate'),
       scope: 'full',
       timeoutMs: 30_000,
+      // Reported by the generated `vinaya-review.yml`, which the verdict
+      // workflow re-runs when a verdict comment lands. `check --all` must not
+      // evaluate it a second time: nothing re-runs `vinaya-checks.yml`, so
+      // that copy freezes at push-time verdicts and stays red after an
+      // approval — measured on atta-labs/vinaya#21.
+      ownWorkflow: true,
       // BRANCH falls back to git; PR_NUMBER's absence takes the explicit
       // "no PR to evaluate yet (local dev, pre-push before a PR exists)"
       // bypass documented in the bin's own module comment. The bin shells

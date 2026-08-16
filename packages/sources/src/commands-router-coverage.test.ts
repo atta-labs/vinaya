@@ -56,6 +56,7 @@ describe('router -> COMMANDS coverage', () => {
         'init product',
         'eject',
         'doctor',
+        'doctrine',
         'upgrade',
         'check',
         'archive',

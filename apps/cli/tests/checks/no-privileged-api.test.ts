@@ -20,7 +20,10 @@ const ALLOWED_KEYS = new Set<keyof CheckSpec>([
   'include',
   'timeoutMs',
   'env',
-  'requiresOpenPr'
+  'requiresOpenPr',
+  // Expressible in config (CheckEntrySchema) and documented in
+  // CONFIG_REFERENCE, so it is not a privileged core-only field.
+  'ownWorkflow'
 ])
 
 describe('no-privileged-api', () => {

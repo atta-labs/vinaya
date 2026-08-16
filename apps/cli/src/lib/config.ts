@@ -37,7 +37,12 @@ const CheckEntrySchema = z
     args: z.array(z.string()).optional(),
     timeoutMs: z.number().optional(),
     env: z.record(z.string(), EnvEntrySchema).optional(),
-    requiresOpenPr: z.boolean().optional()
+    requiresOpenPr: z.boolean().optional(),
+    // Same no-privileged-field discipline as `env` and `requiresOpenPr`: a
+    // config-registered check declares this exactly like a core one. An
+    // adopter whose own workflow reports a check marks it here so
+    // `check --all` stops producing a second conclusion nothing refreshes.
+    ownWorkflow: z.boolean().optional()
   })
   // `anyOf` is keyed BY the variable name it expands to (`{"GITHUB_TOKEN":
   // {"anyOf":["GITHUB_TOKEN","GH_TOKEN"]}}`) — the key must be one of its own

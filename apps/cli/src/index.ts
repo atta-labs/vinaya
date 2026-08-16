@@ -8,6 +8,7 @@ import { auditCommand } from './commands/audit.js'
 import { checkCommand } from './commands/check.js'
 import { demoBreakCommand } from './commands/demo.js'
 import { doctorCommand } from './commands/doctor.js'
+import { doctrineCommand } from './commands/doctrine.js'
 import { ejectCommand } from './commands/eject.js'
 import { initCommand, initProductCommand } from './commands/init.js'
 import { issueCreateCommand, issueEditCommand } from './commands/issue.js'
@@ -59,6 +60,10 @@ try {
     }
     case 'doctor': {
       await doctorCommand(args)
+      break
+    }
+    case 'doctrine': {
+      doctrineCommand(args)
       break
     }
     case 'upgrade': {

@@ -18,7 +18,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { COMMANDS } from '@atta/vinaya-sources'
 
 const PACKAGE_SPEC = '@attalabs/vinaya@0.4.6'
@@ -373,6 +373,32 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome> = {
     return { status: ok ? 'pass' : 'fail', detail: `exit ${r.status}: ${r.stdout.trim()}` }
   },
 
+  doctrine: ({ bin, fixtureDir }) => {
+    // The published-tarball resolution shape, for real: the scratch install's
+    // own bundled `aeg-root/` (in the `files` array) is what must resolve —
+    // exactly the path the committed VINAYA.md pointer hands every reader.
+    const plain = run(bin, ['doctrine'], fixtureDir)
+    const printed = plain.stdout.trim()
+    const entrySuffix = join('aeg-root', 'skills', 'aeg', 'SKILL.md')
+    const plainOk = plain.status === 0 && isAbsolute(printed) && printed.endsWith(entrySuffix) && existsSync(printed)
+    const json = run(bin, ['doctrine', '--json'], fixtureDir)
+    let jsonOk = false
+    try {
+      const parsed = JSON.parse(json.stdout) as { schema?: number; data?: { root?: string; entry?: string } }
+      jsonOk =
+        parsed.schema === 1 &&
+        typeof parsed.data?.root === 'string' &&
+        parsed.data?.entry === join(parsed.data.root, 'skills', 'aeg', 'SKILL.md') &&
+        existsSync(parsed.data.entry)
+    } catch {
+      jsonOk = false
+    }
+    return {
+      status: plainOk && jsonOk ? 'pass' : 'fail',
+      detail: `exit ${plain.status}, printed entry exists: ${plainOk}, --json root/entry coherent: ${jsonOk}`
+    }
+  },
+
   'demo break': ({ bin, fixtureDir }) => {
     // Git-local end to end (branch + fixture commit + hook rejection + its own
     // cleanup) — network-free, so it is exercised for real. It refuses on a
@@ -490,6 +516,7 @@ async function main(): Promise<void> {
       'issue create',
       'doctor',
       'upgrade',
+      'doctrine',
       'demo break',
       'waiver'
     ]) {
@@ -516,7 +543,18 @@ async function main(): Promise<void> {
 
     printReport(results)
 
-    const anyFail = [...results.values()].some((o) => o.status === 'fail')
+    // `coverageCheck()` proves every shipped command has an EXERCISES/
+    // EXEMPTIONS/HANDLED_INLINE key; this proves each one actually RAN. A key
+    // that exists but is missing from the run-order list above would
+    // otherwise be silently unaccounted — report green while never executing
+    // (exactly how a well-built `doctrine` exercise shipped as dead code).
+    const unaccounted = COMMANDS.filter((c) => c.status === 'shipped' && !results.has(c.name)).map((c) => c.name)
+    if (unaccounted.length > 0) {
+      process.stdout.write(
+        `✗ unaccounted shipped command(s) — covered by coverageCheck but never run: ${unaccounted.join(', ')}\n`
+      )
+    }
+    const anyFail = [...results.values()].some((o) => o.status === 'fail') || unaccounted.length > 0
     process.exitCode = anyFail ? 1 : 0
   } finally {
     if (keep) {
