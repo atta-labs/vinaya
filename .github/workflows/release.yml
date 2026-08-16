@@ -38,9 +38,32 @@ jobs:
       # `contents: write` on pushes to main, the same third-party-action
       # trust bar `oven-sh/setup-bun` is held to elsewhere in this repo's
       # workflows. Resolved from the `v1.9.0` tag on 2026-08-15.
+      # `RELEASE_TOKEN`, not `GITHUB_TOKEN`, and only for this step's API
+      # calls. The `atta-labs` organization sets its member repositories'
+      # default workflow permissions to read and leaves "Allow GitHub Actions
+      # to create and approve pull requests" off, so `GITHUB_TOKEN` cannot
+      # call the create-pull-request endpoint here — the job's own
+      # `permissions:` block cannot grant past the organization ceiling. Every
+      # run from 2026-08-15 onward did the whole version plan, committed it,
+      # force-pushed `changeset-release/main`, and then failed on that one
+      # call with "GitHub Actions is not permitted to create or approve pull
+      # requests", leaving the release branch correct and no PR to merge.
+      #
+      # The organization setting is deliberately left alone: that single
+      # checkbox grants create *and* approve to every workflow in every
+      # `atta-labs` repository, and an Actions run able to submit approving
+      # reviews is the one grant that could hollow out this repo's own review
+      # gate. `RELEASE_TOKEN` is a fine-grained token scoped to this
+      # repository alone, with contents and pull-requests write and nothing
+      # else, so it buys back PR creation without buying approval.
+      #
+      # `contents: write` below is still load-bearing and still spent by
+      # `GITHUB_TOKEN`: `actions/checkout` persists it, and that is the
+      # credential the action's `git push` of the release branch uses. Only
+      # the octokit calls read this `env`.
       - name: Open/update the Version Packages PR
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d
         with:
           version: bun run changeset:version
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
