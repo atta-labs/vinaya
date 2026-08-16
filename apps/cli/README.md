@@ -25,7 +25,7 @@ npx @attalabs/vinaya init        # or: pnpm dlx / yarn dlx / bunx
 
 Hierarchical, file-level precedence:
 
-1. Repo-local `vinaya.config.json` (walked up from `cwd` to the filesystem root)
+1. Repo-local `vinaya.config.json` (walked up from `cwd`, stopping at the enclosing repository's root — or the filesystem root when run outside a git repository)
 2. Global `~/.vinaya/config.json`
 3. `null` if neither exists
 

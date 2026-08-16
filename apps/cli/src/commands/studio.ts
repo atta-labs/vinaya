@@ -65,6 +65,16 @@ export function resolveStudioTarget(cwd: string, moduleUrl: string = import.meta
         // malformed package.json — keep walking up
       }
     }
+    // The walk never crosses the enclosing repository's own root (`.git` is a
+    // directory in a primary checkout, a gitlink file in a linked worktree —
+    // existsSync covers both). Without this bound the walk continues to the
+    // filesystem root, and the branch below EXECUTES the resolved directory's
+    // `dev` script — so a planted `apps/vinaya/web/package.json` in a
+    // world-writable ancestor (`/tmp`) would run arbitrary code the moment
+    // `vinaya studio` runs from anywhere beneath it (security review, PR #94
+    // finding 3). Checked AFTER the webDir probe so a monorepo root that
+    // carries both `.git` and `apps/vinaya/web` still resolves.
+    if (existsSync(join(dir, '.git'))) break
     const parent = dirname(dir)
     if (parent === dir) break
     dir = parent
@@ -83,18 +93,33 @@ function spawnDev(webDir: string, args: string[]): Promise<number> {
     // `bun run dev` (not a direct `bun scripts/dev.ts` invocation) — bun's
     // `run` puts the workspace's node_modules/.bin on PATH for the child,
     // which `next` needs; a bare script invocation does not.
+    //
+    // This branch gets NO loopback forcing, unlike `spawnStandalone` below —
+    // deliberately, not by omission (security review, PR #94 finding 1). The
+    // resolved workspace's own `dev` script (attalabs `apps/vinaya/web/
+    // scripts/dev.ts`) execs `next dev` itself, ignores argv, and reads no
+    // HOSTNAME — nothing this spawn passes would change its bind address, so
+    // forcing env here would only pretend to harden. The exposure is exactly
+    // that of running `bun run dev` in that checkout directly; fixing the
+    // bind belongs where the dev script lives, and to the Studio-packaging
+    // work (#43) whose published shape DOES get the loopback default below.
     const child = spawn('bun', ['run', 'dev', ...args], { cwd: webDir, stdio: 'inherit' })
     child.on('exit', (code) => resolve(code ?? 0))
   })
 }
 
-/** Free if the bind succeeds, taken if it errors (almost always EADDRINUSE). */
+/** Free if the bind succeeds, taken if it errors (almost always EADDRINUSE).
+ *  The probe binds loopback — the same address the server it gates defaults
+ *  to — not `0.0.0.0` (security review, PR #94 finding 5): detection is
+ *  equivalent (an all-interfaces listener on the port still makes the
+ *  loopback bind fail EADDRINUSE), and it keeps this file free of
+ *  all-interfaces binds it doesn't mean. */
 function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const tester = net.createServer()
     tester.once('error', () => resolve(false))
     tester.once('listening', () => tester.close(() => resolve(true)))
-    tester.listen(port, '0.0.0.0')
+    tester.listen(port, '127.0.0.1')
   })
 }
 

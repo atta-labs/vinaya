@@ -59,6 +59,45 @@ describe('resolveStudioTarget', () => {
     }
   })
 
+  it('does not resolve a workspace planted above the enclosing git repository', () => {
+    // Security review, PR #94 finding 3: the upward walk must stop at the
+    // enclosing repo's root. A planted `apps/vinaya/web` in an ancestor
+    // OUTSIDE the repo the user is standing in (e.g. a world-writable /tmp)
+    // must never resolve — the workspace branch executes the resolved
+    // directory's own dev script, so resolving it is code execution.
+    const plantedWebDir = join(tmpDir, 'apps', 'vinaya', 'web')
+    mkdirSync(plantedWebDir, { recursive: true })
+    writeFileSync(join(plantedWebDir, 'package.json'), JSON.stringify({ name: '@atta/vinaya-web' }))
+
+    const innerRepo = join(tmpDir, 'inner-repo')
+    const nestedCwd = join(innerRepo, 'deep', 'dir')
+    mkdirSync(nestedCwd, { recursive: true })
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: innerRepo })
+
+    const fakeModuleUrl = pathToFileURL(join(tmpDir, 'dist', 'index.js')).href
+    const target = resolveStudioTarget(nestedCwd, fakeModuleUrl)
+
+    expect(target).toEqual({ kind: 'missing' })
+  })
+
+  it('still resolves a workspace whose root carries both .git and apps/vinaya/web', () => {
+    const repoRoot = join(tmpDir, 'monorepo')
+    const webDir = join(repoRoot, 'apps', 'vinaya', 'web')
+    mkdirSync(webDir, { recursive: true })
+    writeFileSync(join(webDir, 'package.json'), JSON.stringify({ name: '@atta/vinaya-web' }))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repoRoot })
+
+    const nestedCwd = join(repoRoot, 'apps', 'vinaya', 'cli')
+    mkdirSync(nestedCwd, { recursive: true })
+
+    const target = resolveStudioTarget(nestedCwd)
+
+    expect(target.kind).toBe('workspace')
+    if (target.kind === 'workspace') {
+      expect(realpathSync(target.webDir)).toBe(realpathSync(webDir))
+    }
+  })
+
   it('returns missing when the installed package root has no studio-standalone bundle', () => {
     const fakeInstallRoot = join(tmpDir, 'node_modules', '@attalabs', 'vinaya')
     mkdirSync(fakeInstallRoot, { recursive: true })

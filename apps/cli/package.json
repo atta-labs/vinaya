@@ -51,6 +51,7 @@
   },
   "devDependencies": {
     "@atta/aeg-core": "workspace:*",
+    "@atta/aeg-forge-state": "workspace:*",
     "@atta/typescript-config": "workspace:*",
     "@atta/vinaya-sources": "workspace:*",
     "@types/bun": "latest",
