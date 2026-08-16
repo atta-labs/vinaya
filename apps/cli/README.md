@@ -43,6 +43,14 @@ Today the schema carries one surface:
 
 Both `rings` fields are plain booleans — no conditional logic. Ring 0 (git hooks) and the CI/branch-protection guarantee are never represented in this schema, by design — they are not configurable.
 
+## Where the git hooks live
+
+`vinaya init` installs the ring-0 hooks (`pre-commit`, `pre-push`) into a **tracked** `.vinaya/hooks/` directory and points git at it with `git config core.hooksPath .vinaya/hooks` — commit that directory. Raw `.git/hooks` is never versioned by git, so hooks installed there exist only on the installing machine; tracked hooks travel with the repo into every clone and every linked worktree checkout.
+
+One thing git cannot version is the config itself: **each fresh clone runs `git config core.hooksPath .vinaya/hooks` once** to arm the hooks (linked worktrees inherit it — the config is shared, the path is relative). `vinaya doctor` reports an unarmed clone as an error naming that exact command; `vinaya init` and `vinaya upgrade` also set it.
+
+Two shapes deviate: a repo already using **husky** keeps its `.husky/` directory (husky's `prepare` script owns per-clone wiring), and a repo with its own active raw hooks in `.git/hooks` stays on the legacy append-a-managed-block layout there — re-routing `core.hooksPath` would silently disable the adopter's own hooks. On that legacy layout `vinaya doctor` warns that clones have no hooks, and `vinaya upgrade` migrates to the tracked layout as soon as nothing foreign would be disabled.
+
 Custom checks register under `checks`, one entry per check:
 
 ```json
