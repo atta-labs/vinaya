@@ -50,10 +50,10 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
-    "@atta/aeg-core": "workspace:*",
-    "@atta/aeg-forge-state": "workspace:*",
+    "@attalabs/aeg-core": "workspace:*",
+    "@attalabs/aeg-forge-state": "workspace:*",
     "@atta/typescript-config": "workspace:*",
-    "@atta/vinaya-sources": "workspace:*",
+    "@attalabs/vinaya-sources": "workspace:*",
     "@types/bun": "latest",
     "typescript": "^5.5.0"
   }
