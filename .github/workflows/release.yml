@@ -21,13 +21,33 @@ jobs:
   version:
     name: Version Packages
     runs-on: ubuntu-latest
+    # Nothing in this job spends `GITHUB_TOKEN` any more — both the branch
+    # push and the API calls run on `RELEASE_TOKEN` (see the step below).
+    # `contents: read` is what checkout would need if it fell back to the
+    # default token; declaring the writes it no longer uses would misstate
+    # which credential does what.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
+      # `token:` is load-bearing, not tidiness. Without it checkout persists
+      # `GITHUB_TOKEN` as an `http.extraheader` in `.git/config`, and that
+      # header wins over any credential the changesets action supplies for
+      # its own `git push` — so the release branch would be pushed by
+      # `GITHUB_TOKEN` even though the PR was created by `RELEASE_TOKEN`.
+      #
+      # GitHub does not trigger workflows on pushes made with `GITHUB_TOKEN`.
+      # The first Version Packages PR would get its checks (creation is a
+      # `RELEASE_TOKEN` act), and then every later force-push to that same
+      # branch would arrive as a `synchronize` with a new head SHA and zero
+      # required check runs against it — permanently unmergeable, with no
+      # error anywhere. That is the same silent-stall shape this workflow
+      # already failed in once, and with changesets landing in batches,
+      # force-pushing an open Version Packages PR is the steady state, not
+      # the edge case.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
 
@@ -57,10 +77,9 @@ jobs:
       # repository alone, with contents and pull-requests write and nothing
       # else, so it buys back PR creation without buying approval.
       #
-      # `contents: write` below is still load-bearing and still spent by
-      # `GITHUB_TOKEN`: `actions/checkout` persists it, and that is the
-      # credential the action's `git push` of the release branch uses. Only
-      # the octokit calls read this `env`.
+      # This `env` covers the action's API calls. Its `git push` of the
+      # release branch runs on the same token by a different route — the
+      # `token:` given to checkout above, persisted into `.git/config`.
       - name: Open/update the Version Packages PR
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d
         with:
