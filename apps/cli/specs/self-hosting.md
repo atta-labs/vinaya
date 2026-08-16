@@ -139,6 +139,22 @@ With the token on checkout, both the push and the API calls run on it, and `GITH
 
 Publishing itself is `bun run changeset:publish` (`changeset publish`), run by hand with npm credentials rather than wired into `release.yml`. Two reasons, not one: no `NPM_TOKEN` secret is provisioned for this repo's Actions runner yet, and even once it is, a human-triggered publish is the more defensible default for a package whose releases are still infrequent and each one is irreversible on the registry. Automatic publish-on-merge is a later, separate decision — not a gap in this pipeline.
 
+## Verifying a release — and why its expectations are derived, never written down
+
+`apps/cli/scripts/verify-published-lifecycle.ts` installs the published tarball into a scratch directory outside this repo and exercises every shipped command against it. It is the only instrument that measures what adopters actually receive rather than what this working tree intends, and it is meant to be run green after each publish.
+
+**Every expectation in it is derived from current source. That is a hard rule, and it was learned the expensive way.** The first run after `0.6.0` shipped exposed three hand-maintained constants, all stale, each failing in a way that could not announce itself:
+
+- The version under test was pinned to `0.4.6`. A green run had been certifying an artifact three releases old. A stale pin cannot fail loudly, because the version it names is a real published version that really does pass — the run stays honest about the wrong subject.
+- The `init` row asserted a hook at `.git/hooks/pre-commit`, in two separate copies of the same probe. Tracked hooks moved a fresh install to `.vinaya/hooks`, so both copies went wrong at once — and neither could notice, because the pin held the run at a release predating the move. **The two stale things hid each other**; un-pinning the version is what exposed the probe.
+- The check count was the literal `15`. `review-gate` became an own-workflow check and correctly dropped out of `--all`, so the artifact reported 14 and the script called that a regression.
+
+The shared defect is not that the numbers were wrong. It is that a hand-maintained expectation cannot distinguish *the published artifact is stale* — the one thing this script exists to detect — from *the expectation is stale*, and it blames the artifact either way. That turns the instrument into a source of false findings about the product, which is worse than having no instrument, because the findings are credible.
+
+So the version comes from `apps/cli/package.json`, the check count from `coreCheckRegistry()` minus own-workflow checks, and the hook probe accepts every shape `resolveHookDir` chooses between. The command coverage set was already derived this way, from `@atta/vinaya-sources`' `COMMANDS` registry; the rest of the script now matches that discipline.
+
+One ordering constraint follows from deriving the version, and it is the normal release sequence rather than an edge case: between merging the Version Packages PR and running `changeset publish`, `package.json` names a version the registry does not have, so the default mode cannot pass. That window is what `--local-pack` is for.
+
 ## What self-hosting costs, stated plainly
 
 A repo on the vendored shape runs the CLI **from its own working tree**. Its CI therefore exercises the code in the pull request rather than a published copy predating it — normally an improvement, and the reason to prefer this shape even where `npx` would work.
