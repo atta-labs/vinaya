@@ -60,6 +60,7 @@ import { COMMANDS } from '@atta/vinaya-sources'
 // artifact is measured against — the same "derive, never hand-maintain"
 // discipline this script already applies to the command coverage set.
 import { coreCheckRegistry } from '../src/checks/registry.js'
+import { resolveHookDir } from '../src/lib/detect.js'
 
 // `..` from `apps/cli/scripts/` is the package root — the same derivation
 // `--local-pack` already uses to find the tree it packs, so both modes read
@@ -129,13 +130,6 @@ function sha256(buf: Buffer): string {
 }
 
 /**
- * Every hook directory `resolveHookDir` can choose: the tracked default, the
- * `.husky` deferral, and the legacy raw-hooks shape. Ordered as that function
- * decides, so this list reads against it.
- */
-const HOOK_DIRS = ['.vinaya/hooks', '.husky', '.git/hooks'] as const
-
-/**
  * How many checks `check --all` should report — derived from CURRENT source's
  * registry, minus the own-workflow checks `--all` deliberately skips (a check
  * with its own workflow would otherwise be evaluated twice and report under
@@ -149,17 +143,41 @@ const HOOK_DIRS = ['.vinaya/hooks', '.husky', '.git/hooks'] as const
 const EXPECTED_ALL_CHECK_COUNT = coreCheckRegistry().filter((c) => !c.ownWorkflow).length
 
 /**
- * Did `init` install a ring-0 hook, in ANY of the shapes it legitimately
- * chooses between? Asserting one directory is what broke this script: two
- * copies of the probe both named `.git/hooks` alone, which stopped being
- * where a fresh install writes when hooks became tracked. Neither copy could
- * notice, because the version under test was pinned to a release predating
- * the move — so the pin and the probe went stale together and each hid the
- * other. One function now, called from both places, for that reason.
+ * Where CURRENT source says this fixture's hook belongs, and whether the
+ * published artifact put one there. `resolveHookDir` is the function `init`
+ * itself uses, so the expectation tracks the product rather than restating
+ * it — the same reason the version and the check registry are read rather
+ * than written down.
+ *
+ * It must be ONE directory, not a set. An earlier revision of this fix
+ * accepted a `pre-commit` in any of the three shapes, which read as tolerance
+ * and was actually proof loss: this fixture is a bare `git init` with no
+ * `.husky` and no active raw hooks, so the resolver deterministically
+ * promises the tracked directory, and a published artifact regressing to
+ * untracked `.git/hooks` — precisely the clone-survival defect this repo just
+ * fixed — would have passed green. Widening a probe to stop it failing is how
+ * a check stops being able to detect the thing it exists for.
+ *
+ * And it must be resolved on the PRISTINE fixture, before `init` runs. The
+ * resolver reads the tree it is given: an artifact that wrongly wrote
+ * `.git/hooks/pre-commit` would leave an active raw hook behind, and a
+ * post-init call would then legitimately answer `.git/hooks` and agree with
+ * the regression it was meant to catch. Predicting first and comparing after
+ * is what makes this an assertion rather than a restatement.
+ *
+ * Two copies of this probe both named `.git/hooks` alone before, which
+ * stopped being where a fresh install writes once hooks became tracked, and
+ * neither could notice because the version under test was pinned to a release
+ * predating the move. One function now, called from both places.
  */
-function hookInstalledIn(fixtureDir: string): boolean {
-  return HOOK_DIRS.some((d) => existsSync(join(fixtureDir, ...d.split('/'), 'pre-commit')))
+function hookInstalledIn(fixtureDir: string, expected: string): boolean {
+  return existsSync(join(fixtureDir, ...expected.split('/'), 'pre-commit'))
 }
+
+// Resolved once in `main` against the pristine fixture, before `init` runs —
+// see `hookInstalledIn` for why the timing is load-bearing. Both the `init`
+// exercise and the pre-flight guard read it.
+let expectedHookDir = ''
 
 /**
  * Walks `root` recursively. `.git` is skipped except `.git/hooks` — the one
@@ -349,16 +367,16 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome> = {
   init: ({ bin, fixtureDir }) => {
     const r = run(bin, ['init', '--yes'], fixtureDir)
     const coreWritten = CORE_INIT_ARTIFACTS.every((p) => existsSync(join(fixtureDir, p)))
-    const hookInstalled = hookInstalledIn(fixtureDir)
+    const hookInstalled = hookInstalledIn(fixtureDir, expectedHookDir)
     const docOwnersWritten = existsSync(join(fixtureDir, DOC_OWNERS_PATH))
     const coreOk = r.status === 0 && coreWritten && hookInstalled
     return {
       status: coreOk && docOwnersWritten ? 'pass' : 'fail',
       detail: coreOk
         ? docOwnersWritten
-          ? `exit ${r.status}, all 6 manifest artifacts written, hook installed`
+          ? `exit ${r.status}, all 6 manifest artifacts written, hook installed at ${expectedHookDir}`
           : `exit ${r.status}, ${DOC_OWNERS_PATH} missing from published output`
-        : `exit ${r.status}, core artifacts written: ${coreWritten}, hook installed: ${hookInstalled}`
+        : `exit ${r.status}, core artifacts written: ${coreWritten}, hook at ${expectedHookDir} (where current source resolves for this fixture): ${hookInstalled}`
     }
   },
 
@@ -616,9 +634,15 @@ async function main(): Promise<void> {
     // `init` must write its CORE artifacts for every downstream exercise
     // (config/hooks it seeds) to be meaningful — `.vinaya/doc-owners` alone
     // missing is the known, tracked gap and must not block the rest of the run.
+    // Predicted against the pristine fixture — BEFORE `init` writes anything.
+    // See `hookInstalledIn`: resolving after the fact would let a regression
+    // to raw `.git/hooks` supply the very condition that makes the resolver
+    // endorse it.
+    expectedHookDir = resolveHookDir(fixtureDir)
+
     const initOutcome = EXERCISES.init?.(ctx)
     const coreArtifactsOk =
-      CORE_INIT_ARTIFACTS.every((p) => existsSync(join(fixtureDir, p))) && hookInstalledIn(fixtureDir)
+      CORE_INIT_ARTIFACTS.every((p) => existsSync(join(fixtureDir, p))) && hookInstalledIn(fixtureDir, expectedHookDir)
     if (!initOutcome || !coreArtifactsOk) {
       throw new Error(
         `\`vinaya init\` did not write its core artifacts against the published artifact — cannot proceed: ${initOutcome?.detail}`
