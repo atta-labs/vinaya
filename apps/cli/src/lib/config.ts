@@ -239,7 +239,18 @@ export const VinayaConfigSchema = z.object({
   // only, same as `checks` — stripped from a global config below, since who
   // counts as a trusted approver must come from the reviewed, committed
   // per-repo file, never a machine-wide personal config.
-  principals: z.array(z.string()).min(1).optional()
+  principals: z.array(z.string()).min(1).optional(),
+  // Adopter-declared CI preparation. `ci.setup` is a shell command emitted
+  // verbatim as a step in the generated workflows that execute
+  // `vinaya check` — the only generated jobs that can spawn the ADOPTER'S
+  // OWN custom-check scripts, which live in the adopter's repo and may
+  // import the adopter's code. `npx` prepares only vinaya itself; vinaya
+  // cannot know an adopter's package manager or runtime, so this is
+  // declared, never inferred. Absent, the generated workflows are
+  // byte-identical to before this key existed. Read at GENERATION time
+  // (`init`/`upgrade`/`doctor`) from the repo-root config only
+  // (`readRepoCiSetup`) — a global config's `ci` is never consulted.
+  ci: z.object({ setup: z.string().min(1) }).optional()
 })
 
 export type VinayaConfig = z.infer<typeof VinayaConfigSchema>
@@ -544,6 +555,25 @@ export function loadConfig(): VinayaConfig | null {
   try {
     const raw = JSON.parse(readFileSync(path, 'utf-8'))
     return stripGlobalOnlyKeys(VinayaConfigSchema.parse(raw), path)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The `ci.setup` command declared by the REPO-ROOT config, or `null`. Used by
+ * the generators' callers (`init`/`upgrade`/`doctor`) when building an
+ * `InitContext` — deliberately NOT the cwd-walking `loadConfig()`, which
+ * would find an ancestor repo's config when a command runs against a nested
+ * fixture path (same discipline as init's own `readManifest`). Any read or
+ * parse failure is `null`: generation then simply emits no setup step, the
+ * same output as an undeclared key.
+ */
+export function readRepoCiSetup(repoRoot: string): string | null {
+  const p = join(repoRoot, 'vinaya.config.json')
+  if (!existsSync(p)) return null
+  try {
+    return VinayaConfigSchema.parse(JSON.parse(readFileSync(p, 'utf-8'))).ci?.setup ?? null
   } catch {
     return null
   }

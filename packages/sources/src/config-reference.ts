@@ -228,6 +228,28 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       '**Set this on your default branch before you need it.** Because the value is read from the default branch, a pull request that introduces `principals` for the first time is still evaluated against vinaya’s built-in default — so its own author cannot yet approve it, and cannot self-waive either (the waiver labels resolve through the same list). Land it with the `vinaya init` install commit, or any push to the default branch, before enabling branch protection. Once it is on the default branch, ordinary review applies: adding a principal thereafter needs an existing principal’s approval, which is the point.'
     ],
     example: `{ "principals": ["alice", "bob"] }`
+  },
+  {
+    key: 'ci',
+    type: 'object (optional)',
+    semantics: [
+      'Adopter-declared CI preparation for the generated workflows. Vinaya’s own checks arrive whole via `npx` and need no setup; your custom checks are scripts in your repository that may import your repository’s code, and the generated jobs install none of it by default — without this key, any custom check with a dependency fails in CI as a spawn error while passing in the local hooks.'
+    ],
+    example: `{ "ci": { "setup": "npm ci" } }`
+  },
+  {
+    key: 'ci.setup',
+    type: 'string (optional, min 1)',
+    semantics: [
+      'A shell command emitted verbatim as an “Adopter CI setup” step in the generated workflows that execute `vinaya check` (`vinaya-checks.yml`, `vinaya-review.yml`, `vinaya-review-verdict.yml` — not the archivist, whose jobs never spawn custom checks). It runs after checkout and `setup-node`, before any `vinaya check` invocation.',
+      'Declared, never inferred: vinaya cannot know your package manager or runtime. Declare whatever your custom checks need to spawn — e.g. `npm ci`, or a runtime install plus dependency install chained with `&&`.',
+      'When absent, the generated workflows are byte-identical to before this key existed — existing installs see no churn until they both declare the key and run `vinaya upgrade`. The key is read at generation time (`init`/`upgrade`/`doctor`) from the repo-root config; changing it takes effect on the next `vinaya upgrade`, which regenerates the managed workflows.'
+    ],
+    example: `{
+  "ci": {
+    "setup": "npm install -g bun && bun install --frozen-lockfile --ignore-scripts"
+  }
+}`
   }
 ] as const
 

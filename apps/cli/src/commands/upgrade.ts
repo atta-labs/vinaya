@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { DOC_OWNERS_PATH } from '@atta/aeg-core'
 import { buildInitOps, CONFIG_PATH, type HookDir, type InitContext, TRACKED_HOOK_DIR } from '../lib/artifacts.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
-import { MANAGED_MANIFEST_VERSION, type ManagedManifest, VinayaConfigSchema } from '../lib/config.js'
+import { MANAGED_MANIFEST_VERSION, type ManagedManifest, readRepoCiSetup, VinayaConfigSchema } from '../lib/config.js'
 import {
   activeRawHooks,
   detectGitRepo,
@@ -500,7 +500,8 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
     owner: repo.owner,
     repo: repo.repo,
     hookDir: routing.target,
-    selfHost: detectVendoredVinaya(repo.repoRoot)
+    selfHost: detectVendoredVinaya(repo.repoRoot),
+    ciSetup: readRepoCiSetup(repo.repoRoot)
   }
   const ops = buildInitOps(ctx)
   const plan = planUpgrade(ops, repo.repoRoot, planManifest, routing)

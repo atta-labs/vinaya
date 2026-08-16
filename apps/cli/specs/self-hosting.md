@@ -54,6 +54,8 @@ Detection runs at **generation time** — `init`, `upgrade` and `doctor` all hol
 | build | none | `bun install --frozen-lockfile --ignore-scripts`, `bun run --cwd <member> build` |
 | invocation | `npx --yes @attalabs/vinaya <cmd>` | `node <member>/<bin> <cmd>` |
 
+A third emission is orthogonal to the two shapes: when the repo-root config declares `ci.setup`, the workflows that execute `vinaya check` (checks, review, review-verdict — never the archivist, whose jobs spawn no adopter code) carry one additional "Adopter CI setup" step running that command verbatim, after setup and before any invocation. It exists because the table above prepares only *vinaya*: an adopter's custom checks are scripts in the adopter's own repo that may import the adopter's own code, and a bare runner has none of it installed — measured on the first non-greenfield adopter, whose two custom checks failed as `error (2ms)` spawn failures on every CI run while passing in the local hooks. The command is declared in the committed config, never inferred (vinaya cannot know an adopter's package manager), and an undeclared key emits nothing — byte-identical output to before the key existed. Read at generation time from the repo root (`readRepoCiSetup`), same regeneration-determinism argument as the detection predicate below.
+
 ### Git hooks — `pre-commit`, `pre-push`
 
 | | ordinary adopter | vendoring repo |

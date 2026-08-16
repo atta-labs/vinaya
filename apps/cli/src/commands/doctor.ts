@@ -25,6 +25,7 @@ import {
   GLOBAL_CONFIG_PATH,
   globalChecksIgnoredWarning,
   type ManagedManifest,
+  readRepoCiSetup,
   type VinayaConfig,
   VinayaConfigSchema,
   lintEnvDeclarations
@@ -484,7 +485,8 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
       owner: repo.owner,
       repo: repo.repo,
       hookDir,
-      selfHost: detectVendoredVinaya(repo.repoRoot)
+      selfHost: detectVendoredVinaya(repo.repoRoot),
+      ciSetup: readRepoCiSetup(repo.repoRoot)
     }
     const install = diagnoseInstall(repo.repoRoot, ctx, manifest)
     findings.push(...install.findings)

@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CheckSpec } from '../src/checks/contract'
@@ -9,6 +18,7 @@ import { PRINCIPAL_ALLOWLIST } from '@atta/aeg-core'
 import {
   lintEnvDeclarations,
   loadTrustAnchorConfig,
+  readRepoCiSetup,
   resolvePrincipalAllowlist as resolvePrincipalAllowlistStatic,
   trustAnchorRepo,
   VinayaConfigSchema
@@ -536,5 +546,39 @@ describe('config-registered check runs through the runner', () => {
       defaultTimeoutMs: 5000
     })
     expect(outcome?.status).toBe('pass')
+  })
+})
+
+describe('readRepoCiSetup', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'vinaya-cisetup-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('returns the declared command from the repo-root config', () => {
+    writeFileSync(join(dir, 'vinaya.config.json'), JSON.stringify({ ci: { setup: 'npm ci' } }), 'utf-8')
+    expect(readRepoCiSetup(dir)).toBe('npm ci')
+  })
+
+  it('returns null when the config has no ci key', () => {
+    writeFileSync(join(dir, 'vinaya.config.json'), JSON.stringify({ checks: {} }), 'utf-8')
+    expect(readRepoCiSetup(dir)).toBeNull()
+  })
+
+  it('returns null when no config exists', () => {
+    expect(readRepoCiSetup(dir)).toBeNull()
+  })
+
+  it('returns null on unparseable JSON — generation degrades to the undeclared shape, never throws', () => {
+    writeFileSync(join(dir, 'vinaya.config.json'), '{ not json', 'utf-8')
+    expect(readRepoCiSetup(dir)).toBeNull()
+  })
+
+  it('rejects an empty setup string at the schema layer', () => {
+    writeFileSync(join(dir, 'vinaya.config.json'), JSON.stringify({ ci: { setup: '' } }), 'utf-8')
+    expect(readRepoCiSetup(dir)).toBeNull()
   })
 })

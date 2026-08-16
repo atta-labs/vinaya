@@ -18,7 +18,7 @@ import {
   TRACKED_HOOK_DIR
 } from '../lib/artifacts.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
-import { type ManagedManifest, VinayaConfigSchema } from '../lib/config.js'
+import { type ManagedManifest, readRepoCiSetup, VinayaConfigSchema } from '../lib/config.js'
 import {
   checkGhAuth,
   customHooksPath,
@@ -139,7 +139,8 @@ export async function runInit(args: string[], deps: InitDeps): Promise<number> {
     owner: repo.owner,
     repo: repo.repo,
     hookDir: deps.hookDirFor(repo.repoRoot),
-    selfHost: detectVendoredVinaya(repo.repoRoot)
+    selfHost: detectVendoredVinaya(repo.repoRoot),
+    ciSetup: readRepoCiSetup(repo.repoRoot)
   }
   const allOps = buildInitOps(ctx)
   const ops = noRemote ? allOps.filter((op) => op.kind !== 'create-label') : allOps
