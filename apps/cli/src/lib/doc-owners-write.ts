@@ -4,12 +4,12 @@
 // `create-host`/`append-row`/`skip-present` 3-state action, same
 // plan-then-apply split). Simpler than the registry case: a `.vinaya/
 // doc-owners` binding is a plain `<glob>  <pointer>` line (see
-// `@atta/aeg-core`'s `parseDocOwners`), not a markdown table row — no
+// `@attalabs/aeg-core`'s `parseDocOwners`), not a markdown table row — no
 // heading/table-insertion logic is needed.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { DOC_OWNERS_PATH, parseDocOwners } from '@atta/aeg-core'
+import { DOC_OWNERS_PATH, parseDocOwners } from '@attalabs/aeg-core'
 
 export type DocOwnersBindingAction = 'create-host' | 'append-row' | 'skip-present'
 

@@ -3,10 +3,10 @@
 /**
  * check-branch-topology — thin CLI/I/O shim for the branch↔topology
  * gate wired into `.husky/pre-push` (aeg-governance-hardening task 32,
- * #399). Derives the tranche from the forge (`@atta/aeg-forge-state`,
+ * #399). Derives the tranche from the forge (`@attalabs/aeg-forge-state`,
  * task aeg-forge-state-v1 3a — a Milestone + `vinaya/tranche:<slug>`-labeled
  * Issues) and hands the result to the pure evaluator `checkBranchTopology`
- * (@atta/aeg-core), which answers row membership from `topology.tasks`. No
+ * (@attalabs/aeg-core), which answers row membership from `topology.tasks`. No
  * check logic lives here.
  *
  * Refusal reasons print to stderr byte-identical to the inline messages the
@@ -20,7 +20,7 @@
  * Exit code: 0 = allow (push proceeds), 1 = refuse.
  */
 
-import { deriveTrancheFromForge, resolveRepo } from '@atta/aeg-forge-state'
+import { deriveTrancheFromForge, resolveRepo } from '@attalabs/aeg-forge-state'
 import { checkBranchTopology, taskBranchTopologyFields } from '../src/index'
 
 if (import.meta.main) {

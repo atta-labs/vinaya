@@ -224,8 +224,8 @@ export {
   mapForgeFacts,
   matchesLabel,
   projectsFromBody
-} from '@atta/aeg-forge-state'
-export type { Label, LabelCategory, LabelForm, LabelKey } from '@atta/aeg-forge-state'
+} from '@attalabs/aeg-forge-state'
+export type { Label, LabelCategory, LabelForm, LabelKey } from '@attalabs/aeg-forge-state'
 export type {
   FetchForgeFactsInput,
   ForgeFactsSnapshot,
@@ -233,4 +233,4 @@ export type {
   RawTaskFacts,
   TaskIssueRef,
   TaskRef
-} from '@atta/aeg-types'
+} from '@attalabs/aeg-types'

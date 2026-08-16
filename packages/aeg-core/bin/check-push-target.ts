@@ -5,7 +5,7 @@
  * (aeg-governance-hardening task 18, #335). One batched forge call:
  * `gh pr list --head <branch> --state all --json number,state --limit 1`,
  * mapped to a `PrStateFact` and handed to the pure evaluator
- * `checkDeadBranchPush` (@atta/aeg-core). No check logic lives here.
+ * `checkDeadBranchPush` (@attalabs/aeg-core). No check logic lives here.
  *
  * Fail-open by design: any failure to reach the forge (auth, network, rate
  * limit, malformed JSON) maps to `UNKNOWN`, which the pure evaluator treats

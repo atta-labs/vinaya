@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { DoctrineContent, DoctrineSource } from '@atta/aeg-core'
+import type { DoctrineContent, DoctrineSource } from '@attalabs/aeg-core'
 import { DEFAULT_GOVERNANCE_ROOT } from './file-adapter'
 
 export type DoctrineFileSourceConfig = {
@@ -27,7 +27,7 @@ function readMarkdownDir(root: string, dir: string): Array<{ path: string; conte
  * The default root is `DEFAULT_GOVERNANCE_ROOT`; adapter logic never hardcodes
  * a literal path — same rule as `file-adapter.ts`, so relocating this repo's
  * governance data is a config flip, not a rewrite. This is the I/O boundary
- * for the `DoctrineSource` contract, which stays I/O-free in `@atta/aeg-core`.
+ * for the `DoctrineSource` contract, which stays I/O-free in `@attalabs/aeg-core`.
  */
 export function createFileDoctrineSource(config: DoctrineFileSourceConfig = {}): DoctrineSource {
   const root = config.root ?? DEFAULT_GOVERNANCE_ROOT

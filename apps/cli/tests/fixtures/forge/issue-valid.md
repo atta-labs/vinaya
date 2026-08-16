@@ -4,7 +4,7 @@
 
 **Sizing** — One task; a shared helper plus two command files and their tests.
 
-**Project(s) + blast radius** — vinaya; touches `@atta/vinaya-sources` (registry), re-verified.
+**Project(s) + blast radius** — vinaya; touches `@attalabs/vinaya-sources` (registry), re-verified.
 
 **Dependency rationale** — Depends-on: 3 (the check runner + CheckError contract).
 

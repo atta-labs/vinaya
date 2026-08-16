@@ -1,5 +1,5 @@
 import { ghApiGet, ghApiGetAsync } from './gh'
-import type { Lifecycle } from '@atta/aeg-types'
+import type { Lifecycle } from '@attalabs/aeg-types'
 
 export type MilestoneFacts = {
   goal: string

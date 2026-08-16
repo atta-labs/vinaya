@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import type { CheckSpec } from '../checks/contract.js'
 import { coreCheckRegistry } from '../checks/registry.js'
 import { bareKeyNextMinorWarning, overriddenNextMinorWarning, resolveChecks } from '../checks/resolver.js'
-import { DOC_OWNERS_PATH } from '@atta/aeg-core'
+import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
 import {
   buildInitOps,
   CONFIG_PATH,

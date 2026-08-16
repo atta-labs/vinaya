@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: issue-assignment. Thin adapter over `@atta/aeg-core`'s
+ * Core check: issue-assignment. Thin adapter over `@attalabs/aeg-core`'s
  * `decideIssueAssignment` — mirrors `packages/aeg-core/bin/assign-task-issue.ts`'s
  * fact-gathering (topology row's Issue number, current assignees, the
  * authenticated `gh` user) exactly, emitting the check contract instead of
@@ -17,8 +17,8 @@
  * check that mutates forge state on every invocation is a meaningfully
  * different category from the other twelve, which are pure reads.
  *
- * Uses `createForgeSource` (`@atta/vinaya-sources`) rather than
- * `deriveTrancheFromForge`/`resolveRepo` from `@atta/aeg-forge-state`
+ * Uses `createForgeSource` (`@attalabs/vinaya-sources`) rather than
+ * `deriveTrancheFromForge`/`resolveRepo` from `@attalabs/aeg-forge-state`
  * directly — the same dependency boundary every check in this directory
  * keeps.
  *
@@ -27,8 +27,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { decideIssueAssignment, parseTaskBranch } from '@atta/aeg-core'
-import { createForgeSource } from '@atta/vinaya-sources'
+import { decideIssueAssignment, parseTaskBranch } from '@attalabs/aeg-core'
+import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'issue-assignment'

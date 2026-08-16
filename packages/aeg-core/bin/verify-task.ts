@@ -9,7 +9,7 @@
  * against the real diff. No second implementation of any of these — each
  * step shells out to the SAME command CI runs (`turbo typecheck`, `biome
  * check .`, `turbo test`, `bun packages/aeg-core/bin/verify-docs.ts --pr`)
- * or calls the pure `@atta/aeg-core` evaluators directly
+ * or calls the pure `@attalabs/aeg-core` evaluators directly
  * (`checkPremiseCoverage`, `checkPremises`).
  *
  * Usage:
@@ -23,8 +23,8 @@
  * verify-docs/premise steps run against an empty body (as they would for a
  * non-task branch).
  *
- * Scoped to `@atta/aeg-core`: `turbo typecheck`/`turbo test`/`turbo build`
- * run with `--filter=@atta/aeg-core` — a full monorepo application build is
+ * Scoped to `@attalabs/aeg-core`: `turbo typecheck`/`turbo test`/`turbo build`
+ * run with `--filter=@attalabs/aeg-core` — a full monorepo application build is
  * the deployment pipeline's job, not this gate's (`aeg-root/enforcement.md`
  * Ring 1: "application builds are verified by the deployment pipeline").
  * `aeg-core` itself has no bundler build step (source-only package), so the
@@ -124,10 +124,10 @@ if (import.meta.main) {
   const prBody = resolvePrBody()
 
   const steps: StepResult[] = []
-  steps.push(runStep('typecheck', 'turbo typecheck --filter=@atta/aeg-core'))
+  steps.push(runStep('typecheck', 'turbo typecheck --filter=@attalabs/aeg-core'))
   steps.push(runStep('lint (biome check .)', 'biome check .'))
-  steps.push(runStep('test', 'turbo test --filter=@atta/aeg-core'))
-  steps.push(runStep('build', 'turbo build --filter=@atta/aeg-core'))
+  steps.push(runStep('test', 'turbo test --filter=@attalabs/aeg-core'))
+  steps.push(runStep('build', 'turbo build --filter=@attalabs/aeg-core'))
   steps.push(runStep('verify-docs --pr', 'bun packages/aeg-core/bin/verify-docs.ts --pr', { PR_BODY: prBody }))
   steps.push(...runPremiseSteps(prBody))
 

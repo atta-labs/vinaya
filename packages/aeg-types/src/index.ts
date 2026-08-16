@@ -1,6 +1,6 @@
 /**
- * Shared AEG tranche/task shapes, extracted from `@atta/aeg-core` (task
- * aeg-forge-state-v1 3a) so `@atta/aeg-forge-state` can depend on these
+ * Shared AEG tranche/task shapes, extracted from `@attalabs/aeg-core` (task
+ * aeg-forge-state-v1 3a) so `@attalabs/aeg-forge-state` can depend on these
  * types without creating a package cycle: `aeg-forge-state` needs them to
  * type its forge-derived output, and `aeg-core`'s bin scripts need to
  * consume `aeg-forge-state`'s derivation function — a genuine bidirectional
@@ -55,18 +55,18 @@ export type Tranche = {
 
 // ---------- Forge facts + local read-adapter shapes ----------
 //
-// Moved here from `@atta/aeg-core/src` (aeg-core-purity fix, #521):
-// `@atta/aeg-core/src` must stay zero-I/O (#372, #382, #506), but the
+// Moved here from `@attalabs/aeg-core/src` (aeg-core-purity fix, #521):
+// `@attalabs/aeg-core/src` must stay zero-I/O (#372, #382, #506), but the
 // I/O-performing fetchers that produce/consume these shapes
 // (`fetchForgeFacts`, `fetchOpenIssuesByLabel`) live in
-// `@atta/aeg-forge-state`, which cannot depend on `@atta/aeg-core` without
+// `@attalabs/aeg-forge-state`, which cannot depend on `@attalabs/aeg-core` without
 // recreating the cycle `aeg-forge-state-v1` 3a already broke once. Putting
 // the shapes at the bottom of the chain lets `aeg-forge-state` type its own
 // I/O without importing `aeg-core`, while `aeg-core` re-exports them for
-// every existing call site that imports from `@atta/aeg-core`.
+// every existing call site that imports from `@attalabs/aeg-core`.
 
 /**
- * Per-task forge snapshot. `deriveTranche` (`@atta/aeg-core`) consumes this.
+ * Per-task forge snapshot. `deriveTranche` (`@attalabs/aeg-core`) consumes this.
  *
  * Conventions for missing entries: a task absent from the `Map<TaskId,
  * ForgeFacts>` passed to `deriveTranche` is treated as `todo` — tranche

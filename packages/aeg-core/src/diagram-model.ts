@@ -6,7 +6,7 @@
  * (Studio, the Vinaya portal, a CLI visualizer) reads THIS model; none
  * re-implements the governance logic. Zero I/O, zero `fs`/`node:`
  * imports — doctrine arrives already-read through `DoctrineContent`;
- * the file reads live behind `DoctrineSource` in `@atta/vinaya-sources`.
+ * the file reads live behind `DoctrineSource` in `@attalabs/vinaya-sources`.
  *
  * What is NOT here: geometry. Radius, angle, colour, coordinates are the
  * renderer's job (a ring index and a render-state are structural facts; a
@@ -49,7 +49,7 @@ export type DiagramNode = {
   /** Whether this action reaches GitHub — `action` nodes only, straight from
    * its `ACTIONS` entry (the canonical set). On the node because a
    * renderer cannot get it any other way: `ACTIONS` is a value export, and
-   * importing it into a client component drags `@atta/aeg-forge-state`'s
+   * importing it into a client component drags `@attalabs/aeg-forge-state`'s
    * `node:child_process` into the browser bundle. The distinction is
    * doctrine-load-bearing — ring-0 gates guard exactly the crossings, and
    * G3 exists to prove there is no unguarded one — so it must survive to the

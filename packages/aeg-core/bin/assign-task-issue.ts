@@ -11,7 +11,7 @@
  *
  * No decision logic lives here — facts are gathered (topology row → Issue
  * number, current assignees, authenticated login) and handed to the pure
- * evaluator `decideIssueAssignment` (@atta/aeg-core).
+ * evaluator `decideIssueAssignment` (@attalabs/aeg-core).
  *
  * FAIL-OPEN BY CONTRACT: this is a visibility nicety, never a gate. Every
  * failed `gh` call degrades to a `null` fact (which the evaluator maps to a
@@ -29,7 +29,7 @@
 
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
-import { deriveTrancheFromForge, resolveRepo } from '@atta/aeg-forge-state'
+import { deriveTrancheFromForge, resolveRepo } from '@attalabs/aeg-forge-state'
 import { decideIssueAssignment, parseTaskBranch } from '../src/index'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')

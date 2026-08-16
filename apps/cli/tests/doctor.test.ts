@@ -7,7 +7,7 @@ import type { DoctorDeps, Finding } from '../src/commands/doctor.js'
 import { runDoctor } from '../src/commands/doctor.js'
 import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
-import { DOC_OWNERS_PATH } from '@atta/aeg-core'
+import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
 import { CHECKS_WORKFLOW_PATH, CONFIG_PATH, DOCTRINE_POINTER_PATH } from '../src/lib/artifacts.js'
 import type { LabelGateway } from '../src/lib/ops.js'
 

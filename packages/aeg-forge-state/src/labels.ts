@@ -28,12 +28,12 @@
  *
  * ## Why it lives here
  *
- * It lives in `@atta/aeg-forge-state`, not `@atta/aeg-core`, because the
+ * It lives in `@attalabs/aeg-forge-state`, not `@attalabs/aeg-core`, because the
  * dependency direction is `aeg-core → aeg-forge-state → aeg-types`: the
  * vocabulary's first consumer is `map-forge-facts.ts` (the mapper that turns
  * a raw GitHub label list into the `blockedLabel` fact), which sits in this
  * package and cannot import backward from `aeg-core`. This is the lowest
- * package every consumer already depends on. `@atta/aeg-core` re-exports the
+ * package every consumer already depends on. `@attalabs/aeg-core` re-exports the
  * whole helper surface, so consumers that only depend on `aeg-core` (the
  * Vinaya CLI) reach the same single source without a new dependency.
  *

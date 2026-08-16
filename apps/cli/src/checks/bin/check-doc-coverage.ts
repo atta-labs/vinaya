@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: doc-coverage. Thin adapter over `@atta/aeg-core`'s C5 evaluator
+ * Core check: doc-coverage. Thin adapter over `@attalabs/aeg-core`'s C5 evaluator
  * (`evaluateC5` + `parseDocOwners`/`readDocAcks`, used internally by
  * `evaluateC5`) — mirrors `packages/aeg-core/bin/verify-docs.ts`'s `runC5`
  * input assembly (changed files vs base, `PR_BODY`/`PR_BODY_FILE`, the
@@ -14,7 +14,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { DOC_OWNERS_PATH, evaluateC5, isWaiverLabelActorVerified, WAIVER_LABEL } from '@atta/aeg-core'
+import { DOC_OWNERS_PATH, evaluateC5, isWaiverLabelActorVerified, WAIVER_LABEL } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 

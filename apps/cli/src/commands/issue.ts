@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { isTaskIssueLabelSet } from '@atta/aeg-core'
+import { isTaskIssueLabelSet } from '@attalabs/aeg-core'
 import { printJson } from '../lib/envelope'
 import {
   type BodyResult,

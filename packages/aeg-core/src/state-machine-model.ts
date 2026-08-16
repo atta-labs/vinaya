@@ -5,7 +5,7 @@
  * `actions.ts` and `waiver-label.ts` (one pure-data list, read by both
  * the logic and the rendered docs, so the two can never drift). Its only
  * non-type import is `label()` from the sibling pure-data label vocabulary
- * (`@atta/aeg-forge-state`'s `labels.ts`), so the label names this model quotes
+ * (`@attalabs/aeg-forge-state`'s `labels.ts`), so the label names this model quotes
  * cannot drift from the ones the mechanism actually matches.
  *
  * Three parts, in the order a reader needs them:
@@ -27,14 +27,14 @@
  * **Deliberately not imported here: the label vocabulary.** Derivation works
  * on `ForgeFacts` — booleans and enums — never on label *strings*; the one
  * label that matters arrives pre-read as the `blockedLabel` fact. Importing
- * `@atta/aeg-forge-state` for its `LABELS` would also drag that package's
+ * `@attalabs/aeg-forge-state` for its `LABELS` would also drag that package's
  * `node:child_process` into any browser bundle rendering this model, the same
  * hazard `diagram-model.ts` documents for `ACTIONS`. Label names live in
- * `@atta/aeg-forge-state`'s `labels.ts`; this module names them only in prose.
+ * `@attalabs/aeg-forge-state`'s `labels.ts`; this module names them only in prose.
  */
 
-import { label } from '@atta/aeg-forge-state'
-import type { ForgeFacts } from '@atta/aeg-types'
+import { label } from '@attalabs/aeg-forge-state'
+import type { ForgeFacts } from '@attalabs/aeg-types'
 import type { DerivedStatus } from './types'
 
 // ---------- 1. Inputs ----------

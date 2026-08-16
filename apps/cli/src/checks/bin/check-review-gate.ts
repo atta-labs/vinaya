@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: review-gate. Thin adapter over `@atta/aeg-core`'s
+ * Core check: review-gate. Thin adapter over `@attalabs/aeg-core`'s
  * `checkReviewGate` — mirrors `packages/aeg-core/bin/verify-review-gate.ts`'s
  * input assembly (PR comments/labels/waiver-label-actor via `gh`) exactly,
  * emitting the check contract instead of human text.
@@ -19,7 +19,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkReviewGate, isReviewGateExemptBranch, WAIVER_LABEL_REVIEW } from '@atta/aeg-core'
+import { checkReviewGate, isReviewGateExemptBranch, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 

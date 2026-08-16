@@ -17,7 +17,7 @@ import { execSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import matter from 'gray-matter'
-import { resolveRepo } from '@atta/aeg-forge-state'
+import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { checkG1, checkG2, checkG3, checkG4, checkG5, parseEnforcementRegistry } from '../src/index'
 import type { GateRow, RegistryCheckResult } from '../src/index'
 

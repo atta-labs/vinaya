@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
-import { PRINCIPAL_ALLOWLIST } from '@atta/aeg-core'
+import { PRINCIPAL_ALLOWLIST } from '@attalabs/aeg-core'
 
 // Rings is the only schema surface this task ships — declarative
 // booleans, no conditional logic. Ring 0 (git hooks) and the
@@ -115,7 +115,7 @@ export function lintEnvDeclarations(checks: Record<string, CheckEntry> | undefin
 // `issue` body must carry is expressed HERE, never hardcoded in the command
 // code — this repo's required-section set is just one instance (one
 // derivation, N consumers). Declarative only: a section is either a named
-// battle-tested built-in (backed by an `@atta/aeg-core` validator) or a
+// battle-tested built-in (backed by an `@attalabs/aeg-core` validator) or a
 // generic heading/field/phrase matcher an adopter authors for their own
 // required sections. No conditional grammar (no if/unless/except) —
 // any diff-conditionality (lock-ack, premise coverage) lives inside the

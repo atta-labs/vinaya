@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { amendRationaleDeps, projectsFromBody } from '@atta/aeg-forge-state'
+import { amendRationaleDeps, projectsFromBody } from '@attalabs/aeg-forge-state'
 import { describe, expect, it } from 'vitest'
 import { fenceShapes } from './fixtures/fence-shapes'
 import {

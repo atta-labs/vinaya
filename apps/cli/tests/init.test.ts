@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
-import { DOC_OWNERS_PATH } from '@atta/aeg-core'
+import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
 import {
   ARCHIVIST_WORKFLOW_PATH,
   buildInitOps,

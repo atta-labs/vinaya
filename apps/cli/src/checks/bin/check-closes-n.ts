@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: closes-n. Thin adapter over `@atta/aeg-core`'s `checkClosesN`
+ * Core check: closes-n. Thin adapter over `@attalabs/aeg-core`'s `checkClosesN`
  * — mirrors `packages/aeg-core/bin/verify-coherence.ts --closes-n`'s input
  * assembly (BRANCH/PR_BODY env, the branch's own tranche, the reverse
  * `Closes #N` lookup via `fetchTaskIssueRefs`), emitting the check contract
@@ -10,8 +10,8 @@
  * Narrower than `--closes-n`'s own tranche load: that CLI's
  * `loadTrancheFiles(null, slug)` merges an on-disk topology FILE with the
  * forge and falls back to disk when the forge is unavailable. This
- * adapter's dependency boundary is `@atta/aeg-core` + `@atta/vinaya-sources`
- * only (no `@atta/aeg-forge-state` file-loader import) — it derives the
+ * adapter's dependency boundary is `@attalabs/aeg-core` + `@attalabs/vinaya-sources`
+ * only (no `@attalabs/aeg-forge-state` file-loader import) — it derives the
  * branch's own tranche from the forge alone (`createForgeSource`), the same
  * forge-only scoping `check-coherence.ts`/`check-dispatch-readiness.ts`
  * already use. A documented, honest narrowing versus `verify-coherence.ts
@@ -24,8 +24,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkClosesN, extractClosesReferences, fetchTaskIssueRefs, type TrancheFile } from '@atta/aeg-core'
-import { createForgeSource } from '@atta/vinaya-sources'
+import { checkClosesN, extractClosesReferences, fetchTaskIssueRefs, type TrancheFile } from '@attalabs/aeg-core'
+import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 // No chdir — see check-doc-coverage.ts's rationale; the runner's spawn

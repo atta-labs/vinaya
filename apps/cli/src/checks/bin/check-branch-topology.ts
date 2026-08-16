@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: branch-topology. Thin adapter over `@atta/aeg-core`'s
+ * Core check: branch-topology. Thin adapter over `@attalabs/aeg-core`'s
  * `checkBranchTopology` — mirrors `packages/aeg-core/bin/check-branch-topology.ts`'s
  * input assembly (branch-derived tranche/task id, forge-derived topology)
  * exactly, emitting the check contract instead of human text.
  *
- * Uses `createForgeSource` (`@atta/vinaya-sources`) rather than importing
- * `deriveTrancheFromForge`/`resolveRepo` from `@atta/aeg-forge-state`
- * directly — the same `@atta/aeg-core` + `@atta/vinaya-sources`-only
+ * Uses `createForgeSource` (`@attalabs/vinaya-sources`) rather than importing
+ * `deriveTrancheFromForge`/`resolveRepo` from `@attalabs/aeg-forge-state`
+ * directly — the same `@attalabs/aeg-core` + `@attalabs/vinaya-sources`-only
  * dependency boundary `check-coherence.ts`/`check-dispatch-readiness.ts`
  * already establish for this CLI's checks.
  *
@@ -16,8 +16,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkBranchTopology, taskBranchTopologyFields } from '@atta/aeg-core'
-import { createForgeSource } from '@atta/vinaya-sources'
+import { checkBranchTopology, taskBranchTopologyFields } from '@attalabs/aeg-core'
+import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'branch-topology'

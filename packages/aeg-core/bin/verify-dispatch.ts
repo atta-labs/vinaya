@@ -10,7 +10,7 @@
  *
  * Thin CLI/I/O shim, same discipline as `verify-docs.ts`/`verify-coherence.ts`:
  * resolves args, reads freshly-fetched forge/git state, and calls the pure
- * evaluators homed in `@atta/aeg-core` (`checkDispatchReadiness`,
+ * evaluators homed in `@attalabs/aeg-core` (`checkDispatchReadiness`,
  * `classifyLeftover`, `captureBaseline`/`compareToBaseline`,
  * `parsePremiseBlock`/`checkPremises`). No check logic lives here.
  *
@@ -77,7 +77,7 @@ import {
   resolveGithubToken,
   resolveRepo,
   type RepoRef
-} from '@atta/aeg-forge-state'
+} from '@attalabs/aeg-forge-state'
 import {
   type BaselineEntry,
   captureBaseline,
@@ -318,7 +318,7 @@ async function resolvePriorTrancheArchival(
       if (!touchesProject) continue
 
       // Not routed through `ghIssueListByAnyLabel`: that helper is internal to
-      // `@atta/aeg-forge-state`'s `gh.ts` (not exported) and issues a
+      // `@attalabs/aeg-forge-state`'s `gh.ts` (not exported) and issues a
       // `--state all` query with the full Issue JSON, where this site wants
       // open Issues and their numbers only.
       const openIssues =
