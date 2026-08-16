@@ -49,6 +49,7 @@ import {
 } from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 
 const CHECK_NAME = 'coherence'
 
@@ -237,7 +238,7 @@ async function main(): Promise<void> {
     facts: snapshot.facts.get(t.id)
   }))
 
-  results.push(checkA1(enrichedEntries))
+  results.push(checkA1(enrichedEntries, resolvePrincipalAllowlist(loadTrustAnchorConfig())))
   results.push(checkA3(enrichedEntries))
   results.push(checkT1(enrichedEntries))
   results.push(checkD1(enrichedEntries, issueToEntry(enrichedEntries), taskToEntry(enrichedEntries, slug)))

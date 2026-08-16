@@ -46,6 +46,7 @@ import {
 } from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 
 const CHECK_NAME = 'dispatch-readiness'
 
@@ -114,21 +115,49 @@ function fail(message: string, prompt: string): never {
   process.exit(1)
 }
 
+type DispatchFactsSubset = {
+  prState: string
+  issueState: 'open' | 'closed'
+  stateReason: 'completed' | 'not_planned' | null
+  closedByActor: string | null
+}
+
 function resolveEdge(
   id: string,
   taskById: Map<string, { id: string; issue: number | null }>,
-  factsByTaskId: Map<string, { prState: string }>
-): { issue: number | null; merged: boolean; open: boolean } {
+  factsByTaskId: Map<string, DispatchFactsSubset>
+): {
+  issue: number | null
+  merged: boolean
+  open: boolean
+  issueState: 'open' | 'closed' | null
+  stateReason: 'completed' | 'not_planned' | null
+  closedByActor: string | null
+} {
   const target = taskById.get(id)
   if (target) {
     const facts = target.issue !== null ? factsByTaskId.get(target.id) : undefined
-    return { issue: target.issue, merged: facts?.prState === 'merged', open: facts?.prState === 'open' }
+    return {
+      issue: target.issue,
+      merged: facts?.prState === 'merged',
+      open: facts?.prState === 'open',
+      issueState: facts?.issueState ?? null,
+      stateReason: facts?.stateReason ?? null,
+      closedByActor: facts?.closedByActor ?? null
+    }
   }
   // Cross-tranche / #NNN reference — unresolvable with this check's forge
   // toolset (fetchForgeFacts/fetchOpenIssuesByLabel only). Conservative
   // default matches `bin/verify-dispatch.ts`'s own fallback for the same case.
   const direct = id.match(/^#(\d+)$/)
-  return { issue: direct ? Number(direct[1]) : null, merged: false, open: false }
+  return {
+    issue: direct ? Number(direct[1]) : null,
+    merged: false,
+    open: false,
+    issueState: null,
+    stateReason: null,
+    closedByActor: null
+  }
 }
 
 async function main(): Promise<void> {
@@ -198,7 +227,14 @@ async function main(): Promise<void> {
 
   const dependsOn: DispatchDependsOnFact[] = task.dependsOn.map((dep) => {
     const r = resolveEdge(dep, taskById, factsByTaskId)
-    return { id: dep, issue: r.issue, merged: r.merged }
+    return {
+      id: dep,
+      issue: r.issue,
+      merged: r.merged,
+      issueState: r.issueState,
+      stateReason: r.stateReason,
+      closedByActor: r.closedByActor
+    }
   })
   const conflictsWith: DispatchConflictsWithFact[] = task.conflictsWith.map((c) => {
     const r = resolveEdge(c, taskById, factsByTaskId)
@@ -215,7 +251,8 @@ async function main(): Promise<void> {
     dependsOn,
     conflictsWith,
     priorTask: null,
-    priorTrancheArchival
+    priorTrancheArchival,
+    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
   }
 
   const result = checkDispatchReadiness(input)
