@@ -19,12 +19,22 @@
  * the bundle and copies the doctrine, so it is the exact artifact a publish
  * would ship). This is the pre-publish leg: source that is ahead of the
  * registry is *supposed* to print red rows in the default mode, and this
- * flag is how to prove those rows go green before any version is published.
- * One boundary stays as-is: the fixture's generated git hooks pin
- * `npx @attalabs/vinaya@<version>`, so in this mode `demo break` still
- * exercises the registry copy of that version if one exists — the hooks'
- * cache-key pin is itself the behavior under test, not something this
- * script rewires.
+ * flag is how to prove those rows go green before any version is published —
+ * with ONE row excepted, and the exception is the pre-publish case itself.
+ *
+ * `demo break` cannot pass against a version the registry does not have. The
+ * generated git hooks pin `npx --yes @attalabs/vinaya@<version>` (see
+ * `artifacts.ts`'s hook block: the pin is an npx cache-key fix, and is itself
+ * behavior under test, not something this script rewires). If that version is
+ * unpublished, npx returns `ETARGET`, the hook refuses BOTH the broken and the
+ * fixed commit, and `demo.ts`'s requirement that the fixed commit succeed makes
+ * the row red and the run exit 1.
+ *
+ * So: 19 of the 20 rows are provable before a publish; `demo break` is provable
+ * only once that exact version exists on the registry. The failure direction is
+ * safe — a loud red, never a false green — but do not read a green `demo break`
+ * in this mode as evidence about the tarball. It means the registry already has
+ * that version, and the hook exercised the registry copy.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -487,9 +497,14 @@ async function main(): Promise<void> {
     mkdirSync(fixtureDir, { recursive: true })
 
     // The registry spec by default; under --local-pack, a tarball of this
-    // working tree packed into the scratch root (never into the repo). npm
-    // runs `prepack` (build + bundle-doctrine), so the tarball is the exact
-    // artifact `npm publish` would ship from this tree.
+    // working tree. The TARBALL lands in the scratch root, never in the repo —
+    // but the pack OPERATION is not repo-free: npm runs `prepack` with `cwd`
+    // at the package, so build + bundle-doctrine write `apps/cli/dist/` and
+    // `apps/cli/aeg-root/` into the working tree. Both are gitignored, so this
+    // leaves no dirtiness; it does mean two concurrent `--local-pack` runs
+    // race on those shared build outputs, while the scratch root itself is
+    // per-run unique. Running `prepack` is the point: the tarball is then the
+    // exact artifact `npm publish` would ship from this tree.
     let installSource = PACKAGE_SPEC
     if (localPack) {
       const cliDir = fileURLToPath(new URL('..', import.meta.url))
