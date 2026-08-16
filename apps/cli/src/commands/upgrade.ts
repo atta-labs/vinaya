@@ -473,6 +473,15 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
   const plan = planUpgrade(ops, repo.repoRoot, planManifest, routing)
 
   if (!plan.hasChanges) {
+    // A refused hook migration is not a "change", but silence here would
+    // leave the adopter stuck on the untracked layout with no explanation —
+    // say why, every run, until the blocker is resolved.
+    if (routing.blockedReason) {
+      process.stdout.write(
+        `Note: hooks stay at .git/hooks — migration to ${TRACKED_HOOK_DIR} skipped: ${routing.blockedReason}.\n` +
+          `(git never tracks .git/hooks, so fresh clones have no ring-0 hooks; \`vinaya doctor\` keeps reporting this.)\n`
+      )
+    }
     process.stdout.write('vinaya upgrade — already current. Nothing to do.\n')
     return 0
   }
