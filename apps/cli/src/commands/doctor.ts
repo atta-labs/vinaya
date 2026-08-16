@@ -266,7 +266,7 @@ async function diagnoseHookRouting(
       warn(
         'hooks',
         `this repo's ring 0 is installed at .git/hooks, which git does not track — teammates, fresh clones ` +
-          `and their worktrees have no hooks until they run \`vinaya init\` or \`vinaya upgrade\`. ` +
+          'and their worktrees have no hooks until they run `vinaya init` or `vinaya upgrade`. ' +
           `Run \`vinaya upgrade\` to migrate hooks to the tracked ${TRACKED_HOOK_DIR} directory.`
       )
     ]

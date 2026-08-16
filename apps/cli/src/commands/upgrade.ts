@@ -180,7 +180,8 @@ export function planHookRouting(
     if (!existsSync(abs)) continue // nothing on disk (fresh-clone shape) — nothing arming could disable
     const stripped = stripBlockFromContent(readFileSync(abs, 'utf-8'), b.marker, b.comment)
     if (stripped === null) blocked.push(`${b.path} exists without vinaya's managed block`)
-    else if (!blockStripLeavesEmpty(stripped)) blocked.push(`${b.path} carries your own lines alongside the managed block`)
+    else if (!blockStripLeavesEmpty(stripped))
+      blocked.push(`${b.path} carries your own lines alongside the managed block`)
   }
   const legacyNames = new Set(legacy.map((b) => b.path.slice('.git/hooks/'.length)))
   for (const f of activeRawHooks(repoRoot)) {
@@ -202,9 +203,7 @@ export function translateHookPaths(manifest: ManagedManifest): ManagedManifest {
   return {
     ...manifest,
     blocks: manifest.blocks.map((b) =>
-      b.path.startsWith('.git/hooks/')
-        ? { ...b, path: `${TRACKED_HOOK_DIR}/${b.path.slice('.git/hooks/'.length)}` }
-        : b
+      b.path.startsWith('.git/hooks/') ? { ...b, path: `${TRACKED_HOOK_DIR}/${b.path.slice('.git/hooks/'.length)}` } : b
     )
   }
 }
@@ -316,7 +315,9 @@ export function renderUpgradeDiff(plan: UpgradePlan): string {
       )
     }
     if (r.migratesManifest) {
-      lines.push(`  ~ migrate   hooks to the tracked ${TRACKED_HOOK_DIR}/ directory (commit them — they travel with the repo)`)
+      lines.push(
+        `  ~ migrate   hooks to the tracked ${TRACKED_HOOK_DIR}/ directory (commit them — they travel with the repo)`
+      )
     }
     for (const s of r.strips) {
       lines.push(
@@ -479,7 +480,7 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
     if (routing.blockedReason) {
       process.stdout.write(
         `Note: hooks stay at .git/hooks — migration to ${TRACKED_HOOK_DIR} skipped: ${routing.blockedReason}.\n` +
-          `(git never tracks .git/hooks, so fresh clones have no ring-0 hooks; \`vinaya doctor\` keeps reporting this.)\n`
+          '(git never tracks .git/hooks, so fresh clones have no ring-0 hooks; `vinaya doctor` keeps reporting this.)\n'
       )
     }
     process.stdout.write('vinaya upgrade — already current. Nothing to do.\n')

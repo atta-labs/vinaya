@@ -124,7 +124,9 @@ export async function runEject(args: string[], deps: EjectDeps): Promise<number>
   process.stdout.write('vinaya eject — the full diff of every removal:\n\n')
   process.stdout.write(`${renderEjectDiff(plan)}\n`)
   if (unarm) {
-    process.stdout.write(`  ~ unset core.hooksPath (currently ${TRACKED_HOOK_DIR} — vinaya's own tracked-hooks routing)\n`)
+    process.stdout.write(
+      `  ~ unset core.hooksPath (currently ${TRACKED_HOOK_DIR} — vinaya's own tracked-hooks routing)\n`
+    )
   }
 
   if (parsed.dryRun) {

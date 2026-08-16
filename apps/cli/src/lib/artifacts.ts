@@ -854,9 +854,9 @@ export function buildInitOps(ctx: InitContext): Op[] {
       kind: 'print',
       message:
         `Hooks are installed into the TRACKED ${TRACKED_HOOK_DIR}/ directory — commit them so they\n` +
-        `travel with the repo. This working copy is armed via \`git config core.hooksPath\n` +
+        'travel with the repo. This working copy is armed via `git config core.hooksPath\n' +
         `${TRACKED_HOOK_DIR}\` (shared config — covers every linked worktree). Each fresh clone\n` +
-        `runs that one command once; \`vinaya doctor\` reports it whenever it is missing.`,
+        'runs that one command once; `vinaya doctor` reports it whenever it is missing.',
       group: 'Git hooks'
     })
   }

@@ -136,8 +136,7 @@ export function resolveHookDir(repoRoot: string): HookDir {
  */
 export function hookDirFromManifest(manifest: ManagedManifest, fallback: HookDir): HookDir {
   const block = manifest.blocks.find(
-    (b) =>
-      b.path.startsWith('.husky/') || b.path.startsWith('.git/hooks/') || b.path.startsWith(`${TRACKED_HOOK_DIR}/`)
+    (b) => b.path.startsWith('.husky/') || b.path.startsWith('.git/hooks/') || b.path.startsWith(`${TRACKED_HOOK_DIR}/`)
   )
   if (block?.path.startsWith('.husky/')) return '.husky'
   if (block?.path.startsWith(`${TRACKED_HOOK_DIR}/`)) return TRACKED_HOOK_DIR

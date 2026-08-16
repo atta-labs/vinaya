@@ -192,7 +192,10 @@ describe('ring 0 survives a clone', () => {
 
     let rc = -1
     await captureStdout(async () => {
-      rc = await runInit(['--yes'], realishInitDeps(() => root))
+      rc = await runInit(
+        ['--yes'],
+        realishInitDeps(() => root)
+      )
     })
     expect(rc).toBe(0)
 
@@ -242,7 +245,12 @@ describe('ring 0 survives a clone', () => {
     gitInit(root)
     git(root, ['add', 'README.md'])
     git(root, ['commit', '-q', '-m', 'Chore: initial commit'])
-    await captureStdout(async () => runInit(['--yes'], realishInitDeps(() => root)))
+    await captureStdout(async () =>
+      runInit(
+        ['--yes'],
+        realishInitDeps(() => root)
+      )
+    )
     git(root, ['add', '-A'])
     git(root, ['commit', '-q', '-m', 'Chore: install Vinaya', '--no-verify'])
 
@@ -278,7 +286,12 @@ describe('upgrade migrates a legacy .git/hooks install', () => {
     gitInit(root)
     git(root, ['add', 'README.md'])
     git(root, ['commit', '-q', '-m', 'Chore: initial commit'])
-    await captureStdout(async () => runInit(['--yes'], realishInitDeps(() => root, { hookDirFor: () => '.git/hooks' })))
+    await captureStdout(async () =>
+      runInit(
+        ['--yes'],
+        realishInitDeps(() => root, { hookDirFor: () => '.git/hooks' })
+      )
+    )
   }
 
   it('moves vinaya-created hooks to the tracked dir, strips the legacy hosts, arms the config, rewrites the manifest', async () => {
@@ -288,7 +301,10 @@ describe('upgrade migrates a legacy .git/hooks install', () => {
 
     let rc = -1
     const out = await captureStdout(async () => {
-      rc = await runUpgrade(['--yes'], realishUpgradeDeps(() => root))
+      rc = await runUpgrade(
+        ['--yes'],
+        realishUpgradeDeps(() => root)
+      )
     })
     expect(rc).toBe(0)
     expect(out).toContain('Hook location')
@@ -314,7 +330,10 @@ describe('upgrade migrates a legacy .git/hooks install', () => {
 
     let rc = -1
     const out = await captureStdout(async () => {
-      rc = await runUpgrade(['--yes'], realishUpgradeDeps(() => root))
+      rc = await runUpgrade(
+        ['--yes'],
+        realishUpgradeDeps(() => root)
+      )
     })
     expect(rc).toBe(0)
     expect(out).toContain('migration to .vinaya/hooks skipped')
@@ -327,14 +346,24 @@ describe('upgrade migrates a legacy .git/hooks install', () => {
     // Same refusal for an unmanaged raw hook elsewhere in .git/hooks.
     writeFileSync(host, readFileSync(host, 'utf-8').replace('\necho my-own-step\n', ''), { mode: 0o755 })
     writeFileSync(join(root, '.git/hooks/post-checkout'), '#!/bin/sh\necho theirs\n', { mode: 0o755 })
-    const out2 = await captureStdout(async () => runUpgrade(['--yes'], realishUpgradeDeps(() => root)))
+    const out2 = await captureStdout(async () =>
+      runUpgrade(
+        ['--yes'],
+        realishUpgradeDeps(() => root)
+      )
+    )
     expect(out2).toContain('.git/hooks/post-checkout is an active raw hook vinaya does not manage')
     expect(existsSync(join(root, TRACKED_HOOK_DIR, 'pre-commit'))).toBe(false)
   }, 20_000)
 
   it('on an already-migrated manifest, re-arms an unarmed clone and sweeps stale legacy blocks (the post-merge machine shape)', async () => {
     await legacyInstall()
-    await captureStdout(async () => runUpgrade(['--yes'], realishUpgradeDeps(() => root))) // migrate for real
+    await captureStdout(async () =>
+      runUpgrade(
+        ['--yes'],
+        realishUpgradeDeps(() => root)
+      )
+    ) // migrate for real
 
     // Simulate the machine that merged the migration commit but never ran it:
     // manifest + tracked hooks present, config unarmed, stale legacy block back.
@@ -344,7 +373,10 @@ describe('upgrade migrates a legacy .git/hooks install', () => {
 
     let rc = -1
     await captureStdout(async () => {
-      rc = await runUpgrade(['--yes'], realishUpgradeDeps(() => root))
+      rc = await runUpgrade(
+        ['--yes'],
+        realishUpgradeDeps(() => root)
+      )
     })
     expect(rc).toBe(0)
     expect(git(root, ['config', '--get', 'core.hooksPath'])).toBe(TRACKED_HOOK_DIR)
@@ -382,12 +414,20 @@ describe('eject of a tracked-hooks install', () => {
     gitInit(root)
     git(root, ['add', 'README.md'])
     git(root, ['commit', '-q', '-m', 'Chore: initial commit'])
-    await captureStdout(async () => runInit(['--yes'], realishInitDeps(() => root)))
+    await captureStdout(async () =>
+      runInit(
+        ['--yes'],
+        realishInitDeps(() => root)
+      )
+    )
     expect(git(root, ['config', '--get', 'core.hooksPath'])).toBe(TRACKED_HOOK_DIR)
 
     let rc = -1
     const out = await captureStdout(async () => {
-      rc = await runEject(['--yes'], realishEjectDeps(() => root))
+      rc = await runEject(
+        ['--yes'],
+        realishEjectDeps(() => root)
+      )
     })
     expect(rc).toBe(0)
     expect(out).toContain('unset core.hooksPath')
