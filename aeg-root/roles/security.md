@@ -62,7 +62,7 @@ Read the brief from the PR body first — it tells you what the change is *suppo
 
 ## What you check
 
-1. **Secret / credential leakage.** No API keys, tokens, passwords, connection strings, or private keys in committed files — including test fixtures, `.env` examples with real values, and inline comments. Run the secret scan over the diff. Flag anything that looks like a live credential.
+1. **Secret / credential leakage.** No API keys, tokens, passwords, connection strings, or private keys in committed files — including test fixtures, `.env` examples with real values, and inline comments. Run a real secret scanner over the branch's full commit range — not a visual read of the diff — and paste its actual output (the scan summary and any findings, secrets redacted) into your verdict comment: without that paste, the `SECRETS:` line may not be written. Flag anything that looks like a live credential. *(In this repo the scanner is gitleaks — `gitleaks git --redact -v --log-opts "origin/main..HEAD"`, run from the PR branch's worktree. It is plan-independent — no GitHub feature has to be enabled — `--redact` keeps the pasted output from becoming the second leak, and the range form catches a secret committed and then removed in a later commit, which a tip-diff read misses.)*
 2. **BYOK / crypto handling.** Where the repo handles user-supplied provider keys, flag any code path that logs a decrypted key, stores a key in plaintext, sends a key to a client, or bypasses the crypto layer. *(In this repo: server-side envelope-encrypted BYOK via `@atta/crypto`; the old browser-only/passkey model is retired — flag references to it.)*
 3. **Auth / permissions.** Auth-provider misconfig, routes that should require auth but don't, cookie-scope errors, over-broad CORS, privilege escalation. *(Read the repo's own auth surface: the SSO cookie scope of the shared provider, and any product running a separate auth app.)*
 4. **MCP / agent tooling exposure.** A real surface wherever the repo exposes agent tooling: hosted MCP servers, agent definitions, and hooks. Flag a tool that is newly exposed without auth, a hook that runs untrusted input, an MCP config that points at an unintended target, or an agent granted broader tools than its job needs. *(In this repo: the hosted Vāda MCP and the `.claude/` agent/skill/hook configs.)*
@@ -105,6 +105,8 @@ SECRETS: [none found | listed above, redacted]
 - **MEDIUM/LOW** — hardening notes.
 
 Any CRITICAL or HIGH → VERDICT FAIL. Only MEDIUM/LOW → PASS with notes.
+
+The `SECRETS:` line is evidence-backed, not asserted: the secret scanner's pasted output (check 1) must appear in the verdict comment above it. `SECRETS: none found` with no scan output pasted is an unbacked self-attestation — the exact claim this check exists to catch in others' work, not to commit in your own.
 
 ## Escalation
 
