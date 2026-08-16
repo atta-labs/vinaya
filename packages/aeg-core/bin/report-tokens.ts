@@ -12,7 +12,7 @@
  *
  * Thin I/O shim: resolves the transcript path, reads it, and calls the pure
  * `summarizeTranscript` / `formatTokensLine` / `formatBreakdown` homed in
- * `@atta/aeg-core`. Mirrors `bin/archive-task.ts`'s split (I/O here, pure
+ * `@attalabs/aeg-core`. Mirrors `bin/archive-task.ts`'s split (I/O here, pure
  * logic in `src/`).
  *
  * Transcript-path resolution never scans `~/.claude/projects/<slug>/` for

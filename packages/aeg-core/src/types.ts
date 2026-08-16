@@ -6,7 +6,7 @@
  * contents; `deriveTranche` consumes them plus a `ForgeFacts` snapshot.
  */
 
-import type { ForgeFacts, Tranche, Lifecycle, Task } from '@atta/aeg-types'
+import type { ForgeFacts, Tranche, Lifecycle, Task } from '@attalabs/aeg-types'
 
 // ---------- Registry (projects.md) ----------
 
@@ -30,10 +30,10 @@ export type Registry = Project[]
 // ---------- Tranche file (tranches/<name>.md) ----------
 
 /**
- * `Lifecycle`/`Task`/`Tranche` live in `@atta/aeg-types` (task
+ * `Lifecycle`/`Task`/`Tranche` live in `@attalabs/aeg-types` (task
  * aeg-forge-state-v1 3a) — re-exported here since every existing call site
- * across the repo imports them from `@atta/aeg-core`. Moved out so
- * `@atta/aeg-forge-state` can depend on these shapes without creating a
+ * across the repo imports them from `@attalabs/aeg-core`. Moved out so
+ * `@attalabs/aeg-forge-state` can depend on these shapes without creating a
  * package cycle with `aeg-core` (which in turn depends on
  * `aeg-forge-state`'s derivation function).
  */
@@ -42,11 +42,11 @@ export type { Lifecycle, Task, Tranche }
 // ---------- Forge facts ----------
 
 /**
- * `ForgeFacts` lives in `@atta/aeg-types` (aeg-core-purity fix, #521) —
+ * `ForgeFacts` lives in `@attalabs/aeg-types` (aeg-core-purity fix, #521) —
  * re-exported here for the same reason as `Lifecycle`/`Task`/`Tranche`:
- * every existing call site imports it from `@atta/aeg-core`, and it moved
+ * every existing call site imports it from `@attalabs/aeg-core`, and it moved
  * out so the I/O-performing fetchers that produce it (now in
- * `@atta/aeg-forge-state`) don't need to depend on `aeg-core`.
+ * `@attalabs/aeg-forge-state`) don't need to depend on `aeg-core`.
  */
 export type { ForgeFacts }
 

@@ -49,7 +49,7 @@ import {
   trancheSlugLengthError,
   type MilestoneFacts,
   parseRationaleDeps
-} from '@atta/aeg-forge-state'
+} from '@attalabs/aeg-forge-state'
 import { checkForgeTitle } from '../src/brief-validation'
 import {
   checkBlastRadiusScope,
@@ -214,7 +214,7 @@ function hasExplicitMilestoneFlag(args: string[]): boolean {
 
 /**
  * Milestone auto-attach on Issue CREATE (aeg-review-gate-v1 task 1 follow-up).
- * `deriveTrancheFromForge`/`listActiveTrancheSlugs` (`@atta/aeg-forge-state`)
+ * `deriveTrancheFromForge`/`listActiveTrancheSlugs` (`@attalabs/aeg-forge-state`)
  * never read an Issue's GitHub-native milestone field — only the
  * `vinaya/tranche:<slug>` label — so this drift was never functionally
  * load-pathing; it is pure GitHub-view hygiene (a Milestone showing

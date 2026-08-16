@@ -1,4 +1,4 @@
-import type { RawTaskFacts } from '@atta/aeg-types'
+import type { RawTaskFacts } from '@attalabs/aeg-types'
 import { describe, expect, it } from 'vitest'
 import {
   AEG_BLOCKED_LABEL,

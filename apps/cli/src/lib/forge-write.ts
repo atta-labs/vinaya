@@ -13,7 +13,7 @@
  *     process validated.
  *
  *  2. **The config-defined brief-schema validation runner**
- *     (`validateForgeWrite`) — pure over its inputs, built on `@atta/aeg-core`
+ *     (`validateForgeWrite`) — pure over its inputs, built on `@attalabs/aeg-core`
  *     public exports, emitting the versioned `CheckError` contract instead of
  *     human text (the same move `src/checks/bin/check-brief-shape.ts` makes for
  *     the check runner). WHICH sections a body must carry comes from
@@ -44,7 +44,7 @@ import {
   isBriefShaped,
   isTaskBranch,
   readTierFromPrBody
-} from '@atta/aeg-core'
+} from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks/contract'
 import { type BriefBuiltin, type BriefSection, loadConfigChecked } from './config'
 
@@ -231,7 +231,7 @@ const CHECK_BRIEF_SCHEMA = 'brief-schema'
 const CHECK_FORGE_TITLE = 'forge-title'
 
 /**
- * Maps each built-in section name to the `@atta/aeg-core` validator that backs
+ * Maps each built-in section name to the `@attalabs/aeg-core` validator that backs
  * it. The `Record<BriefBuiltin, …>` type makes this exhaustive — adding a name
  * to `BRIEF_BUILTINS` without wiring it here is a compile error.
  */

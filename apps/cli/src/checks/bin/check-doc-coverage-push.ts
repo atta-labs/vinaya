@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: doc-coverage-push. Thin adapter over `@atta/aeg-core`'s C5
+ * Core check: doc-coverage-push. Thin adapter over `@attalabs/aeg-core`'s C5
  * evaluator (`evaluateC5`) run with PUSH semantics — mirrors
  * `packages/aeg-core/bin/verify-docs.ts --push`'s `runPushMode` exactly:
  * `vinaya/override:docs`/`OVERRIDE_DOCS=1` is honored (via `overrideActive`)
@@ -37,7 +37,13 @@
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { DOC_OWNERS_PATH, evaluateC5, isWaiverLabelActorVerified, overrideActive, WAIVER_LABEL } from '@atta/aeg-core'
+import {
+  DOC_OWNERS_PATH,
+  evaluateC5,
+  isWaiverLabelActorVerified,
+  overrideActive,
+  WAIVER_LABEL
+} from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 

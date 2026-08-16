@@ -6,10 +6,10 @@
  * topology are injected by the caller (`bin/verify-coherence.ts`, the I/O shim).
  */
 
-import { trancheLabel, label } from '@atta/aeg-forge-state'
+import { trancheLabel, label } from '@attalabs/aeg-forge-state'
 import { anchoredRegion, stripCode } from './anchored-region'
 import { checkIssueRationale, checkProjectsRegistered, isTaskIssueLabelSet } from './issue-validation'
-import type { ForgeIssue, TaskIssueRef } from '@atta/aeg-types'
+import type { ForgeIssue, TaskIssueRef } from '@attalabs/aeg-types'
 import type { ForgeFacts, Tranche, Task } from './types'
 
 // ---------- grandfather cutoff -----------------------------------------------
@@ -397,9 +397,9 @@ function resolveDepEntry(
 }
 
 /**
- * `ForgeIssue` lives in `@atta/aeg-types` (aeg-core-purity fix, #521) —
+ * `ForgeIssue` lives in `@attalabs/aeg-types` (aeg-core-purity fix, #521) —
  * re-exported here since every existing call site imports it from
- * `@atta/aeg-core`.
+ * `@attalabs/aeg-core`.
  */
 export type { ForgeIssue }
 
@@ -688,7 +688,7 @@ export function extractClosesReferences(prBody: string): Set<number> {
  *
  * Pure function; reads from injected parameters. The CLI entry-point wires
  * in BRANCH + PR_BODY env vars (forward) and a batched forge lookup
- * (reverse, see `@atta/aeg-forge-state`'s `fetchTaskIssueRefs`).
+ * (reverse, see `@attalabs/aeg-forge-state`'s `fetchTaskIssueRefs`).
  */
 export function checkClosesN(
   branch: string,

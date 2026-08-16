@@ -239,7 +239,7 @@ Every role that runs in a tranche reports its **token spend and cost**; the per-
 
 **Historically**, one sibling file per tranche at `aeg-root/tranches/<name>.tokens.md`, next to the topology file. Both went with the forge-native cutover; the four that remain sit in `completed/` and are read, never written.
 
-The sibling form was chosen over an inline `## Token ledger` section for a reason worth keeping: two roles appending rows to one file at the same time is exactly the merge-collision the topology file's "Planner-only at plan time" rule existed to avoid. A ledger in its own append-only file meant a Planner editing topology and a Developer reporting a turn-end never touched the same bytes. `@atta/aeg-core`'s `parseLedger` still reads both forms, which is what keeps the archived ledgers legible.
+The sibling form was chosen over an inline `## Token ledger` section for a reason worth keeping: two roles appending rows to one file at the same time is exactly the merge-collision the topology file's "Planner-only at plan time" rule existed to avoid. A ledger in its own append-only file meant a Planner editing topology and a Developer reporting a turn-end never touched the same bytes. `@attalabs/aeg-core`'s `parseLedger` still reads both forms, which is what keeps the archived ledgers legible.
 
 ### Format
 

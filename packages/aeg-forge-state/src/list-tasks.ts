@@ -1,4 +1,4 @@
-import type { Task, TaskIssueRef } from '@atta/aeg-types'
+import type { Task, TaskIssueRef } from '@attalabs/aeg-types'
 import { type GhIssue, ghIssueListByAnyLabel, ghIssueListByAnyLabelAsync } from './gh'
 import { findTrancheSlug, trancheLabel } from './labels'
 import { parseRationaleDeps } from './parse-rationale-deps'
@@ -119,7 +119,7 @@ export async function listTasksForSlugAsync(owner: string, repo: string, slug: s
  * (title typo) doesn't invalidate the label's membership signal.
  *
  * Used by `checkClosesN`'s reverse-direction check (Layer 1 reverse,
- * `@atta/aeg-core`'s `coherence-checks.ts`).
+ * `@attalabs/aeg-core`'s `coherence-checks.ts`).
  */
 export function resolveTaskIssueRef(title: string, labels: string[]): TaskIssueRef | null {
   const m = title.match(TITLE_PATTERN)

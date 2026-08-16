@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseDocOwners } from '@atta/aeg-core'
+import { parseDocOwners } from '@attalabs/aeg-core'
 import {
   appendDocOwnersBinding,
   applyDocOwnersBinding,

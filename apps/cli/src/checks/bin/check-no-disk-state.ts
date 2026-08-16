@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: no-disk-state. Thin adapter over `@atta/aeg-core`'s
+ * Core check: no-disk-state. Thin adapter over `@attalabs/aeg-core`'s
  * `isNewDiskStateFile` — mirrors `packages/aeg-core/bin/check-no-disk-state.ts`'s
  * `git diff --name-status` parsing exactly, emitting the check contract
  * instead of human text.
@@ -10,7 +10,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { isNewDiskStateFile, type DiskStateFileStatus } from '@atta/aeg-core'
+import { isNewDiskStateFile, type DiskStateFileStatus } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'no-disk-state'

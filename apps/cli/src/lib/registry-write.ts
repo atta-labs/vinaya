@@ -17,7 +17,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { parseRegistry } from '@atta/aeg-core'
+import { parseRegistry } from '@attalabs/aeg-core'
 
 export const PROJECTS_REGISTRY_PATH = '.vinaya/projects.md'
 

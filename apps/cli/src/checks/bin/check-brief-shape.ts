@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: brief-shape. Thin adapter over `@atta/aeg-core`'s
+ * Core check: brief-shape. Thin adapter over `@attalabs/aeg-core`'s
  * `checkBriefSections` — mirrors `packages/aeg-core/bin/verify-brief.ts`'s
  * input assembly (PR_BODY/BRANCH env, tier via `readTierFromPrBody`, the
  * non-task/non-brief-shaped bypass, `requireClosesN: isTaskBranch(branch)`
@@ -13,7 +13,7 @@
  * scope: diff — reads only the PR body, never the whole repo.
  */
 
-import { checkBriefSections, isBriefShaped, isTaskBranch, readTierFromPrBody } from '@atta/aeg-core'
+import { checkBriefSections, isBriefShaped, isTaskBranch, readTierFromPrBody } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'brief-shape'

@@ -73,7 +73,7 @@ export function runsUnderAll(spec: CheckSpec): boolean {
  * (`apps/vinaya/web/src/app/(site)/**\/page.tsx`) — a scope-registration bug,
  * not a pathing one. No `packageRoot()`-style fix makes those paths exist in
  * an arbitrary adopter's repo. The check's bin and its underlying
- * `@atta/aeg-core` logic are left in place — they may still be useful as this
+ * `@attalabs/aeg-core` logic are left in place — they may still be useful as this
  * repo's own internal doc-quality tool — but they are reachable only by
  * direct invocation, never through this adopter-facing registry.
  */
@@ -281,7 +281,7 @@ export function coreCheckRegistry(): CheckSpec[] {
       timeoutMs: 30_000,
       // BRANCH falls back to git; AEG_REPO falls back to `git remote`.
       // Tokens forwarded because the bin reaches the forge through
-      // `createForgeSource` → `@atta/aeg-forge-state`'s token resolution
+      // `createForgeSource` → `@attalabs/aeg-forge-state`'s token resolution
       // (GITHUB_TOKEN, then GH_TOKEN, then a `gh auth token` subprocess)
       // — the subprocess tier fails on CI runners, so without forwarding
       // the check cannot reach the forge there. Same reasoning as

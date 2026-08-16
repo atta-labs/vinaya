@@ -4,8 +4,8 @@
 // this monorepo's own `packages/aeg-core/bin/archive-task.ts`: resolves the
 // merged PR from a merge SHA via `gh`, gathers `MergedPrFacts`, and calls
 // the pure `buildProvenanceBlock` / `taskRefFromBranch` / `hasProvenance` /
-// `isEligibleForProvenance` homed in `@atta/aeg-core` — already a CLI
-// dependency (see artifacts.ts's own `@atta/aeg-core` import).
+// `isEligibleForProvenance` homed in `@attalabs/aeg-core` — already a CLI
+// dependency (see artifacts.ts's own `@attalabs/aeg-core` import).
 //
 // Repo/owner resolution goes through this CLI's own `detectGitRepo()`
 // (lib/detect.ts) — the same path every other command uses — never a
@@ -19,7 +19,7 @@ import {
   isEligibleForProvenance,
   taskRefFromBranch,
   type MergedPrFacts
-} from '@atta/aeg-core'
+} from '@attalabs/aeg-core'
 import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
 

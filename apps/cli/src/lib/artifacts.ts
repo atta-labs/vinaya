@@ -20,7 +20,7 @@
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { DOC_OWNERS_PATH, label } from '@atta/aeg-core'
+import { DOC_OWNERS_PATH, label } from '@attalabs/aeg-core'
 import type { VinayaConfig } from './config.js'
 import type { CreateLabelOp, Op } from './ops.js'
 import { packageRoot } from './package-root.js'
@@ -840,7 +840,7 @@ function starterDocOwners(): string {
 
 // ---------------------------------------------------------------------------
 // Labels — create-if-absent, existing never modified (amendment-4 manifest).
-// The names come from the code-owned vocabulary (`@atta/aeg-core`'s re-exported
+// The names come from the code-owned vocabulary (`@attalabs/aeg-core`'s re-exported
 // `LABELS`), never written here as literals, so an adopter's repo is seeded
 // with exactly the namespaced set this repo runs on. Only the
 // tier + needs families are installed: no tier:2 (vestigial), no status:*

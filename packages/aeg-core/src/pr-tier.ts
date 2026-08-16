@@ -6,7 +6,7 @@
  * here — the caller (the CLI shim) reads env once and passes the values in.
  */
 
-import { hasLabel, label } from '@atta/aeg-forge-state'
+import { hasLabel, label } from '@attalabs/aeg-forge-state'
 import { anchoredRegion } from './anchored-region'
 import { isDocFile, isSpecFile } from './file-classify'
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: test-plan. Thin adapter over `@atta/aeg-core`'s
+ * Core check: test-plan. Thin adapter over `@attalabs/aeg-core`'s
  * `evaluateTestPlanGate` — mirrors `packages/aeg-core/bin/verify-test-plan.ts`'s
  * input assembly (PR_BODY/BRANCH env) exactly, emitting the check contract
  * instead of human text.
@@ -9,7 +9,7 @@
  * scope: diff — reads only the PR body, never the whole repo.
  */
 
-import { evaluateTestPlanGate } from '@atta/aeg-core'
+import { evaluateTestPlanGate } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'test-plan'

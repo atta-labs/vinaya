@@ -5,7 +5,7 @@
 // `packages/aeg-core/bin/dead-branch-audit.ts` (never-red — a notification
 // channel) and `check-direct-main-push.ts` (a real pass/fail), calling the
 // same pure `findDeadBranchPushes` / `checkDirectMainPush` homed in
-// `@atta/aeg-core`.
+// `@attalabs/aeg-core`.
 //
 // Repo/owner resolution goes through this CLI's own `detectGitRepo()`
 // (lib/detect.ts) — the same path every other command uses — never a
@@ -18,7 +18,7 @@ import {
   label,
   type DeadBranchFact,
   type DeadBranchPush
-} from '@atta/aeg-core'
+} from '@attalabs/aeg-core'
 import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
 import { printJson } from '../lib/envelope.js'
 

@@ -2,7 +2,7 @@
  * Public entry point for the local GitHub read adapter.
  *
  * Given a list of tasks for a tranche, return a `Map<TaskId, ForgeFacts>`
- * matching the `ForgeFacts` contract (`@atta/aeg-types`). One batched GraphQL
+ * matching the `ForgeFacts` contract (`@attalabs/aeg-types`). One batched GraphQL
  * query covers all tasks (issue + ref + latest PR per task, aliased) —
  * rate-limit-friendly and avoids aggregating REST `/reviews` for
  * `reviewDecision`.
@@ -18,9 +18,9 @@
  * SERVER-ONLY. Pulls `node:child_process` transitively via
  * `resolveGithubToken`.
  *
- * Lives in `@atta/aeg-forge-state`, not `@atta/aeg-core` (aeg-core-purity
- * fix, #521) — `@atta/aeg-core/src` is zero-I/O (#372, #382, #506) and this
- * module performs `@octokit/graphql` I/O. Re-exported from `@atta/aeg-core`
+ * Lives in `@attalabs/aeg-forge-state`, not `@attalabs/aeg-core` (aeg-core-purity
+ * fix, #521) — `@attalabs/aeg-core/src` is zero-I/O (#372, #382, #506) and this
+ * module performs `@octokit/graphql` I/O. Re-exported from `@attalabs/aeg-core`
  * for every existing call site that imports it from there.
  */
 
@@ -32,7 +32,7 @@ import type {
   PrRef,
   RawTaskFacts,
   TaskRef
-} from '@atta/aeg-types'
+} from '@attalabs/aeg-types'
 import { resolveGithubToken } from './github-token'
 import { trancheLabel } from './labels'
 import { mapForgeFacts } from './map-forge-facts'

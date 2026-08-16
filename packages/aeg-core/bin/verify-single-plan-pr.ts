@@ -6,7 +6,7 @@
  * `checkSinglePlanPrGate` is ring-0 prevention, but it only runs for PRs
  * opened through that wrapper — a PR opened directly via the GitHub web UI
  * bypasses it entirely. This script re-runs the IDENTICAL predicate
- * (`checkSinglePlanPr`, `@atta/aeg-core`) forge-side, in CI, on every PR —
+ * (`checkSinglePlanPr`, `@attalabs/aeg-core`) forge-side, in CI, on every PR —
  * one implementation per fact (§11 constraint), never a second copy.
  *
  * No-ops (exit 0) for any PR whose diff doesn't touch a tranche topology

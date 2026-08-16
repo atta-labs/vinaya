@@ -1,4 +1,4 @@
-import { deriveTrancheFromForge } from '@atta/aeg-forge-state'
+import { deriveTrancheFromForge } from '@attalabs/aeg-forge-state'
 import type { StateSource } from './contract'
 
 export type ForgeSourceConfig = {
@@ -7,9 +7,9 @@ export type ForgeSourceConfig = {
 }
 
 /**
- * Primary StateSource design. Wires `@atta/aeg-forge-state`'s
+ * Primary StateSource design. Wires `@attalabs/aeg-forge-state`'s
  * `deriveTrancheFromForge` behind the contract — imported as a workspace
- * dependency rather than re-homed. `@atta/aeg-forge-state` is already a
+ * dependency rather than re-homed. `@attalabs/aeg-forge-state` is already a
  * clean, general-purpose, repo/owner-parameterized package with no
  * vinaya-specific coupling and existing consumers of its own
  * (`packages/aeg-core/bin/*`, both apps' `read-root.ts`/`stale-blocker.ts`);

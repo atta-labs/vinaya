@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: dead-branch-push. Thin adapter over `@atta/aeg-core`'s
+ * Core check: dead-branch-push. Thin adapter over `@attalabs/aeg-core`'s
  * `checkDeadBranchPush` — mirrors `packages/aeg-core/bin/check-push-target.ts`'s
  * one batched `gh pr list --head <branch>` call exactly, emitting the check
  * contract instead of human text.
@@ -14,7 +14,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkDeadBranchPush, type PrStateFact } from '@atta/aeg-core'
+import { checkDeadBranchPush, type PrStateFact } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'dead-branch-push'

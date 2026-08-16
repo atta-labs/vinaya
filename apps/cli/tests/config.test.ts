@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CheckSpec } from '../src/checks/contract'
 import { runChecks } from '../src/checks/runner'
-import { PRINCIPAL_ALLOWLIST } from '@atta/aeg-core'
+import { PRINCIPAL_ALLOWLIST } from '@attalabs/aeg-core'
 import {
   lintEnvDeclarations,
   loadTrustAnchorConfig,

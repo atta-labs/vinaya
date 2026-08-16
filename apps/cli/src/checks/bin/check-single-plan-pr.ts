@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: single-plan-pr. Thin adapter over `@atta/aeg-core`'s
+ * Core check: single-plan-pr. Thin adapter over `@attalabs/aeg-core`'s
  * `checkSinglePlanPr` — mirrors `packages/aeg-core/bin/verify-single-plan-pr.ts`'s
  * predicate (does this branch's diff touch a tranche topology file that
  * some OTHER open PR's diff also touches), emitting the check contract
@@ -21,7 +21,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkSinglePlanPr, touchesAnyTopology, type OpenPrFiles } from '@atta/aeg-core'
+import { checkSinglePlanPr, touchesAnyTopology, type OpenPrFiles } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'single-plan-pr'

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { CONFIG_REFERENCE } from '@atta/vinaya-sources'
+import { CONFIG_REFERENCE } from '@attalabs/vinaya-sources'
 import { VinayaConfigSchema } from '../../src/lib/config'
 
 /**

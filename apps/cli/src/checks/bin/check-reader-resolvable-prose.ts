@@ -2,7 +2,7 @@
 
 /**
  * Core check: reader-resolvable-prose. Thin adapter over
- * `@atta/aeg-core`'s `checkReaderResolvableProse` — the two mechanizable
+ * `@attalabs/aeg-core`'s `checkReaderResolvableProse` — the two mechanizable
  * classes (unresolvable references, undefined coined vocabulary) from
  * Issue #694's three-class analysis. Class 3 (register/slop) stays with the
  * review role; it is not deterministic and is not attempted here.
@@ -27,7 +27,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkReaderResolvableProse, parseGlossaryTerms, type ProseSourceFile } from '@atta/aeg-core'
+import { checkReaderResolvableProse, parseGlossaryTerms, type ProseSourceFile } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../../..')

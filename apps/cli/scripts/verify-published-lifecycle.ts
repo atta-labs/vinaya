@@ -3,7 +3,7 @@
  * Installs `@attalabs/vinaya` from the PUBLIC npm registry into a scratch
  * directory outside this repo and exercises the full shipped-command
  * lifecycle against the real published artifact — never this workspace's
- * local source. The coverage set is derived from `@atta/vinaya-sources`'
+ * local source. The coverage set is derived from `@attalabs/vinaya-sources`'
  * `COMMANDS` registry (current source), not hand-maintained here.
  *
  * The version under test is READ FROM `apps/cli/package.json`, not pinned
@@ -55,7 +55,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { COMMANDS } from '@atta/vinaya-sources'
+import { COMMANDS } from '@attalabs/vinaya-sources'
 // Current source's registry, read to derive the expectation the published
 // artifact is measured against — the same "derive, never hand-maintain"
 // discipline this script already applies to the command coverage set.

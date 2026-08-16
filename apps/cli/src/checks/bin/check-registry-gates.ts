@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: registry-gates. Thin adapter over `@atta/aeg-core`'s
+ * Core check: registry-gates. Thin adapter over `@attalabs/aeg-core`'s
  * `checkG1`–`checkG5` — mirrors `packages/aeg-core/bin/verify-registry.ts`'s
  * input assembly (`aeg-root/enforcement.md` parse, `.husky`/`.claude/hooks`/
  * `packages/aeg-core/bin` candidate-file glob, role/contract frontmatter,
@@ -48,7 +48,7 @@ import {
   checkG5,
   parseEnforcementRegistry,
   type RegistryCheckResult
-} from '@atta/aeg-core'
+} from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'registry-gates'

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { parseTranche } from '@atta/aeg-core'
+import { parseTranche } from '@attalabs/aeg-core'
 import type { StateSource } from './contract'
 
 /** Default governance root when no config value is supplied. Never read

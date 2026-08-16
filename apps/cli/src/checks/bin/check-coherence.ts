@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: coherence. Thin adapter over `@atta/aeg-core`'s coherence
+ * Core check: coherence. Thin adapter over `@attalabs/aeg-core`'s coherence
  * evaluators — mirrors `packages/aeg-core/bin/verify-coherence.ts`'s
  * forge-fact assembly, but scoped to the CURRENT task branch's tranche
  * only (derived from `BRANCH`/the current git branch), the same
@@ -10,7 +10,7 @@
  *
  * Tranche state is read ONLY through a `StateSource`
  * (`createForgeSource`). Forge facts come only from the two primitives this
- * task's boundary re-exports from `@atta/aeg-core`: `fetchForgeFacts` and
+ * task's boundary re-exports from `@attalabs/aeg-core`: `fetchForgeFacts` and
  * `fetchOpenIssuesByLabel`.
  *
  * Known scope gap (recorded in the PR body): this check runs A1, A3, T1, T2,
@@ -46,8 +46,8 @@ import {
   type CheckResult,
   type TrancheFile,
   type TaskEntry
-} from '@atta/aeg-core'
-import { createForgeSource } from '@atta/vinaya-sources'
+} from '@attalabs/aeg-core'
+import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'coherence'

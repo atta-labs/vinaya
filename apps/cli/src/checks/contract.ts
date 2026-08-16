@@ -3,7 +3,7 @@
  * will be written against it. Additive evolution ONLY: never remove or
  * retype a field; bump `CHECK_SCHEMA_VERSION` only on a breaking change.
  *
- * Pure contract — no `@atta/aeg-core` import. Both the runner and every
+ * Pure contract — no `@attalabs/aeg-core` import. Both the runner and every
  * check (core or custom) import from here; nothing here depends on them.
  */
 export const CHECK_SCHEMA_VERSION = 1

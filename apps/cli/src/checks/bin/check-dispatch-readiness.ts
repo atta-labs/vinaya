@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: dispatch-readiness. Thin adapter over `@atta/aeg-core`'s
+ * Core check: dispatch-readiness. Thin adapter over `@attalabs/aeg-core`'s
  * `checkDispatchReadiness` — mirrors `packages/aeg-core/bin/verify-dispatch.ts`'s
  * gate-mode input assembly, scoped to the CURRENT task branch (derived from
  * `BRANCH`/the current git branch, `task/<tranche>/<n>`) rather than every
@@ -9,17 +9,17 @@
  * `packages/aeg-core/bin/verify-brief.ts`/`verify-coherence.ts` already use.
  *
  * Tranche state is read ONLY through a `StateSource`
- * (`createForgeSource` from `@atta/vinaya-sources`) — no hardcoded state
+ * (`createForgeSource` from `@attalabs/vinaya-sources`) — no hardcoded state
  * path (task 2's ratified corollary). Forge facts come only from the two
- * primitives `@atta/aeg-core` re-exports for this purpose: `fetchForgeFacts`
+ * primitives `@attalabs/aeg-core` re-exports for this purpose: `fetchForgeFacts`
  * and `fetchOpenIssuesByLabel`.
  *
  * `resolveRepo`/token discovery below are NOT re-derivations of a governance
  * fact — they're the same small env-or-git-remote / env-or-`gh` recipe
- * `@atta/aeg-forge-state`'s `resolveRepo`/`resolveGithubToken` use, kept
- * local because those two functions are not re-exported from `@atta/aeg-core`
+ * `@attalabs/aeg-forge-state`'s `resolveRepo`/`resolveGithubToken` use, kept
+ * local because those two functions are not re-exported from `@attalabs/aeg-core`
  * (aeg-core-purity, #521) and this task's dependency boundary is
- * `@atta/aeg-core` + `@atta/vinaya-sources` only.
+ * `@attalabs/aeg-core` + `@attalabs/vinaya-sources` only.
  *
  * Known scope gap (recorded in the PR body): `priorTrancheArchival` is
  * always reported empty. Resolving it for real requires
@@ -43,8 +43,8 @@ import {
   type DispatchDependsOnFact,
   type DispatchGateInput,
   type DispatchPriorTrancheFact
-} from '@atta/aeg-core'
-import { createForgeSource } from '@atta/vinaya-sources'
+} from '@attalabs/aeg-core'
+import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'dispatch-readiness'

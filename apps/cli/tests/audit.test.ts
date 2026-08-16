@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { findDeadBranchPushes } from '@atta/aeg-core'
+import { findDeadBranchPushes } from '@attalabs/aeg-core'
 import type { AuditDeps } from '../src/commands/audit.js'
 import { runAudit } from '../src/commands/audit.js'
 
@@ -69,7 +69,7 @@ describe('vinaya audit — direct-main-push bounded poll (#870)', () => {
 })
 
 describe('vinaya audit — dead-branch-push detection parity', () => {
-  it('flags a branch whose tip commit lands after its own PR already resolved, via the same pure findDeadBranchPushes @atta/aeg-core exports to packages/aeg-core/bin/dead-branch-audit.ts', () => {
+  it('flags a branch whose tip commit lands after its own PR already resolved, via the same pure findDeadBranchPushes @attalabs/aeg-core exports to packages/aeg-core/bin/dead-branch-audit.ts', () => {
     const findings = findDeadBranchPushes([
       {
         branch: 'task/scratch/1',

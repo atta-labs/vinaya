@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { parseTranche } from '@atta/aeg-core'
+import { parseTranche } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 
 /**
@@ -16,7 +16,7 @@ import { describe, expect, it } from 'bun:test'
  *   - the pinned commit SHA does not exist after `git filter-repo` rewrote
  *     every hash, and the file's directory (`aeg-root/iterations/`) is
  *     retired vocabulary;
- *   - `deriveTrancheFromForge` (`@atta/aeg-forge-state`) has no
+ *   - `deriveTrancheFromForge` (`@attalabs/aeg-forge-state`) has no
  *     fixture-injection seam — it always does a real `owner`/`repo`/`slug`
  *     GitHub Milestone+Issues lookup, see its own doc comment — and this
  *     repo's own forge has no comparable real tranche yet (no

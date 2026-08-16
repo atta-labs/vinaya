@@ -141,7 +141,7 @@ describe('runStudio', () => {
   })
 
   // Security review, PR #855, Finding 2 (MINOR): `resolveRepo()` (from
-  // `@atta/aeg-forge-state`) caches its result at MODULE scope for the
+  // `@attalabs/aeg-forge-state`) caches its result at MODULE scope for the
   // process lifetime, by that module's own design — correct for a real CLI
   // invocation (one `studio` command per process), but any OTHER caller of
   // the shared `resolveRepo()` that runs earlier in this same `bun test`

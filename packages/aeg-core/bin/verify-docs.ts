@@ -6,7 +6,7 @@
  * This is the HARD enforcement mechanism — the Archivist is advisory.
  * Per aeg-consolidation task 1, the check logic below is a thin CLI shim: it
  * resolves args/env, reads the filesystem/git, and calls the pure, tested
- * functions homed in `@atta/aeg-core`. The checks themselves — including their
+ * functions homed in `@attalabs/aeg-core`. The checks themselves — including their
  * exact wording — live there now, not here.
  *
  * Modes:

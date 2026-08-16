@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { parseRegistry } from '@atta/aeg-core'
+import { parseRegistry } from '@attalabs/aeg-core'
 import { appendRegistryRow, freshProjectsRegistry, planRegistryRow } from '../src/lib/registry-write.js'
 
 describe('registry-write', () => {

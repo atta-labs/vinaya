@@ -1,9 +1,9 @@
-import type { Tranche } from '@atta/aeg-types'
+import type { Tranche } from '@attalabs/aeg-types'
 import { findMilestoneForSlug, type MilestoneFacts } from './fetch-milestone'
 import { listTasksForSlugAsync } from './list-tasks'
 
 /**
- * Derives an `@atta/aeg-types` `Tranche` purely from forge objects:
+ * Derives an `@attalabs/aeg-types` `Tranche` purely from forge objects:
  *   - a Milestone titled exactly `slug` → `goal` + `lifecycle` (absent when no
  *     Milestone exists yet for this tranche — a real transitional state,
  *     not an error; `goal`/`lifecycle` then degrade to `''`/`'active'`,

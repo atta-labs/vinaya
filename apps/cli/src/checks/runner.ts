@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { cpus } from 'node:os'
-import { globToRegex } from '@atta/aeg-core'
+import { globToRegex } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, type CheckError, type CheckOutcome, type CheckSpec, type CheckStatus } from './contract'
 
 export type RunOptions = {

@@ -6,7 +6,7 @@
  * `brief-validation` stub in `.github/workflows/archivist.yml`.
  *
  * Thin CLI/Action shim: reads `PR_BODY` from env, derives whether the diff
- * homed in `@atta/aeg-core`. The grammar itself — including exact wording —
+ * homed in `@attalabs/aeg-core`. The grammar itself — including exact wording —
  * lives in `src/brief-validation.ts`, not here. Follows `bin/verify-docs.ts`'s
  * exact shape (chdir to repo root; read env; call pure function; print
  * failures; exit).

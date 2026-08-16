@@ -1,4 +1,4 @@
-import type { ForgeFacts } from '@atta/aeg-types'
+import type { ForgeFacts } from '@attalabs/aeg-types'
 import { describe, expect, it } from 'vitest'
 import {
   DERIVABLE_STATUSES,

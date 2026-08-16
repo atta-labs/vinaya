@@ -2,7 +2,7 @@
  * Pure mapper: GitHub raw responses → `ForgeFacts`. No I/O. Isolated from the
  * I/O layer so the derivation is exhaustively testable with fixtures.
  *
- * Field-by-field correspondence to `ForgeFacts` (defined in `@atta/aeg-types`):
+ * Field-by-field correspondence to `ForgeFacts` (defined in `@attalabs/aeg-types`):
  *
  *   issueState     ← issue.state lowercased ('OPEN' | 'CLOSED' → 'open' | 'closed')
  *   assigned       ← issue.assigneesCount > 0
@@ -26,7 +26,7 @@
  * `deriveTranche` treats as `todo` — tranche tasks are minimum `todo`).
  */
 
-import type { ForgeFacts, RawTaskFacts } from '@atta/aeg-types'
+import type { ForgeFacts, RawTaskFacts } from '@attalabs/aeg-types'
 import { AEG_BLOCKED_LABEL, hasLabel } from './labels'
 
 // The constant's home is now `labels.ts` (the code-owned label vocabulary,

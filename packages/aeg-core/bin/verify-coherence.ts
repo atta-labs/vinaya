@@ -40,8 +40,8 @@ import {
   listIssueMilestonesForSlug,
   resolveGithubToken,
   resolveRepo
-} from '@atta/aeg-forge-state'
-import type { Tranche } from '@atta/aeg-types'
+} from '@attalabs/aeg-forge-state'
+import type { Tranche } from '@attalabs/aeg-types'
 import {
   checkA1,
   checkA2,
@@ -187,7 +187,7 @@ function readFileAtRef(ref: string, relPath: string): string | null {
 
 /**
  * Reads one non-PR-touched tranche file's content: `id`/`issue` come from
- * the forge (`@atta/aeg-forge-state`'s `deriveTrancheFromForge`, task
+ * the forge (`@attalabs/aeg-forge-state`'s `deriveTrancheFromForge`, task
  * aeg-forge-state-v1 3b, #437) when a repo resolves and the forge call
  * succeeds — the golden comparison (Issue #437) confirmed these two fields
  * match the file-parsed topology table exactly for every task that HAS a

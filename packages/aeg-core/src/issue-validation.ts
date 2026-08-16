@@ -16,7 +16,7 @@
  * applicability from the labels; this module only checks the body.
  */
 
-import { hasLabel, projectsFromBody, SECTION_HEADER } from '@atta/aeg-forge-state'
+import { hasLabel, projectsFromBody, SECTION_HEADER } from '@attalabs/aeg-forge-state'
 import { stripCode } from './anchored-region'
 
 export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }
@@ -58,7 +58,7 @@ const DEPENDENCY_RATIONALE_FIELD_NAME = 'Dependency rationale'
  * `checkBriefSections`'s error style.
  *
  * `Dependency rationale` carries a second, stricter requirement the other
- * seven fields do not: `amendRationaleDeps` (`@atta/aeg-forge-state`, the ONLY
+ * seven fields do not: `amendRationaleDeps` (`@attalabs/aeg-forge-state`, the ONLY
  * sanctioned way to edit `Depends-on`/`Conflicts-with`) locates this section
  * by the exact anchor `SECTION_HEADER` — `**Dependency rationale**` with the
  * bold closing immediately after the label. A body written
@@ -142,7 +142,7 @@ export type ProjectPath = { name: string; path: string }
 /**
  * The projects a task Issue declares — its body's `**Project:**` field, and
  * only that. Project is a **field, not a label** (doctrine): #614 dropped the
- * `project:*` labels outright, and `@atta/aeg-forge-state`'s `list-tasks.ts`
+ * `project:*` labels outright, and `@attalabs/aeg-forge-state`'s `list-tasks.ts`
  * derives a task's project from the same field, so the two agree by
  * construction. `labels` stays in the signature because callers pass it and
  * the applicability question (`isTaskIssueLabelSet`) is label-shaped.
@@ -175,7 +175,7 @@ export function declaredProjects(body: string, _labels: string[]): string[] {
  * review judgment like the rest of this module.
  *
  * **It calls `projectsFromBody` — the same function, not a matching regex.**
- * `@atta/aeg-forge-state`'s `list-tasks.ts` is the repo's authority for what a
+ * `@attalabs/aeg-forge-state`'s `list-tasks.ts` is the repo's authority for what a
  * task's project *is*: it is what fills `Task.projects`, and therefore what
  * drives the board, dispatch, and doc fan-out. A gate that decides a project is
  * unregistered must be reading the identical name the derivation resolved, or
@@ -298,7 +298,7 @@ const BLAST_RADIUS_ACK_RE = /(?:\*\*)?blast-radius-ack(?:\*\*)?\s*[:—–-]/i
  * shared edit, which is a gate that blocks valid work.
  *
  * **The declared set is read through `projectsFromBody`** — the same parser
- * `checkProjectsRegistered` and `@atta/aeg-forge-state`'s `list-tasks.ts` use,
+ * `checkProjectsRegistered` and `@attalabs/aeg-forge-state`'s `list-tasks.ts` use,
  * shared by construction rather than by agreement. It reads the line-anchored
  * project field and only that. The previous body-wide read took the first
  * field-shaped token *anywhere* in the body, which is routinely prose in Sizing

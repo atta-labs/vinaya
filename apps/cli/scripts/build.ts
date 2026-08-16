@@ -22,7 +22,7 @@
  *   (it ships as a real npm dependency); the whole `@atta/*` workspace graph
  *   is inlined. Adding a real dependency later can therefore never be
  *   silently inlined. Same external list for both builds — the checks import
- *   `@atta/aeg-core`, no dependency the main entrypoint doesn't already have.
+ *   `@attalabs/aeg-core`, no dependency the main entrypoint doesn't already have.
  * - Output is a single-level `dist/` for the main entrypoint —
  *   `readVersion()` in src/index.ts resolves `..` from the emitted file and
  *   must land on the package root. Check bins nest one level deeper

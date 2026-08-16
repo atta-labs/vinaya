@@ -6,14 +6,14 @@
  *
  * Read-only, always. No writes, no labels, no comments.
  *
- * Lives in `@atta/aeg-forge-state`, not `@atta/aeg-core` (aeg-core-purity
- * fix, #521) — `@atta/aeg-core/src` is zero-I/O (#372, #382, #506) and this
- * module performs `@octokit/graphql` I/O. Re-exported from `@atta/aeg-core`
+ * Lives in `@attalabs/aeg-forge-state`, not `@attalabs/aeg-core` (aeg-core-purity
+ * fix, #521) — `@attalabs/aeg-core/src` is zero-I/O (#372, #382, #506) and this
+ * module performs `@octokit/graphql` I/O. Re-exported from `@attalabs/aeg-core`
  * for every existing call site that imports it from there.
  */
 
 import { graphql } from '@octokit/graphql'
-import type { ForgeIssue } from '@atta/aeg-types'
+import type { ForgeIssue } from '@attalabs/aeg-types'
 import { trancheLabel } from './labels'
 
 type LabeledIssuesResponse = {

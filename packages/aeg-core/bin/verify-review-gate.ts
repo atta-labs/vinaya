@@ -23,7 +23,7 @@
  *
  * Thin CLI/I/O shim, same discipline as `verify-single-plan-pr.ts`: resolves
  * the PR's comments/labels/waiver-label-actor via `gh`, calls the pure
- * `checkReviewGate` (`@atta/aeg-core`), and exits non-zero with a clear
+ * `checkReviewGate` (`@attalabs/aeg-core`), and exits non-zero with a clear
  * message on failure. No check logic lives here.
  *
  * Usage:

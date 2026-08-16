@@ -1,4 +1,4 @@
-# @atta/aeg-core
+# @attalabs/aeg-core
 
 The pure, no-I/O core of the AEG (Agentic Engineering Governance) engine.
 
@@ -11,7 +11,7 @@ The `bin/` directory carries the check binaries (`verify-dispatch`, `verify-docs
 
 This package is published as TypeScript source (`main` points at `./src/index.ts`) — consume it with Bun or a TS-aware bundler, not plain Node.
 
-Part of the fixed release group `@atta/aeg-types` / `@atta/aeg-forge-state` / `@atta/aeg-core` / `@atta/vinaya-sources` / `@attalabs/vinaya`: all five always share one version, and internal dependencies are pinned exactly.
+Part of the fixed release group `@attalabs/aeg-types` / `@attalabs/aeg-forge-state` / `@attalabs/aeg-core` / `@attalabs/vinaya-sources` / `@attalabs/vinaya`: all five always share one version, and internal dependencies are pinned exactly.
 
 ## License
 

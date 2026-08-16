@@ -17,7 +17,7 @@
 // command structurally cannot prove which of them ran it — `--print-only`
 // exists for exactly that gap: print the commands, let the human run them.
 import { execFileSync } from 'node:child_process'
-import { WAIVER_LABEL, WAIVER_LABEL_REVIEW } from '@atta/aeg-core'
+import { WAIVER_LABEL, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
 import { closeStdin, prompt } from '../lib/prompt.js'
 
 type WaiverKind = 'docs' | 'review'

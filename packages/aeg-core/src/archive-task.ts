@@ -12,7 +12,7 @@
  * posted by hand on PRs #302/#305/#306.
  */
 
-import { hasLabel } from '@atta/aeg-forge-state'
+import { hasLabel } from '@attalabs/aeg-forge-state'
 import { type AnchorField, anchoredRegion, stripCode } from './anchored-region'
 import { headerRegion } from './brief-validation'
 import { readTierFromPrBody } from './pr-tier'

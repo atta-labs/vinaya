@@ -6,7 +6,7 @@
  * #365). Runs the UNCHANGED `verify-dispatch.ts` gate mode once, on a
  * `task/<tranche>/<n>` branch's first push (no PR yet), and classifies its
  * exit/output into a `READY`/`NOT_READY`/`UNKNOWN` fact for the pure
- * evaluator `checkFirstPushDispatchGate` (@atta/aeg-core). No
+ * evaluator `checkFirstPushDispatchGate` (@attalabs/aeg-core). No
  * dispatch-readiness logic lives here — `verify-dispatch.ts`'s own
  * `checkDispatchReadiness` remains the single source of truth, wired here,
  * not re-implemented (§4 of this task's brief).

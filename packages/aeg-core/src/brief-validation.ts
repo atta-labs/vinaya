@@ -67,7 +67,7 @@ function headingCheck(prBody: string, keywordPattern: string, sectionName: strin
   }
 }
 
-/** Tier field — reuses the canonical `@atta/aeg-core` parser (do not re-implement). */
+/** Tier field — reuses the canonical `@attalabs/aeg-core` parser (do not re-implement). */
 export function checkTierField(prBody: string, readTier: (body: string) => 0 | 1 | 3 | null): BriefSectionResult {
   if (readTier(prBody) !== null) return { status: 'pass', errors: [] }
   return {

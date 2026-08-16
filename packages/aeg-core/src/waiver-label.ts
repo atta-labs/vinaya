@@ -13,11 +13,11 @@
  * could drift out of sync.
  *
  * The label strings themselves are read from the code-owned vocabulary in
- * `@atta/aeg-forge-state`'s `labels.ts`, never written as literals here — a
+ * `@attalabs/aeg-forge-state`'s `labels.ts`, never written as literals here — a
  * namespace change lands in one file (discipline).
  */
 
-import { label as labelFor } from '@atta/aeg-forge-state'
+import { label as labelFor } from '@attalabs/aeg-forge-state'
 
 export const WAIVER_LABEL = labelFor('waiver-docs')
 export const WAIVER_LABEL_REVIEW = labelFor('waiver-review')

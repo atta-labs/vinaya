@@ -5,7 +5,7 @@
  * hardening task 24, #364, Part 4 — item 2). Thin I/O shim: lists every
  * remote `task/*` branch, resolves each one's most recent PR (any state)
  * plus that PR's resolution timestamp and the branch's current tip commit
- * date, and calls the pure `findDeadBranchPushes` (`@atta/aeg-core`).
+ * date, and calls the pure `findDeadBranchPushes` (`@attalabs/aeg-core`).
  *
  * Extends task 23's `daily-drift` job (`.github/workflows/archivist.yml`) —
  * never-red discipline: this script always exits 0; the job step also wraps
@@ -19,7 +19,7 @@ import { execSync } from 'node:child_process'
 import { join } from 'node:path'
 import { findDeadBranchPushes } from '../src/index'
 import type { DeadBranchFact, DeadBranchPush } from '../src/index'
-import { label, resolveRepo } from '@atta/aeg-forge-state'
+import { label, resolveRepo } from '@attalabs/aeg-forge-state'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)

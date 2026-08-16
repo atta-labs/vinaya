@@ -1,6 +1,6 @@
 /**
  * Batched resolver for `checkClosesN`'s reverse-direction check (Layer 1
- * reverse, `@atta/aeg-core`'s `coherence-checks.ts`) — given the
+ * reverse, `@attalabs/aeg-core`'s `coherence-checks.ts`) — given the
  * Issue numbers a PR body's `Closes #N` references, resolves each to its
  * AEG task identity (`resolveTaskIssueRef`) if it's a real task Issue, or
  * `null` if it's an ordinary (non-task) Issue.
@@ -20,7 +20,7 @@
  */
 
 import { graphql } from '@octokit/graphql'
-import type { TaskIssueRef } from '@atta/aeg-types'
+import type { TaskIssueRef } from '@attalabs/aeg-types'
 import { resolveGithubToken } from './github-token'
 import { resolveTaskIssueRef } from './list-tasks'
 
