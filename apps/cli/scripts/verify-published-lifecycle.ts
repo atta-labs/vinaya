@@ -71,10 +71,14 @@ const PUBLISHED_VERSION = (
 const PACKAGE_SPEC = `@attalabs/vinaya@${PUBLISHED_VERSION}`
 
 // What the run is actually testing — the registry spec by default, or the
-// locally packed tarball under `--local-pack`. Set once in `main` before any
-// exercise runs; the `version` exercise and the report header read these.
+// locally packed tarball under `--local-pack`. `specLabel` is set once in
+// `main` before any exercise runs; the report header reads it.
+//
+// `expectedVersion` is const because both modes now resolve to the same
+// number — it is this package's own version either way, so `--local-pack` has
+// nothing left to override. That is the point of deriving rather than pinning.
 let specLabel = PACKAGE_SPEC
-let expectedVersion = PUBLISHED_VERSION
+const expectedVersion = PUBLISHED_VERSION
 
 // ---------------------------------------------------------------------------
 // Workspace-root guard — the whole point is testing the PUBLISHED artifact in
