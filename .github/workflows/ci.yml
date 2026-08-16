@@ -1,4 +1,4 @@
-# This repo's own ring-1 typecheck/test gate — hand-written, not
+# This repo's own ring-1 lint/typecheck/test gate — hand-written, not
 # vinaya-generated, not vinaya-managed, invisible to `doctor` by design.
 # The four vinaya-*.yml workflows in this directory run `vinaya check` /
 # `archive` / `audit`; none of them ever ran a test or a typecheck (#933).
@@ -36,6 +36,20 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # Biome was a devDependency every contributor already installed, and
+      # nothing ever ran it — so formatting and lint drifted in whenever a
+      # contributor did not run it by hand. `check` is formatter + linter in
+      # one pass over the whole repo; it takes ~150ms, so there is no reason
+      # to scope it. Deliberately BEFORE typecheck: a formatting failure is
+      # the cheapest and most mechanical one to read, and reporting it first
+      # keeps it from being buried under type errors.
+      #
+      # No `--write` here. CI reports; the contributor fixes with
+      # `bunx biome check --write .` locally. A CI job that rewrites the tree
+      # would be pushing to a PR branch, which is not this gate's job.
+      - name: Lint and format
+        run: bunx biome check .
 
       - name: Typecheck
         run: bunx turbo typecheck

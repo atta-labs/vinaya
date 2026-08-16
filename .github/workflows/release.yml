@@ -88,5 +88,17 @@ jobs:
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d
         with:
           version: bun run changeset:version
+          # This repo's commit convention is `Type(scope): Description`, and
+          # the action's defaults ("Version Packages" for both) do not meet
+          # it. Nothing mechanically rejects them — there is no commitlint
+          # here, deliberately — so the convention holds only where it is
+          # actually set, and this is the one commit no human writes.
+          #
+          # `setupGitUser` is left at its default on purpose: the commit stays
+          # authored by `github-actions[bot]`, because a machine did write it.
+          # The MESSAGE should follow the convention; the AUTHOR should stay
+          # honest about what produced the commit.
+          commit: 'Chore(release): Version packages'
+          title: 'Chore(release): Version packages'
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}

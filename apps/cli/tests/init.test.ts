@@ -514,6 +514,11 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // bash -e before the empty-RUN_ID no-op can run.
     expect(verdict).not.toContain('--arg')
     expect(verdict).toContain('select(.conclusion!="cancelled")')
+    // The `${{ }}` below is GitHub Actions expression syntax in the generated
+    // workflow, asserted verbatim. Making it a template literal — biome's
+    // suggested fix — would interpolate it away and the assertion would stop
+    // testing the emitted text.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: asserts emitted Actions syntax, not a JS template
     expect(verdict).toContain('HEAD_SHA: ${{ needs.evaluate.outputs.sha }}')
     expect(verdict.indexOf('if [ -z "$HEAD_SHA" ]')).toBeLessThan(verdict.indexOf('gh run list'))
     // The empty-branch guard must still precede the query.

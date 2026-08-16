@@ -2,15 +2,7 @@
   "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
-  "fixed": [
-    [
-      "@atta/aeg-types",
-      "@atta/aeg-forge-state",
-      "@atta/aeg-core",
-      "@atta/vinaya-sources",
-      "@attalabs/vinaya"
-    ]
-  ],
+  "fixed": [["@atta/aeg-types", "@atta/aeg-forge-state", "@atta/aeg-core", "@atta/vinaya-sources", "@attalabs/vinaya"]],
   "linked": [],
   "access": "public",
   "baseBranch": "main",
