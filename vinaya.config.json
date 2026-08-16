@@ -64,7 +64,8 @@
       "vinaya/tier:3",
       "vinaya/needs:execution-input",
       "vinaya/needs:strategy-input",
-      "vinaya/needs:principal-input"
+      "vinaya/needs:principal-input",
+      "project:vinaya"
     ]
   }
 }
