@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { coreCheckRegistry } from '../../src/checks/registry'
+import { coreCheckRegistry, runsUnderAll } from '../../src/checks/registry'
 
 /**
  * `check --all` must not evaluate a check that a dedicated workflow already
@@ -23,7 +23,10 @@ describe('ownWorkflow — checks reported by their own workflow', () => {
   })
 
   it('every other core check still runs under --all', () => {
-    const runnable = coreCheckRegistry().filter((s) => !s.ownWorkflow)
+    // Filtered through the exported predicate — the same one `check.ts`'s
+    // `--all` selection and the lifecycle script's derived expectation apply,
+    // so this test measures the shipped rule rather than a re-derivation.
+    const runnable = coreCheckRegistry().filter(runsUnderAll)
     // The registry is 15 core checks; exactly one is withheld.
     expect(runnable.length).toBe(coreCheckRegistry().length - 1)
     expect(runnable.some((s) => s.name === 'review-gate')).toBe(false)
