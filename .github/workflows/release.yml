@@ -54,10 +54,14 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # Pinned to a commit, not the mutable `v1` tag — this action runs with
-      # `contents: write` on pushes to main, the same third-party-action
-      # trust bar `oven-sh/setup-bun` is held to elsewhere in this repo's
-      # workflows. Resolved from the `v1.9.0` tag on 2026-08-15.
+      # Pinned to a commit, not the mutable `v1` tag — this action holds
+      # `RELEASE_TOKEN`, a credential with contents and pull-requests write
+      # on this repository, and it holds it on pushes to main. That is the
+      # same third-party-action trust bar `oven-sh/setup-bun` is held to
+      # elsewhere in this repo's workflows, and it is set by the token the
+      # step is handed rather than by the `permissions:` block, which now
+      # grants `GITHUB_TOKEN` nothing this job spends. Resolved from the
+      # `v1.9.0` tag on 2026-08-15.
       # `RELEASE_TOKEN`, not `GITHUB_TOKEN`, and only for this step's API
       # calls. The `atta-labs` organization sets its member repositories'
       # default workflow permissions to read and leaves "Allow GitHub Actions
