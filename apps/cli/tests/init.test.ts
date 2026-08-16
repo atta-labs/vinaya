@@ -174,9 +174,13 @@ describe('vinaya init', () => {
     // on npx's non-interactive cancel. The exact-version `--yes` pin is the
     // fix; this locks it.
     const pkg = JSON.parse(readFileSync(join(import.meta.dir, '..', 'package.json'), 'utf-8')) as { version: string }
-    const hookOps = buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky', selfHost: null }).filter(
-      (op) => op.kind === 'managed-block' && /pre-(commit|push)/.test(op.path)
-    )
+    const hookOps = buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost: null,
+      ciSetup: null
+    }).filter((op) => op.kind === 'managed-block' && /pre-(commit|push)/.test(op.path))
     expect(hookOps.length).toBe(2)
     for (const op of hookOps) {
       if (op.kind !== 'managed-block') continue
@@ -193,9 +197,13 @@ describe('vinaya init', () => {
     // unconditionally. `vinaya-checks.yml` (CI, pull_request-triggered) is
     // deliberately NOT asserted here — it must omit --local so these checks
     // run for real once a PR exists.
-    const hookOps = buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky', selfHost: null }).filter(
-      (op) => op.kind === 'managed-block' && /pre-(commit|push)/.test(op.path)
-    )
+    const hookOps = buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost: null,
+      ciSetup: null
+    }).filter((op) => op.kind === 'managed-block' && /pre-(commit|push)/.test(op.path))
     expect(hookOps.length).toBe(2)
     for (const op of hookOps) {
       if (op.kind !== 'managed-block') continue
@@ -210,7 +218,13 @@ describe('vinaya init', () => {
     const after = snapshot(root)
     expect(after).toEqual(before) // nothing written
     // dry-run diff shows the exact bytes a real install writes
-    for (const op of buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky', selfHost: null })) {
+    for (const op of buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost: null,
+      ciSetup: null
+    })) {
       if (op.kind === 'create-file') expect(out).toContain(op.content.trimEnd().split('\n')[0] ?? '')
     }
     expect(out).toContain('nothing was written')
@@ -218,7 +232,13 @@ describe('vinaya init', () => {
 
   it('dry-run output byte-matches what install then writes (content artifacts)', async () => {
     await runInit(['--yes'], makeDeps())
-    for (const op of buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky', selfHost: null })) {
+    for (const op of buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost: null,
+      ciSetup: null
+    })) {
       // vinaya.config.json is the one file whose bytes legitimately differ: the
       // ownership `managed` manifest is injected at apply time. Every other
       // create-file artifact is byte-identical to what the diff showed.
@@ -868,7 +888,7 @@ describe('generated git hooks: published vs vendored invocation (atta-labs/attal
   const VENDORED: VendoredVinaya = { dir: 'apps/cli', bin: 'apps/cli/dist/index.js' }
 
   function hookBodies(selfHost: VendoredVinaya | null): string[] {
-    return buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky', selfHost })
+    return buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky', selfHost, ciSetup: null })
       .filter((op) => op.kind === 'managed-block' && /pre-(commit|push)/.test(op.path))
       .map((op) => (op.kind === 'managed-block' ? op.body : ''))
   }
@@ -1109,5 +1129,71 @@ describe('partial-failure ownership recording (review finding 3)', () => {
     expect(warnings.some((w) => w.includes('tier:0') && w.includes('HTTP 404: Not Found'))).toBe(true)
     // every other label still gets created — one failure doesn't stop the loop
     expect(createdLabels.length).toBeGreaterThan(0)
+  })
+})
+
+describe('adopter-declared CI setup (ci.setup)', () => {
+  const base = { owner: 'acme', repo: 'widget', hookDir: '.husky' as const, selfHost: null }
+  const CHECK_EXECUTING = [CHECKS_WORKFLOW_PATH, REVIEW_WORKFLOW_PATH, REVIEW_VERDICT_WORKFLOW_PATH]
+
+  function workflowContent(ciSetup: string | null, path: string): string {
+    const op = buildInitOps({ ...base, ciSetup }).find((o) => o.kind === 'create-file' && o.path === path)
+    if (op?.kind !== 'create-file') throw new Error(`no create-file op for ${path}`)
+    return op.content
+  }
+
+  it('emits the step in every check-executing workflow, before the vinaya invocation', () => {
+    for (const path of CHECK_EXECUTING) {
+      const content = workflowContent('npm ci', path)
+      expect(content).toContain('- name: Adopter CI setup')
+      expect(content).toContain('          npm ci')
+      // preparation must precede execution — the step exists so the check
+      // runner finds the adopter's code already installed
+      expect(content.indexOf('Adopter CI setup')).toBeLessThan(content.indexOf('npx --yes @attalabs/vinaya'))
+    }
+  })
+
+  it('never emits the step in the archivist workflow — archive/audit spawn no adopter checks', () => {
+    expect(workflowContent('npm ci', ARCHIVIST_WORKFLOW_PATH)).not.toContain('Adopter CI setup')
+  })
+
+  it('emits nothing when undeclared — no trace of the feature in any workflow', () => {
+    for (const path of [...CHECK_EXECUTING, ARCHIVIST_WORKFLOW_PATH]) {
+      const content = workflowContent(null, path)
+      expect(content).not.toContain('Adopter CI setup')
+      expect(content).not.toContain('ci.setup')
+    }
+  })
+
+  it('a first line carrying extra leading whitespace cannot break the block scalar (reviewer finding)', () => {
+    // YAML derives a `|` scalar's indentation from its first non-empty
+    // line; without normalization, `"  a\nb"` would set it to 12 and the
+    // 10-column `b` line would de-dent out of the scalar, producing an
+    // invalid workflow. trimStart() pins the reference to column 10.
+    const content = workflowContent('  npm ci\necho done', CHECKS_WORKFLOW_PATH)
+    expect(content).toContain('          npm ci\n          echo done')
+    expect(content).not.toContain('            npm ci')
+  })
+
+  it('multi-command values chained with && land verbatim on one run line', () => {
+    const cmd = 'npm install -g bun && bun install --frozen-lockfile --ignore-scripts'
+    const content = workflowContent(cmd, CHECKS_WORKFLOW_PATH)
+    expect(content).toContain(`          ${cmd}`)
+  })
+
+  it('runInit reads ci.setup from a pre-existing repo-root config and writes it into the generated workflow', async () => {
+    // The non-greenfield adopter path: the config exists (foreign, refused as
+    // a write target) and already declares ci.setup — generation must honor
+    // it even though init will not touch the file itself.
+    writeFileSync(
+      join(root, CONFIG_PATH),
+      `${JSON.stringify({ checks: {}, ci: { setup: 'npm ci' } }, null, 2)}\n`,
+      'utf-8'
+    )
+    const rc = await runInit(['--yes'], makeDeps())
+    expect(rc).toBe(0)
+    const workflow = readFileSync(join(root, CHECKS_WORKFLOW_PATH), 'utf-8')
+    expect(workflow).toContain('- name: Adopter CI setup')
+    expect(workflow).toContain('          npm ci')
   })
 })

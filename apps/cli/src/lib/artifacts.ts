@@ -52,6 +52,14 @@ export type InitContext = {
    * published `npx` invocation cannot work in such a repo.
    */
   selfHost: VendoredVinaya | null
+  /**
+   * The adopter-declared CI preparation command (`vinaya.config.json`'s
+   * `ci.setup`), or `null` when undeclared. Callers get it from
+   * `readRepoCiSetup(repoRoot)` (lib/config.ts). Emitted as a step in the
+   * generated workflows that execute `vinaya check`; `null` produces
+   * byte-identical output to before the key existed.
+   */
+  ciSetup: string | null
 }
 
 // --- neutral scaffold paths (never aeg-root / aeg-project) ------------------
@@ -170,7 +178,58 @@ function vinayaRun(selfHost: VendoredVinaya | null, args: string): string {
   return selfHost ? `node ${selfHost.bin} ${args}` : `npx --yes @attalabs/vinaya ${args}`
 }
 
-function checksWorkflow(selfHost: VendoredVinaya | null): string {
+/**
+ * The adopter-declared CI preparation step (`vinaya.config.json`'s
+ * `ci.setup`), emitted only in the workflows that execute `vinaya check` —
+ * the one place a generated job can spawn the ADOPTER'S OWN check scripts.
+ *
+ * Vinaya's own checks arrive whole via `npx`, which is why the ordinary
+ * adopter's shape needs no preparation FOR VINAYA. The adopter's custom
+ * checks are different: they are scripts in the adopter's repository,
+ * importing the adopter's own code, and a bare runner has none of it
+ * installed. Measured on the first non-greenfield adopter: both of its
+ * custom checks failed as `error (2ms)` on every CI run — spawn failure,
+ * not findings — turning a required check permanently red. A custom check
+ * exists to use the repo's own code, so the fix cannot be "keep custom
+ * checks dependency-free"; and vinaya cannot know an adopter's package
+ * manager or runtime, so the command is declared, never inferred.
+ *
+ * Not emitted in the archivist workflow: `archive`/`audit` are vinaya
+ * commands that never spawn adopter check scripts, and its scheduled jobs
+ * would pay the install daily for nothing.
+ *
+ * `''` when undeclared — byte-identical output to before the key existed.
+ */
+function adopterSetupStep(ciSetup: string | null): string {
+  if (!ciSetup) return ''
+  // trimStart() is load-bearing, not cosmetic: YAML takes a `|` block
+  // scalar's indentation from its FIRST non-empty line, so a value whose
+  // first line carries extra leading whitespace would set the reference
+  // deeper than a later line and de-dent that line out of the scalar —
+  // an invalid workflow from valid-looking config (both reviewers flagged
+  // it). Leading whitespace before a shell command is semantically inert,
+  // so stripping it changes nothing the adopter declared. Later lines may
+  // be MORE indented than the first (heredocs, continuations) — that is
+  // always inside the scalar and stays untouched.
+  const indented = ciSetup
+    .trimStart()
+    .split('\n')
+    .map((line) => (line.length > 0 ? `          ${line}` : line))
+    .join('\n')
+  return `      # Adopter-declared CI setup (vinaya.config.json \`ci.setup\`), emitted
+      # verbatim. It prepares this repository's OWN custom checks — scripts
+      # committed here that may import this repository's code — which the
+      # \`npx\` invocation below cannot do: npx prepares only vinaya itself.
+      # The command is repo-committed, reviewed config; under \`pull_request\`
+      # the workflow definition is already controlled by the pull request, so
+      # this step adds no trust surface that did not already exist.
+      - name: Adopter CI setup
+        run: |
+${indented}
+`
+}
+
+function checksWorkflow(selfHost: VendoredVinaya | null, ciSetup: string | null): string {
   return `# ${MANAGED_NOTE}
 #
 # The deterministic gate suite. Runs every registered vinaya check over the
@@ -226,7 +285,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-${vinayaSetupSteps(selfHost)}      - name: Run checks
+${vinayaSetupSteps(selfHost)}${adopterSetupStep(ciSetup)}      - name: Run checks
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
@@ -261,7 +320,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Run checks
 `
 }
 
-function reviewWorkflow(selfHost: VendoredVinaya | null): string {
+function reviewWorkflow(selfHost: VendoredVinaya | null, ciSetup: string | null): string {
   return `# ${MANAGED_NOTE}
 #
 # The required review gate — pull_request events only. The verdict-comment
@@ -322,7 +381,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-${vinayaSetupSteps(selfHost)}      - name: Review gate
+${vinayaSetupSteps(selfHost)}${adopterSetupStep(ciSetup)}      - name: Review gate
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           # PR_NUMBER is what makes the review-gate check EVALUATE: without
@@ -334,7 +393,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Review gate
 `
 }
 
-function reviewVerdictWorkflow(selfHost: VendoredVinaya | null): string {
+function reviewVerdictWorkflow(selfHost: VendoredVinaya | null, ciSetup: string | null): string {
   return `# ${MANAGED_NOTE}
 #
 # The verdict-comment half of the review gate. A reviewer's verdict arrives
@@ -393,7 +452,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-${vinayaSetupSteps(selfHost)}      - name: Review gate (verdict evaluation)
+${vinayaSetupSteps(selfHost)}${adopterSetupStep(ciSetup)}      - name: Review gate (verdict evaluation)
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           # Same wiring as the required workflow: PR_NUMBER is what makes
@@ -827,19 +886,19 @@ export function buildInitOps(ctx: InitContext): Op[] {
   ops.push({
     kind: 'create-file',
     path: CHECKS_WORKFLOW_PATH,
-    content: checksWorkflow(ctx.selfHost),
+    content: checksWorkflow(ctx.selfHost, ctx.ciSetup),
     group: 'CI workflows'
   })
   ops.push({
     kind: 'create-file',
     path: REVIEW_WORKFLOW_PATH,
-    content: reviewWorkflow(ctx.selfHost),
+    content: reviewWorkflow(ctx.selfHost, ctx.ciSetup),
     group: 'CI workflows'
   })
   ops.push({
     kind: 'create-file',
     path: REVIEW_VERDICT_WORKFLOW_PATH,
-    content: reviewVerdictWorkflow(ctx.selfHost),
+    content: reviewVerdictWorkflow(ctx.selfHost, ctx.ciSetup),
     group: 'CI workflows'
   })
   ops.push({
