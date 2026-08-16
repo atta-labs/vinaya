@@ -382,6 +382,18 @@ describe('workflows', () => {
     // A body-only edit must re-trigger the checks workflow so test-plan/
     // closes-n re-evaluate against the corrected body (#870).
     expect(checks).toContain('edited')
+    // Per-check step summary: the job's one check name names no check, so a
+    // red run's guilty check must be readable on the run's Summary page.
+    // pipefail guards the tee that captures it — the default run shell is
+    // `bash -e` WITHOUT pipefail, so an unguarded pipe would report a red
+    // suite green. `!cancelled()` (not `always()`): the concurrency group
+    // cancels superseded runs routinely, and their half-captured output is
+    // noise.
+    expect(checks).toContain('GITHUB_STEP_SUMMARY')
+    expect(checks).toContain('set -o pipefail')
+    // `${'$'}` keeps the literal out of noTemplateCurlyInString's sights,
+    // same dodge as the vendored describe's SIGIL helper.
+    expect(checks).toContain(`if: ${'$'}{{ !cancelled() }}`)
   })
 })
 
@@ -598,7 +610,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
     const verdict = files.get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
     const archivist = files.get(ARCHIVIST_WORKFLOW_PATH) ?? ''
-    expect(checks).toContain(`${VENDORED_BIN} check --all --diff-only`)
+    // The vendored shape pipes through the same tee/step-summary capture as
+    // the published shape — the summary is shape-independent.
+    expect(checks).toContain(`${VENDORED_BIN} check --all --diff-only | tee vinaya-check-output.txt`)
+    expect(checks).toContain('GITHUB_STEP_SUMMARY')
     expect(review).toContain(`${VENDORED_BIN} check review-gate`)
     expect(verdict).toContain(`${VENDORED_BIN} check review-gate`)
     expect(archivist).toContain(`${VENDORED_BIN} archive --merge-sha=${SIGIL}{{ github.sha }}`)
