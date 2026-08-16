@@ -1,7 +1,15 @@
 {
   "name": "@atta/aeg-forge-state",
   "version": "0.7.0",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/atta-labs/vinaya.git",
+    "directory": "packages/aeg-forge-state"
+  },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
@@ -15,7 +23,7 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@atta/aeg-types": "workspace:*",
+    "@atta/aeg-types": "0.7.0",
     "@octokit/graphql": "^8.1.1"
   },
   "devDependencies": {
