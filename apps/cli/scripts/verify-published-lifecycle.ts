@@ -49,7 +49,7 @@
  * in this mode as evidence about the tarball. It means the registry already has
  * that version, and the hook exercised the registry copy.
  */
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -60,6 +60,10 @@ import { COMMANDS } from '@attalabs/vinaya-sources'
 // artifact is measured against — the same "derive, never hand-maintain"
 // discipline this script already applies to the command coverage set.
 import { coreCheckRegistry, runsUnderAll } from '../src/checks/registry.js'
+// Same discipline for the `studio` exercise below: it probes the ports
+// current source would actually bind rather than hand-maintaining a second
+// copy of `3008`/`3108` that could silently drift from `studio.ts`.
+import { FALLBACK_PORT as STUDIO_FALLBACK_PORT, PRIMARY_PORT as STUDIO_PRIMARY_PORT } from '../src/commands/studio.js'
 import { resolveHookDir } from '../src/lib/detect.js'
 
 // `..` from `apps/cli/scripts/` is the package root — the same derivation
@@ -247,6 +251,31 @@ function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
 }
 
+/**
+ * Polls `http://127.0.0.1:<port>/studio` on every candidate port until one
+ * answers or `timeoutMs` elapses. Two ports, not one: `studio.ts` falls back
+ * from `STUDIO_PRIMARY_PORT` to `STUDIO_FALLBACK_PORT` when the primary is
+ * already bound (a real possibility on a dev machine already running
+ * `vinaya studio`), and this exercise must accept either — hardcoding one
+ * port would make the exercise flaky on exactly the machine most likely to
+ * run it by hand.
+ */
+async function waitForStudio(ports: number[], timeoutMs: number): Promise<{ port: number; status: number } | null> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    for (const port of ports) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/studio`, { signal: AbortSignal.timeout(1000) })
+        return { port, status: res.status }
+      } catch {
+        // not up yet on this port — try the next, or the next poll cycle
+      }
+    }
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  return null
+}
+
 // ---------------------------------------------------------------------------
 // Per-command exercises. Every `status: 'shipped'` entry in `COMMANDS` must
 // have a matching key here OR in `EXEMPTIONS` below — checked at start,
@@ -343,7 +372,7 @@ const EXEMPTIONS: Record<string, string> = {
     'exercised for real below.'
 }
 
-const EXERCISES: Record<string, (ctx: Ctx) => Outcome> = {
+const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
   help: ({ bin, fixtureDir }) => {
     const r = run(bin, ['help'], fixtureDir)
     const ok = r.status === 0 && /vinaya/i.test(r.stdout)
@@ -531,22 +560,41 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome> = {
     }
   },
 
-  studio: ({ bin, fixtureDir }) => {
-    // The published artifact ships no Studio bundle — `studio-standalone/` is
-    // not in the `files` allowlist and `bundle-studio` is not part of
-    // `prepack` — so the shipped behavior for a published install IS the
-    // refusal path: exit 1 with a message naming the package. Exercised for
-    // real rather than exempted: this proves the command is routed in the
-    // published artifact AND that it refuses clearly instead of crashing or
-    // exiting 0 over nothing (a `studio` that silently does nothing is the
-    // defect shape this command was recovered against). When Studio
-    // packaging (#43) ships a real bundle, this exercise must flip to
-    // asserting a real launch.
-    const r = run(bin, ['studio'], fixtureDir)
-    const refused = r.status === 1 && /Vinaya Studio isn't available in this install/.test(r.stderr)
+  studio: async ({ bin, fixtureDir }) => {
+    // `studio-standalone/` is now in the `files` allowlist and `bundle-studio`
+    // runs at `prepack`, so the shipped behavior for a published install is a
+    // REAL launch, not the refusal path this exercise asserted before Studio
+    // packaging shipped. `vinaya studio` never exits on its own (it's a
+    // server), so this spawns it detached, polls until it answers on either
+    // candidate port, then tears it down — the same "spawn, prove liveness,
+    // kill" shape Part 4 of this task's own brief uses for its end-to-end
+    // proof, just inlined here as one row of the lifecycle sweep.
+    const child = spawn(bin, ['studio'], { cwd: fixtureDir, stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    child.stdout?.on('data', (d: Buffer) => {
+      stdout += d.toString()
+    })
+    child.stderr?.on('data', (d: Buffer) => {
+      stderr += d.toString()
+    })
+    let exitCode: number | null = null
+    child.on('exit', (code) => {
+      exitCode = code
+    })
+
+    const hit = await waitForStudio([STUDIO_PRIMARY_PORT, STUDIO_FALLBACK_PORT], 20_000)
+
+    child.kill('SIGTERM')
+    await new Promise((r) => setTimeout(r, 500))
+    if (exitCode === null) child.kill('SIGKILL')
+
+    const launched = hit !== null && hit.status === 200
     return {
-      status: refused ? 'pass' : 'fail',
-      detail: `exit ${r.status} (expected 1), honest refusal on stderr: ${refused}`
+      status: launched ? 'pass' : 'fail',
+      detail: launched
+        ? `real launch: server on port ${hit?.port} answered /studio with ${hit?.status}`
+        : `no 200 from /studio on port ${STUDIO_PRIMARY_PORT} or ${STUDIO_FALLBACK_PORT} within 20s — exit ${exitCode ?? 'n/a (still running)'}, stdout tail: ${stdout.trim().slice(-300)}, stderr tail: ${stderr.trim().slice(-300)}`
     }
   },
 
@@ -690,7 +738,7 @@ async function main(): Promise<void> {
     ]) {
       const exercise = EXERCISES[name]
       if (!exercise) continue
-      results.set(name, exercise(ctx))
+      results.set(name, await exercise(ctx))
     }
     for (const [name, reason] of Object.entries(EXEMPTIONS)) {
       results.set(name, { status: 'pass', detail: `EXEMPT — ${reason}` })
