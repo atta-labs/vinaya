@@ -399,9 +399,6 @@ export async function loadTrancheSweep(
   addFromDir(TRANCHES_RELDIR, false)
   addFromDir(COMPLETED_RELDIR, true)
 
-  /** A candidate read from the PR head with real content needs no forge data — its content IS the answer. */
-  const isSelfSufficient = (c: TrancheCandidate): boolean => c.fromHead && c.headContent !== null
-
   // Forge-native tranches with no topology file at all (at the forge-native
   // cutover, a tranche's aeg-root/tranches/*.md was deleted once its
   // Milestone-derived replacement was proven safe) are structurally invisible
@@ -434,7 +431,15 @@ export async function loadTrancheSweep(
   // enumeration is already answered from local git.
   const needForge = new Set<string>()
   if (repo && milestones) {
-    for (const c of candidates) if (!isSelfSufficient(c)) needForge.add(c.slug)
+    // A candidate read from the PR head never consults the forge, in either
+    // direction: with content at the head that content IS the answer, and
+    // without it the candidate produces nothing at all — the compose pass
+    // skips it and the fill-in below is what recovers its slug, asking for its
+    // own fetch on the line after this one. Keying this on the candidate
+    // rather than on the slug is what keeps an archival move (two candidates,
+    // one slug, one of them self-sufficient) from paying for a query whose
+    // result is then discarded.
+    for (const c of candidates) if (!c.fromHead) needForge.add(c.slug)
     for (const { slug } of milestoneRefs) if (!producedSlugs.has(slug)) needForge.add(slug)
   }
 
@@ -747,57 +752,83 @@ export async function runCoherenceChecks(
   // derivation used (`gh issue list --json ... milestone` carries the
   // attachment). Re-fetching cost 7.5 s of a 26 s run for bytes already in
   // hand. Same authority, same facts — only the round trips are gone.
-  const milestoneActiveSlugs = (sweep.milestones?.active ?? []).map((m) => m.slug)
-  // The sweep fetches only the slugs its own composition needed, so a tranche
-  // resolved entirely from the PR head (or already present in `files` without
-  // consulting the forge) may have no entry here — top up just those, bounded.
   //
-  // Deliberately NOT wrapped in a catch that substitutes an empty list: to L4
-  // an empty Issue list is indistinguishable from "this tranche has no
-  // attachment drift", so swallowing a transient forge failure here would
-  // report a clean advisory rather than an unavailable one. The pre-refactor
-  // path (`listIssueMilestonesForSlug`, a synchronous uncaught `gh` call)
-  // propagated and failed the run; that fail-closed behaviour is preserved.
-  const missingIssueSlugs = milestoneActiveSlugs.filter((slug) => !sweep.issuesBySlug.has(slug))
-  const toppedUp = await mapWithConcurrency(missingIssueSlugs, FORGE_FETCH_CONCURRENCY, async (slug) => {
-    try {
-      return { slug, issues: await fetchTrancheIssuesAsync(owner, repoName, slug) }
-    } catch {
-      return { slug, issues: null }
-    }
-  })
-  const l4UnavailableSlugs: string[] = []
-  for (const { slug, issues } of toppedUp) {
-    if (issues === null) l4UnavailableSlugs.push(slug)
-    else sweep.issuesBySlug.set(slug, issues)
-  }
-
-  // A failed top-up is neither swallowed nor thrown. Substituting an empty list
-  // would make L4 read "no attachment drift" for a tranche it never saw;
-  // throwing would empty this process's stdout, which in `--json` mode must
-  // stay parseable JSON for the CI job that pipes it to `jq`. So the tranche is
-  // withheld from L4's inputs and the gap is reported below.
-  const l4Slugs = milestoneActiveSlugs.filter((slug) => !l4UnavailableSlugs.includes(slug))
-  const issueMilestones = l4Slugs.flatMap((slug) =>
-    issueMilestonesFromIssues(sweep.issuesBySlug.get(slug) ?? []).map((f) => ({ tranche: slug, ...f }))
-  )
-  results.push(checkL4(l4Slugs, issueMilestones))
-  if (l4UnavailableSlugs.length > 0) {
+  // The index is also the ONLY authority either check has: with it lost,
+  // `sweep.milestones` is null, the active list is empty, and both checks read
+  // that as "no active tranche has any drift" and report clean. That vacuous
+  // green is what the enumeration guard above refuses when the index failure
+  // leaves nothing at all to check — but that guard is gated on `files` being
+  // empty, so the moment one topology file survives to populate `files` the
+  // same outage passes silently here instead. Reachable in any repo that still
+  // carries `aeg-root/tranches/completed/*.md`, and on any plan PR that reads
+  // its own topology file from the head. It does not even take an outage:
+  // `indexTrancheMilestonesAsync` reads through `gh` while A1/A2/A3's snapshots
+  // read through octokit, so a `gh auth token` keyring failure alone produces
+  // an index-less run with `anyForgeUnavailable` still false. The pre-refactor
+  // path could not do this — L4/L5 called `listActiveTrancheSlugs`
+  // synchronously and uncaught, so an index failure killed the run rather than
+  // passing it. Neither check runs without its authority; the gap is reported.
+  if (sweep.milestoneIndexFailed) {
     results.push({
       check: 'FORGE',
       status: 'fail',
-      failures: l4UnavailableSlugs.map((slug) => ({
-        tranche: slug,
-        reason: "Forge read failed while collecting L4's Milestone-attachment facts — L4 did not evaluate this tranche."
-      })),
-      note: `severity:infra — ${l4UnavailableSlugs.length} tranche(s) were withheld from L4 because their Issue list could not be read. Re-run once the forge is reachable.`
+      failures: [],
+      note: 'severity:infra — the Milestone index could not be read, so L4 and L5 had no active-tranche authority and did not evaluate anything. Tranches resolved from topology files were still checked by everything above. Re-run once the forge is reachable.'
     })
-  }
+  } else {
+    const milestoneActiveSlugs = (sweep.milestones?.active ?? []).map((m) => m.slug)
+    // The sweep fetches only the slugs its own composition needed, so a tranche
+    // resolved entirely from the PR head (or already present in `files` without
+    // consulting the forge) may have no entry here — top up just those, bounded.
+    //
+    // Deliberately NOT wrapped in a catch that substitutes an empty list: to L4
+    // an empty Issue list is indistinguishable from "this tranche has no
+    // attachment drift", so swallowing a transient forge failure here would
+    // report a clean advisory rather than an unavailable one. The pre-refactor
+    // path (`listIssueMilestonesForSlug`, a synchronous uncaught `gh` call)
+    // propagated and failed the run; that fail-closed behaviour is preserved.
+    const missingIssueSlugs = milestoneActiveSlugs.filter((slug) => !sweep.issuesBySlug.has(slug))
+    const toppedUp = await mapWithConcurrency(missingIssueSlugs, FORGE_FETCH_CONCURRENCY, async (slug) => {
+      try {
+        return { slug, issues: await fetchTrancheIssuesAsync(owner, repoName, slug) }
+      } catch {
+        return { slug, issues: null }
+      }
+    })
+    const l4UnavailableSlugs: string[] = []
+    for (const { slug, issues } of toppedUp) {
+      if (issues === null) l4UnavailableSlugs.push(slug)
+      else sweep.issuesBySlug.set(slug, issues)
+    }
 
-  // L5 — forge-native Milestone-state coherence (Issue #481, drift class #2):
-  // an open Milestone whose every task Issue is closed. Advisory analogue of
-  // file-based L1 for post-cutover tranches that have no topology file.
-  results.push(checkL5(milestoneActiveSlugs, entriesBySlug))
+    // A failed top-up is neither swallowed nor thrown. Substituting an empty list
+    // would make L4 read "no attachment drift" for a tranche it never saw;
+    // throwing would empty this process's stdout, which in `--json` mode must
+    // stay parseable JSON for the CI job that pipes it to `jq`. So the tranche is
+    // withheld from L4's inputs and the gap is reported below.
+    const l4Slugs = milestoneActiveSlugs.filter((slug) => !l4UnavailableSlugs.includes(slug))
+    const issueMilestones = l4Slugs.flatMap((slug) =>
+      issueMilestonesFromIssues(sweep.issuesBySlug.get(slug) ?? []).map((f) => ({ tranche: slug, ...f }))
+    )
+    results.push(checkL4(l4Slugs, issueMilestones))
+    if (l4UnavailableSlugs.length > 0) {
+      results.push({
+        check: 'FORGE',
+        status: 'fail',
+        failures: l4UnavailableSlugs.map((slug) => ({
+          tranche: slug,
+          reason:
+            "Forge read failed while collecting L4's Milestone-attachment facts — L4 did not evaluate this tranche."
+        })),
+        note: `severity:infra — ${l4UnavailableSlugs.length} tranche(s) were withheld from L4 because their Issue list could not be read. Re-run once the forge is reachable.`
+      })
+    }
+
+    // L5 — forge-native Milestone-state coherence (Issue #481, drift class #2):
+    // an open Milestone whose every task Issue is closed. Advisory analogue of
+    // file-based L1 for post-cutover tranches that have no topology file.
+    results.push(checkL5(milestoneActiveSlugs, entriesBySlug))
+  }
 
   // N/M stubs
   results.push(...checkM1M2M3())
@@ -819,7 +850,10 @@ export async function runCoherenceChecks(
     return { results, forgeUnavailable: true }
   }
 
-  return { results, forgeUnavailable: anyForgeUnavailable }
+  // A lost Milestone index counts as forge-unavailable even when every other
+  // fetch succeeded: L4 and L5 did not evaluate, and the human-facing banner
+  // that says "forge-dependent checks may be incomplete" is exactly true.
+  return { results, forgeUnavailable: anyForgeUnavailable || sweep.milestoneIndexFailed }
 }
 
 // ---------- output ------------------------------------------------------------

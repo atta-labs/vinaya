@@ -1,4 +1,5 @@
 import { execFileSync, execSync } from 'node:child_process'
+import { fetchTrancheIssuesAsync, indexTrancheMilestonesAsync, resolveRepo } from '@attalabs/aeg-forge-state'
 import { describe, expect, it } from 'vitest'
 import { loadTrancheSweep } from './verify-coherence'
 
@@ -120,7 +121,7 @@ describe('a PR that removes a topology file cannot narrow the sweep', () => {
     expect(entry?.tranche.tasks[0]).toMatchObject({ id: '1', title: 'Synthetic complete task', issue: 999999 })
   }, 60_000)
 
-  it('does not drop a tranche whose topology file the PR deletes outright', async () => {
+  it('reaches the Milestone fill-in for a plain deletion, and reports absence only because no Milestone exists', async () => {
     const base = commitWithFiles('origin/main', { [ACTIVE_PATH]: trancheFileContent(SLUG, 'active') }, 'fixture base')
     const head = commitWithFiles(base, { [ACTIVE_PATH]: '' }, 'fixture head: delete the tranche file')
 
@@ -153,4 +154,58 @@ describe('a PR that removes a topology file cannot narrow the sweep', () => {
     expect(entries).toHaveLength(1)
     expect(entries[0]?.archived).toBe(true)
   }, 60_000)
+
+  /**
+   * The predicate itself, on the only shape that can observe it (round-3
+   * review finding 4). The three cases above all use a synthetic slug with no
+   * Milestone, and the fill-in's own dedupe is keyed on `files` — so keying
+   * `producedSlugs` on *enumerated* rather than *produced* candidates leaves
+   * every one of them green while still being the defect the fix names.
+   *
+   * What it actually breaks is the fetch list: an enumerated-but-vanished
+   * candidate marks its slug as already produced, the forge fetch for it is
+   * never issued, and the fill-in composes the tranche from an EMPTY Issue
+   * list. The tranche is then present with zero forge-derived tasks — every
+   * task-level check trivially passes it. That is invisible to a presence
+   * assertion and needs a slug whose Milestone and labeled Issues are real.
+   */
+  it('fetches the forge for a deleted tranche whose Milestone is real, so its tasks survive the deletion', async () => {
+    const live = await liveTrancheWithIssues()
+    const livePath = `aeg-root/tranches/${live.slug}.md`
+
+    // Base carries a topology file for a REAL tranche slug, with one row that
+    // exists nowhere on the forge; the PR deletes that file.
+    const base = commitWithFiles('origin/main', { [livePath]: trancheFileContent(live.slug, 'active') }, 'fixture base')
+    const head = commitWithFiles(base, { [livePath]: '' }, 'fixture head: delete the tranche file')
+
+    const sweep = await loadTrancheSweep({ prHeadSha: head, touchedFiles: new Set([livePath]) }, live.slug, base)
+
+    const entries = sweep.files.filter((f) => f.slug === live.slug)
+    expect(entries).toHaveLength(1)
+
+    // The forge WAS consulted for this slug: at least one task carries a real
+    // Issue number. With the fill-in keyed on enumeration, `needForge` skips
+    // the slug, `trancheFromIssues` receives `[]`, and the only task left is
+    // the fixture's own unreachable `#999999` row.
+    const issues = entries[0]?.tranche.tasks.map((t) => t.issue) ?? []
+    expect(issues.filter((n) => n !== null && n !== 999999).length).toBeGreaterThan(0)
+    expect(sweep.issuesBySlug.get(live.slug)?.length ?? 0).toBeGreaterThan(0)
+  }, 120_000)
 })
+
+/**
+ * The first active Milestone in this repo that has at least one
+ * `vinaya/tranche:<slug>`-labeled Issue. Resolved live rather than hardcoded:
+ * a pinned slug becomes a false red the day that tranche is archived.
+ */
+async function liveTrancheWithIssues(): Promise<{ slug: string }> {
+  const repo = await resolveRepo()
+  if (!repo) throw new Error('no repo resolved — this test needs a live forge')
+
+  const index = await indexTrancheMilestonesAsync(repo.owner, repo.repo)
+  for (const { slug } of index.active) {
+    const issues = await fetchTrancheIssuesAsync(repo.owner, repo.repo, slug)
+    if (issues.length > 0) return { slug }
+  }
+  throw new Error('no active Milestone in this repo carries labeled Issues — cannot observe the fetch predicate')
+}
