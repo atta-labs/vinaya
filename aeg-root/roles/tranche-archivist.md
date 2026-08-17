@@ -227,7 +227,7 @@ The token ledger lives on the forge, not a central file: post the `tranche-close
 
 **Legacy exception:** if this tranche still has a pre-cutover `<name>.tokens.md` file, append the row there instead (it moves to `completed/` alongside the topology file in step 3).
 
-When you run in Claude Code, fill numeric cells with exact session meter values. When you run conversationally on claude.ai, leave as `—` and the Principal fills later.
+When you are **self-metering** — your host exposes your session's own usage to you — fill the numeric cells with the exact figures it reports. When you are **operator-metered** — the host exposes no usage to the agent — leave them `—` and the Principal fills them later (`tranche-model.md` §12).
 
 ---
 
