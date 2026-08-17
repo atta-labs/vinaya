@@ -291,7 +291,7 @@ describe('AEG_BLOCKED_LABEL — tied to its LABELS entry', () => {
       assigneesCount: 0,
       labels: [AEG_BLOCKED_LABEL]
     }
-    const raw: RawTaskFacts = { issue, refExists: false, pullRequest: null }
+    const raw: RawTaskFacts = { issue, refExists: false, pullRequest: null, closedByActor: null }
     expect(mapForgeFacts(raw)?.blockedLabel).toBe(true)
     expect(mapForgeFacts({ ...raw, issue: { ...issue, labels: [] } })?.blockedLabel).toBe(false)
   })
@@ -300,7 +300,8 @@ describe('AEG_BLOCKED_LABEL — tied to its LABELS entry', () => {
     const raw: RawTaskFacts = {
       issue: { state: 'OPEN', stateReason: null, closedAt: null, assigneesCount: 0, labels: ['aeg:blocked'] },
       refExists: false,
-      pullRequest: null
+      pullRequest: null,
+      closedByActor: null
     }
     expect(mapForgeFacts(raw)?.blockedLabel).toBe(false)
   })

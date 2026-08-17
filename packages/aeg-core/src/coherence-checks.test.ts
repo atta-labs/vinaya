@@ -40,6 +40,7 @@ function makeFacts(overrides: Partial<ForgeFacts> = {}): ForgeFacts {
     stateReason: null,
     closedAt: null,
     mergedAt: null,
+    closedByActor: null,
     ...overrides
   }
 }
@@ -263,6 +264,89 @@ describe('A1: closed-without-merge', () => {
     const r = checkA1(entries)
     expect(r.status).toBe('fail')
     expect(r.failures).toHaveLength(1)
+  })
+
+  // ---- hand-closed dependency recognition (task vinaya-engine-v1 21, #99) --
+
+  it('pass — closed COMPLETED, no merged PR, but hand-closed by a recognized Principal', () => {
+    const entries = [
+      makeEntry(
+        'iter-1',
+        '1',
+        101,
+        makeFacts({
+          issueState: 'closed',
+          prState: 'none',
+          stateReason: 'completed',
+          closedByActor: 'daniboomerang'
+        })
+      )
+    ]
+    passesWithNoFailures(checkA1(entries, ['daniboomerang']))
+  })
+
+  it('fail — closed COMPLETED, no merged PR, closed by a non-recognized actor', () => {
+    const entries = [
+      makeEntry(
+        'iter-1',
+        '1',
+        101,
+        makeFacts({ issueState: 'closed', prState: 'none', stateReason: 'completed', closedByActor: 'some-rando' })
+      )
+    ]
+    const r = checkA1(entries, ['daniboomerang'])
+    expect(r.status).toBe('fail')
+    expect(r.failures).toHaveLength(1)
+  })
+
+  it('fail — closed NOT_PLANNED is a dropped task, not "hand-closed done" — even by a recognized Principal', () => {
+    // stateReason: 'not_planned' short-circuits to pass at the top of the loop
+    // (a dropped task, not an A1 concern at all) — asserting the reason here
+    // guards against ever moving the hand-close check ahead of that
+    // short-circuit and treating NOT_PLANNED as a resolution.
+    const entries = [
+      makeEntry(
+        'iter-1',
+        '1',
+        101,
+        makeFacts({
+          issueState: 'closed',
+          prState: 'none',
+          stateReason: 'not_planned',
+          closedByActor: 'daniboomerang'
+        })
+      )
+    ]
+    passesWithNoFailures(checkA1(entries, ['daniboomerang']))
+  })
+
+  it('pass — merged PR still wins on its own, independent of closedByActor', () => {
+    const entries = [
+      makeEntry(
+        'iter-1',
+        '1',
+        101,
+        makeFacts({ issueState: 'closed', prState: 'merged', stateReason: 'completed', closedByActor: null })
+      )
+    ]
+    passesWithNoFailures(checkA1(entries, ['daniboomerang']))
+  })
+
+  it('defaults to PRINCIPAL_ALLOWLIST when no principalAllowlist is passed', () => {
+    const entries = [
+      makeEntry(
+        'iter-1',
+        '1',
+        101,
+        makeFacts({
+          issueState: 'closed',
+          prState: 'none',
+          stateReason: 'completed',
+          closedByActor: 'daniboomerang'
+        })
+      )
+    ]
+    passesWithNoFailures(checkA1(entries))
   })
 })
 

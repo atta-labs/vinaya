@@ -101,6 +101,19 @@ export type ForgeFacts = {
   closedAt: string | null
   /** ISO 8601 datetime when the closing PR was merged, or `null` if not yet merged. Used by the coherence oracle for grandfather cutoff logic. */
   mergedAt: string | null
+  /**
+   * GitHub login of the `actor` who performed the Issue's most recent
+   * CLOSED_EVENT, or `null` when the issue is open or no close event was
+   * recorded. Distinct from what triggered an automatic close (`closer`,
+   * which feeds `prState`): `actor` is populated on a manual close (`gh
+   * issue close`, the web UI) even though `closer` is null in that case.
+   * Recognizes a hand-closed dependency as a second, narrower "done" path
+   * (task `vinaya-engine-v1` 21, #99) — never sufficient on its own; a
+   * consumer must also check `stateReason === 'completed'` and that this
+   * login is a recognized Principal identity before treating a hand-close
+   * as resolved.
+   */
+  closedByActor: string | null
 }
 
 /** An open Issue's forge-fetched body + labels, as returned by the batched label query. */
@@ -205,4 +218,12 @@ export type RawTaskFacts = {
     /** ISO 8601 datetime when the PR was merged, or null. */
     mergedAt: string | null
   } | null
+  /**
+   * GitHub login of the `actor` on the issue's most recent CLOSED_EVENT, or
+   * `null` (open issue, no close event, or the timeline item's actor could
+   * not be resolved). Sibling fact to `pullRequest`'s `closer` on the same
+   * ClosedEvent timeline node — see `ForgeFacts.closedByActor` for the full
+   * rationale. The pure mapper passes this through unchanged.
+   */
+  closedByActor: string | null
 }

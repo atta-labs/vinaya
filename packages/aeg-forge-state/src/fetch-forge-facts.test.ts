@@ -47,6 +47,8 @@ type TaskFixture = {
    */
   closer: PrFixture | 'commit' | null | Array<PrFixture | 'commit' | null>
   branchPr: PrFixture | null
+  /** `ClosedEvent.actor.login` for the (last, per `usesLast`) timeline node. `undefined` → no `_issue` fixture sets it (defaults to no actor). */
+  actor?: string | null | Array<string | null>
 }
 
 let fixtures: Record<string, TaskFixture> = {}
@@ -77,6 +79,11 @@ vi.mock('@octokit/graphql', () => ({
                   const events = Array.isArray(fx.closer) ? fx.closer : [fx.closer]
                   const picked = usesLast ? events[events.length - 1] : events[0]
                   return picked === 'commit' ? {} : picked
+                })(),
+                actor: (() => {
+                  const actors = Array.isArray(fx.actor) ? fx.actor : [fx.actor ?? null]
+                  const picked = usesLast ? actors[actors.length - 1] : actors[0]
+                  return picked ? { login: picked } : null
                 })()
               }
             ]
@@ -198,5 +205,91 @@ describe('fetchForgeFacts — stale ClosedEvent after reopen (#524)', () => {
 
     const prRef = snapshot.prRefs.get('1')
     expect(prRef?.number).toBe(530)
+  })
+})
+
+describe('fetchForgeFacts — closedByActor (task vinaya-engine-v1 21, #99)', () => {
+  it('resolves closedByActor from a manual close (closer null, actor populated) — reproduces attalabs#890', async () => {
+    // Reproduces the incident exactly: `atta-labs/attalabs#890` was closed
+    // directly (`gh issue close` / the web UI), no PR — `closer` is null but
+    // `actor` records who performed the close.
+    fixtures.t_1 = {
+      issueState: 'CLOSED',
+      stateReason: 'COMPLETED',
+      closedAt: '2026-08-16T00:00:00Z',
+      assigneesCount: 0,
+      labels: [],
+      closer: null,
+      branchPr: null,
+      actor: 'daniboomerang'
+    }
+
+    const snapshot = await fetchForgeFacts({
+      owner: 'atta-labs',
+      repo: 'attalabs',
+      tranche: 'iter',
+      tasks: [{ id: '1', issue: 890 }],
+      token: 'test-token'
+    })
+
+    const facts = snapshot.facts.get('1')
+    expect(facts?.prState).toBe('none')
+    expect(facts?.stateReason).toBe('completed')
+    expect(facts?.closedByActor).toBe('daniboomerang')
+  })
+
+  it('is null when the issue has never been closed', async () => {
+    fixtures.t_1 = {
+      issueState: 'OPEN',
+      stateReason: null,
+      closedAt: null,
+      assigneesCount: 1,
+      labels: [],
+      closer: null,
+      branchPr: null,
+      actor: null
+    }
+
+    const snapshot = await fetchForgeFacts({
+      owner: 'owner',
+      repo: 'repo',
+      tranche: 'iter',
+      tasks: [{ id: '1', issue: 100 }],
+      token: 'test-token'
+    })
+
+    expect(snapshot.facts.get('1')?.closedByActor).toBeNull()
+  })
+
+  it('follows `last: 1` for actor too — a stale first close does not leak its actor after reopen+reclose', async () => {
+    fixtures.t_1 = {
+      issueState: 'CLOSED',
+      stateReason: 'COMPLETED',
+      closedAt: '2026-08-16T00:00:00Z',
+      assigneesCount: 1,
+      labels: [],
+      closer: [
+        null,
+        {
+          number: 530,
+          url: 'https://github.com/owner/repo/pull/530',
+          state: 'MERGED',
+          reviewDecision: 'APPROVED',
+          mergedAt: '2026-08-16T00:00:00Z'
+        }
+      ],
+      branchPr: null,
+      actor: ['stale-actor', 'real-actor']
+    }
+
+    const snapshot = await fetchForgeFacts({
+      owner: 'owner',
+      repo: 'repo',
+      tranche: 'iter',
+      tasks: [{ id: '1', issue: 524 }],
+      token: 'test-token'
+    })
+
+    expect(snapshot.facts.get('1')?.closedByActor).toBe('real-actor')
   })
 })

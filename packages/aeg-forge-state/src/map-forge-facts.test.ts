@@ -12,7 +12,12 @@ type PullRequestOverride = Partial<NonNullable<RawTaskFacts['pullRequest']>> | n
  * partial merges onto the open/unassigned/unlabeled default.
  */
 function rawBase(
-  overrides: { issue?: IssueOverride; refExists?: boolean; pullRequest?: PullRequestOverride } = {}
+  overrides: {
+    issue?: IssueOverride
+    refExists?: boolean
+    pullRequest?: PullRequestOverride
+    closedByActor?: string | null
+  } = {}
 ): RawTaskFacts {
   const issue: RawTaskFacts['issue'] =
     overrides.issue === null
@@ -36,7 +41,8 @@ function rawBase(
   return {
     issue,
     refExists: overrides.refExists ?? false,
-    pullRequest
+    pullRequest,
+    closedByActor: overrides.closedByActor ?? null
   }
 }
 
@@ -181,6 +187,37 @@ describe('mapForgeFacts', () => {
     })
   })
 
+  describe('closedByActor', () => {
+    it('is null when the issue is open', () => {
+      const facts = mapForgeFacts(rawBase({ closedByActor: null }))
+      expect(facts?.closedByActor).toBeNull()
+    })
+
+    it('passes through the login of a manual-close actor (closer null, actor populated)', () => {
+      const facts = mapForgeFacts(
+        rawBase({
+          issue: { state: 'CLOSED', stateReason: 'COMPLETED', assigneesCount: 0, labels: [] },
+          pullRequest: null,
+          closedByActor: 'daniboomerang'
+        })
+      )
+      expect(facts?.closedByActor).toBe('daniboomerang')
+      expect(facts?.prState).toBe('none')
+    })
+
+    it('is orthogonal to prState — populated even alongside a merged closing PR', () => {
+      const facts = mapForgeFacts(
+        rawBase({
+          issue: { state: 'CLOSED', stateReason: 'COMPLETED', assigneesCount: 0, labels: [] },
+          pullRequest: { state: 'MERGED', reviewDecision: 'APPROVED' },
+          closedByActor: 'daniboomerang'
+        })
+      )
+      expect(facts?.closedByActor).toBe('daniboomerang')
+      expect(facts?.prState).toBe('merged')
+    })
+  })
+
   describe('composite fixtures (the kinds of rows Studio will actually render)', () => {
     it('open + unassigned + no branch + no PR → backlog-ish facts', () => {
       const facts = mapForgeFacts(rawBase())
@@ -193,7 +230,8 @@ describe('mapForgeFacts', () => {
         reviewDecision: 'none',
         stateReason: null,
         closedAt: null,
-        mergedAt: null
+        mergedAt: null,
+        closedByActor: null
       })
     })
 

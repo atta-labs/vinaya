@@ -40,6 +40,7 @@ import {
 } from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 
 const CHECK_NAME = 'first-push-dispatch'
 
@@ -82,18 +83,46 @@ function prExistsFor(branch: string): boolean {
   }
 }
 
+type DispatchFactsSubset = {
+  prState: string
+  issueState: 'open' | 'closed'
+  stateReason: 'completed' | 'not_planned' | null
+  closedByActor: string | null
+}
+
 function resolveEdge(
   id: string,
   taskById: Map<string, { id: string; issue: number | null }>,
-  factsByTaskId: Map<string, { prState: string }>
-): { issue: number | null; merged: boolean; open: boolean } {
+  factsByTaskId: Map<string, DispatchFactsSubset>
+): {
+  issue: number | null
+  merged: boolean
+  open: boolean
+  issueState: 'open' | 'closed' | null
+  stateReason: 'completed' | 'not_planned' | null
+  closedByActor: string | null
+} {
   const target = taskById.get(id)
   if (target) {
     const facts = target.issue !== null ? factsByTaskId.get(target.id) : undefined
-    return { issue: target.issue, merged: facts?.prState === 'merged', open: facts?.prState === 'open' }
+    return {
+      issue: target.issue,
+      merged: facts?.prState === 'merged',
+      open: facts?.prState === 'open',
+      issueState: facts?.issueState ?? null,
+      stateReason: facts?.stateReason ?? null,
+      closedByActor: facts?.closedByActor ?? null
+    }
   }
   const direct = id.match(/^#(\d+)$/)
-  return { issue: direct ? Number(direct[1]) : null, merged: false, open: false }
+  return {
+    issue: direct ? Number(direct[1]) : null,
+    merged: false,
+    open: false,
+    issueState: null,
+    stateReason: null,
+    closedByActor: null
+  }
 }
 
 /** Best-effort readiness classification — any forge failure degrades to `UNKNOWN` (fail-open), never a thrown error. */
@@ -133,7 +162,14 @@ async function classifyReadiness(trancheSlug: string, taskId: string): Promise<D
 
     const dependsOn: DispatchDependsOnFact[] = task.dependsOn.map((dep) => {
       const r = resolveEdge(dep, taskById, factsByTaskId)
-      return { id: dep, issue: r.issue, merged: r.merged }
+      return {
+        id: dep,
+        issue: r.issue,
+        merged: r.merged,
+        issueState: r.issueState,
+        stateReason: r.stateReason,
+        closedByActor: r.closedByActor
+      }
     })
     const conflictsWith: DispatchConflictsWithFact[] = task.conflictsWith.map((c) => {
       const r = resolveEdge(c, taskById, factsByTaskId)
@@ -148,7 +184,8 @@ async function classifyReadiness(trancheSlug: string, taskId: string): Promise<D
       dependsOn,
       conflictsWith,
       priorTask: null,
-      priorTrancheArchival: []
+      priorTrancheArchival: [],
+      principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
     }
 
     return checkDispatchReadiness(input).ready ? 'READY' : 'NOT_READY'

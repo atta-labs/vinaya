@@ -9,6 +9,7 @@
 import { trancheLabel, label } from '@attalabs/aeg-forge-state'
 import { anchoredRegion, stripCode } from './anchored-region'
 import { checkIssueRationale, checkProjectsRegistered, isTaskIssueLabelSet } from './issue-validation'
+import { isPrincipal, PRINCIPAL_ALLOWLIST } from './waiver-label'
 import type { ForgeIssue, TaskIssueRef } from '@attalabs/aeg-types'
 import type { ForgeFacts, Tranche, Task } from './types'
 
@@ -83,22 +84,32 @@ export type TrancheFile = {
 // ---------- pure check evaluators --------------------------------------------
 
 /**
- * A1: Every closed task-Issue has a merged closing PR.
+ * A1: Every closed task-Issue has a merged closing PR — OR was hand-closed
+ * directly by a recognized Principal (task `vinaya-engine-v1` 21, #99): a
+ * second, narrower "done" path for a dependency Issue whose technical
+ * premise dissolved, closed with a stated `COMPLETED` reason rather than via
+ * a merge. Every condition is a real forge fact (who performed the
+ * CLOSED_EVENT, GitHub's own close reason), never a prose claim in a
+ * comment — the trap this task exists to avoid is "any closed Issue with a
+ * comment counts."
  * Fail class: `closed-without-merge`
  * Terminal event date: `issueClosedAt` — grandfathered when before `COHERENCE_ENFORCED_FROM`.
  *
  * Excludes `stateReason: 'not_planned'`: a task closed that way with no merged
  * PR is `dropped` — legitimately abandoned, never done, never `todo` — a valid
  * terminal state, not a coherence failure. `stateReason: 'completed'` (or
- * `null`) with no merged PR stays flagged: that is done-but-unprovable, or a
- * broken close, exactly the class this check exists to catch.
+ * `null`) with no merged PR and no recognized hand-close stays flagged: that
+ * is done-but-unprovable, or a broken close, exactly the class this check
+ * exists to catch.
  */
-export function checkA1(entries: TaskEntry[]): CheckResult {
+export function checkA1(entries: TaskEntry[], principalAllowlist: string[] = PRINCIPAL_ALLOWLIST): CheckResult {
   const failures: CheckFailure[] = []
   for (const e of entries) {
     if (!e.facts) continue
     if (e.facts.stateReason === 'not_planned') continue
     if (e.facts.issueState === 'closed' && e.facts.prState !== 'merged') {
+      const handClosed = e.facts.stateReason === 'completed' && isPrincipal(e.facts.closedByActor, principalAllowlist)
+      if (handClosed) continue
       failures.push({
         issue: e.task.issue,
         tranche: e.trancheSlug,
