@@ -164,11 +164,23 @@ describe('fetchProvenance — Part 2: null-closer fallback', () => {
  * exercises the same stdio path CI does, including the real `git fetch`
  * this file's `loadTrancheFiles` now performs.
  *
- * Timeout raised 30s → 60s (aeg-forge-state-v1 3b, #437): `loadTrancheFiles`
- * now derives each non-touched tranche from the forge (one `gh` round trip
- * per tranche, sequential) instead of a local `git show` — ~30s observed
- * across this repo's real ~20 tranches, leaving no margin under the old
- * 30s budget.
+ * On the budget below (#52). It is deliberately NOT tuned to the current
+ * runtime. This test's assertion is JSON purity; the clock is only here to
+ * stop a hung forge call from hanging CI, so the right budget is one no
+ * healthy run can reach — anything tighter makes machine load, not the code
+ * under test, decide the result.
+ *
+ * The history is worth keeping, because it is what made the number a defect
+ * once already: when `loadTrancheFiles` derived each tranche from the forge
+ * one serial `gh` round trip at a time, the sweep grew with the repo until it
+ * outran its own budget (measured 2026-08-14 in the attalabs monorepo, ~20
+ * tranches: 115.7 s / 121 s / 142 s against 120,000 ms — a coin flip). The
+ * fix was not a bigger constant: the sweep now indexes Milestones once and
+ * fetches each tranche's Issues exactly once, `FORGE_FETCH_CONCURRENCY` at a
+ * time. Measured here after that change (`atta-labs/vinaya`, 6 Milestones):
+ * 9.5 s / 9.5 s / 9.9 s, against the same 120,000 ms. The margin is now the
+ * order of magnitude a timeout of this kind should have, and it comes from
+ * the workload, not the constant.
  */
 describe('CLI --json mode produces pure JSON on stdout (PR #378 review)', () => {
   it('parses as JSON with no leading/trailing noise, regardless of exit code', () => {
