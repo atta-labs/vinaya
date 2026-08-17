@@ -418,17 +418,25 @@ describe('the real manifest resolves at its configured path', () => {
     expect(bindings.length).toBeGreaterThan(0)
   })
 
-  // This repo's own installed manifest is a separate, weaker claim: it ships
-  // as the empty starter (comments only, zero bindings) — that is correct
-  // for a freshly-extracted repo, not a parser regression. Asserts it still
-  // parses cleanly and is dormant, rather than blurring this with the claim
-  // above.
-  it("this repo's own .vinaya/doc-owners parses cleanly and is dormant (starter manifest, zero bindings)", async () => {
-    const { readFileSync } = await import('node:fs')
+  // This repo's own installed manifest is a separate claim. It shipped as the
+  // empty starter until the repo's first real binding landed
+  // (atta-labs/vinaya#17), so "zero bindings" is no longer the invariant —
+  // asserting it would mean every future binding breaks this test. What is
+  // durable is that the installed manifest parses cleanly and carries no
+  // DANGLING pointer: an in-repo pointer that does not exist on disk is a hard
+  // C5 FAIL on every PR that fires the binding, and this is the cheapest place
+  // to catch one.
+  it("this repo's own .vinaya/doc-owners parses cleanly, with no dangling in-repo pointer", async () => {
+    const { existsSync, readFileSync } = await import('node:fs')
     const { join } = await import('node:path')
-    const raw = readFileSync(join(__dirname, '../../..', DOC_OWNERS_PATH), 'utf8')
+    const repoRoot = join(__dirname, '../../..')
+    const raw = readFileSync(join(repoRoot, DOC_OWNERS_PATH), 'utf8')
     const { bindings, errors } = parseDocOwners(raw)
     expect(errors).toEqual([])
-    expect(bindings).toEqual([])
+    const dangling = bindings
+      .filter((b) => !/^https?:\/\//.test(b.pointer))
+      .map((b) => b.pointer.split('#')[0] ?? b.pointer)
+      .filter((path) => !existsSync(join(repoRoot, path)))
+    expect(dangling).toEqual([])
   })
 })
