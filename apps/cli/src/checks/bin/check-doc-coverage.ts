@@ -3,10 +3,17 @@
 /**
  * Core check: doc-coverage. Thin adapter over `@attalabs/aeg-core`'s C5 evaluator
  * (`evaluateC5` + `parseDocOwners`/`readDocAcks`, used internally by
- * `evaluateC5`) — mirrors `packages/aeg-core/bin/verify-docs.ts`'s `runC5`
- * input assembly (changed files vs base, `PR_BODY`/`PR_BODY_FILE`, the
- * `PR_LABELS`/`WAIVER_LABEL_ACTOR` waiver-verification envelope), emitting
- * the check contract instead of human text.
+ * `evaluateC5`), emitting the check contract instead of human text.
+ *
+ * The waiver-label lookup is resolved live via `gh`, from `PR_NUMBER` —
+ * mirrors `check-review-gate.ts`'s `fetchPr`/`fetchWaiverLabelActor` pair.
+ * An earlier version instead expected the CALLER (the generated CI workflow)
+ * to inject `PR_LABELS`/`WAIVER_LABEL_ACTOR` env vars; no generated
+ * `vinaya-checks.yml` — old or current — ever set them, so an applied
+ * `vinaya/waiver:docs` label was silently unreachable by this check in every
+ * adopter's CI (caught live on atta-labs/attalabs#948). Self-resolving here
+ * needs no workflow template change and fixes every already-generated
+ * `vinaya-checks.yml` in place.
  *
  * scope: diff — the whole point of C5 is "did this diff's code changes touch
  * a bound doc."
@@ -61,26 +68,56 @@ function resolvePrBody(): string {
   return ''
 }
 
-/** a waiver is honored only when the label is present AND its actor is a configured principal — resolved by CI ahead of this check, never derived here. */
-function waiverActiveFromEnv(): boolean {
-  const labels = (process.env.PR_LABELS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-  // Short-circuit BEFORE resolving the allowlist. `loadTrustAnchorConfig()`
-  // makes a real `gh api` call (~0.5s), and this function is an eagerly
-  // evaluated argument to `evaluateC5` below — without this guard every local
-  // pre-commit/pre-push paid that latency even though `PR_LABELS` is empty
-  // outside CI, so the waiver could never have been active anyway (review
-  // finding, PR #862 round 4).
-  if (!labels.includes(WAIVER_LABEL)) return false
-  // Trust anchor: GitHub-API default-branch read, never BASE_SHA (that env var
-  // is for diff-SCOPING only, below) and never the PR's own checkout. See
-  // `loadTrustAnchorConfig` in lib/config.ts.
+type PrLabelsView = { labels: { name: string }[] }
+
+function fetchPrLabels(prNumber: number): string[] | null {
+  try {
+    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'labels'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    return (JSON.parse(out) as PrLabelsView).labels.map((l) => l.name)
+  } catch {
+    return null
+  }
+}
+
+type TimelineLabeledEvent = { event: string; actor?: { login: string } | null; label?: { name: string } | null }
+
+function fetchWaiverLabelActor(prNumber: number, label: string): string | null {
+  try {
+    const out = execFileSync('gh', ['api', `repos/{owner}/{repo}/issues/${prNumber}/timeline`, '--paginate'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    const events = JSON.parse(out) as TimelineLabeledEvent[]
+    const matches = events.filter((e) => e.event === 'labeled' && e.label?.name === label)
+    return matches[matches.length - 1]?.actor?.login ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * A waiver is honored only when `vinaya/waiver:docs` is present on the PR
+ * AND the actor of its most recent labeling timeline event is a configured
+ * principal. `PR_NUMBER` is already provided by every generated
+ * `vinaya-checks.yml` (`test-plan`/`closes-n` depend on it too), so no new
+ * CI wiring is required for this to work.
+ */
+function waiverActive(): boolean {
+  const prNumberStr = process.env.PR_NUMBER
+  if (!prNumberStr) return false
+  const prNumber = Number(prNumberStr)
+  const labels = fetchPrLabels(prNumber)
+  if (!labels?.includes(WAIVER_LABEL)) return false
+  // Trust anchor: GitHub-API default-branch read, never the PR's own
+  // checkout. See `loadTrustAnchorConfig` in lib/config.ts.
+  const labelActor = fetchWaiverLabelActor(prNumber, WAIVER_LABEL)
   return isWaiverLabelActorVerified({
     label: WAIVER_LABEL,
     labels,
-    labelActor: process.env.WAIVER_LABEL_ACTOR || null,
+    labelActor,
     principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
   })
 }
@@ -94,7 +131,7 @@ function main(): void {
   }
 
   const content = existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null
-  const result = evaluateC5(changed, content, resolvePrBody(), existsSync, waiverActiveFromEnv())
+  const result = evaluateC5(changed, content, resolvePrBody(), existsSync, waiverActive())
 
   if (result.errors.length > 0) {
     for (const message of result.errors) {
