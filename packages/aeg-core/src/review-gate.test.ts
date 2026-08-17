@@ -242,4 +242,107 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       '2 verdict-shaped comment(s) from authors outside the principal allowlist were ignored'
     )
   })
+
+  it('an EMPTY principalAllowlist trusts nobody — every verdict is ignored and the gate fails closed', () => {
+    // The shape an adopter hits when `principals` resolves to an empty list.
+    // Fail-closed is the only safe reading: an empty trust anchor must not be
+    // read as "trust anyone", and `isPrincipal` never matches against it.
+    const result = checkReviewGate({
+      comments: [adopterApprove('daniboomerang'), adopterPass('daniboomerang')],
+      labels: [],
+      waiverLabelActor: null,
+      principalAllowlist: []
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.waived).toBe(false)
+  })
+
+  it('an EMPTY principalAllowlist also refuses the waiver label, whoever applied it', () => {
+    const result = checkReviewGate({
+      comments: [],
+      labels: ['vinaya/waiver:review'],
+      waiverLabelActor: 'daniboomerang',
+      principalAllowlist: []
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.waived).toBe(false)
+  })
+})
+
+/**
+ * CHARACTERIZATION, NOT ENDORSEMENT — `atta-labs/vinaya#71`, open.
+ *
+ * `checkReviewGate` resolves verdicts by RECENCY only. Nothing in
+ * `ReviewGateInput` carries the PR's head SHA or any comment timestamp, so a
+ * verdict cast against a tree that no longer exists is indistinguishable, to
+ * this function, from one cast against the current tree.
+ *
+ * The tests below pin what the gate does TODAY so that the fix for #71 — which
+ * necessarily changes `ReviewGateInput`'s signature (a `headSha`, or per-comment
+ * `createdAt` compared against the head commit's committer date) — has to come
+ * back here and flip these expectations deliberately. A silent behavior change
+ * in either direction is what this pins against.
+ *
+ * The fixture is the live instance named in this task's brief:
+ * `atta-labs/attalabs#953`, whose security `PASS` names head `ab0f47c0` while
+ * the PR head is `d48236d2`.
+ *
+ * Testing the CORRECT behavior is impossible from here without that signature
+ * change, which this task's brief puts out of scope (STOP condition) — hence
+ * characterization plus this note, not a `.todo`/`.fails` test that would read
+ * as if the gap were merely unimplemented rather than shipped.
+ */
+describe('checkReviewGate — verdicts are not bound to a tree (#71, OPEN)', () => {
+  const PR_HEAD = 'd48236d2'
+  const SUPERSEDED_HEAD = 'ab0f47c0'
+
+  it('accepts a security PASS that names a superseded head (attalabs#953, live)', () => {
+    const result = checkReviewGate({
+      comments: [
+        APPROVE_COMMENT,
+        principal(`VERDICT: PASS\n\nReviewed at head \`${SUPERSEDED_HEAD}\`.\n\nSECRETS: none found.`)
+      ],
+      labels: [],
+      waiverLabelActor: null
+    })
+    // The verdict names a tree that is no longer the PR's head — and the gate
+    // is green anyway, because it never sees `PR_HEAD` at all.
+    expect(SUPERSEDED_HEAD).not.toBe(PR_HEAD)
+    expect(result.verdict).toBe('pass')
+    expect(result.waived).toBe(false)
+    // Nothing in the reason mentions staleness: the caller gets no signal either.
+    expect(result.reason).not.toMatch(/stale|superseded|head/i)
+  })
+
+  it('accepts an APPROVE + PASS pair that predates a force-push, with no signal that the diff changed', () => {
+    // #71's reproduction, reduced: the reviewer approved head `52107b3`; a
+    // rebase replaced it with an unrelated `945b3af`; no new verdict was cast.
+    // The comment stream is byte-identical to a genuinely-reviewed PR's.
+    const result = checkReviewGate({
+      comments: [
+        principal('VERDICT: APPROVE\n\nreviewed at 52107b3'),
+        principal('VERDICT: PASS\n\nreviewed at 52107b3')
+      ],
+      labels: [],
+      waiverLabelActor: null
+    })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('an explicitly RETRACTED verdict still loses to recency, not to retraction (the only working escape today)', () => {
+    // The one thing that DOES work: casting a newer verdict. #71's live
+    // instance was caught only because the reviewer re-checked the SHA itself
+    // and posted a superseding FAIL — discipline substituting for a mechanism.
+    const result = checkReviewGate({
+      comments: [
+        APPROVE_COMMENT,
+        principal(`VERDICT: PASS\n\nReviewed at head \`${SUPERSEDED_HEAD}\`.`),
+        principal(`VERDICT: FAIL\n\nprevious PASS was against ${SUPERSEDED_HEAD}, head is now ${PR_HEAD}.`)
+      ],
+      labels: [],
+      waiverLabelActor: null
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('security-review verdict is not a clean PASS (found: FAIL)')
+  })
 })
