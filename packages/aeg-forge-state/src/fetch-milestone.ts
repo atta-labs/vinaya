@@ -31,6 +31,16 @@ export function findMilestoneForSlug(owner: string, repo: string, slug: string):
 
 export type ActiveTrancheRef = { slug: string; goal: string }
 
+/** One Milestone fetch, split every way its readers ask for it — see `indexTrancheMilestonesAsync`. */
+export type TrancheMilestoneIndex = {
+  /** Open Milestones, in `listActiveTrancheSlugs`'s shape and order. */
+  active: ActiveTrancheRef[]
+  /** Closed Milestones, in `listArchivedTrancheSlugs`'s shape and order. */
+  archived: ActiveTrancheRef[]
+  /** Milestone title → the same facts `findMilestoneForSlug` returns; absent ⇒ that reader's `null`. */
+  facts: Map<string, MilestoneFacts>
+}
+
 /**
  * Lists every OPEN Milestone as an active-tranche slug — the forge-native
  * enumeration of "which tranches are currently active" — a
@@ -53,6 +63,40 @@ export function listActiveTrancheSlugs(owner: string, repo: string): ActiveTranc
 export function listArchivedTrancheSlugs(owner: string, repo: string): ActiveTrancheRef[] {
   const milestones = ghApiGet<GhMilestone[]>(`repos/${owner}/${repo}/milestones?state=closed&per_page=100`)
   return milestones.map((m) => ({ slug: m.title, goal: m.description ?? '' }))
+}
+
+/**
+ * Every Milestone question answered from ONE `state=all` fetch: the
+ * active/archived slug lists AND the per-slug `MilestoneFacts` that
+ * `findMilestoneForSlug` otherwise re-derives with its own full round trip.
+ *
+ * The three single-purpose readers above each re-pull the entire Milestone
+ * list, so a caller that needs the active list, the archived list, and one
+ * `MilestoneFacts` per slug pays `2 + N` identical round trips for data that
+ * is one response. `verify-coherence.ts`'s repo-wide sweep measured 9 of
+ * them (~5.9 s of a 26 s run) against a 6-Milestone repo. The readers stay —
+ * a caller that genuinely wants one fact should not have to index everything
+ * — but any caller in a loop over slugs should index once and read from here.
+ *
+ * Lifecycle mapping is `findMilestoneForSlug`'s, unchanged: `closed` →
+ * `complete`, anything else → `active`. A slug with no Milestone is simply
+ * absent from `facts`, which is the same `null` the per-slug reader returns.
+ */
+export async function indexTrancheMilestonesAsync(owner: string, repo: string): Promise<TrancheMilestoneIndex> {
+  const milestones = await ghApiGetAsync<GhMilestone[]>(`repos/${owner}/${repo}/milestones?state=all&per_page=100`)
+  const active: ActiveTrancheRef[] = []
+  const archived: ActiveTrancheRef[] = []
+  const facts = new Map<string, MilestoneFacts>()
+  for (const m of milestones) {
+    const ref = { slug: m.title, goal: m.description ?? '' }
+    if (m.state === 'closed') archived.push(ref)
+    else active.push(ref)
+    facts.set(m.title, {
+      goal: m.description ?? '',
+      lifecycle: m.state === 'closed' ? 'complete' : 'active'
+    })
+  }
+  return { active, archived, facts }
 }
 
 /** Async twin of `listActiveTrancheSlugs` — non-blocking `gh` exec, same map. */

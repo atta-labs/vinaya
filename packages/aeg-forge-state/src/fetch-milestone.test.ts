@@ -3,11 +3,12 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('./gh', () => ({
-  ghApiGet: vi.fn()
+  ghApiGet: vi.fn(),
+  ghApiGetAsync: vi.fn()
 }))
 
-const { ghApiGet } = await import('./gh')
-const { findMilestoneForSlug, listActiveTrancheSlugs } = await import('./fetch-milestone')
+const { ghApiGet, ghApiGetAsync } = await import('./gh')
+const { findMilestoneForSlug, indexTrancheMilestonesAsync, listActiveTrancheSlugs } = await import('./fetch-milestone')
 
 const OWNER = 'daniboomerang'
 const REPO = 'attalabs'
@@ -73,5 +74,57 @@ describe('listActiveTrancheSlugs', () => {
   it('returns an empty list when no milestones are open (the real, current fixture)', () => {
     vi.mocked(ghApiGet).mockReturnValue(emptyMilestones)
     expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+})
+
+describe('indexTrancheMilestonesAsync', () => {
+  const MILESTONES = [
+    { title: 'aeg-forge-state-v1', description: 'Migrate this repo governance state.', state: 'open' },
+    { title: 'herald-hardening-v1', description: null, state: 'open' },
+    { title: 'vinaya-cli-v1', description: 'Ship the CLI.', state: 'closed' }
+  ]
+
+  it('splits one state=all response into the active and archived lists', async () => {
+    vi.mocked(ghApiGetAsync).mockResolvedValue(MILESTONES)
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(index.active).toEqual([
+      { slug: 'aeg-forge-state-v1', goal: 'Migrate this repo governance state.' },
+      { slug: 'herald-hardening-v1', goal: '' }
+    ])
+    expect(index.archived).toEqual([{ slug: 'vinaya-cli-v1', goal: 'Ship the CLI.' }])
+  })
+
+  it('yields, per slug, exactly what findMilestoneForSlug returns for the same data', async () => {
+    vi.mocked(ghApiGetAsync).mockResolvedValue(MILESTONES)
+    vi.mocked(ghApiGet).mockReturnValue(MILESTONES)
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    for (const slug of ['aeg-forge-state-v1', 'herald-hardening-v1', 'vinaya-cli-v1', 'no-such-slug']) {
+      expect(index.facts.get(slug) ?? null).toEqual(findMilestoneForSlug(OWNER, REPO, slug))
+    }
+  })
+
+  it('costs exactly one round trip regardless of how many slugs are read from it', async () => {
+    vi.mocked(ghApiGetAsync).mockResolvedValue(MILESTONES)
+    vi.mocked(ghApiGetAsync).mockClear()
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+    for (const m of MILESTONES) index.facts.get(m.title)
+
+    expect(ghApiGetAsync).toHaveBeenCalledTimes(1)
+    expect(ghApiGetAsync).toHaveBeenCalledWith(`repos/${OWNER}/${REPO}/milestones?state=all&per_page=100`)
+  })
+
+  it('returns empty lists and no facts when the repo has no milestones', async () => {
+    vi.mocked(ghApiGetAsync).mockResolvedValue(emptyMilestones)
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(index.active).toEqual([])
+    expect(index.archived).toEqual([])
+    expect(index.facts.size).toBe(0)
   })
 })

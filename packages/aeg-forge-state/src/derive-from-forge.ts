@@ -1,6 +1,28 @@
 import type { Tranche } from '@attalabs/aeg-types'
+import type { GhIssue } from './gh'
 import { findMilestoneForSlug, type MilestoneFacts } from './fetch-milestone'
-import { listTasksForSlugAsync } from './list-tasks'
+import { fetchTrancheIssuesAsync, tasksFromIssues } from './list-tasks'
+
+/**
+ * The pure composition step: an already-fetched labeled-Issue list plus
+ * already-known Milestone facts → the same `Tranche` `deriveTrancheFromForge`
+ * returns, with zero I/O of its own.
+ *
+ * Exists for the repo-wide sweeps that index every Milestone up front and
+ * fetch each slug's Issues once (`verify-coherence.ts`'s `loadTrancheFiles`):
+ * routing those through the fetching entry point below would re-pull both
+ * halves per slug. Degradation is identical — a slug with no Milestone gets
+ * `''`/`'active'`, matching `parseTranche`'s own no-marker default.
+ */
+export function trancheFromIssues(slug: string, issues: GhIssue[], known?: MilestoneFacts | null): Tranche {
+  return {
+    name: slug,
+    lifecycle: known?.lifecycle ?? 'active',
+    goal: known?.goal ?? '',
+    tasks: tasksFromIssues(issues),
+    backlog: []
+  }
+}
 
 /**
  * Derives an `@attalabs/aeg-types` `Tranche` purely from forge objects:
@@ -32,13 +54,7 @@ export async function deriveTrancheFromForge(
   known?: MilestoneFacts
 ): Promise<Tranche> {
   const milestone = known ?? findMilestoneForSlug(owner, repo, slug)
-  const tasks = await listTasksForSlugAsync(owner, repo, slug)
+  const issues = await fetchTrancheIssuesAsync(owner, repo, slug)
 
-  return {
-    name: slug,
-    lifecycle: milestone?.lifecycle ?? 'active',
-    goal: milestone?.goal ?? '',
-    tasks,
-    backlog: []
-  }
+  return trancheFromIssues(slug, issues, milestone)
 }

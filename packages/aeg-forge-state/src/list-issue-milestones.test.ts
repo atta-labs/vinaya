@@ -5,7 +5,7 @@ vi.mock('./gh', () => ({
 }))
 
 const { ghIssueListByAnyLabel } = await import('./gh')
-const { listIssueMilestonesForSlug } = await import('./list-issue-milestones')
+const { issueMilestonesFromIssues, listIssueMilestonesForSlug } = await import('./list-issue-milestones')
 
 describe('listIssueMilestonesForSlug', () => {
   it('maps each open Issue to its milestone title, or null when unattached', () => {
@@ -47,5 +47,48 @@ describe('listIssueMilestonesForSlug', () => {
     ])
 
     expect(listIssueMilestonesForSlug('daniboomerang', 'attalabs', 'iter')).toEqual([])
+  })
+})
+
+describe('issueMilestonesFromIssues', () => {
+  const ISSUES = [
+    {
+      number: 1,
+      title: '[iter] 1 — a',
+      body: '',
+      state: 'OPEN' as const,
+      labels: [{ name: 'vinaya/tranche:iter' }],
+      milestone: { title: 'iter' }
+    },
+    {
+      number: 2,
+      title: '[iter] 2 — b',
+      body: '',
+      state: 'OPEN' as const,
+      labels: [{ name: 'vinaya/tranche:iter' }],
+      milestone: null
+    },
+    {
+      number: 3,
+      title: '[iter] 3 — c',
+      body: '',
+      state: 'CLOSED' as const,
+      labels: [{ name: 'vinaya/tranche:iter' }],
+      milestone: { title: 'iter' }
+    }
+  ]
+
+  it('derives the same facts from an already-fetched list as the fetching wrapper does', () => {
+    vi.mocked(ghIssueListByAnyLabel).mockReturnValue(ISSUES)
+
+    expect(issueMilestonesFromIssues(ISSUES)).toEqual(listIssueMilestonesForSlug('daniboomerang', 'attalabs', 'iter'))
+  })
+
+  it('issues no forge call of its own', () => {
+    vi.mocked(ghIssueListByAnyLabel).mockClear()
+
+    issueMilestonesFromIssues(ISSUES)
+
+    expect(ghIssueListByAnyLabel).not.toHaveBeenCalled()
   })
 })

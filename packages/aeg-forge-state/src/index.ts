@@ -1,14 +1,16 @@
 export { amendRationaleDeps } from './amend-rationale-deps'
 export type { AmendDepsInput } from './amend-rationale-deps'
-export { deriveTrancheFromForge } from './derive-from-forge'
+export { deriveTrancheFromForge, trancheFromIssues } from './derive-from-forge'
 export {
   findMilestoneForSlug,
+  indexTrancheMilestonesAsync,
   listActiveTrancheSlugs,
   listActiveTrancheSlugsAsync,
   listArchivedTrancheSlugs,
   listArchivedTrancheSlugsAsync
 } from './fetch-milestone'
-export type { ActiveTrancheRef, MilestoneFacts } from './fetch-milestone'
+export type { ActiveTrancheRef, MilestoneFacts, TrancheMilestoneIndex } from './fetch-milestone'
+export type { GhIssue } from './gh'
 export { fetchProvenance } from './fetch-provenance'
 export { buildBranchName, fetchForgeFacts, fetchForgeTasksByLabel } from './fetch-forge-facts'
 export { fetchOpenIssuesByLabel } from './fetch-open-issues'
@@ -28,13 +30,15 @@ export {
 export type { Label, LabelCategory, LabelForm, LabelKey } from './labels'
 export { AEG_BLOCKED_LABEL, mapForgeFacts } from './map-forge-facts'
 export { resolveGithubToken } from './github-token'
-export { listIssueMilestonesForSlug } from './list-issue-milestones'
+export { issueMilestonesFromIssues, listIssueMilestonesForSlug } from './list-issue-milestones'
 export type { IssueMilestoneFact } from './list-issue-milestones'
 export {
+  fetchTrancheIssuesAsync,
   listTasksForSlug,
   listTasksForSlugAsync,
   projectsFromBody,
   resolveTaskIssueRef,
+  tasksFromIssues,
   TITLE_PATTERN
 } from './list-tasks'
 export { parseRationaleDeps, SECTION_HEADER } from './parse-rationale-deps'
