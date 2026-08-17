@@ -5,7 +5,7 @@ vi.mock('./gh', () => ({
 }))
 
 const { ghIssueListByAnyLabel } = await import('./gh')
-const { listTasksForSlug } = await import('./list-tasks')
+const { listTasksForSlug, projectFieldFromBody, projectsFromBody } = await import('./list-tasks')
 
 describe('listTasksForSlug', () => {
   it('parses id/title from the `[<slug>] <id> — <title>` convention and projects from the body field', () => {
@@ -172,5 +172,124 @@ describe('listTasksForSlug', () => {
     ])
 
     expect(listTasksForSlug('daniboomerang', 'attalabs', 'iter')).toEqual([])
+  })
+})
+
+/**
+ * A body whose real declaration sits at the foot, preceded by a fenced example
+ * of the same field — the shape a brief or a rationale routinely carries when
+ * it *documents* the grammar it is written in. The fenced line is an example;
+ * only the foot line is a declaration.
+ */
+const FENCED_EXAMPLE_THEN_FOOT_DECLARATION = [
+  '**Boundary** — teaches the field shape:',
+  '',
+  '```markdown',
+  '**Project:** example-only',
+  '```',
+  '',
+  '**Tier:** 1',
+  '**Project:** aeg-forge-state'
+].join('\n')
+
+describe('projectsFromBody — fence-blindness', () => {
+  it('reads the foot declaration, not an earlier fenced example of the same field', () => {
+    expect(projectsFromBody(FENCED_EXAMPLE_THEN_FOOT_DECLARATION)).toEqual(['aeg-forge-state'])
+  })
+
+  it('reads the foot declaration past a tilde-fenced example', () => {
+    const body = ['~~~', '**Project:** example-only', '~~~', '', '**Project:** aeg-core'].join('\n')
+    expect(projectsFromBody(body)).toEqual(['aeg-core'])
+  })
+
+  it('reads the foot declaration past a 4-space-indented example', () => {
+    const body = ['Prose paragraph.', '', '    Project: example-only', '', '**Project:** aeg-core'].join('\n')
+    expect(projectsFromBody(body)).toEqual(['aeg-core'])
+  })
+
+  it('finds nothing when the only Project field is fenced — a fenced field is never a declaration', () => {
+    const body = ['```', '**Project:** example-only', '```', '', '**Boundary** — x'].join('\n')
+    expect(projectsFromBody(body)).toEqual([])
+  })
+})
+
+describe('projectsFromBody — a declared value no longer vanishes silently', () => {
+  it('parses a value wrapped entirely in backticks', () => {
+    expect(projectsFromBody('**Project:** `aeg-core`')).toEqual(['aeg-core'])
+  })
+
+  it('parses a value wrapped entirely in bold', () => {
+    expect(projectsFromBody('Project: **aeg-core**')).toEqual(['aeg-core'])
+  })
+
+  it('parses a value carrying the sentence full stop, so the registry can refuse it', () => {
+    expect(projectsFromBody('**Project:** notaproject.')).toEqual(['notaproject'])
+  })
+
+  it('still parses the tolerant plain form', () => {
+    expect(projectsFromBody('Project: aeg, aeg-core')).toEqual(['aeg', 'aeg-core'])
+  })
+
+  it('still parses the bold form', () => {
+    expect(projectsFromBody('**Project:** aeg-core, vinaya')).toEqual(['aeg-core', 'vinaya'])
+  })
+
+  it('still refuses the `**Project(s) + blast radius**` prose heading', () => {
+    expect(projectsFromBody('**Project(s) + blast radius** — `vinaya`. Touches packages/ui.')).toEqual([])
+  })
+})
+
+describe('projectFieldFromBody — absent is distinguishable from unparseable', () => {
+  it('reports a body with no Project field as undeclared', () => {
+    const body = '**Project(s) + blast radius** — `vinaya`.\n\n**Boundary** — x'
+    expect(projectFieldFromBody(body)).toEqual({ declared: false, names: [], unparsed: [] })
+  })
+
+  it('reports a declared value that did not parse, rather than dropping it', () => {
+    // #554's exact body line: prose in the field. It still yields no project
+    // name — but the caller can now see that a value WAS declared.
+    const body = '**Project:** (none — tools/admin is unregistered; see Project(s) + blast radius above)'
+    expect(projectFieldFromBody(body)).toEqual({
+      declared: true,
+      names: [],
+      unparsed: ['(none — tools/admin is unregistered; see Project(s) + blast radius above)']
+    })
+  })
+
+  it('reports the parsed names and the unparsed residue side by side', () => {
+    const body = '**Project:** aeg-core, a value with spaces'
+    expect(projectFieldFromBody(body)).toEqual({
+      declared: true,
+      names: ['aeg-core'],
+      unparsed: ['a value with spaces']
+    })
+  })
+
+  it('de-duplicates repeated names, as `declaredProjects` already does', () => {
+    expect(projectFieldFromBody('**Project:** vinaya, vinaya')).toEqual({
+      declared: true,
+      names: ['vinaya'],
+      unparsed: []
+    })
+  })
+
+  it('reports an empty value as declared — the field exists, it just says nothing', () => {
+    expect(projectFieldFromBody('**Project:**   \n')).toEqual({ declared: true, names: [], unparsed: [] })
+  })
+
+  it('reports a fully-parsed declaration with no residue', () => {
+    expect(projectFieldFromBody('**Project:** aeg-core, vinaya')).toEqual({
+      declared: true,
+      names: ['aeg-core', 'vinaya'],
+      unparsed: []
+    })
+  })
+
+  it('reads the same field, past the same fences, that `projectsFromBody` does', () => {
+    expect(projectFieldFromBody(FENCED_EXAMPLE_THEN_FOOT_DECLARATION)).toEqual({
+      declared: true,
+      names: ['aeg-forge-state'],
+      unparsed: []
+    })
   })
 })
