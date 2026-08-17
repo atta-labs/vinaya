@@ -33,10 +33,14 @@ export type { IssueMilestoneFact } from './list-issue-milestones'
 export {
   listTasksForSlug,
   listTasksForSlugAsync,
+  projectFieldFromBody,
   projectsFromBody,
   resolveTaskIssueRef,
   TITLE_PATTERN
 } from './list-tasks'
+export type { ProjectField } from './list-tasks'
+export { maskCode, stripCode } from './strip-code'
+export type { StripCodeOptions } from './strip-code'
 export { parseRationaleDeps, SECTION_HEADER } from './parse-rationale-deps'
 export type { ParsedRationaleDeps } from './parse-rationale-deps'
 export { resolveRepo } from './resolve-repo'
