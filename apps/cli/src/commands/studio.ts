@@ -25,40 +25,42 @@ export type StudioTarget =
   | { kind: 'package'; packageDir: string }
   | { kind: 'missing' }
 
-const PRIMARY_PORT = 3006
-const FALLBACK_PORT = 3106
+// Exported so `verify-published-lifecycle.ts`'s `studio` exercise derives the
+// ports it probes rather than hand-maintaining a second copy that could drift.
+export const PRIMARY_PORT = 3008
+export const FALLBACK_PORT = 3108
 
 /**
  * THE resolution seam. One function, three outcomes, in this order:
- *   1. workspace — walk up from `cwd` for `apps/vinaya/web/package.json`
- *      whose `name` is `@atta/vinaya-web`. Studio's SOURCE does not live in
- *      this repository — the CLI was extracted here while `apps/vinaya/web`
- *      stayed behind in the attalabs monorepo — so this branch answers only
- *      when the command runs inside a checkout that still carries that tree.
+ *   1. workspace — walk up from `cwd` for `apps/vinaya-studio/web/package.json`
+ *      whose `name` is `@atta/vinaya-studio-web`. Studio's SOURCE does not
+ *      live in this repository — the CLI was extracted here while Studio's
+ *      app stayed behind in the attalabs monorepo — so this branch answers
+ *      only when the command runs inside a checkout that still carries that
+ *      tree.
  *   2. package  — the published shape: this installed package's own
- *      `studio-standalone/apps/vinaya/web/server.js`. Located relative to
- *      THIS module's own install root — `packageRoot()`'s
- *      caller-supplied-URL contract, same pattern `registry.ts`/`doctor.ts`
- *      already use, and why `moduleUrl` is a parameter here rather than a
- *      module-level constant: it lets a test inject a fake install root
- *      without touching the real one. NO published build produces that
- *      bundle today: `scripts/bundle-studio.ts` needs a Studio source tree
- *      this repository does not contain, and it is deliberately NOT wired
- *      into `prepack` or the `files` allowlist. Producing and shipping the
- *      bundle is the Studio-packaging task (#43) — do not implement it here.
- *   3. missing  — neither found. For every published install this is the
- *      answer today, and `runStudio` turns it into an explicit refusal
- *      rather than a silent no-op.
+ *      `studio-standalone/apps/vinaya-studio/web/server.js`, fetched from
+ *      attalabs' published release artifact at `prepack` time
+ *      (`scripts/bundle-studio.ts`) and shipped in the `files` allowlist.
+ *      Located relative to THIS module's own install root —
+ *      `packageRoot()`'s caller-supplied-URL contract, same pattern
+ *      `registry.ts`/`doctor.ts` already use, and why `moduleUrl` is a
+ *      parameter here rather than a module-level constant: it lets a test
+ *      inject a fake install root without touching the real one.
+ *   3. missing  — neither found. Only reachable if a publish shipped without
+ *      the Studio bundle (e.g. the attalabs artifact fetch failed and
+ *      `prepack` was forced through anyway) — `runStudio` turns it into an
+ *      explicit refusal rather than a silent no-op.
  */
 export function resolveStudioTarget(cwd: string, moduleUrl: string = import.meta.url): StudioTarget {
   let dir = cwd
   for (;;) {
-    const webDir = join(dir, 'apps', 'vinaya', 'web')
+    const webDir = join(dir, 'apps', 'vinaya-studio', 'web')
     const pkgPath = join(webDir, 'package.json')
     if (existsSync(pkgPath)) {
       try {
         const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
-        if (pkg.name === '@atta/vinaya-web') {
+        if (pkg.name === '@atta/vinaya-studio-web') {
           return { kind: 'workspace', webDir }
         }
       } catch {
@@ -69,18 +71,18 @@ export function resolveStudioTarget(cwd: string, moduleUrl: string = import.meta
     // directory in a primary checkout, a gitlink file in a linked worktree —
     // existsSync covers both). Without this bound the walk continues to the
     // filesystem root, and the branch below EXECUTES the resolved directory's
-    // `dev` script — so a planted `apps/vinaya/web/package.json` in a
+    // `dev` script — so a planted `apps/vinaya-studio/web/package.json` in a
     // world-writable ancestor (`/tmp`) would run arbitrary code the moment
     // `vinaya studio` runs from anywhere beneath it (security review, PR #94
     // finding 3). Checked AFTER the webDir probe so a monorepo root that
-    // carries both `.git` and `apps/vinaya/web` still resolves.
+    // carries both `.git` and `apps/vinaya-studio/web` still resolves.
     if (existsSync(join(dir, '.git'))) break
     const parent = dirname(dir)
     if (parent === dir) break
     dir = parent
   }
 
-  const standaloneWebDir = join(packageRoot(moduleUrl), 'studio-standalone', 'apps', 'vinaya', 'web')
+  const standaloneWebDir = join(packageRoot(moduleUrl), 'studio-standalone', 'apps', 'vinaya-studio', 'web')
   if (existsSync(join(standaloneWebDir, 'server.js'))) {
     return { kind: 'package', packageDir: standaloneWebDir }
   }
@@ -96,7 +98,7 @@ function spawnDev(webDir: string, args: string[]): Promise<number> {
     //
     // This branch gets NO loopback forcing, unlike `spawnStandalone` below —
     // deliberately, not by omission (security review, PR #94 finding 1). The
-    // resolved workspace's own `dev` script (attalabs `apps/vinaya/web/
+    // resolved workspace's own `dev` script (attalabs `apps/vinaya-studio/web/
     // scripts/dev.ts`) execs `next dev` itself, ignores argv, and reads no
     // HOSTNAME — nothing this spawn passes would change its bind address, so
     // forcing env here would only pretend to harden. The exposure is exactly
@@ -213,14 +215,16 @@ export async function runStudio(cwd: string, args: string[], moduleUrl: string =
     case 'workspace':
       return spawnDev(target.webDir, args)
     case 'package': {
-      // packageDir is <bundleRoot>/apps/vinaya/web — the same nesting
-      // `next build`'s tracing produced and bundle-studio.ts preserved.
+      // packageDir is <bundleRoot>/apps/vinaya-studio/web — the same
+      // nesting attalabs' `next build` tracing produced and
+      // bundle-studio.ts preserved when it fetched and assembled the
+      // artifact.
       const bundleRoot = join(target.packageDir, '..', '..', '..')
       return spawnStandalone(cwd, join(target.packageDir, 'server.js'), bundleRoot)
     }
     case 'missing':
       console.error(
-        "Vinaya Studio isn't available in this install — no published @attalabs/vinaya build bundles the Studio app yet. Inside a checkout that contains Studio's source (apps/vinaya/web), `vinaya studio` runs it directly."
+        "Vinaya Studio isn't available in this install — no published @attalabs/vinaya build bundles the Studio app yet. Inside a checkout that contains Studio's source (apps/vinaya-studio/web), `vinaya studio` runs it directly."
       )
       return 1
   }

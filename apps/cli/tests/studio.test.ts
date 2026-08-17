@@ -19,9 +19,9 @@ describe('resolveStudioTarget', () => {
   })
 
   it('finds the workspace web dir from a nested cwd', () => {
-    const webDir = join(tmpDir, 'apps', 'vinaya', 'web')
+    const webDir = join(tmpDir, 'apps', 'vinaya-studio', 'web')
     mkdirSync(webDir, { recursive: true })
-    writeFileSync(join(webDir, 'package.json'), JSON.stringify({ name: '@atta/vinaya-web' }))
+    writeFileSync(join(webDir, 'package.json'), JSON.stringify({ name: '@atta/vinaya-studio-web' }))
 
     const nestedCwd = join(tmpDir, 'apps', 'vinaya', 'cli', 'src', 'commands')
     mkdirSync(nestedCwd, { recursive: true })
@@ -45,7 +45,7 @@ describe('resolveStudioTarget', () => {
 
   it('finds the bundled standalone build relative to the installed package root', () => {
     const fakeInstallRoot = join(tmpDir, 'node_modules', '@attalabs', 'vinaya')
-    const standaloneWebDir = join(fakeInstallRoot, 'studio-standalone', 'apps', 'vinaya', 'web')
+    const standaloneWebDir = join(fakeInstallRoot, 'studio-standalone', 'apps', 'vinaya-studio', 'web')
     mkdirSync(standaloneWebDir, { recursive: true })
     writeFileSync(join(fakeInstallRoot, 'package.json'), JSON.stringify({ name: '@attalabs/vinaya' }))
     writeFileSync(join(standaloneWebDir, 'server.js'), '// fixture\n')
@@ -61,13 +61,13 @@ describe('resolveStudioTarget', () => {
 
   it('does not resolve a workspace planted above the enclosing git repository', () => {
     // Security review, PR #94 finding 3: the upward walk must stop at the
-    // enclosing repo's root. A planted `apps/vinaya/web` in an ancestor
+    // enclosing repo's root. A planted `apps/vinaya-studio/web` in an ancestor
     // OUTSIDE the repo the user is standing in (e.g. a world-writable /tmp)
     // must never resolve — the workspace branch executes the resolved
     // directory's own dev script, so resolving it is code execution.
-    const plantedWebDir = join(tmpDir, 'apps', 'vinaya', 'web')
+    const plantedWebDir = join(tmpDir, 'apps', 'vinaya-studio', 'web')
     mkdirSync(plantedWebDir, { recursive: true })
-    writeFileSync(join(plantedWebDir, 'package.json'), JSON.stringify({ name: '@atta/vinaya-web' }))
+    writeFileSync(join(plantedWebDir, 'package.json'), JSON.stringify({ name: '@atta/vinaya-studio-web' }))
 
     const innerRepo = join(tmpDir, 'inner-repo')
     const nestedCwd = join(innerRepo, 'deep', 'dir')
@@ -80,11 +80,11 @@ describe('resolveStudioTarget', () => {
     expect(target).toEqual({ kind: 'missing' })
   })
 
-  it('still resolves a workspace whose root carries both .git and apps/vinaya/web', () => {
+  it('still resolves a workspace whose root carries both .git and apps/vinaya-studio/web', () => {
     const repoRoot = join(tmpDir, 'monorepo')
-    const webDir = join(repoRoot, 'apps', 'vinaya', 'web')
+    const webDir = join(repoRoot, 'apps', 'vinaya-studio', 'web')
     mkdirSync(webDir, { recursive: true })
-    writeFileSync(join(webDir, 'package.json'), JSON.stringify({ name: '@atta/vinaya-web' }))
+    writeFileSync(join(webDir, 'package.json'), JSON.stringify({ name: '@atta/vinaya-studio-web' }))
     execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repoRoot })
 
     const nestedCwd = join(repoRoot, 'apps', 'vinaya', 'cli')
@@ -151,7 +151,7 @@ describe('runStudio', () => {
   // if that ever changes, not an active bug.
   it('spawns the bundled server.js with the CALLER cwd and a derived AEG_REPO, not the package dir', async () => {
     const fakeInstallRoot = join(tmpDir, 'node_modules', '@attalabs', 'vinaya')
-    const standaloneWebDir = join(fakeInstallRoot, 'studio-standalone', 'apps', 'vinaya', 'web')
+    const standaloneWebDir = join(fakeInstallRoot, 'studio-standalone', 'apps', 'vinaya-studio', 'web')
     mkdirSync(standaloneWebDir, { recursive: true })
     writeFileSync(join(fakeInstallRoot, 'package.json'), JSON.stringify({ name: '@attalabs/vinaya' }))
 
@@ -190,15 +190,15 @@ describe('runStudio', () => {
     // process.env.HOSTNAME || '0.0.0.0' — unset, it's reachable by anything
     // on the local network. Loopback-only must be the default.
     expect(proof.hostname).toBe('127.0.0.1')
-    // 3006 unless something else on the machine already holds it, in which
+    // 3008 unless something else on the machine already holds it, in which
     // case the same fallback dev.ts already relies on kicks in — either is
     // a correct result, not just an acceptable one.
-    expect(['3006', '3106']).toContain(proof.port)
+    expect(['3008', '3108']).toContain(proof.port)
   })
 
   it('preserves an operator-set HOSTNAME instead of forcing loopback', async () => {
     const fakeInstallRoot = join(tmpDir, 'node_modules', '@attalabs', 'vinaya')
-    const standaloneWebDir = join(fakeInstallRoot, 'studio-standalone', 'apps', 'vinaya', 'web')
+    const standaloneWebDir = join(fakeInstallRoot, 'studio-standalone', 'apps', 'vinaya-studio', 'web')
     mkdirSync(standaloneWebDir, { recursive: true })
     writeFileSync(join(fakeInstallRoot, 'package.json'), JSON.stringify({ name: '@attalabs/vinaya' }))
 
