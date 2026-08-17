@@ -375,11 +375,22 @@ export async function loadTrancheSweep(prContext: PrReadContext = null, onlySlug
   }
 
   // ---------- fetch ----------
-  // One Issue query per candidate that needs forge derivation, bounded. A
-  // PR-head-read candidate is deliberately excluded: its content is this PR's
-  // own uncommitted topology edit, which has no forge equivalent to derive
-  // from.
-  const toFetch = repo ? candidates.filter((c) => c.headSha === null) : []
+  // One Issue query per candidate, bounded.
+  //
+  // A PR-head-read candidate is fetched too, even though its content normally
+  // comes from the PR's own topology edit rather than the forge. It is the
+  // fallback for the one case where that read yields nothing: a PR that
+  // DELETES or renames a tranche's topology file leaves a candidate that was
+  // enumerated (and so already recorded in `seen`, which suppresses the
+  // Milestone fill-in below) but has no content at the head SHA. Dropping it
+  // there would silently remove that tranche from every repo-wide check —
+  // A1/A2/A3 included — so a PR could shrink the sweep instead of failing it.
+  // The pre-refactor loader avoided this by accident: it dropped the tranche
+  // from `files` and the unscoped Milestone loop, keyed on `files` rather than
+  // on enumeration, then re-added it forge-derived. Fetching here restores that
+  // outcome deliberately. The extra query only ever fires for a PR that touches
+  // a topology file at all, i.e. a plan PR in a repo that still has one.
+  const toFetch = repo ? candidates : []
   const fetched = await mapWithConcurrency(toFetch, FORGE_FETCH_CONCURRENCY, async (c) => {
     try {
       return { slug: c.slug, issues: await fetchTrancheIssuesAsync(repo!.owner, repo!.repo, c.slug) }
@@ -405,10 +416,14 @@ export async function loadTrancheSweep(prContext: PrReadContext = null, onlySlug
   const files: TrancheFile[] = []
   for (const c of candidates) {
     if (c.headSha !== null) {
-      const raw = readFileAtRef(c.headSha, c.relPath)
-      if (raw === null) continue
-      files.push({ slug: c.slug, archived: c.archived, tranche: parseTranche(raw) })
-      continue
+      const headRaw = readFileAtRef(c.headSha, c.relPath)
+      if (headRaw !== null) {
+        files.push({ slug: c.slug, archived: c.archived, tranche: parseTranche(headRaw) })
+        continue
+      }
+      // No content at the head SHA — the PR deleted or renamed this topology
+      // file. Fall through to the forge/origin-main path rather than dropping
+      // the tranche, so a deletion cannot quietly narrow the sweep.
     }
 
     const raw = readFileAtRef('origin/main', c.relPath)
@@ -648,14 +663,18 @@ export async function runCoherenceChecks(
   const milestoneActiveSlugs = (sweep.milestones?.active ?? []).map((m) => m.slug)
   // A tranche whose topology file this PR touches is read from the PR head and
   // therefore never had its Issues fetched — top up just those, bounded.
+  //
+  // Deliberately NOT wrapped in a catch that substitutes an empty list: to L4
+  // an empty Issue list is indistinguishable from "this tranche has no
+  // attachment drift", so swallowing a transient forge failure here would
+  // report a clean advisory rather than an unavailable one. The pre-refactor
+  // path (`listIssueMilestonesForSlug`, a synchronous uncaught `gh` call)
+  // propagated and failed the run; that fail-closed behaviour is preserved.
   const missingIssueSlugs = milestoneActiveSlugs.filter((slug) => !sweep.issuesBySlug.has(slug))
-  const toppedUp = await mapWithConcurrency(missingIssueSlugs, FORGE_FETCH_CONCURRENCY, async (slug) => {
-    try {
-      return { slug, issues: await fetchTrancheIssuesAsync(owner, repoName, slug) }
-    } catch {
-      return { slug, issues: [] as GhIssue[] }
-    }
-  })
+  const toppedUp = await mapWithConcurrency(missingIssueSlugs, FORGE_FETCH_CONCURRENCY, async (slug) => ({
+    slug,
+    issues: await fetchTrancheIssuesAsync(owner, repoName, slug)
+  }))
   for (const { slug, issues } of toppedUp) sweep.issuesBySlug.set(slug, issues)
 
   const issueMilestones = milestoneActiveSlugs.flatMap((slug) =>
