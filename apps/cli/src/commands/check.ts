@@ -1,7 +1,13 @@
 import { execFileSync } from 'node:child_process'
 import { emitCheckError, type CheckError, type CheckOutcome, type CheckSpec } from '../checks/contract'
 import { coreCheckRegistry, runsUnderAll } from '../checks/registry'
-import { resolveChecks, type ResolvedCheck, type ResolverFailure, type ResolveResult } from '../checks/resolver'
+import {
+  bareKeyRejectedDiagnostic,
+  resolveChecks,
+  type ResolvedCheck,
+  type ResolverFailure,
+  type ResolveResult
+} from '../checks/resolver'
 import { defaultParallelism, runChecks } from '../checks/runner'
 import { type ConfigLoadResult, loadConfigChecked } from '../lib/config'
 import { printJson } from '../lib/envelope'
@@ -139,45 +145,51 @@ export function duplicateIdFailures(resolved: ResolvedCheck[]): ResolverFailure[
   return failures
 }
 
+const FAIL_CLOSED_RECOVERY =
+  'Fix or remove the rejected `checks` entries named above in vinaya.config.json, then re-run `vinaya check`. Until every entry resolves, NO check runs — vinaya refuses the whole run rather than executing a partial ruleset. `vinaya check --plan` prints the same resolution, and `vinaya doctor` carries the permanent diagnostic for each rejected entry.'
+
+function refusal(message: string): CheckError {
+  return { schema: 1, check: 'config', severity: 'error', message, agent_recovery_prompt: FAIL_CLOSED_RECOVERY }
+}
+
 /**
  * The ONE resolution both `--plan` and real execution read. Sharing it is
  * what makes plan-vs-execution agreement structural rather than a property
  * two code paths have to be kept in sync about.
  *
- * Core-only resolution plus a synthesized failure naming the config file
- * when `loadConfigChecked()` itself failed (invalid JSON / schema): `--plan`
- * still renders whatever it can rather than crashing uncaught, and execution
- * reads that same failure as a refusal rather than proceeding as if the
- * config didn't exist.
+ * `result` is exactly what `--plan` renders. `refusals` is FAIL_CLOSED's
+ * side: the same failures, phrased for the human being refused. They are
+ * built HERE rather than by string-matching `result.failures` afterwards,
+ * because only here is each failure's provenance still known — a bare key
+ * rejected by the resolver gets the resolver's own permanent diagnostic
+ * (naming the rename requirement), while a config that failed to load at
+ * all, or a duplicate id caught at this boundary, gets its own wording.
+ *
+ * A `loadConfigChecked()` failure (invalid JSON / schema) resolves core-only
+ * plus a synthesized failure naming the config file: `--plan` still renders
+ * whatever it can rather than crashing uncaught, and execution reads that
+ * same failure as a refusal rather than proceeding as if the config didn't
+ * exist.
  */
-function resolveForRun(configResult: ConfigLoadResult): ResolveResult {
+function resolveForRun(configResult: ConfigLoadResult): { result: ResolveResult; refusals: CheckError[] } {
   const base = configResult.ok
     ? resolveChecks(coreCheckRegistry(), configResult.config?.checks)
     : {
         resolved: resolveChecks(coreCheckRegistry(), undefined).resolved,
         failures: [{ key: configResult.path, reason: `invalid \`checks\` registration — ${configResult.error}` }]
       }
-  return { resolved: base.resolved, failures: [...base.failures, ...duplicateIdFailures(base.resolved)] }
-}
 
-const FAIL_CLOSED_RECOVERY =
-  'Fix or remove the rejected `checks` entries named above in vinaya.config.json, then re-run `vinaya check`. Until every entry resolves, NO check runs — vinaya refuses the whole run rather than executing a partial ruleset. `vinaya check --plan` prints the same resolution, and `vinaya doctor` carries the permanent diagnostic for each rejected entry.'
+  const duplicates = duplicateIdFailures(base.resolved)
+  const refusals: CheckError[] = [
+    ...base.failures.map((failure) =>
+      configResult.ok
+        ? refusal(bareKeyRejectedDiagnostic(failure.key))
+        : refusal(`${failure.key}: ${failure.reason} — refusing to run any check.`)
+    ),
+    ...duplicates.map((failure) => refusal(`${failure.key}: ${failure.reason} — refusing to run any check.`))
+  ]
 
-/**
- * FAIL_CLOSED: every resolver failure becomes a refusal of the ENTIRE run —
- * not a skipped entry, not a core-only fallback. A partially-applied ruleset
- * that still prints green is the exact failure this design exists to
- * prevent, so this outcome is emitted BEFORE any check is spawned.
- */
-function refusalOutcome(failures: ResolverFailure[]): CheckOutcome {
-  const errors: CheckError[] = failures.map((failure) => ({
-    schema: 1,
-    check: 'config',
-    severity: 'error',
-    message: `${failure.key}: ${failure.reason} — refusing to run any check.`,
-    agent_recovery_prompt: FAIL_CLOSED_RECOVERY
-  }))
-  return { name: 'config', status: 'error', exitCode: null, errors, durationMs: 0 }
+  return { result: { resolved: base.resolved, failures: [...base.failures, ...duplicates] }, refusals }
 }
 
 export async function checkCommand(args: string[]): Promise<void> {
@@ -190,15 +202,15 @@ export async function checkCommand(args: string[]): Promise<void> {
   const positional = args.filter((a) => !a.startsWith('--'))
   const requestedName = positional[0]
 
-  const resolution = resolveForRun(loadConfigChecked())
+  const { result, refusals } = resolveForRun(loadConfigChecked())
 
   if (planRequested) {
     if (jsonOutput) {
-      process.stdout.write(`${JSON.stringify(renderPlanJson(resolution), null, 2)}\n`)
+      process.stdout.write(`${JSON.stringify(renderPlanJson(result), null, 2)}\n`)
     } else {
-      process.stdout.write(`${renderPlanTable(resolution)}\n`)
+      process.stdout.write(`${renderPlanTable(result)}\n`)
     }
-    process.exit(resolution.failures.length > 0 ? 1 : 0)
+    process.exit(result.failures.length > 0 ? 1 : 0)
   }
 
   if (!allRequested && !requestedName) {
@@ -207,14 +219,22 @@ export async function checkCommand(args: string[]): Promise<void> {
   }
 
   // FAIL_CLOSED — refuse the whole run before a single check is spawned.
-  if (resolution.failures.length > 0) {
-    const refusal = refusalOutcome(resolution.failures)
-    for (const e of refusal.errors) emitCheckError(e)
+  // Not core-only, not best-effort: a partially-applied ruleset that still
+  // prints green is the failure this design exists to prevent.
+  if (refusals.length > 0) {
+    const outcome: CheckOutcome = {
+      name: 'config',
+      status: 'error',
+      exitCode: null,
+      errors: refusals,
+      durationMs: 0
+    }
+    for (const e of refusals) emitCheckError(e)
     if (jsonOutput) {
-      printJson({ checks: [refusal] })
+      printJson({ checks: [outcome] })
     } else {
-      process.stdout.write(`✗ ${refusal.name}: refused — no checks ran\n`)
-      for (const e of refusal.errors) process.stdout.write(`    ${e.severity}: ${e.message}\n`)
+      process.stdout.write(`✗ ${outcome.name}: refused — no checks ran\n`)
+      for (const e of refusals) process.stdout.write(`    ${e.severity}: ${e.message}\n`)
     }
     process.exit(1)
   }
@@ -223,7 +243,7 @@ export async function checkCommand(args: string[]): Promise<void> {
   // replaced that core spec in place (it no longer runs alongside it), and a
   // namespaced entry was appended. Same `ResolveResult` `--plan` just
   // rendered, so what the plan printed is what runs here.
-  const allSpecs: CheckSpec[] = resolution.resolved.map((entry) => entry.spec)
+  const allSpecs: CheckSpec[] = result.resolved.map((entry) => entry.spec)
 
   // `--all` omits a check whose own workflow already reports it. Running it
   // twice produces a second conclusion nothing can refresh: `review-gate`'s
