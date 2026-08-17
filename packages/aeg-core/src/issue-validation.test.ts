@@ -192,6 +192,14 @@ const REGISTERED = REGISTRY.map((p) => p.name)
  */
 const realBody = (n: number): string => readFileSync(join(__dirname, 'fixtures', `issue-${n}-body.md`), 'utf8')
 
+/**
+ * The two control characters these tests smuggle through the gate, named rather
+ * than embedded: a literal `ESC` in a source file is invisible in review and in
+ * a diff, which is the whole reason it is worth defending against.
+ */
+const ESC = String.fromCharCode(0x1b)
+const BEL = String.fromCharCode(0x07)
+
 describe('checkProjectsRegistered', () => {
   it('#863 (modern `**Project:**` footer) — EVALUATES its names, and passes on their merit', () => {
     const body = realBody(863)
@@ -266,6 +274,79 @@ describe('checkProjectsRegistered', () => {
     const body = 'A body with no rationale and no Project field at all.'
     expect(projectsFromBody(body)).toEqual([])
     expect(checkProjectsRegistered(body, [], REGISTERED).status).toBe('pass')
+  })
+
+  // -------------------------------------------------------------------------
+  // The silent-drop fail-open: a DECLARED value the parser could not turn into
+  // a name used to be indistinguishable from no declaration at all, so the gate
+  // passed vacuously on the one body it most needed to refuse.
+  // -------------------------------------------------------------------------
+
+  it('fails a declaration whose value yields no name — it can no longer pass vacuously', () => {
+    // #554's exact shape: prose in the field. `projectsFromBody` still yields
+    // nothing, which used to read to this gate as "no project declared".
+    const body = '**Project:** (none — tools/admin is unregistered; see Project(s) + blast radius above)'
+    expect(projectsFromBody(body)).toEqual([])
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/resolves to no project name/)
+    // …and names the residue, so the author can see what was read.
+    expect(r.errors[0]).toMatch(/tools\/admin is unregistered/)
+  })
+
+  it('fails a declaration with an empty value — the same vacuous pass, one shape further', () => {
+    // `**Project:**` with nothing after it yields no name AND no residue to
+    // report. Keying the failure on "declared but resolved to nothing" rather
+    // than on the residue is what catches this shape too.
+    const r = checkProjectsRegistered('**Project:**   \n', [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/resolves to no project name/)
+  })
+
+  it('fails on the unparseable half of a partly-parseable declaration', () => {
+    const body = '**Project:** vinaya, a value with spaces'
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/a value with spaces/)
+  })
+
+  it('refuses an unregistered name that only trailing punctuation used to hide', () => {
+    // `notaproject.` failed the slug shape and was dropped before the registry
+    // could refuse it — the gate cannot fail on a name it never receives.
+    const r = checkProjectsRegistered('**Project:** notaproject.', [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/notaproject/)
+  })
+
+  it('reads the foot declaration, not a fenced example, so the gate and the board agree', () => {
+    const body = ['```markdown', '**Project:** not-a-real-project', '```', '', '**Project:** vinaya'].join('\n')
+    expect(projectsFromBody(body)).toEqual(['vinaya'])
+    expect(checkProjectsRegistered(body, [], REGISTERED).status).toBe('pass')
+  })
+
+  // -------------------------------------------------------------------------
+  // Error-message sanitation. `parseRegistry` validates nothing, so a guest
+  // repo's `.vinaya/projects.md` reaches this message as raw markdown-cell text.
+  // -------------------------------------------------------------------------
+
+  it('does not render a registry name’s terminal escapes into the error message', () => {
+    const hostile = ['vinaya', `${ESC}[31mred${ESC}[0m`, `drop${BEL}bell`]
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], hostile)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).not.toContain(ESC)
+    expect(r.errors[0]).not.toContain(BEL)
+  })
+
+  it('does not render a declared value’s terminal escapes into the error message', () => {
+    const r = checkProjectsRegistered(`**Project:** ${ESC}[31mnotaname${ESC}[0m here`, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).not.toContain(ESC)
+  })
+
+  it('still names a well-formed registry row verbatim — sanitation is not redaction', () => {
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], REGISTERED)
+    expect(r.errors[0]).toMatch(/aeg-core/)
+    expect(r.errors[0]).toMatch(/nosuchproject/)
   })
 })
 

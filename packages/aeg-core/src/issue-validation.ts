@@ -16,7 +16,7 @@
  * applicability from the labels; this module only checks the body.
  */
 
-import { hasLabel, projectsFromBody, SECTION_HEADER } from '@attalabs/aeg-forge-state'
+import { hasLabel, projectFieldFromBody, projectsFromBody, SECTION_HEADER } from '@attalabs/aeg-forge-state'
 import { stripCode } from './anchored-region'
 
 export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }
@@ -140,6 +140,57 @@ const PATH_TEXT = (body: string): string => stripCode(body, { inlineSpans: 'keep
 export type ProjectPath = { name: string; path: string }
 
 /**
+ * A C0 or C1 control character — `ESC` (and therefore every ANSI/OSC terminal
+ * escape), `BEL`, and the rest.
+ *
+ * Tested by code point rather than by a character-class regex on purpose: a
+ * regex spelling this range is itself a lint violation
+ * (`noControlCharactersInRegex`), and the rule is right — the readable way to
+ * say "control character" is to name the code points.
+ */
+function isControlCodePoint(codePoint: number): boolean {
+  return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)
+}
+
+/** How much of one untrusted value an error message will carry before eliding. */
+const MESSAGE_VALUE_MAX = 64
+
+/**
+ * Renders an untrusted string into an error message.
+ *
+ * **Neither side of this gate's message is validated at its source.** Registered
+ * names come from `parseRegistry`, which by design "is forgiving" and applies no
+ * shape check at all — a name is whatever text sat in a markdown table cell. The
+ * declared side is a task Issue's body. Vinaya ships inside the published
+ * `@attalabs/vinaya` tarball and runs against *guest* repos, so both are attacker-
+ * reachable: a hostile `.vinaya/projects.md` row (or Issue body) carrying `ESC`
+ * renders ANSI/OSC sequences straight through a Vinaya error into the operator's
+ * terminal, where they can repaint or hide the very failure being reported.
+ *
+ * Sanitising here rather than at `parseRegistry` is deliberate: the registry's
+ * tolerance is load-bearing (a typo'd row must not crash Studio), and a name that
+ * is merely *odd* must still resolve for exact-match purposes. The constraint
+ * belongs where the value crosses into a rendered message, which is here.
+ *
+ * Strips control characters, collapses whitespace to single spaces (so a value
+ * cannot span lines and forge a second error line), and elides past
+ * `MESSAGE_VALUE_MAX`. Everything a well-formed project name is made of survives
+ * untouched — this is sanitation, not redaction.
+ */
+function forMessage(value: string): string {
+  // Whitespace collapses FIRST, so a newline or tab becomes a space rather than
+  // vanishing and welding two words together — and a multi-line value cannot
+  // forge what looks like a second error line.
+  let cleaned = ''
+  for (const ch of value.replace(/\s+/g, ' ')) {
+    if (!isControlCodePoint(ch.codePointAt(0) ?? 0)) cleaned += ch
+  }
+  cleaned = cleaned.trim()
+  if (cleaned.length === 0) return '(unprintable)'
+  return cleaned.length > MESSAGE_VALUE_MAX ? `${cleaned.slice(0, MESSAGE_VALUE_MAX)}…` : cleaned
+}
+
+/**
  * The projects a task Issue declares — its body's `**Project:**` field, and
  * only that. Project is a **field, not a label** (doctrine): #614 dropped the
  * `project:*` labels outright, and `@attalabs/aeg-forge-state`'s `list-tasks.ts`
@@ -206,6 +257,22 @@ export function declaredProjects(body: string, _labels: string[]): string[] {
  * gates with two different messages. This check answers only "do the declared
  * names resolve".
  *
+ * **A declared value that resolves to no name FAILS** — the distinction the
+ * parser's old bare `string[]` could not express. Every value used to be filtered
+ * through the slug shape and dropped without trace, so `**Project:** notaproject.`
+ * (trailing full stop) and a fully backticked or bolded value each arrived here as
+ * an empty list, identical to a body that declares nothing. The gate cannot refuse
+ * a name it never receives, so it passed **vacuously** on exactly the bodies it
+ * exists to catch. `projectFieldFromBody` now separates "no field" (still a pass)
+ * from "a field present that resolves to nothing" (a fail, naming the residue when
+ * there is one and calling the field empty when there is not). Measured across all
+ * 50 task Issues in this repo's forge at the time of the fix: zero carry either
+ * shape, so this closes a fail-open without turning any live body red.
+ *
+ * **What reaches the message is constrained** (`forMessage`). Both the declared
+ * value and the registered names are untrusted — `parseRegistry` validates
+ * nothing, and Vinaya runs against guest repos — so neither is rendered raw.
+ *
  * Dormant when `registeredNames` is empty (no `.vinaya/projects.md` on disk) —
  * the same seam-is-dormant-when-absent shape `checkBlastRadiusScope` and
  * `doc-owners` use. A single-project repo has no registry by design, and a
@@ -218,23 +285,53 @@ export function checkProjectsRegistered(
   registeredNames: string[]
 ): IssueSectionResult {
   if (registeredNames.length === 0) return { status: 'pass', errors: [] }
+  const field = projectFieldFromBody(body)
+  if (!field.declared) return { status: 'pass', errors: [] }
   const known = new Set(registeredNames.map((n) => n.trim()))
-  const unregistered = projectsFromBody(body).filter((p) => !known.has(p))
-  if (unregistered.length === 0) return { status: 'pass', errors: [] }
-  // A name differing from a real row only in case is the likeliest typo, and the
-  // least obvious from the registered list alone — call it out by name.
-  const caseHints = unregistered
-    .map((p) => {
-      const row = [...known].find((k) => k.toLowerCase() === p.toLowerCase())
-      return row ? `\`${p}\` differs from the registered \`${row}\` only in case` : null
-    })
-    .filter((h): h is string => h !== null)
-  return {
-    status: 'fail',
-    errors: [
-      `issue-validation project registry: the \`**Project:**\` field declares ${unregistered.join(', ')} — no such row in \`.vinaya/projects.md\`, which is the authority for valid project names (registered: ${[...registeredNames].join(', ')}). Fix the name, or register the project with \`vinaya init product <name> --path <folder>\` first; an unregistered project has no specs to read and no per-project state to update.${caseHints.length > 0 ? ` Note: ${caseHints.join('; ')} — project names are matched exactly, because every downstream consumer compares them literally.` : ''} This reads the same field \`projectsFromBody\` derives the task's project from, so a name here that is not a row is a task that resolves to a project that does not exist.`
-    ]
+  const registeredList = [...registeredNames].map(forMessage).join(', ')
+  const errors: string[] = []
+
+  const unregistered = field.names.filter((p) => !known.has(p))
+  if (unregistered.length > 0) {
+    // A name differing from a real row only in case is the likeliest typo, and the
+    // least obvious from the registered list alone — call it out by name.
+    const caseHints = unregistered
+      .map((p) => {
+        const row = [...known].find((k) => k.toLowerCase() === p.toLowerCase())
+        return row ? `\`${forMessage(p)}\` differs from the registered \`${forMessage(row)}\` only in case` : null
+      })
+      .filter((h): h is string => h !== null)
+    errors.push(
+      `issue-validation project registry: the \`**Project:**\` field declares ${unregistered.map(forMessage).join(', ')} — no such row in \`.vinaya/projects.md\`, which is the authority for valid project names (registered: ${registeredList}). Fix the name, or register the project with \`vinaya init product <name> --path <folder>\` first; an unregistered project has no specs to read and no per-project state to update.${caseHints.length > 0 ? ` Note: ${caseHints.join('; ')} — project names are matched exactly, because every downstream consumer compares them literally.` : ''} This reads the same field \`projectsFromBody\` derives the task's project from, so a name here that is not a row is a task that resolves to a project that does not exist.`
+    )
   }
+
+  // The fail-open this check was blind to. A value the parser cannot turn into a
+  // name never reached the loop above, so the gate had nothing to refuse and
+  // passed — on a body that declares a project as loudly as any other. Silence
+  // here is indistinguishable from "this task declares no project", and the two
+  // mean opposite things: one is a deliberate omission, the other is a
+  // declaration nothing in the system can resolve.
+  //
+  // Keyed on "declared and resolved to NOTHING", not on the residue: an empty
+  // `**Project:**` line yields no name and no residue either, and is the same
+  // vacuous pass one shape further along. The residue is named when there is
+  // one, because it is the whole of the fix — but its absence is not a pass.
+  if (field.names.length === 0) {
+    const residue =
+      field.unparsed.length > 0
+        ? ` — ${field.unparsed.map((v) => `\`${forMessage(v)}\``).join(', ')}`
+        : ' — the field is empty'
+    errors.push(
+      `issue-validation project registry: the \`**Project:**\` field is present but resolves to no project name${residue} (registered: ${registeredList}). A project name is a slug (\`[a-z0-9][a-z0-9-]*\`, matched exactly); prose, a parenthetical, or a sentence in this field resolves to no project at all, and this gate cannot check a name it never receives — which is how a declaration like this used to pass. Write the registered name on its own, or register the project with \`vinaya init product <name> --path <folder>\` first. If the task genuinely touches no registered project, omit the field rather than explaining its absence inside it — \`checkIssueRationale\` already requires the \`Project(s) + blast radius\` narrative field for that.`
+    )
+  } else if (field.unparsed.length > 0) {
+    errors.push(
+      `issue-validation project registry: the \`**Project:**\` field declares a value that is not a project name — ${field.unparsed.map((v) => `\`${forMessage(v)}\``).join(', ')} (registered: ${registeredList}). The rest of the field parsed, so this is a name the gate silently could not check rather than a field it could not read at all. A project name is a slug (\`[a-z0-9][a-z0-9-]*\`, matched exactly); write it on its own, or drop it if it names no project.`
+    )
+  }
+
+  return errors.length > 0 ? { status: 'fail', errors } : { status: 'pass', errors: [] }
 }
 
 /**
