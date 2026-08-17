@@ -2,10 +2,12 @@
  * The checks-side resolver — a pure function, no I/O, no `@attalabs/aeg-core`
  * import (mirrors `contract.ts`'s own "pure contract" discipline).
  *
- * Feeds `vinaya check --plan` / `--plan --json` ONLY. `vinaya check`'s real
- * execution (`check.ts:76`) stays on today's flat concat, untouched — this
- * resolver is not wired into execution until a later release. See the
- * Configuration architecture chapter, `apps/vinaya/specs/vinaya-spec.md`.
+ * AUTHORITATIVE as of the execution flip: `vinaya check --plan` /
+ * `--plan --json` and `vinaya check`'s real execution both resolve through
+ * this one function, so what the plan prints IS what runs. The classification
+ * logic below (`resolveChecks`, `isValidNamespacedKey`) is unchanged by that
+ * flip — only its consumers moved. See the Configuration architecture
+ * chapter, `apps/vinaya/specs/vinaya-spec.md`.
  */
 import type { CheckEntry } from '../lib/config'
 import type { CheckSpec } from './contract'
@@ -88,16 +90,29 @@ export function resolveChecks(core: CheckSpec[], configChecks: Record<string, Ch
 }
 
 /**
- * Shared message builders for the two classification-warning classes —
- * `vinaya check`'s own (non-`--plan`) output and `vinaya doctor`'s permanent
- * diagnostics reuse the exact same strings so the two surfaces cannot drift
- * apart, the same discipline `env-lint.ts` already keeps for the env
- * diagnostic.
+ * Shared message builders for the two classification classes. Before the
+ * execution flip these were `vinaya check`'s own grace-period warnings
+ * ("...starting next minor"); the flip demoted them from check output to
+ * `vinaya doctor`'s permanent diagnostics and retargeted the wording at the
+ * behavior that is now live. They stay HERE, next to the predicates that
+ * produce them, so a diagnostic can never describe a classification the
+ * resolver no longer makes.
+ *
+ * A rejected config is refused whole (FAIL_CLOSED, `commands/check.ts`), so
+ * `vinaya doctor` is the only surface left that can explain WHY — deleting
+ * these would leave a refused config undiagnosable.
  */
-export function overriddenNextMinorWarning(name: string): string {
-  return `check "${name}" shares its name with a core check — it will replace the core check starting next minor (currently it runs alongside it under the flat registry).`
+export function overriddenReplacesCoreDiagnostic(name: string): string {
+  return `check "${name}" shares its name with a core check — it REPLACES that core check. The core check does not run.`
 }
 
-export function bareKeyNextMinorWarning(key: string): string {
-  return `check "${key}" has no namespace and matches no core check — it will be rejected starting next minor. Rename it to "<yourname>/x".`
+/**
+ * Names the rename requirement in full, because a prefix alone is NOT always
+ * enough: the namespaced form is `<yourname>/<id>` with BOTH segments
+ * matching `[a-z0-9][a-z0-9-]*`, so a bare name that already breaks that
+ * grammar (`my_check`, `QALint`) still breaks it after prefixing and needs a
+ * real rename.
+ */
+export function bareKeyRejectedDiagnostic(key: string): string {
+  return `check "${key}" has no namespace and matches no core check — it is REJECTED, and \`vinaya check\` refuses the whole run rather than executing a partial ruleset. Rename it to "<yourname>/<id>", both segments matching [a-z0-9][a-z0-9-]* — prefixing alone is not enough when the bare name itself breaks that grammar ("my_check", "QALint" need a real rename, not just a prefix).`
 }

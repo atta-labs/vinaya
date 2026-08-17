@@ -10,7 +10,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { CheckSpec } from '../checks/contract.js'
 import { coreCheckRegistry } from '../checks/registry.js'
-import { bareKeyNextMinorWarning, overriddenNextMinorWarning, resolveChecks } from '../checks/resolver.js'
+import { bareKeyRejectedDiagnostic, overriddenReplacesCoreDiagnostic, resolveChecks } from '../checks/resolver.js'
 import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
 import {
   buildInitOps,
@@ -347,23 +347,30 @@ function diagnoseEnvDeclarations(repoRoot: string, config: VinayaConfig | null):
 }
 
 // ---------------------------------------------------------------------------
-// checks-classification diagnostics (Part 4) — the resolver's own two
-// FAIL_CLOSED-adjacent classes, surfaced permanently (not warn-phase-only
-// like `vinaya check`'s own print): an `overridden` core ID ("will replace
-// the core check next minor") and a bare, un-namespaced key matching no
-// core ID ("will be rejected next minor"). Reuses the exact same message
-// strings `vinaya check` prints (`checks/resolver.js`) so the two surfaces
-// cannot drift apart — the same discipline the env diagnostic already
-// keeps between this file and `check.ts` via `lib/env-lint.ts`.
+// checks-classification diagnostics — the resolver's own two classes: an
+// `overridden` core ID (the config entry REPLACES the core check) and a
+// bare, un-namespaced key matching no core ID (REJECTED — `vinaya check`
+// refuses the whole run).
+//
+// These began as `vinaya check`'s grace-period warnings ahead of the
+// execution flip. The flip removed them from check output — where a refused
+// run now prints a refusal instead — and they live on HERE, permanently.
+// That persistence is load-bearing, not vestigial: a rejected config runs
+// nothing, so this is the only surface left that explains why, and the
+// bare-key class is `error` rather than `warn` because it is now fatal to
+// every `vinaya check` invocation. Reuses the resolver's own message
+// strings (`checks/resolver.js`) so the diagnostic can never describe a
+// classification the resolver no longer makes — the same discipline the env
+// diagnostic keeps between this file and `check.ts` via `lib/env-lint.ts`.
 // ---------------------------------------------------------------------------
 function diagnoseCheckClassification(config: VinayaConfig | null): Finding[] {
   const classification = resolveChecks(coreCheckRegistry(), config?.checks)
   const findings: Finding[] = []
   for (const entry of classification.resolved) {
-    if (entry.state === 'overridden') findings.push(warn('checks', overriddenNextMinorWarning(entry.name)))
+    if (entry.state === 'overridden') findings.push(warn('checks', overriddenReplacesCoreDiagnostic(entry.name)))
   }
   for (const failure of classification.failures) {
-    findings.push(warn('checks', bareKeyNextMinorWarning(failure.key)))
+    findings.push(error('checks', bareKeyRejectedDiagnostic(failure.key)))
   }
   return findings
 }

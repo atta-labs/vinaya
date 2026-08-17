@@ -1,14 +1,9 @@
 import { execFileSync } from 'node:child_process'
 import { emitCheckError, type CheckError, type CheckOutcome, type CheckSpec } from '../checks/contract'
 import { coreCheckRegistry, runsUnderAll } from '../checks/registry'
-import {
-  bareKeyNextMinorWarning,
-  overriddenNextMinorWarning,
-  resolveChecks,
-  type ResolveResult
-} from '../checks/resolver'
+import { resolveChecks, type ResolvedCheck, type ResolverFailure, type ResolveResult } from '../checks/resolver'
 import { defaultParallelism, runChecks } from '../checks/runner'
-import { type CheckEntry, type ConfigLoadResult, loadConfigChecked } from '../lib/config'
+import { type ConfigLoadResult, loadConfigChecked } from '../lib/config'
 import { printJson } from '../lib/envelope'
 
 // Array-form execFileSync — no shell, so `base` (env-controlled) is passed
@@ -37,38 +32,6 @@ function parseParallel(args: string[]): number | undefined {
     if (m) return m[1] ? Number(m[1]) : defaultParallelism()
   }
   return undefined
-}
-
-function configErrorOutcome(path: string, error: string): CheckOutcome {
-  const finding: CheckError = {
-    schema: 1,
-    check: 'config',
-    severity: 'error',
-    message: `${path}: invalid \`checks\` registration — ${error}`,
-    agent_recovery_prompt: `Fix the invalid key/value named above in ${path}, then re-run \`vinaya check\`.`
-  }
-  return { name: 'config', status: 'error', exitCode: null, errors: [finding], durationMs: 0 }
-}
-
-/**
- * Loud config validation (Part 3): a typo'd `checks` key surfaces as a
- * `status: 'error'` outcome naming the invalid path/key — never a silent
- * `null` that makes `vinaya check --all` print green over a broken
- * registration.
- */
-type CustomSpecsResult = {
-  specs: CheckSpec[]
-  errorOutcome: CheckOutcome | null
-  checks: Record<string, CheckEntry> | undefined
-}
-
-function customSpecsFromConfig(): CustomSpecsResult {
-  const result = loadConfigChecked()
-  if (!result.ok) return { specs: [], errorOutcome: configErrorOutcome(result.path, result.error), checks: undefined }
-  const checks = result.config?.checks
-  if (!checks) return { specs: [], errorOutcome: null, checks: undefined }
-  const specs: CheckSpec[] = Object.entries(checks).map(([name, entry]) => ({ name, ...entry }))
-  return { specs, errorOutcome: null, checks }
 }
 
 type EnvLabel = 'passthrough' | 'optional' | 'literal' | 'anyOf'
@@ -152,41 +115,69 @@ function renderPlanTable(result: ResolveResult): string {
 }
 
 /**
- * Core-only resolution plus a synthesized failure naming the config file
- * when `loadConfigChecked()` itself failed (invalid JSON / schema) — `--plan`
- * still renders whatever it can rather than crashing uncaught or silently
- * proceeding as if the config didn't exist.
+ * A resolved set may never carry the same id twice. The resolver's own
+ * classification cannot produce one (an exact core-id match replaces in
+ * place; an additive key must contain a `/`, which no core id does), so this
+ * is a boundary invariant asserted where execution consumes the set, NOT a
+ * re-implementation of resolver logic: if the two ever diverge, the run
+ * refuses instead of silently running one of the two colliding specs.
+ * Reported once per duplicated name, however many times it repeats.
  */
-function resolveForPlan(configResult: ConfigLoadResult): ResolveResult {
-  if (configResult.ok) {
-    return resolveChecks(coreCheckRegistry(), configResult.config?.checks)
+export function duplicateIdFailures(resolved: ResolvedCheck[]): ResolverFailure[] {
+  const seen = new Set<string>()
+  const reported = new Set<string>()
+  const failures: ResolverFailure[] = []
+  for (const entry of resolved) {
+    if (!seen.has(entry.name)) {
+      seen.add(entry.name)
+      continue
+    }
+    if (reported.has(entry.name)) continue
+    reported.add(entry.name)
+    failures.push({ key: entry.name, reason: 'duplicate check id — two resolved entries claim the same name' })
   }
-  const core = resolveChecks(coreCheckRegistry(), undefined)
-  return {
-    resolved: core.resolved,
-    failures: [{ key: configResult.path, reason: `invalid \`checks\` registration — ${configResult.error}` }]
-  }
+  return failures
 }
 
 /**
- * Classification warnings for the non-`--plan` path (Part 2): computed from
- * the same predicates the resolver uses, describing what next minor —
- * once execution wires onto the resolver — will do. Print-only; must never
- * affect `specsToRun`/`allOutcomes`/the exit code of the non-plan path.
+ * The ONE resolution both `--plan` and real execution read. Sharing it is
+ * what makes plan-vs-execution agreement structural rather than a property
+ * two code paths have to be kept in sync about.
  *
- * Takes the already-loaded `checks` record from `customSpecsFromConfig()`
- * rather than calling `loadConfigChecked()` again — a second load re-runs
- * `stripGlobalChecks`'s stderr side effect, double-printing the
- * global-config-ignored warning for every invocation of this path.
+ * Core-only resolution plus a synthesized failure naming the config file
+ * when `loadConfigChecked()` itself failed (invalid JSON / schema): `--plan`
+ * still renders whatever it can rather than crashing uncaught, and execution
+ * reads that same failure as a refusal rather than proceeding as if the
+ * config didn't exist.
  */
-function printClassificationWarnings(configChecks: Record<string, CheckEntry> | undefined): void {
-  const classification = resolveChecks(coreCheckRegistry(), configChecks)
-  for (const entry of classification.resolved) {
-    if (entry.state === 'overridden') process.stdout.write(`${overriddenNextMinorWarning(entry.name)}\n`)
-  }
-  for (const failure of classification.failures) {
-    process.stdout.write(`${bareKeyNextMinorWarning(failure.key)}\n`)
-  }
+function resolveForRun(configResult: ConfigLoadResult): ResolveResult {
+  const base = configResult.ok
+    ? resolveChecks(coreCheckRegistry(), configResult.config?.checks)
+    : {
+        resolved: resolveChecks(coreCheckRegistry(), undefined).resolved,
+        failures: [{ key: configResult.path, reason: `invalid \`checks\` registration — ${configResult.error}` }]
+      }
+  return { resolved: base.resolved, failures: [...base.failures, ...duplicateIdFailures(base.resolved)] }
+}
+
+const FAIL_CLOSED_RECOVERY =
+  'Fix or remove the rejected `checks` entries named above in vinaya.config.json, then re-run `vinaya check`. Until every entry resolves, NO check runs — vinaya refuses the whole run rather than executing a partial ruleset. `vinaya check --plan` prints the same resolution, and `vinaya doctor` carries the permanent diagnostic for each rejected entry.'
+
+/**
+ * FAIL_CLOSED: every resolver failure becomes a refusal of the ENTIRE run —
+ * not a skipped entry, not a core-only fallback. A partially-applied ruleset
+ * that still prints green is the exact failure this design exists to
+ * prevent, so this outcome is emitted BEFORE any check is spawned.
+ */
+function refusalOutcome(failures: ResolverFailure[]): CheckOutcome {
+  const errors: CheckError[] = failures.map((failure) => ({
+    schema: 1,
+    check: 'config',
+    severity: 'error',
+    message: `${failure.key}: ${failure.reason} — refusing to run any check.`,
+    agent_recovery_prompt: FAIL_CLOSED_RECOVERY
+  }))
+  return { name: 'config', status: 'error', exitCode: null, errors, durationMs: 0 }
 }
 
 export async function checkCommand(args: string[]): Promise<void> {
@@ -199,14 +190,15 @@ export async function checkCommand(args: string[]): Promise<void> {
   const positional = args.filter((a) => !a.startsWith('--'))
   const requestedName = positional[0]
 
+  const resolution = resolveForRun(loadConfigChecked())
+
   if (planRequested) {
-    const result = resolveForPlan(loadConfigChecked())
     if (jsonOutput) {
-      process.stdout.write(`${JSON.stringify(renderPlanJson(result), null, 2)}\n`)
+      process.stdout.write(`${JSON.stringify(renderPlanJson(resolution), null, 2)}\n`)
     } else {
-      process.stdout.write(`${renderPlanTable(result)}\n`)
+      process.stdout.write(`${renderPlanTable(resolution)}\n`)
     }
-    process.exit(result.failures.length > 0 ? 1 : 0)
+    process.exit(resolution.failures.length > 0 ? 1 : 0)
   }
 
   if (!allRequested && !requestedName) {
@@ -214,8 +206,24 @@ export async function checkCommand(args: string[]): Promise<void> {
     process.exit(2)
   }
 
-  const { specs: customSpecs, errorOutcome, checks: configChecks } = customSpecsFromConfig()
-  const allSpecs = [...coreCheckRegistry(), ...customSpecs]
+  // FAIL_CLOSED — refuse the whole run before a single check is spawned.
+  if (resolution.failures.length > 0) {
+    const refusal = refusalOutcome(resolution.failures)
+    for (const e of refusal.errors) emitCheckError(e)
+    if (jsonOutput) {
+      printJson({ checks: [refusal] })
+    } else {
+      process.stdout.write(`✗ ${refusal.name}: refused — no checks ran\n`)
+      for (const e of refusal.errors) process.stdout.write(`    ${e.severity}: ${e.message}\n`)
+    }
+    process.exit(1)
+  }
+
+  // The resolved set IS the registry: an entry whose key matched a core id
+  // replaced that core spec in place (it no longer runs alongside it), and a
+  // namespaced entry was appended. Same `ResolveResult` `--plan` just
+  // rendered, so what the plan printed is what runs here.
+  const allSpecs: CheckSpec[] = resolution.resolved.map((entry) => entry.spec)
 
   // `--all` omits a check whose own workflow already reports it. Running it
   // twice produces a second conclusion nothing can refresh: `review-gate`'s
@@ -241,25 +249,22 @@ export async function checkCommand(args: string[]): Promise<void> {
         })
       : []
 
-  const allOutcomes = errorOutcome ? [...outcomes, errorOutcome] : outcomes
-
   // Findings go to stderr as the contract's JSON lines regardless of which
   // stdout mode (--json envelope or human summary) is chosen below.
-  for (const o of allOutcomes) {
+  for (const o of outcomes) {
     for (const e of o.errors) emitCheckError(e)
   }
 
   if (jsonOutput) {
-    printJson({ checks: allOutcomes })
+    printJson({ checks: outcomes })
   } else {
-    for (const o of allOutcomes) {
+    for (const o of outcomes) {
       const symbol = o.status === 'pass' ? '✓' : o.status === 'skipped' ? '·' : '✗'
       process.stdout.write(`${symbol} ${o.name}: ${o.status} (${Math.round(o.durationMs)}ms)\n`)
       for (const e of o.errors) process.stdout.write(`    ${e.severity}: ${e.message}\n`)
     }
-    printClassificationWarnings(configChecks)
   }
 
-  const failed = allOutcomes.some((o) => o.status === 'fail' || o.status === 'error' || o.status === 'timeout')
+  const failed = outcomes.some((o) => o.status === 'fail' || o.status === 'error' || o.status === 'timeout')
   process.exit(failed ? 1 : 0)
 }
