@@ -12,10 +12,9 @@ out/
 # That copy is a build artifact, not a second source of truth.
 /apps/cli/aeg-root/
 
-# bundle-studio.ts copies the standalone Studio build into
-# apps/cli/studio-standalone/ — only possible when a Studio source tree is
-# available (see that script's guard; not the case in this repository today).
-# Build artifact, never tracked.
+# bundle-studio.ts fetches attalabs' published Studio release artifact and
+# assembles it into apps/cli/studio-standalone/ at prepack time. Build
+# artifact, never tracked.
 /apps/cli/studio-standalone/
 
 # Environment
