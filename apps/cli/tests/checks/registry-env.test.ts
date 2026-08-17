@@ -139,17 +139,33 @@ describe('registry env declarations', () => {
     }
   })
 
-  // Perf regression, PR #862 round 4: `waiverActiveFromEnv()` is an eagerly
-  // evaluated ARGUMENT to `evaluateC5(...)`, so without an early return on the
-  // label check every local pre-commit/pre-push paid a real ~0.5s `gh api`
-  // round-trip for a waiver that cannot possibly be active outside CI.
-  it('both doc-coverage bins short-circuit on the waiver label BEFORE the network-bound trust-anchor read', () => {
-    for (const name of ['check-doc-coverage.ts', 'check-doc-coverage-push.ts']) {
-      const src = readCode(name)
-      const guardAt = src.indexOf('if (!labels.includes(WAIVER_LABEL)) return false')
-      const fetchAt = src.indexOf('loadTrustAnchorConfig()')
-      expect(guardAt, `${name} must guard on the waiver label before fetching`).toBeGreaterThan(-1)
-      expect(guardAt, `${name}'s label guard must come BEFORE the trust-anchor fetch`).toBeLessThan(fetchAt)
-    }
+  // Perf regression, PR #862 round 4: the waiver check is an eagerly
+  // evaluated ARGUMENT to `evaluateC5(...)`, so without an early return every
+  // local pre-commit/pre-push paid a real ~0.5s `gh api` round-trip for a
+  // waiver that cannot possibly be active outside a PR.
+  it('doc-coverage-push short-circuits on the waiver label BEFORE the network-bound trust-anchor read', () => {
+    const src = readCode('check-doc-coverage-push.ts')
+    const guardAt = src.indexOf('if (!labels.includes(WAIVER_LABEL)) return false')
+    const fetchAt = src.indexOf('loadTrustAnchorConfig()')
+    expect(guardAt, 'must guard on the waiver label before fetching').toBeGreaterThan(-1)
+    expect(guardAt, 'label guard must come BEFORE the trust-anchor fetch').toBeLessThan(fetchAt)
+  })
+
+  // doc-coverage resolves labels live via `gh` (task 4, atta-labs/attalabs#948
+  // — the env-injected PR_LABELS/WAIVER_LABEL_ACTOR it used to read were never
+  // set by any generated workflow), so its short-circuit is on PR_NUMBER
+  // absence instead: no PR means no waiver can be active, and every
+  // network-bound call — `fetchPrLabels`, `fetchWaiverLabelActor`,
+  // `loadTrustAnchorConfig` — must sit after that guard.
+  it('doc-coverage short-circuits on PR_NUMBER absence BEFORE any network-bound waiver read', () => {
+    const src = readCode('check-doc-coverage.ts')
+    const guardAt = src.indexOf('if (!prNumberStr) return false')
+    const fetchLabelsAt = src.indexOf('fetchPrLabels(prNumber)')
+    const fetchActorAt = src.indexOf('fetchWaiverLabelActor(prNumber, WAIVER_LABEL)')
+    const trustAnchorAt = src.indexOf('loadTrustAnchorConfig()')
+    expect(guardAt, 'must guard on PR_NUMBER before any network read').toBeGreaterThan(-1)
+    expect(guardAt, 'PR_NUMBER guard must come BEFORE fetching labels').toBeLessThan(fetchLabelsAt)
+    expect(guardAt, 'PR_NUMBER guard must come BEFORE fetching the waiver actor').toBeLessThan(fetchActorAt)
+    expect(guardAt, 'PR_NUMBER guard must come BEFORE the trust-anchor fetch').toBeLessThan(trustAnchorAt)
   })
 })

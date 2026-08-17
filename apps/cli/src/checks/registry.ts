@@ -100,9 +100,15 @@ export function coreCheckRegistry(): CheckSpec[] {
       timeoutMs: 15_000,
       // `resolvePrBody()` falls through to `''` when neither PR_BODY nor
       // PR_BODY_FILE is set — the legitimate ring-0 "no PR exists yet" case.
-      // BASE_SHA/PR_LABELS/WAIVER_LABEL_ACTOR each already default via
-      // `|| 'origin/main'` / `|| ''` / `|| null` in the bin itself.
-      // GITHUB_REPOSITORY/GITHUB_TOKEN/GH_TOKEN feed the trust-anchor read
+      // BASE_SHA already defaults via `|| 'origin/main'` in the bin itself.
+      // PR_NUMBER absence takes the bin's own "no PR to evaluate the waiver
+      // against yet" bypass (`waiverActive()` returns false) — same shape as
+      // `review-gate`'s identical PR_NUMBER declaration below. The bin shells
+      // to `gh pr view`/`gh api .../timeline` directly to resolve the
+      // `vinaya/waiver:docs` label + its labeling actor, so
+      // GITHUB_TOKEN/GH_TOKEN must reach it on a CI runner, where `gh`
+      // authenticates only from those env vars. GITHUB_REPOSITORY/
+      // GITHUB_TOKEN/GH_TOKEN also feed the trust-anchor read
       // (`loadTrustAnchorConfig`, lib/config.ts) — a `gh api` fetch of
       // `principals` from the DEFAULT BRANCH, never local git. All optional:
       // absent, the fetch fails and the allowlist falls back to the hardcoded
@@ -111,8 +117,7 @@ export function coreCheckRegistry(): CheckSpec[] {
         BASE_SHA: { optional: true },
         PR_BODY: { optional: true },
         PR_BODY_FILE: { optional: true },
-        PR_LABELS: { optional: true },
-        WAIVER_LABEL_ACTOR: { optional: true },
+        PR_NUMBER: { optional: true },
         GITHUB_REPOSITORY: { optional: true },
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true }
