@@ -381,6 +381,14 @@ describe('A2: archived-without-provenance', () => {
     passesWithNoFailures(checkA2(entries, map))
   })
 
+  it('skip — entry with no facts at all (forge unavailable) is never flagged', () => {
+    // A forge outage leaves `facts` undefined. A2 must not read the provenance
+    // map for such an entry: a missing provenance comment is unknowable, not absent.
+    const entries = [makeEntry('iter-1', '1', 101, undefined)]
+    const map = new Map([['iter-1/1', false]])
+    passesWithNoFailures(checkA2(entries, map))
+  })
+
   it('info — missing provenance before COHERENCE_ENFORCED_FROM is grandfathered', () => {
     const entries = [
       makeEntry(
@@ -857,6 +865,37 @@ describe('D1: dispatched-on-unmet-deps', () => {
     const r = checkD1([main], new Map(), new Map())
     passesWithNoFailures(r)
   })
+
+  it('skip — entry with no facts at all (forge unavailable) is never flagged', () => {
+    // Without facts there is no `prState`, so D1 cannot know the task was
+    // dispatched at all — an outage must not manufacture a dispatch finding.
+    const dep = makeEntry('iter-1', '1', 100, makeFacts({ issueState: 'open' }))
+    const main = makeEntry('iter-1', '2', 200, undefined, false, ['#100'])
+    passesWithNoFailures(checkD1([main, dep], new Map([[100, dep]]), new Map()))
+  })
+
+  it('fail — an unresolved dep Issue number renders as `#?` rather than `#undefined`', () => {
+    // The dep resolves to a task-ID entry whose own topology row has no Issue
+    // number yet (#TBD). It is still un-closed, so D1 still fires — the message
+    // must degrade to `#?`, never leak `null`/`undefined` into the report.
+    const dep = makeEntry('iter-1', '1', null, makeFacts({ issueState: 'open' }))
+    const main = makeEntry('iter-1', '2', 200, makeFacts({ prState: 'open' }), false, ['1'])
+    const r = checkD1([main, dep], new Map(), new Map([['iter-1/1', dep]]))
+    expect(r.status).toBe('fail')
+    expect(r.failures[0]!.reason).toContain('(issue #?)')
+  })
+
+  it('fail — a task-ID dep resolves via the cross-tranche fallback key', () => {
+    // `resolveDepEntry` tries `<slug>/<taskId>` first, then the bare `<taskId>`
+    // key. A dep living in a DIFFERENT tranche is only reachable via that
+    // second lookup; without it the dep reads as "unknown" and D1 silently passes.
+    const dep = makeEntry('other-tranche', '7', 700, makeFacts({ issueState: 'open' }))
+    const main = makeEntry('iter-1', '2', 200, makeFacts({ prState: 'open' }), false, ['7'])
+    const r = checkD1([main, dep], new Map(), new Map([['7', dep]]))
+    expect(r.status).toBe('fail')
+    expect(r.failures[0]!.task).toBe('2')
+    expect(r.failures[0]!.reason).toContain('(issue #700)')
+  })
 })
 
 // ---------- L1: stale-active-tranche ---------------------------------------
@@ -895,6 +934,26 @@ describe('L1: stale-active-tranche (advisory — info, never fail)', () => {
     expect(r.status).toBe('info')
     expect(r.failures).toHaveLength(0)
   })
+
+  it('info + no findings — active tranche absent from the entries map is skipped', () => {
+    // No entries at all for the slug. `every()` over an empty list is vacuously
+    // true, so a naive implementation would report EVERY entry-less tranche as
+    // "all closed, archive it". The empty-guard is what stops that.
+    const f = makeTrancheFile('iter-1', false)
+    const r = checkL1([f], new Map<string, TaskEntry[]>())
+    expect(r.status).toBe('info')
+    expect(r.failures).toHaveLength(0)
+  })
+
+  it('info + no findings — active tranche whose every entry lacks facts is skipped', () => {
+    // Same vacuous-truth trap reached the other way: the tranche has tasks, but
+    // a forge outage left all of them factless. An outage is not a finding.
+    const f = makeTrancheFile('iter-1', false)
+    const entries = [makeEntry('iter-1', '1', 101, undefined), makeEntry('iter-1', '2', 102, undefined)]
+    const r = checkL1([f], new Map([['iter-1', entries]]))
+    expect(r.status).toBe('info')
+    expect(r.failures).toHaveLength(0)
+  })
 })
 
 // ---------- L2: premature-archive --------------------------------------------
@@ -924,6 +983,34 @@ describe('L2: premature-archive (advisory — info, never fail)', () => {
     const r = checkL2([f], new Map([['iter-active', entries]]))
     expect(r.status).toBe('info')
     expect(r.failures).toHaveLength(0)
+  })
+
+  it('info + no findings — archived tranche absent from the entries map is skipped', () => {
+    const f = makeTrancheFile('iter-arch', true)
+    const r = checkL2([f], new Map<string, TaskEntry[]>())
+    expect(r.status).toBe('info')
+    expect(r.failures).toHaveLength(0)
+  })
+
+  it('info + no findings — a factless entry in an archived tranche is never flagged', () => {
+    // `issueState` is unknown during a forge outage. L2 must not read "not
+    // closed" as "open" and report a premature archive that may not exist.
+    const f = makeTrancheFile('iter-arch', true)
+    const entries = [makeEntry('iter-arch', '1', 101, undefined, true)]
+    const r = checkL2([f], new Map([['iter-arch', entries]]))
+    expect(r.status).toBe('info')
+    expect(r.failures).toHaveLength(0)
+  })
+
+  it('info + finding — an open task-Issue with no Issue number renders as `#?`', () => {
+    // A #TBD row inside an archived tranche is still a premature-archive signal.
+    // The message degrades to `#?` rather than leaking `null` into the report.
+    const f = makeTrancheFile('iter-arch', true)
+    const entries = [makeEntry('iter-arch', '1', null, makeFacts({ issueState: 'open' }), true)]
+    const r = checkL2([f], new Map([['iter-arch', entries]]))
+    expect(r.status).toBe('info')
+    expect(r.failures).toHaveLength(1)
+    expect(r.failures[0]!.reason).toContain('open task-Issue #? (premature archive)')
   })
 })
 
