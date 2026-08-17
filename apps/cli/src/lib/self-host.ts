@@ -16,7 +16,9 @@
 // misresolution — a workspace member named `@attalabs/vinaya` — and nothing
 // more. A repo without one is an ordinary adopter and must keep the published
 // `npx` invocation with no build step (constraint: adopters do not pay for
-// this). A repo with one gets its OWN CLI built and invoked by path, which is
+// this) — pinned to the generating CLI's exact version, which is orthogonal to
+// this predicate and never rescues a vendoring repo (see `ownVersion()` in
+// lib/artifacts.ts for why the workflows pin at all). A repo with one gets its OWN CLI built and invoked by path, which is
 // also strictly better for it: its CI then exercises the code in the pull
 // request rather than a published copy predating it.
 //
