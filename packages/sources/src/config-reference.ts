@@ -320,7 +320,8 @@ export const PLAN_JSON_SCHEMA: readonly PlanJsonField[] = [
     key: 'errors',
     type: 'ResolverFailure[]',
     semantics: [
-      'Every `FAIL_CLOSED` entry (a bare key with no namespace matching no core check) — rendered inline, never dropped. Non-empty `errors` always exits non-zero; `--plan` never swallows a failure to render a clean-looking table.'
+      'Every `FAIL_CLOSED` entry (a bare key with no namespace matching no core check) — rendered inline, never dropped. Non-empty `errors` always exits non-zero; `--plan` never swallows a failure to render a clean-looking table.',
+      'Non-empty `errors` is also what real execution refuses on: `vinaya check` runs NOTHING while any entry is unresolvable, so a non-empty `errors` here is a preview of a refused run, not an advisory.'
     ]
   }
 ] as const
