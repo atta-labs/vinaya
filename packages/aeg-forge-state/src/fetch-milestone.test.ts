@@ -4,10 +4,11 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('./gh', () => ({
   ghApiGet: vi.fn(),
-  ghApiGetAsync: vi.fn()
+  ghApiGetAsync: vi.fn(),
+  ghApiGetAllPagesAsync: vi.fn()
 }))
 
-const { ghApiGet, ghApiGetAsync } = await import('./gh')
+const { ghApiGet, ghApiGetAsync, ghApiGetAllPagesAsync } = await import('./gh')
 const { findMilestoneForSlug, indexTrancheMilestonesAsync, listActiveTrancheSlugs } = await import('./fetch-milestone')
 
 const OWNER = 'daniboomerang'
@@ -85,7 +86,7 @@ describe('indexTrancheMilestonesAsync', () => {
   ]
 
   it('splits one state=all response into the active and archived lists', async () => {
-    vi.mocked(ghApiGetAsync).mockResolvedValue(MILESTONES)
+    vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue(MILESTONES)
 
     const index = await indexTrancheMilestonesAsync(OWNER, REPO)
 
@@ -97,7 +98,7 @@ describe('indexTrancheMilestonesAsync', () => {
   })
 
   it('yields, per slug, exactly what findMilestoneForSlug returns for the same data', async () => {
-    vi.mocked(ghApiGetAsync).mockResolvedValue(MILESTONES)
+    vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue(MILESTONES)
     vi.mocked(ghApiGet).mockReturnValue(MILESTONES)
 
     const index = await indexTrancheMilestonesAsync(OWNER, REPO)
@@ -108,23 +109,65 @@ describe('indexTrancheMilestonesAsync', () => {
   })
 
   it('costs exactly one round trip regardless of how many slugs are read from it', async () => {
-    vi.mocked(ghApiGetAsync).mockResolvedValue(MILESTONES)
-    vi.mocked(ghApiGetAsync).mockClear()
+    vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue(MILESTONES)
+    vi.mocked(ghApiGetAllPagesAsync).mockClear()
 
     const index = await indexTrancheMilestonesAsync(OWNER, REPO)
     for (const m of MILESTONES) index.facts.get(m.title)
 
-    expect(ghApiGetAsync).toHaveBeenCalledTimes(1)
-    expect(ghApiGetAsync).toHaveBeenCalledWith(`repos/${OWNER}/${REPO}/milestones?state=all&per_page=100`)
+    expect(ghApiGetAllPagesAsync).toHaveBeenCalledTimes(1)
+    expect(ghApiGetAllPagesAsync).toHaveBeenCalledWith(`repos/${OWNER}/${REPO}/milestones?state=all&per_page=100`)
   })
 
   it('returns empty lists and no facts when the repo has no milestones', async () => {
-    vi.mocked(ghApiGetAsync).mockResolvedValue(emptyMilestones)
+    vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue(emptyMilestones)
 
     const index = await indexTrancheMilestonesAsync(OWNER, REPO)
 
     expect(index.active).toEqual([])
     expect(index.archived).toEqual([])
     expect(index.facts.size).toBe(0)
+  })
+})
+
+/**
+ * Guards the pagination decision itself, not just its output. Milestones are
+ * append-only, so a single `per_page=100` page is a countdown rather than a
+ * bound: the day a repo's 101st Milestone is created, a non-paginated index
+ * starts omitting tranches from the repo-wide sweep it is the enumeration
+ * authority for — silently, with no error. Swapping this reader back to the
+ * single-page `ghApiGetAsync` is therefore a real regression that no
+ * output-shape assertion above would notice, since every fixture here is
+ * smaller than one page.
+ */
+describe('indexTrancheMilestonesAsync reads every page', () => {
+  it('uses the paginated reader, never the single-page one', async () => {
+    vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue([])
+    vi.mocked(ghApiGetAsync).mockClear()
+
+    await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(ghApiGetAllPagesAsync).toHaveBeenCalledWith(`repos/${OWNER}/${REPO}/milestones?state=all&per_page=100`)
+    expect(ghApiGetAsync).not.toHaveBeenCalled()
+  })
+
+  it('indexes a result larger than one page', async () => {
+    // What the paginated reader returns once it has walked past page 1.
+    const many = Array.from({ length: 137 }, (_, i) => ({
+      title: `tranche-${i}`,
+      description: null,
+      state: i % 2 === 0 ? 'open' : 'closed'
+    }))
+    vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue(many)
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(index.facts.size).toBe(137)
+    expect(index.active).toHaveLength(69)
+    expect(index.archived).toHaveLength(68)
+    // The entries that only exist beyond the first page must be present, in
+    // both lifecycles (even index ⇒ open ⇒ active, odd ⇒ closed ⇒ complete).
+    expect(index.facts.get('tranche-136')).toEqual({ goal: '', lifecycle: 'active' })
+    expect(index.facts.get('tranche-135')).toEqual({ goal: '', lifecycle: 'complete' })
   })
 })

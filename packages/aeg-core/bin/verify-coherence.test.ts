@@ -177,10 +177,15 @@ describe('fetchProvenance — Part 2: null-closer fallback', () => {
  * tranches: 115.7 s / 121 s / 142 s against 120,000 ms — a coin flip). The
  * fix was not a bigger constant: the sweep now indexes Milestones once and
  * fetches each tranche's Issues exactly once, `FORGE_FETCH_CONCURRENCY` at a
- * time. Measured here after that change (`atta-labs/vinaya`, 6 Milestones):
- * 9.5 s / 9.5 s / 9.9 s, against the same 120,000 ms. The margin is now the
- * order of magnitude a timeout of this kind should have, and it comes from
- * the workload, not the constant.
+ * time.
+ *
+ * Post-fix figures, stated as what they actually measure. THIS test's own
+ * wall-clock (`atta-labs/vinaya`, 6 Milestones): 10.1 / 10.2 / 11.1 s idle,
+ * and 12.1 / 11.9 s with the machine deliberately loaded — against the same
+ * 120,000 ms. The bare script the subprocess runs is faster than the test
+ * around it (9.5-9.9 s idle); the numbers above are the ones this budget is
+ * actually judged against. The margin is now the order of magnitude a timeout
+ * of this kind should have, and it comes from the workload, not the constant.
  */
 describe('CLI --json mode produces pure JSON on stdout (PR #378 review)', () => {
   it('parses as JSON with no leading/trailing noise, regardless of exit code', () => {

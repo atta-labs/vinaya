@@ -48,6 +48,34 @@ export async function ghApiGetAsync<T>(path: string): Promise<T> {
   return JSON.parse(await runAsync(['api', path])) as T
 }
 
+/** GitHub's maximum, and the page size every paginated read here requests. */
+const MAX_PER_PAGE = 100
+
+/**
+ * Every page of a list endpoint, concatenated.
+ *
+ * A single `?per_page=100` read silently truncates at the 101st item, and for
+ * an append-only collection that is a countdown rather than a limit: Milestones
+ * are never deleted, so a repo crosses the boundary by accumulating history and
+ * the reader starts returning an incomplete answer with no error. Where that
+ * answer is a gate's enumeration authority, the failure surfaces as tranches
+ * quietly vanishing from a sweep.
+ *
+ * Pagination is done by explicit `page=` walk rather than `gh --paginate` so
+ * the result is a single parseable array on every `gh` version (bare
+ * `--paginate` concatenates separate JSON arrays, which is not valid JSON, and
+ * `--slurp` is not available everywhere). Stops on the first short page.
+ */
+export async function ghApiGetAllPagesAsync<T>(pathWithoutPage: string): Promise<T[]> {
+  const sep = pathWithoutPage.includes('?') ? '&' : '?'
+  const all: T[] = []
+  for (let page = 1; ; page++) {
+    const batch = JSON.parse(await runAsync(['api', `${pathWithoutPage}${sep}page=${page}`])) as T[]
+    all.push(...batch)
+    if (batch.length < MAX_PER_PAGE) return all
+  }
+}
+
 export function ghApiPost<T>(path: string, fields: Record<string, string>): T {
   const args = ['api', path]
   for (const [key, value] of Object.entries(fields)) {

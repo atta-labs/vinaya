@@ -1,4 +1,4 @@
-import { ghApiGet, ghApiGetAsync } from './gh'
+import { ghApiGet, ghApiGetAllPagesAsync, ghApiGetAsync } from './gh'
 import type { Lifecycle } from '@attalabs/aeg-types'
 
 export type MilestoneFacts = {
@@ -83,7 +83,15 @@ export function listArchivedTrancheSlugs(owner: string, repo: string): ActiveTra
  * absent from `facts`, which is the same `null` the per-slug reader returns.
  */
 export async function indexTrancheMilestonesAsync(owner: string, repo: string): Promise<TrancheMilestoneIndex> {
-  const milestones = await ghApiGetAsync<GhMilestone[]>(`repos/${owner}/${repo}/milestones?state=all&per_page=100`)
+  // Paginated, unlike the three single-purpose readers above. Milestones are
+  // append-only — closed ones are never deleted — so a single 100-item page is
+  // a countdown, not a bound, and this index is the enumeration authority a
+  // repo-wide sweep trusts: silent truncation there means tranches vanishing
+  // from every check with no error. Measured headroom at the time of writing:
+  // atta-labs/vinaya 6 total, atta-labs/attalabs 35 total.
+  const milestones = await ghApiGetAllPagesAsync<GhMilestone>(
+    `repos/${owner}/${repo}/milestones?state=all&per_page=100`
+  )
   const active: ActiveTrancheRef[] = []
   const archived: ActiveTrancheRef[] = []
   const facts = new Map<string, MilestoneFacts>()
