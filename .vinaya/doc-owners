@@ -44,3 +44,5 @@
 #
 # This starter ships empty — no bindings, no no-doc entries. Add your own
 # below this line as your repo grows real code → doc coverage needs.
+
+apps/cli/src/lib/ops.ts  apps/cli/specs/self-hosting.md
