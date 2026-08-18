@@ -48,6 +48,7 @@ import {
   overrideActive,
   WAIVER_LABEL
 } from '@attalabs/aeg-core'
+import { fileDiffAgainst } from '../../lib/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 
@@ -110,13 +111,25 @@ function main(): void {
     process.exit(0)
   }
 
+  // `ref`, not `base`: the fallback below re-resolves against `main` when
+  // `origin/main` is absent (a local run, a shallow clone), and the
+  // `Doc-neutral:` evidence diff MUST use whichever ref actually produced the
+  // changed-file list. Diffing against a ref that resolved nothing returns
+  // null, which `evaluateC5` reads as "no evidence" — the declaration then
+  // fails for a reason that has nothing to do with the declaration.
   const base = process.env.BASE_SHA || 'origin/main'
-  let changed = changedFiles(base)
-  if (changed.length === 0) changed = changedFiles('main')
+  let ref = base
+  let changed = changedFiles(ref)
+  if (changed.length === 0) {
+    ref = 'main'
+    changed = changedFiles(ref)
+  }
   if (changed.length === 0) process.exit(0)
 
   const content = existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null
-  const result = evaluateC5(changed, content, resolvePrBody(), existsSync, waiverActiveFromEnv())
+  const result = evaluateC5(changed, content, resolvePrBody(), existsSync, waiverActiveFromEnv(), (p) =>
+    fileDiffAgainst(ref, p)
+  )
 
   // Ring 0: warn-with-declared-intent, never a hard block — the push always
   // succeeds; the PR (once opened, `doc-coverage`) is where this actually
