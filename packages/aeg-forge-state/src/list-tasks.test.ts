@@ -412,3 +412,50 @@ describe('projectFieldFromBody — an HTML comment still wins first match (pre-e
     expect(projectsFromBody(body)).toEqual(['vinaya'])
   })
 })
+
+describe('projectFieldFromBody — an indented code block is swallowed the same as a balanced fence', () => {
+  // CommonMark treats a ≥4-column-indented run after a blank line as code, the
+  // same as it treats a fenced block — and stripCode already blanks both the
+  // same way (`maskIndentedCode`, `strip-code.ts`). A Project line down there is
+  // an example, not a declaration, by the SAME deliberate rule this file
+  // already applies to a balanced fence (see the fence-blindness describe
+  // block above). This is not the round-1 regression: an indented block always
+  // terminates by definition (indentation drops, or the body ends) — there is
+  // no "unterminated indented block" state analogous to an unbalanced fence,
+  // so `unreadable` correctly never fires here. Pinned as a recorded decision.
+  it('reports a 4-space-indented-only declaration as absent, not unreadable', () => {
+    const body = ['Prose.', '', '    **Project:** notaproject'].join('\n')
+    expect(projectFieldFromBody(body)).toEqual({ declared: false, names: [], unparsed: [], unreadable: false })
+  })
+
+  it('reports a tab-indented-only declaration as absent, not unreadable', () => {
+    const body = ['Prose.', '', '\t**Project:** notaproject'].join('\n')
+    expect(projectFieldFromBody(body)).toEqual({ declared: false, names: [], unparsed: [], unreadable: false })
+  })
+
+  it('still reads a declaration indented inside LIST context — not code by CommonMark', () => {
+    const body = ['- item', '', '    **Project:** aeg-core'].join('\n')
+    expect(projectFieldFromBody(body).names).toEqual(['aeg-core'])
+  })
+
+  it('still reads an indented declaration with no preceding blank line — not code by CommonMark', () => {
+    const body = ['Prose continues here.', '    **Project:** aeg-core'].join('\n')
+    expect(projectFieldFromBody(body).names).toEqual(['aeg-core'])
+  })
+})
+
+describe('PROJECT_FIELD — bounded regardless of body shape', () => {
+  it('stays fast on the field-name-plus-whitespace-plus-newlines shape that made the old pattern quadratic', () => {
+    const body = `Project${' \t'.repeat(2000)}:${'\n'.repeat(32768)}`
+    const start = performance.now()
+    projectFieldFromBody(body)
+    expect(performance.now() - start).toBeLessThan(50)
+  })
+
+  it('stays fast on a pure-newline body', () => {
+    const body = '\n'.repeat(65536)
+    const start = performance.now()
+    projectFieldFromBody(body)
+    expect(performance.now() - start).toBeLessThan(50)
+  })
+})

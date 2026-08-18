@@ -51,8 +51,20 @@ const PROJECT_SLUG = /^[a-z0-9][a-z0-9-]*$/i
  * must never be run against a raw body. See `projectFieldFromBody`: the first
  * field-shaped line in a raw body is routinely a fenced *example* of the field,
  * and the real declaration sits at the foot by convention.
+ *
+ * **Every internal whitespace run is `[ \t]*`, never `\s*`.** The field is a
+ * single line by definition (the docstring above shows only one-line shapes),
+ * so nothing here needs to span a line break. `\s*` matches `\n` — plain JS
+ * regex semantics, no flag required — and with several `\s*` runs sitting back
+ * to back around the colon, a body of `Project` + long whitespace + `:` +
+ * thousands of trailing newlines with no match at the end forces the engine to
+ * explore every way of partitioning those newlines among the runs before
+ * failing: measured at 705 ms for a 32 768-newline tail. Restricting to
+ * `[ \t]*` removes the newline from every one of those quantifiers, so a `\n`
+ * fails the match immediately instead of being tried as whitespace — the same
+ * body drops to sub-millisecond, independent of length.
  */
-const PROJECT_FIELD = /^[ \t]*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.+)$/im
+const PROJECT_FIELD = /^[ \t]*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?[ \t]*:[ \t]*(?:\*\*)?[ \t]*(.+)$/im
 
 /**
  * What the body's `Project:` field says — including when it says something this
