@@ -18,7 +18,7 @@ npx @attalabs/vinaya init        # or: pnpm dlx / yarn dlx / bunx
 | `vinaya version` | Print the installed CLI version (`--json` for the enveloped machine form) |
 | `vinaya doctrine` | Print the absolute path of the bundled doctrine's front door (`aeg-root/skills/aeg/SKILL.md`) on this machine. The committed root `VINAYA.md` pointer names the package, never a filesystem path — this command is the read-time resolution step it hands the reader. `--json` for the enveloped `{ root, entry }` form. |
 | `vinaya check <name> \| --all` | Run one check, or every registered check (core + `vinaya.config.json`-registered). `--json` for the enveloped `{ checks: CheckOutcome[] }` form; `--diff-only` scopes `scope: 'diff'` checks to changed files; `--parallel[=n]` caps concurrency (default: cpu-derived). Findings always print as the check contract's JSON lines on stderr, regardless of `--json`. Exit 0 iff every check passed. |
-| `vinaya new check <name>` | Scaffold a self-contained custom check into `./scripts/vinaya-checks/<name>.ts`, ready to register in `vinaya.config.json` |
+| `vinaya new check <yourname>/<id>` | Scaffold a self-contained custom check into `./scripts/vinaya-checks/<id>.ts`, ready to register in `vinaya.config.json` under that namespaced key |
 | `vinaya studio` | Launch Vinaya Studio. Inside a checkout that carries Studio's source (`apps/vinaya-studio/web` — it lives in the attalabs monorepo, not this repository) it runs the dev app; a published install runs its bundled standalone server instead, fetched from attalabs' published release artifact at publish time. |
 
 ## Config
@@ -52,12 +52,12 @@ One thing git cannot version is the config itself: **each fresh clone runs `git 
 
 Two shapes deviate: a repo already using **husky** keeps its `.husky/` directory (husky's `prepare` script owns per-clone wiring), and a repo with its own active raw hooks in `.git/hooks` stays on the legacy append-a-managed-block layout there — re-routing `core.hooksPath` would silently disable the adopter's own hooks. On that legacy layout `vinaya doctor` warns that clones have no hooks, and `vinaya upgrade` migrates to the tracked layout as soon as nothing foreign would be disabled.
 
-Custom checks register under `checks`, one entry per check:
+Custom checks register under `checks`, one entry per check. **Every key must be namespaced `<yourname>/<id>`** — exactly one `/`, both segments matching `[a-z0-9][a-z0-9-]*`, with `vinaya` reserved as a prefix:
 
 ```json
 {
   "checks": {
-    "my-check": {
+    "myteam/my-check": {
       "run": "./scripts/my-check.ts",
       "scope": "diff",
       "include": ["src/**/*.ts"],
@@ -66,6 +66,8 @@ Custom checks register under `checks`, one entry per check:
   }
 }
 ```
+
+The one exception is a key that exactly matches a **core** check id: that is an override, and it **replaces** the core check — the core one stops running. Anything else — a bare, un-namespaced key matching no core id — is rejected, and `vinaya check` then refuses the **entire** run (exit 1, nothing executes) rather than running a partial ruleset. Note that a prefix alone is not always enough: if the bare name already breaks the segment grammar (`my_check`, `QALint`), it still breaks it after prefixing and needs a real rename. Run `vinaya check --plan` to see exactly how your config resolves before it runs, and `vinaya doctor` to diagnose a config that is being refused.
 
 Glob scoping (`include`) is permitted; conditional logic (`if`/`unless`/`except`) is **never** part of this grammar — see the check-contract quick reference below for the full grammar and the error contract every registered `run` executable must honor.
 
@@ -79,7 +81,7 @@ Full field-by-field reference: [vinaya.attalabs.dev/docs/cli](https://vinaya.att
 - Never self-enforce a timeout — the runner does that (`vinaya.config.json`'s `timeoutMs`, or the runner's default).
 - Never reach the network unless explicitly declared as an exception (today: none of the custom-check surface; the core `coherence`/`dispatch-readiness` checks are the only declared exceptions).
 
-`vinaya new check <name>` scaffolds a worked, self-contained example that honors this contract out of the box.
+`vinaya new check <yourname>/<id>` scaffolds a worked, self-contained example that honors this contract out of the box, and prints the exact — namespaced — registration to paste.
 
 ## JSON output envelope
 

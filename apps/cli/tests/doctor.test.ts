@@ -240,6 +240,47 @@ describe('vinaya doctor — never mutates', () => {
     expect(snapshot(root)).toEqual(before)
   })
 
+  // The execution flip removed these two from `vinaya check`'s own output —
+  // a rejected config now refuses the run outright. They must SURVIVE here,
+  // permanently: doctor is the only surface left that can explain why a run
+  // that executes nothing executes nothing.
+  it('still surfaces the bare-key rejection on a config `vinaya check` now refuses outright', async () => {
+    await runInit(['--yes'], initDeps())
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.checks = { my_check: { run: 'scripts/vinaya-checks/my_check.ts', scope: 'full' } }
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+    mkdirSync(join(root, 'scripts', 'vinaya-checks'), { recursive: true })
+    writeFileSync(join(root, 'scripts', 'vinaya-checks', 'my_check.ts'), '#!/usr/bin/env bun\n')
+    const before = snapshot(root)
+
+    const report = await runDoctorJson()
+    expect(report.healthy).toBe(false)
+    const hit = report.findings.find((f) => f.check === 'checks' && f.message.includes('REJECTED'))
+    expect(hit).toBeDefined()
+    // `error`, not `warn`: post-flip this is fatal to every `vinaya check`.
+    expect(hit?.severity).toBe('error')
+    expect(hit?.message).toContain('my_check')
+    expect(hit?.message).toContain('prefixing alone is not enough')
+
+    expect(snapshot(root)).toEqual(before)
+  })
+
+  it('still surfaces the override diagnostic, now stating the core check is replaced', async () => {
+    await runInit(['--yes'], initDeps())
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.checks = { 'doc-coverage': { run: 'scripts/vinaya-checks/mine.ts', scope: 'full' } }
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+    mkdirSync(join(root, 'scripts', 'vinaya-checks'), { recursive: true })
+    writeFileSync(join(root, 'scripts', 'vinaya-checks', 'mine.ts'), '#!/usr/bin/env bun\n')
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'checks' && f.message.includes('REPLACES'))
+    expect(hit).toBeDefined()
+    expect(hit?.severity).toBe('warn')
+    expect(hit?.message).toContain('doc-coverage')
+    expect(hit?.message).toContain('The core check does not run')
+  })
+
   it('reports "not initialized" on a repo that never ran init, and still writes nothing', async () => {
     const before = snapshot(root)
     const report = await runDoctorJson()

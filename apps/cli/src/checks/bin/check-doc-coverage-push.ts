@@ -22,10 +22,14 @@
  *      workflow generator) is out of this task's surface — its generated
  *      pre-push hook body is `npx --no-install @attalabs/vinaya check --all`
  *      unconditionally, with no mode flag or env differentiation between a
- *      push-time and a PR-time invocation. Since `--all` already
- *      unconditionally runs every entry in `coreCheckRegistry()`, adding
- *      THIS check as a new entry makes it reachable from that unmodified
- *      hook body automatically — no `artifacts.ts` edit required. This is
+ *      push-time and a PR-time invocation. Since `--all` runs every entry of
+ *      the RESOLVED set (`coreCheckRegistry()` after config override/
+ *      additive resolution, minus `ownWorkflow` entries), adding THIS check
+ *      as a new core entry makes it reachable from that unmodified hook body
+ *      automatically — no `artifacts.ts` edit required. Two post-flip
+ *      caveats on "every entry", both adopter-controlled: a config entry
+ *      keyed with this check's id REPLACES it, and an unresolvable `checks`
+ *      registration refuses the whole run so nothing executes at all. This is
  *      also the first place `OVERRIDE_DOCS` is honored anywhere in this
  *      CLI's check surface — `check-doc-coverage.ts` (the existing,
  *      PR-blocking entry) never calls `overrideActive` at all, a real,

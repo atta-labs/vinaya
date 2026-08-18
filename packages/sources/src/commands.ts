@@ -82,7 +82,8 @@ export const COMMANDS: readonly Command[] = [
     ],
     details: [
       "Each spawned check's child process sees only a fixed baseline (`PATH`, `LANG`, `HOME`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `TMPDIR`) plus whatever its `CheckSpec['env']` declaration explicitly forwards — never the full parent environment. A required (`true`) or unsatisfied `anyOf` declaration missing from the caller's environment synthesizes a `CheckError` before the check ever spawns. Declare `env` (a core check's own registration, or `vinaya.config.json`'s `checks.<name>.env` for a custom one) for any check that reads `process.env`/`Bun.env`/`Deno.env` directly — `vinaya doctor` carries the permanent diagnostic for one that doesn't.",
-      "`--plan` composes with `--json`. It requires zero env vars and never prints an env value — only how each one resolves (passthrough, optional, literal, or anyOf). A `FAIL_CLOSED` entry (a bare key with no namespace matching no core check) always renders inline rather than being dropped, and exits non-zero. `--plan` previews what the next minor's execution will enforce — `vinaya check` itself still runs the flat, unvalidated registry this release.",
+      'The resolved registry IS what runs. A `checks` key that exactly matches a core check id REPLACES that core check (the core one does not run); any other key must be namespaced `<yourname>/<id>`. Anything the resolver cannot classify — a malformed entry, a bare un-namespaced key matching no core id, a duplicate id — makes `vinaya check` refuse the ENTIRE run: exit 1, nothing executes, never a partial ruleset and never a core-only fallback. `vinaya doctor` carries the permanent diagnostic for each rejected entry, so a refused config is still diagnosable.',
+      '`--plan` composes with `--json`. It requires zero env vars and never prints an env value — only how each one resolves (passthrough, optional, literal, or anyOf). A `FAIL_CLOSED` entry always renders inline rather than being dropped, and exits non-zero. `--plan` and execution read the same resolution, so what the plan prints is what runs.',
       "`--local` exists because a `requiresOpenPr` check (the core `closes-n`/`test-plan`, or a custom check declaring the same field) can only evaluate for real once a pull request exists — the generated `pre-commit`/`pre-push` hooks pass it so the first commit on a fresh task branch is never asked to satisfy a PR-body field before a PR can possibly exist. CI's `vinaya-checks.yml` omits it, so these checks always run for real once a PR is open."
     ],
     status: 'shipped'
@@ -90,6 +91,9 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'new check',
     description: 'Scaffold a custom check into ./scripts/vinaya-checks/',
+    details: [
+      'Takes the REGISTRATION KEY, not a bare name: `vinaya new check <yourname>/<id>` writes `./scripts/vinaya-checks/<id>.ts` and prints the namespaced `checks` entry to paste. It refuses a bare, un-namespaced name — `vinaya check` refuses its entire run over a key it cannot resolve, so scaffolding one would brick every check invocation in the repo — and refuses a core check id, since registering one REPLACES that core gate and a scaffolded stub is never what an adopter means by that.'
+    ],
     status: 'shipped'
   },
   {
@@ -158,7 +162,8 @@ export const COMMANDS: readonly Command[] = [
     description: 'Diagnose hook, workflow, and config health — report only, never mutates',
     flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1)' }],
     details: [
-      'Carries the same env-declaration diagnostic `vinaya check` warns with — permanently, at `info` severity, not just ahead of the spawn-default flip — plus a `warn`-severity lint over suspicious `env` literal forms (a stray `"true"`/`"false"` string, or a high-entropy literal that reads like a leaked secret committed to config).'
+      'Carries the same env-declaration diagnostic `vinaya check` warns with — permanently, at `info` severity, not just ahead of the spawn-default flip — plus a `warn`-severity lint over suspicious `env` literal forms (a stray `"true"`/`"false"` string, or a high-entropy literal that reads like a leaked secret committed to config).',
+      'Also carries the two permanent `checks`-classification diagnostics: a config key that REPLACES a core check (`warn`), and a bare un-namespaced key that is REJECTED (`error`, naming the rename requirement). These are the reason a config `vinaya check` now refuses outright is still diagnosable — the refusal runs nothing, so `doctor` is the surface that explains why.'
     ],
     status: 'shipped'
   },
