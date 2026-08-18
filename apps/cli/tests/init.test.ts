@@ -26,7 +26,10 @@ let root: string
 let createdLabels: string[]
 
 /**
- * This package's own version — the single thing every generated published-shape
+ * This package's own version — what both invocation emitters pin to (the four
+ * workflows via `vinayaRun`, the two git hooks via `hookRun`); the `VINAYA.md`
+ * doctrine pointer is human-facing prose and deliberately unpinned. Formerly
+ * described as the single thing every generated published-shape
  * invocation pins to (`ownVersion()` in lib/artifacts.ts), workflows and git
  * hooks alike (atta-labs/vinaya#86).
  */

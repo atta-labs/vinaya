@@ -119,7 +119,8 @@ export function starterConfig(): VinayaConfig {
 // surfaces drifting apart is the defect atta-labs/vinaya#86 fixed (the hooks
 // pinned, the workflows did not). `doctor.ts` and `quickstart.ts` read the
 // same `package.json` for display, but neither feeds a generated artifact, so
-// neither can cause that drift. The root `VINAYA.md` doctrine pointer
+// neither can cause that drift — nor can `index.ts`'s own `readVersion()`,
+// the third such display reader. The root `VINAYA.md` doctrine pointer
 // (`doctrinePointer`) is deliberately left unpinned — it is a reading-order
 // hint a human runs by hand, not a CI invocation.
 //
@@ -140,7 +141,8 @@ export function starterConfig(): VinayaConfig {
 //   - **The archivist workflow resolves the other way, and is the sharp end.**
 //     It emits no install step (its jobs spawn no adopter code), so an
 //     unpinned spec there really did mean registry latest — in three jobs
-//     holding `issues: write` + `pull-requests: write`, on every push to main
+//     that all hold `issues: write` (two of them `pull-requests: write`, one
+//     `pull-requests: read`), covering between them every push to main
 //     and nightly. A compromised publish of this package would have run with
 //     that token in every adopter, unreviewed. (Origin of #86: a security
 //     review of atta-labs/attalabs#944.)
@@ -171,7 +173,7 @@ function ownVersion(): string {
 //     @attalabs/vinaya@<exact-installed-version>`, no build step. An adopter
 //     has no local copy to build and must not pay for a problem they do not
 //     have, so the shape stays npx; the version spec is exact for the reason
-//     in `ownVersion()` below.
+//     in `ownVersion()` above.
 //   - repo that vendors the CLI — build the workspace member and invoke the
 //     built file by path. NEVER `npx` here: npx is the thing that misresolves
 //     (it matches on the package NAME against the workspace before reading any
