@@ -128,8 +128,10 @@ This form is **forge-agnostic.** It depends on no GitHub feature, no `.github/PU
 ```markdown
 ## Summary
 
-<one paragraph: what shipped, the validated mechanism (if any), and the
-durable why. Links to `Closes #<N>` go here.>
+<one paragraph: what shipped and the durable why. Links to `Closes #<N>` go
+here. No verification claims — no "typecheck passes", no diff stats, no
+test counts. Those are the Evidence block below, and it is the ONLY sanctioned
+home for them: emitted by `vinaya pr report --write`, never hand-typed.>
 
 ## Test plan
 
@@ -144,6 +146,15 @@ empty list.>
       check — e.g. signing in with Clerk and running a real BYOK audit. The
       Principal runs this in a browser and ticks the box.>
 
+## Evidence
+
+Run `vinaya pr report --write <body-file>` and commit its output. Do not type
+this block by hand — see [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed).
+
+<!-- AEG:EVIDENCE:START -->
+[populated by `vinaya pr report --write` — never edited by hand]
+<!-- AEG:EVIDENCE:END -->
+
 ## Scope
 
 <one-paragraph summary of the blast radius — projects touched, packages
@@ -157,16 +168,23 @@ field on its own line:>
 
 | Field            | Requirement                                                                                                                                                                       |
 |------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Summary          | One paragraph. Closes the Issue with `Closes #<N>` somewhere in the body.                                                                                                         |
+| Summary          | One paragraph. Closes the Issue with `Closes #<N>` somewhere in the body. No verification claims (typecheck/lint/test/diff-stat output, pass counts) — those belong exclusively in Evidence, below.                    |
 | Test plan        | Every runtime check tagged `[agent]` or `[principal]`. The brief-authoring skill makes this a **required** field — empty plans use `Test Plan: unit-tests-only` as the sentinel.   |
 | `[agent]` items  | Items the Developer-agent can run end-to-end before opening the PR. Paste the **actual command output**, not a paraphrase. (This is the `[agent]` half of the Verification phase, see `state-machine.md` § Verification.) |
 | `[principal]` items | Items only the Principal can run (auth-gated, vendor-key-dependent, visual). The agent **does not tick these** — the Principal does, after running in a real browser.            |
+| Evidence         | The `AEG:EVIDENCE` block — emitted by `vinaya pr report --write`, never hand-typed. See [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed). `check-evidence-fresh` refuses a body whose block doesn't match the head it's attached to. |
 | Scope            | One paragraph + the Tier field. Ends with `**Tier:** 0 \| 1 \| 3` on its own line.                                                                                                |
 | **Tier syntax**  | Exactly `Tier: 0`, `Tier: 1`, `Tier: 3` (plain) — or `**Tier:** 0`, `**Tier:** 1`, `**Tier:** 3` (bold). `Tier 1` (no colon), `Tier-1`, `Tier:1` (no space) are **rejected** by CI. |
 | `Doc-ack:`       | Optional. `Doc-ack: <pointer> — <note>` — acknowledges an external (URL) binding in `.vinaya/doc-owners` that fired on this PR. `<pointer>` must exactly match the binding URL. Separator is flexible — em-dash `—`, en-dash `–`, or a plain ASCII hyphen `-` (with surrounding whitespace) are all accepted, so `Doc-ack: <pointer> - <note>` parses identically. **Body field, not a label.** (state-machine.md Section 15) |
 | `vinaya/waiver:docs` (label, not a field) | Optional. A doc-coverage waiver is honored PR-wide ONLY when this label is applied AND the actor of its labeling timeline event is a configured principal — there is no body-field waiver grammar anymore; a parseable string is never sufficient. **Principal only**, applied outside any agent session. |
 
 **What this section is NOT:** not a style guide, not exhaustive PR etiquette. It is the **contract** for the shapes `verify-docs` (C0–C5), Brief Validation, the Verification phase, and the Pre-merge gate all read. Add anything you want beneath the four sections; don't omit or reshape any of them.
+
+### Evidence is emitted, never typed
+
+The `AEG:EVIDENCE` block is populated by running `vinaya pr report --write <body-file>` — never by hand-typing a diff stat, a test count, or a gate's pass/fail line into the PR body. Regenerate it after your final commit, before opening or editing the PR: `vinaya pr report --write` both runs the real gates (Group B) and recomputes the diff stat (Group A), so its own exit code doubles as the pre-open verification run — a red gate still writes the block (recording the failure honestly) but exits non-zero, so a scripted `--write && open-pr` never carries a failing suite onto the forge.
+
+`check-evidence-fresh` (CI) refuses a body whose block doesn't match the head it's attached to — recomputing Group A exactly and checking Group B for staleness. This closes fabrication for **Group A only** (a hand-typed diff stat cannot survive a byte-compare); Group B is checked for freshness, not re-run, so a stale-but-not-fabricated Group B slips past unless the block is also out of date. Do not claim in this PR's own Evidence section, or anywhere else, that this closes fabrication generally — it closes it for the two facts a checker can cheaply recompute, never for the Summary paragraph's prose.
 
 ---
 

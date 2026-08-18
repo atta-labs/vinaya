@@ -5,7 +5,7 @@ sidebar_title: "Template: PR report"
 
 **Copy the block below the divider into the PR body file (opened via `open-pr.ts --body-file`) and replace every `[…]` placeholder with real content.** This packages the canonical PR-body form defined by `aeg-root/roles/developer.md` § "PR body — canonical form" — that section remains the contract for what each field requires (exact `Tier:` syntax, tagging rules, the optional `Conforms-to:`/`Doc-ack:`/`Doc-waiver:` fields); this file is the container.
 
-**The anchor comments are load-bearing.** Each gate-read field — `Closes #N`, `Project:`, `Tier:`, the Test Plan section, the Premise block — sits inside an AEG anchor pair (an HTML comment pair, invisible on the rendered PR). When an anchor pair for a field is present, every gate reads that field **exclusively from inside the pair**, ignoring identical-looking text anywhere else in the body — a pasted reference brief, a quoted example, a duplicate section can no longer be mistaken for the real field. Bodies without anchors remain fully recognized (prose recognition is the compatibility fallback); use at most one anchor pair per field. Keep the anchors when you fill this in.
+**The anchor comments are load-bearing.** Each gate-read field — `Closes #N`, `Project:`, `Tier:`, the Test Plan section, the Premise block, the Evidence block — sits inside an AEG anchor pair (an HTML comment pair, invisible on the rendered PR). When an anchor pair for a field is present, every gate reads that field **exclusively from inside the pair**, ignoring identical-looking text anywhere else in the body — a pasted reference brief, a quoted example, a duplicate section can no longer be mistaken for the real field. Bodies without anchors remain fully recognized (prose recognition is the compatibility fallback) for every field **except Evidence**, which has no prose fallback — it is never hand-typed. Use at most one anchor pair per field. Keep the anchors when you fill this in.
 
 **The `AEG:PREMISE` anchor is not optional when the brief carried a `Premise:` block.** Without it, `premise-recheck` scans the *whole* body for anything premise-shaped — including the brief's own original pins, pasted verbatim into the `<details>` reference copy at the bottom — and re-asserts those against the code you just changed. A premise pinning the *pre-fix* state will correctly fail once your fix lands, because the pin describes what you just changed away from. Put a fresh, post-fix, currently-true assertion inside `<!-- AEG:PREMISE:START -->` / `<!-- AEG:PREMISE:END -->` so the re-check asserts something true of the shipped diff, not the brief's stale snapshot.
 
@@ -22,7 +22,7 @@ Closes #[N]
 
 ## Summary
 
-[SUMMARY — one paragraph: what shipped, the validated mechanism, the durable why. Then the decisions you made that weren't explicit in the brief — name the alternatives and why you picked yours, so the Principal can reverse a wrong call.]
+[SUMMARY — one paragraph: what shipped and the durable why. Then the decisions you made that weren't explicit in the brief — name the alternatives and why you picked yours, so the Principal can reverse a wrong call. No verification claims here (no "typecheck passes", no diff stats, no test counts) — those go in the emitted Evidence block below, never typed by hand.]
 
 ## Test plan
 
@@ -40,9 +40,13 @@ Closes #[N]
 
 [Omit this whole section — anchors and all — only when §4 of the brief had no real code surface (a Tier 0 doc-only or planning-only change). Any brief with a `Premise:` block gets a fresh one here; do not leave the brief's original block as the only copy in the body, since it lives inside the `<details>` reference copy below and unanchored will be picked up by the re-check instead of this one.]
 
-## Verification evidence
+## Evidence
 
-[EVIDENCE — the actual output (not a paraphrase) for every static gate and every `[agent]` Test Plan item: typecheck, lint, tests, verify-docs, and the full `git diff main --stat` change list. Long output may be elided — say so where you elide.]
+Run `vinaya pr report --write <this-body-file>` and commit its output — this block is generated, never hand-typed. `check-evidence-fresh` refuses a body whose block doesn't match the head it's attached to.
+
+<!-- AEG:EVIDENCE:START -->
+[run `vinaya pr report --write` to populate — do not type this block by hand]
+<!-- AEG:EVIDENCE:END -->
 
 ## Scope
 

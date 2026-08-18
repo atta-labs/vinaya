@@ -14,6 +14,7 @@ import { initCommand, initProductCommand } from './commands/init.js'
 import { issueCreateCommand, issueEditCommand } from './commands/issue.js'
 import { newCheckCommand } from './commands/new-check.js'
 import { prCreateCommand, prEditCommand } from './commands/pr.js'
+import { prReportCommand } from './commands/pr-report.js'
 import { quickstartCommand } from './commands/quickstart.js'
 import { runStudio } from './commands/studio.js'
 import { upgradeCommand } from './commands/upgrade.js'
@@ -109,8 +110,10 @@ try {
         prCreateCommand(rest)
       } else if (subcommand === 'edit') {
         prEditCommand(rest)
+      } else if (subcommand === 'report') {
+        await prReportCommand(rest)
       } else {
-        console.error(`Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'create' or 'edit')`)
+        console.error(`Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'create', 'edit', or 'report')`)
         process.exit(2)
       }
       break
