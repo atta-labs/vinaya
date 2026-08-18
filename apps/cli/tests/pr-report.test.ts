@@ -1,5 +1,9 @@
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { buildReport, type GateRunResult, replaceEvidenceBlock } from '../src/commands/pr-report'
+import { buildReport, computeGroupA, type GateRunResult, replaceEvidenceBlock } from '../src/commands/pr-report'
 
 // Fixed inputs throughout — no real `git`/`gh` calls, no real gate suite. See
 // pr-report.ts's module doc, "Recursion, and why gate running is
@@ -72,6 +76,43 @@ describe('buildReport', () => {
     // Only the two labelled sections and the Head line — no Summary/Notes/etc.
     const headings = [...result.blockInner.matchAll(/^###.*$/gm)].map((m) => m[0])
     expect(headings).toEqual(['### Group A — recomputable', '### Group B — attested'])
+  })
+})
+
+describe('computeGroupA — real git, no origin/main fallback (found live, own dogfood run)', () => {
+  // A bare local fixture with NO `origin` remote at all — several existing
+  // apps/cli fixtures are exactly this shape, and running this command
+  // inside one is exactly how the bug below was found: `git merge-base
+  // origin/main HEAD` fails outright, and the ORIGINAL code silently
+  // swallowed that to an empty base, producing a Group A that claimed no
+  // diff existed even though the fixture carried a real one.
+  function initFixtureWithFeatureBranch(): string {
+    const root = mkdtempSync(join(tmpdir(), 'pr-report-groupa-'))
+    const git = (args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' })
+    git(['init', '-q', '-b', 'main'])
+    git(['config', 'user.email', 'test@example.com'])
+    git(['config', 'user.name', 'Test'])
+    writeFileSync(join(root, 'a.txt'), 'hello\n')
+    git(['add', 'a.txt'])
+    git(['commit', '-q', '-m', 'Chore: initial'])
+    git(['checkout', '-qb', 'feature/x'])
+    writeFileSync(join(root, 'a.txt'), 'hello\nworld\n')
+    git(['commit', '-aq', '-m', 'Feat: add a line'])
+    return root
+  }
+
+  it('resolves a real, non-empty diff via the `main` fallback when `origin/main` does not exist', () => {
+    const root = initFixtureWithFeatureBranch()
+    const originalCwd = process.cwd()
+    try {
+      process.chdir(root)
+      const groupA = computeGroupA()
+      expect(groupA.base).not.toBe('')
+      expect(groupA.numstat).toContain('a.txt')
+    } finally {
+      process.chdir(originalCwd)
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 

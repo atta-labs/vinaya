@@ -72,12 +72,28 @@ function git(args: string[]): string {
   }
 }
 
+/**
+ * `origin/main`, falling back to plain `main` when the former doesn't
+ * resolve — same fallback `pr.ts`'s `localChangedFiles()` and
+ * `checks/bin/check-doc-coverage.ts` already use. Not every repo this runs
+ * in has a remote named `origin`: a bare local fixture (this command's own
+ * test setup, and several existing `apps/cli/tests/*.test.ts` fixtures) has
+ * none, and `git merge-base origin/main HEAD` fails outright there — found
+ * live, running this command inside such a fixture: it exited 0 and wrote a
+ * block whose Group A was silently empty, despite the fixture carrying a
+ * real diff.
+ */
+function resolveMergeBase(head: string): string {
+  const base = git(['merge-base', 'origin/main', head])
+  return base || git(['merge-base', 'main', head])
+}
+
 export type GroupA = { head: string; base: string; numstat: string }
 
-/** The head sha, its merge-base against `origin/main`, and the width-invariant `--numstat` diff between them. */
+/** The head sha, its merge-base against `origin/main` (or `main`), and the width-invariant `--numstat` diff between them. */
 export function computeGroupA(): GroupA {
   const head = git(['rev-parse', 'HEAD'])
-  const base = head ? git(['merge-base', 'origin/main', head]) : ''
+  const base = head ? resolveMergeBase(head) : ''
   const numstat = base ? git(['diff', `${base}...${head}`, '--numstat']) : ''
   return { head, base, numstat }
 }

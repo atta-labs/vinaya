@@ -47,6 +47,12 @@ function git(args: string[]): string {
   }
 }
 
+/** Same `origin/main` → `main` fallback as `pr-report.ts`'s `resolveMergeBase` — see that one's doc comment for why. */
+function resolveMergeBase(head: string): string {
+  const base = git(['merge-base', 'origin/main', head])
+  return base || git(['merge-base', 'main', head])
+}
+
 function fetchHeadSha(prNumber: number): string | null {
   try {
     const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'headRefOid', '-q', '.headRefOid'], {
@@ -92,7 +98,7 @@ function main(): void {
     process.exit(1)
   }
 
-  const base = git(['merge-base', 'origin/main', resolvedHead])
+  const base = resolveMergeBase(resolvedHead)
   const actualNumstat = base ? git(['diff', `${base}...${resolvedHead}`, '--numstat']) : ''
 
   const result = compareEvidenceBlock(region, resolvedHead, actualNumstat)
