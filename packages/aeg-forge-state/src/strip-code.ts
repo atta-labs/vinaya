@@ -49,6 +49,73 @@ export function maskCode(body: string): string {
   return maskIndentedCode(maskFencedCode(body, fill), fill).replace(/(`+)[^\n]*?\1/g, (m) => ' '.repeat(m.length))
 }
 
+/** A `<details ...>` opening tag (not the self-closed `<details/>` shape — not in real use here). */
+const DETAILS_OPEN = /<details\b[^>]*>/gi
+/** A `</details>` closing tag, tolerant of interior whitespace. */
+const DETAILS_CLOSE = /<\/details\s*>/gi
+
+/**
+ * Blanks (same-length-masks, index-preserving — this function has only one
+ * mode; every caller needs positions, not shortened text) `<details>…</details>`
+ * blocks — this repo's standing convention (`aeg-root/templates/pr-report-template.md`)
+ * for wrapping the frozen, verbatim reference-brief copy below a PR's live
+ * report, "the gates read the anchored fields above, never this block." No
+ * gate needed to make that literally true until now — `body-bare-digits`
+ * scans PR-body prose for bare digits, and a pasted brief is loaded with
+ * dates, sizes, and example figures that are quoted history, not a live
+ * claim about the PR carrying it.
+ *
+ * Tracks real GFM rendering, not CommonMark's own blank-line-terminated
+ * "Type 6" HTML block rule: GitHub renders a `<details>` spanning blank
+ * lines and nested markdown as one real collapsible element (every extant
+ * PR body using the canonical form does exactly this), so this scanner
+ * follows actual tag nesting depth instead of stopping at the first blank
+ * line, which would under-mask and leak real reference-brief prose back
+ * into the scan.
+ *
+ * **MUST run on `maskCode`'s OUTPUT, never the reverse** — call as
+ * `maskDetailsBlocks(maskCode(body))`. A `<details>` tag quoted inside a
+ * fenced block or an inline code span is already inert same-length filler
+ * by the time this runs, so it can never be mistaken for a real region
+ * boundary. Reversing the order reopens the exact decoy class
+ * `anchoredRegionBounds` closed for the `AEG:*` anchors (PR #126 review): a
+ * real narrative digit could sit between a quoted `` `<details>` `` and a
+ * real `</details>`, and this scanner would mask it by mistake, believing a
+ * real block was open when only a code-quoted example was.
+ *
+ * **Nesting.** A `<details>` may contain another `<details>` (valid GFM,
+ * real usage in worked examples). Depth-tracked, not boolean, so an inner
+ * close does not prematurely resume scanning inside a still-open outer
+ * block.
+ *
+ * **An unterminated block fails closed, on purpose** — mirroring
+ * `scanFencedCode`'s identical call for an unclosed fence
+ * (`hasUnterminatedFence`'s doc comment). A `<details>` with no matching
+ * `</details>` before end-of-body is exactly the shape a browser's own HTML
+ * parser resolves by implicitly closing the element at end-of-document, so
+ * masking to end-of-body is not a defensive guess — it matches what GitHub
+ * actually renders.
+ *
+ * A stray, unmatched `</details>` (depth already 0) is left untouched —
+ * inert text, not a region boundary; masking it would blank real prose for
+ * no reason any closer justifies.
+ */
+export function maskDetailsBlocks(body: string): string {
+  const fill = (line: string) => ' '.repeat(line.length)
+  const lines = body.split('\n')
+  let depth = 0
+
+  const out = lines.map((line) => {
+    const opens = line.match(DETAILS_OPEN)?.length ?? 0
+    const closes = line.match(DETAILS_CLOSE)?.length ?? 0
+    const maskThisLine = depth > 0 || opens > 0
+    depth = Math.max(0, depth + opens - closes)
+    return maskThisLine ? fill(line) : line
+  })
+
+  return out.join('\n')
+}
+
 /**
  * Removes fenced code blocks and inline code spans entirely, so example/quoted
  * text (a Test Plan's `Closes #123` fixture, a pasted reference brief, a
