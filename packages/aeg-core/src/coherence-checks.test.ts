@@ -384,6 +384,10 @@ describe('A2: archived-without-provenance', () => {
   it('skip — entry with no facts at all (forge unavailable) is never flagged', () => {
     // A forge outage leaves `facts` undefined. A2 must not read the provenance
     // map for such an entry: a missing provenance comment is unknowable, not absent.
+    // The map is seeded `false` — the value that WOULD produce a finding — on
+    // purpose. `!e.facts` fires first so the entry never reaches the lookup,
+    // which is exactly the point: not "no map entry, so nothing to report", but
+    // "a would-fail map entry, still nothing to report, because facts are unknown".
     const entries = [makeEntry('iter-1', '1', 101, undefined)]
     const map = new Map([['iter-1/1', false]])
     passesWithNoFailures(checkA2(entries, map))
@@ -885,10 +889,21 @@ describe('D1: dispatched-on-unmet-deps', () => {
     expect(r.failures[0]!.reason).toContain('(issue #?)')
   })
 
-  it('fail — a task-ID dep resolves via the cross-tranche fallback key', () => {
-    // `resolveDepEntry` tries `<slug>/<taskId>` first, then the bare `<taskId>`
-    // key. A dep living in a DIFFERENT tranche is only reachable via that
-    // second lookup; without it the dep reads as "unknown" and D1 silently passes.
+  it("fail — a bare `<taskId>` key resolves via resolveDepEntry's second lookup", () => {
+    // `resolveDepEntry` tries `<slug>/<taskId>` first, then a bare `<taskId>` key.
+    //
+    // UNREACHABLE FROM EVERY IN-REPO CALLER, and this test does not pretend
+    // otherwise. Both producers of `taskToEntry` key exclusively by
+    // `<slug>/<taskId>` — `bin/verify-coherence.ts:680` keys by each entry's own
+    // `trancheSlug`, and `apps/cli/src/checks/bin/check-coherence.ts:149` keys
+    // every entry by the CURRENT branch's slug. Neither ever emits a bare key,
+    // so the fallback below cannot fire in production; the map here is
+    // hand-built to reach it. Do not read this case as coverage of
+    // cross-tranche `depends-on` resolution: that is genuinely broken at BOTH
+    // call sites (a `depends-on: <taskId>` naming another tranche's task
+    // resolves to `undefined` and D1 silently passes it, with or without this
+    // fallback). Reported as a defect in the PR body, not fixed here — the
+    // fix belongs to `bin/`/`apps/cli`, outside this brief's surface.
     const dep = makeEntry('other-tranche', '7', 700, makeFacts({ issueState: 'open' }))
     const main = makeEntry('iter-1', '2', 200, makeFacts({ prState: 'open' }), false, ['7'])
     const r = checkD1([main, dep], new Map(), new Map([['7', dep]]))
@@ -935,14 +950,19 @@ describe('L1: stale-active-tranche (advisory — info, never fail)', () => {
     expect(r.failures).toHaveLength(0)
   })
 
-  it('info + no findings — active tranche absent from the entries map is skipped', () => {
-    // No entries at all for the slug. `every()` over an empty list is vacuously
-    // true, so a naive implementation would report EVERY entry-less tranche as
-    // "all closed, archive it". The empty-guard is what stops that.
-    const f = makeTrancheFile('iter-1', false)
-    const r = checkL1([f], new Map<string, TaskEntry[]>())
+  it('info — a tranche absent from the entries map is skipped without suppressing its neighbours', () => {
+    // No entries at all for `iter-absent`. `every()` over an empty list is
+    // vacuously true, so a naive implementation would report EVERY entry-less
+    // tranche as "all closed, archive it". The empty-guard is what stops that.
+    // Paired with a second tranche that SHOULD report, so this asserts the skip
+    // is scoped to the absent slug rather than "empty in, empty out".
+    const absent = makeTrancheFile('iter-absent', false)
+    const reporting = makeTrancheFile('iter-closed', false)
+    const entries = [makeEntry('iter-closed', '1', 101, makeFacts({ issueState: 'closed' }))]
+    const r = checkL1([absent, reporting], new Map([['iter-closed', entries]]))
     expect(r.status).toBe('info')
-    expect(r.failures).toHaveLength(0)
+    expect(r.failures).toHaveLength(1)
+    expect(r.failures[0]!.tranche).toBe('iter-closed')
   })
 
   it('info + no findings — active tranche whose every entry lacks facts is skipped', () => {
@@ -985,11 +1005,16 @@ describe('L2: premature-archive (advisory — info, never fail)', () => {
     expect(r.failures).toHaveLength(0)
   })
 
-  it('info + no findings — archived tranche absent from the entries map is skipped', () => {
-    const f = makeTrancheFile('iter-arch', true)
-    const r = checkL2([f], new Map<string, TaskEntry[]>())
+  it('info — an archived tranche absent from the entries map is skipped without suppressing its neighbours', () => {
+    // Same shape as L1's: the `?? []` fallback must skip only the slug with no
+    // entries, not swallow a real premature-archive finding in a sibling.
+    const absent = makeTrancheFile('iter-absent', true)
+    const reporting = makeTrancheFile('iter-premature', true)
+    const entries = [makeEntry('iter-premature', '1', 101, makeFacts({ issueState: 'open' }), true)]
+    const r = checkL2([absent, reporting], new Map([['iter-premature', entries]]))
     expect(r.status).toBe('info')
-    expect(r.failures).toHaveLength(0)
+    expect(r.failures).toHaveLength(1)
+    expect(r.failures[0]!.tranche).toBe('iter-premature')
   })
 
   it('info + no findings — a factless entry in an archived tranche is never flagged', () => {
