@@ -16,7 +16,7 @@
  * applicability from the labels; this module only checks the body.
  */
 
-import { hasLabel, projectsFromBody, SECTION_HEADER } from '@attalabs/aeg-forge-state'
+import { hasLabel, projectFieldFromBody, projectsFromBody, SECTION_HEADER } from '@attalabs/aeg-forge-state'
 import { stripCode } from './anchored-region'
 
 export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }
@@ -140,6 +140,104 @@ const PATH_TEXT = (body: string): string => stripCode(body, { inlineSpans: 'keep
 export type ProjectPath = { name: string; path: string }
 
 /**
+ * A C0 or C1 control character — `ESC` (and therefore every ANSI/OSC terminal
+ * escape), `BEL`, and the rest.
+ *
+ * Tested by code point rather than by a character-class regex on purpose: a
+ * regex spelling this range is itself a lint violation
+ * (`noControlCharactersInRegex`), and the rule is right — the readable way to
+ * say "control character" is to name the code points.
+ */
+function isControlCodePoint(codePoint: number): boolean {
+  return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)
+}
+
+/**
+ * Characters that change how the rest of a line *renders* without printing
+ * anything themselves — the Trojan-Source class.
+ *
+ * Stripping C0/C1 closes ANSI and OSC, but it is not the whole of "a hostile
+ * value cannot repaint or hide the failure being reported": a bidi override
+ * (U+202E) reverses the rendered name in the operator's terminal, and a
+ * zero-width character (U+200B) splits a name so it reads as a registered one.
+ * Same untrusted sources, same goal, so they are dropped by the same pass.
+ *
+ *   U+200B–200F  zero width space/joiners, LRM/RLM
+ *   U+202A–202E  bidi embedding and override
+ *   U+2066–2069  bidi isolates
+ *   U+FEFF       byte-order mark used as a zero-width no-break space
+ */
+function isDisplayControlCodePoint(codePoint: number): boolean {
+  return (
+    (codePoint >= 0x200b && codePoint <= 0x200f) ||
+    (codePoint >= 0x202a && codePoint <= 0x202e) ||
+    (codePoint >= 0x2066 && codePoint <= 0x2069) ||
+    codePoint === 0xfeff
+  )
+}
+
+/**
+ * How many residue values one error message will name before summarising the
+ * rest. `field.unparsed` is one entry per comma-separated segment, so a single
+ * body of repeated `%,` pairs yields tens of thousands of them; uncapped they
+ * render into one enormous string that lands in `CheckFailure.reason` and in a
+ * blocking gate's `--json` output. Naming the first few is what an author needs
+ * to find the line; the count carries the rest.
+ */
+const MESSAGE_VALUE_COUNT_MAX = 5
+
+/** Renders a residue list for an error message: the first few values, then a count. */
+function residueForMessage(values: string[]): string {
+  const shown = values.slice(0, MESSAGE_VALUE_COUNT_MAX).map((v) => `\`${forMessage(v)}\``)
+  const rest = values.length - shown.length
+  return rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.join(', ')
+}
+
+/** How much of one untrusted value an error message will carry before eliding. */
+const MESSAGE_VALUE_MAX = 64
+
+/**
+ * Renders an untrusted string into an error message.
+ *
+ * **Neither side of this gate's message is validated at its source.** Registered
+ * names come from `parseRegistry`, which by design "is forgiving" and applies no
+ * shape check at all — a name is whatever text sat in a markdown table cell. The
+ * declared side is a task Issue's body. Vinaya ships inside the published
+ * `@attalabs/vinaya` tarball and runs against *guest* repos, so both are attacker-
+ * reachable: a hostile `.vinaya/projects.md` row (or Issue body) carrying `ESC`
+ * renders ANSI/OSC sequences straight through a Vinaya error into the operator's
+ * terminal, where they can repaint or hide the very failure being reported.
+ *
+ * Sanitising here rather than at `parseRegistry` is deliberate: the registry's
+ * tolerance is load-bearing (a typo'd row must not crash Studio), and a name that
+ * is merely *odd* must still resolve for exact-match purposes. The constraint
+ * belongs where the value crosses into a rendered message, which is here.
+ *
+ * Strips control characters, collapses whitespace to single spaces (so a value
+ * cannot span lines and forge a second error line), and elides past
+ * `MESSAGE_VALUE_MAX`. Everything a well-formed project name is made of survives
+ * untouched — this is sanitation, not redaction.
+ */
+function forMessage(value: string): string {
+  // Whitespace collapses FIRST, so a newline or tab becomes a space rather than
+  // vanishing and welding two words together — and a multi-line value cannot
+  // forge what looks like a second error line.
+  const kept: string[] = []
+  for (const ch of value.replace(/\s+/g, ' ')) {
+    const codePoint = ch.codePointAt(0) ?? 0
+    if (isControlCodePoint(codePoint) || isDisplayControlCodePoint(codePoint)) continue
+    kept.push(ch)
+  }
+  // Elide by CODE POINT, not by UTF-16 index. `slice` on a string counts code
+  // units, so a cut landing inside an astral character emits a lone surrogate —
+  // a malformed string, from the function whose job is to make this value safe.
+  const cleaned = kept.join('').trim()
+  if (cleaned.length === 0) return '(unprintable)'
+  const points = Array.from(cleaned)
+  return points.length > MESSAGE_VALUE_MAX ? `${points.slice(0, MESSAGE_VALUE_MAX).join('')}…` : cleaned
+}
+
+/**
  * The projects a task Issue declares — its body's `**Project:**` field, and
  * only that. Project is a **field, not a label** (doctrine): #614 dropped the
  * `project:*` labels outright, and `@attalabs/aeg-forge-state`'s `list-tasks.ts`
@@ -206,6 +304,46 @@ export function declaredProjects(body: string, _labels: string[]): string[] {
  * gates with two different messages. This check answers only "do the declared
  * names resolve".
  *
+ * **A declared value that resolves to no name FAILS** — the distinction the
+ * parser's old bare `string[]` could not express. Every value used to be filtered
+ * through the slug shape and dropped without trace, so `**Project:** notaproject.`
+ * (trailing full stop) and a fully backticked or bolded value each arrived here as
+ * an empty list, identical to a body that declares nothing. The gate cannot refuse
+ * a name it never receives, so it passed **vacuously** on exactly the bodies it
+ * exists to catch. `projectFieldFromBody` now separates "no field" (still a pass)
+ * from "a field present that resolves to nothing" (a fail, naming the residue when
+ * there is one and calling the field empty when there is not) and from "a field
+ * this reader could not see" (an unterminated fence — also a fail, see above).
+ *
+ * **What the corpus does and does not say.** Measured across every task Issue
+ * in this repo's forge: zero carry any of those shapes, so this closed a
+ * fail-open without turning a single live body red. That is a statement about
+ * bodies that exist, not a proof that none can slip past — a constructed body
+ * can carry a shape the live corpus happens not to.
+ *
+ * **A `Project:` line inside CODE — a balanced fence, or a ≥4-column-indented
+ * block after a blank line — is an example, not a declaration, and is not
+ * read**, by the same rule `stripCode` already applies to every other
+ * code-aware gate in this file. This is deliberate, not a gap: it matches how
+ * the forge itself renders the line, so refusing to read it is refusing to read
+ * what GitHub also treats as code. Only an UNTERMINATED fence differs — it has
+ * no natural end, so `stripCode` blanks everything after it including the
+ * body's foot, and that swallowed region fails closed rather than reading as
+ * absent (see `hasUnterminatedFence` above). An indented block has no
+ * equivalent unterminated state — it always ends, either at a dedent or at the
+ * body's own end — so it stays a pass like any other example; pinned by test
+ * (`list-tasks.test.ts`) so the difference is a recorded decision, not a silent
+ * surprise.
+ *
+ * A known remaining gap of a DIFFERENT class, out of scope here because it is
+ * the field's grammar rather than its code-blindness: a `Project:` line inside
+ * an HTML comment still outranks the real declaration, since a comment is not
+ * code and `stripCode` correctly leaves it.
+ *
+ * **What reaches the message is constrained** (`forMessage`). Both the declared
+ * value and the registered names are untrusted — `parseRegistry` validates
+ * nothing, and Vinaya runs against guest repos — so neither is rendered raw.
+ *
  * Dormant when `registeredNames` is empty (no `.vinaya/projects.md` on disk) —
  * the same seam-is-dormant-when-absent shape `checkBlastRadiusScope` and
  * `doc-owners` use. A single-project repo has no registry by design, and a
@@ -218,23 +356,65 @@ export function checkProjectsRegistered(
   registeredNames: string[]
 ): IssueSectionResult {
   if (registeredNames.length === 0) return { status: 'pass', errors: [] }
+  const field = projectFieldFromBody(body)
+  if (!field.declared) return { status: 'pass', errors: [] }
   const known = new Set(registeredNames.map((n) => n.trim()))
-  const unregistered = projectsFromBody(body).filter((p) => !known.has(p))
-  if (unregistered.length === 0) return { status: 'pass', errors: [] }
-  // A name differing from a real row only in case is the likeliest typo, and the
-  // least obvious from the registered list alone — call it out by name.
-  const caseHints = unregistered
-    .map((p) => {
-      const row = [...known].find((k) => k.toLowerCase() === p.toLowerCase())
-      return row ? `\`${p}\` differs from the registered \`${row}\` only in case` : null
-    })
-    .filter((h): h is string => h !== null)
-  return {
-    status: 'fail',
-    errors: [
-      `issue-validation project registry: the \`**Project:**\` field declares ${unregistered.join(', ')} — no such row in \`.vinaya/projects.md\`, which is the authority for valid project names (registered: ${[...registeredNames].join(', ')}). Fix the name, or register the project with \`vinaya init product <name> --path <folder>\` first; an unregistered project has no specs to read and no per-project state to update.${caseHints.length > 0 ? ` Note: ${caseHints.join('; ')} — project names are matched exactly, because every downstream consumer compares them literally.` : ''} This reads the same field \`projectsFromBody\` derives the task's project from, so a name here that is not a row is a task that resolves to a project that does not exist.`
-    ]
+  const registeredList = [...registeredNames].map(forMessage).join(', ')
+  const errors: string[] = []
+
+  // An unterminated fence ran to end of body and swallowed the region the field
+  // lives in, so the value below is what the RAW body says and cannot be trusted
+  // — inside a swallowed region a quoted example and a real declaration are
+  // indistinguishable. Fail closed and point at the malformed fence: accusing
+  // the name of not being a project would be wrong (it may be a perfectly good
+  // registered one) and would send the author to fix the wrong line.
+  if (field.unreadable) {
+    return {
+      status: 'fail',
+      errors: [
+        `issue-validation project registry: the body has an unterminated code fence, so its \`**Project:**\` field could not be read reliably — the fence runs to end of body (CommonMark, and how the forge renders it), swallowing everything after it including the foot field where the declaration lives by convention. Read from the raw body the field says ${residueForMessage(field.unparsed) || '(nothing)'}, but a line inside a swallowed region may be a quoted example rather than a real declaration, so this gate refuses rather than guessing which. Balance the fences — every opening run of backticks or tildes needs a closing run at least as long — and the field reads normally.`
+      ]
+    }
   }
+
+  const unregistered = field.names.filter((p) => !known.has(p))
+  if (unregistered.length > 0) {
+    // A name differing from a real row only in case is the likeliest typo, and the
+    // least obvious from the registered list alone — call it out by name.
+    const caseHints = unregistered
+      .map((p) => {
+        const row = [...known].find((k) => k.toLowerCase() === p.toLowerCase())
+        return row ? `\`${forMessage(p)}\` differs from the registered \`${forMessage(row)}\` only in case` : null
+      })
+      .filter((h): h is string => h !== null)
+    errors.push(
+      `issue-validation project registry: the \`**Project:**\` field declares ${unregistered.map(forMessage).join(', ')} — no such row in \`.vinaya/projects.md\`, which is the authority for valid project names (registered: ${registeredList}). Fix the name, or register the project with \`vinaya init product <name> --path <folder>\` first; an unregistered project has no specs to read and no per-project state to update.${caseHints.length > 0 ? ` Note: ${caseHints.join('; ')} — project names are matched exactly, because every downstream consumer compares them literally.` : ''} This reads the same field \`projectsFromBody\` derives the task's project from, so a name here that is not a row is a task that resolves to a project that does not exist.`
+    )
+  }
+
+  // The fail-open this check was blind to. A value the parser cannot turn into a
+  // name never reached the loop above, so the gate had nothing to refuse and
+  // passed — on a body that declares a project as loudly as any other. Silence
+  // here is indistinguishable from "this task declares no project", and the two
+  // mean opposite things: one is a deliberate omission, the other is a
+  // declaration nothing in the system can resolve.
+  //
+  // Keyed on "declared and resolved to NOTHING", not on the residue: an empty
+  // `**Project:**` line yields no name and no residue either, and is the same
+  // vacuous pass one shape further along. The residue is named when there is
+  // one, because it is the whole of the fix — but its absence is not a pass.
+  if (field.names.length === 0) {
+    const residue = field.unparsed.length > 0 ? ` — ${residueForMessage(field.unparsed)}` : ' — the field is empty'
+    errors.push(
+      `issue-validation project registry: the \`**Project:**\` field is present but resolves to no project name${residue} (registered: ${registeredList}). A project name is a slug (\`[a-z0-9][a-z0-9-]*\`, matched exactly); prose, a parenthetical, or a sentence in this field resolves to no project at all, and this gate cannot check a name it never receives — which is how a declaration like this used to pass. Write the registered name on its own, or register the project with \`vinaya init product <name> --path <folder>\` first. If the task genuinely touches no registered project, omit the field rather than explaining its absence inside it — \`checkIssueRationale\` already requires the \`Project(s) + blast radius\` narrative field for that.`
+    )
+  } else if (field.unparsed.length > 0) {
+    errors.push(
+      `issue-validation project registry: the \`**Project:**\` field declares a value that is not a project name — ${residueForMessage(field.unparsed)} (registered: ${registeredList}). The rest of the field parsed, so this is a name the gate silently could not check rather than a field it could not read at all. A project name is a slug (\`[a-z0-9][a-z0-9-]*\`, matched exactly); write it on its own, or drop it if it names no project.`
+    )
+  }
+
+  return errors.length > 0 ? { status: 'fail', errors } : { status: 'pass', errors: [] }
 }
 
 /**
