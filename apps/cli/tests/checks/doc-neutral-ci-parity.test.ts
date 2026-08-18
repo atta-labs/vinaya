@@ -36,6 +36,11 @@ function repoWithFiredBinding(codeEdit: string): { dir: string; base: string } {
   git(dir, ['add', '-A'])
   git(dir, ['commit', '-qm', 'base'])
   const base = git(dir, ['rev-parse', 'HEAD'])
+  // The edit lands on a SECOND branch so `main` stays behind HEAD. With both
+  // commits on `main`, `git diff main...HEAD` is empty, the bin exits 0 before
+  // the binding is ever evaluated, and any assertion here passes for a reason
+  // unrelated to what it claims.
+  git(dir, ['checkout', '-qb', 'work'])
   writeFileSync(join(dir, 'src/x.ts'), codeEdit)
   git(dir, ['add', '-A'])
   git(dir, ['commit', '-qm', 'edit'])
@@ -61,6 +66,27 @@ describe('C5 Doc-neutral parity between the blocking check and verify-docs (#122
   it('still rejects a substantive change that declares Doc-neutral', async () => {
     const { dir, base } = repoWithFiredBinding('export const x = 2\n')
     expect(await runCheck(dir, base, 'Doc-neutral: docs/x.md — claimed neutral')).not.toBe(0)
+  })
+
+  // The evidence diff must use the ref that actually produced the changed-file
+  // list. With no `origin/main` (a local run, a shallow clone) the bins fall
+  // back to `main`; a closure still holding `origin/main` diffs against a ref
+  // that resolves nothing, returns null, and the declaration fails for an
+  // unrelated reason. Runs with BASE_SHA unset so the fallback is exercised.
+  it('clears via the fallback ref when origin/main does not exist', async () => {
+    const { dir } = repoWithFiredBinding('export const x = 1\n// a clarifying comment\n')
+    const proc = Bun.spawn(['bun', BIN], {
+      cwd: dir,
+      env: {
+        ...process.env,
+        BASE_SHA: '',
+        PR_BODY: 'Doc-neutral: docs/x.md — comment-only edit',
+        PR_NUMBER: ''
+      },
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+    expect(await proc.exited).toBe(0)
   })
 
   it('still fires when nothing is declared', async () => {
