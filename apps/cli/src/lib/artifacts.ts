@@ -113,14 +113,67 @@ export function starterConfig(): VinayaConfig {
 }
 
 // ---------------------------------------------------------------------------
+// The version both command emitters pin to — ONE source, shared by the four
+// workflows via `vinayaRun` and the two git hooks via `hookRun`. There is
+// deliberately no second source for a generated artifact's pin: the two
+// surfaces drifting apart is the defect atta-labs/vinaya#86 fixed (the hooks
+// pinned, the workflows did not). `doctor.ts` and `quickstart.ts` read the
+// same `package.json` for display, but neither feeds a generated artifact, so
+// neither can cause that drift — nor can `index.ts`'s own `readVersion()`,
+// the third such display reader. The root `VINAYA.md` doctrine pointer
+// (`doctrinePointer`) is deliberately left unpinned — it is a reading-order
+// hint a human runs by hand, not a CI invocation.
+//
+// Why exact, and never bare or `@latest`:
+//
+//   - **Bare is not "latest" — and which way it resolves depends on the
+//     adopter.** Where the generated `vinaya-checks.yml` carries an install
+//     step — which it does only when the adopter declares `ci.setup` — a
+//     devDependency copy of `@attalabs/vinaya` puts `node_modules/.bin/vinaya`
+//     on disk and npx prefers it over the registry. Measured 2026-08-17 in
+//     atta-labs/attalabs, which declares `ci.setup`: the same bare command
+//     resolved 0.8.2 inside that repo and 0.9.0 in /tmp. There, CI's version
+//     was an accident of a devDependency no workflow referenced — change or
+//     drop it and CI jumps to registry latest with no commit and no diff.
+//     An adopter that declares no `ci.setup` gets no install step at all
+//     (`adopterSetupStep` returns `''`), so for them a bare spec resolved
+//     registry latest in all four workflows, not only the archivist.
+//   - **The archivist workflow resolves the other way, and is the sharp end.**
+//     It emits no install step (its jobs spawn no adopter code), so an
+//     unpinned spec there really did mean registry latest — in three jobs
+//     that all hold `issues: write` (two of them `pull-requests: write`, one
+//     `pull-requests: read`), covering between them every push to main
+//     and nightly. A compromised publish of this package would have run with
+//     that token in every adopter, unreviewed. (Origin of #86: a security
+//     review of atta-labs/attalabs#944.)
+//   - **`@latest` is a different product decision** (deliberately floating CI)
+//     and is not what the hooks do.
+//   - For the hooks the pin is additionally load-bearing on npx's cache key —
+//     see the git-hook section below.
+//
+// The cost is the same one the hooks already pay and `upgrade` already exists
+// to settle: the pinned bytes go stale when the CLI is bumped, `doctor` reports
+// that as drift, and `vinaya upgrade` re-pins.
+// ---------------------------------------------------------------------------
+/** This installed package's own version — the hooks and the workflows pin to it. */
+function ownVersion(): string {
+  const pkg = JSON.parse(readFileSync(join(packageRoot(import.meta.url), 'package.json'), 'utf-8')) as {
+    version: string
+  }
+  return pkg.version
+}
+
+// ---------------------------------------------------------------------------
 // Workflow files (four, all refuse-if-foreign, all vinaya-prefixed)
 //
 // How the CI jobs reach the vinaya binary has TWO shapes, chosen at generation
 // time from `ctx.selfHost` (atta-labs/attalabs#929):
 //
-//   - ordinary adopter (`selfHost: null`) — `npx --yes @attalabs/vinaya`, no
-//     build step. Unchanged, and deliberately so: an adopter has no local copy
-//     to build and must not pay for a problem they do not have.
+//   - ordinary adopter (`selfHost: null`) — `npx --yes
+//     @attalabs/vinaya@<exact-installed-version>`, no build step. An adopter
+//     has no local copy to build and must not pay for a problem they do not
+//     have, so the shape stays npx; the version spec is exact for the reason
+//     in `ownVersion()` above.
 //   - repo that vendors the CLI — build the workspace member and invoke the
 //     built file by path. NEVER `npx` here: npx is the thing that misresolves
 //     (it matches on the package NAME against the workspace before reading any
@@ -173,9 +226,13 @@ function vinayaSetupSteps(selfHost: VendoredVinaya | null): string {
 `
 }
 
-/** The command that runs a vinaya subcommand, in whichever shape applies. */
+/**
+ * The command that runs a vinaya subcommand, in whichever shape applies. The
+ * published shape pins the exact installed version — same source and same
+ * reasoning as `hookRun`'s published shape; see `ownVersion()`.
+ */
 function vinayaRun(selfHost: VendoredVinaya | null, args: string): string {
-  return selfHost ? `node ${selfHost.bin} ${args}` : `npx --yes @attalabs/vinaya ${args}`
+  return selfHost ? `node ${selfHost.bin} ${args}` : `npx --yes @attalabs/vinaya@${ownVersion()} ${args}`
 }
 
 /**
@@ -668,14 +725,6 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=direct-push
 // ---------------------------------------------------------------------------
 const HOOK_PREAMBLE = '#!/usr/bin/env sh\n'
 
-/** This installed package's own version — the hook pins to it. */
-function ownVersion(): string {
-  const pkg = JSON.parse(readFileSync(join(packageRoot(import.meta.url), 'package.json'), 'utf-8')) as {
-    version: string
-  }
-  return pkg.version
-}
-
 // `--local` skips every `requiresOpenPr` check (closes-n, test-plan): neither
 // hook can ever satisfy them — a PR doesn't exist yet at commit time, and
 // pushing the branch is what makes one *possible*, not what creates it. CI's
@@ -683,9 +732,9 @@ function ownVersion(): string {
 // so both checks run for real, against the real PR body, once one exists.
 /**
  * The command a generated hook runs, in whichever shape applies — the hook
- * analogue of `vinayaRun` (which the workflows use). It differs in exactly two
- * ways, both deliberate: the published form pins the exact version (the npx
- * cache-key regression above), and the vendored form guards on the built file
+ * analogue of `vinayaRun` (which the workflows use). Both published forms pin
+ * the exact installed version, from the same `ownVersion()`; this one differs
+ * in exactly one way, deliberate: the vendored form guards on the built file
  * being present.
  *
  * That guard is the whole reason this is not a one-line branch. A hook that

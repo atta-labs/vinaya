@@ -25,6 +25,21 @@ import type { LabelGateway } from '../src/lib/ops.js'
 let root: string
 let createdLabels: string[]
 
+/**
+ * This package's own version — what both invocation emitters pin to (the four
+ * workflows via `vinayaRun`, the two git hooks via `hookRun`); the `VINAYA.md`
+ * doctrine pointer is human-facing prose and deliberately unpinned. Formerly
+ * described as the single thing every generated published-shape
+ * invocation pins to (`ownVersion()` in lib/artifacts.ts), workflows and git
+ * hooks alike (atta-labs/vinaya#86).
+ */
+const OWN_VERSION = (
+  JSON.parse(readFileSync(join(import.meta.dir, '..', 'package.json'), 'utf-8')) as { version: string }
+).version
+
+/** The published invocation the generators emit, version pin included. */
+const PUBLISHED_RUN = `npx --yes @attalabs/vinaya@${OWN_VERSION}`
+
 function makeDeps(overrides: Partial<InitDeps> = {}): InitDeps {
   const labels: LabelGateway = {
     async exists() {
@@ -173,7 +188,6 @@ describe('vinaya init', () => {
     // @attalabs/vinaya` — on a fresh machine the first commit after init died
     // on npx's non-interactive cancel. The exact-version `--yes` pin is the
     // fix; this locks it.
-    const pkg = JSON.parse(readFileSync(join(import.meta.dir, '..', 'package.json'), 'utf-8')) as { version: string }
     const hookOps = buildInitOps({
       owner: 'acme',
       repo: 'widget',
@@ -184,7 +198,7 @@ describe('vinaya init', () => {
     expect(hookOps.length).toBe(2)
     for (const op of hookOps) {
       if (op.kind !== 'managed-block') continue
-      expect(op.body).toContain(`npx --yes @attalabs/vinaya@${pkg.version} check`)
+      expect(op.body).toContain(`${PUBLISHED_RUN} check`)
       expect(op.body).not.toContain('--no-install')
     }
   })
@@ -379,7 +393,10 @@ describe('workflows', () => {
     expect(verdict).toContain('actions: write')
     expect(verdict).toContain('gh run rerun')
     expect(verdict).toContain('vinaya-review.yml')
-    expect(checks).toContain('vinaya check --all --diff-only')
+    // Assert the INVOCATION, pin included — not the bare subcommand string,
+    // which also appears as the job's `name:` and would keep passing even if
+    // the run step lost its invocation entirely.
+    expect(checks).toContain(`${PUBLISHED_RUN} check --all --diff-only`)
     // PR_NUMBER wiring is what makes the review-gate adapter EVALUATE —
     // without it the check reads "local dev" and exits 0 unconditionally,
     // a vacuous gate (PR #813 review blocker). Guard all three PR-facing
@@ -400,8 +417,8 @@ describe('workflows', () => {
     expect(review).not.toContain('github.event.pull_request.body')
     // review-gate is the review job's sole check (#870) — decoupled from the
     // PR_BODY-driven check --all it used to run.
-    expect(review).toContain('vinaya check review-gate')
-    expect(review).not.toContain('vinaya check --all')
+    expect(review).toContain(`${PUBLISHED_RUN} check review-gate`)
+    expect(review).not.toContain('check --all')
     // A body-only edit must re-trigger the checks workflow so test-plan/
     // closes-n re-evaluate against the corrected body (#870).
     expect(checks).toContain('edited')
@@ -478,13 +495,43 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
-    expect(occurrences(files, 'npx --yes @attalabs/vinaya ')).toBe(6)
+    expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(6)
+    // …and none of them unpinned. An unpinned `npx` is NOT "latest". Where
+    // the generated checks workflow carries an install step — only when the
+    // adopter declares `ci.setup` — a repo carrying `@attalabs/vinaya` as a
+    // devDependency resolves `node_modules/.bin/vinaya` instead of the
+    // registry: measured 2026-08-17, the same bare command gave 0.8.2 inside
+    // atta-labs/attalabs, which declares `ci.setup`, and 0.9.0 in /tmp. There
+    // the CI version was an accident of a devDependency no workflow
+    // referenced. With no `ci.setup` declared no install step is generated at
+    // all, so a bare spec resolved registry latest (atta-labs/vinaya#86).
+    expect(occurrences(files, 'npx --yes @attalabs/vinaya ')).toBe(0)
+    expect(occurrences(files, 'npx --yes @attalabs/vinaya@latest')).toBe(0)
     expect(occurrences(files, 'node apps/cli/dist/index.js')).toBe(0)
     for (const content of files.values()) {
       expect(content).not.toContain('setup-bun')
       expect(content).not.toContain('bun install')
       expect(content).not.toContain('Build the vendored Vinaya CLI')
     }
+  })
+
+  it('every workflow and hook invocation is pinned, all to the generator’s own version', async () => {
+    // The symmetry atta-labs/vinaya#86 restored. The two emitters share one
+    // `ownVersion()`; a second version source appearing on either side would
+    // let them drift, which is exactly the state that made an adopter's CI
+    // version an untracked accident. Reading the version from the package
+    // here — rather than hard-coding it — is what makes a drift visible.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const hooks = readFileSync(join(root, '.husky/pre-commit'), 'utf-8')
+    const specs: string[] = []
+    for (const content of [...generated().values(), hooks]) {
+      for (const m of content.matchAll(/npx --yes @attalabs\/vinaya@([^\s]+)/g)) specs.push(m[1] ?? '')
+    }
+    // Count, not just uniqueness: a set-only assertion would still pass if the
+    // workflows lost their pin entirely and the hook alone contributed the
+    // single value. Six workflow invocations plus one hook.
+    expect(specs).toHaveLength(7)
+    expect([...new Set(specs)]).toEqual([OWN_VERSION])
   })
 
   it('the PR-triggered workflows carry a concurrency group — one run per PR', async () => {
@@ -1149,7 +1196,7 @@ describe('adopter-declared CI setup (ci.setup)', () => {
       expect(content).toContain('          npm ci')
       // preparation must precede execution — the step exists so the check
       // runner finds the adopter's code already installed
-      expect(content.indexOf('Adopter CI setup')).toBeLessThan(content.indexOf('npx --yes @attalabs/vinaya'))
+      expect(content.indexOf('Adopter CI setup')).toBeLessThan(content.indexOf(PUBLISHED_RUN))
     }
   })
 
