@@ -15,9 +15,15 @@ describe('isDocFile', () => {
     expect(isDocFile('CLAUDE.md')).toBe(true)
   })
 
+  it('matches a package-level README', () => {
+    expect(isDocFile('apps/cli/README.md')).toBe(true)
+    expect(isDocFile('packages/aeg-core/README.md')).toBe(true)
+  })
+
   it('does not match code or unrelated markdown', () => {
     expect(isDocFile('apps/herald-ai/web/src/lib/foo.ts')).toBe(false)
     expect(isDocFile('some/random/notes.md')).toBe(false)
+    expect(isDocFile('apps/cli/src/README.md')).toBe(false)
   })
 })
 
