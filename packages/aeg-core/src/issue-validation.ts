@@ -315,16 +315,30 @@ export function declaredProjects(body: string, _labels: string[]): string[] {
  * there is one and calling the field empty when there is not) and from "a field
  * this reader could not see" (an unterminated fence — also a fail, see above).
  *
- * **What the corpus does and does not say.** Measured across all 50 task Issues
- * in this repo's forge at the time of the fix: zero carry any of those shapes, so
- * this closed a fail-open without turning a single live body red. That is a
- * statement about bodies that exist, not a proof that none can slip past — the
- * unterminated-fence case above was found by a reviewer constructing a body, not
- * by the corpus, and the corpus could not have found it because no live body has
- * odd fence parity. A known remaining gap of the same class, out of scope here
- * because it is the field's grammar rather than its code-blindness: a `Project:`
- * line inside an HTML comment still outranks the real declaration, since a
- * comment is not code and `stripCode` correctly leaves it.
+ * **What the corpus does and does not say.** Measured across every task Issue
+ * in this repo's forge: zero carry any of those shapes, so this closed a
+ * fail-open without turning a single live body red. That is a statement about
+ * bodies that exist, not a proof that none can slip past — a constructed body
+ * can carry a shape the live corpus happens not to.
+ *
+ * **A `Project:` line inside CODE — a balanced fence, or a ≥4-column-indented
+ * block after a blank line — is an example, not a declaration, and is not
+ * read**, by the same rule `stripCode` already applies to every other
+ * code-aware gate in this file. This is deliberate, not a gap: it matches how
+ * the forge itself renders the line, so refusing to read it is refusing to read
+ * what GitHub also treats as code. Only an UNTERMINATED fence differs — it has
+ * no natural end, so `stripCode` blanks everything after it including the
+ * body's foot, and that swallowed region fails closed rather than reading as
+ * absent (see `hasUnterminatedFence` above). An indented block has no
+ * equivalent unterminated state — it always ends, either at a dedent or at the
+ * body's own end — so it stays a pass like any other example; pinned by test
+ * (`list-tasks.test.ts`) so the difference is a recorded decision, not a silent
+ * surprise.
+ *
+ * A known remaining gap of a DIFFERENT class, out of scope here because it is
+ * the field's grammar rather than its code-blindness: a `Project:` line inside
+ * an HTML comment still outranks the real declaration, since a comment is not
+ * code and `stripCode` correctly leaves it.
  *
  * **What reaches the message is constrained** (`forMessage`). Both the declared
  * value and the registered names are untrusted — `parseRegistry` validates
