@@ -34,6 +34,7 @@ export function isDocFile(p: string): boolean {
     (p.startsWith('docs/') && p.endsWith('.md') && !isFrozenArchive(p)) ||
     (p.startsWith('apps/') && p.includes('/specs/') && p.endsWith('.md') && !isFrozenArchive(p)) ||
     (p.startsWith('.claude/skills/') && p.endsWith('.md')) ||
+    /^(apps|packages)\/[^/]+\/README\.md$/.test(p) ||
     p === 'docs-index.md' ||
     p === 'README.md' ||
     p === 'CLAUDE.md'
