@@ -445,7 +445,7 @@ describe('projectFieldFromBody — an indented code block is swallowed the same 
 })
 
 /**
- * Round-4 review, findings 1 and 2. The field's VALUE routinely sits on the
+ * The field's VALUE routinely sits on the
  * line after the label — GitHub renders `Project:\nvinaya` as the single
  * paragraph "Project: vinaya", and the tolerant-plain-form cohort the brief's
  * Traps section names is exactly this shape. `\s*` around the colon and after
@@ -467,23 +467,23 @@ describe('projectFieldFromBody — the value may sit on the line after the label
     expect(projectFieldFromBody(body)).toEqual({ declared: true, names: ['vinaya'], unparsed: [], unreadable: false })
   })
 
-  it('agrees with declaredProjects on the plain next-line shape — the two tolerant siblings must not diverge', () => {
+  it('reads the plain next-line shape — the form GitHub renders as one paragraph', () => {
     const body = 'Project:\nvinaya'
     expect(projectsFromBody(body)).toEqual(['vinaya'])
   })
 
-  it('agrees with declaredProjects on the bold next-line shape', () => {
+  it('reads the bold next-line shape', () => {
     const body = '**Project:**\nvinaya'
     expect(projectsFromBody(body)).toEqual(['vinaya'])
   })
 })
 
 /**
- * Round-4 finding 4 — a mutation survivor. Deleting the whitespace run
- * immediately before the colon left all 156 tests green, which is exactly how
- * finding 1's narrowing shipped unnoticed. `Project :` (a space before the
- * colon) is a tolerance the pattern already offers; pin it so any future
- * narrowing of that specific run fails a test instead of shipping silently.
+ * Deleting the whitespace run immediately before the colon left the whole
+ * suite green — an unpinned tolerance is how a narrowing of this pattern
+ * ships unnoticed. `Project :` (a space before the colon) is a shape the
+ * pattern already accepts; pin it so any future narrowing of that specific
+ * run fails a test instead of passing silently.
  */
 describe('projectFieldFromBody — tolerates a space before the colon', () => {
   it('parses "Project : x" — space before the colon', () => {
@@ -493,4 +493,22 @@ describe('projectFieldFromBody — tolerates a space before the colon', () => {
   it('parses "**Project** : x" — space before the colon, bold form', () => {
     expect(projectsFromBody('**Project** : vinaya')).toEqual(['vinaya'])
   })
+})
+
+describe('the leading whitespace run is part of the grammar', () => {
+  // A revert that restored only the runs around the colon left `^[ \t]*`
+  // in place, so these shapes still dropped silently while `declaredProjects`
+  // kept reading the name. `\s` covers them; `[ \t]` does not.
+  const EXOTIC: Array<[string, string]> = [
+    ['non-breaking space', '\u00a0'],
+    ['form feed', '\f'],
+    ['vertical tab', '\v']
+  ]
+
+  for (const [name, ws] of EXOTIC) {
+    it(`reads a field line prefixed by a ${name}`, () => {
+      expect(projectsFromBody(`${ws}**Project:** vinaya`)).toEqual(['vinaya'])
+      expect(projectFieldFromBody(`${ws}**Project:** vinaya`).declared).toBe(true)
+    })
+  }
 })

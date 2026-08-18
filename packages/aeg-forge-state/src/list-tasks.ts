@@ -52,14 +52,19 @@ const PROJECT_SLUG = /^[a-z0-9][a-z0-9-]*$/i
  * field-shaped line in a raw body is routinely a fenced *example* of the field,
  * and the real declaration sits at the foot by convention.
  *
- * **The internal whitespace runs around the colon and `**` are `\s*`, and MUST
- * stay `\s*` — this is the field's grammar, not an implementation detail.**
+ * **Every whitespace run in this pattern — the leading one as well as those
+ * around the colon and `**` — is `\s*`, and MUST stay `\s*`: this is the
+ * field's grammar, not an implementation detail.** A revert that restored
+ * only the internal runs left the leading one narrowed, so a field line
+ * prefixed by a non-breaking space, form feed or vertical tab still went
+ * `declared: false` with the gate passing, while `declaredProjects` read the
+ * name — the same silent drop, one character class over.
  * GitHub renders `Project:\nvinaya` as the single paragraph "Project: vinaya",
  * and the tolerant-plain-form cohort the docstring above names is written
  * exactly this way; `\s*` (which matches `\n`) is what lets the value sit on
- * the line after the label. A task-3 attempt narrowed these runs to `[ \t]*`
- * to remove a ReDoS class (measured: 705 ms → 0.02 ms on a crafted body) and
- * was reverted: it silently dropped the
+ * the line after the label. An attempt to narrow these runs to `[ \t]*`
+ * removed a ReDoS class (measured: 705 ms → 0.02 ms on a crafted body) and was
+ * reverted: it silently dropped the
  * plain next-line form to `declared: false` and made the bold next-line form
  * fail with a false "the field is empty" message — the same silent-drop and
  * vacuous-fail-open classes this whole task exists to close. The `Project:`
@@ -68,7 +73,7 @@ const PROJECT_SLUG = /^[a-z0-9][a-z0-9-]*$/i
  * (plain/bold × same-line/next-line × leading whitespace), not a timing
  * number — that it does not narrow which shapes the field accepts.
  */
-const PROJECT_FIELD = /^[ \t]*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.+)$/im
+const PROJECT_FIELD = /^\s*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.+)$/im
 
 /**
  * What the body's `Project:` field says — including when it says something this
