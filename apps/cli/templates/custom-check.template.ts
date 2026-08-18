@@ -8,6 +8,11 @@
  * from the vinaya CLI's own source tree) because it lives in YOUR repo, not
  * inside `@attalabs/vinaya`.
  *
+ * Its registration key is `{{CHECK_NAME}}` — namespaced `<yourname>/<id>`,
+ * which is what `vinaya check` requires: a bare, un-namespaced key matching
+ * no core check id is rejected, and the whole run then refuses rather than
+ * executing a partial ruleset.
+ *
  * If this check reads `process.env` directly, declare which variables it
  * needs on its REGISTRATION in `vinaya.config.json` (not in this file —
  * there is no CheckSpec type to attach it to here) via `checks.{{CHECK_NAME}}.env`.

@@ -91,6 +91,9 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'new check',
     description: 'Scaffold a custom check into ./scripts/vinaya-checks/',
+    details: [
+      'Takes the REGISTRATION KEY, not a bare name: `vinaya new check <yourname>/<id>` writes `./scripts/vinaya-checks/<id>.ts` and prints the namespaced `checks` entry to paste. It refuses a bare, un-namespaced name — `vinaya check` refuses its entire run over a key it cannot resolve, so scaffolding one would brick every check invocation in the repo — and refuses a core check id, since registering one REPLACES that core gate and a scaffolded stub is never what an adopter means by that.'
+    ],
     status: 'shipped'
   },
   {
