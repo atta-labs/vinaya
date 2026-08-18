@@ -200,7 +200,11 @@ function isExemptToken(rawToken: string, precedingWord: string | null): boolean 
   if (rawToken.includes('://')) return true // a URL/markdown-link locator, not a claim
   if (core.includes('/')) {
     if (/^[\w./-]+$/.test(core)) return true // a file path segment
-    if (core.split('/').every((part) => SECTION_SYMBOL.test(part))) return true // `§2/§9`
+    // A slash-separated list of identifiers cited together (`§2/§9`,
+    // `#126/#129/#130`) — every part must independently be an identifier
+    // shape, not just the first, or a real claim glued to a real ref by a
+    // stray slash would slip through on the ref's coattails.
+    if (core.split('/').every((part) => SECTION_SYMBOL.test(part) || ISSUE_REF.test(part))) return true
   }
   // The comma guard matters: in "1 MAJOR, 6 MINOR" the word immediately
   // before "6" is "MAJOR," — adjacent only because it's the previous item

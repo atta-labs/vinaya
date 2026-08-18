@@ -12,6 +12,16 @@ describe('body-bare-digits — must NOT fail: identifier shapes', () => {
     expect(violationLines('See #135 for the original report.')).toEqual([])
   })
 
+  it('a slash-separated list of Issue/PR references cited together', () => {
+    expect(violationLines("Checked against #126/#129/#130/#132/#136's real bodies.")).toEqual([])
+  })
+
+  it('does not let a slash-list exemption launder a real claim glued to a real ref', () => {
+    // "#126/42" is not a legitimate multi-ref citation — "42" alone is a
+    // bare count wearing a ref's slash as camouflage, and must still fail.
+    expect(violationLines('See #126/42 for the count.').length).toBeGreaterThan(0)
+  })
+
   it('a date', () => {
     expect(violationLines('Fixed on 2026-08-18, verified the same day.')).toEqual([])
   })
