@@ -140,7 +140,7 @@ Rows = artifact types. Columns = roles. "—" means no authority. The Reviewer i
 | **Orchestration-tool runtime** (if used) | Edits config; reads (audit) | Reads | Appends events via the tool | — |
 | **CI/forge Actions** | Approves workflow changes via PR | Proposes workflow changes via PR | — | Runs as forge-CI automation |
 
-**Token ledger — a second read path:** the table row above still governs who *writes* `tranches/<name>.tokens.md` (the Archivist, sole writer) — that is unchanged. AEG Studio's tranche page, however, no longer *reads* that file to render totals: it re-derives the Developer/Reviewer/Security rows live from the task's own merged PR(s) (`packages/aeg-core/src/parse-token-report.ts`, `apps/vinaya/web/src/lib/forge/fetch-token-ledger.ts`) — narrower than the file (it cannot recover the Archivist's own row or the Planner's report; see `tranche-model.md` §12). The file is not deleted and remains the durable, complete record.
+**Token ledger — a second read path:** the table row above still governs who *writes* `tranches/<name>.tokens.md` (the Archivist, sole writer) — that is unchanged. AEG Studio's tranche page, however, no longer *reads* that file to render totals: it re-derives the Developer/Reviewer/Security rows live from the task's own merged PR(s) (`aggregateTaskTokenRows`, `packages/aeg-core/src/parse-token-report.ts`, called from Studio's own forge-reading layer in the repo that hosts it) — narrower than the file (it cannot recover the Archivist's own row or the Planner's report; see `tranche-model.md` §12). The file is not deleted and remains the durable, complete record.
 
 ### Reviewer & Security review authority (extended)
 
