@@ -294,6 +294,26 @@ describe('checkProjectsRegistered', () => {
     expect(r.errors[0]).toMatch(/tools\/admin is unregistered/)
   })
 
+  it('fails closed when an unterminated fence swallowed the field, and says so', () => {
+    // Regression pin for the fail-open the fence fix itself introduced: the
+    // stray fence blanked the foot declaration, the parser reported "absent",
+    // and this gate passed a body its pre-fix self refused.
+    const body = ['```', 'a stray unclosed fence', '', '**Project:** notaproject'].join('\n')
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/unterminated code fence|fences do not balance/i)
+  })
+
+  it('fails closed on an unreadable body even when the swallowed name IS registered', () => {
+    // The read cannot be trusted, so the answer cannot be "pass" — but the
+    // message must point at the malformed fence, not accuse a valid name.
+    const body = ['````', 'x', '```', '', '**Project:** vinaya'].join('\n')
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/unterminated code fence|fences do not balance/i)
+    expect(r.errors[0]).not.toMatch(/is not a project name/)
+  })
+
   it('fails a declaration with an empty value — the same vacuous pass, one shape further', () => {
     // `**Project:**` with nothing after it yields no name AND no residue to
     // report. Keying the failure on "declared but resolved to nothing" rather
@@ -744,5 +764,77 @@ describe('hasRationaleField — label-pattern grouping (regression, found live 2
     const depError = result.errors.find((e) => e.startsWith('issue-validation Dependency rationale'))
     expect(depError).toBeDefined()
     expect(depError).toMatch(/rationale field not found/)
+  })
+})
+
+/**
+ * Trojan-Source class characters. Named, never embedded: a literal bidi
+ * override in a source file is invisible in review, which is the entire reason
+ * it is worth stripping out of an operator-facing message.
+ */
+const RLO = String.fromCharCode(0x202e) // right-to-left override
+const ZWSP = String.fromCharCode(0x200b) // zero-width space
+const BOM = String.fromCharCode(0xfeff)
+
+describe('checkProjectsRegistered — what reaches the operator’s terminal', () => {
+  it('drops bidi overrides from a registry name', () => {
+    const hostile = ['vinaya', `aeg${RLO}erroc-gea`]
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], hostile)
+    expect(r.errors[0]).not.toContain(RLO)
+  })
+
+  it('drops zero-width characters that could split a name into a lookalike', () => {
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], [`vin${ZWSP}aya`, 'aeg-core'])
+    expect(r.errors[0]).not.toContain(ZWSP)
+  })
+
+  it('drops a byte-order mark from a declared value', () => {
+    const r = checkProjectsRegistered(`**Project:** not a name${BOM} here`, [], REGISTERED)
+    expect(r.errors[0]).not.toContain(BOM)
+  })
+
+  it('bounds the residue count, so one body cannot amplify into a huge error string', () => {
+    // 500 unparseable values. Uncapped this renders every one of them into a
+    // single error string that lands in `CheckFailure.reason` and in a blocking
+    // gate's `--json` output.
+    const body = `**Project:** ${Array.from({ length: 500 }, (_, i) => `not a name ${i}`).join(', ')}`
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect((r.errors[0] ?? '').length).toBeLessThan(2000)
+    expect(r.errors[0]).toMatch(/more/)
+  })
+
+  it('never emits a lone surrogate when eliding a long value', () => {
+    // An astral character straddling the elision boundary splits into a lone
+    // surrogate under a UTF-16 slice.
+    // 61 single-unit characters put the 64th code UNIT inside the first astral
+    // character, so a `slice(0, 64)` cuts it in half.
+    const astral = '\u{1F600}'
+    const body = `**Project:** ${'a'.repeat(61)}${astral.repeat(10)}`
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    // Scan CODE UNITS: every high surrogate must be followed by a low one.
+    // (Iterating the string with `for...of` walks code points and would never
+    // see the split, which is exactly why a UTF-16 slice can hide this.)
+    const msg = r.errors[0] ?? ''
+    let lone = 0
+    for (let i = 0; i < msg.length; i++) {
+      const code = msg.charCodeAt(i)
+      const isHigh = code >= 0xd800 && code <= 0xdbff
+      const isLow = code >= 0xdc00 && code <= 0xdfff
+      if (isHigh) {
+        const next = msg.charCodeAt(i + 1)
+        if (!(next >= 0xdc00 && next <= 0xdfff)) lone++
+        else i++
+      } else if (isLow) {
+        lone++
+      }
+    }
+    expect(lone).toBe(0)
+  })
+
+  it('still renders a well-formed registry row verbatim — sanitation is not redaction', () => {
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], REGISTERED)
+    expect(r.errors[0]).toMatch(/aeg-core/)
+    expect(r.errors[0]).toMatch(/nosuchproject/)
   })
 })

@@ -152,6 +152,47 @@ function isControlCodePoint(codePoint: number): boolean {
   return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)
 }
 
+/**
+ * Characters that change how the rest of a line *renders* without printing
+ * anything themselves — the Trojan-Source class.
+ *
+ * Stripping C0/C1 closes ANSI and OSC, but it is not the whole of "a hostile
+ * value cannot repaint or hide the failure being reported": a bidi override
+ * (U+202E) reverses the rendered name in the operator's terminal, and a
+ * zero-width character (U+200B) splits a name so it reads as a registered one.
+ * Same untrusted sources, same goal, so they are dropped by the same pass.
+ *
+ *   U+200B–200F  zero width space/joiners, LRM/RLM
+ *   U+202A–202E  bidi embedding and override
+ *   U+2066–2069  bidi isolates
+ *   U+FEFF       byte-order mark used as a zero-width no-break space
+ */
+function isDisplayControlCodePoint(codePoint: number): boolean {
+  return (
+    (codePoint >= 0x200b && codePoint <= 0x200f) ||
+    (codePoint >= 0x202a && codePoint <= 0x202e) ||
+    (codePoint >= 0x2066 && codePoint <= 0x2069) ||
+    codePoint === 0xfeff
+  )
+}
+
+/**
+ * How many residue values one error message will name before summarising the
+ * rest. `field.unparsed` is one entry per comma-separated segment, so a single
+ * body of repeated `%,` pairs yields tens of thousands of them; uncapped they
+ * render into one enormous string that lands in `CheckFailure.reason` and in a
+ * blocking gate's `--json` output. Naming the first few is what an author needs
+ * to find the line; the count carries the rest.
+ */
+const MESSAGE_VALUE_COUNT_MAX = 5
+
+/** Renders a residue list for an error message: the first few values, then a count. */
+function residueForMessage(values: string[]): string {
+  const shown = values.slice(0, MESSAGE_VALUE_COUNT_MAX).map((v) => `\`${forMessage(v)}\``)
+  const rest = values.length - shown.length
+  return rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.join(', ')
+}
+
 /** How much of one untrusted value an error message will carry before eliding. */
 const MESSAGE_VALUE_MAX = 64
 
@@ -181,13 +222,19 @@ function forMessage(value: string): string {
   // Whitespace collapses FIRST, so a newline or tab becomes a space rather than
   // vanishing and welding two words together — and a multi-line value cannot
   // forge what looks like a second error line.
-  let cleaned = ''
+  const kept: string[] = []
   for (const ch of value.replace(/\s+/g, ' ')) {
-    if (!isControlCodePoint(ch.codePointAt(0) ?? 0)) cleaned += ch
+    const codePoint = ch.codePointAt(0) ?? 0
+    if (isControlCodePoint(codePoint) || isDisplayControlCodePoint(codePoint)) continue
+    kept.push(ch)
   }
-  cleaned = cleaned.trim()
+  // Elide by CODE POINT, not by UTF-16 index. `slice` on a string counts code
+  // units, so a cut landing inside an astral character emits a lone surrogate —
+  // a malformed string, from the function whose job is to make this value safe.
+  const cleaned = kept.join('').trim()
   if (cleaned.length === 0) return '(unprintable)'
-  return cleaned.length > MESSAGE_VALUE_MAX ? `${cleaned.slice(0, MESSAGE_VALUE_MAX)}…` : cleaned
+  const points = Array.from(cleaned)
+  return points.length > MESSAGE_VALUE_MAX ? `${points.slice(0, MESSAGE_VALUE_MAX).join('')}…` : cleaned
 }
 
 /**
@@ -265,9 +312,19 @@ export function declaredProjects(body: string, _labels: string[]): string[] {
  * a name it never receives, so it passed **vacuously** on exactly the bodies it
  * exists to catch. `projectFieldFromBody` now separates "no field" (still a pass)
  * from "a field present that resolves to nothing" (a fail, naming the residue when
- * there is one and calling the field empty when there is not). Measured across all
- * 50 task Issues in this repo's forge at the time of the fix: zero carry either
- * shape, so this closes a fail-open without turning any live body red.
+ * there is one and calling the field empty when there is not) and from "a field
+ * this reader could not see" (an unterminated fence — also a fail, see above).
+ *
+ * **What the corpus does and does not say.** Measured across all 50 task Issues
+ * in this repo's forge at the time of the fix: zero carry any of those shapes, so
+ * this closed a fail-open without turning a single live body red. That is a
+ * statement about bodies that exist, not a proof that none can slip past — the
+ * unterminated-fence case above was found by a reviewer constructing a body, not
+ * by the corpus, and the corpus could not have found it because no live body has
+ * odd fence parity. A known remaining gap of the same class, out of scope here
+ * because it is the field's grammar rather than its code-blindness: a `Project:`
+ * line inside an HTML comment still outranks the real declaration, since a
+ * comment is not code and `stripCode` correctly leaves it.
  *
  * **What reaches the message is constrained** (`forMessage`). Both the declared
  * value and the registered names are untrusted — `parseRegistry` validates
@@ -290,6 +347,21 @@ export function checkProjectsRegistered(
   const known = new Set(registeredNames.map((n) => n.trim()))
   const registeredList = [...registeredNames].map(forMessage).join(', ')
   const errors: string[] = []
+
+  // An unterminated fence ran to end of body and swallowed the region the field
+  // lives in, so the value below is what the RAW body says and cannot be trusted
+  // — inside a swallowed region a quoted example and a real declaration are
+  // indistinguishable. Fail closed and point at the malformed fence: accusing
+  // the name of not being a project would be wrong (it may be a perfectly good
+  // registered one) and would send the author to fix the wrong line.
+  if (field.unreadable) {
+    return {
+      status: 'fail',
+      errors: [
+        `issue-validation project registry: the body has an unterminated code fence, so its \`**Project:**\` field could not be read reliably — the fence runs to end of body (CommonMark, and how the forge renders it), swallowing everything after it including the foot field where the declaration lives by convention. Read from the raw body the field says ${residueForMessage(field.unparsed) || '(nothing)'}, but a line inside a swallowed region may be a quoted example rather than a real declaration, so this gate refuses rather than guessing which. Balance the fences — every opening run of backticks or tildes needs a closing run at least as long — and the field reads normally.`
+      ]
+    }
+  }
 
   const unregistered = field.names.filter((p) => !known.has(p))
   if (unregistered.length > 0) {
@@ -318,16 +390,13 @@ export function checkProjectsRegistered(
   // vacuous pass one shape further along. The residue is named when there is
   // one, because it is the whole of the fix — but its absence is not a pass.
   if (field.names.length === 0) {
-    const residue =
-      field.unparsed.length > 0
-        ? ` — ${field.unparsed.map((v) => `\`${forMessage(v)}\``).join(', ')}`
-        : ' — the field is empty'
+    const residue = field.unparsed.length > 0 ? ` — ${residueForMessage(field.unparsed)}` : ' — the field is empty'
     errors.push(
       `issue-validation project registry: the \`**Project:**\` field is present but resolves to no project name${residue} (registered: ${registeredList}). A project name is a slug (\`[a-z0-9][a-z0-9-]*\`, matched exactly); prose, a parenthetical, or a sentence in this field resolves to no project at all, and this gate cannot check a name it never receives — which is how a declaration like this used to pass. Write the registered name on its own, or register the project with \`vinaya init product <name> --path <folder>\` first. If the task genuinely touches no registered project, omit the field rather than explaining its absence inside it — \`checkIssueRationale\` already requires the \`Project(s) + blast radius\` narrative field for that.`
     )
   } else if (field.unparsed.length > 0) {
     errors.push(
-      `issue-validation project registry: the \`**Project:**\` field declares a value that is not a project name — ${field.unparsed.map((v) => `\`${forMessage(v)}\``).join(', ')} (registered: ${registeredList}). The rest of the field parsed, so this is a name the gate silently could not check rather than a field it could not read at all. A project name is a slug (\`[a-z0-9][a-z0-9-]*\`, matched exactly); write it on its own, or drop it if it names no project.`
+      `issue-validation project registry: the \`**Project:**\` field declares a value that is not a project name — ${residueForMessage(field.unparsed)} (registered: ${registeredList}). The rest of the field parsed, so this is a name the gate silently could not check rather than a field it could not read at all. A project name is a slug (\`[a-z0-9][a-z0-9-]*\`, matched exactly); write it on its own, or drop it if it names no project.`
     )
   }
 
