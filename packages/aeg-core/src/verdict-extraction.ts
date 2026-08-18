@@ -69,20 +69,54 @@
  * Anything that doesn't match the exact value pattern reads as "missing",
  * identical to no comment existing — which is also what the DANGLING
  * placeholder case above requires.
+ *
+ * Reviewed-commit binding (#73, a duplicate of #71 closes this one). The
+ * winning comment (the one whose `VERDICT:` line matched) is also searched
+ * for a `Judged head: <sha>` line — the exact phrase reviewers on
+ * atta-labs/attalabs#664 were already hand-typing before this existed as a
+ * mechanism, formalized rather than invented. Same anchor discipline as
+ * `VERDICT:` itself: line-start, optional leading emphasis run, no
+ * blockquote/list-item/heading/code-span tolerance — a sha mentioned in
+ * ordinary prose ("see 8365ca57 for context") is a mention, not a binding,
+ * and must not parse as one. Accepts both the abbreviated (7-char) and full
+ * (40-char) hex forms; `review-gate.ts` does the prefix comparison against
+ * the PR's actual head. Searched only within the SAME comment body that
+ * produced the winning verdict — a sha mentioned in a different comment is
+ * not this verdict's binding.
  */
 
-export type VerdictExtraction = { value: string; danglingNote: string | null }
+const HEAD_SHA_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Judged head:\s*([0-9a-f]{7,40})(?![A-Za-z0-9])/im
+
+function extractHeadSha(comment: string): string | null {
+  const m = comment.match(HEAD_SHA_PATTERN)
+  return m ? (m[1] as string).toLowerCase() : null
+}
+
+/**
+ * `headSha` is `null` in two distinct situations that both mean "cannot
+ * confirm this verdict covers the current head": no verdict comment matched
+ * at all (`danglingNote` is also set), or a verdict comment matched but
+ * carried no `Judged head:` line (`danglingNote` is `null` — the verdict
+ * itself is real, only the binding is missing). `review-gate.ts` treats both
+ * as unbound; only their `danglingNote`/`value` differ.
+ */
+export type VerdictExtraction = { value: string; headSha: string | null; danglingNote: string | null }
 
 function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: string): VerdictExtraction {
   const clearHits = comments.filter((c) => valuePattern.test(c))
   if (clearHits.length > 0) {
     const latest = clearHits[clearHits.length - 1] as string
     const m = latest.match(valuePattern) as RegExpMatchArray
-    return { value: (m[1] as string).toUpperCase().replace(/[_-]/g, ' '), danglingNote: null }
+    return {
+      value: (m[1] as string).toUpperCase().replace(/[_-]/g, ' '),
+      headSha: extractHeadSha(latest),
+      danglingNote: null
+    }
   }
 
   return {
     value: `no ${missingLabel} pass was run before merge — DANGLING, see below`,
+    headSha: null,
     danglingNote: `no ${missingLabel} verdict comment found on this PR`
   }
 }

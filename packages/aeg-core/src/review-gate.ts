@@ -17,9 +17,43 @@
  * one PR. Label presence alone is never sufficient — only an actor-verified
  * label waives the gate, mirroring exactly.
  *
+ * Reviewed-commit binding (#73, a duplicate of #71 closes this one). A clean
+ * verdict is no longer sufficient on its own — it must also cover the PR's
+ * CURRENT head. Design record (the four questions this fix had to answer,
+ * argued in full in the closing PR's body):
+ *
+ * 1. Commit sha, not tree hash. `headSha` is `gh pr view --json headRefOid`
+ *    verbatim — one API call, no second fetch of a commit object's tree.
+ *    Matches the Issue's own proposed fix shape and the hand-typed
+ *    convention reviewers were already using ("Judged head: <sha>", never a
+ *    tree hash). Cost accepted: a rebase or an empty amend that leaves the
+ *    tree byte-identical still invalidates every verdict — no free pass for
+ *    "the code didn't really change." That is the explicit trade for a
+ *    single mental model ("a verdict covers an exact commit") over a cheaper
+ *    but subtler one (two different code states could share a tree).
+ * 2. Every push that changes `headRefOid` invalidates unconditionally — a
+ *    rebase with an identical tree, a merge commit resolving a conflict
+ *    elsewhere, and a genuine content-changing amend all produce a new sha
+ *    and therefore a new required verdict. Only a push that does NOT change
+ *    `headRefOid` at all (a body-only PR-description edit; a force-push that
+ *    reproduces the exact same commit object) leaves an existing binding
+ *    intact, because there is nothing for it to have gone stale against.
+ * 3. `headSha` is REQUIRED on `ReviewGateInput`, not optional. An optional
+ *    field that silently skips the binding check when absent is fail-open —
+ *    exactly the defect class this task exists to close. Every caller
+ *    (`bin/verify-review-gate.ts`, `apps/cli/src/checks/bin/check-review-gate.ts`)
+ *    must supply it; the type system enforces that, not a runtime default.
+ * 4. Fail-closed for the transition. The moment this merges, every verdict
+ *    already posted on an open PR is unbound (it carries no `Judged head:`
+ *    line) and the gate stops honouring it — expensive, and correct: an
+ *    unbound verdict is exactly the property this task closes. The sanctioned
+ *    escape for a PR already far along in review is the existing
+ *    `vinaya/waiver:review` actor-verified label, applied by a principal, the
+ *    same mechanism that already exists for any other one-off skip.
+ *
  * Pure — no `fs`, no `fetch`, no `process.env`. The CLI shim
- * (`bin/verify-review-gate.ts`) resolves the PR's comments/labels/label-actor
- * via `gh` and calls `checkReviewGate`.
+ * (`bin/verify-review-gate.ts`) resolves the PR's comments/labels/label-actor/
+ * head sha via `gh` and calls `checkReviewGate`.
  */
 
 import { isPrincipal, isWaiverLabelActorVerified, PRINCIPAL_ALLOWLIST, WAIVER_LABEL_REVIEW } from './waiver-label'
@@ -46,6 +80,17 @@ export type ReviewGateInput = {
   labels: string[]
   /** Actor of the most recent `vinaya/waiver:review` labeling timeline event, or `null` when none exists. */
   waiverLabelActor: string | null
+  /**
+   * The PR's current head commit sha (`gh pr view --json headRefOid`),
+   * resolved from GitHub — never from local git, an env var, or the PR's own
+   * checkout, all three of which a `pull_request`-triggered workflow's
+   * PR-editable YAML could steer (#73). REQUIRED, not optional: an omitted
+   * head would have to mean either skip-the-binding-check (fail-open, the
+   * exact defect this field exists to close) or unconditional-fail, and a
+   * required field makes that choice a compile error instead of a runtime
+   * default. Every verdict must cover this value to count as clean.
+   */
+  headSha: string
   /**
    * Overrides `PRINCIPAL_ALLOWLIST` for this evaluation when provided — an
    * adopter repo's own `vinaya.config.json` `principals` field, resolved by
@@ -77,11 +122,25 @@ export function isReviewGateExemptBranch(branch: string): boolean {
 }
 
 /**
+ * True when `extraction.headSha` covers `headSha` — an exact match, or
+ * `headSha` starting with `extraction.headSha` (the abbreviated-sha case:
+ * a verdict may bind against a 7-char prefix, and `headSha` itself is always
+ * the full 40-char form GitHub's API returns). `false` when the extraction
+ * carries no `headSha` at all (no `Judged head:` line was found) — an
+ * unbound verdict never counts as covering anything.
+ */
+function isBoundToHead(extraction: { headSha: string | null }, headSha: string): boolean {
+  if (!extraction.headSha) return false
+  return headSha.toLowerCase().startsWith(extraction.headSha.toLowerCase())
+}
+
+/**
  * `pass` when either (a) `vinaya/waiver:review` is present and actor-verified against
- * `PRINCIPAL_ALLOWLIST`, or (b) both verdicts are clean — code-reviewer
- * `APPROVE` (not `REQUEST_CHANGES`, not missing, not unclear) and
- * security-review `PASS` (not `FAIL`, not missing, not unclear). `fail`
- * otherwise, naming exactly which verdict(s) are not clean.
+ * `PRINCIPAL_ALLOWLIST`, or (b) both verdicts are clean AND bound — code-reviewer
+ * `APPROVE` (not `REQUEST_CHANGES`, not missing, not unclear) covering the PR's
+ * current `headSha`, and security-review `PASS` (not `FAIL`, not missing, not
+ * unclear) covering it too. `fail` otherwise, naming exactly which verdict(s)
+ * are not clean, not bound to the current head, or both.
  */
 export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const principalAllowlist = input.principalAllowlist ?? PRINCIPAL_ALLOWLIST
@@ -122,18 +181,32 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const security = extractSecurityReviewVerdict(verifiedBodies)
   const codeReviewClean = codeReview.value === 'APPROVE'
   const securityClean = security.value === 'PASS'
+  const codeReviewBound = isBoundToHead(codeReview, input.headSha)
+  const securityBound = isBoundToHead(security, input.headSha)
 
-  if (codeReviewClean && securityClean) {
+  if (codeReviewClean && codeReviewBound && securityClean && securityBound) {
     return {
       verdict: 'pass',
-      reason: 'code-reviewer verdict is a clean APPROVE and security-review verdict is a clean PASS.',
+      reason: `code-reviewer verdict is a clean APPROVE and security-review verdict is a clean PASS, both covering head ${input.headSha}.`,
       waived: false
     }
   }
 
   const problems: string[] = []
-  if (!codeReviewClean) problems.push(`code-reviewer verdict is not a clean APPROVE (found: ${codeReview.value})`)
-  if (!securityClean) problems.push(`security-review verdict is not a clean PASS (found: ${security.value})`)
+  if (!codeReviewClean) {
+    problems.push(`code-reviewer verdict is not a clean APPROVE (found: ${codeReview.value})`)
+  } else if (!codeReviewBound) {
+    problems.push(
+      `the newest code-review verdict covers ${codeReview.headSha ?? 'no recorded commit'}, head is ${input.headSha}`
+    )
+  }
+  if (!securityClean) {
+    problems.push(`security-review verdict is not a clean PASS (found: ${security.value})`)
+  } else if (!securityBound) {
+    problems.push(
+      `the newest security-review verdict covers ${security.headSha ?? 'no recorded commit'}, head is ${input.headSha}`
+    )
+  }
   const ignoredNote =
     ignoredCount > 0
       ? ` ${ignoredCount} verdict-shaped comment(s) from authors outside the principal allowlist were ignored.`

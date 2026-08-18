@@ -22,9 +22,14 @@
  * worth naming explicitly since it IS a behavior change from before.
  *
  * Thin CLI/I/O shim, same discipline as `verify-single-plan-pr.ts`: resolves
- * the PR's comments/labels/waiver-label-actor via `gh`, calls the pure
- * `checkReviewGate` (`@attalabs/aeg-core`), and exits non-zero with a clear
- * message on failure. No check logic lives here.
+ * the PR's comments/labels/waiver-label-actor/head sha via `gh`, calls the
+ * pure `checkReviewGate` (`@attalabs/aeg-core`), and exits non-zero with a
+ * clear message on failure. No check logic lives here.
+ *
+ * `headRefOid` (#73) is resolved from GitHub via this same `gh pr view`
+ * call, never from local git or an env var — see `checkReviewGate`'s own
+ * module comment for why an env-sourced head would reopen the self-approval
+ * hole a `BASE_SHA` env var already tried and was reverted for.
  *
  * Usage:
  *   PR_NUMBER=<n> bun packages/aeg-core/bin/verify-review-gate.ts
@@ -45,10 +50,11 @@ type PrView = {
   number: number
   comments: { body: string; author?: { login?: string } | null }[]
   labels: { name: string }[]
+  headRefOid: string
 }
 
 function fetchPr(prNumber: number): PrView {
-  const out = execSync(`gh pr view ${prNumber} --json number,comments,labels`, { encoding: 'utf8' })
+  const out = execSync(`gh pr view ${prNumber} --json number,comments,labels,headRefOid`, { encoding: 'utf8' })
   return JSON.parse(out) as PrView
 }
 
@@ -80,7 +86,8 @@ export function main(prNumber: number): void {
   const result = checkReviewGate({
     comments: pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
     labels,
-    waiverLabelActor
+    waiverLabelActor,
+    headSha: pr.headRefOid
   })
 
   if (result.verdict === 'fail') {
