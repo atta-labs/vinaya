@@ -6,8 +6,14 @@
  * `--plan --json` and `vinaya check`'s real execution both resolve through
  * this one function, so what the plan prints IS what runs. The classification
  * logic below (`resolveChecks`, `isValidNamespacedKey`) is unchanged by that
- * flip — only its consumers moved. See the Configuration architecture
- * chapter, `apps/vinaya/specs/vinaya-spec.md`.
+ * flip — only its consumers moved.
+ *
+ * Reference for the resolution rules: the `checks` rows of
+ * `packages/sources/src/config-reference.ts` (the adopter-facing field
+ * reference) and `aeg-root/enforcement.md`'s `vinaya check` row. The former
+ * pointer here — a Configuration architecture chapter in
+ * `apps/vinaya/specs/vinaya-spec.md` — named a path that exists in no
+ * checkout of this repo (review finding, PR #120).
  */
 import type { CheckEntry } from '../lib/config'
 import type { CheckSpec } from './contract'
@@ -102,8 +108,27 @@ export function resolveChecks(core: CheckSpec[], configChecks: Record<string, Ch
  * `vinaya doctor` is the only surface left that can explain WHY — deleting
  * these would leave a refused config undiagnosable.
  */
+
+/**
+ * A config key is adopter-authored, arbitrary-length text these builders
+ * interpolate into a `CheckError.message` — emitted as a JSON line for agent
+ * consumption and written raw to stdout. Left verbatim, a crafted key can
+ * inject instruction-shaped text into an agent's error-handling context or
+ * newline-flood a CI log (security pass, PR #120, finding 3), so control
+ * characters are stripped and the key is truncated before it ever reaches a
+ * message. Display only — no classification ever compares against the
+ * sanitized form.
+ */
+const MAX_KEY_DISPLAY_LENGTH = 80
+
+export function sanitizeKeyForDisplay(key: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point.
+  const stripped = key.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+  return stripped.length > MAX_KEY_DISPLAY_LENGTH ? `${stripped.slice(0, MAX_KEY_DISPLAY_LENGTH)}…` : stripped
+}
+
 export function overriddenReplacesCoreDiagnostic(name: string): string {
-  return `check "${name}" shares its name with a core check — it REPLACES that core check. The core check does not run.`
+  return `check "${sanitizeKeyForDisplay(name)}" shares its name with a core check — it REPLACES that core check. The core check does not run.`
 }
 
 /**
@@ -114,5 +139,5 @@ export function overriddenReplacesCoreDiagnostic(name: string): string {
  * real rename.
  */
 export function bareKeyRejectedDiagnostic(key: string): string {
-  return `check "${key}" has no namespace and matches no core check — it is REJECTED, and \`vinaya check\` refuses the whole run rather than executing a partial ruleset. Rename it to "<yourname>/<id>", both segments matching [a-z0-9][a-z0-9-]* — prefixing alone is not enough when the bare name itself breaks that grammar ("my_check", "QALint" need a real rename, not just a prefix).`
+  return `check "${sanitizeKeyForDisplay(key)}" has no namespace and matches no core check — it is REJECTED, and \`vinaya check\` refuses the whole run rather than executing a partial ruleset. Rename it to "<yourname>/<id>", both segments matching [a-z0-9][a-z0-9-]* — prefixing alone is not enough when the bare name itself breaks that grammar ("my_check", "QALint" need a real rename, not just a prefix).`
 }

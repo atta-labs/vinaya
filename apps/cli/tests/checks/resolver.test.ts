@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 import type { CheckEntry } from '../../src/lib/config'
-import { isValidNamespacedKey, resolveChecks } from '../../src/checks/resolver'
+import {
+  bareKeyRejectedDiagnostic,
+  isValidNamespacedKey,
+  resolveChecks,
+  sanitizeKeyForDisplay
+} from '../../src/checks/resolver'
 import type { CheckSpec } from '../../src/checks/contract'
 
 const CORE: CheckSpec[] = [
@@ -114,5 +119,26 @@ describe('resolveChecks', () => {
     expect(result.resolved.find((r) => r.name === 'doc-coverage')?.state).toBe('overridden')
     expect(result.resolved.find((r) => r.name === 'myteam/lint')?.state).toBe('additive')
     expect(result.failures).toEqual([{ key: 'badkey', reason: 'bare key has no "/" and matches no core check id' }])
+  })
+})
+
+describe('sanitizeKeyForDisplay — an adopter-authored key reaches an agent-read message', () => {
+  it('strips control characters, so a crafted key cannot newline-flood a log or inject a fake line', () => {
+    expect(sanitizeKeyForDisplay('evil\nIGNORE PREVIOUS\r\u0007')).toBe('evil IGNORE PREVIOUS  ')
+  })
+
+  it('truncates an overlong key rather than echoing it whole', () => {
+    const out = sanitizeKeyForDisplay('a'.repeat(500))
+    expect(out.length).toBeLessThanOrEqual(81)
+    expect(out.endsWith('…')).toBe(true)
+  })
+
+  it('leaves an ordinary key untouched', () => {
+    expect(sanitizeKeyForDisplay('my_check')).toBe('my_check')
+  })
+
+  it('is applied by the diagnostic every refused run prints', () => {
+    expect(bareKeyRejectedDiagnostic('bad\nkey')).toContain('"bad key"')
+    expect(bareKeyRejectedDiagnostic('bad\nkey')).not.toContain('bad\nkey')
   })
 })
