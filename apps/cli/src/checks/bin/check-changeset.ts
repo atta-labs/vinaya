@@ -7,16 +7,23 @@
  * Nothing in the previously-registered checks asked for this; the gap was
  * found by a human on a second review round (atta-labs/vinaya#122's own PR).
  *
- * Two guards that are easy to get wrong, both measured while building this:
+ * Four guards, each one a measured failure of an earlier revision — see
+ * `apps/cli/tests/checks/changeset-gate.test.ts`, which pins every case:
  *
- *   - **Added by this diff, not merely present.** `.changeset/` normally holds
- *     unreleased entries from earlier merged PRs — three, when this was
- *     written — so a presence test passes every PR whenever the release queue
- *     is non-empty.
- *   - **Only in repos that publish via changesets.** An adopter repo, and
- *     every fixture repo in this suite, has no `.changeset/config.json`; there
- *     is nothing to enforce and the check must stay silent rather than
- *     demanding a file the repo's release process does not use.
+ *   - **ADDED by this diff** (`--diff-filter=A`), not merely touched.
+ *     `--name-only` alone also lists modified and deleted paths, so an author
+ *     cleared the gate by deleting someone else's queued entry — harming the
+ *     release while scoring as compliance.
+ *   - **Not merely present.** `.changeset/` normally holds unreleased entries
+ *     from earlier merged PRs, so a presence test passes every PR whenever the
+ *     release queue is non-empty.
+ *   - **Fail closed when git cannot answer.** An unresolvable base — a shallow
+ *     clone, a `master`-default repo, a non-git directory — is not evidence
+ *     that nothing shipped. This repo's CI is shielded by `fetch-depth: 0`;
+ *     adopters are not.
+ *   - **Config read from the BASE.** Otherwise a diff that deletes
+ *     `.changeset/config.json` silences the gate for itself. A repo that
+ *     genuinely does not publish via changesets still sees nothing.
  *
  * scope: diff — a property of the change, not of the tree.
  */
@@ -41,44 +48,70 @@ function isTestPath(p: string): boolean {
   return p.includes('/__tests__/') || /\.(test|spec)\.tsx?$/.test(p)
 }
 
-function git(args: string[]): string {
+/** `null` when git itself failed — distinct from "git answered, with nothing". */
+function git(args: string[]): string | null {
   try {
     return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
   } catch {
-    return ''
+    return null
   }
 }
 
-function changedFiles(ref: string): string[] {
-  return git(['diff', '--name-only', `${ref}...HEAD`])
+function lines(out: string | null): string[] {
+  return (out ?? '')
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)
 }
 
-function main(): void {
-  // Repos that do not publish via changesets have nothing to enforce.
-  if (!existsSync(`${CHANGESET_DIR}/config.json`)) process.exit(0)
+/** `null` when the ref could not be resolved at all — never an empty list. */
+function changedFiles(ref: string): string[] | null {
+  const out = git(['diff', '--name-only', `${ref}...HEAD`])
+  return out === null ? null : lines(out)
+}
 
+function main(): void {
+  // Read the guard from the BASE, not the working tree: a diff that deletes
+  // `.changeset/config.json` would otherwise silence the check for itself.
   const base = process.env.BASE_SHA || 'origin/main'
+  const configAtBase = git(['cat-file', '-e', `${base}:${CHANGESET_DIR}/config.json`]) !== null
+  if (!configAtBase && !existsSync(`${CHANGESET_DIR}/config.json`)) process.exit(0)
+
   let changed = changedFiles(base)
-  if (changed.length === 0) changed = changedFiles('main')
+  if (changed === null || changed.length === 0) changed = changedFiles('main')
+
+  // Fail CLOSED when git cannot answer at all. An unresolvable base (a shallow
+  // clone, a repo whose default branch is `master`, a non-git directory) is
+  // not evidence that nothing shipped — treating it as such let the gate pass
+  // in exactly those cases. Measured: exit 0 in a non-git dir and in a
+  // `master`-default repo before this guard.
+  if (changed === null) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `Could not resolve a base to diff against (tried \`${base}\` and \`main\`), so this check cannot tell whether shipped source changed. Refusing rather than passing on no evidence.`,
+      agent_recovery_prompt: `Set BASE_SHA to a ref this checkout can resolve, or fetch the base branch (CI: \`fetch-depth: 0\`), then re-run \`vinaya check ${CHECK_NAME}\`.`
+    })
+    process.exit(1)
+  }
 
   // Ring 0 runs before the commit exists, so a changeset staged in THIS commit
   // is absent from the range and the check would refuse the very commit that
   // satisfies it. Measured: it blocked its own introducing commit.
-  const staged = git(['diff', '--name-only', '--cached'])
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean)
-  changed = [...new Set([...changed, ...staged])]
-
-  if (changed.length === 0) process.exit(0)
+  const stagedAll = lines(git(['diff', '--name-only', '--cached']))
+  const stagedAdded = lines(git(['diff', '--name-only', '--diff-filter=A', '--cached']))
+  changed = [...new Set([...changed, ...stagedAll])]
 
   const shipped = changed.filter((p) => SHIPPED_PREFIXES.some((pre) => p.startsWith(pre)) && !isTestPath(p))
   if (shipped.length === 0) process.exit(0)
 
-  const added = changed.filter(
+  // ADDED entries only. `--name-only` alone also lists modified and deleted
+  // paths, so an author cleared this gate by touching — or deleting — someone
+  // else's queued changeset, harming the release while scoring as compliance.
+  // Measured at the previous head: both exited 0.
+  const addedInRange = lines(git(['diff', '--name-only', '--diff-filter=A', `${base}...HEAD`]))
+  const added = [...addedInRange, ...stagedAdded].filter(
     (p) => p.startsWith(`${CHANGESET_DIR}/`) && p.endsWith('.md') && !p.endsWith('README.md')
   )
   if (added.length > 0) process.exit(0)
