@@ -1,6 +1,6 @@
 # @attalabs/vinaya
 
-The `vinaya` bin — Vinaya's npm-distributed CLI, published to the public npm registry as `@attalabs/vinaya`. The installed command is `vinaya`; only the package name carries the scope. This package ships the command router, the hierarchical config loader, the versioned `--json` output envelope, the check engine (`vinaya check` / `vinaya new check`), the install lifecycle (`init` / `doctor` / `upgrade` / `eject`), and validated forge writes (`pr` / `issue`).
+The `vinaya` bin — Vinaya's npm-distributed CLI, published to the public npm registry as `@attalabs/vinaya`. The installed command is `vinaya`; only the package name carries the scope. This package ships the command router, the hierarchical config loader, the versioned `--json` output envelope, the check engine (`vinaya check` / `vinaya new check`), the install lifecycle (`init` / `doctor` / `upgrade` / `eject`), and validated forge writes (`pr` / `issue` / `review post`).
 
 ## Install
 
@@ -19,6 +19,7 @@ npx @attalabs/vinaya init        # or: pnpm dlx / yarn dlx / bunx
 | `vinaya doctrine` | Print the absolute path of the bundled doctrine's front door (`aeg-root/skills/aeg/SKILL.md`) on this machine. The committed root `VINAYA.md` pointer names the package, never a filesystem path — this command is the read-time resolution step it hands the reader. `--json` for the enveloped `{ root, entry }` form. |
 | `vinaya check <name> \| --all` | Run one check, or every registered check (core + `vinaya.config.json`-registered). `--json` for the enveloped `{ checks: CheckOutcome[] }` form; `--diff-only` scopes `scope: 'diff'` checks to changed files; `--parallel[=n]` caps concurrency (default: cpu-derived). Findings always print as the check contract's JSON lines on stderr, regardless of `--json`. Exit 0 iff every check passed. |
 | `vinaya new check <yourname>/<id>` | Scaffold a self-contained custom check into `./scripts/vinaya-checks/<id>.ts`, ready to register in `vinaya.config.json` under that namespaced key |
+| `vinaya review post --role code-reviewer \| security --pr <n> ...` | Render, post, and self-verify a code-reviewer or security-review verdict comment on a PR from structured flags (verdict, findings, per-field text) instead of a hand-typed comment. Resolves the PR's real head itself (`gh pr view --json headRefOid`); renders every structural `VERDICT:`/`Judged head:` line from validated inputs, never from caller-supplied text; refuses a contradictory verdict (a BLOCKER/CRITICAL-or-HIGH finding with a clean verdict) before posting anything; and after posting, re-fetches the comment and refuses to exit 0 unless it re-parses through the exact `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` functions the merge gate calls. `--json` for the enveloped machine form. |
 | `vinaya studio` | Launch Vinaya Studio. Inside a checkout that carries Studio's source (`apps/vinaya-studio/web` — it lives in the attalabs monorepo, not this repository) it runs the dev app; a published install runs its bundled standalone server instead, fetched from attalabs' published release artifact at publish time. |
 
 ## Config

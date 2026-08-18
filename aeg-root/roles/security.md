@@ -87,7 +87,16 @@ When the PR touches agent/skill/hook definitions, MCP configs, or anything under
 
 ## Output format
 
-The `VERDICT:` line is bare — no bold, no heading, no blockquote — it is machine-read by the pre-merge review gate. So is the `Judged head:` line immediately below it: the gate binds your verdict to the exact commit you reviewed, and a verdict that does not cover the PR's current head does not count as clean, however clean its `VERDICT:` value is (`review-gate.ts`). Post the PR's head sha (`gh pr view --json headRefOid`, or read it off the PR page) — full or abbreviated form, either is accepted.
+**Run `vinaya review post --role security` with this data; do not hand-type a verdict comment.** The `VERDICT:` line is bare — no bold, no heading, no blockquote — it is machine-read by the pre-merge review gate. So is the `Judged head:` line immediately below it: the gate binds your verdict to the exact commit you reviewed, and a verdict that does not cover the PR's current head does not count as clean, however clean its `VERDICT:` value is (`review-gate.ts`). Free-typing this shape into `gh pr comment` is no longer the sanctioned path — a decorated heading or a bolded/blockquoted line the gate's line-anchored parser cannot see reaches the forge looking correct to a human reader and is invisible to `verify-review-gate.ts`, with no pointer back to what was wrong until CI goes red. `vinaya review post` resolves the PR's real head itself (`gh pr view --json headRefOid` — never a self-reported sha), renders every structural line from your validated inputs, posts the comment, and refuses to exit 0 unless its own post re-parses clean through the exact same `extractSecurityReviewVerdict` function the gate calls:
+
+```
+vinaya review post --role security --pr <n> --verdict PASS|FAIL \
+  --findings-file <path> --config-scan <text> \
+  --secrets <text> --secrets-evidence-file <path> \
+  --task-id <task-id> --model <model> --tokens-in <n|-> --tokens-out <n|-> --cost <text|->
+```
+
+The findings file is one finding per line, `SEVERITY|file:line|description` (`|`-delimited: `file:line` already contains a colon), severity one of `CRITICAL|HIGH|MEDIUM|LOW`. Omit `--findings-file` for zero findings. The command renders this exact shape (kept here so a human or a debugging agent can still read what it produces — this is documentation, not something to write by hand):
 
 ```
 VERDICT: PASS | FAIL
@@ -106,9 +115,9 @@ SECRETS: [none found | listed above, redacted]
 - **HIGH** — likely exploitable misconfig or injection surface.
 - **MEDIUM/LOW** — hardening notes.
 
-Any CRITICAL or HIGH → VERDICT FAIL. Only MEDIUM/LOW → PASS with notes.
+Any CRITICAL or HIGH → VERDICT FAIL. Only MEDIUM/LOW → PASS with notes. `vinaya review post` refuses before posting anything if you pass a CRITICAL/HIGH finding together with `--verdict PASS` — that contradiction is caught mechanically, not left to review.
 
-The `SECRETS:` line is evidence-backed, not asserted: the secret scanner's pasted output (check 1) must appear in the verdict comment above it — necessary evidence that the scan ran, never sufficient on its own, since the judgment half of check 1 still stands behind the claim. `SECRETS: none found` with no scan output pasted is an unbacked self-attestation — the exact claim this check exists to catch in others' work, not to commit in your own.
+The `SECRETS:` line is evidence-backed, not asserted: the secret scanner's pasted output (check 1) must appear in the verdict comment above it — necessary evidence that the scan ran, never sufficient on its own, since the judgment half of check 1 still stands behind the claim. `SECRETS: none found` with no scan output pasted is an unbacked self-attestation — the exact claim this check exists to catch in others' work, not to commit in your own. `vinaya review post` mechanizes this: passing `--secrets "none found"` without `--secrets-evidence-file <path>` (the actual pasted scanner output) is refused outright.
 
 ## Escalation
 
@@ -122,4 +131,4 @@ Phase 10 (Review) in `process.md`: code-reviewer pass → **security pass (you)*
 
 ## Turn-end: report your tokens in the verdict comment
 
-You do not append your own row to `aeg-root/tranches/<name>.tokens.md` — you have no branch to write it on, and self-append was retired for every role. Instead, close your verdict comment with a one-line token report: `Tokens: <task-id>: security — Security — <model> — in/out/cost or — if unknown`. A security pass normally runs **operator-metered** — on a host that exposes no usage figure to the agent — so report `—` for the numeric cells; that host capability is the one sanctioned reason for a blank token cell (`tranche-model.md` §12), never inconvenience, and you never estimate. If your host does expose your own usage to you, report the real figures instead. The per-task Archivist collects this report at close-out and appends the row to the ledger — see `roles/archivist.md`. A re-pass after the Developer's fixes reports again, never edits the prior report.
+You do not append your own row to `aeg-root/tranches/<name>.tokens.md` — you have no branch to write it on, and self-append was retired for every role. Instead, `vinaya review post`'s `--task-id`/`--model`/`--tokens-in`/`--tokens-out`/`--cost` flags render the closing one-line token report as part of the same posted comment: `Tokens: <task-id>: security — Security — <model> — in/out/cost`. A security pass normally runs **operator-metered** — on a host that exposes no usage figure to the agent — so pass `-` (a literal hyphen, not this doc's `—`) for `--tokens-in`/`--tokens-out`/`--cost` when unknown; that host capability is the one sanctioned reason for a blank token cell (`tranche-model.md` §12), never inconvenience, and you never estimate. If your host does expose your own usage to you, pass the real figures instead. The per-task Archivist collects this report at close-out and appends the row to the ledger — see `roles/archivist.md`. A re-pass after the Developer's fixes reports again — run `vinaya review post` again rather than editing the prior comment.
