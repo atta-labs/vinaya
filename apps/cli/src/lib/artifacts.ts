@@ -872,6 +872,14 @@ function starterDocOwners(): string {
 #   This file absent, OR no glob matches any changed code file → silent no-op.
 #   The gate has no opinion until you teach it one.
 #
+# \`vinaya doctor\` (never \`vinaya check\`) separately reports — it does not
+# fail the check — any binding whose code glob matches zero tracked files
+# anywhere in the repo, or whose in-repo pointer doesn't exist on disk. This
+# catches what the dormancy rule above structurally cannot: a glob matching
+# nothing trivially satisfies "no changed file matched" on every diff,
+# forever, so a binding naming deleted or renamed code reads as healthy
+# indefinitely unless something walks the whole repo, not just one diff.
+#
 # ── No-doc allow-list ───────────────────────────────────────────────────────
 # Surfaces that legitimately need no bound doc are listed below. Format:
 #   # no-doc: <glob> — <reason>
