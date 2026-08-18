@@ -2,7 +2,10 @@
  * claude-code-transcript — the Claude Code **collection adapter** for the
  * token-report obligation (`aeg-root/tranche-model.md` §12, layer 2).
  *
- * This file is host-coupled on purpose and is the only `src/` module that is.
+ * This file is host-coupled on purpose: it is the only `src/` module whose
+ * LOGIC parses a host's own data format. Others name host paths as
+ * classification patterns — `file-classify.ts` matches `.claude/skills/` and
+ * `CLAUDE.md` — which is a different and weaker kind of coupling.
  * It knows one harness's session-transcript format: JSONL, one object per
  * line, assistant turns carrying a `message.usage` object whose fields are
  * named `input_tokens` / `output_tokens` / `cache_creation_input_tokens` /

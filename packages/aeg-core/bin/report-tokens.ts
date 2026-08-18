@@ -107,7 +107,7 @@ export function resolveTranscriptPath(explicit: string | undefined, deps: Resolv
         'passes hooks as `transcript_path` (typically under ~/.claude/projects/<project-slug>/). ' +
         'The pointer is optional convenience: it exists only in repos that install a ' +
         "`track-transcript.sh` Stop hook, and even there it is absent until this session's first turn " +
-        'completes. A repo with no such hook never writes one, and that is not a defect.'
+        'completes. The hook may equally be configured in your own host settings rather than in the repo, so a repo that installs none of its own may still have a pointer. Lacking one is not a defect.'
     )
   }
 

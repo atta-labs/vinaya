@@ -27,7 +27,7 @@ Vinaya uses a handful of words in a specific, non-obvious sense — on the pages
 
 **Resolution state** — One of three states — `default`, `overridden`, or `additive` — that every check or role ID resolves to. `default` means shipped-and-unmodified; `overridden` means a config entry currently claims that ID and satisfies its contract; `additive` means a wholly new, namespaced entry the shipped product has no opinion on.
 
-**Self-metering** — Said of an agent whose tool lets it read, by itself, how much work it just did — so it can report a real figure with nobody watching. How it reads that figure differs from tool to tool, and is the one part of this system that has to be written fresh for each one. An agent that can do this is never allowed to report a blank instead. The opposite is operator-metered, defined above.
+**Self-metering** — Said of an agent whose tool lets it read, by itself, how much work it just did — so it can report a real figure with nobody watching. How it reads that figure differs from tool to tool, and is the one part of this system that has to be written fresh for each one. An agent that can do this is not allowed to report a blank token count instead. The opposite is operator-metered, defined above.
 
 **Seam** — The handoff point between two people or roles, where one produces something — a document, a decision, a record — and the other consumes it. Each seam is written down once, in its own place, so both sides can agree on exactly what crosses it.
 
