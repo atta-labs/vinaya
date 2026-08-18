@@ -31,6 +31,7 @@ describe('registry env declarations', () => {
   it('registers exactly this name set as core checks (the audited surface)', () => {
     expect(specs.map((s) => s.name).sort()).toEqual(
       [
+        'body-bare-digits',
         'brief-shape',
         'branch-topology',
         'closes-n',

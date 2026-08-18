@@ -109,22 +109,25 @@ function blankTokenReportSection(body: string): string {
 
 /**
  * Blanks every line whose trimmed content starts with one of a small, fixed
- * set of bold-labeled structural fields: `**For:**` (the brief's mandatory
- * "model + environment" line — always names an agent/model identifier that
- * carries a version number, e.g. "Sonnet 5"), and `**Tier:**` / `**Project:**`
- * when NOT already inside their `AEG:*` anchor (an older, pre-anchor body
- * like #126 writes them bare) — layer 3 already blanks these when anchored,
- * so this is strictly the anchor-optional fallback, never a second pass over
- * already-blanked text.
+ * set of structural fields — plain (`Tier: 1`) or bold (`**Tier:** 1`), both
+ * accepted by this repo's own Tier grammar
+ * (`aeg-root/roles/developer.md` § PR body — canonical form): `For:` (the
+ * brief's mandatory "model + environment" line — always names an
+ * agent/model identifier that carries a version number, e.g. "Sonnet 5"),
+ * and `Tier:` / `Project:` when NOT already inside their `AEG:*` anchor (an
+ * older, pre-anchor body like #126 writes them bare, and `vinaya demo`'s own
+ * fixture PR body writes a plain, unbolded `Tier: 1`) — layer 3 already
+ * blanks these when anchored, so this is strictly the anchor-optional
+ * fallback, never a second pass over already-blanked text.
  *
- * Scoped to exactly these three labels, not every bold field in the body: a
- * broader "any `**Label:**` line is exempt" rule would swallow a genuine
- * claim written as a field (`**Result:** 138 passed`), which this check
- * exists to catch.
+ * Scoped to exactly these three labels, not every field in the body: a
+ * broader "any `Label:` line is exempt" rule would swallow a genuine claim
+ * written as a field (`Result: 138 passed`), which this check exists to
+ * catch.
  */
 function blankUnanchoredStructuralFields(body: string): string {
   const lines = body.split('\n')
-  const STRUCTURAL_FIELD = /^\*\*(For|Tier|Project):\*\*/
+  const STRUCTURAL_FIELD = /^\*{0,2}(For|Tier|Project):\*{0,2}/
   const fill = (line: string) => ' '.repeat(line.length)
   return lines.map((l) => (STRUCTURAL_FIELD.test(l.trim()) ? fill(l) : l)).join('\n')
 }

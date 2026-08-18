@@ -47,6 +47,10 @@ describe('body-bare-digits — must NOT fail: identifier shapes', () => {
     expect(violationLines(body)).toEqual([])
   })
 
+  it("a plain, unbolded, unanchored Tier field (accepted Tier syntax — real: `vinaya demo`'s own fixture body)", () => {
+    expect(violationLines('Tier: 1')).toEqual([])
+  })
+
   it('a digit inside an AEG:EVIDENCE anchor (owned by evidence-fresh, not this check)', () => {
     const body = [
       '<!-- AEG:EVIDENCE:START -->',
