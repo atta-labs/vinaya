@@ -440,3 +440,54 @@ describe('the real manifest resolves at its configured path', () => {
     expect(dangling).toEqual([])
   })
 })
+
+/**
+ * The behaviour of this repo's own `ops.ts → self-hosting.md` binding, pinned
+ * as executable outcomes rather than described in prose.
+ *
+ * `apps/cli/specs/self-hosting.md` previously stated this in a sentence, and
+ * the sentence was wrong: it said C5 "fails any PR that edits the resolver's
+ * file without updating this spec", omitting both routes that clear a fired
+ * binding. A sentence cannot detect its own decay; these cases fail the day
+ * the behaviour changes. The spec now points here instead of restating it.
+ */
+describe("the ops.ts → self-hosting.md binding's actual outcomes", () => {
+  const MANIFEST = 'apps/cli/src/lib/ops.ts  apps/cli/specs/self-hosting.md'
+  const CODE = 'apps/cli/src/lib/ops.ts'
+  const DOC = 'apps/cli/specs/self-hosting.md'
+  const exists = () => true
+  const substantiveDiff = () => '+  const x = resolveManagedBlockPath(root)\n'
+
+  it('fires when the code file changes alone', () => {
+    const r = evaluateC5([CODE], MANIFEST, '', exists, false)
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0]).toContain('C5 doc-coverage')
+  })
+
+  it('is satisfied when the bound doc changes in the same diff', () => {
+    expect(evaluateC5([CODE, DOC], MANIFEST, '', exists, false).errors).toEqual([])
+  })
+
+  it('is cleared by an actor-verified waiver label, with a note', () => {
+    const r = evaluateC5([CODE], MANIFEST, '', exists, true)
+    expect(r.errors).toEqual([])
+    expect(r.notes.join(' ')).toContain('waiver')
+  })
+
+  it('is cleared by a Doc-neutral declaration when the diff is comment/whitespace-only', () => {
+    const body = `Doc-neutral: ${DOC} — comment-only edit`
+    const r = evaluateC5([CODE], MANIFEST, body, exists, false, () => '+  // a clarifying comment\n')
+    expect(r.errors).toEqual([])
+  })
+
+  it('rejects a Doc-neutral declaration when the diff is substantive', () => {
+    const body = `Doc-neutral: ${DOC} — claimed neutral`
+    const r = evaluateC5([CODE], MANIFEST, body, exists, false, substantiveDiff)
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0]).toContain('doc-neutral-unverified')
+  })
+
+  it('does not fire on a sibling in the same directory', () => {
+    expect(evaluateC5(['apps/cli/src/lib/config.ts'], MANIFEST, '', exists, false).errors).toEqual([])
+  })
+})
