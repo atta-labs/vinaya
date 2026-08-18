@@ -87,10 +87,12 @@ When the PR touches agent/skill/hook definitions, MCP configs, or anything under
 
 ## Output format
 
-The `VERDICT:` line is bare — no bold, no heading, no blockquote — it is machine-read by the pre-merge review gate.
+The `VERDICT:` line is bare — no bold, no heading, no blockquote — it is machine-read by the pre-merge review gate. So is the `Judged head:` line immediately below it: the gate binds your verdict to the exact commit you reviewed, and a verdict that does not cover the PR's current head does not count as clean, however clean its `VERDICT:` value is (`review-gate.ts` — #73). Post the PR's head sha (`gh pr view --json headRefOid`, or read it off the PR page) — full or abbreviated form, either is accepted.
 
 ```
 VERDICT: PASS | FAIL
+
+Judged head: <sha>
 
 FINDINGS (ordered by severity):
 1. [CRITICAL|HIGH|MEDIUM|LOW] <file:line> — <what and why>
@@ -116,7 +118,7 @@ A security finding that implies a product/architecture decision (e.g., "the whol
 
 Phase 10 (Review) in `process.md`: code-reviewer pass → **security pass (you)** → Principal code review → Brief Author spec review → merge.
 
-**Your verdict is also a mechanical merge gate (the review-gate tranche, task 1).** A required, blocking CI check (`packages/aeg-core/bin/verify-review-gate.ts`) reads every PR comment from a **principal-allowlisted author** (verdict-author verification, 2026-08-09 — bot and unknown-author comments are ignored) for a clean `PASS` verdict — `FAIL`, a missing verdict, or an unclear one all fail the check and block merge, same as the code-reviewer pass. This is not advisory: it is the same enforcement class as typecheck or lint. A principal can waive it for one PR with an actor-verified `vinaya/waiver:review` label (`aeg-root/enforcement.md`) — label presence alone is never sufficient.
+**Your verdict is also a mechanical merge gate (the review-gate tranche, task 1).** A required, blocking CI check (`packages/aeg-core/bin/verify-review-gate.ts`) reads every PR comment from a **principal-allowlisted author** (verdict-author verification, 2026-08-09 — bot and unknown-author comments are ignored) for a clean `PASS` verdict that also covers the PR's current head commit (reviewed-commit binding, #73) — `FAIL`, a missing verdict, an unclear one, or one bound to a superseded commit all fail the check and block merge, same as the code-reviewer pass. This is not advisory: it is the same enforcement class as typecheck or lint. A principal can waive it for one PR with an actor-verified `vinaya/waiver:review` label (`aeg-root/enforcement.md`) — label presence alone is never sufficient.
 
 ## Turn-end: report your tokens in the verdict comment
 
