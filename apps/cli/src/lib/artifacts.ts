@@ -113,22 +113,30 @@ export function starterConfig(): VinayaConfig {
 }
 
 // ---------------------------------------------------------------------------
-// The version every published-shape invocation pins to — ONE source, shared by
-// both emitters (the four workflows via `vinayaRun`, the two git hooks via
-// `hookRun`). There is deliberately no second way for this package to learn its
-// own version: the two surfaces drifting apart is the defect
-// atta-labs/vinaya#86 fixed (the hooks pinned, the workflows did not).
+// The version both command emitters pin to — ONE source, shared by the four
+// workflows via `vinayaRun` and the two git hooks via `hookRun`. There is
+// deliberately no second source for a generated artifact's pin: the two
+// surfaces drifting apart is the defect atta-labs/vinaya#86 fixed (the hooks
+// pinned, the workflows did not). `doctor.ts` and `quickstart.ts` read the
+// same `package.json` for display, but neither feeds a generated artifact, so
+// neither can cause that drift. The root `VINAYA.md` doctrine pointer
+// (`doctrinePointer`) is deliberately left unpinned — it is a reading-order
+// hint a human runs by hand, not a CI invocation.
 //
 // Why exact, and never bare or `@latest`:
 //
-//   - **Bare is not "latest".** A generated `vinaya-checks.yml` runs the
-//     adopter's own install step before the `npx` line, so if the adopter
-//     happens to carry `@attalabs/vinaya` as a devDependency, `node_modules/
-//     .bin/vinaya` exists and npx prefers it over the registry. Measured
-//     2026-08-17 in atta-labs/attalabs: the same bare command resolved 0.8.2
-//     inside that repo and 0.9.0 in /tmp. The adopter's CI version was an
-//     accident of a devDependency no workflow referenced — change or drop it
-//     and CI jumps to registry latest with no commit and no diff.
+//   - **Bare is not "latest" — and which way it resolves depends on the
+//     adopter.** Where the generated `vinaya-checks.yml` carries an install
+//     step — which it does only when the adopter declares `ci.setup` — a
+//     devDependency copy of `@attalabs/vinaya` puts `node_modules/.bin/vinaya`
+//     on disk and npx prefers it over the registry. Measured 2026-08-17 in
+//     atta-labs/attalabs, which declares `ci.setup`: the same bare command
+//     resolved 0.8.2 inside that repo and 0.9.0 in /tmp. There, CI's version
+//     was an accident of a devDependency no workflow referenced — change or
+//     drop it and CI jumps to registry latest with no commit and no diff.
+//     An adopter that declares no `ci.setup` gets no install step at all
+//     (`adopterSetupStep` returns `''`), so for them a bare spec resolved
+//     registry latest in all four workflows, not only the archivist.
 //   - **The archivist workflow resolves the other way, and is the sharp end.**
 //     It emits no install step (its jobs spawn no adopter code), so an
 //     unpinned spec there really did mean registry latest — in three jobs

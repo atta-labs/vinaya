@@ -16,11 +16,16 @@
 // misresolution — a workspace member named `@attalabs/vinaya` — and nothing
 // more. A repo without one is an ordinary adopter and must keep the published
 // `npx` invocation with no build step (constraint: adopters do not pay for
-// this) — pinned to the generating CLI's exact version, which is orthogonal to
-// this predicate and never rescues a vendoring repo (see `ownVersion()` in
-// lib/artifacts.ts for why the workflows pin at all). A repo with one gets its OWN CLI built and invoked by path, which is
-// also strictly better for it: its CI then exercises the code in the pull
-// request rather than a published copy predating it.
+// this), pinned to the generating CLI's exact version. Two different
+// resolution problems meet here and must not be confused: the paragraph above
+// is about npm matching a WORKSPACE NAME before any version spec, which no
+// pin can escape; the pin is about which REGISTRY version an ordinary
+// adopter's CI resolves. The pin is therefore orthogonal to this predicate and
+// never rescues a vendoring repo (see `ownVersion()` in lib/artifacts.ts for
+// why the workflows pin at all). A repo with a vendored member gets its OWN
+// CLI built and invoked by path, which is also strictly better for it: its CI
+// then exercises the code in the pull request rather than a published copy
+// predating it.
 //
 // Detection runs at generation time (`init` / `upgrade` / `doctor` all hold the
 // repo root), so the generated YAML stays free of branching logic. It is a

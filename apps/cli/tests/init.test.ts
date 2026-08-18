@@ -493,13 +493,15 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     const files = generated()
 
     expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(6)
-    // …and none of them unpinned. An unpinned `npx` is NOT "latest": the
-    // generated checks workflow installs the adopter's own dependencies
-    // before this line, so a repo carrying `@attalabs/vinaya` as a
+    // …and none of them unpinned. An unpinned `npx` is NOT "latest". Where
+    // the generated checks workflow carries an install step — only when the
+    // adopter declares `ci.setup` — a repo carrying `@attalabs/vinaya` as a
     // devDependency resolves `node_modules/.bin/vinaya` instead of the
-    // registry — measured 2026-08-17, the same bare command gave 0.8.2 inside
-    // atta-labs/attalabs and 0.9.0 in /tmp. The CI version was an accident of
-    // a devDependency no workflow referenced (atta-labs/vinaya#86).
+    // registry: measured 2026-08-17, the same bare command gave 0.8.2 inside
+    // atta-labs/attalabs, which declares `ci.setup`, and 0.9.0 in /tmp. There
+    // the CI version was an accident of a devDependency no workflow
+    // referenced. With no `ci.setup` declared no install step is generated at
+    // all, so a bare spec resolved registry latest (atta-labs/vinaya#86).
     expect(occurrences(files, 'npx --yes @attalabs/vinaya ')).toBe(0)
     expect(occurrences(files, 'npx --yes @attalabs/vinaya@latest')).toBe(0)
     expect(occurrences(files, 'node apps/cli/dist/index.js')).toBe(0)
@@ -510,7 +512,7 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
   })
 
-  it('workflows and hooks pin the SAME version, from the generator’s own package', async () => {
+  it('every workflow and hook invocation is pinned, all to the generator’s own version', async () => {
     // The symmetry atta-labs/vinaya#86 restored. The two emitters share one
     // `ownVersion()`; a second version source appearing on either side would
     // let them drift, which is exactly the state that made an adopter's CI
@@ -518,11 +520,15 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // here — rather than hard-coding it — is what makes a drift visible.
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const hooks = readFileSync(join(root, '.husky/pre-commit'), 'utf-8')
-    const specs = new Set<string>()
+    const specs: string[] = []
     for (const content of [...generated().values(), hooks]) {
-      for (const m of content.matchAll(/npx --yes @attalabs\/vinaya@([^\s]+)/g)) specs.add(m[1] ?? '')
+      for (const m of content.matchAll(/npx --yes @attalabs\/vinaya@([^\s]+)/g)) specs.push(m[1] ?? '')
     }
-    expect([...specs]).toEqual([OWN_VERSION])
+    // Count, not just uniqueness: a set-only assertion would still pass if the
+    // workflows lost their pin entirely and the hook alone contributed the
+    // single value. Six workflow invocations plus one hook.
+    expect(specs).toHaveLength(7)
+    expect([...new Set(specs)]).toEqual([OWN_VERSION])
   })
 
   it('the PR-triggered workflows carry a concurrency group — one run per PR', async () => {
