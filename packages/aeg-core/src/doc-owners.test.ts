@@ -436,8 +436,8 @@ describe('the real manifest resolves at its configured path', () => {
     const { bindings, errors } = parseDocOwners(raw)
     expect(errors).toEqual([])
     const dangling = bindings
-      .filter((b) => !/^https?:\/\//.test(b.pointer))
-      .map((b) => b.pointer.split('#')[0] ?? b.pointer)
+      .filter((b) => !isUrlPointer(b.pointer))
+      .map((b) => pointerToPath(b.pointer))
       .filter((path) => !existsSync(join(repoRoot, path)))
     expect(dangling).toEqual([])
   })
@@ -478,10 +478,22 @@ describe("the ops.ts → self-hosting.md binding's actual outcomes", () => {
     expect(r.notes.join(' ')).toContain('waiver')
   })
 
-  it('is cleared by a Doc-neutral declaration when the diff is comment/whitespace-only', () => {
+  // The two enforcement points disagree about Doc-neutral, so both are pinned.
+  // `getDiff` is supplied only by packages/aeg-core/bin/verify-docs.ts, which
+  // runs at PR open/edit via open-pr.ts. The CI check that blocks merges —
+  // apps/cli/src/checks/bin/check-doc-coverage.ts:134 — calls evaluateC5 with
+  // five arguments and no getDiff, and so cannot take this route.
+  it('Doc-neutral clears at PR open/edit, where verify-docs supplies getDiff', () => {
     const body = `Doc-neutral: ${DOC} — comment-only edit`
     const r = evaluateC5([CODE], MANIFEST, body, exists, false, () => '+  // a clarifying comment\n')
     expect(r.errors).toEqual([])
+  })
+
+  it('Doc-neutral does NOT clear in the blocking CI check, which passes no getDiff', () => {
+    const body = `Doc-neutral: ${DOC} — comment-only edit`
+    const r = evaluateC5([CODE], MANIFEST, body, exists, false)
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0]).toContain('doc-neutral-unverified')
   })
 
   it('rejects a Doc-neutral declaration when the diff is substantive', () => {
