@@ -173,6 +173,49 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'review post',
+    description: 'Render, post, and self-verify a code-reviewer or security-review verdict comment on a PR',
+    flags: [
+      { flag: '--role', description: '`code-reviewer` or `security` — selects which role template is rendered' },
+      {
+        flag: '--pr',
+        description: 'Target PR number — its real head is resolved via `gh pr view`, never caller-supplied'
+      },
+      {
+        flag: '--verdict',
+        description: 'code-reviewer: `APPROVE` | `REQUEST_CHANGES`. security: `PASS` | `FAIL`'
+      },
+      {
+        flag: '--findings-file',
+        description: 'One finding per line: `SEVERITY|file:line|description` (`|`-delimited). Omit for zero findings.'
+      },
+      { flag: '--brief-conformance', description: 'code-reviewer only: the BRIEF CONFORMANCE line' },
+      { flag: '--spec-conformance', description: 'code-reviewer only: the SPEC CONFORMANCE line' },
+      { flag: '--scope', description: 'code-reviewer only: the SCOPE line' },
+      { flag: '--tests', description: 'code-reviewer only: the TESTS line' },
+      { flag: '--docs', description: 'code-reviewer only: the DOCS line' },
+      { flag: '--config-scan', description: 'security only: the CONFIG SCAN line' },
+      { flag: '--secrets', description: 'security only: the SECRETS line' },
+      {
+        flag: '--secrets-evidence-file',
+        description:
+          'security only: required whenever `--secrets` claims "none found" — the pasted scanner output backing that claim'
+      },
+      { flag: '--task-id', description: "the closing `Tokens:` line's task id" },
+      { flag: '--model', description: "the closing `Tokens:` line's model name" },
+      { flag: '--tokens-in', description: 'a non-negative integer, or `-` if unknown' },
+      { flag: '--tokens-out', description: 'a non-negative integer, or `-` if unknown' },
+      { flag: '--cost', description: 'free text, or `-` if unknown' },
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
+    ],
+    details: [
+      "Every structural line (`VERDICT:`, `Judged head:`) is rendered from this command's own validated enum/sha inputs — never from a caller-supplied string — so a Reviewer's free-typed prose can no longer produce a shape the merge gate's line-anchored regex fails to see.",
+      "Refuses a contradictory verdict before posting anything: a BLOCKER finding with `--verdict APPROVE`, or a CRITICAL/HIGH finding with `--verdict PASS`, is rejected outright, mirroring each role doc's own consistency rule.",
+      "After posting, re-fetches the PR's comments and runs them through the exact `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` functions `checkReviewGate` calls — the same functions, not a second implementation — and exits non-zero naming precisely what failed to re-parse if the post does not come back clean and bound to the resolved head. There is no `--skip-verify` escape."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'doctor',
     description: 'Diagnose hook, workflow, and config health — report only, never mutates',
     flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1)' }],

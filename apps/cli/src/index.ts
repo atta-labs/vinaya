@@ -16,6 +16,7 @@ import { newCheckCommand } from './commands/new-check.js'
 import { prCreateCommand, prEditCommand } from './commands/pr.js'
 import { prReportCommand } from './commands/pr-report.js'
 import { quickstartCommand } from './commands/quickstart.js'
+import { reviewPostCommand } from './commands/review-post.js'
 import { runStudio } from './commands/studio.js'
 import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
@@ -126,6 +127,16 @@ try {
         issueEditCommand(rest)
       } else {
         console.error(`Unknown 'issue' subcommand: ${subcommand ?? '(none)'} (expected 'create' or 'edit')`)
+        process.exit(2)
+      }
+      break
+    }
+    case 'review': {
+      const [subcommand, ...rest] = args
+      if (subcommand === 'post') {
+        await reviewPostCommand(rest)
+      } else {
+        console.error(`Unknown 'review' subcommand: ${subcommand ?? '(none)'} (expected 'post')`)
         process.exit(2)
       }
       break
