@@ -6,12 +6,21 @@
 // precisely because a doctor that "fixes" silently destroys the support
 // story; `vinaya upgrade` is the only sanctioned path back to a clean state.
 
+import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { CheckSpec } from '../checks/contract.js'
 import { coreCheckRegistry } from '../checks/registry.js'
 import { bareKeyRejectedDiagnostic, overriddenReplacesCoreDiagnostic, resolveChecks } from '../checks/resolver.js'
-import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
+import {
+  classifyDocOwnersManifest,
+  DOC_OWNERS_PATH,
+  globToRegex,
+  isCodeFile,
+  isUrlPointer,
+  parseDocOwners,
+  pointerToPath
+} from '@attalabs/aeg-core'
 import {
   buildInitOps,
   CONFIG_PATH,
@@ -316,6 +325,96 @@ function diagnoseCustomChecks(repoRoot: string, config: VinayaConfig): Finding[]
 }
 
 // ---------------------------------------------------------------------------
+// doc-owners health — repo-wide, not diff-scoped. C5 (`evaluateC5`,
+// packages/aeg-core/src/doc-owners.ts:234) only ever tests a binding's glob
+// against the CURRENT PR'S changed files; a binding whose glob matches zero
+// files ANYWHERE in the repo (the code it names was deleted or renamed
+// wholesale) never fires on any diff, ever again, and is structurally
+// indistinguishable to C5 from a healthy binding nothing happened to touch.
+// This walks every tracked file once per `doctor` run instead, so a dead
+// binding surfaces even though no diff would ever trigger it. Mirrors the
+// dangling-pointer check `evaluateC5` already does (lines 278-284), but
+// unconditionally — not gated on the glob having fired first.
+//
+// Scope, precisely: this answers ONLY "does this glob match anything that
+// exists right now" against a single repo snapshot. It does NOT reason about
+// diff history or which globs are technically alive but practically never
+// touched by a typical PR — that is a different, harder question this
+// diagnostic deliberately does not attempt.
+// ---------------------------------------------------------------------------
+function listTrackedFiles(repoRoot: string): string[] {
+  try {
+    return execFileSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf-8' })
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+function diagnoseDocOwnersHealth(repoRoot: string): Finding[] {
+  const path = join(repoRoot, DOC_OWNERS_PATH)
+  const content = existsSync(path) ? readFileSync(path, 'utf-8') : null
+  const state = classifyDocOwnersManifest(content)
+  if (state === 'absent' || state === 'empty') return []
+
+  // `parseDocOwners`'s own malformed-line `errors` are C5's job on the
+  // `vinaya check`/`vinaya pr report` path today — surfacing a second copy
+  // here would be scope creep this diagnostic doesn't take on.
+  const { bindings } = parseDocOwners(content as string)
+  if (bindings.length === 0) return []
+
+  // `isCodeFile` is load-bearing here, not optional: `evaluateC5` only ever
+  // tests a binding's glob against `changed.filter(isCodeFile)`, so a binding
+  // whose glob matches only non-code files is exactly as unfireable, from
+  // C5's point of view, as one matching nothing at all. Skipping this filter
+  // would report "healthy" on a binding just as dead as the one Issue #77
+  // measured.
+  const codeFiles = listTrackedFiles(repoRoot).filter(isCodeFile)
+
+  const findings: Finding[] = []
+  for (const b of bindings) {
+    let flagged = false
+
+    const re = globToRegex(b.glob)
+    if (!codeFiles.some((f) => re.test(f))) {
+      flagged = true
+      findings.push(
+        warn(
+          'doc-owners',
+          `${DOC_OWNERS_PATH}:${b.lineNum} binds glob '${b.glob}', which matches none of the ${codeFiles.length} ` +
+            'tracked code file(s) in this repo — the code it names may have been deleted, renamed, or never ' +
+            "existed. Repoint the binding to the code's new location, or remove it."
+        )
+      )
+    }
+
+    // Independent of the glob-match check above — a binding can be flagged
+    // for either reason, both, or neither.
+    if (!isUrlPointer(b.pointer)) {
+      const pointerPath = join(repoRoot, pointerToPath(b.pointer))
+      if (!existsSync(pointerPath)) {
+        flagged = true
+        findings.push(
+          warn(
+            'doc-owners',
+            `${DOC_OWNERS_PATH}:${b.lineNum} points to ${b.pointer}, which does not exist on disk. Repoint the ` +
+              'binding, or add the missing doc.'
+          )
+        )
+      }
+    }
+
+    if (!flagged) {
+      findings.push(ok('doc-owners', `${DOC_OWNERS_PATH}:${b.lineNum} — '${b.glob}' → ${b.pointer} is live.`))
+    }
+  }
+
+  return findings
+}
+
+// ---------------------------------------------------------------------------
 // env-loss diagnostics — permanent (not warn-phase-only like `vinaya
 // check`'s equivalent print): a check reading `process.env`/`Bun.env`/
 // `Deno.env` directly with no `env` declaration, across BOTH the core
@@ -552,6 +651,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
     hasDrift = install.hasDrift
     findings.push(...(await diagnoseHookRouting(repo.repoRoot, hookDir, deps.readHooksPath)))
     findings.push(...diagnoseCustomChecks(repo.repoRoot, configRead.config))
+    findings.push(...diagnoseDocOwnersHealth(repo.repoRoot))
   }
 
   findings.push(...diagnoseEnvDeclarations(repo.repoRoot, configRead.kind === 'ok' ? configRead.config : null))
