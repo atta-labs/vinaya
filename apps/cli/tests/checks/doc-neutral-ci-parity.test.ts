@@ -15,7 +15,14 @@ import { join } from 'node:path'
  * from the bin and the first case fails — the mutation this pins.
  */
 const REPO_ROOT = join(import.meta.dir, '../../../..')
-const BIN = join(REPO_ROOT, 'apps/cli/src/checks/bin/check-doc-coverage.ts')
+const BINS = {
+  // The merge-blocking entry: registry.ts -> `vinaya check --all --diff-only`.
+  blocking: join(REPO_ROOT, 'apps/cli/src/checks/bin/check-doc-coverage.ts'),
+  // Ring 0: emits `severity: 'warning'` and always exits 0, so its verdict is
+  // only visible in stderr. Asserting on exit code here would pass for every
+  // input and pin nothing.
+  push: join(REPO_ROOT, 'apps/cli/src/checks/bin/check-doc-coverage-push.ts')
+} as const
 
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -47,50 +54,65 @@ function repoWithFiredBinding(codeEdit: string): { dir: string; base: string } {
   return { dir, base }
 }
 
-async function runCheck(dir: string, base: string, prBody: string): Promise<number> {
-  const proc = Bun.spawn(['bun', BIN], {
+async function runCheck(
+  bin: string,
+  dir: string,
+  base: string,
+  prBody: string
+): Promise<{ code: number; stderr: string }> {
+  const proc = Bun.spawn(['bun', bin], {
     cwd: dir,
     env: { ...process.env, BASE_SHA: base, PR_BODY: prBody, PR_NUMBER: '' },
     stdout: 'pipe',
     stderr: 'pipe'
   })
-  return await proc.exited
+  const stderr = await new Response(proc.stderr).text()
+  return { code: await proc.exited, stderr }
 }
 
 describe('C5 Doc-neutral parity between the blocking check and verify-docs (#122)', () => {
-  it('clears a comment-only change when Doc-neutral is declared', async () => {
-    const { dir, base } = repoWithFiredBinding('export const x = 1\n// a clarifying comment\n')
-    expect(await runCheck(dir, base, 'Doc-neutral: docs/x.md — comment-only edit')).toBe(0)
-  })
+  const UNVERIFIED = 'doc-neutral-unverified'
 
-  it('still rejects a substantive change that declares Doc-neutral', async () => {
-    const { dir, base } = repoWithFiredBinding('export const x = 2\n')
-    expect(await runCheck(dir, base, 'Doc-neutral: docs/x.md — claimed neutral')).not.toBe(0)
-  })
+  // Both bins are exercised. The push bin's change would otherwise be
+  // unpinned — its existing coverage is source-text grep, so reverting its
+  // getDiff/ref fix would leave every test green, which is the drift this
+  // change exists to prevent.
+  for (const [label, bin] of Object.entries(BINS)) {
+    const blocking = label === 'blocking'
 
-  // The evidence diff must use the ref that actually produced the changed-file
-  // list. With no `origin/main` (a local run, a shallow clone) the bins fall
-  // back to `main`; a closure still holding `origin/main` diffs against a ref
-  // that resolves nothing, returns null, and the declaration fails for an
-  // unrelated reason. Runs with BASE_SHA unset so the fallback is exercised.
-  it('clears via the fallback ref when origin/main does not exist', async () => {
-    const { dir } = repoWithFiredBinding('export const x = 1\n// a clarifying comment\n')
-    const proc = Bun.spawn(['bun', BIN], {
-      cwd: dir,
-      env: {
-        ...process.env,
-        BASE_SHA: '',
-        PR_BODY: 'Doc-neutral: docs/x.md — comment-only edit',
-        PR_NUMBER: ''
-      },
-      stdout: 'pipe',
-      stderr: 'pipe'
+    it(`[${label}] clears a comment-only change when Doc-neutral is declared`, async () => {
+      const { dir, base } = repoWithFiredBinding('export const x = 1\n// a clarifying comment\n')
+      const r = await runCheck(bin, dir, base, 'Doc-neutral: docs/x.md — comment-only edit')
+      if (blocking) expect(r.code).toBe(0)
+      expect(r.stderr).not.toContain(UNVERIFIED)
     })
-    expect(await proc.exited).toBe(0)
-  })
 
-  it('still fires when nothing is declared', async () => {
-    const { dir, base } = repoWithFiredBinding('export const x = 2\n')
-    expect(await runCheck(dir, base, '')).not.toBe(0)
-  })
+    // Asserts the SPECIFIC failure, not merely "non-zero": a regression that
+    // dropped Doc-neutral parsing entirely would still fail, with a plain
+    // `C5 doc-coverage` message, and a not.toBe(0) assertion would stay green.
+    it(`[${label}] rejects a substantive change that declares Doc-neutral`, async () => {
+      const { dir, base } = repoWithFiredBinding('export const x = 2\n')
+      const r = await runCheck(bin, dir, base, 'Doc-neutral: docs/x.md — claimed neutral')
+      if (blocking) expect(r.code).not.toBe(0)
+      expect(r.stderr).toContain(UNVERIFIED)
+    })
+
+    // The evidence diff must use the ref that actually produced the changed
+    // file list. With no `origin/main` the bins fall back to `main`; a closure
+    // still holding `origin/main` diffs against a ref that resolves nothing,
+    // returns null, and the declaration fails for an unrelated reason.
+    it(`[${label}] clears via the fallback ref when origin/main does not exist`, async () => {
+      const { dir } = repoWithFiredBinding('export const x = 1\n// a clarifying comment\n')
+      const r = await runCheck(bin, dir, '', 'Doc-neutral: docs/x.md — comment-only edit')
+      if (blocking) expect(r.code).toBe(0)
+      expect(r.stderr).not.toContain(UNVERIFIED)
+    })
+
+    it(`[${label}] still fires when nothing is declared`, async () => {
+      const { dir, base } = repoWithFiredBinding('export const x = 2\n')
+      const r = await runCheck(bin, dir, base, '')
+      if (blocking) expect(r.code).not.toBe(0)
+      expect(r.stderr).toContain('C5 doc-coverage')
+    })
+  }
 })

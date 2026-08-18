@@ -153,9 +153,7 @@ function main(): void {
   }
 
   const content = existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null
-  const result = evaluateC5(changed, content, resolvePrBody(), existsSync, waiverActive(), (p) =>
-    fileDiff(ref, p)
-  )
+  const result = evaluateC5(changed, content, resolvePrBody(), existsSync, waiverActive(), (p) => fileDiff(ref, p))
 
   if (result.errors.length > 0) {
     for (const message of result.errors) {
