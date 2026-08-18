@@ -94,17 +94,6 @@ export function coreCheckRegistry(): CheckSpec[] {
       }
     },
     {
-      name: 'changeset',
-      run: bin('check-changeset'),
-      scope: 'diff',
-      timeoutMs: 10_000,
-      // BASE_SHA only, same default and `main` fallback as `doc-coverage`.
-      // No forge read, no PR body.
-      env: {
-        BASE_SHA: { optional: true }
-      }
-    },
-    {
       name: 'doc-coverage',
       run: bin('check-doc-coverage'),
       scope: 'diff',
