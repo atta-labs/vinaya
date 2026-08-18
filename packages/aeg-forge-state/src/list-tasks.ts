@@ -59,7 +59,7 @@ const PROJECT_SLUG = /^[a-z0-9][a-z0-9-]*$/i
  * exactly this way; `\s*` (which matches `\n`) is what lets the value sit on
  * the line after the label. A task-3 attempt narrowed these runs to `[ \t]*`
  * to remove a ReDoS class (measured: 705 ms → 0.02 ms on a crafted body) and
- * was reverted (round-4 review, findings 1 and 2): it silently dropped the
+ * was reverted: it silently dropped the
  * plain next-line form to `declared: false` and made the bold next-line form
  * fail with a false "the field is empty" message — the same silent-drop and
  * vacuous-fail-open classes this whole task exists to close. The `Project:`
