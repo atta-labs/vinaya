@@ -106,6 +106,10 @@ The generated command embeds the member's directory and `bin` path. Both come fr
 
 Branch protection is worth enabling, and it does not make the generated review gate unbypassable — a required status check is satisfied by a conclusion reported under its name, and under a `pull_request` trigger the workflow definition comes from the PR. That is true whether CI runs the published package or a vendored build; vendoring widens what the PR controls, it does not open the hole. The full statement, including where the shape degrades silently, is in [`specs/self-hosting.md`](./specs/self-hosting.md) in the source repository — it is not part of the published tarball.
 
+## Doc-owners coverage
+
+`.vinaya/doc-owners` binds code globs to the docs that must change with them; `vinaya check`'s C5 gate enforces that binding against each pull request's own diff — it fires only when a changed file matches a bound glob. That leaves a gap C5 cannot close on its own: a binding whose code was deleted or renamed wholesale matches nothing on any later diff, ever again, and reads as healthy forever. `vinaya doctor` closes it separately — it never fails `vinaya check` — by walking every binding against the repo's full tracked-file list and reporting any whose code glob matches zero tracked files anywhere in the repo, or whose in-repo doc pointer doesn't exist on disk. Report-only, like every other `vinaya doctor` diagnostic: it repoints or removes nothing itself.
+
 ## Known limits
 
 The five core AEG checks (`coherence`, `dispatch-readiness`, and siblings) are bound to the Vinaya development repository — they read governance documents relative to it. Outside a Vinaya workspace, `vinaya check --all` reports those checks as `status: 'error'` rather than crashing.
