@@ -39,12 +39,18 @@
  *     **Tier:** 1
  *     <!-- AEG:TIER:END -->
  *
- * Deliberately minimal: five field names, one shape. This is a delimiting
+ * Deliberately minimal: six field names, one shape. This is a delimiting
  * convention, not a metadata DSL; resist adding structure to it.
+ *
+ * `EVIDENCE` (fix/pr-report-emitter) differs from the other five in one way:
+ * it is never hand-typed. `vinaya pr report --write` is the only writer, and
+ * `check-evidence-fresh` is the only reader — no prose-fallback recognition
+ * exists or is planned for this field, unlike the anchor-optional grammar
+ * described above for the other five.
  */
 
-/** The five gate-read fields with an anchored home. */
-export const ANCHOR_FIELDS = ['CLOSES', 'PROJECT', 'TIER', 'PREMISE', 'TEST-PLAN'] as const
+/** The six gate-read fields with an anchored home. */
+export const ANCHOR_FIELDS = ['CLOSES', 'PROJECT', 'TIER', 'PREMISE', 'TEST-PLAN', 'EVIDENCE'] as const
 
 export type AnchorField = (typeof ANCHOR_FIELDS)[number]
 

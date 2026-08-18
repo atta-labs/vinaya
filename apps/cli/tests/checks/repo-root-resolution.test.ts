@@ -64,7 +64,7 @@ describe('RC1 — packageRoot() resolves regardless of the calling module’s de
 describe('RC3 — reader-resolvable-prose is not part of the adopter-facing registry', () => {
   it("coreCheckRegistry() never contains a reader-resolvable-prose entry, task 4's 11 new registrations included", () => {
     const specs = coreCheckRegistry()
-    expect(specs.length).toBe(15)
+    expect(specs.length).toBe(16)
     expect(specs.map((s) => s.name).sort()).toEqual(
       [
         'brief-shape',
@@ -75,6 +75,7 @@ describe('RC3 — reader-resolvable-prose is not part of the adopter-facing regi
         'dispatch-readiness',
         'doc-coverage',
         'doc-coverage-push',
+        'evidence-fresh',
         'first-push-dispatch',
         'issue-assignment',
         'no-disk-state',

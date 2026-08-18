@@ -370,6 +370,26 @@ export function coreCheckRegistry(): CheckSpec[] {
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true }
       }
+    },
+    {
+      name: 'evidence-fresh',
+      run: bin('check-evidence-fresh'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Pre-merge-only: meaningless before a PR exists to resolve a real
+      // head against. Same reasoning as `closes-n`/`test-plan` above.
+      requiresOpenPr: true,
+      // The bin shells to `gh pr view --json headRefOid` to resolve the real
+      // PR head (never `HEAD`, which is the merge commit in CI — see the
+      // bin's own module comment), so GITHUB_TOKEN/GH_TOKEN must reach it on
+      // a CI runner. PR_NUMBER/PR_BODY absence both take documented
+      // ring-0/no-PR bypasses in the bin.
+      env: {
+        PR_NUMBER: { optional: true },
+        PR_BODY: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true }
+      }
     }
   ]
 }
