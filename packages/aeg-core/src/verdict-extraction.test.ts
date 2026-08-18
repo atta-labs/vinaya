@@ -109,8 +109,16 @@ describe('extractCodeReviewVerdict', () => {
   it('extracts APPROVE from an underscore-emphasized VERDICT: line (both single and double)', () => {
     // `_` is a word character, so a `\b` value-side boundary would reject the
     // closing `_` and silently make the header comment's `_` claim false.
-    expect(extractCodeReviewVerdict(['_VERDICT: APPROVE_'])).toEqual({ value: 'APPROVE', headSha: null, danglingNote: null })
-    expect(extractCodeReviewVerdict(['__VERDICT: APPROVE__'])).toEqual({ value: 'APPROVE', headSha: null, danglingNote: null })
+    expect(extractCodeReviewVerdict(['_VERDICT: APPROVE_'])).toEqual({
+      value: 'APPROVE',
+      headSha: null,
+      danglingNote: null
+    })
+    expect(extractCodeReviewVerdict(['__VERDICT: APPROVE__'])).toEqual({
+      value: 'APPROVE',
+      headSha: null,
+      danglingNote: null
+    })
   })
 
   it('regression 5: bolded prose with no VERDICT: marker still does NOT produce a clean APPROVE', () => {
@@ -209,7 +217,11 @@ describe('extractSecurityReviewVerdict', () => {
   })
 
   it('extracts PASS from an underscore-emphasized VERDICT: line', () => {
-    expect(extractSecurityReviewVerdict(['_VERDICT: PASS_'])).toEqual({ value: 'PASS', headSha: null, danglingNote: null })
+    expect(extractSecurityReviewVerdict(['_VERDICT: PASS_'])).toEqual({
+      value: 'PASS',
+      headSha: null,
+      danglingNote: null
+    })
   })
 
   // ---- what the emphasis tolerance must still REJECT (#639 review, findings 1/3/4/5) ----
@@ -257,7 +269,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
     expect(result).toEqual({ value: 'PASS', headSha: SHORT_SHA, danglingNote: null })
   })
 
-  it('present but naming a superseded (stale) head: extraction still returns it verbatim — staleness is the gate\'s judgment, not the extractor\'s', () => {
+  it("present but naming a superseded (stale) head: extraction still returns it verbatim — staleness is the gate's judgment, not the extractor's", () => {
     const staleSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     const result = extractCodeReviewVerdict([`VERDICT: APPROVE\n\nJudged head: ${staleSha}`])
     expect(result.headSha).toBe(staleSha)

@@ -3,8 +3,14 @@
 /**
  * Core check: review-gate. Thin adapter over `@attalabs/aeg-core`'s
  * `checkReviewGate` — mirrors `packages/aeg-core/bin/verify-review-gate.ts`'s
- * input assembly (PR comments/labels/waiver-label-actor via `gh`) exactly,
- * emitting the check contract instead of human text.
+ * input assembly (PR comments/labels/waiver-label-actor/head sha via `gh`)
+ * exactly, emitting the check contract instead of human text.
+ *
+ * `headRefOid` (#73) is resolved from this same `gh pr view` call, never
+ * from local git or an env var — see `checkReviewGate`'s own module comment
+ * for why an env-sourced head would reopen the self-approval hole a
+ * `BASE_SHA` env var already tried and was reverted for (registry.ts's own
+ * comment on this check's entry states the same prohibition).
  *
  * Documented divergence from the reference script: `verify-review-gate.ts`
  * fails CLOSED when `PR_NUMBER` is unset, because its only real caller
@@ -37,11 +43,12 @@ type PrView = {
   number: number
   comments: { body: string; author?: { login?: string } | null }[]
   labels: { name: string }[]
+  headRefOid: string
 }
 
 function fetchPr(prNumber: number): PrView | null {
   try {
-    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'number,comments,labels'], {
+    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'number,comments,labels,headRefOid'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     })
@@ -108,7 +115,8 @@ function main(): void {
     comments: pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
     labels,
     waiverLabelActor,
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
+    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig()),
+    headSha: pr.headRefOid
   })
 
   if (result.verdict === 'fail') {
