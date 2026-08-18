@@ -242,12 +242,14 @@ export async function checkCommand(args: string[]): Promise<void> {
     } else {
       process.stdout.write(`${renderPlanTable(result)}\n`)
     }
-    process.exit(result.failures.length > 0 ? 1 : 0)
+    process.exitCode = result.failures.length > 0 ? 1 : 0
+    return
   }
 
   if (!allRequested && !requestedName) {
     console.error('Usage: vinaya check <name> | --all | --plan [--json] [--diff-only] [--local] [--parallel[=n]]')
-    process.exit(2)
+    process.exitCode = 2
+    return
   }
 
   // FAIL_CLOSED — refuse the whole run before a single check is spawned.
@@ -268,7 +270,8 @@ export async function checkCommand(args: string[]): Promise<void> {
       process.stdout.write(`✗ ${outcome.name}: refused — no checks ran\n`)
       for (const e of refusals) process.stdout.write(`    ${e.severity}: ${e.message}\n`)
     }
-    process.exit(1)
+    process.exitCode = 1
+    return
   }
 
   // The resolved set IS the registry: an entry whose key matched a core id
@@ -293,7 +296,8 @@ export async function checkCommand(args: string[]): Promise<void> {
   const specsToRun = allRequested ? allSpecs.filter(runsUnderAll) : allSpecs.filter((s) => s.name === requestedName)
   if (!allRequested && specsToRun.length === 0) {
     console.error(`Unknown check: ${requestedName}`)
-    process.exit(2)
+    process.exitCode = 2
+    return
   }
 
   const changed = diffOnly ? changedFiles() : null
@@ -326,5 +330,5 @@ export async function checkCommand(args: string[]): Promise<void> {
   }
 
   const failed = outcomes.some((o) => o.status === 'fail' || o.status === 'error' || o.status === 'timeout')
-  process.exit(failed ? 1 : 0)
+  process.exitCode = failed ? 1 : 0
 }
