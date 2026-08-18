@@ -85,6 +85,41 @@ describe('extractIssue', () => {
       outsideHeader: false
     })
   })
+
+  it('an EMPTY AEG:CLOSES pair strands the Issue rather than falling back to a body-wide reference', () => {
+    // Anchored IS canonical: when the pair is present it replaces the header
+    // block entirely, with deliberately no fallback to body-wide search (that
+    // fallback is the decoy problem the anchor exists to solve). So a pair the
+    // author left empty yields `issue: null` — a loud DANGLING at archive time —
+    // while the stray reference elsewhere in the body is still flagged, not lost.
+    const body = [
+      '<!-- AEG:CLOSES:START -->',
+      '<!-- AEG:CLOSES:END -->',
+      '',
+      '## Summary',
+      '',
+      'Closes #524 — but written outside the pair, so it does not close.'
+    ].join('\n')
+    expect(extractIssue(body)).toEqual({ issue: null, extraIssues: [524], outsideHeader: false })
+  })
+
+  it('an empty AEG:CLOSES pair with no reference anywhere is null with nothing flagged', () => {
+    const body = '<!-- AEG:CLOSES:START -->\n\n<!-- AEG:CLOSES:END -->\n\n## Summary\n\nNothing here.'
+    expect(extractIssue(body)).toEqual({ issue: null, extraIssues: [], outsideHeader: false })
+  })
+
+  it('a populated AEG:CLOSES pair still flags body-wide extras beyond its own reference', () => {
+    const body = [
+      '<!-- AEG:CLOSES:START -->',
+      'Closes #524',
+      '<!-- AEG:CLOSES:END -->',
+      '',
+      '## Summary',
+      '',
+      'Also Closes #530 in passing.'
+    ].join('\n')
+    expect(extractIssue(body)).toEqual({ issue: 524, extraIssues: [530], outsideHeader: false })
+  })
 })
 
 // #524/#530 regression, the actual shipped decision (not just its inputs):
@@ -248,5 +283,42 @@ describe('buildProvenanceBlock', () => {
     const { block, dangling } = buildProvenanceBlock(facts({ body }))
     expect(block).toContain('- Project(s):   DANGLING — no Project field in PR body')
     expect(dangling).toContain('no `Project:` field found in PR body — Project(s) field is DANGLING')
+  })
+
+  it('a PRESENT-but-empty field is DANGLING, not an empty value — assemble, never author', () => {
+    // The `·` separator terminates the field's value pattern, so a field whose
+    // value is nothing but the separator reads as present-with-no-value. The
+    // cardinal constraint says the block must not fabricate or default: it
+    // DANGLES, exactly as an absent field does.
+    const body = FULL_BODY.replace('Project: aeg, aeg-core', 'Project: ·')
+    const { block, dangling } = buildProvenanceBlock(facts({ body }))
+    expect(block).toContain('- Project(s):   DANGLING — no Project field in PR body')
+    expect(dangling).toContain('no `Project:` field found in PR body — Project(s) field is DANGLING')
+  })
+
+  it('an empty Ticket field falls back to the literal "none", the one sanctioned default', () => {
+    // `Ticket:` is the single field with a defaulted value — it is optional by
+    // design, so its absence is not a provenance hole and must not DANGLE.
+    const body = FULL_BODY.replace('Ticket: none\n', '')
+    const { block, dangling } = buildProvenanceBlock(facts({ body }))
+    expect(block).toContain('- Ticket:       none')
+    expect(dangling.some((d) => d.includes('Ticket'))).toBe(false)
+  })
+
+  it('copies the merge SHA and timestamp verbatim from the frozen facts', () => {
+    const { block } = buildProvenanceBlock(
+      facts({ body: FULL_BODY, mergeSha: 'deadbeef0001', mergedAt: '2026-08-18T09:30:00Z' })
+    )
+    expect(block).toContain('- Merged:       deadbeef0001 at 2026-08-18T09:30:00Z')
+  })
+
+  it('appends every DANGLING reason in one trailing line, not one per field', () => {
+    // A body with nothing the Archivist can copy: the block still renders in
+    // full, every field marked, and the reasons collected once at the end.
+    const { block, dangling } = buildProvenanceBlock(facts({ body: '## Summary\n\nNothing to copy.' }))
+    const trailing = block.split('\n').filter((l) => l.startsWith('DANGLING: '))
+    expect(trailing).toHaveLength(1)
+    expect(dangling.length).toBeGreaterThan(1)
+    for (const reason of dangling) expect(trailing[0]).toContain(reason)
   })
 })
