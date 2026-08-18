@@ -478,18 +478,18 @@ describe("the ops.ts → self-hosting.md binding's actual outcomes", () => {
     expect(r.notes.join(' ')).toContain('waiver')
   })
 
-  // The two enforcement points disagree about Doc-neutral, so both are pinned.
-  // `getDiff` is supplied only by packages/aeg-core/bin/verify-docs.ts, which
-  // runs at PR open/edit via open-pr.ts. The CI check that blocks merges —
-  // apps/cli/src/checks/bin/check-doc-coverage.ts:134 — calls evaluateC5 with
-  // five arguments and no getDiff, and so cannot take this route.
-  it('Doc-neutral clears at PR open/edit, where verify-docs supplies getDiff', () => {
+  // `evaluateC5`'s own contract, both directions: with `getDiff` it can verify a
+  // `Doc-neutral:` declaration; without it there is no evidence to check and the
+  // declaration cannot clear. These pin the FUNCTION, not any particular caller
+  // — a caller's argument list is that caller's test to own, and naming one here
+  // would make this file state a falsehood the day that caller changes.
+  it('Doc-neutral clears when the caller supplies getDiff and the diff is neutral', () => {
     const body = `Doc-neutral: ${DOC} — comment-only edit`
     const r = evaluateC5([CODE], MANIFEST, body, exists, false, () => '+  // a clarifying comment\n')
     expect(r.errors).toEqual([])
   })
 
-  it('Doc-neutral does NOT clear in the blocking CI check, which passes no getDiff', () => {
+  it('Doc-neutral cannot clear when the caller supplies no getDiff', () => {
     const body = `Doc-neutral: ${DOC} — comment-only edit`
     const r = evaluateC5([CODE], MANIFEST, body, exists, false)
     expect(r.errors).toHaveLength(1)
