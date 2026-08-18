@@ -138,7 +138,7 @@ export const COMMANDS: readonly Command[] = [
       }
     ],
     details: [
-      "Two groups: Group A (recomputable) is the head sha and a width-invariant `git diff --numstat` against the `origin/main` merge-base — `check-evidence-fresh` recomputes and byte-compares this exactly. Group B (attested) is the result of `vinaya check --all --diff-only`, this CLI's own portable gate suite — `check-evidence-fresh` can only check it for staleness (the block's recorded head still matches the PR's real head), never re-run it.",
+      "Two groups: Group A (recomputable) is the head sha and a width-invariant `git diff --numstat` against the merge-base with `BASE_SHA` (else `origin/main`, then `main`) — `check-evidence-fresh` recomputes and byte-compares this exactly. Group B (attested) is the result of `vinaya check --all --diff-only`, this CLI's own portable gate suite — `check-evidence-fresh` can only check it for staleness (the block's recorded head still matches the PR's real head), never re-run it.",
       'With no `--write`, prints the block to stdout instead of writing a file. Exits non-zero whenever the gate run failed, whether or not `--write` was given — the block records a failing result rather than hiding one, and a non-zero exit stops a scripted `--write && open-pr` from carrying a failing suite onto the forge.'
     ],
     status: 'shipped'

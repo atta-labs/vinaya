@@ -61,7 +61,7 @@ function git(args: string[]): string {
  * (same class of bug, mirrored here: `base ? git([...]) : ''` collapsed a
  * real resolution failure into the exact same `''` a genuinely empty diff
  * produces, so `compareEvidenceBlock` reported PASS having recomputed
- * nothing at all — found in review, round 1 of this PR).
+ * nothing at all — found in review, PR #126).
  */
 class UnresolvableMergeBaseError extends Error {
   constructor(triedRefs: readonly string[]) {
@@ -69,14 +69,22 @@ class UnresolvableMergeBaseError extends Error {
   }
 }
 
-/** Same `BASE_SHA || 'origin/main'`, then `main`, convention as `pr-report.ts`'s `resolveMergeBase` — see that one's doc comment for the sibling checks it matches. */
 /**
  * Mirrors `pr-report.ts`'s `gitStrict`: a non-zero exit throws instead of
  * collapsing to `''`. `git diff --numstat` printing nothing is a real answer
  * ("no files changed"); `git diff` FAILING also printed nothing, and the
  * emitter's side collapsed the same way, so both agreed on `''` and this
- * check reported PASS having recomputed nothing. Round 1 closed that for the
- * merge-base only.
+ * check reported PASS having recomputed nothing. An earlier fix in PR #126
+ * closed that for the merge-base only.
+ *
+ * Defence in depth, and stated as such rather than pinned: this bin resolves
+ * the base BEFORE diffing, and every way `git diff <base>...<head>` can fail
+ * (bad head, bad base) already fails `git merge-base` one line earlier, so
+ * the throw below is not reachable through this bin's own ordering. A test
+ * asserting a non-zero exit here passes for the merge-base reason whether or
+ * not `gitStrict` is used, which is why review's mutation survived and why
+ * no test claims to pin it. It guards the ordering changing, not today's
+ * ordering.
  */
 class GitCommandError extends Error {
   constructor(args: readonly string[], cause: string) {
@@ -93,6 +101,7 @@ function gitStrict(args: string[]): string {
   }
 }
 
+/** Same `BASE_SHA || 'origin/main'`, then `main`, convention as `pr-report.ts`'s `resolveMergeBase` — see that one's doc comment for the sibling checks it matches. */
 function resolveMergeBase(head: string): string {
   const primary = process.env.BASE_SHA || 'origin/main'
   const tried = primary === 'main' ? [primary] : [primary, 'main']

@@ -385,7 +385,8 @@ export function coreCheckRegistry(): CheckSpec[] {
       // a CI runner. PR_NUMBER/PR_BODY absence both take documented
       // ring-0/no-PR bypasses in the bin. BASE_SHA overrides the
       // `origin/main`/`main` merge-base resolution — same declaration as
-      // `doc-coverage`/`no-disk-state`/`closes-n`/`single-plan-pr` above —
+      // `doc-coverage`/`doc-coverage-push`/`no-disk-state`/`single-plan-pr`
+      // above (`closes-n` declares no BASE_SHA and resolves no merge-base) —
       // for a repo whose default branch resolves as neither.
       env: {
         PR_NUMBER: { optional: true },

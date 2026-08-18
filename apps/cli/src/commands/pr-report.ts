@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { anchoredRegionBounds } from '@attalabs/aeg-core'
@@ -85,7 +85,7 @@ function git(args: string[]): string {
  * `git diff --numstat` printing nothing means "no files changed" — a real,
  * verifiable answer; `git diff` FAILING also produced `''`, and both sides of
  * the evidence contract then agreed on it and reported PASS having compared
- * nothing. Round 1 of this PR fixed that collapse for the merge-base only;
+ * nothing. An earlier fix (PR #126) covered the merge-base only;
  * the same collapse survived behind `rev-parse` and `diff`. Commands whose
  * empty output is meaningful must therefore distinguish "empty" from
  * "failed", which means throwing rather than returning a sentinel.
@@ -124,7 +124,7 @@ function gitStrict(args: string[]): string {
  * `git()` itself does for every other caller) let a REAL failure collapse
  * into the exact same value as a genuinely empty diff, and `compareEvidenceBlock`
  * cannot tell "verified: no changes" from "never verified anything" once both
- * sides independently produce `''` — found in review, round 1 of this PR: an
+ * sides independently produce `''` — found in review (PR #126): an
  * adopter whose default branch is `master`/`develop` hits this on every run,
  * silently.
  */
@@ -145,7 +145,7 @@ export class UnresolvableMergeBaseError extends Error {
  * `BASE_SHA` if set, else `origin/main`, falling back to plain `main` when
  * that doesn't resolve either — same `BASE_SHA || 'origin/main'` convention
  * four sibling core checks already use (`check-doc-coverage.ts`,
- * `check-no-disk-state.ts`, `check-closes-n.ts`, `check-single-plan-pr.ts`),
+ * `check-no-disk-state.ts`, `check-doc-coverage-push.ts`, `check-single-plan-pr.ts`),
  * plus the `main` fallback `pr.ts`'s `localChangedFiles()` also uses. Not
  * every repo this runs in has a remote named `origin`, or a branch named
  * `main`: a bare local fixture (this command's own test setup, and several
@@ -169,13 +169,15 @@ export type GroupA = { head: string; base: string; numstat: string }
 
 /**
  * The head sha, its resolved merge-base (`resolveMergeBase`), and the
- * width-invariant `--numstat` diff between them. Throws
- * `UnresolvableMergeBaseError` when `head` resolves but no base does — see
- * that class's doc comment. `head` itself resolving to `''` (not a git repo,
- * or an unborn branch) is a separate, pre-existing condition this leaves
- * unchanged: there is no HEAD to diff against at all, so `base`/`numstat`
- * stay `''` rather than attempting a base resolution that has nothing to
- * resolve against.
+ * width-invariant `--numstat` diff between them.
+ *
+ * Every step refuses rather than degrading, because the two facts this
+ * function can report — "verified: no changes" and "never verified
+ * anything" — are otherwise the same bytes. `git rev-parse HEAD` failing
+ * (not a git repo, or an unborn branch) throws `GitCommandError`; no base
+ * resolving throws `UnresolvableMergeBaseError`; `git diff` failing throws
+ * `GitCommandError` again. Only an empty `numstat` from a SUCCEEDING diff is
+ * a legitimate result, and it is returned normally.
  */
 export function computeGroupA(): GroupA {
   // Every step throws rather than degrading. An unborn branch (no commits
@@ -219,12 +221,19 @@ export function anyGateFailed(outcomes: GateOutcome[]): boolean {
 /** The real gate runner: shells to this CLI's own `check --all --diff-only --json`, from the caller's cwd. */
 export function runRealGates(): GateRunResult {
   const entry = resolveSelfEntry()
-  const proc = Bun.spawnSync([process.execPath, entry, 'check', '--all', '--diff-only', '--json'], {
+  // `node:child_process`, not `Bun.spawnSync`: this package ships a
+  // `#!/usr/bin/env node` bin with `engines.node >= 20`, so a `Bun.*` call
+  // here is a `ReferenceError: Bun is not defined` for every adopter running
+  // the published CLI under node — Group B could never run for them. Found
+  // in the security pass; it failed closed (the ReferenceError escaped the
+  // narrowed catch below before any write), so nothing false was published.
+  const proc = spawnSync(process.execPath, [entry, 'check', '--all', '--diff-only', '--json'], {
     cwd: process.cwd(),
-    stdout: 'pipe',
-    stderr: 'ignore'
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    maxBuffer: 32 * 1024 * 1024
   })
-  const stdout = new TextDecoder().decode(proc.stdout)
+  const stdout = proc.stdout ?? ''
   try {
     const parsed = JSON.parse(stdout) as { data: { checks: GateOutcome[] } }
     const outcomes = parsed.data.checks
