@@ -242,7 +242,7 @@ describe('projectsFromBody — a declared value no longer vanishes silently', ()
 describe('projectFieldFromBody — absent is distinguishable from unparseable', () => {
   it('reports a body with no Project field as undeclared', () => {
     const body = '**Project(s) + blast radius** — `vinaya`.\n\n**Boundary** — x'
-    expect(projectFieldFromBody(body)).toEqual({ declared: false, names: [], unparsed: [] })
+    expect(projectFieldFromBody(body)).toEqual({ declared: false, names: [], unparsed: [], unreadable: false })
   })
 
   it('reports a declared value that did not parse, rather than dropping it', () => {
@@ -252,7 +252,8 @@ describe('projectFieldFromBody — absent is distinguishable from unparseable', 
     expect(projectFieldFromBody(body)).toEqual({
       declared: true,
       names: [],
-      unparsed: ['(none — tools/admin is unregistered; see Project(s) + blast radius above)']
+      unparsed: ['(none — tools/admin is unregistered; see Project(s) + blast radius above)'],
+      unreadable: false
     })
   })
 
@@ -261,7 +262,8 @@ describe('projectFieldFromBody — absent is distinguishable from unparseable', 
     expect(projectFieldFromBody(body)).toEqual({
       declared: true,
       names: ['aeg-core'],
-      unparsed: ['a value with spaces']
+      unparsed: ['a value with spaces'],
+      unreadable: false
     })
   })
 
@@ -269,19 +271,26 @@ describe('projectFieldFromBody — absent is distinguishable from unparseable', 
     expect(projectFieldFromBody('**Project:** vinaya, vinaya')).toEqual({
       declared: true,
       names: ['vinaya'],
-      unparsed: []
+      unparsed: [],
+      unreadable: false
     })
   })
 
   it('reports an empty value as declared — the field exists, it just says nothing', () => {
-    expect(projectFieldFromBody('**Project:**   \n')).toEqual({ declared: true, names: [], unparsed: [] })
+    expect(projectFieldFromBody('**Project:**   \n')).toEqual({
+      declared: true,
+      names: [],
+      unparsed: [],
+      unreadable: false
+    })
   })
 
   it('reports a fully-parsed declaration with no residue', () => {
     expect(projectFieldFromBody('**Project:** aeg-core, vinaya')).toEqual({
       declared: true,
       names: ['aeg-core', 'vinaya'],
-      unparsed: []
+      unparsed: [],
+      unreadable: false
     })
   })
 
@@ -289,7 +298,117 @@ describe('projectFieldFromBody — absent is distinguishable from unparseable', 
     expect(projectFieldFromBody(FENCED_EXAMPLE_THEN_FOOT_DECLARATION)).toEqual({
       declared: true,
       names: ['aeg-forge-state'],
-      unparsed: []
+      unparsed: [],
+      unreadable: false
     })
+  })
+})
+
+/**
+ * An unterminated fence runs to end of body (CommonMark, and how GitHub renders
+ * it), so a strip-then-read parser goes blind from the stray fence onward — and
+ * the foot declaration is exactly what lives down there. Mapping that onto
+ * `declared: false` hands the gate a pass on a body the pre-fix parser refused,
+ * which is the same fail-open this whole change exists to close, one layer in.
+ *
+ * The reader is not asked to guess the author's intent: a body whose fences do
+ * not balance is malformed, and the honest answer is "a field is there and I
+ * cannot trust my read of it" — `declared: true` with the value as residue, so
+ * the gate fails closed and says why.
+ */
+describe('projectFieldFromBody — an unterminated fence must not read as "no project"', () => {
+  it('reports a field swallowed by a stray unclosed fence as declared, not absent', () => {
+    const body = ['```', 'some example', '', '**Project:** notaproject'].join('\n')
+    expect(projectFieldFromBody(body)).toEqual({
+      declared: true,
+      names: [],
+      unparsed: ['notaproject'],
+      unreadable: true
+    })
+  })
+
+  it('reports a field swallowed by a four-backtick fence closed by three', () => {
+    const body = ['````', 'x', '```', '', '**Project:** notaproject'].join('\n')
+    expect(projectFieldFromBody(body)).toEqual({
+      declared: true,
+      names: [],
+      unparsed: ['notaproject'],
+      unreadable: true
+    })
+  })
+
+  it('reports a field swallowed by an unterminated tilde fence', () => {
+    const body = ['~~~', 'x', '', '**Project:** aeg-core'].join('\n')
+    expect(projectFieldFromBody(body)).toEqual({
+      declared: true,
+      names: [],
+      unparsed: ['aeg-core'],
+      unreadable: true
+    })
+  })
+
+  it('still reports a genuinely absent field as absent when the fences balance', () => {
+    const body = ['```', 'example', '```', '', '**Boundary** — x'].join('\n')
+    expect(projectFieldFromBody(body)).toEqual({ declared: false, names: [], unparsed: [], unreadable: false })
+  })
+
+  it('still refuses a Project line that lives only inside a BALANCED fence', () => {
+    // The defect this PR fixes. A balanced fence is a real example, and an
+    // example is still not a declaration — the unterminated-fence guard must
+    // not resurrect it.
+    const body = ['```', '**Project:** example-only', '```', '', '**Boundary** — x'].join('\n')
+    expect(projectFieldFromBody(body)).toEqual({ declared: false, names: [], unparsed: [], unreadable: false })
+  })
+
+  it('prefers the real foot declaration when the fences balance', () => {
+    const body = ['```', '**Project:** example-only', '```', '', '**Project:** aeg-core'].join('\n')
+    expect(projectFieldFromBody(body).names).toEqual(['aeg-core'])
+  })
+})
+
+describe('projectFieldFromBody — the wrapper peel is anchored to the value’s ends', () => {
+  it('still peels a fully backticked value', () => {
+    expect(projectsFromBody('**Project:** `aeg-core`')).toEqual(['aeg-core'])
+  })
+
+  it('still peels a trailing sentence full stop', () => {
+    expect(projectsFromBody('**Project:** notaproject.')).toEqual(['notaproject'])
+  })
+
+  it('still peels a backticked value carrying the sentence full stop outside the span', () => {
+    expect(projectsFromBody('**Project:** `aeg-core`.')).toEqual(['aeg-core'])
+  })
+
+  it('does NOT erase interior punctuation to manufacture a name', () => {
+    // Erasing `.` anywhere let `v.i.n.a.y.a` resolve to the registered
+    // `vinaya`: a body could read to a human as one thing and to the gate,
+    // the board and the blast-radius check as a registered project.
+    expect(projectFieldFromBody('**Project:** v.i.n.a.y.a')).toEqual({
+      declared: true,
+      names: [],
+      unparsed: ['v.i.n.a.y.a'],
+      unreadable: false
+    })
+  })
+
+  it('does NOT erase an interior semicolon to manufacture a name', () => {
+    expect(projectFieldFromBody('**Project:** vin;aya')).toEqual({
+      declared: true,
+      names: [],
+      unparsed: ['vin;aya'],
+      unreadable: false
+    })
+  })
+})
+
+describe('projectFieldFromBody — an HTML comment still wins first match (pre-existing)', () => {
+  it('pins the known gap: a commented-out field outranks the real foot declaration', () => {
+    // NOT introduced by the fence fix — the pre-fix parser gave the identical
+    // answer, and an HTML comment is not code, so `stripCode` leaves it. Pinned
+    // so the behaviour is a recorded decision rather than a silent surprise;
+    // closing it means teaching the parser to skip comments, which is the
+    // `Project:` field GRAMMAR and deliberately out of this change's scope.
+    const body = ['<!--', '**Project:** vinaya', '-->', '', '**Project:** notaproject'].join('\n')
+    expect(projectsFromBody(body)).toEqual(['vinaya'])
   })
 })

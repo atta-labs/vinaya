@@ -2,7 +2,7 @@ import type { Task, TaskIssueRef } from '@attalabs/aeg-types'
 import { type GhIssue, ghIssueListByAnyLabel, ghIssueListByAnyLabelAsync } from './gh'
 import { findTrancheSlug, trancheLabel } from './labels'
 import { parseRationaleDeps } from './parse-rationale-deps'
-import { stripCode } from './strip-code'
+import { hasUnterminatedFence, stripCode } from './strip-code'
 
 /** Issue title convention: `[<tranche-slug>] <task-id> — <title>`, the same
  * shape every Vinaya Issue is opened with (`open-issue.ts`, brief-authoring). */
@@ -52,7 +52,7 @@ const PROJECT_SLUG = /^[a-z0-9][a-z0-9-]*$/i
  * field-shaped line in a raw body is routinely a fenced *example* of the field,
  * and the real declaration sits at the foot by convention.
  */
-const PROJECT_FIELD = /^\s*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.+)$/im
+const PROJECT_FIELD = /^[ \t]*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.+)$/im
 
 /**
  * What the body's `Project:` field says — including when it says something this
@@ -83,6 +83,13 @@ export type ProjectField = {
   names: string[]
   /** Declared values that yielded no name — the residue no consumer can check. */
   unparsed: string[]
+  /**
+   * The body's fences do not balance, so an unterminated fence swallowed the
+   * region the field lives in and this read cannot be trusted. Distinct from
+   * every other state on purpose: "absent" and "unreadable" are the conflation
+   * that let a malformed body pass a gate the readable version of it failed.
+   */
+  unreadable: boolean
 }
 
 /**
@@ -94,13 +101,27 @@ export type ProjectField = {
  * could not refuse an unregistered `notaproject.` and passed vacuously on a
  * fully-wrapped one.
  *
- * These are exactly the characters `issue-validation.ts`'s `declaredProjects`
- * already trims. The two read the same field and must agree on what its value
- * is; a wrapper one of them peels and the other does not is the drift that
- * silently dropped the project of every plain-form Issue once before.
+ * The peel is **anchored to the value's ends**, not applied body-wide. Deleting
+ * `.` and `;` wherever they appeared let `v.i.n.a.y.a` and `vin;aya` collapse
+ * onto the registered `vinaya`, so a body could read to a human as one thing
+ * and resolve, for the gate AND for `Task.projects`, as a registered project.
+ * Interior punctuation now leaves the value non-slug, which reports it as
+ * residue — the honest answer.
+ *
+ * `issue-validation.ts`'s `declaredProjects` peels the same character SET, and
+ * that much the two share. They are not otherwise interchangeable and this
+ * function does not pretend they are: `declaredProjects` splits on `/[,/]/` and
+ * DROPS a non-slug segment, while this one splits on `,` (the documented
+ * grammar) and REPORTS it. On `**Project:** vinaya / aeg-core` they disagree by
+ * construction. The shared peel set is what keeps a wrapper from costing a real
+ * name its shape in one reader and not the other — the drift that silently
+ * dropped the project of every plain-form Issue once before; it is not a claim
+ * that the two functions agree in general.
  */
+const VALUE_EDGE_MARKUP = /^[`.;\s]+|[`.;\s]+$/g
+
 function unwrapValue(raw: string): string {
-  return raw.replace(/\*\*/g, '').replace(/[`.;]/g, '').trim()
+  return raw.replace(/\*\*/g, '').replace(VALUE_EDGE_MARKUP, '')
 }
 
 /**
@@ -125,16 +146,43 @@ function unwrapValue(raw: string): string {
  */
 export function projectFieldFromBody(body: string): ProjectField {
   const m = stripCode(body, { inlineSpans: 'keep' }).match(PROJECT_FIELD)
-  if (!m) return { declared: false, names: [], unparsed: [] }
+  if (m) return parseFieldValue(m[1] ?? '')
+
+  // No field OUTSIDE code. Two very different reasons, and collapsing them is
+  // the same fail-open this function exists to close, one layer in:
+  //
+  //   - the body genuinely declares none, or declares one only inside a
+  //     BALANCED fence (an example, not a declaration) — absent, and a pass;
+  //   - an UNTERMINATED fence ran to end of body and swallowed the rest,
+  //     including the foot where the real declaration lives by convention.
+  //
+  // In the second case the reader is blind, not looking at an empty page. A
+  // body with unbalanced fences is malformed — GitHub renders its tail as code
+  // too — so the honest answer is "a field is there and this read of it cannot
+  // be trusted": declared, with the value as residue, which fails the gate
+  // closed and names what it could not check. Reported rather than parsed,
+  // because inside the swallowed region a quoted example and a real
+  // declaration are genuinely indistinguishable — and unlike `Closes #N`,
+  // there is no GitHub behaviour to match here. This system is the only
+  // reader, so the safe direction is fail-closed, not pass.
+  if (hasUnterminatedFence(body)) {
+    const raw = body.match(PROJECT_FIELD)
+    if (raw) return { declared: true, names: [], unparsed: [(raw[1] ?? '').trim()], unreadable: true }
+  }
+  return { declared: false, names: [], unparsed: [], unreadable: false }
+}
+
+/** Splits one captured field value into resolved names and the residue that yielded none. */
+function parseFieldValue(value: string): ProjectField {
   const names: string[] = []
   const unparsed: string[] = []
-  for (const raw of (m[1] ?? '').split(',')) {
-    const value = unwrapValue(raw)
-    if (value.length === 0) continue
-    if (PROJECT_SLUG.test(value)) names.push(value)
+  for (const raw of value.split(',')) {
+    const name = unwrapValue(raw)
+    if (name.length === 0) continue
+    if (PROJECT_SLUG.test(name)) names.push(name)
     else unparsed.push(raw.trim())
   }
-  return { declared: true, names: [...new Set(names)], unparsed }
+  return { declared: true, names: [...new Set(names)], unparsed, unreadable: false }
 }
 
 /**

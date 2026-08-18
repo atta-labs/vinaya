@@ -168,30 +168,65 @@ const FENCE_CLOSE = /^ {0,3}(`+|~+)[ \t]*\r?$/
  * code and must not count.
  */
 function maskFencedCode(body: string, fill: LineFill): string {
+  const { lines } = scanFencedCode(body)
+  return lines.map(({ line, inCode }) => (inCode ? fill(line) : line)).join('\n')
+}
+
+/**
+ * One pass of the fence state machine: which lines are inside a fenced block,
+ * and whether the body ended while a fence was still open.
+ *
+ * Both facts come out of the SAME scan on purpose. `hasUnterminatedFence` is a
+ * question about the fence grammar, and this file's whole reason to exist is
+ * that the grammar has exactly one implementation — answering it with a
+ * separate backtick-counting regex is how the two drift and how #617's decoy
+ * class comes back.
+ */
+function scanFencedCode(body: string): { lines: Array<{ line: string; inCode: boolean }>; unterminated: boolean } {
   let fenceChar: string | null = null
   let fenceLen = 0
 
-  return body
-    .split('\n')
-    .map((line) => {
-      if (fenceChar === null) {
-        const open = line.match(FENCE_OPEN)
-        if (!open) return line
-        const marker = open[1] as string
-        // A backtick fence's info string cannot contain a backtick.
-        if (marker[0] === '`' && (open[2] as string).includes('`')) return line
-        fenceChar = marker[0] as string
-        fenceLen = marker.length
-        return fill(line)
-      }
-      const close = line.match(FENCE_CLOSE)
-      if (close && (close[1] as string)[0] === fenceChar && (close[1] as string).length >= fenceLen) {
-        fenceChar = null
-        fenceLen = 0
-      }
-      return fill(line)
-    })
-    .join('\n')
+  const lines = body.split('\n').map((line) => {
+    if (fenceChar === null) {
+      const open = line.match(FENCE_OPEN)
+      if (!open) return { line, inCode: false }
+      const marker = open[1] as string
+      // A backtick fence's info string cannot contain a backtick.
+      if (marker[0] === '`' && (open[2] as string).includes('`')) return { line, inCode: false }
+      fenceChar = marker[0] as string
+      fenceLen = marker.length
+      return { line, inCode: true }
+    }
+    const close = line.match(FENCE_CLOSE)
+    if (close && (close[1] as string)[0] === fenceChar && (close[1] as string).length >= fenceLen) {
+      fenceChar = null
+      fenceLen = 0
+    }
+    return { line, inCode: true }
+  })
+
+  return { lines, unterminated: fenceChar !== null }
+}
+
+/**
+ * Did the body end with a fence still open?
+ *
+ * An unterminated fence runs to end of body — CommonMark says so and GitHub
+ * renders it that way, so `stripCode` blanking everything after it is correct,
+ * not a bug. What is a bug is a caller reading that blanked tail as "the field
+ * is absent": from the stray fence onward the reader is **blind**, and a body's
+ * conventional foot fields are exactly what live down there.
+ *
+ * Callers that must distinguish "absent" from "unreadable" ask this first. See
+ * `projectFieldFromBody` (`list-tasks.ts`), where treating a swallowed
+ * `Project:` line as absent handed a registry gate a pass on a body the
+ * previous, fence-blind parser refused.
+ *
+ * Line endings are normalised exactly as `stripCode` normalises them, so the
+ * answer matches the strip the caller is about to distrust.
+ */
+export function hasUnterminatedFence(body: string): boolean {
+  return scanFencedCode(body.replace(/\r\n?/g, '\n')).unterminated
 }
 
 /** A list marker (`-`, `*`, `+`, `1.`, `1)`) indented 0–3 spaces — opens list context. */
