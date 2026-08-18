@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   classifyDocOwnersManifest,
@@ -445,16 +447,18 @@ describe('the real manifest resolves at its configured path', () => {
  * The behaviour of this repo's own `ops.ts → self-hosting.md` binding, pinned
  * as executable outcomes rather than described in prose.
  *
- * `apps/cli/specs/self-hosting.md` previously stated this in a sentence, and
- * the sentence was wrong: it said C5 "fails any PR that edits the resolver's
- * file without updating this spec", omitting both routes that clear a fired
- * binding. A sentence cannot detect its own decay; these cases fail the day
- * the behaviour changes. The spec now points here instead of restating it.
+ * The manifest is READ FROM DISK, never hard-coded: a fixture copy would keep
+ * these cases green if the binding line were deleted, which would pin nothing.
  */
 describe("the ops.ts → self-hosting.md binding's actual outcomes", () => {
-  const MANIFEST = 'apps/cli/src/lib/ops.ts  apps/cli/specs/self-hosting.md'
   const CODE = 'apps/cli/src/lib/ops.ts'
   const DOC = 'apps/cli/specs/self-hosting.md'
+  const MANIFEST = readFileSync(join(__dirname, '../../..', DOC_OWNERS_PATH), 'utf8')
+
+  it('the installed manifest actually carries this binding', () => {
+    const { bindings } = parseDocOwners(MANIFEST)
+    expect(bindings.map((b) => `${b.glob} -> ${b.pointer}`)).toContain(`${CODE} -> ${DOC}`)
+  })
   const exists = () => true
   const substantiveDiff = () => '+  const x = resolveManagedBlockPath(root)\n'
 
