@@ -35,20 +35,36 @@
  * claim never depends on the caller having gotten the ordering right.
  *
  * Self-verification (the part that actually closes the gap): after posting,
- * this command re-fetches the PR's comments and runs them through the exact
- * gate-side extractors. A single fetch-and-check, deliberately with no retry
- * loop — a retry here would risk masking a genuine GitHub comment-propagation
- * race as a transient hiccup (`aeg-root/roles/developer.md`'s stop-condition
+ * this command re-fetches the PR's comments, filters them to the same
+ * `PRINCIPAL_ALLOWLIST`/`principals`-derived author set `checkReviewGate`
+ * itself filters to (the #806 verdict-author-verification fix — a
+ * non-allowlisted "VERDICT:"-shaped comment must never count, in either
+ * direction), and runs the survivors through the exact gate-side extractors.
+ * A single fetch-and-check, deliberately with no retry loop — a retry here
+ * would risk masking a genuine GitHub comment-propagation race as a
+ * transient hiccup (`aeg-root/roles/developer.md`'s stop-condition
  * discipline: report a real race precisely, never paper over it). Measured
  * during this task's own end-to-end run: an immediate re-fetch reliably saw
  * the just-posted comment, so no such race was ever observed here.
+ *
+ * "Self-verified: clean" proves format and head-binding only — `--verdict`
+ * and each finding's severity remain caller-asserted, by the brief's explicit
+ * scope. This command mechanizes the SHAPE of a verdict, never the judgment
+ * behind it.
  */
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { extractCodeReviewVerdict, extractSecurityReviewVerdict, type VerdictExtraction } from '@attalabs/aeg-core'
+import {
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict,
+  isPrincipal,
+  type ReviewGateComment,
+  type VerdictExtraction
+} from '@attalabs/aeg-core'
+import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config'
 import { printJson } from '../lib/envelope'
 import { makeCheckError, refuse } from '../lib/forge-write'
 
@@ -248,26 +264,62 @@ function checkExtraction(extraction: VerdictExtraction, expectedValue: string, h
   return { ok: true, reason: 'clean' }
 }
 
-export function verifyPostedCodeReview(
-  comments: string[],
-  verdict: CodeReviewVerdict,
-  headSha: string
-): SelfVerifyResult {
-  return checkExtraction(extractCodeReviewVerdict(comments), CODE_REVIEW_VERDICT_TEXT[verdict], headSha)
+/**
+ * Same author filter `checkReviewGate` applies before calling either
+ * extractor (the #806 verdict-author-verification fix) — a non-allowlisted
+ * "VERDICT:"-shaped comment must never count toward self-verification either,
+ * or "self-verified: clean" would not be a faithful proxy for what the real
+ * merge gate concludes at CI time.
+ */
+function principalBodies(comments: readonly ReviewGateComment[], principalAllowlist: readonly string[]): string[] {
+  return comments.filter((c) => isPrincipal(c.author, principalAllowlist as string[])).map((c) => c.body)
 }
 
-export function verifyPostedSecurity(comments: string[], verdict: SecurityVerdict, headSha: string): SelfVerifyResult {
-  return checkExtraction(extractSecurityReviewVerdict(comments), verdict, headSha)
+export function verifyPostedCodeReview(
+  comments: readonly ReviewGateComment[],
+  verdict: CodeReviewVerdict,
+  headSha: string,
+  principalAllowlist: readonly string[]
+): SelfVerifyResult {
+  return checkExtraction(
+    extractCodeReviewVerdict(principalBodies(comments, principalAllowlist)),
+    CODE_REVIEW_VERDICT_TEXT[verdict],
+    headSha
+  )
+}
+
+export function verifyPostedSecurity(
+  comments: readonly ReviewGateComment[],
+  verdict: SecurityVerdict,
+  headSha: string,
+  principalAllowlist: readonly string[]
+): SelfVerifyResult {
+  return checkExtraction(extractSecurityReviewVerdict(principalBodies(comments, principalAllowlist)), verdict, headSha)
 }
 
 // --- CLI plumbing ----------------------------------------------------------
 
-function parseFlags(args: string[]): Map<string, string> {
+/**
+ * Never consumes a token that itself looks like a flag (`--foo`) as the
+ * PRECEDING flag's value — a misordered invocation (a nullary flag left
+ * un-filtered before this call, or simply a missing value) sets that flag to
+ * `''` instead, so a real `requireFlag` refusal fires loudly on the flag that
+ * is actually missing, rather than silently swallowing the NEXT flag's name
+ * and value (review finding, PR #144: `--role` immediately before a
+ * `--json`-like token used to eat the following `--verdict APPROVE` pair
+ * whole with no error at all).
+ */
+export function parseFlags(args: string[]): Map<string, string> {
   const map = new Map<string, string>()
   for (let i = 0; i < args.length; i++) {
     const a = args[i] as string
     if (a.startsWith('--')) {
-      map.set(a, args[i + 1] ?? '')
+      const value = args[i + 1]
+      if (value === undefined || value.startsWith('--')) {
+        map.set(a, '')
+        continue
+      }
+      map.set(a, value)
       i++
     }
   }
@@ -376,15 +428,19 @@ function postComment(pr: string, body: string): string {
   }
 }
 
-function fetchComments(pr: string): string[] {
+function fetchComments(pr: string): ReviewGateComment[] {
   const out = gh(['pr', 'view', pr, '--json', 'comments'])
-  const parsed = JSON.parse(out) as { comments: { body: string }[] }
-  return parsed.comments.map((c) => c.body)
+  const parsed = JSON.parse(out) as { comments: { body: string; author?: { login?: string } | null }[] }
+  return parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
 }
 
 export async function reviewPostCommand(args: string[]): Promise<void> {
   const json = args.includes('--json')
-  const flags = parseFlags(args)
+  // Nullary flags are stripped BEFORE parseFlags's pairwise scan — `pr.ts`'s
+  // established pattern. Left in, `--json` immediately preceding a real flag
+  // would be misread as that flag's un-provided value, and the flag after IT
+  // would vanish silently (review finding, PR #144).
+  const flags = parseFlags(args.filter((a) => a !== '--json'))
 
   const role = flags.get('--role')
   if (role !== 'code-reviewer' && role !== 'security') {
@@ -403,9 +459,13 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   const tokens: TokensInput = { taskId, model, tokensIn, tokensOut, cost }
 
   const headSha = resolveHeadSha(pr)
+  // Same trust anchor `checkReviewGate` itself uses — the repo's own
+  // `principals` field on the default branch (never the PR's checkout),
+  // falling back to the hardcoded `PRINCIPAL_ALLOWLIST` on any read failure.
+  const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
 
   let body: string
-  let verify: (comments: string[]) => SelfVerifyResult
+  let verify: (comments: ReviewGateComment[]) => SelfVerifyResult
 
   if (role === 'code-reviewer') {
     const verdict = normalizeCodeReviewVerdict(requireFlag(flags, '--verdict'))
@@ -428,7 +488,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       docs: requireFlag(flags, '--docs')
     }
     body = renderCodeReviewComment(input)
-    verify = (comments) => verifyPostedCodeReview(comments, verdict, headSha)
+    verify = (comments) => verifyPostedCodeReview(comments, verdict, headSha, principalAllowlist)
   } else {
     const verdict = normalizeSecurityVerdict(requireFlag(flags, '--verdict'))
     const findings = readFindingsFile(flags.get('--findings-file'), SECURITY_SEVERITIES)
@@ -464,12 +524,12 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       secretsEvidence
     }
     body = renderSecurityComment(input)
-    verify = (comments) => verifyPostedSecurity(comments, verdict, headSha)
+    verify = (comments) => verifyPostedSecurity(comments, verdict, headSha, principalAllowlist)
   }
 
   const url = postComment(pr, body)
 
-  let comments: string[]
+  let comments: ReviewGateComment[]
   try {
     comments = fetchComments(pr)
   } catch (err) {

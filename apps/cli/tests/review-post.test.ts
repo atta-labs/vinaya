@@ -5,6 +5,7 @@ import {
   type Finding,
   isNoneFoundClaim,
   parseFindingsFile,
+  parseFlags,
   renderCodeReviewComment,
   renderFindingsSection,
   renderSecurityComment,
@@ -15,6 +16,8 @@ import {
 
 const HEAD = 'a'.repeat(40)
 const TOKENS = { taskId: 'fix/vinaya-review-post', model: 'claude-sonnet-5', tokensIn: '-', tokensOut: '-', cost: '-' }
+const PRINCIPALS = ['daniboomerang']
+const asComment = (body: string, author: string | null = 'daniboomerang') => [{ body, author }]
 
 describe('parseFindingsFile', () => {
   it('parses valid pipe-delimited lines', () => {
@@ -45,6 +48,30 @@ describe('parseFindingsFile', () => {
   it('throws on an empty location or description', () => {
     expect(() => parseFindingsFile('BLOCKER||x', ['BLOCKER'])).toThrow(FindingsParseError)
     expect(() => parseFindingsFile('BLOCKER|a.ts:1|', ['BLOCKER'])).toThrow(FindingsParseError)
+  })
+})
+
+describe("parseFlags — the exact reproduction from PR #144's BLOCKER finding", () => {
+  it("a nullary flag left un-filtered no longer eats the next flag's name and value", () => {
+    // Before the fix: '--json' was read as '--role''s missing value, and
+    // '--verdict'/'APPROVE' vanished from the map with no error at all.
+    const flags = parseFlags(['--pr', '5', '--json', '--role', 'code-reviewer', '--verdict', 'APPROVE'])
+    expect(flags.get('--pr')).toBe('5')
+    expect(flags.get('--role')).toBe('code-reviewer')
+    expect(flags.get('--verdict')).toBe('APPROVE')
+    expect(flags.get('--json')).toBe('')
+  })
+
+  it('a flag with a genuinely missing value maps to empty string rather than swallowing the next flag', () => {
+    const flags = parseFlags(['--verdict', '--role', 'security'])
+    expect(flags.get('--verdict')).toBe('')
+    expect(flags.get('--role')).toBe('security')
+  })
+
+  it('an ordinary well-formed invocation is unaffected', () => {
+    const flags = parseFlags(['--pr', '5', '--verdict', 'PASS'])
+    expect(flags.get('--pr')).toBe('5')
+    expect(flags.get('--verdict')).toBe('PASS')
   })
 })
 
@@ -105,7 +132,7 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
     const extraction = extractCodeReviewVerdict([body])
     expect(extraction.value).toBe('APPROVE')
     expect(extraction.headSha).toBe(HEAD)
-    expect(verifyPostedCodeReview([body], 'APPROVE', HEAD).ok).toBe(true)
+    expect(verifyPostedCodeReview(asComment(body), 'APPROVE', HEAD, PRINCIPALS).ok).toBe(true)
   })
 
   it('renders REQUEST CHANGES with a space, matching the role doc template literally', () => {
@@ -158,7 +185,7 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
     const extraction = extractSecurityReviewVerdict([body])
     expect(extraction.value).toBe('PASS')
     expect(extraction.headSha).toBe(HEAD)
-    expect(verifyPostedSecurity([body], 'PASS', HEAD).ok).toBe(true)
+    expect(verifyPostedSecurity(asComment(body), 'PASS', HEAD, PRINCIPALS).ok).toBe(true)
   })
 
   it('pastes the secrets evidence above the SECRETS: line', () => {
@@ -196,21 +223,21 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
 describe('self-verification — the mutation-proof: catches malformed renders the merge gate would also miss', () => {
   it('a heading-wrapped VERDICT (the exact incident this task closes) fails self-verification', () => {
     const malformed = `## Security Review — PASS\n\nJudged head: ${HEAD}\n\nEverything looks fine.`
-    const result = verifyPostedSecurity([malformed], 'PASS', HEAD)
+    const result = verifyPostedSecurity(asComment(malformed), 'PASS', HEAD, PRINCIPALS)
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('no clean VERDICT was found')
   })
 
   it('a bolded VERDICT for the wrong value fails self-verification', () => {
     const malformed = `**VERDICT: FAIL**\n\nJudged head: ${HEAD}`
-    const result = verifyPostedSecurity([malformed], 'PASS', HEAD)
+    const result = verifyPostedSecurity(asComment(malformed), 'PASS', HEAD, PRINCIPALS)
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('expected "PASS"')
   })
 
   it('a clean VERDICT with no Judged head line fails self-verification', () => {
     const malformed = 'VERDICT: APPROVE\n\nNo head line here.'
-    const result = verifyPostedCodeReview([malformed], 'APPROVE', HEAD)
+    const result = verifyPostedCodeReview(asComment(malformed), 'APPROVE', HEAD, PRINCIPALS)
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('no `Judged head:` line')
   })
@@ -218,14 +245,42 @@ describe('self-verification — the mutation-proof: catches malformed renders th
   it('a clean VERDICT bound to a stale head fails self-verification', () => {
     const staleHead = 'b'.repeat(40)
     const malformed = `VERDICT: APPROVE\n\nJudged head: ${staleHead}`
-    const result = verifyPostedCodeReview([malformed], 'APPROVE', HEAD)
+    const result = verifyPostedCodeReview(asComment(malformed), 'APPROVE', HEAD, PRINCIPALS)
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('does not cover the resolved head')
   })
 
   it('accepts an abbreviated Judged head that is a real prefix of the resolved head', () => {
     const clean = `VERDICT: APPROVE\n\nJudged head: ${HEAD.slice(0, 7)}`
-    const result = verifyPostedCodeReview([clean], 'APPROVE', HEAD)
+    const result = verifyPostedCodeReview(asComment(clean), 'APPROVE', HEAD, PRINCIPALS)
+    expect(result.ok).toBe(true)
+  })
+
+  it("a clean VERDICT from a non-allowlisted author does not count — matches checkReviewGate's own author filter (PR #144 review finding)", () => {
+    const clean = `VERDICT: APPROVE\n\nJudged head: ${HEAD}`
+    const result = verifyPostedCodeReview(asComment(clean, 'some-random-account'), 'APPROVE', HEAD, PRINCIPALS)
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('no clean VERDICT was found')
+  })
+
+  it('an unauthored (null) comment does not count either', () => {
+    const clean = `VERDICT: PASS\n\nJudged head: ${HEAD}`
+    const result = verifyPostedSecurity(asComment(clean, null), 'PASS', HEAD, PRINCIPALS)
+    expect(result.ok).toBe(false)
+  })
+
+  it('a real allowlisted verdict still counts alongside a non-allowlisted decoy comment', () => {
+    const real = `VERDICT: APPROVE\n\nJudged head: ${HEAD}`
+    const decoy = `VERDICT: REQUEST CHANGES\n\nJudged head: ${HEAD}`
+    const result = verifyPostedCodeReview(
+      [
+        { body: decoy, author: 'some-random-account' },
+        { body: real, author: 'daniboomerang' }
+      ],
+      'APPROVE',
+      HEAD,
+      PRINCIPALS
+    )
     expect(result.ok).toBe(true)
   })
 })
