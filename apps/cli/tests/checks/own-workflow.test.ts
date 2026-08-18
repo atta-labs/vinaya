@@ -27,7 +27,9 @@ describe('ownWorkflow — checks reported by their own workflow', () => {
     // `--all` selection and the lifecycle script's derived expectation apply,
     // so this test measures the shipped rule rather than a re-derivation.
     const runnable = coreCheckRegistry().filter(runsUnderAll)
-    // The registry is 15 core checks; exactly one is withheld.
+    // Relative to the live registry's own size, not a hardcoded count — this
+    // cannot go stale as the registry grows, unlike an absolute number would.
+    // Exactly one check (`review-gate`, pinned above) is ever withheld.
     expect(runnable.length).toBe(coreCheckRegistry().length - 1)
     expect(runnable.some((s) => s.name === 'review-gate')).toBe(false)
     // Spot-check that the withholding is not accidentally broad.

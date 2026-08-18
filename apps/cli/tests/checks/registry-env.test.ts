@@ -6,11 +6,11 @@ import { coreCheckRegistry } from '../../src/checks/registry'
 import { VinayaConfigSchema } from '../../src/lib/config'
 
 /**
- * Proves the task 2 (#775) audit actually landed: every one of the 15
- * registered core checks carries an `env` declaration, and every
- * declaration is valid against the exact same `CheckEntrySchema` an
- * adopter's `vinaya.config.json` entry would be parsed with — the
- * no-privileged-API invariant extended to this new field.
+ * Proves the task 2 (#775) audit actually landed: every registered core
+ * check carries an `env` declaration, and every declaration is valid
+ * against the exact same `CheckEntrySchema` an adopter's
+ * `vinaya.config.json` entry would be parsed with — the no-privileged-API
+ * invariant extended to this new field.
  */
 /**
  * A check bin's source with comments stripped. The source-text guards below
@@ -28,8 +28,27 @@ function readCode(binName: string): string {
 describe('registry env declarations', () => {
   const specs = coreCheckRegistry()
 
-  it('registers exactly 16 core checks (the audited surface)', () => {
-    expect(specs).toHaveLength(16)
+  it('registers exactly this name set as core checks (the audited surface)', () => {
+    expect(specs.map((s) => s.name).sort()).toEqual(
+      [
+        'brief-shape',
+        'branch-topology',
+        'closes-n',
+        'coherence',
+        'dead-branch-push',
+        'dispatch-readiness',
+        'doc-coverage',
+        'doc-coverage-push',
+        'evidence-fresh',
+        'first-push-dispatch',
+        'issue-assignment',
+        'no-disk-state',
+        'registry-gates',
+        'review-gate',
+        'single-plan-pr',
+        'test-plan'
+      ].sort()
+    )
   })
 
   it('every core check carries an env declaration', () => {
