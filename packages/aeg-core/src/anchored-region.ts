@@ -43,7 +43,7 @@
  * convention, not a metadata DSL; resist adding structure to it.
  */
 
-import { maskCode } from '@attalabs/aeg-forge-state'
+import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
 
 /** The five gate-read fields with an anchored home. */
 export const ANCHOR_FIELDS = ['CLOSES', 'PROJECT', 'TIER', 'PREMISE', 'TEST-PLAN'] as const

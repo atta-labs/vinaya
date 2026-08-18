@@ -39,7 +39,11 @@ export {
   TITLE_PATTERN
 } from './list-tasks'
 export type { ProjectField } from './list-tasks'
-export { maskCode, stripCode } from './strip-code'
+// `stripCode` is on the barrel because `aeg-core` re-exports it as public API.
+// `maskCode` and `hasUnterminatedFence` are NOT: they are reachable through the
+// `./strip-code` subpath for the two callers that need them, so moving the
+// grammar down a layer does not widen this published package's front door.
+export { stripCode } from './strip-code'
 export type { StripCodeOptions } from './strip-code'
 export { parseRationaleDeps, SECTION_HEADER } from './parse-rationale-deps'
 export type { ParsedRationaleDeps } from './parse-rationale-deps'
