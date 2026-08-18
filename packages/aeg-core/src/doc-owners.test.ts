@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   classifyDocOwnersManifest,
@@ -418,17 +420,90 @@ describe('the real manifest resolves at its configured path', () => {
     expect(bindings.length).toBeGreaterThan(0)
   })
 
-  // This repo's own installed manifest is a separate, weaker claim: it ships
-  // as the empty starter (comments only, zero bindings) — that is correct
-  // for a freshly-extracted repo, not a parser regression. Asserts it still
-  // parses cleanly and is dormant, rather than blurring this with the claim
-  // above.
-  it("this repo's own .vinaya/doc-owners parses cleanly and is dormant (starter manifest, zero bindings)", async () => {
-    const { readFileSync } = await import('node:fs')
+  // This repo's own installed manifest is a separate claim. It shipped as the
+  // empty starter until the repo's first real binding landed
+  // (atta-labs/vinaya#17), so "zero bindings" is no longer the invariant —
+  // asserting it would mean every future binding breaks this test. What is
+  // durable is that the installed manifest parses cleanly and carries no
+  // DANGLING pointer: an in-repo pointer that does not exist on disk is a hard
+  // C5 FAIL on every PR that fires the binding, and this is the cheapest place
+  // to catch one.
+  it("this repo's own .vinaya/doc-owners parses cleanly, with no dangling in-repo pointer", async () => {
+    const { existsSync, readFileSync } = await import('node:fs')
     const { join } = await import('node:path')
-    const raw = readFileSync(join(__dirname, '../../..', DOC_OWNERS_PATH), 'utf8')
+    const repoRoot = join(__dirname, '../../..')
+    const raw = readFileSync(join(repoRoot, DOC_OWNERS_PATH), 'utf8')
     const { bindings, errors } = parseDocOwners(raw)
     expect(errors).toEqual([])
-    expect(bindings).toEqual([])
+    const dangling = bindings
+      .filter((b) => !isUrlPointer(b.pointer))
+      .map((b) => pointerToPath(b.pointer))
+      .filter((path) => !existsSync(join(repoRoot, path)))
+    expect(dangling).toEqual([])
+  })
+})
+
+/**
+ * The behaviour of this repo's own `ops.ts → self-hosting.md` binding, pinned
+ * as executable outcomes rather than described in prose.
+ *
+ * The manifest is READ FROM DISK, never hard-coded: a fixture copy would keep
+ * these cases green if the binding line were deleted, which would pin nothing.
+ */
+describe("the ops.ts → self-hosting.md binding's actual outcomes", () => {
+  const CODE = 'apps/cli/src/lib/ops.ts'
+  const DOC = 'apps/cli/specs/self-hosting.md'
+  const MANIFEST = readFileSync(join(__dirname, '../../..', DOC_OWNERS_PATH), 'utf8')
+
+  it('the installed manifest actually carries this binding', () => {
+    const { bindings } = parseDocOwners(MANIFEST)
+    expect(bindings.map((b) => `${b.glob} -> ${b.pointer}`)).toContain(`${CODE} -> ${DOC}`)
+  })
+  const exists = () => true
+  const substantiveDiff = () => '+  const x = resolveManagedBlockPath(root)\n'
+
+  it('fires when the code file changes alone', () => {
+    const r = evaluateC5([CODE], MANIFEST, '', exists, false)
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0]).toContain('C5 doc-coverage')
+  })
+
+  it('is satisfied when the bound doc changes in the same diff', () => {
+    expect(evaluateC5([CODE, DOC], MANIFEST, '', exists, false).errors).toEqual([])
+  })
+
+  it('is cleared by an actor-verified waiver label, with a note', () => {
+    const r = evaluateC5([CODE], MANIFEST, '', exists, true)
+    expect(r.errors).toEqual([])
+    expect(r.notes.join(' ')).toContain('waiver')
+  })
+
+  // `evaluateC5`'s own contract, both directions: with `getDiff` it can verify a
+  // `Doc-neutral:` declaration; without it there is no evidence to check and the
+  // declaration cannot clear. These pin the FUNCTION, not any particular caller
+  // — a caller's argument list is that caller's test to own, and naming one here
+  // would make this file state a falsehood the day that caller changes.
+  it('Doc-neutral clears when the caller supplies getDiff and the diff is neutral', () => {
+    const body = `Doc-neutral: ${DOC} — comment-only edit`
+    const r = evaluateC5([CODE], MANIFEST, body, exists, false, () => '+  // a clarifying comment\n')
+    expect(r.errors).toEqual([])
+  })
+
+  it('Doc-neutral cannot clear when the caller supplies no getDiff', () => {
+    const body = `Doc-neutral: ${DOC} — comment-only edit`
+    const r = evaluateC5([CODE], MANIFEST, body, exists, false)
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0]).toContain('doc-neutral-unverified')
+  })
+
+  it('rejects a Doc-neutral declaration when the diff is substantive', () => {
+    const body = `Doc-neutral: ${DOC} — claimed neutral`
+    const r = evaluateC5([CODE], MANIFEST, body, exists, false, substantiveDiff)
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0]).toContain('doc-neutral-unverified')
+  })
+
+  it('does not fire on a sibling in the same directory', () => {
+    expect(evaluateC5(['apps/cli/src/lib/config.ts'], MANIFEST, '', exists, false).errors).toEqual([])
   })
 })
