@@ -48,6 +48,60 @@ export async function ghApiGetAsync<T>(path: string): Promise<T> {
   return JSON.parse(await runAsync(['api', path])) as T
 }
 
+/** GitHub's maximum, and the page size every paginated read here requests. */
+const MAX_PER_PAGE = 100
+
+/**
+ * Page ceiling. Reaching it means either a collection far larger than anything
+ * this package models, or an endpoint ignoring `page=` and returning a full
+ * page forever. Both are defects, and both must surface as an error rather
+ * than as an unbounded loop — the one case in this file that throws instead of
+ * returning a "nothing found" shape, because there is no honest empty answer
+ * to a walk that will not terminate. Callers that must not die on it (the
+ * coherence sweep's Milestone index) already treat a throw here as
+ * index-unavailable and degrade.
+ */
+const MAX_PAGES = 100
+
+/**
+ * Every page of a list endpoint, concatenated.
+ *
+ * A single `?per_page=100` read silently truncates at the 101st item, and for
+ * an append-only collection that is a countdown rather than a limit: Milestones
+ * are never deleted, so a repo crosses the boundary by accumulating history and
+ * the reader starts returning an incomplete answer with no error. Where that
+ * answer is a gate's enumeration authority, the failure surfaces as tranches
+ * quietly vanishing from a sweep.
+ *
+ * `per_page` is set here rather than trusted from the caller's path, because
+ * the stop condition IS the page size: a path arriving with `per_page=30` — or
+ * with none at all, which is GitHub's own default of 30 — returns a short
+ * first page, stops the walk one page in, and reproduces the exact silent
+ * truncation this function exists to prevent. Any caller-supplied `per_page`
+ * is overwritten; every other query parameter is preserved.
+ *
+ * Pagination is done by explicit `page=` walk rather than `gh --paginate` so
+ * the result is a single parseable array on every `gh` version (bare
+ * `--paginate` concatenates separate JSON arrays, which is not valid JSON, and
+ * `--slurp` is not available everywhere). Stops on the first short page.
+ */
+export async function ghApiGetAllPagesAsync<T>(pathWithoutPage: string): Promise<T[]> {
+  const [base = pathWithoutPage, query = ''] = pathWithoutPage.split('?')
+  const params = new URLSearchParams(query)
+  params.set('per_page', String(MAX_PER_PAGE))
+
+  const all: T[] = []
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    params.set('page', String(page))
+    const batch = JSON.parse(await runAsync(['api', `${base}?${params.toString()}`])) as T[]
+    all.push(...batch)
+    if (batch.length < MAX_PER_PAGE) return all
+  }
+  throw new Error(
+    `ghApiGetAllPagesAsync: "${pathWithoutPage}" did not terminate within ${MAX_PAGES} pages (${MAX_PAGES * MAX_PER_PAGE} items) — refusing to keep walking.`
+  )
+}
+
 export function ghApiPost<T>(path: string, fields: Record<string, string>): T {
   const args = ['api', path]
   for (const [key, value] of Object.entries(fields)) {

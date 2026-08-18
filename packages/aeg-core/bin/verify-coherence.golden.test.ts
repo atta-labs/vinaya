@@ -94,7 +94,7 @@ type ComparableTask = { id: string; issue: number | null }
  * ever list them (confirmed live: `vada-production-v1`'s 6a/6b/6c) — that's
  * an expected, by-design gap in forge derivation itself, not a data-quality
  * divergence this test exists to catch. `loadTrancheFiles` handles it
- * separately (appends file-only tasks as-is — see `deriveOrFallback`'s
+ * separately (appends file-only tasks as-is — see `mergeFileTopology`'s
  * docstring); this test only proves equivalence for tasks forge CAN see.
  */
 function normalizeTasks(tasks: readonly { id: string; issue: number | null }[]): ComparableTask[] {

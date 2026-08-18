@@ -83,8 +83,13 @@ function compareTaskIds(a: string, b: string): number {
 
 /** Shared `GhIssue[] → Task[]` transform (`taskFromIssue` map + `compareTaskIds`
  * sort), the single source both the sync and async list functions call so the
- * two can never derive a different task list. */
-function tasksFromIssues(issues: GhIssue[]): Task[] {
+ * two can never derive a different task list.
+ *
+ * Exported so a caller that has ALREADY fetched a slug's labeled Issues (see
+ * `fetchTrancheIssuesAsync`) can derive the task list without paying a second
+ * identical `gh issue list` — the pure half of `listTasksForSlug`, split out
+ * rather than reimplemented, so the two can still never disagree. */
+export function tasksFromIssues(issues: GhIssue[]): Task[] {
   const tasks: Task[] = []
   for (const issue of issues) {
     const task = taskFromIssue(issue)
@@ -103,7 +108,23 @@ export function listTasksForSlug(owner: string, repo: string, slug: string): Tas
 
 /** Async twin of `listTasksForSlug` — non-blocking `gh` exec, same transform. */
 export async function listTasksForSlugAsync(owner: string, repo: string, slug: string): Promise<Task[]> {
-  return tasksFromIssues(await ghIssueListByAnyLabelAsync(owner, repo, [trancheLabel(slug)]))
+  return tasksFromIssues(await fetchTrancheIssuesAsync(owner, repo, slug))
+}
+
+/**
+ * The raw `vinaya/tranche:<slug>`-labeled Issue list — the ONE fetch that
+ * `tasksFromIssues` (the task list) and `issueMilestonesFromIssues` (L4's
+ * Milestone-attachment facts) both derive from.
+ *
+ * Both derivations previously ran their own copy of this identical query, so
+ * a caller needing both paid two round trips per slug (measured: 6.4 s + 6.9 s
+ * across 6 tranches in `verify-coherence.ts`'s sweep). Fetch once, derive
+ * twice. `--state all` and the `--json` field set are `gh.ts`'s single arg
+ * vector, so what comes back here is byte-identical to what either wrapper
+ * fetched before.
+ */
+export async function fetchTrancheIssuesAsync(owner: string, repo: string, slug: string): Promise<GhIssue[]> {
+  return ghIssueListByAnyLabelAsync(owner, repo, [trancheLabel(slug)])
 }
 
 /**

