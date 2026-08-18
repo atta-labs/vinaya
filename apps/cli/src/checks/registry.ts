@@ -383,10 +383,14 @@ export function coreCheckRegistry(): CheckSpec[] {
       // PR head (never `HEAD`, which is the merge commit in CI — see the
       // bin's own module comment), so GITHUB_TOKEN/GH_TOKEN must reach it on
       // a CI runner. PR_NUMBER/PR_BODY absence both take documented
-      // ring-0/no-PR bypasses in the bin.
+      // ring-0/no-PR bypasses in the bin. BASE_SHA overrides the
+      // `origin/main`/`main` merge-base resolution — same declaration as
+      // `doc-coverage`/`no-disk-state`/`closes-n`/`single-plan-pr` above —
+      // for a repo whose default branch resolves as neither.
       env: {
         PR_NUMBER: { optional: true },
         PR_BODY: { optional: true },
+        BASE_SHA: { optional: true },
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true }
       }

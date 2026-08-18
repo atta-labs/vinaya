@@ -18,13 +18,18 @@ import { packageRoot } from '../lib/package-root.js'
  * different degrees:
  *
  *   - **Group A (recomputable).** The head sha and `git diff --numstat`
- *     against `origin/main`'s merge-base. `check-evidence-fresh` recomputes
- *     this exactly and byte-compares it — a hand-typed diff stat cannot
- *     survive that. `--numstat`, never `--stat`: `--stat` scales its column
- *     widths to the output width (the terminal's on a TTY, 80 when piped),
- *     so a block written in a developer's terminal and recomputed in CI
- *     would differ byte-for-byte with identical content — a red-line for the
- *     exact reason this command exists. `--numstat` is width-invariant.
+ *     against `origin/main`'s merge-base (`BASE_SHA`, then `main`, on repos
+ *     where that doesn't resolve — see `resolveMergeBase`). `check-evidence-fresh`
+ *     recomputes this exactly and byte-compares it — a hand-typed diff stat
+ *     cannot survive that. `--numstat`, never `--stat`: `--stat` scales its
+ *     column widths to the output width (the terminal's on a TTY, 80 when
+ *     piped), so a block written in a developer's terminal and recomputed in
+ *     CI would differ byte-for-byte with identical content — a red-line for
+ *     the exact reason this command exists. `--numstat` is width-invariant.
+ *     When NO tried ref resolves, this REFUSES (`UnresolvableMergeBaseError`,
+ *     non-zero exit, nothing written) rather than writing an empty Group A —
+ *     an unresolvable base is an infrastructure failure, and "no diff" is a
+ *     claim this command must never make without actually having computed one.
  *
  *   - **Group B (attested).** The result of `vinaya check --all
  *     --diff-only` — THIS repo's own portable gate suite, not `ci.yml`'s
@@ -73,24 +78,66 @@ function git(args: string[]): string {
 }
 
 /**
- * `origin/main`, falling back to plain `main` when the former doesn't
- * resolve — same fallback `pr.ts`'s `localChangedFiles()` and
- * `checks/bin/check-doc-coverage.ts` already use. Not every repo this runs
- * in has a remote named `origin`: a bare local fixture (this command's own
- * test setup, and several existing `apps/cli/tests/*.test.ts` fixtures) has
- * none, and `git merge-base origin/main HEAD` fails outright there — found
- * live, running this command inside such a fixture: it exited 0 and wrote a
- * block whose Group A was silently empty, despite the fixture carrying a
- * real diff.
+ * Thrown by `resolveMergeBase` when none of the tried refs produce a
+ * merge-base. An unresolvable base is an infrastructure failure — the repo's
+ * default branch isn't reachable as any of the tried names, or `origin` isn't
+ * configured — not evidence of an empty diff. Swallowing it to `''` (what
+ * `git()` itself does for every other caller) let a REAL failure collapse
+ * into the exact same value as a genuinely empty diff, and `compareEvidenceBlock`
+ * cannot tell "verified: no changes" from "never verified anything" once both
+ * sides independently produce `''` — found in review, round 1 of this PR: an
+ * adopter whose default branch is `master`/`develop` hits this on every run,
+ * silently.
+ */
+export class UnresolvableMergeBaseError extends Error {
+  constructor(
+    readonly head: string,
+    readonly triedRefs: readonly string[]
+  ) {
+    super(
+      `could not resolve a merge-base for HEAD (${head}) against any of: ${triedRefs.join(', ')}. ` +
+        'This repo\'s default branch may not be named "main", or "origin" may not be configured — set BASE_SHA to override.'
+    )
+    this.name = 'UnresolvableMergeBaseError'
+  }
+}
+
+/**
+ * `BASE_SHA` if set, else `origin/main`, falling back to plain `main` when
+ * that doesn't resolve either — same `BASE_SHA || 'origin/main'` convention
+ * four sibling core checks already use (`check-doc-coverage.ts`,
+ * `check-no-disk-state.ts`, `check-closes-n.ts`, `check-single-plan-pr.ts`),
+ * plus the `main` fallback `pr.ts`'s `localChangedFiles()` also uses. Not
+ * every repo this runs in has a remote named `origin`, or a branch named
+ * `main`: a bare local fixture (this command's own test setup, and several
+ * existing `apps/cli/tests/*.test.ts` fixtures) has neither, and both
+ * `git merge-base` calls fail outright there. When every tried ref fails,
+ * this throws `UnresolvableMergeBaseError` rather than returning `''` — see
+ * that class's doc comment for why silently degrading to an empty base is
+ * the wrong failure mode.
  */
 function resolveMergeBase(head: string): string {
-  const base = git(['merge-base', 'origin/main', head])
-  return base || git(['merge-base', 'main', head])
+  const primary = process.env.BASE_SHA || 'origin/main'
+  const tried = primary === 'main' ? [primary] : [primary, 'main']
+  for (const ref of tried) {
+    const base = git(['merge-base', ref, head])
+    if (base) return base
+  }
+  throw new UnresolvableMergeBaseError(head, tried)
 }
 
 export type GroupA = { head: string; base: string; numstat: string }
 
-/** The head sha, its merge-base against `origin/main` (or `main`), and the width-invariant `--numstat` diff between them. */
+/**
+ * The head sha, its resolved merge-base (`resolveMergeBase`), and the
+ * width-invariant `--numstat` diff between them. Throws
+ * `UnresolvableMergeBaseError` when `head` resolves but no base does — see
+ * that class's doc comment. `head` itself resolving to `''` (not a git repo,
+ * or an unborn branch) is a separate, pre-existing condition this leaves
+ * unchanged: there is no HEAD to diff against at all, so `base`/`numstat`
+ * stay `''` rather than attempting a base resolution that has nothing to
+ * resolve against.
+ */
 export function computeGroupA(): GroupA {
   const head = git(['rev-parse', 'HEAD'])
   const base = head ? resolveMergeBase(head) : ''
@@ -111,6 +158,20 @@ function resolveSelfEntry(): string {
 
 const FAILING_STATUSES = new Set(['fail', 'error', 'timeout'])
 
+/**
+ * Whether any outcome is fail/error/timeout — `pass` and `skipped` are the
+ * only non-failing statuses `vinaya check`'s `CheckOutcome` can carry.
+ * Pulled out of `runRealGates` as its own pure, exported function so it's
+ * directly unit-testable: `runRealGates` itself needs a real subprocess to
+ * exercise, which hid a mutation-testing gap in review — a test asserting
+ * only on hand-built `{ failed: true }` fixtures never actually re-derives
+ * this computation, so narrowing `FAILING_STATUSES` to `['fail']` alone left
+ * every existing test green.
+ */
+export function anyGateFailed(outcomes: GateOutcome[]): boolean {
+  return outcomes.some((o) => FAILING_STATUSES.has(o.status))
+}
+
 /** The real gate runner: shells to this CLI's own `check --all --diff-only --json`, from the caller's cwd. */
 export function runRealGates(): GateRunResult {
   const entry = resolveSelfEntry()
@@ -123,7 +184,7 @@ export function runRealGates(): GateRunResult {
   try {
     const parsed = JSON.parse(stdout) as { data: { checks: GateOutcome[] } }
     const outcomes = parsed.data.checks
-    return { outcomes, failed: outcomes.some((o) => FAILING_STATUSES.has(o.status)) }
+    return { outcomes, failed: anyGateFailed(outcomes) }
   } catch {
     return {
       outcomes: [
@@ -140,15 +201,24 @@ export function runRealGates(): GateRunResult {
   }
 }
 
-/** Group A, rendered inside its fenced block. Content only — no head sha, so a fresh recompute at the same content matches regardless of which commit produced it. */
-function renderGroupA(numstat: string): string {
+/**
+ * Group A, rendered inside its fenced block. The command line names the REAL
+ * resolved base and head — not a hardcoded `git merge-base origin/main HEAD`
+ * label — because on the `main`/`BASE_SHA` fallback path that label would be
+ * a hand-typed claim inside the one block built to have none: it would say
+ * `origin/main` having actually resolved against `main` (found in review,
+ * round 1). `compareEvidenceBlock` never parses this line — only the fenced
+ * `numstat` content below it is compared — so this is display-only honesty,
+ * not a verification input.
+ */
+function renderGroupA(groupA: GroupA): string {
   return [
     '### Group A — recomputable',
     '',
-    '`git diff $(git merge-base origin/main HEAD)...HEAD --numstat`',
+    `\`git diff ${groupA.base}...${groupA.head} --numstat\``,
     '',
     '```',
-    numstat,
+    groupA.numstat,
     '```'
   ].join('\n')
 }
@@ -166,8 +236,8 @@ function renderGroupB(outcomes: GateOutcome[]): string {
   )
 }
 
-function buildBlockInner(head: string, numstat: string, gateOutcomes: GateOutcome[]): string {
-  return [`Head: ${head}`, '', renderGroupA(numstat), '', renderGroupB(gateOutcomes)].join('\n')
+function buildBlockInner(groupA: GroupA, gateOutcomes: GateOutcome[]): string {
+  return [`Head: ${groupA.head}`, '', renderGroupA(groupA), '', renderGroupB(gateOutcomes)].join('\n')
 }
 
 /**
@@ -204,7 +274,7 @@ export async function buildReport(opts: { groupA?: GroupA; gateRunner?: GateRunn
   const groupA = opts.groupA ?? computeGroupA()
   const gateRunner = opts.gateRunner ?? runRealGates
   const gateResult = await gateRunner()
-  const blockInner = buildBlockInner(groupA.head, groupA.numstat, gateResult.outcomes)
+  const blockInner = buildBlockInner(groupA, gateResult.outcomes)
   const block = `${EVIDENCE_START}\n${blockInner}\n${EVIDENCE_END}`
   return { block, blockInner, gatesFailed: gateResult.failed, gateOutcomes: gateResult.outcomes }
 }
@@ -218,7 +288,20 @@ export async function prReportCommand(args: string[]): Promise<void> {
     process.exit(2)
   }
 
-  const result = await buildReport()
+  let result: ReportResult
+  try {
+    result = await buildReport()
+  } catch (err) {
+    if (err instanceof UnresolvableMergeBaseError) {
+      // Refuse — write nothing, print nothing that looks like a block.
+      // See that class's doc comment: an unresolvable base is an
+      // infrastructure failure, and writing an empty Group A here would
+      // silently claim "verified: no changes" for "never verified anything."
+      console.error(`vinaya pr report: refused — ${err.message}`)
+      process.exit(1)
+    }
+    throw err
+  }
 
   if (writePath) {
     const existing = existsSync(writePath) ? readFileSync(writePath, 'utf8') : ''

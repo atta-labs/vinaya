@@ -26,6 +26,13 @@
  * point, spuriously red-lining any PR whose base has since advanced over
  * overlapping files.
  *
+ * Base resolution (`resolveMergeBase`) tries `BASE_SHA` (else `origin/main`),
+ * then `main`, matching `pr-report.ts`'s emitter-side resolution exactly. When
+ * NEITHER resolves, this REFUSES (a CheckError, non-zero exit) rather than
+ * recomputing against an empty base and reporting PASS having verified
+ * nothing — an unresolvable base is an infrastructure failure, not evidence
+ * of an empty diff.
+ *
  * scope: diff — the whole point is "does this PR body's evidence match this
  * PR's own head." requiresOpenPr: true — meaningless before a PR exists,
  * same reasoning as `closes-n`/`test-plan`.
@@ -47,10 +54,30 @@ function git(args: string[]): string {
   }
 }
 
-/** Same `origin/main` → `main` fallback as `pr-report.ts`'s `resolveMergeBase` — see that one's doc comment for why. */
+/**
+ * Thrown when neither the resolved primary ref (`BASE_SHA`, else
+ * `origin/main`) nor the `main` fallback produces a merge-base — see
+ * `pr-report.ts`'s `UnresolvableMergeBaseError` for the full rationale
+ * (same class of bug, mirrored here: `base ? git([...]) : ''` collapsed a
+ * real resolution failure into the exact same `''` a genuinely empty diff
+ * produces, so `compareEvidenceBlock` reported PASS having recomputed
+ * nothing at all — found in review, round 1 of this PR).
+ */
+class UnresolvableMergeBaseError extends Error {
+  constructor(triedRefs: readonly string[]) {
+    super(`could not resolve a merge-base against any of: ${triedRefs.join(', ')}.`)
+  }
+}
+
+/** Same `BASE_SHA || 'origin/main'`, then `main`, convention as `pr-report.ts`'s `resolveMergeBase` — see that one's doc comment for the sibling checks it matches. */
 function resolveMergeBase(head: string): string {
-  const base = git(['merge-base', 'origin/main', head])
-  return base || git(['merge-base', 'main', head])
+  const primary = process.env.BASE_SHA || 'origin/main'
+  const tried = primary === 'main' ? [primary] : [primary, 'main']
+  for (const ref of tried) {
+    const base = git(['merge-base', ref, head])
+    if (base) return base
+  }
+  throw new UnresolvableMergeBaseError(tried)
 }
 
 function fetchHeadSha(prNumber: number): string | null {
@@ -98,8 +125,24 @@ function main(): void {
     process.exit(1)
   }
 
-  const base = resolveMergeBase(resolvedHead)
-  const actualNumstat = base ? git(['diff', `${base}...${resolvedHead}`, '--numstat']) : ''
+  let base: string
+  try {
+    base = resolveMergeBase(resolvedHead)
+  } catch (err) {
+    // An unresolvable base is an infrastructure failure, not an empty
+    // diff — refuse rather than recomputing against '' and reporting PASS
+    // having verified nothing. See UnresolvableMergeBaseError's doc comment.
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `evidence-fresh: ${err instanceof Error ? err.message : String(err)}`,
+      agent_recovery_prompt:
+        "This repo's default branch may not be reachable as `origin/main` or `main` from this checkout. Set BASE_SHA (e.g. `origin/<default-branch>`) on the check, or fetch the base branch, then re-run `vinaya check evidence-fresh`."
+    })
+    process.exit(1)
+  }
+  const actualNumstat = git(['diff', `${base}...${resolvedHead}`, '--numstat'])
 
   const result = compareEvidenceBlock(region, resolvedHead, actualNumstat)
   if (result.status === 'fail') {

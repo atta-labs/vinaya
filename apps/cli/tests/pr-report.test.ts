@@ -3,7 +3,15 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { buildReport, computeGroupA, type GateRunResult, replaceEvidenceBlock } from '../src/commands/pr-report'
+import {
+  anyGateFailed,
+  buildReport,
+  computeGroupA,
+  type GateOutcome,
+  type GateRunResult,
+  replaceEvidenceBlock,
+  UnresolvableMergeBaseError
+} from '../src/commands/pr-report'
 
 // Fixed inputs throughout — no real `git`/`gh` calls, no real gate suite. See
 // pr-report.ts's module doc, "Recursion, and why gate running is
@@ -50,6 +58,13 @@ describe('buildReport', () => {
     expect(result.block).toContain('doc-coverage: pass')
   })
 
+  it("Group A's command line names the REAL resolved base and head, not a hardcoded origin/main label", async () => {
+    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES })
+    expect(result.block).toContain(`git diff ${FIXED_GROUP_A.base}...${FIXED_GROUP_A.head} --numstat`)
+    // The old hardcoded label would lie on the `main`/BASE_SHA fallback path — must be gone.
+    expect(result.block).not.toContain('$(git merge-base origin/main HEAD)')
+  })
+
   it('every line is transcribed command output — no summary/count/rewrite of the gate result', async () => {
     const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => FAILING_GATES })
     // The exact error message string survives verbatim, not a paraphrase or count.
@@ -79,6 +94,34 @@ describe('buildReport', () => {
   })
 })
 
+describe('anyGateFailed — the fail/error/timeout computation, tested directly (mutation-survivor fix)', () => {
+  // Direct tests, not routed through `buildReport`'s injected `{ failed }`
+  // fixtures: those only prove pass-through, never re-derive this
+  // computation, which is exactly how the original test suite stayed green
+  // with `FAILING_STATUSES` narrowed to `['fail']` alone (review finding).
+  const outcome = (status: string): GateOutcome => ({ name: 'x', status, errors: [] })
+
+  it('false when every outcome is pass or skipped', () => {
+    expect(anyGateFailed([outcome('pass'), outcome('skipped')])).toBe(false)
+  })
+
+  it('true when any outcome is "fail"', () => {
+    expect(anyGateFailed([outcome('pass'), outcome('fail')])).toBe(true)
+  })
+
+  it('true when any outcome is "error"', () => {
+    expect(anyGateFailed([outcome('pass'), outcome('error')])).toBe(true)
+  })
+
+  it('true when any outcome is "timeout"', () => {
+    expect(anyGateFailed([outcome('pass'), outcome('timeout')])).toBe(true)
+  })
+
+  it('false for an empty outcome list', () => {
+    expect(anyGateFailed([])).toBe(false)
+  })
+})
+
 describe('computeGroupA — real git, no origin/main fallback (found live, own dogfood run)', () => {
   // A bare local fixture with NO `origin` remote at all — several existing
   // apps/cli fixtures are exactly this shape, and running this command
@@ -86,10 +129,10 @@ describe('computeGroupA — real git, no origin/main fallback (found live, own d
   // origin/main HEAD` fails outright, and the ORIGINAL code silently
   // swallowed that to an empty base, producing a Group A that claimed no
   // diff existed even though the fixture carried a real one.
-  function initFixtureWithFeatureBranch(): string {
+  function initFixtureWithFeatureBranch(baseBranch: string): string {
     const root = mkdtempSync(join(tmpdir(), 'pr-report-groupa-'))
     const git = (args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' })
-    git(['init', '-q', '-b', 'main'])
+    git(['init', '-q', '-b', baseBranch])
     git(['config', 'user.email', 'test@example.com'])
     git(['config', 'user.name', 'Test'])
     writeFileSync(join(root, 'a.txt'), 'hello\n')
@@ -101,18 +144,56 @@ describe('computeGroupA — real git, no origin/main fallback (found live, own d
     return root
   }
 
-  it('resolves a real, non-empty diff via the `main` fallback when `origin/main` does not exist', () => {
-    const root = initFixtureWithFeatureBranch()
+  function withFixtureCwd<T>(root: string, fn: () => T): T {
     const originalCwd = process.cwd()
     try {
       process.chdir(root)
-      const groupA = computeGroupA()
-      expect(groupA.base).not.toBe('')
-      expect(groupA.numstat).toContain('a.txt')
+      return fn()
     } finally {
       process.chdir(originalCwd)
       rmSync(root, { recursive: true, force: true })
     }
+  }
+
+  it('resolves a real, non-empty diff via the `main` fallback when `origin/main` does not exist', () => {
+    const root = initFixtureWithFeatureBranch('main')
+    withFixtureCwd(root, () => {
+      const groupA = computeGroupA()
+      expect(groupA.base).not.toBe('')
+      expect(groupA.numstat).toContain('a.txt')
+    })
+  })
+
+  it('refuses (UnresolvableMergeBaseError) rather than writing an empty diff when the default branch is `master` — neither `origin/main` nor `main` resolves', () => {
+    const root = initFixtureWithFeatureBranch('master')
+    withFixtureCwd(root, () => {
+      expect(() => computeGroupA()).toThrow(UnresolvableMergeBaseError)
+      try {
+        computeGroupA()
+      } catch (err) {
+        expect(err).toBeInstanceOf(UnresolvableMergeBaseError)
+        const e = err as UnresolvableMergeBaseError
+        expect(e.triedRefs).toEqual(['origin/main', 'main'])
+        expect(e.message).toContain('origin/main')
+        expect(e.message).toContain('main')
+      }
+    })
+  })
+
+  it('BASE_SHA overrides the primary resolution attempt (escape hatch for a non-main default branch)', () => {
+    const root = initFixtureWithFeatureBranch('master')
+    const originalBaseSha = process.env.BASE_SHA
+    withFixtureCwd(root, () => {
+      process.env.BASE_SHA = 'master'
+      try {
+        const groupA = computeGroupA()
+        expect(groupA.base).not.toBe('')
+        expect(groupA.numstat).toContain('a.txt')
+      } finally {
+        if (originalBaseSha === undefined) delete process.env.BASE_SHA
+        else process.env.BASE_SHA = originalBaseSha
+      }
+    })
   })
 })
 
