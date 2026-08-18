@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { anchoredRegionBounds } from '@attalabs/aeg-core'
 import { packageRoot } from '../lib/package-root.js'
 
 /**
@@ -153,15 +154,23 @@ function buildBlockInner(head: string, numstat: string, gateOutcomes: GateOutcom
   return [`Head: ${head}`, '', renderGroupA(numstat), '', renderGroupB(gateOutcomes)].join('\n')
 }
 
-/** Replaces the content between the AEG:EVIDENCE anchors in `body`, in place. Appends a fresh anchored pair at the end when the body carries none yet (first adoption). */
+/**
+ * Replaces the content between the REAL, non-fenced `AEG:EVIDENCE` anchor
+ * pair in `body`, in place — found via `anchoredRegionBounds`'s masked
+ * search, never a raw `indexOf`. A raw `indexOf` finds whichever copy of the
+ * marker text comes first, fenced decoy included; a PR body that quotes a
+ * worked example of its own anchor (this command's own test plan evidence
+ * does exactly that) would get its replacement written into the quoted
+ * example instead of the real field — found live, in this task's own PR
+ * body, before this fix. Appends a fresh anchored pair at the end when the
+ * body carries no REAL pair yet (first adoption) — a body with only a fenced
+ * decoy is "no real pair" by the same rule.
+ */
 export function replaceEvidenceBlock(body: string, blockInner: string): string {
   const full = `${EVIDENCE_START}\n${blockInner}\n${EVIDENCE_END}`
-  const startIdx = body.indexOf(EVIDENCE_START)
-  const endIdx = body.indexOf(EVIDENCE_END)
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    const before = body.slice(0, startIdx)
-    const after = body.slice(endIdx + EVIDENCE_END.length)
-    return `${before}${full}${after}`
+  const bounds = anchoredRegionBounds(body, 'EVIDENCE')
+  if (bounds) {
+    return `${body.slice(0, bounds.outerStart)}${full}${body.slice(bounds.outerEnd)}`
   }
   const sep = body.length === 0 || body.endsWith('\n') ? '' : '\n'
   return `${body}${sep}\n${full}\n`

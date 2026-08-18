@@ -292,17 +292,43 @@ function maskIndentedCode(body: string, fill: LineFill): string {
 }
 
 /**
+ * The START/END markers' positions in `body`, found the same code-blind way
+ * `anchoredRegion` finds its content — `null` under the identical conditions
+ * `anchoredRegion` returns `null`. `outerStart`/`outerEnd` span the markers
+ * themselves; `innerStart`/`innerEnd` span the content between them (what
+ * `anchoredRegion` returns as a string).
+ *
+ * Exists so a WRITER (`vinaya pr report --write`'s `replaceEvidenceBlock`)
+ * can target the same real, non-fenced pair a reader would — a naive
+ * `body.indexOf(START)` finds whichever copy comes first in raw text, fenced
+ * decoy included, and a body that quotes a worked example of its own anchor
+ * (exactly what this task's own PR body does, in its Test Plan evidence)
+ * would get ITS OWN replacement written into the quoted example instead of
+ * the real field. One masked search, shared by the reader and the writer,
+ * closes that by construction rather than by convention.
+ */
+export function anchoredRegionBounds(
+  body: string,
+  field: AnchorField
+): { outerStart: number; outerEnd: number; innerStart: number; innerEnd: number } | null {
+  const masked = maskCode(body)
+  const start = new RegExp(`<!--\\s*AEG:${field}:START\\s*-->`).exec(masked)
+  if (!start) return null
+  const innerStart = start.index + start[0].length
+  const end = new RegExp(`<!--\\s*AEG:${field}:END\\s*-->`).exec(masked.slice(innerStart))
+  if (!end) return null
+  const innerEnd = innerStart + end.index
+  return { outerStart: start.index, outerEnd: innerEnd + end[0].length, innerStart, innerEnd }
+}
+
+/**
  * The text between the first `<!-- AEG:<field>:START -->` and the first
  * `<!-- AEG:<field>:END -->` after it, or `null` when the body carries no
  * (well-formed, non-code) pair for this field. `null` is the signal for
  * consumers to run their unchanged prose/heading recognition.
  */
 export function anchoredRegion(body: string, field: AnchorField): string | null {
-  const masked = maskCode(body)
-  const start = new RegExp(`<!--\\s*AEG:${field}:START\\s*-->`).exec(masked)
-  if (!start) return null
-  const afterStart = start.index + start[0].length
-  const end = new RegExp(`<!--\\s*AEG:${field}:END\\s*-->`).exec(masked.slice(afterStart))
-  if (!end) return null
-  return body.slice(afterStart, afterStart + end.index)
+  const bounds = anchoredRegionBounds(body, field)
+  if (!bounds) return null
+  return body.slice(bounds.innerStart, bounds.innerEnd)
 }

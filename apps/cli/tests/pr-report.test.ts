@@ -101,4 +101,36 @@ describe('replaceEvidenceBlock', () => {
     expect(updated).toContain('<!-- AEG:EVIDENCE:END -->')
     expect(updated).toContain('Head: deadbeef')
   })
+
+  it('ignores a fenced decoy anchor pair and replaces the real, non-fenced one — regression, found live in this task’s own PR body', () => {
+    // A body that quotes a worked example of its own anchor (exactly what
+    // this command's Test Plan evidence does) must not have its
+    // replacement written into the quoted example.
+    const body = [
+      '## Test plan',
+      '',
+      '- [x] example output:',
+      '',
+      '  ```',
+      '  <!-- AEG:EVIDENCE:START -->',
+      '  decoy — quoted example, not the real field',
+      '  <!-- AEG:EVIDENCE:END -->',
+      '  ```',
+      '',
+      '## Evidence',
+      '',
+      '<!-- AEG:EVIDENCE:START -->',
+      'stale content',
+      '<!-- AEG:EVIDENCE:END -->',
+      '',
+      '## Scope'
+    ].join('\n')
+    const updated = replaceEvidenceBlock(body, 'Head: deadbeef')
+    expect(updated).toContain('decoy — quoted example, not the real field')
+    expect(updated).not.toContain('stale content')
+    expect(updated).toContain('## Scope')
+    // Exactly one real (unfenced) Head line — the decoy is untouched, not duplicated.
+    const realHeadLines = updated.split('\n').filter((line) => line.trim() === 'Head: deadbeef')
+    expect(realHeadLines).toHaveLength(1)
+  })
 })
