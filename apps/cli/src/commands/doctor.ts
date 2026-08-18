@@ -6,7 +6,7 @@
 // precisely because a doctor that "fixes" silently destroys the support
 // story; `vinaya upgrade` is the only sanctioned path back to a clean state.
 
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { CheckSpec } from '../checks/contract.js'
 import { coreCheckRegistry } from '../checks/registry.js'
@@ -444,6 +444,54 @@ async function diagnoseBranchProtection(deps: DoctorDeps, owner: string, repo: s
 }
 
 // ---------------------------------------------------------------------------
+// Check 8 — test CI, report-only, a heuristic. Vinaya requires a Test Plan on
+// every PR and enforces it as a blocking gate but never checks whether
+// anything actually runs the adopter's tests — this names that asymmetry.
+// Narrow by design: a short literal-substring list, not a fuzzy matcher, and
+// silent whenever there's nothing to check against (no package.json, no
+// `scripts.test`) — inventing an opinion about a test runner this repo can't
+// see is worse than staying silent (a Python/Rust/Go repo may have neither).
+// Scans EVERY file under .github/workflows/, not only the four vinaya-
+// generated ones — a hand-written CI workflow (this repo's own `ci.yml`) is
+// exactly where the real invocation lives, and scanning only the generated
+// four would false-positive against vinaya's own repo. Report-only like
+// `diagnoseBranchProtection`: vinaya cannot know the adopter's test command
+// and will not generate one (a wrong guess written into CI is worse than
+// silence).
+// ---------------------------------------------------------------------------
+const TEST_INVOCATION_SUBSTRINGS = ['npm test', 'npm run test', 'bun test', 'bunx turbo test']
+
+function diagnoseTestCi(repoRoot: string): Finding[] {
+  let pkg: unknown
+  try {
+    pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8'))
+  } catch {
+    return []
+  }
+  const testScript = (pkg as { scripts?: Record<string, unknown> })?.scripts?.test
+  if (typeof testScript !== 'string' || testScript.trim() === '') return []
+
+  const workflowsDir = join(repoRoot, '.github/workflows')
+  const files = existsSync(workflowsDir)
+    ? readdirSync(workflowsDir).filter((name) => statSync(join(workflowsDir, name)).isFile())
+    : []
+
+  const invoked = files.some((name) => {
+    const content = readFileSync(join(workflowsDir, name), 'utf-8')
+    return TEST_INVOCATION_SUBSTRINGS.some((s) => content.includes(s))
+  })
+  if (invoked) return []
+
+  return [
+    warn(
+      'test-ci',
+      "no workflow under .github/workflows/ appears to invoke this repo's `package.json` test script — " +
+        'vinaya requires a Test Plan on every PR and enforces it as a blocking gate, but nothing here verifies that tests actually run.'
+    )
+  ]
+}
+
+// ---------------------------------------------------------------------------
 // Report rendering
 // ---------------------------------------------------------------------------
 function symbolFor(severity: Severity): string {
@@ -511,6 +559,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
   findings.push(...diagnoseGlobalConfigChecks())
   findings.push(...(await diagnoseEnvironment(deps, hasDrift)))
   findings.push(await diagnoseBranchProtection(deps, repo.owner, repo.repo))
+  findings.push(...diagnoseTestCi(repo.repoRoot))
 
   const healthy = findings.every((f) => f.severity === 'ok' || f.severity === 'info')
 

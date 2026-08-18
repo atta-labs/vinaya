@@ -297,6 +297,37 @@ describe('vinaya doctor — never mutates', () => {
     expect(rc).toBe(1)
   })
 
+  it('silence when a workflow invokes the test script', async () => {
+    await runInit(['--yes'], initDeps())
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'widget', scripts: { test: 'turbo test' } }))
+    writeFileSync(join(root, '.github/workflows/ci.yml'), 'jobs:\n  test:\n    steps:\n      - run: bunx turbo test\n')
+
+    const report = await runDoctorJson()
+    expect(report.findings.some((f) => f.check === 'test-ci')).toBe(false)
+  })
+
+  it('flags no workflow invoking the test script', async () => {
+    await runInit(['--yes'], initDeps())
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'widget', scripts: { test: 'turbo test' } }))
+    const before = snapshot(root)
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'test-ci')
+    expect(hit).toBeDefined()
+    expect(hit?.severity).toBe('warn')
+    expect(hit?.message).toContain('Test Plan')
+
+    expect(snapshot(root)).toEqual(before)
+  })
+
+  it('does not flag a repo with no scripts.test at all', async () => {
+    await runInit(['--yes'], initDeps())
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'widget', scripts: { build: 'tsc' } }))
+
+    const report = await runDoctorJson()
+    expect(report.findings.some((f) => f.check === 'test-ci')).toBe(false)
+  })
+
   it('does not let environment/branch-protection info findings affect health', async () => {
     await runInit(['--yes'], initDeps())
     const report = await runDoctorJson({
