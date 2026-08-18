@@ -3,6 +3,7 @@ import { emitCheckError, type CheckError, type CheckOutcome, type CheckSpec } fr
 import { coreCheckRegistry, runsUnderAll } from '../checks/registry'
 import {
   bareKeyRejectedDiagnostic,
+  overriddenReplacesCoreDiagnostic,
   resolveChecks,
   type ResolvedCheck,
   type ResolverFailure,
@@ -192,6 +193,37 @@ function resolveForRun(configResult: ConfigLoadResult): { result: ResolveResult;
   return { result: { resolved: base.resolved, failures: [...base.failures, ...duplicates] }, refusals }
 }
 
+/**
+ * Substitution notices for the REAL run — one `warning` finding per
+ * `overridden` entry, announcing on the enforcing surface that a core check
+ * was replaced and did not run.
+ *
+ * This is deliberately NOT the pre-flip grace-period warning coming back:
+ * that one predicted a future minor ("will replace…"), this one reports
+ * what this very run did. It exists because the flip made substitution
+ * load-bearing while removing the only signal of it from the surface CI
+ * shows — `vinaya-checks.yml` runs `check --all --diff-only` and tees that
+ * to the step summary; no generated workflow runs `doctor` or `--plan`,
+ * so without this a substituted gate reads `✓ <core-id>: pass`,
+ * byte-indistinguishable from the real gate (security pass, PR #120,
+ * finding 2). Detection is the doctrine's declared backstop for a
+ * config-authored gate substitution, so it has to live where the gate runs.
+ *
+ * `severity: 'warning'`, never `error`: an override is a supported,
+ * documented extension point, and this must not change any exit code.
+ */
+function substitutionNotices(resolved: ResolvedCheck[]): CheckError[] {
+  return resolved
+    .filter((entry) => entry.state === 'overridden')
+    .map((entry) => ({
+      schema: 1 as const,
+      check: 'config',
+      severity: 'warning' as const,
+      message: overriddenReplacesCoreDiagnostic(entry.name),
+      agent_recovery_prompt: `If replacing the core check "${entry.name}" was intended, nothing to do — this is a notice, not a failure. If it was not, remove or rename that \`checks\` entry in vinaya.config.json so the core check runs again.`
+    }))
+}
+
 export async function checkCommand(args: string[]): Promise<void> {
   const jsonOutput = args.includes('--json')
   const diffOnly = args.includes('--diff-only')
@@ -244,6 +276,14 @@ export async function checkCommand(args: string[]): Promise<void> {
   // namespaced entry was appended. Same `ResolveResult` `--plan` just
   // rendered, so what the plan printed is what runs here.
   const allSpecs: CheckSpec[] = result.resolved.map((entry) => entry.spec)
+
+  // Announce every substitution BEFORE the run, on the surface the run
+  // itself is read from — see `substitutionNotices`.
+  const notices = substitutionNotices(result.resolved)
+  for (const notice of notices) emitCheckError(notice)
+  if (!jsonOutput) {
+    for (const notice of notices) process.stdout.write(`⚠ ${notice.message}\n`)
+  }
 
   // `--all` omits a check whose own workflow already reports it. Running it
   // twice produces a second conclusion nothing can refresh: `review-gate`'s

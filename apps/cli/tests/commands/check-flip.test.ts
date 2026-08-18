@@ -168,6 +168,38 @@ describe('vinaya check — same-name-as-core REPLACES', () => {
   }, 120000)
 })
 
+describe('vinaya check — substitution is announced on the surface that enforces', () => {
+  it('prints a notice and emits a warning finding when a core check is replaced', async () => {
+    const { repo, home } = fixture({ checks: { [CORE_NAME]: { run: './override.sh', scope: 'full' } } })
+    stubCheck(repo, 'override.sh', 'replacement')
+
+    const run = await runCli(['check', '--all'], repo, home)
+
+    // Human surface: the CI log for a substituted gate must not read
+    // byte-identically to the real gate's.
+    expect(run.stdout).toContain('REPLACES that core check')
+    expect(run.stdout).toContain(CORE_NAME)
+
+    // Machine surface: one well-formed `warning` CheckError on stderr.
+    const findings = run.stderr
+      .split('\n')
+      .filter((l) => l.trim().startsWith('{'))
+      .map((l) => JSON.parse(l) as { check: string; severity: string; message: string })
+    const notice = findings.find((f) => f.severity === 'warning' && f.message.includes('REPLACES'))
+    expect(notice).toBeDefined()
+    expect(notice?.check).toBe('config')
+  }, 120000)
+
+  it('says nothing when no core check is replaced — the notice is not noise', async () => {
+    const { repo, home } = fixture({ checks: { 'myteam/only-additive': { run: './add.sh', scope: 'full' } } })
+    stubCheck(repo, 'add.sh', 'myteam/only-additive')
+
+    const run = await runCli(['check', '--all'], repo, home)
+
+    expect(run.stdout).not.toContain('REPLACES that core check')
+  }, 120000)
+})
+
 describe('duplicateIdFailures — the execution-boundary invariant', () => {
   const entry = (name: string) =>
     ({
