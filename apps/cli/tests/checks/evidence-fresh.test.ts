@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { anchoredRegion } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 import { compareEvidenceBlock } from '../../src/checks/evidence-fresh-logic'
@@ -90,5 +94,66 @@ describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)',
     const malformed = ['<!-- AEG:EVIDENCE:START -->', '```', NUMSTAT, '```', '<!-- AEG:EVIDENCE:END -->'].join('\n')
     const result = compareEvidenceBlock(regionOf(malformed), HEAD, NUMSTAT)
     expect(result.status).toBe('fail')
+  })
+})
+
+describe('the check refuses when the diff cannot be recomputed', () => {
+  // A base that resolves and a diff that fails is reachable: a repo-local
+  // `diff.orderFile` pointing at a missing path leaves `git merge-base` at
+  // exit 0 and sends `git diff` to exit 128. Without the strict wrapper the
+  // failure collapsed to '', which byte-matches an empty Group A fence, and
+  // the check reported PASS having recomputed nothing — a fail-open on the
+  // gate that guards the merge.
+  const BIN = join(import.meta.dir, '../../src/checks/bin/check-evidence-fresh.ts')
+
+  function fixtureWithFailingDiff(): { dir: string; head: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'ef-diff-fail-'))
+    const g = (args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+    g(['init', '-q', '-b', 'main'])
+    g(['config', 'user.email', 't@example.com'])
+    g(['config', 'user.name', 'test'])
+    writeFileSync(join(dir, 'a.txt'), 'a\n')
+    g(['add', '-A'])
+    g(['commit', '-qm', 'base'])
+    g(['checkout', '-qb', 'work'])
+    writeFileSync(join(dir, 'b.txt'), 'b\n')
+    g(['add', '-A'])
+    g(['commit', '-qm', 'edit'])
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+    g(['config', 'diff.orderFile', '/nonexistent/order-file'])
+
+    const ghDir = join(dir, 'fakebin')
+    mkdirSync(ghDir, { recursive: true })
+    const ghPath = join(ghDir, 'gh')
+    writeFileSync(ghPath, `#!/bin/sh\necho ${head}\n`)
+    chmodSync(ghPath, 0o755)
+    return { dir, head }
+  }
+
+  it('exits non-zero rather than matching an empty block against a failed recompute', async () => {
+    const { dir, head } = fixtureWithFailingDiff()
+    try {
+      // An EMPTY Group A fence: the value a failed `git diff` collapses to.
+      // Under the soft `git()` this compared equal and passed.
+      const body = [
+        '<!-- AEG:EVIDENCE:START -->',
+        `Head: ${head}`,
+        '',
+        '### Group A — recomputable',
+        '',
+        '```',
+        '```',
+        '<!-- AEG:EVIDENCE:END -->'
+      ].join('\n')
+      const proc = Bun.spawn(['bun', BIN], {
+        cwd: dir,
+        env: { ...process.env, PATH: `${join(dir, 'fakebin')}:${process.env.PATH}`, PR_BODY: body, PR_NUMBER: '1' },
+        stdout: 'pipe',
+        stderr: 'pipe'
+      })
+      expect(await proc.exited).not.toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

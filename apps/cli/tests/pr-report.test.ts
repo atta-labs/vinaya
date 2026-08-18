@@ -258,9 +258,9 @@ describe('replaceEvidenceBlock', () => {
   })
 })
 
-describe('computeGroupA refuses rather than degrading (round-2 review)', () => {
-  // Round 1 made an unresolvable merge-base throw. The same collapse survived
-  // behind the other two git calls: `git()` returns '' for a FAILED command
+describe('computeGroupA refuses rather than degrading', () => {
+  // An unresolvable merge-base throws. The same collapse can survive behind
+  // the other two git calls: `git()` returns '' for a FAILED command
   // and for one that legitimately printed nothing, so a failure produced the
   // exact bytes a genuinely empty diff produces — and the check, recomputing
   // the same way, compared '' to '' and passed having verified nothing.

@@ -76,15 +76,7 @@ class UnresolvableMergeBaseError extends Error {
  * emitter's side collapsed the same way, so both agreed on `''` and this
  * check reported PASS having recomputed nothing. An earlier fix in PR #126
  * closed that for the merge-base only.
- *
- * Defence in depth, and stated as such rather than pinned: this bin resolves
- * the base BEFORE diffing, and every way `git diff <base>...<head>` can fail
- * (bad head, bad base) already fails `git merge-base` one line earlier, so
- * the throw below is not reachable through this bin's own ordering. A test
- * asserting a non-zero exit here passes for the merge-base reason whether or
- * not `gitStrict` is used, which is why review's mutation survived and why
- * no test claims to pin it. It guards the ordering changing, not today's
- * ordering.
+
  */
 class GitCommandError extends Error {
   constructor(args: readonly string[], cause: string) {

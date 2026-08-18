@@ -44,10 +44,11 @@ import { packageRoot } from '../lib/package-root.js'
  *     whole suite, which it deliberately does not do.
  *
  * Emits no free-text field — no summary, no risk note, nothing this command
- * would have to interpret or word. Every line is a command's output,
- * verbatim; normalised only to strip non-deterministic noise (durations)
- * that would make two runs at the same sha differ byte-for-byte for no
- * reason.
+ * would have to interpret or word. Every VALUE is a command's output,
+ * verbatim; the section headings and the Group A command line are
+ * display-only (`renderGroupA`). No normalising step is needed or present:
+ * `GateOutcome` carries no timing or cache-status field, so two runs at the
+ * same sha are byte-identical by construction.
  *
  * **Recursion, and why gate running is injectable.** Group B runs this same
  * CLI's own `check --all --diff-only` as a subprocess. `pr-report.test.ts`
@@ -184,7 +185,7 @@ export function computeGroupA(): GroupA {
   // yet, so `rev-parse HEAD` fails) previously short-circuited BOTH ternaries
   // below, so `resolveMergeBase` was never reached and nothing refused — the
   // emitter wrote an empty head and an empty Group A and exited 0. That is
-  // the round-1 BLOCKER's shape reached by a different door.
+  // the same fail-open shape, reached by a different door.
   const head = gitStrict(['rev-parse', 'HEAD'])
   const base = resolveMergeBase(head)
   const numstat = gitStrict(['diff', `${base}...${head}`, '--numstat'])
@@ -224,9 +225,9 @@ export function runRealGates(): GateRunResult {
   // `node:child_process`, not `Bun.spawnSync`: this package ships a
   // `#!/usr/bin/env node` bin with `engines.node >= 20`, so a `Bun.*` call
   // here is a `ReferenceError: Bun is not defined` for every adopter running
-  // the published CLI under node — Group B could never run for them. Found
-  // in the security pass; it failed closed (the ReferenceError escaped the
-  // narrowed catch below before any write), so nothing false was published.
+  // the published CLI under node — Group B could never run for them. It
+  // failed closed (the ReferenceError escapes the narrowed catch below
+  // before any write), so no false attestation could be published.
   const proc = spawnSync(process.execPath, [entry, 'check', '--all', '--diff-only', '--json'], {
     cwd: process.cwd(),
     encoding: 'utf8',
@@ -259,8 +260,8 @@ export function runRealGates(): GateRunResult {
  * resolved base and head — not a hardcoded `git merge-base origin/main HEAD`
  * label — because on the `main`/`BASE_SHA` fallback path that label would be
  * a hand-typed claim inside the one block built to have none: it would say
- * `origin/main` having actually resolved against `main` (found in review,
- * round 1). `compareEvidenceBlock` never parses this line — only the fenced
+ * `origin/main` having actually resolved against `main`.
+ * `compareEvidenceBlock` never parses this line — only the fenced
  * `numstat` content below it is compared — so this is display-only honesty,
  * not a verification input.
  */
