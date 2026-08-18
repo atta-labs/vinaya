@@ -192,6 +192,14 @@ const REGISTERED = REGISTRY.map((p) => p.name)
  */
 const realBody = (n: number): string => readFileSync(join(__dirname, 'fixtures', `issue-${n}-body.md`), 'utf8')
 
+/**
+ * The two control characters these tests smuggle through the gate, named rather
+ * than embedded: a literal `ESC` in a source file is invisible in review and in
+ * a diff, which is the whole reason it is worth defending against.
+ */
+const ESC = String.fromCharCode(0x1b)
+const BEL = String.fromCharCode(0x07)
+
 describe('checkProjectsRegistered', () => {
   it('#863 (modern `**Project:**` footer) — EVALUATES its names, and passes on their merit', () => {
     const body = realBody(863)
@@ -266,6 +274,99 @@ describe('checkProjectsRegistered', () => {
     const body = 'A body with no rationale and no Project field at all.'
     expect(projectsFromBody(body)).toEqual([])
     expect(checkProjectsRegistered(body, [], REGISTERED).status).toBe('pass')
+  })
+
+  // -------------------------------------------------------------------------
+  // The silent-drop fail-open: a DECLARED value the parser could not turn into
+  // a name used to be indistinguishable from no declaration at all, so the gate
+  // passed vacuously on the one body it most needed to refuse.
+  // -------------------------------------------------------------------------
+
+  it('fails a declaration whose value yields no name — it can no longer pass vacuously', () => {
+    // #554's exact shape: prose in the field. `projectsFromBody` still yields
+    // nothing, which used to read to this gate as "no project declared".
+    const body = '**Project:** (none — tools/admin is unregistered; see Project(s) + blast radius above)'
+    expect(projectsFromBody(body)).toEqual([])
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/resolves to no project name/)
+    // …and names the residue, so the author can see what was read.
+    expect(r.errors[0]).toMatch(/tools\/admin is unregistered/)
+  })
+
+  it('fails closed when an unterminated fence swallowed the field, and says so', () => {
+    // Regression pin for the fail-open the fence fix itself introduced: the
+    // stray fence blanked the foot declaration, the parser reported "absent",
+    // and this gate passed a body its pre-fix self refused.
+    const body = ['```', 'a stray unclosed fence', '', '**Project:** notaproject'].join('\n')
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/unterminated code fence|fences do not balance/i)
+  })
+
+  it('fails closed on an unreadable body even when the swallowed name IS registered', () => {
+    // The read cannot be trusted, so the answer cannot be "pass" — but the
+    // message must point at the malformed fence, not accuse a valid name.
+    const body = ['````', 'x', '```', '', '**Project:** vinaya'].join('\n')
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/unterminated code fence|fences do not balance/i)
+    expect(r.errors[0]).not.toMatch(/is not a project name/)
+  })
+
+  it('fails a declaration with an empty value — the same vacuous pass, one shape further', () => {
+    // `**Project:**` with nothing after it yields no name AND no residue to
+    // report. Keying the failure on "declared but resolved to nothing" rather
+    // than on the residue is what catches this shape too.
+    const r = checkProjectsRegistered('**Project:**   \n', [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/resolves to no project name/)
+  })
+
+  it('fails on the unparseable half of a partly-parseable declaration', () => {
+    const body = '**Project:** vinaya, a value with spaces'
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/a value with spaces/)
+  })
+
+  it('refuses an unregistered name that only trailing punctuation used to hide', () => {
+    // `notaproject.` failed the slug shape and was dropped before the registry
+    // could refuse it — the gate cannot fail on a name it never receives.
+    const r = checkProjectsRegistered('**Project:** notaproject.', [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/notaproject/)
+  })
+
+  it('reads the foot declaration, not a fenced example, so the gate and the board agree', () => {
+    const body = ['```markdown', '**Project:** not-a-real-project', '```', '', '**Project:** vinaya'].join('\n')
+    expect(projectsFromBody(body)).toEqual(['vinaya'])
+    expect(checkProjectsRegistered(body, [], REGISTERED).status).toBe('pass')
+  })
+
+  // -------------------------------------------------------------------------
+  // Error-message sanitation. `parseRegistry` validates nothing, so a guest
+  // repo's `.vinaya/projects.md` reaches this message as raw markdown-cell text.
+  // -------------------------------------------------------------------------
+
+  it('does not render a registry name’s terminal escapes into the error message', () => {
+    const hostile = ['vinaya', `${ESC}[31mred${ESC}[0m`, `drop${BEL}bell`]
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], hostile)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).not.toContain(ESC)
+    expect(r.errors[0]).not.toContain(BEL)
+  })
+
+  it('does not render a declared value’s terminal escapes into the error message', () => {
+    const r = checkProjectsRegistered(`**Project:** ${ESC}[31mnotaname${ESC}[0m here`, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).not.toContain(ESC)
+  })
+
+  it('still names a well-formed registry row verbatim — sanitation is not redaction', () => {
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], REGISTERED)
+    expect(r.errors[0]).toMatch(/aeg-core/)
+    expect(r.errors[0]).toMatch(/nosuchproject/)
   })
 })
 
@@ -663,5 +764,77 @@ describe('hasRationaleField — label-pattern grouping (regression, found live 2
     const depError = result.errors.find((e) => e.startsWith('issue-validation Dependency rationale'))
     expect(depError).toBeDefined()
     expect(depError).toMatch(/rationale field not found/)
+  })
+})
+
+/**
+ * Trojan-Source class characters. Named, never embedded: a literal bidi
+ * override in a source file is invisible in review, which is the entire reason
+ * it is worth stripping out of an operator-facing message.
+ */
+const RLO = String.fromCharCode(0x202e) // right-to-left override
+const ZWSP = String.fromCharCode(0x200b) // zero-width space
+const BOM = String.fromCharCode(0xfeff)
+
+describe('checkProjectsRegistered — what reaches the operator’s terminal', () => {
+  it('drops bidi overrides from a registry name', () => {
+    const hostile = ['vinaya', `aeg${RLO}erroc-gea`]
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], hostile)
+    expect(r.errors[0]).not.toContain(RLO)
+  })
+
+  it('drops zero-width characters that could split a name into a lookalike', () => {
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], [`vin${ZWSP}aya`, 'aeg-core'])
+    expect(r.errors[0]).not.toContain(ZWSP)
+  })
+
+  it('drops a byte-order mark from a declared value', () => {
+    const r = checkProjectsRegistered(`**Project:** not a name${BOM} here`, [], REGISTERED)
+    expect(r.errors[0]).not.toContain(BOM)
+  })
+
+  it('bounds the residue count, so one body cannot amplify into a huge error string', () => {
+    // 500 unparseable values. Uncapped this renders every one of them into a
+    // single error string that lands in `CheckFailure.reason` and in a blocking
+    // gate's `--json` output.
+    const body = `**Project:** ${Array.from({ length: 500 }, (_, i) => `not a name ${i}`).join(', ')}`
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect((r.errors[0] ?? '').length).toBeLessThan(2000)
+    expect(r.errors[0]).toMatch(/more/)
+  })
+
+  it('never emits a lone surrogate when eliding a long value', () => {
+    // An astral character straddling the elision boundary splits into a lone
+    // surrogate under a UTF-16 slice.
+    // 61 single-unit characters put the 64th code UNIT inside the first astral
+    // character, so a `slice(0, 64)` cuts it in half.
+    const astral = '\u{1F600}'
+    const body = `**Project:** ${'a'.repeat(61)}${astral.repeat(10)}`
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    // Scan CODE UNITS: every high surrogate must be followed by a low one.
+    // (Iterating the string with `for...of` walks code points and would never
+    // see the split, which is exactly why a UTF-16 slice can hide this.)
+    const msg = r.errors[0] ?? ''
+    let lone = 0
+    for (let i = 0; i < msg.length; i++) {
+      const code = msg.charCodeAt(i)
+      const isHigh = code >= 0xd800 && code <= 0xdbff
+      const isLow = code >= 0xdc00 && code <= 0xdfff
+      if (isHigh) {
+        const next = msg.charCodeAt(i + 1)
+        if (!(next >= 0xdc00 && next <= 0xdfff)) lone++
+        else i++
+      } else if (isLow) {
+        lone++
+      }
+    }
+    expect(lone).toBe(0)
+  })
+
+  it('still renders a well-formed registry row verbatim — sanitation is not redaction', () => {
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], REGISTERED)
+    expect(r.errors[0]).toMatch(/aeg-core/)
+    expect(r.errors[0]).toMatch(/nosuchproject/)
   })
 })

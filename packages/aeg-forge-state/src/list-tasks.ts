@@ -2,6 +2,7 @@ import type { Task, TaskIssueRef } from '@attalabs/aeg-types'
 import { type GhIssue, ghIssueListByAnyLabel, ghIssueListByAnyLabelAsync } from './gh'
 import { findTrancheSlug, trancheLabel } from './labels'
 import { parseRationaleDeps } from './parse-rationale-deps'
+import { hasUnterminatedFence, stripCode } from './strip-code'
 
 /** Issue title convention: `[<tranche-slug>] <task-id> — <title>`, the same
  * shape every Vinaya Issue is opened with (`open-issue.ts`, brief-authoring). */
@@ -22,7 +23,15 @@ export const TITLE_PATTERN = /^\[([^\]]+)]\s*(\S+)\s*—\s*(.+)$/
  * guard stays a slug shape rather than a registry lookup on purpose: this
  * package is pure, repo-parameterized forge derivation and must not couple to
  * `.vinaya`. An unregistered-but-slug-shaped value still resolves
- * here; that is the registry's problem to report, not this parser's. */
+ * here; that is the registry's problem to report, not this parser's.
+ *
+ * The guard **rejects, it no longer discards**: a value failing this shape is
+ * reported on `ProjectField.unparsed` rather than dropped, because a drop left
+ * the registry gate unable to tell an unparseable declaration from no
+ * declaration and passing vacuously on both. It is applied AFTER `unwrapValue`,
+ * so the markup and sentence punctuation prose wraps a real name in
+ * (`` `vinaya` ``, `**vinaya**`, `notaproject.`) no longer costs that name its
+ * shape — those were valid declarations the guard was never aimed at. */
 const PROJECT_SLUG = /^[a-z0-9][a-z0-9-]*$/i
 
 /**
@@ -37,16 +46,178 @@ const PROJECT_SLUG = /^[a-z0-9][a-z0-9-]*$/i
  * The optional `**` are matched independently on each side rather than as a
  * required pair, which is what keeps the prose heading `**Project(s) + blast
  * radius**` out: nothing there puts a `:` straight after the name.
+ *
+ * Line-anchored, first-match-wins, and deliberately un-global — which is why it
+ * must never be run against a raw body. See `projectFieldFromBody`: the first
+ * field-shaped line in a raw body is routinely a fenced *example* of the field,
+ * and the real declaration sits at the foot by convention.
+ *
+ * **Every whitespace run in this pattern — the leading one as well as those
+ * around the colon and `**` — is `\s*`, and MUST stay `\s*`: this is the
+ * field's grammar, not an implementation detail.** A revert that restored
+ * only the internal runs left the leading one narrowed, so a field line
+ * prefixed by a non-breaking space, form feed or vertical tab still went
+ * `declared: false` with the gate passing, while `declaredProjects` read the
+ * name — the same silent drop, one character class over.
+ * GitHub renders `Project:\nvinaya` as the single paragraph "Project: vinaya",
+ * and the tolerant-plain-form cohort the docstring above names is written
+ * exactly this way; `\s*` (which matches `\n`) is what lets the value sit on
+ * the line after the label. An attempt to narrow these runs to `[ \t]*`
+ * removed a ReDoS class (measured: 705 ms → 0.02 ms on a crafted body) and was
+ * reverted: it silently dropped the
+ * plain next-line form to `declared: false` and made the bold next-line form
+ * fail with a false "the field is empty" message — the same silent-drop and
+ * vacuous-fail-open classes this whole task exists to close. The `Project:`
+ * field's grammar is explicitly NOT in this task's scope; the perf work
+ * belongs in its own task, constrained to prove — with a shape corpus
+ * (plain/bold × same-line/next-line × leading whitespace), not a timing
+ * number — that it does not narrow which shapes the field accepts.
  */
 const PROJECT_FIELD = /^\s*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.+)$/im
 
+/**
+ * What the body's `Project:` field says — including when it says something this
+ * parser cannot turn into a name.
+ *
+ * `declared` answers "is there a `Project:` field at all", which is the
+ * distinction the bare `string[]` return could never express: an empty
+ * `names` was indistinguishable from an absent field, so a consumer could not
+ * tell "this task legitimately declares no project" from "this task declared
+ * something and the parser dropped it". A registry gate reading only `names`
+ * therefore passes **vacuously** on a value it never received — it cannot
+ * refuse a name that was filtered away before it arrived. The instance that
+ * made this concrete: #104 named its project only in the `Project(s) + blast
+ * radius` prose heading, which this parser deliberately does not read, so no
+ * gate fired on it and it sat invisible until someone counted the corpus by
+ * hand. (#104 has carried a real field since the #112 registry migration; the
+ * defect class is what this type exists for, not that one Issue.)
+ *
+ * `unparsed` carries those dropped values verbatim (comma-split, trimmed) so a
+ * caller can report what it could not check. It is deliberately raw and
+ * deliberately not acted on here: turning a value into a name is this parser's
+ * job, and deciding what an uncheckable declaration means is the gate's.
+ */
+export type ProjectField = {
+  /** A `Project:` field line exists outside code. Says nothing about whether its value parsed. */
+  declared: boolean
+  /** Slug-shaped names, de-duplicated, in declaration order. What consumers resolve. */
+  names: string[]
+  /** Declared values that yielded no name — the residue no consumer can check. */
+  unparsed: string[]
+  /**
+   * The body's fences do not balance, so an unterminated fence swallowed the
+   * region the field lives in and this read cannot be trusted. Distinct from
+   * every other state on purpose: "absent" and "unreadable" are the conflation
+   * that let a malformed body pass a gate the readable version of it failed.
+   */
+  unreadable: boolean
+}
+
+/**
+ * Trims the markup and sentence punctuation a field value carries in prose —
+ * the value is routinely written as "`Project: vinaya`." (backticked, with the
+ * sentence's full stop inside the span, which the span-preserving strip keeps)
+ * or as `**Project:** **vinaya**`. Without this, each of those wrappers made an
+ * otherwise-valid name fail the slug shape and vanish, so the registry check
+ * could not refuse an unregistered `notaproject.` and passed vacuously on a
+ * fully-wrapped one.
+ *
+ * The peel is **anchored to the value's ends**, not applied body-wide. Deleting
+ * `.` and `;` wherever they appeared let `v.i.n.a.y.a` and `vin;aya` collapse
+ * onto the registered `vinaya`, so a body could read to a human as one thing
+ * and resolve, for the gate AND for `Task.projects`, as a registered project.
+ * Interior punctuation now leaves the value non-slug, which reports it as
+ * residue — the honest answer.
+ *
+ * `issue-validation.ts`'s `declaredProjects` peels the same character SET, and
+ * that much the two share. They are not otherwise interchangeable and this
+ * function does not pretend they are: `declaredProjects` splits on `/[,/]/` and
+ * DROPS a non-slug segment, while this one splits on `,` (the documented
+ * grammar) and REPORTS it. On `**Project:** vinaya / aeg-core` they disagree by
+ * construction. The shared peel set is what keeps a wrapper from costing a real
+ * name its shape in one reader and not the other — the drift that silently
+ * dropped the project of every plain-form Issue once before; it is not a claim
+ * that the two functions agree in general.
+ */
+const VALUE_EDGE_MARKUP = /^[`.;\s]+|[`.;\s]+$/g
+
+function unwrapValue(raw: string): string {
+  return raw.replace(/\*\*/g, '').replace(VALUE_EDGE_MARKUP, '')
+}
+
+/**
+ * The `Project:` field, read from the body **minus its examples**.
+ *
+ * Reads `stripCode(body, { inlineSpans: 'keep' })` rather than the raw body.
+ * `PROJECT_FIELD` is line-anchored, first-match-wins and un-global, so against a
+ * raw body it takes the first field-shaped line ANYWHERE — including one inside
+ * a fenced code block. The real declaration sits at the body's foot by
+ * convention, so any earlier fenced example outranked it, and both consumers
+ * inherited the wrong answer in agreement: a rationale that *documents* the
+ * field's shape had its own documentation parsed as its declaration. A `Project`
+ * line inside a fence is an example, not a declaration.
+ *
+ * Inline spans are KEPT (`'keep'`), not stripped: prose writes the value in
+ * backticks by convention ("`Project: vinaya`"), so a span-blind read finds
+ * nothing on the very bodies this must parse. `unwrapValue` peels the backticks
+ * off the captured value instead. This is the same reading, through the same
+ * stripper, that `issue-validation.ts`'s `PATH_TEXT` already uses — `stripCode`
+ * moved down to `strip-code.ts` so both share one implementation rather than
+ * two regexes that agree today.
+ */
+export function projectFieldFromBody(body: string): ProjectField {
+  const m = stripCode(body, { inlineSpans: 'keep' }).match(PROJECT_FIELD)
+  if (m) return parseFieldValue(m[1] ?? '')
+
+  // No field OUTSIDE code. Two very different reasons, and collapsing them is
+  // the same fail-open this function exists to close, one layer in:
+  //
+  //   - the body genuinely declares none, or declares one only inside a
+  //     BALANCED fence (an example, not a declaration) — absent, and a pass;
+  //   - an UNTERMINATED fence ran to end of body and swallowed the rest,
+  //     including the foot where the real declaration lives by convention.
+  //
+  // In the second case the reader is blind, not looking at an empty page. A
+  // body with unbalanced fences is malformed — GitHub renders its tail as code
+  // too — so the honest answer is "a field is there and this read of it cannot
+  // be trusted": declared, with the value as residue, which fails the gate
+  // closed and names what it could not check. Reported rather than parsed,
+  // because inside the swallowed region a quoted example and a real
+  // declaration are genuinely indistinguishable — and unlike `Closes #N`,
+  // there is no GitHub behaviour to match here. This system is the only
+  // reader, so the safe direction is fail-closed, not pass.
+  if (hasUnterminatedFence(body)) {
+    const raw = body.match(PROJECT_FIELD)
+    if (raw) return { declared: true, names: [], unparsed: [(raw[1] ?? '').trim()], unreadable: true }
+  }
+  return { declared: false, names: [], unparsed: [], unreadable: false }
+}
+
+/** Splits one captured field value into resolved names and the residue that yielded none. */
+function parseFieldValue(value: string): ProjectField {
+  const names: string[] = []
+  const unparsed: string[] = []
+  for (const raw of value.split(',')) {
+    const name = unwrapValue(raw)
+    if (name.length === 0) continue
+    if (PROJECT_SLUG.test(name)) names.push(name)
+    else unparsed.push(raw.trim())
+  }
+  return { declared: true, names: [...new Set(names)], unparsed, unreadable: false }
+}
+
+/**
+ * The declared project names, and only those — the `Task.projects` shape every
+ * consumer already reads. Signature-identical to its pre-fence-fix form on
+ * purpose: `checkProjectsRegistered` (the gate) and the Studio board derivation
+ * both call it, and a change that moved one of them and not the other would
+ * create the gate/board disagreement the shared parser exists to prevent.
+ *
+ * Use `projectFieldFromBody` when `[]` needs to be told apart from "declared
+ * but unparseable" — this function cannot express the difference.
+ */
 export function projectsFromBody(body: string): string[] {
-  const m = body.match(PROJECT_FIELD)
-  if (!m) return []
-  return (m[1] ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => PROJECT_SLUG.test(s))
+  return projectFieldFromBody(body).names
 }
 
 function taskFromIssue(issue: GhIssue): Task | null {

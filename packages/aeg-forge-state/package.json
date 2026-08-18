@@ -14,7 +14,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./labels": "./src/labels.ts"
+    "./labels": "./src/labels.ts",
+    "./strip-code": "./src/strip-code.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
