@@ -9,6 +9,8 @@ sidebar_title: "Template: PR report"
 
 **The `AEG:PREMISE` anchor is not optional when the brief carried a `Premise:` block.** Without it, `premise-recheck` scans the *whole* body for anything premise-shaped — including the brief's own original pins, pasted verbatim into the `<details>` reference copy at the bottom — and re-asserts those against the code you just changed. A premise pinning the *pre-fix* state will correctly fail once your fix lands, because the pin describes what you just changed away from. Put a fresh, post-fix, currently-true assertion inside `<!-- AEG:PREMISE:START -->` / `<!-- AEG:PREMISE:END -->` so the re-check asserts something true of the shipped diff, not the brief's stale snapshot.
 
+**No bare digit outside a fenced block.** `body-bare-digits` (CI) refuses a countable claim — a test count, a file count, a timing figure, "N passed" — written loose in a sentence anywhere in this body. A number is only safe in one of three shapes: inside a fenced/indented code block or an inline code span (`` `N` ``), inside one of the anchored fields above (`Closes #N`, `Project:`, `Tier:`, Premise, Test plan, Evidence — each has its own gate), or as a plain identifier a reader would recognize on sight (an Issue/PR reference, a date, a dotted version, a file-path segment, a section number). Anything else — write it inside a fenced block, or don't write it as a bare number at all.
+
 ---
 
 <!-- AEG:CLOSES:START -->
