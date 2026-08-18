@@ -1,6 +1,6 @@
 {
   "name": "@attalabs/vinaya-sources",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "publishConfig": {
     "access": "public"
   },
@@ -22,9 +22,9 @@
     "lint": "biome check src"
   },
   "dependencies": {
-    "@attalabs/aeg-core": "0.13.1",
-    "@attalabs/aeg-forge-state": "0.13.1",
-    "@attalabs/aeg-types": "0.13.1",
+    "@attalabs/aeg-core": "0.14.0",
+    "@attalabs/aeg-forge-state": "0.14.0",
+    "@attalabs/aeg-types": "0.14.0",
     "zod": "3.25.76"
   },
   "devDependencies": {
