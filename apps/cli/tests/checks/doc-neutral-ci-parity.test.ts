@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'bun:test'
+import { afterAll, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -24,6 +24,12 @@ const BINS = {
   push: join(REPO_ROOT, 'apps/cli/src/checks/bin/check-doc-coverage-push.ts')
 } as const
 
+const TEMP_DIRS: string[] = []
+
+afterAll(() => {
+  for (const d of TEMP_DIRS) rmSync(d, { recursive: true, force: true })
+})
+
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 }
@@ -31,6 +37,7 @@ function git(cwd: string, args: string[]): string {
 /** A repo whose one binding has fired: the bound code changed, the doc did not. */
 function repoWithFiredBinding(codeEdit: string): { dir: string; base: string } {
   const dir = mkdtempSync(join(tmpdir(), 'c5-parity-'))
+  TEMP_DIRS.push(dir)
   git(dir, ['init', '-q', '-b', 'main'])
   git(dir, ['config', 'user.email', 't@example.com'])
   git(dir, ['config', 'user.name', 'test'])
@@ -83,7 +90,10 @@ describe('C5 Doc-neutral parity between the blocking check and verify-docs (#122
     it(`[${label}] clears a comment-only change when Doc-neutral is declared`, async () => {
       const { dir, base } = repoWithFiredBinding('export const x = 1\n// a clarifying comment\n')
       const r = await runCheck(bin, dir, base, 'Doc-neutral: docs/x.md — comment-only edit')
-      if (blocking) expect(r.code).toBe(0)
+      // The push bin always exits 0 by contract, so its `clears` cases assert
+      // on stderr — but without an exit-code guard a crash would satisfy
+      // `not.toContain` vacuously. Both bins are pinned to their own contract.
+      expect(r.code).toBe(0)
       expect(r.stderr).not.toContain(UNVERIFIED)
     })
 
@@ -104,7 +114,10 @@ describe('C5 Doc-neutral parity between the blocking check and verify-docs (#122
     it(`[${label}] clears via the fallback ref when origin/main does not exist`, async () => {
       const { dir } = repoWithFiredBinding('export const x = 1\n// a clarifying comment\n')
       const r = await runCheck(bin, dir, '', 'Doc-neutral: docs/x.md — comment-only edit')
-      if (blocking) expect(r.code).toBe(0)
+      // The push bin always exits 0 by contract, so its `clears` cases assert
+      // on stderr — but without an exit-code guard a crash would satisfy
+      // `not.toContain` vacuously. Both bins are pinned to their own contract.
+      expect(r.code).toBe(0)
       expect(r.stderr).not.toContain(UNVERIFIED)
     })
 

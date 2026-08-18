@@ -28,8 +28,8 @@ function readCode(binName: string): string {
 describe('registry env declarations', () => {
   const specs = coreCheckRegistry()
 
-  it('registers exactly 15 core checks (the audited surface)', () => {
-    expect(specs).toHaveLength(15)
+  it('registers exactly 16 core checks (the audited surface)', () => {
+    expect(specs).toHaveLength(16)
   })
 
   it('every core check carries an env declaration', () => {

@@ -44,6 +44,7 @@ import {
   overrideActive,
   WAIVER_LABEL
 } from '@attalabs/aeg-core'
+import { fileDiffAgainst } from '../../lib/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 
@@ -62,18 +63,6 @@ function changedFiles(base: string): string[] {
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)
-}
-
-/**
- * Per-file diff for `evaluateC5`'s `Doc-neutral:` evidence check. Without it
- * every `Doc-neutral:` declaration resolves to `doc-neutral-unverified`, so
- * this check rejected a route `verify-docs.ts` accepts at PR open (#122).
- * Same shape as `verify-docs.ts`'s: `null` when the file has no diff against
- * the base, which `evaluateC5` reads as "no evidence".
- */
-function fileDiff(base: string, path: string): string | null {
-  const out = git(['diff', `${base}...HEAD`, '--', path])
-  return out === '' ? null : out
 }
 
 function resolvePrBody(): string {
@@ -135,7 +124,7 @@ function main(): void {
 
   const content = existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null
   const result = evaluateC5(changed, content, resolvePrBody(), existsSync, waiverActiveFromEnv(), (p) =>
-    fileDiff(ref, p)
+    fileDiffAgainst(ref, p)
   )
 
   // Ring 0: warn-with-declared-intent, never a hard block — the push always
