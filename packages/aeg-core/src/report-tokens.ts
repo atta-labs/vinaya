@@ -1,18 +1,37 @@
 /**
- * Session token self-report (misc-hardening-v1 task 1, #675). Retracts
- * `aeg-root/tranche-model.md` §12's claim that a terminal role reports exact
- * tokens "from `/cost`": `/cost` is a Claude Code slash command typed by an
- * operator at the interactive prompt — an unattended agent session has no
- * way to invoke it. The real per-agent source is the session's own
- * transcript (`~/.claude/projects/<slug>/<session-id>.jsonl`), which the
- * harness already writes as the session runs and hands to every hook as
- * `transcript_path`.
+ * report-tokens — the **portable** half of the token-report contract
+ * (`aeg-root/tranche-model.md` §12, layers 1 and 3). No value this file reads,
+ * computes or emits is host-specific: it defines the summary shape every
+ * collection adapter must produce, and renders that shape into the frozen
+ * `Tokens: …` grammar `parse-token-report.ts` reads back. A host is named
+ * below only to point at the one shipped adapter and to record a retraction —
+ * never to branch on, and never in rendered output.
+ *
+ * `TranscriptSummary` **is the seam.** A host adapter's whole job is to
+ * produce one — from a session transcript, an API usage response, a meter the
+ * harness exposes, or figures an operator supplies by hand. AEG ships exactly
+ * one such adapter, for Claude Code, in `claude-code-transcript.ts`; a repo
+ * on another harness writes its own and reuses everything here unchanged.
+ * Adding host knowledge to this file would silently re-couple the portable
+ * layers to one vendor — that coupling is the defect the split exists to
+ * prevent, and this file is where it would reappear first.
+ *
+ * Historical note (misc-hardening-v1 task 1, #675): this module retracted
+ * §12's earlier claim that a role reports exact tokens "from `/cost`" — an
+ * operator-typed slash command no unattended agent session can invoke, in
+ * that host or any other. §12 records the retraction; the fix was to collect
+ * from a real per-turn source instead.
  *
  * Pure — no `fs`, no `process.env`. The CLI shim (`bin/report-tokens.ts`)
- * resolves the transcript path and reads the file; these functions take its
- * text content and produce the report.
+ * does the I/O; these functions take values and produce the report.
  */
 
+/**
+ * The four usage figures a role reports, in host-neutral terms. Every
+ * collection adapter maps its host's own field names onto these, so no field
+ * name from a host's own API or transcript format appears downstream of the
+ * adapter — including in this file.
+ */
 export type UsageComponents = {
   inputTokens: number
   outputTokens: number
@@ -20,81 +39,37 @@ export type UsageComponents = {
   cacheReadInputTokens: number
 }
 
+/**
+ * **The adapter seam.** What a host's collection step must produce for one
+ * role-turn, and the only thing the portable layers below consume. Named for
+ * the shipped adapter's source (a session transcript), but the shape is not
+ * transcript-specific: an adapter that reads an API usage response or takes
+ * operator-supplied figures produces this same object.
+ */
 export type TranscriptSummary = {
   components: UsageComponents
-  /** The most recent model id seen on an assistant message, or `null` if none. */
+  /** The model id for the turn, or `null` when the host does not report one. */
   model: string | null
-  /** Count of unique assistant messages summed (post-dedup). */
+  /**
+   * How many distinct usage records were summed. Callers use `0` as the
+   * "nothing usable was collected" signal — a real turn always has at least
+   * one — rather than letting a zeroed summary format as a plausible `0/0/—`.
+   */
   messageCount: number
-}
-
-/**
- * Sum usage across every unique assistant message in a session transcript
- * (JSONL — one object per line). A single API turn is frequently split
- * across several JSONL entries (a thinking block, a tool_use block, a text
- * block, …) that each carry an identical copy of that turn's `usage` object
- * under the same `message.id` — confirmed against this task's own live
- * transcript, where 59 assistant-typed lines held only 22 unique message
- * ids. Summing every line naively over-counts by as much as 3x. Dedup by
- * `message.id` first; a line missing an id or a usage object is skipped,
- * not guessed at.
- */
-export function summarizeTranscript(jsonl: string): TranscriptSummary {
-  const seen = new Set<string>()
-  const components: UsageComponents = {
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheCreationInputTokens: 0,
-    cacheReadInputTokens: 0
-  }
-  let model: string | null = null
-  let messageCount = 0
-
-  for (const rawLine of jsonl.split(/\r?\n/)) {
-    const line = rawLine.trim()
-    if (!line) continue
-
-    let entry: unknown
-    try {
-      entry = JSON.parse(line)
-    } catch {
-      continue
-    }
-    if (!entry || typeof entry !== 'object') continue
-    const obj = entry as Record<string, unknown>
-    if (obj.type !== 'assistant') continue
-
-    const message = obj.message as Record<string, unknown> | undefined
-    const id = message?.id
-    const usage = message?.usage as Record<string, unknown> | undefined
-    if (typeof id !== 'string' || !id || !usage || seen.has(id)) continue
-    seen.add(id)
-    messageCount++
-
-    components.inputTokens += numberOr(usage.input_tokens, 0)
-    components.outputTokens += numberOr(usage.output_tokens, 0)
-    components.cacheCreationInputTokens += numberOr(usage.cache_creation_input_tokens, 0)
-    components.cacheReadInputTokens += numberOr(usage.cache_read_input_tokens, 0)
-
-    const messageModel = message?.model
-    if (typeof messageModel === 'string' && messageModel) model = messageModel
-  }
-
-  return { components, model, messageCount }
-}
-
-function numberOr(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
 export type TokensLineInput = {
   phase: string
   role: string
-  /** `null` when the surface genuinely cannot self-report (a claude.ai chat
-   * role) — produces the all-`—` numbers segment that the parser already
-   * tolerates. */
+  /**
+   * `null` only when the role is operator-metered — its host exposes no
+   * usage to the agent at all — which produces the all-`—` numbers segment
+   * the parser already tolerates. Never a convenience escape for a
+   * self-metering role whose collection step merely failed: that case is an
+   * error to report, not a blank to emit (`aeg-root/tranche-model.md` §12).
+   */
   summary: TranscriptSummary | null
-  /** Overrides the model derived from the transcript, if given. */
+  /** Overrides the model the adapter derived, if given. */
   modelOverride?: string
 }
 
@@ -104,8 +79,8 @@ export type TokensLineInput = {
  * grammar is frozen (three parsers depend on it) — this function must never
  * change its shape, only what feeds it.
  *
- * `Tokens in` is the full input-side total (`input_tokens +
- * cache_creation_input_tokens + cache_read_input_tokens`) — genuinely every
+ * `Tokens in` is the full input-side total (`inputTokens +
+ * cacheCreationInputTokens + cacheReadInputTokens`) — genuinely every
  * token that went in, not a partial figure. Cache reads can outweigh fresh
  * input by two orders of magnitude on a long session, so that total is
  * never the whole story on its own; `formatBreakdown` reports the four
@@ -142,6 +117,6 @@ export function formatBreakdown(summary: TranscriptSummary): string {
     `  cache read tokens:     ${cacheReadInputTokens}`,
     `  output tokens:         ${outputTokens}`,
     `  model:                 ${summary.model ?? '—'}`,
-    `  messages summed:       ${summary.messageCount} (deduped by message.id)`
+    `  messages summed:       ${summary.messageCount}`
   ].join('\n')
 }

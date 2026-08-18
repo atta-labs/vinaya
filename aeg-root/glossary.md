@@ -17,6 +17,8 @@ Vinaya uses a handful of words in a specific, non-obvious sense — on the pages
 
 **Impact tier** — A number (0, 1, or 3) assigned to a task that decides how much documentation, testing and record-keeping it owes before it can merge. A higher number means a bigger blast radius and a stricter checklist.
 
+**Operator-metered** — Said of an agent whose tool gives it no way to see how much work it just did, so only a person can supply that figure. Such an agent still files its report at the end of its turn — which task, which role, which model, what date — but leaves the count itself blank rather than guessing. A person may fill the blank in later from whatever usage screen the tool shows them. The opposite is self-metering, defined below.
+
 **Provenance** — A short, durable record, left as a comment on a merged pull request, proving the work behind it was actually reviewed and closed out — not just merged. A pull request carrying no such record means that close-out step never happened.
 
 **Ratification** — Sign-off, from the person ultimately accountable for the product, on a decision or a piece of work that would be hard to undo. Higher-impact changes wait for a scheduled sign-off window rather than merging the moment they're technically ready.
@@ -24,6 +26,8 @@ Vinaya uses a handful of words in a specific, non-obvious sense — on the pages
 **Registry ID / rendering ID** — Two names for the same role that can differ. The registry ID is the config key an adopter uses to claim or add a role — namespaced for an additive one. The rendering ID is the role file's own `role_id`, always slash-free, what every diagram and downstream reader actually sees. An override's rendering ID must equal its registry ID exactly; an additive role's rendering ID must equal the key's segment after the `/`.
 
 **Resolution state** — One of three states — `default`, `overridden`, or `additive` — that every check or role ID resolves to. `default` means shipped-and-unmodified; `overridden` means a config entry currently claims that ID and satisfies its contract; `additive` means a wholly new, namespaced entry the shipped product has no opinion on.
+
+**Self-metering** — Said of an agent whose tool lets it read, by itself, how much work it just did — so it can report a real figure with nobody watching. How it reads that figure differs from tool to tool, and is the one part of this system that has to be written fresh for each one. An agent that can do this is not allowed to report a blank token count instead. The opposite is operator-metered, defined above.
 
 **Seam** — The handoff point between two people or roles, where one produces something — a document, a decision, a record — and the other consumes it. Each seam is written down once, in its own place, so both sides can agree on exactly what crosses it.
 

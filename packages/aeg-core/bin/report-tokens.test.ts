@@ -48,6 +48,28 @@ describe('parseArgs', () => {
     })
   })
 
+  it('parses the named --transcript flag identically to the positional form', () => {
+    const named = parseArgs(['--phase', '1: develop', '--role', 'Developer', '--transcript', '/tmp/t.jsonl'])
+    const positional = parseArgs(['--phase', '1: develop', '--role', 'Developer', '/tmp/t.jsonl'])
+    expect(named.transcriptPath).toBe('/tmp/t.jsonl')
+    expect(named).toEqual(positional)
+  })
+
+  it('never swallows the --transcript value as an unknown flag, whatever the argument order', () => {
+    // Before `--transcript` was a declared flag it only "worked" by accident:
+    // the flag itself fell through the unknown-`--` branch and its value was
+    // picked up as the bare positional. That left the primary route for a
+    // caller naming its own transcript undocumented and one refactor away
+    // from silently breaking.
+    const parsed = parseArgs(['--transcript', '/tmp/t.jsonl', '--phase', '1: develop', '--role', 'Developer'])
+    expect(parsed.transcriptPath).toBe('/tmp/t.jsonl')
+    expect(parsed.phase).toBe('1: develop')
+  })
+
+  it('advertises --transcript in the usage text — a primary route, not an undocumented escape hatch', () => {
+    expect(() => parseArgs([])).toThrow(/--transcript/)
+  })
+
   it('leaves model and transcriptPath undefined when omitted', () => {
     const parsed = parseArgs(['--phase', '1: review', '--role', 'Reviewer'])
     expect(parsed.model).toBeUndefined()

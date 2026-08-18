@@ -1,30 +1,52 @@
 #!/usr/bin/env bun
 
 /**
- * report-tokens — emits one `Tokens: …` line (`packages/aeg-core/src/parse-token-report.ts`'s
- * grammar) for the calling role's own turn, replacing the retracted `/cost`
- * claim in `aeg-root/tranche-model.md` §12 (misc-hardening-v1 task 1,
- * #675): `/cost` is a Claude Code slash command typed by an operator at the
- * interactive prompt — an unattended agent session has no way to invoke it
- * itself. This reads the session's own transcript instead
- * (`~/.claude/projects/<slug>/<session-id>.jsonl`), which the harness
- * writes as the session runs and hands to every hook as `transcript_path`.
+ * report-tokens — **the Claude Code collection adapter** for AEG's
+ * token-report obligation, and only that. `aeg-root/tranche-model.md` §12
+ * splits the obligation into three layers: every role reports its own turn's
+ * usage (layer 1, portable), by whatever means its host offers (layer 2,
+ * host-specific), into the `Tokens: …` grammar in the artifact its turn
+ * produced (layer 3, portable). **This file is one instance of layer 2.**
+ *
+ * That means a repo running some other agent host is not missing anything by
+ * not having this script. It satisfies the same obligation by reading its own
+ * harness's usage figures — a session log, a usage field on an API response,
+ * a meter the harness exposes, or an operator supplying the numbers — and
+ * writing the same line. Doctrine cites this path as an example, never as the
+ * requirement; if you find a doc that reads otherwise, the doc is the defect.
+ *
+ * What this adapter knows that nothing portable may: Claude Code writes each
+ * session's transcript as JSONL with a per-assistant-message `usage` object,
+ * and hands every hook its path as `transcript_path`. The JSONL parsing lives
+ * in `../src/claude-code-transcript.ts` (host-coupled, like this file); the
+ * rendering it feeds (`formatTokensLine`, `formatBreakdown`) and the grammar
+ * that reads the result back (`src/parse-token-report.ts`) are portable and
+ * shared by every host. The `bin/` vs `src/` split does not mark that seam —
+ * `TranscriptSummary` does.
+ *
+ * Historical note (misc-hardening-v1 task 1, #675): this adapter exists
+ * because §12 once claimed a role reports exact tokens "from `/cost`" — an
+ * operator-typed slash command no unattended agent session can invoke. §12
+ * records that retraction.
  *
  * Thin I/O shim: resolves the transcript path, reads it, and calls the pure
- * `summarizeTranscript` / `formatTokensLine` / `formatBreakdown` homed in
- * `@attalabs/aeg-core`. Mirrors `bin/archive-task.ts`'s split (I/O here, pure
- * logic in `src/`).
+ * functions homed in `@attalabs/aeg-core`. Mirrors `bin/archive-task.ts`'s
+ * split (I/O here, pure logic in `src/`).
  *
- * Transcript-path resolution never scans `~/.claude/projects/<slug>/` for
- * the newest file — that breaks the moment two worktrees run concurrent
- * sessions (whichever session wrote last wins, regardless of which one
- * asked). Instead it reads the pointer `.claude/hooks/track-transcript.sh`
- * writes on every Stop event, keyed by `CLAUDE_PROJECT_DIR` — the harness's
- * own per-worktree identity, already relied on by `check-skill.sh`.
+ * **Two ways in, both first-class.** `--transcript <path>` names the
+ * transcript outright and is the whole of the resolution when given — the
+ * right route whenever the caller already knows which transcript is theirs,
+ * and the only route in a repo that installs no Claude Code hooks. Otherwise
+ * the adapter reads a pointer file written by a `track-transcript.sh` Stop
+ * hook, keyed by `CLAUDE_PROJECT_DIR`. It deliberately never scans
+ * `~/.claude/projects/<slug>/` for the newest file: that breaks the moment
+ * two worktrees run concurrent sessions, since whichever session wrote last
+ * would win regardless of which one asked.
  */
 
 import { existsSync, readFileSync } from 'node:fs'
-import { formatBreakdown, formatTokensLine, summarizeTranscript } from '../src/report-tokens'
+import { summarizeTranscript } from '../src/claude-code-transcript'
+import { formatBreakdown, formatTokensLine } from '../src/report-tokens'
 
 export function sanitizeKey(value: string): string {
   return value.replace(/[^A-Za-z0-9]+/g, '-')
@@ -42,11 +64,18 @@ export type ResolveDeps = {
 }
 
 /**
- * Resolves the transcript path to read: an explicit CLI arg wins outright;
- * otherwise reads the Stop-hook's pointer file. Throws rather than falling
- * back to a `—` line — a Claude Code session missing its own pointer file
- * is a wiring bug, not a surface that "genuinely cannot self-report" (that
- * case is a claude.ai role, which never calls this bin at all).
+ * Resolves the transcript path to read. `--transcript <path>` (or a bare
+ * positional path) wins outright and is a normal, supported route, not a
+ * fallback: the caller has told us exactly which transcript is theirs, which
+ * is strictly better evidence than any inference we could make. Only when no
+ * path is given does this consult the Stop-hook pointer file.
+ *
+ * Throws rather than falling back to a `—` line. A `—` is sanctioned only for
+ * an operator-metered role — one whose host exposes no usage to the agent at
+ * all (`aeg-root/tranche-model.md` §12) — and such a role never invokes this
+ * adapter. Reaching this code means the host *does* expose usage, so an
+ * unresolvable transcript is a wiring problem to report, never a blank to
+ * emit.
  *
  * A worktree reused across sessions (e.g. a Developer re-entry after
  * `CHANGES_REQUESTED`, `aeg-root/roles/developer.md`) can hold a pointer
@@ -72,9 +101,13 @@ export function resolveTranscriptPath(explicit: string | undefined, deps: Resolv
 
   if (!deps.exists(pointerPath)) {
     throw new Error(
-      `No transcript pointer at ${pointerPath}. The Stop hook (.claude/hooks/track-transcript.sh) hasn't ` +
-        'fired yet this session — it writes the pointer after your first turn completes. Pass the transcript ' +
-        'path explicitly as the first argument if you need a report before then.'
+      `No transcript pointer at ${pointerPath}, so this adapter has nothing to auto-resolve. ` +
+        'Name the transcript directly instead — `--transcript <path>` is a fully supported route, not a ' +
+        'workaround, and is the normal one here. Your session transcript is the JSONL file the harness ' +
+        'passes hooks as `transcript_path` (typically under ~/.claude/projects/<project-slug>/). ' +
+        'The pointer is optional convenience: it exists only in repos that install a ' +
+        "`track-transcript.sh` Stop hook, and even there it is absent until this session's first turn " +
+        'completes. The hook may equally be configured in your own host settings rather than in the repo, so a repo that installs none of its own may still have a pointer. Lacking one is not a defect.'
     )
   }
 
@@ -89,8 +122,9 @@ export function resolveTranscriptPath(explicit: string | undefined, deps: Resolv
     throw new Error(
       `Transcript pointer at ${pointerPath} is stale: it was written for session ${pointerSessionId}, ` +
         `but this session is ${currentSessionId}. A previous session's Stop hook wrote this pointer, and this ` +
-        "session's own Stop hook hasn't fired yet (it fires after your first turn completes). Pass the " +
-        'transcript path explicitly as the first argument if you need a report before then.'
+        "session's own Stop hook hasn't fired yet (it fires after your first turn completes). Name your own " +
+        'transcript with `--transcript <path>` — a supported route, not a workaround — rather than reporting ' +
+        "another session's figures as yours."
     )
   }
 
@@ -115,13 +149,22 @@ export function parseArgs(argv: string[]): ParsedArgs {
     if (arg === '--phase') phase = argv[++i]
     else if (arg === '--role') role = argv[++i]
     else if (arg === '--model') model = argv[++i]
+    // `--transcript <path>` is the named form of the bare positional below.
+    // Both are first-class: naming your own transcript is the primary route
+    // wherever the caller knows it, and the only one in a repo that installs
+    // no Stop hook to write a pointer. The positional stays supported so
+    // existing invocations keep working.
+    else if (arg === '--transcript') transcriptPath = argv[++i]
     else if (arg && !arg.startsWith('--')) transcriptPath = arg
   }
 
   if (!phase || !role) {
     throw new Error(
       'Usage: bun packages/aeg-core/bin/report-tokens.ts --phase "<task-id>: develop" --role Developer ' +
-        '[--model <id>] [<transcript-path>]'
+        '[--model <id>] [--transcript <path> | <transcript-path>]\n' +
+        '  --transcript  Read this transcript directly. Supported primary route — use it whenever you know\n' +
+        '                which transcript is yours, and always in a repo with no track-transcript.sh hook.\n' +
+        '  (omitted)     Resolve via the Stop-hook pointer file, if this repo installs that hook.'
     )
   }
 
