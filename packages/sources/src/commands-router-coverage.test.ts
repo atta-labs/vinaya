@@ -65,6 +65,7 @@ describe('router -> COMMANDS coverage', () => {
         'new check',
         'pr create',
         'pr edit',
+        'pr report',
         'issue create',
         'issue edit',
         'demo break',
