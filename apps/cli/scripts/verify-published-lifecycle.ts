@@ -449,7 +449,9 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
       const parsed = JSON.parse(r.stdout) as { data?: { checks?: Array<{ name?: unknown }> } }
       const checks = parsed.data?.checks
       if (Array.isArray(checks)) {
-        reportedNames = checks.map((c) => (typeof c?.name === 'string' ? c.name : `<unnamed:${String(c?.name)}>`)).sort()
+        reportedNames = checks
+          .map((c) => (typeof c?.name === 'string' ? c.name : `<unnamed:${String(c?.name)}>`))
+          .sort()
       }
     } catch {
       reportedNames = null
