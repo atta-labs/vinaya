@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import type { DoctorDeps, Finding } from '../src/commands/doctor.js'
 import { runDoctor } from '../src/commands/doctor.js'
 import type { InitDeps } from '../src/commands/init.js'
@@ -46,11 +46,21 @@ function doctorDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
   }
 }
 
-/** Recursive snapshot of the fixture tree: relative path → content. */
+function git(cwd: string, args: string[]): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+}
+
+/**
+ * Recursive snapshot of the fixture tree: relative path → content. Skips
+ * `.git` — a git-backed fixture's object/pack files are binary and huge
+ * relative to the fixture itself; nothing under `.git` is a doctor mutation
+ * target, so it's outside what this comparison needs to prove.
+ */
 function snapshot(dir: string): Map<string, string> {
   const out = new Map<string, string>()
   const walk = (d: string) => {
     for (const name of readdirSync(d)) {
+      if (name === '.git') continue
       const p = join(d, name)
       if (statSync(p).isDirectory()) walk(p)
       else out.set(relative(dir, p), readFileSync(p, 'utf-8'))
@@ -351,10 +361,6 @@ describe('vinaya doctor — never mutates', () => {
 // shares the main checkout's hooks). Doctor reported both hooks "missing" and
 // recommended `vinaya upgrade`, which would not have fixed anything.
 describe('vinaya doctor — raw git hooks inside a linked worktree', () => {
-  function git(cwd: string, args: string[]): string {
-    return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
-  }
-
   it('reports installed .git/hooks as present and matching, probed from a linked worktree', async () => {
     git(root, ['init', '-q', '-b', 'main'])
     git(root, ['config', 'user.email', 'test@example.com'])
@@ -397,4 +403,102 @@ describe('vinaya doctor — raw git hooks inside a linked worktree', () => {
       git(root, ['worktree', 'remove', '--force', wtRoot])
     }
   }, 20_000) // real `runInit` + two `git commit`s + `worktree add` — bun's 5s default is too tight on a cold CI runner
+})
+
+// Regression coverage for Issue #77: C5 (`evaluateC5`) only ever tests a
+// binding's glob against the current PR's changed files, so a binding whose
+// code was deleted or renamed wholesale never fires on any diff again — it
+// reads as healthy forever. These tests need a REAL git-tracked-file list
+// (the diagnostic shells to `git ls-files`), so — unlike the rest of this
+// file — the fixture must be a real `git init` + `git add` + `git commit`
+// tree, not the plain tmpdir the other describe blocks use. A plain,
+// non-git tmpdir makes `git ls-files` fail outright (not a git repository),
+// which would make every binding in a plain-tmpdir fixture falsely report
+// "matches zero files" — a test that can never fail.
+describe('vinaya doctor — doc-owners binding health', () => {
+  function writeTracked(relPath: string, content: string): void {
+    const abs = join(root, relPath)
+    mkdirSync(dirname(abs), { recursive: true })
+    writeFileSync(abs, content)
+  }
+
+  async function initAndCommit(docOwnersContent: string, extraFiles: Record<string, string>): Promise<void> {
+    git(root, ['init', '-q', '-b', 'main'])
+    git(root, ['config', 'user.email', 'test@example.com'])
+    git(root, ['config', 'user.name', 'Test'])
+    await runInit(['--yes'], initDeps())
+    writeTracked(DOC_OWNERS_PATH, docOwnersContent)
+    for (const [relPath, content] of Object.entries(extraFiles)) writeTracked(relPath, content)
+    git(root, ['add', '-A'])
+    git(root, ['commit', '-q', '-m', 'Chore: fixture', '--no-verify'])
+  }
+
+  it('measured shape + negative control: a glob naming a deleted tree warns; a live glob in the same manifest does not', async () => {
+    const docOwners = ['apps/deleted-tool/src/**  docs/deleted-tool.md', 'apps/live/src/**  docs/live.md'].join('\n')
+    await initAndCommit(docOwners, {
+      'docs/deleted-tool.md': '# deleted tool\n',
+      'apps/live/src/index.ts': 'export {}\n',
+      'docs/live.md': '# live\n'
+    })
+
+    const report = await runDoctorJson()
+    const docOwnersFindings = report.findings.filter((f) => f.check === 'doc-owners')
+
+    const dead = docOwnersFindings.find((f) => f.message.includes(`${DOC_OWNERS_PATH}:1`))
+    expect(dead?.severity).toBe('warn')
+    expect(dead?.message).toContain('apps/deleted-tool/src/**')
+    expect(dead?.message).toContain('matches none of')
+
+    const live = docOwnersFindings.find((f) => f.message.includes(`${DOC_OWNERS_PATH}:2`))
+    expect(live?.severity).toBe('ok')
+  })
+
+  it('dangling pointer is independent of the glob-match check: a live glob with a missing pointer fires only the pointer warning', async () => {
+    await initAndCommit('apps/live2/src/**  docs/missing.md\n', {
+      'apps/live2/src/index.ts': 'export {}\n'
+    })
+
+    const report = await runDoctorJson()
+    const docOwnersFindings = report.findings.filter((f) => f.check === 'doc-owners')
+
+    expect(docOwnersFindings.some((f) => f.message.includes('matches none of'))).toBe(false)
+    const dangling = docOwnersFindings.find((f) => f.message.includes('docs/missing.md'))
+    expect(dangling?.severity).toBe('warn')
+    expect(dangling?.message).toContain('does not exist on disk')
+  })
+
+  it('a URL pointer never trips the dangling-pointer check, even when its glob matches nothing', async () => {
+    await initAndCommit('apps/deleted-tool2/src/**  https://example.com/docs\n', {})
+
+    const report = await runDoctorJson()
+    const docOwnersFindings = report.findings.filter((f) => f.check === 'doc-owners')
+
+    const dead = docOwnersFindings.find((f) => f.message.includes('apps/deleted-tool2/src/**'))
+    expect(dead?.severity).toBe('warn')
+    expect(dead?.message).toContain('matches none of')
+    expect(docOwnersFindings.some((f) => f.message.includes('does not exist on disk'))).toBe(false)
+  })
+
+  it('dormancy: no .vinaya/doc-owners, and separately an empty one, produce zero doc-owners findings', async () => {
+    await runInit(['--yes'], initDeps())
+    rmSync(join(root, DOC_OWNERS_PATH))
+
+    let report = await runDoctorJson()
+    expect(report.findings.filter((f) => f.check === 'doc-owners')).toEqual([])
+
+    writeFileSync(join(root, DOC_OWNERS_PATH), '')
+    report = await runDoctorJson()
+    expect(report.findings.filter((f) => f.check === 'doc-owners')).toEqual([])
+  })
+
+  it('never mutates: fixture tree is byte-identical before and after runDoctor runs this diagnostic', async () => {
+    await initAndCommit('apps/deleted-tool3/src/**  docs/deleted-tool3.md\n', {
+      'docs/deleted-tool3.md': '# deleted tool 3\n'
+    })
+    const before = snapshot(root)
+
+    await runDoctorJson()
+
+    expect(snapshot(root)).toEqual(before)
+  })
 })
