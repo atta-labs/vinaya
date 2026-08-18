@@ -70,6 +70,29 @@ class UnresolvableMergeBaseError extends Error {
 }
 
 /** Same `BASE_SHA || 'origin/main'`, then `main`, convention as `pr-report.ts`'s `resolveMergeBase` — see that one's doc comment for the sibling checks it matches. */
+/**
+ * Mirrors `pr-report.ts`'s `gitStrict`: a non-zero exit throws instead of
+ * collapsing to `''`. `git diff --numstat` printing nothing is a real answer
+ * ("no files changed"); `git diff` FAILING also printed nothing, and the
+ * emitter's side collapsed the same way, so both agreed on `''` and this
+ * check reported PASS having recomputed nothing. Round 1 closed that for the
+ * merge-base only.
+ */
+class GitCommandError extends Error {
+  constructor(args: readonly string[], cause: string) {
+    super(`\`git ${args.join(' ')}\` failed: ${cause}`)
+  }
+}
+
+function gitStrict(args: string[]): string {
+  try {
+    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  } catch (err) {
+    const stderr = (err as { stderr?: Buffer | string }).stderr
+    throw new GitCommandError(args, String(stderr ?? (err as Error).message).trim() || 'non-zero exit')
+  }
+}
+
 function resolveMergeBase(head: string): string {
   const primary = process.env.BASE_SHA || 'origin/main'
   const tried = primary === 'main' ? [primary] : [primary, 'main']
@@ -126,8 +149,14 @@ function main(): void {
   }
 
   let base: string
+  let actualNumstat: string
   try {
     base = resolveMergeBase(resolvedHead)
+    // `gitStrict`, not `git`: a FAILED `git diff` returned `''`, which is
+    // byte-identical to a genuinely empty diff, so this check compared `''`
+    // to the emitter's equally-collapsed `''` and reported PASS having
+    // recomputed nothing. See `GitCommandError`.
+    actualNumstat = gitStrict(['diff', `${base}...${resolvedHead}`, '--numstat'])
   } catch (err) {
     // An unresolvable base is an infrastructure failure, not an empty
     // diff — refuse rather than recomputing against '' and reporting PASS
@@ -142,7 +171,6 @@ function main(): void {
     })
     process.exit(1)
   }
-  const actualNumstat = git(['diff', `${base}...${resolvedHead}`, '--numstat'])
 
   const result = compareEvidenceBlock(region, resolvedHead, actualNumstat)
   if (result.status === 'fail') {

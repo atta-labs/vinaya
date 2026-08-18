@@ -78,6 +78,45 @@ function git(args: string[]): string {
 }
 
 /**
+ * Thrown by `gitStrict` when a git command exits non-zero. Same reasoning as
+ * `UnresolvableMergeBaseError` below, applied to the other two commands this
+ * module runs: `git()` returns `''` for a FAILED command and for a command
+ * that legitimately printed nothing, and those two are not the same fact.
+ * `git diff --numstat` printing nothing means "no files changed" — a real,
+ * verifiable answer; `git diff` FAILING also produced `''`, and both sides of
+ * the evidence contract then agreed on it and reported PASS having compared
+ * nothing. Round 1 of this PR fixed that collapse for the merge-base only;
+ * the same collapse survived behind `rev-parse` and `diff`. Commands whose
+ * empty output is meaningful must therefore distinguish "empty" from
+ * "failed", which means throwing rather than returning a sentinel.
+ */
+export class GitCommandError extends Error {
+  constructor(
+    readonly args: readonly string[],
+    readonly cause: string
+  ) {
+    super(`\`git ${args.join(' ')}\` failed: ${cause}`)
+    this.name = 'GitCommandError'
+  }
+}
+
+/**
+ * `git`, but a non-zero exit throws instead of collapsing to `''`. Use this
+ * wherever an empty stdout is a legitimate answer that must not be
+ * confusable with failure — see `GitCommandError`. `resolveMergeBase` keeps
+ * the soft `git()`: there, an empty result IS the signal it acts on, and it
+ * raises its own error once every candidate ref has been tried.
+ */
+function gitStrict(args: string[]): string {
+  try {
+    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  } catch (err) {
+    const stderr = (err as { stderr?: Buffer | string }).stderr
+    throw new GitCommandError(args, String(stderr ?? (err as Error).message).trim() || 'non-zero exit')
+  }
+}
+
+/**
  * Thrown by `resolveMergeBase` when none of the tried refs produce a
  * merge-base. An unresolvable base is an infrastructure failure — the repo's
  * default branch isn't reachable as any of the tried names, or `origin` isn't
@@ -139,9 +178,14 @@ export type GroupA = { head: string; base: string; numstat: string }
  * resolve against.
  */
 export function computeGroupA(): GroupA {
-  const head = git(['rev-parse', 'HEAD'])
-  const base = head ? resolveMergeBase(head) : ''
-  const numstat = base ? git(['diff', `${base}...${head}`, '--numstat']) : ''
+  // Every step throws rather than degrading. An unborn branch (no commits
+  // yet, so `rev-parse HEAD` fails) previously short-circuited BOTH ternaries
+  // below, so `resolveMergeBase` was never reached and nothing refused — the
+  // emitter wrote an empty head and an empty Group A and exited 0. That is
+  // the round-1 BLOCKER's shape reached by a different door.
+  const head = gitStrict(['rev-parse', 'HEAD'])
+  const base = resolveMergeBase(head)
+  const numstat = gitStrict(['diff', `${base}...${head}`, '--numstat'])
   return { head, base, numstat }
 }
 
@@ -292,7 +336,7 @@ export async function prReportCommand(args: string[]): Promise<void> {
   try {
     result = await buildReport()
   } catch (err) {
-    if (err instanceof UnresolvableMergeBaseError) {
+    if (err instanceof UnresolvableMergeBaseError || err instanceof GitCommandError) {
       // Refuse — write nothing, print nothing that looks like a block.
       // See that class's doc comment: an unresolvable base is an
       // infrastructure failure, and writing an empty Group A here would

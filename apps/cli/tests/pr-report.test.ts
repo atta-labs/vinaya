@@ -9,6 +9,7 @@ import {
   computeGroupA,
   type GateOutcome,
   type GateRunResult,
+  GitCommandError,
   replaceEvidenceBlock,
   UnresolvableMergeBaseError
 } from '../src/commands/pr-report'
@@ -254,5 +255,59 @@ describe('replaceEvidenceBlock', () => {
     // Exactly one real (unfenced) Head line — the decoy is untouched, not duplicated.
     const realHeadLines = updated.split('\n').filter((line) => line.trim() === 'Head: deadbeef')
     expect(realHeadLines).toHaveLength(1)
+  })
+})
+
+describe('computeGroupA refuses rather than degrading (round-2 review)', () => {
+  // Round 1 made an unresolvable merge-base throw. The same collapse survived
+  // behind the other two git calls: `git()` returns '' for a FAILED command
+  // and for one that legitimately printed nothing, so a failure produced the
+  // exact bytes a genuinely empty diff produces — and the check, recomputing
+  // the same way, compared '' to '' and passed having verified nothing.
+
+  it('throws on an unborn branch instead of emitting an empty head and diff', () => {
+    // No commits yet, so `git rev-parse HEAD` exits non-zero. This previously
+    // short-circuited BOTH ternaries in computeGroupA, so resolveMergeBase was
+    // never reached and nothing refused.
+    const dir = mkdtempSync(join(tmpdir(), 'c126-unborn-'))
+    try {
+      execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir })
+      const cwd = process.cwd()
+      process.chdir(dir)
+      try {
+        expect(() => computeGroupA()).toThrow(GitCommandError)
+      } finally {
+        process.chdir(cwd)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a genuinely empty diff is still a normal, non-throwing answer', () => {
+    // The distinction the fix rests on: empty OUTPUT is a real verified
+    // answer; a failed COMMAND is not. Only the latter throws.
+    const dir = mkdtempSync(join(tmpdir(), 'c126-empty-'))
+    try {
+      const g = (args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+      g(['init', '-q', '-b', 'main'])
+      g(['config', 'user.email', 't@example.com'])
+      g(['config', 'user.name', 'test'])
+      writeFileSync(join(dir, 'a.txt'), 'a\n')
+      g(['add', '-A'])
+      g(['commit', '-qm', 'base'])
+      const cwd = process.cwd()
+      process.chdir(dir)
+      try {
+        const result = computeGroupA()
+        expect(result.numstat).toBe('')
+        expect(result.head).not.toBe('')
+        expect(result.base).not.toBe('')
+      } finally {
+        process.chdir(cwd)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
