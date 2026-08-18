@@ -134,20 +134,36 @@ function sha256(buf: Buffer): string {
 }
 
 /**
- * How many checks `check --all` should report — derived from CURRENT source's
+ * Which checks `check --all` should report — derived from CURRENT source's
  * registry, filtered by the SAME `runsUnderAll` predicate `check.ts` ships (a
  * check with its own workflow would otherwise be evaluated twice and report
- * under two names). This was the literal `15`, and it was wrong for the same
- * reason the version pin was: `review-gate` gained `ownWorkflow` and dropped
- * out of `--all`, so the published artifact correctly reported 14 while the
- * script called that a regression. A hand-maintained count cannot distinguish
- * "published is stale" — the thing this row exists to catch — from "the
- * expectation is stale", and it silently blames the artifact either way.
+ * under two names). This was once a literal count (`15`), and a count was
+ * wrong for the same reason the version pin was: `review-gate` gained
+ * `ownWorkflow` and dropped out of `--all`, so the published artifact
+ * correctly reported 14 while the script called that a regression. A
+ * hand-maintained count cannot distinguish "published is stale" — the thing
+ * this row exists to catch — from "the expectation is stale", and it
+ * silently blames the artifact either way. Worse, a count is blind to the
+ * one regression class this row most needs to catch: a check dropped from
+ * BOTH the current registry and the published artifact leaves the two
+ * numbers equal and the row green, exactly when a name has silently gone
+ * missing everywhere at once.
+ *
+ * A sorted NAME list closes that gap — the published artifact's `--all
+ * --json` output already carries a `name` per check (`CheckOutcome.name`),
+ * so comparing sets by name, not counting them, is possible with no change
+ * to `check --all`'s output contract. It also makes a red row actionable: the
+ * `detail` string below names exactly which checks are missing or
+ * unexpected, instead of leaving the operator to diff two integers by hand.
+ *
  * Importing the predicate rather than re-deriving `!ownWorkflow` here closes
  * the same gap one level down: a second selection condition added to `--all`
  * reaches this expectation automatically instead of turning it stale.
  */
-const EXPECTED_ALL_CHECK_COUNT = coreCheckRegistry().filter(runsUnderAll).length
+const EXPECTED_ALL_CHECK_NAMES = coreCheckRegistry()
+  .filter(runsUnderAll)
+  .map((s) => s.name)
+  .sort()
 
 /**
  * Where CURRENT source says this fixture's hook belongs, and whether the
@@ -428,17 +444,39 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
 
   check: ({ bin, fixtureDir }) => {
     const r = run(bin, ['check', '--all', '--json'], fixtureDir)
-    let count = -1
+    let reportedNames: string[] | null = null
     try {
-      const parsed = JSON.parse(r.stdout) as { data?: { checks?: unknown[] } }
-      count = parsed.data?.checks?.length ?? -1
+      const parsed = JSON.parse(r.stdout) as { data?: { checks?: Array<{ name?: unknown }> } }
+      const checks = parsed.data?.checks
+      if (Array.isArray(checks)) {
+        reportedNames = checks
+          .map((c) => (typeof c?.name === 'string' ? c.name : `<unnamed:${String(c?.name)}>`))
+          .sort()
+      }
     } catch {
-      count = -1
+      reportedNames = null
     }
-    const ok = count === EXPECTED_ALL_CHECK_COUNT
+
+    // Kept distinguishable from a membership mismatch: a malformed/unparseable
+    // payload is a different failure mode (the artifact's output contract
+    // broke) from "the artifact's output parsed fine but the names disagree".
+    if (reportedNames === null) {
+      return {
+        status: 'fail',
+        detail:
+          `expected ${EXPECTED_ALL_CHECK_NAMES.length} checks under --all (${EXPECTED_ALL_CHECK_NAMES.join(', ')}), ` +
+          'but published output did not parse as the expected { data: { checks: [{ name, ... }] } } envelope'
+      }
+    }
+
+    const missing = EXPECTED_ALL_CHECK_NAMES.filter((n) => !reportedNames?.includes(n))
+    const unexpected = reportedNames.filter((n) => !EXPECTED_ALL_CHECK_NAMES.includes(n))
+    const ok = missing.length === 0 && unexpected.length === 0
     return {
       status: ok ? 'pass' : 'fail',
-      detail: `expected ${EXPECTED_ALL_CHECK_COUNT} checks under --all (current source's registry, own-workflow checks excluded), published reports ${count}`
+      detail: ok
+        ? `all ${EXPECTED_ALL_CHECK_NAMES.length} expected checks reported under --all: ${EXPECTED_ALL_CHECK_NAMES.join(', ')}`
+        : `checks under --all diverge from current source's registry — missing: [${missing.join(', ')}], unexpected: [${unexpected.join(', ')}]`
     }
   },
 
