@@ -93,7 +93,7 @@ This is why the review is a separate pass and not something the Developer does t
 
 ## Output format
 
-Report in this exact shape so the Principal and Brief Author can act without re-reading the diff. The `VERDICT:` line is bare — no bold, no heading, no blockquote — it is machine-read by the pre-merge review gate. So is the `Judged head:` line immediately below it: the gate binds your verdict to the exact commit you reviewed, and a verdict that does not cover the PR's current head does not count as clean, however clean its `VERDICT:` value is (`review-gate.ts` — #73). Post the PR's head sha (`gh pr view --json headRefOid`, or read it off the PR page) — full or abbreviated form, either is accepted:
+Report in this exact shape so the Principal and Brief Author can act without re-reading the diff. The `VERDICT:` line is bare — no bold, no heading, no blockquote — it is machine-read by the pre-merge review gate. So is the `Judged head:` line immediately below it: the gate binds your verdict to the exact commit you reviewed, and a verdict that does not cover the PR's current head does not count as clean, however clean its `VERDICT:` value is (`review-gate.ts`). Post the PR's head sha (`gh pr view --json headRefOid`, or read it off the PR page) — full or abbreviated form, either is accepted:
 
 ```
 VERDICT: APPROVE | REQUEST CHANGES
@@ -128,7 +128,7 @@ If you discover something that needs a decision above review authority — the b
 
 Phase 10 (Review) in `process.md`. The order is: **code-reviewer pass (you) → security pass (`roles/security.md`) → Principal code review → Brief Author spec review → merge.** Your verdict feeds the human reviews; it does not replace them.
 
-**Your verdict is also a mechanical merge gate (the review-gate tranche, task 1).** A required, blocking CI check (`packages/aeg-core/bin/verify-review-gate.ts`) reads every PR comment from a **principal-allowlisted author** (verdict-author verification, 2026-08-09 — bot and unknown-author comments are ignored) for a clean `APPROVE` verdict that also covers the PR's current head commit (reviewed-commit binding, #73) — `REQUEST CHANGES`, a missing verdict, an unclear one, or one bound to a superseded commit all fail the check and block merge, same as this repo's own security pass. This is not advisory: it is the same enforcement class as typecheck or lint. A principal can waive it for one PR with an actor-verified `vinaya/waiver:review` label (`aeg-root/enforcement.md`) — label presence alone is never sufficient.
+**Your verdict is also a mechanical merge gate (the review-gate tranche, task 1).** A required, blocking CI check (`packages/aeg-core/bin/verify-review-gate.ts`) reads every PR comment from a **principal-allowlisted author** (verdict-author verification, 2026-08-09 — bot and unknown-author comments are ignored) for a clean `APPROVE` verdict that also covers the PR's current head commit (reviewed-commit binding) — `REQUEST CHANGES`, a missing verdict, an unclear one, or one bound to a superseded commit all fail the check and block merge, same as this repo's own security pass. This is not advisory: it is the same enforcement class as typecheck or lint. A principal can waive it for one PR with an actor-verified `vinaya/waiver:review` label (`aeg-root/enforcement.md`) — label presence alone is never sufficient.
 
 ## Turn-end: report your tokens in the verdict comment
 
