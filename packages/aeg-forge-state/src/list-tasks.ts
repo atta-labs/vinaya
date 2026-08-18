@@ -52,19 +52,23 @@ const PROJECT_SLUG = /^[a-z0-9][a-z0-9-]*$/i
  * field-shaped line in a raw body is routinely a fenced *example* of the field,
  * and the real declaration sits at the foot by convention.
  *
- * **Every internal whitespace run is `[ \t]*`, never `\s*`.** The field is a
- * single line by definition (the docstring above shows only one-line shapes),
- * so nothing here needs to span a line break. `\s*` matches `\n` — plain JS
- * regex semantics, no flag required — and with several `\s*` runs sitting back
- * to back around the colon, a body of `Project` + long whitespace + `:` +
- * thousands of trailing newlines with no match at the end forces the engine to
- * explore every way of partitioning those newlines among the runs before
- * failing: measured at 705 ms for a 32 768-newline tail. Restricting to
- * `[ \t]*` removes the newline from every one of those quantifiers, so a `\n`
- * fails the match immediately instead of being tried as whitespace — the same
- * body drops to sub-millisecond, independent of length.
+ * **The internal whitespace runs around the colon and `**` are `\s*`, and MUST
+ * stay `\s*` — this is the field's grammar, not an implementation detail.**
+ * GitHub renders `Project:\nvinaya` as the single paragraph "Project: vinaya",
+ * and the tolerant-plain-form cohort the docstring above names is written
+ * exactly this way; `\s*` (which matches `\n`) is what lets the value sit on
+ * the line after the label. A task-3 attempt narrowed these runs to `[ \t]*`
+ * to remove a ReDoS class (measured: 705 ms → 0.02 ms on a crafted body) and
+ * was reverted (round-4 review, findings 1 and 2): it silently dropped the
+ * plain next-line form to `declared: false` and made the bold next-line form
+ * fail with a false "the field is empty" message — the same silent-drop and
+ * vacuous-fail-open classes this whole task exists to close. The `Project:`
+ * field's grammar is explicitly NOT in this task's scope; the perf work
+ * belongs in its own task, constrained to prove — with a shape corpus
+ * (plain/bold × same-line/next-line × leading whitespace), not a timing
+ * number — that it does not narrow which shapes the field accepts.
  */
-const PROJECT_FIELD = /^[ \t]*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?[ \t]*:[ \t]*(?:\*\*)?[ \t]*(.+)$/im
+const PROJECT_FIELD = /^[ \t]*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.+)$/im
 
 /**
  * What the body's `Project:` field says — including when it says something this

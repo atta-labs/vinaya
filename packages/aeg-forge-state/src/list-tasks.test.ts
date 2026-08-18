@@ -419,10 +419,10 @@ describe('projectFieldFromBody — an indented code block is swallowed the same 
   // same way (`maskIndentedCode`, `strip-code.ts`). A Project line down there is
   // an example, not a declaration, by the SAME deliberate rule this file
   // already applies to a balanced fence (see the fence-blindness describe
-  // block above). This is not the round-1 regression: an indented block always
-  // terminates by definition (indentation drops, or the body ends) — there is
-  // no "unterminated indented block" state analogous to an unbalanced fence,
-  // so `unreadable` correctly never fires here. Pinned as a recorded decision.
+  // block above). An indented block always terminates by definition
+  // (indentation drops, or the body ends) — there is no "unterminated
+  // indented block" state analogous to an unbalanced fence, so `unreadable`
+  // correctly never fires here. Pinned as a recorded decision.
   it('reports a 4-space-indented-only declaration as absent, not unreadable', () => {
     const body = ['Prose.', '', '    **Project:** notaproject'].join('\n')
     expect(projectFieldFromBody(body)).toEqual({ declared: false, names: [], unparsed: [], unreadable: false })
@@ -444,18 +444,53 @@ describe('projectFieldFromBody — an indented code block is swallowed the same 
   })
 })
 
-describe('PROJECT_FIELD — bounded regardless of body shape', () => {
-  it('stays fast on the field-name-plus-whitespace-plus-newlines shape that made the old pattern quadratic', () => {
-    const body = `Project${' \t'.repeat(2000)}:${'\n'.repeat(32768)}`
-    const start = performance.now()
-    projectFieldFromBody(body)
-    expect(performance.now() - start).toBeLessThan(50)
+/**
+ * Round-4 review, findings 1 and 2. The field's VALUE routinely sits on the
+ * line after the label — GitHub renders `Project:\nvinaya` as the single
+ * paragraph "Project: vinaya", and the tolerant-plain-form cohort the brief's
+ * Traps section names is exactly this shape. `\s*` around the colon and after
+ * `**` therefore MUST cross a line break; narrowing it to `[ \t]*` (a task 3
+ * perf attempt, reverted) silently dropped this declaration to `declared:
+ * false` (plain form) or a false "the field is empty" fail (bold form) — the
+ * same silent-drop and vacuous-fail-open classes this whole task exists to
+ * close, reintroduced one layer in. Nothing pinned this shape before; these
+ * four tests do.
+ */
+describe('projectFieldFromBody — the value may sit on the line after the label', () => {
+  it('reads the plain form when the value is on the next line', () => {
+    const body = '**Project(s) + blast radius** — `vinaya`, edits `apps/cli`.\n\nProse.\n\nProject:\nvinaya'
+    expect(projectFieldFromBody(body)).toEqual({ declared: true, names: ['vinaya'], unparsed: [], unreadable: false })
   })
 
-  it('stays fast on a pure-newline body', () => {
-    const body = '\n'.repeat(65536)
-    const start = performance.now()
-    projectFieldFromBody(body)
-    expect(performance.now() - start).toBeLessThan(50)
+  it('reads the bold form when the value is on the next line — does not report a false "field is empty"', () => {
+    const body = 'Prose.\n\n**Project:**\nvinaya'
+    expect(projectFieldFromBody(body)).toEqual({ declared: true, names: ['vinaya'], unparsed: [], unreadable: false })
+  })
+
+  it('agrees with declaredProjects on the plain next-line shape — the two tolerant siblings must not diverge', () => {
+    const body = 'Project:\nvinaya'
+    expect(projectsFromBody(body)).toEqual(['vinaya'])
+  })
+
+  it('agrees with declaredProjects on the bold next-line shape', () => {
+    const body = '**Project:**\nvinaya'
+    expect(projectsFromBody(body)).toEqual(['vinaya'])
+  })
+})
+
+/**
+ * Round-4 finding 4 — a mutation survivor. Deleting the whitespace run
+ * immediately before the colon left all 156 tests green, which is exactly how
+ * finding 1's narrowing shipped unnoticed. `Project :` (a space before the
+ * colon) is a tolerance the pattern already offers; pin it so any future
+ * narrowing of that specific run fails a test instead of shipping silently.
+ */
+describe('projectFieldFromBody — tolerates a space before the colon', () => {
+  it('parses "Project : x" — space before the colon', () => {
+    expect(projectsFromBody('Project : vinaya')).toEqual(['vinaya'])
+  })
+
+  it('parses "**Project** : x" — space before the colon, bold form', () => {
+    expect(projectsFromBody('**Project** : vinaya')).toEqual(['vinaya'])
   })
 })
