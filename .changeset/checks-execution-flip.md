@@ -10,7 +10,7 @@
 
 2. **Namespace rejection.** A bare, un-namespaced key that matches no core check id is now **REJECTED**. Every non-override key must be `<yourname>/<id>`, with both segments matching `[a-z0-9][a-z0-9-]*` and `vinaya` reserved as a prefix. **Adding a prefix is not always enough:** if the bare name itself breaks that grammar — `my_check` (underscore), `QALint` (uppercase) — it still breaks it after prefixing, and needs a real rename.
 
-3. **`FAIL_CLOSED` is live.** A malformed `checks` entry, a rejected bare key, or a duplicate resolved id now makes the whole run **refuse**: exit 1, loud, with **nothing executed**. Before this release, an invalid config still ran the core checks; after it, nothing runs. There is no `--skip-broken` escape hatch and no core-only fallback — a partially-applied ruleset that still prints green is exactly what this refuses to produce.
+3. **`FAIL_CLOSED` is live.** A malformed `checks` entry or a rejected bare key now makes the whole run **refuse**: exit 1, loud, with **nothing executed**. Before this release, an invalid config still ran the core checks; after it, nothing runs. There is no `--skip-broken` escape hatch and no core-only fallback — a partially-applied ruleset that still prints green is exactly what this refuses to produce.
 
 **This can break an adopter's CI.** That is intended — an invalid registration silently running a subset of your gates is the failure mode being closed — but it means the upgrade is not a no-op for any repo whose `checks` block is not already clean.
 

@@ -327,12 +327,16 @@ function diagnoseCustomChecks(repoRoot: string, config: VinayaConfig): Finding[]
 // which core checks won't after task 2's audit.
 // ---------------------------------------------------------------------------
 function diagnoseEnvDeclarations(repoRoot: string, config: VinayaConfig | null): Finding[] {
-  const customSpecs: CheckSpec[] = Object.entries(config?.checks ?? {}).map(([name, entry]) => ({
-    name,
-    ...entry,
-    run: join(repoRoot, entry.run)
-  }))
-  const missing = checksMissingEnvDeclaration([...coreCheckRegistry(), ...customSpecs])
+  // The RESOLVED set, not the pre-flip `[...core, ...custom]` concat: after
+  // the execution flip an overriding entry's core counterpart never runs, so
+  // linting it would diagnose a spec that cannot execute (review finding,
+  // PR #120). Paths are re-rooted for config-sourced specs only — a core
+  // spec's `run` is already absolute.
+  const resolved = resolveChecks(coreCheckRegistry(), config?.checks).resolved
+  const specs: CheckSpec[] = resolved.map((entry) =>
+    entry.source === 'config' ? { ...entry.spec, run: join(repoRoot, entry.spec.run) } : entry.spec
+  )
+  const missing = checksMissingEnvDeclaration(specs)
   const findings = missing.map((name) => info('env', envDeclarationWarning(name)))
 
   // Load-time lint over literal-string `env` forms (a stray `"true"`/
