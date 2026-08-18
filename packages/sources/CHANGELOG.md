@@ -1,5 +1,15 @@
 # @atta/vinaya-sources
 
+## 0.14.0
+
+### Patch Changes
+
+- da64fd0: `vinaya doctor` now flags `.vinaya/doc-owners` bindings whose code glob matches no tracked file in the repo, or whose doc pointer doesn't exist on disk — both silent gaps the diff-scoped C5 gate structurally cannot see on its own, since a glob matching nothing trivially satisfies "did the docs change" for every diff. Report-only, like every other `doctor` diagnostic — it never mutates `.vinaya/doc-owners` and is not a `vinaya check` gate.
+- Updated dependencies [da64fd0]
+  - @attalabs/aeg-core@0.14.0
+  - @attalabs/aeg-forge-state@0.14.0
+  - @attalabs/aeg-types@0.14.0
+
 ## 0.13.1
 
 ### Patch Changes
