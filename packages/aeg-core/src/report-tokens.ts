@@ -1,9 +1,11 @@
 /**
  * report-tokens — the **portable** half of the token-report contract
- * (`aeg-root/tranche-model.md` §12, layers 1 and 3). Nothing in this file
- * knows what an agent host is: it defines the summary shape every collection
- * adapter must produce, and renders that shape into the frozen `Tokens: …`
- * grammar `parse-token-report.ts` reads back.
+ * (`aeg-root/tranche-model.md` §12, layers 1 and 3). No value this file reads,
+ * computes or emits is host-specific: it defines the summary shape every
+ * collection adapter must produce, and renders that shape into the frozen
+ * `Tokens: …` grammar `parse-token-report.ts` reads back. A host is named
+ * below only to point at the one shipped adapter and to record a retraction —
+ * never to branch on, and never in rendered output.
  *
  * `TranscriptSummary` **is the seam.** A host adapter's whole job is to
  * produce one — from a session transcript, an API usage response, a meter the
@@ -26,8 +28,9 @@
 
 /**
  * The four usage figures a role reports, in host-neutral terms. Every
- * collection adapter maps its host's own field names onto these; nothing
- * downstream ever sees a vendor's spelling.
+ * collection adapter maps its host's own field names onto these, so no field
+ * name from a host's own API or transcript format appears downstream of the
+ * adapter — including in this file.
  */
 export type UsageComponents = {
   inputTokens: number
@@ -76,8 +79,8 @@ export type TokensLineInput = {
  * grammar is frozen (three parsers depend on it) — this function must never
  * change its shape, only what feeds it.
  *
- * `Tokens in` is the full input-side total (`input_tokens +
- * cache_creation_input_tokens + cache_read_input_tokens`) — genuinely every
+ * `Tokens in` is the full input-side total (`inputTokens +
+ * cacheCreationInputTokens + cacheReadInputTokens`) — genuinely every
  * token that went in, not a partial figure. Cache reads can outweigh fresh
  * input by two orders of magnitude on a long session, so that total is
  * never the whole story on its own; `formatBreakdown` reports the four
@@ -114,6 +117,6 @@ export function formatBreakdown(summary: TranscriptSummary): string {
     `  cache read tokens:     ${cacheReadInputTokens}`,
     `  output tokens:         ${outputTokens}`,
     `  model:                 ${summary.model ?? '—'}`,
-    `  messages summed:       ${summary.messageCount} (deduped by message.id)`
+    `  messages summed:       ${summary.messageCount}`
   ].join('\n')
 }
