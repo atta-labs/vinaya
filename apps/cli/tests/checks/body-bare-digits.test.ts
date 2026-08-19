@@ -208,6 +208,26 @@ describe('body-bare-digits — must fail: narrative quantitative claims', () => 
     const violations = checkBareDigits(body).violations
     expect(violations.length).toBeGreaterThan(0)
   })
+
+  // Security review round 1 (this task, live) — five confirmed escapes: an
+  // ordinal-word label directly adjacent to a real countable claim, with no
+  // comma to trip the tally guard, all previously reported as 0 violations.
+  it.each([
+    'We ran step 200 tests and they all passed.',
+    'During round 5000 regressions were fixed.',
+    'Finding 999 critical bugs were patched in this release.',
+    'shape 12345 requests were served without error.',
+    'exit 42 tests failed silently.'
+  ])('does not let an ordinal-word label launder a countable-noun claim it directly precedes: %s', (body) => {
+    expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+  })
+
+  // Security review round 1 (this task, live) — LETTER_LED_ID matched any
+  // token merely starting with a letter and containing a digit anywhere,
+  // so a whole hyphenated claim-as-one-token escaped as a fake identifier.
+  it('does not let LETTER_LED_ID launder a claim hyphenated into a pseudo-identifier', () => {
+    expect(checkBareDigits('Fixed-42-bugs-in-this-pass.').violations.length).toBeGreaterThan(0)
+  })
 })
 
 // ---------- <details> masking — nesting, siblings, decoys, unterminated ----------
