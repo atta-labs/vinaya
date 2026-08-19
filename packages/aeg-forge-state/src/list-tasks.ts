@@ -32,7 +32,12 @@ export const TITLE_PATTERN = /^\[([^\]]+)]\s*(\S+)\s*—\s*(.+)$/
  * so the markup and sentence punctuation prose wraps a real name in
  * (`` `vinaya` ``, `**vinaya**`, `notaproject.`) no longer costs that name its
  * shape — those were valid declarations the guard was never aimed at. */
-const PROJECT_SLUG = /^[a-z0-9][a-z0-9-]*$/i
+// Exported so a consumer that needs to tell a real project name apart from
+// smuggled prose in the SAME comma-separated `Project:` value — `body-bare-digits`,
+// which must exempt only a real name's own span, not whatever a claim
+// disguised as an extra comma-separated "name" might carry — reuses this
+// one validated shape rather than a second regex that could drift from it.
+export const PROJECT_SLUG = /^[a-z0-9][a-z0-9-]*$/i
 
 /**
  * The field line, in either markup the corpus actually uses: the bold
@@ -141,7 +146,8 @@ export type ProjectField = {
  */
 const VALUE_EDGE_MARKUP = /^[`.;\s]+|[`.;\s]+$/g
 
-function unwrapValue(raw: string): string {
+/** Exported alongside `PROJECT_SLUG` — the slug check is only meaningful applied AFTER this peel, same as `parseFieldValue` applies it. */
+export function unwrapValue(raw: string): string {
   return raw.replace(/\*\*/g, '').replace(VALUE_EDGE_MARKUP, '')
 }
 

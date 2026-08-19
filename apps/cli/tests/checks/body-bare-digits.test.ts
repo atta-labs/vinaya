@@ -386,6 +386,24 @@ describe('body-bare-digits — round 6: Tier:/Project: no longer blank a claim a
   })
 })
 
+describe('body-bare-digits — round 7: Tier:/Project: reuse the real field grammar, not a guessable boundary heuristic', () => {
+  it('does not let an appended claim through when no clause-boundary punctuation separates it from the real value (round 7 BLOCKER)', () => {
+    expect(checkBareDigits('Tier: 1 500 known regressions untriaged').violations.length).toBeGreaterThan(0)
+  })
+
+  it("still exempts Tier: written mid-line in real metadata-line usage (pr-tier.ts's own documented, NOT line-anchored grammar)", () => {
+    expect(checkBareDigits('Tranche: x · Task: 1 · **Tier:** 3 · Project: y').violations.length).toBe(1) // "Task: 1" is a real, correct hit — Task: is not one of the three recognized fields
+  })
+
+  it('does not let a claim disguised as an extra comma-separated Project name through', () => {
+    expect(checkBareDigits('Project: cli, though 500 regressions were found').violations.length).toBeGreaterThan(0)
+  })
+
+  it('still exempts a real multi-name Project value with no punctuation boundary needed after it', () => {
+    expect(checkBareDigits('Project: aeg-core, cli, vinaya, aeg-forge-state').violations).toEqual([])
+  })
+})
+
 // ---------- mutation proof: masking is load-bearing, not decorative ----------
 
 describe('body-bare-digits — mutation proof (brief §8 Test Plan item 3)', () => {

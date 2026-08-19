@@ -85,8 +85,9 @@
  * carve-out from reopening that exact class.
  */
 
-import { anchoredRegionBounds, ANCHOR_FIELDS } from '@attalabs/aeg-core'
+import { anchoredRegionBounds, ANCHOR_FIELDS, TIER_FIELD } from '@attalabs/aeg-core'
 import type { AnchorField } from '@attalabs/aeg-core'
+import { PROJECT_SLUG, unwrapValue } from '@attalabs/aeg-forge-state'
 import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
 
 export type BareDigitViolation = { line: number; text: string }
@@ -227,61 +228,85 @@ function blankTokenReportSection(body: string): string {
 }
 
 /**
- * Blanks every line whose trimmed content starts with one of a small, fixed
- * set of structural fields — plain (`Tier: 1`) or bold (`**Tier:** 1`), both
- * accepted by this repo's own Tier grammar
- * (`aeg-root/roles/developer.md` § PR body — canonical form): `For:` (the
- * brief's mandatory "model + environment" line — always names an
- * agent/model identifier that carries a version number, e.g. "Sonnet 5"),
- * and `Tier:` / `Project:` when NOT already inside their `AEG:*` anchor (an
- * older, pre-anchor body like #126 writes them bare, and `vinaya demo`'s own
- * fixture PR body writes a plain, unbolded `Tier: 1`) — layer 3 already
- * blanks these when anchored, so this is strictly the anchor-optional
- * fallback, never a second pass over already-blanked text.
- *
- * Scoped to exactly these three labels, not every field in the body: a
- * broader "any `Label:` line is exempt" rule would swallow a genuine claim
- * written as a field (`Result: 138 passed`), which this check exists to
- * catch.
+ * Blanks the unanchored `Tier:`/`Project:`/`For:` fallback forms — the
+ * anchor-optional convention layer 3 doesn't reach (an older, pre-anchor
+ * body like `#126` writes them bare, and `vinaya demo`'s own fixture PR
+ * body writes a plain, unbolded `Tier: 1`).
  *
  * Round 6 security review, HIGH: this used to blank the WHOLE line once the
- * label matched, not just the label and its own value — so a real claim
- * appended after the value on the same line rode along unscanned.
- * Reproduced: `Tier: 1, though 500 known regressions remain untriaged.` and
- * `Project: cli — but 12345 tests are currently failing.` both scored zero
- * violations. `Tier:`/`Project:` are narrowed to a BOUNDED value — blanked
- * only up to the first clause-boundary character (`,`/`.`/an em or en dash)
- * after the label, never the rest of the line — because their real values
- * are always short (a digit; a short, usually digit-free project-name
- * list), so nothing legitimate is lost, and the repro'd appended claim now
- * sits past the boundary, unmasked, exactly where it should be scanned.
- * `For:` is left as whole-line, deliberately not narrowed the same way: it
- * is the one field with no `AEG:*` anchor to fall back to at all (`ANCHOR_FIELDS`
- * has no `FOR` entry — this repo's canonical form never anchors it), and
- * its real, required content is a full free-text sentence describing the
- * agent/environment, not a bounded value — narrowing it the same way would
- * break real corpus usage (`**For:** Sonnet 5 (Claude Code CLI on a dev
- * machine, dispatched locally, unattended)`) for a field that structurally
- * cannot be expressed as a short bounded token. A narrower, honestly
- * documented residual specific to this one field, not a reopened gap.
+ * label matched. Round 7 found the round-6 fix (blank up to the first
+ * clause-boundary punctuation) was still a guessable shape, not a closed
+ * one — `Tier: 1 500 known regressions untriaged` (no punctuation between
+ * the real value and the claim) scored zero violations, same bug, narrower
+ * trigger. The actual fix, per this round: don't guess the value's
+ * boundary at all — REUSE the exact grammar the field's own real reader
+ * already validates against, the same "reuse a hardened primitive, don't
+ * hand-roll a shape detector" discipline this whole task started from
+ * (`stripCode`/`maskCode`, `anchoredRegionBounds`).
+ *
+ * `Tier:` — `TIER_FIELD` (`@attalabs/aeg-core`, `pr-tier.ts`) is the exact
+ * regex `readTierFromPrBody` already uses to parse the field CI enforces;
+ * exported (additive, behavior-unchanged for that module) so this check
+ * can blank precisely what that regex matches, nothing appended after it.
+ *
+ * `Project:` — `PROJECT_SLUG`/`unwrapValue` (`@attalabs/aeg-forge-state`,
+ * `list-tasks.ts`) are the exact validation `projectFieldFromBody` already
+ * applies per comma-separated segment to tell a real project name apart
+ * from smuggled prose (`parseFieldValue`'s own `unparsed` bucket is
+ * precisely "failed this same check"). Reused the same way: each
+ * comma-separated segment after the label is blanked only if it validates
+ * as a real name; a segment that doesn't (a claim disguised as an extra
+ * "name") stays unmasked and gets scanned like anything else.
+ *
+ * `For:` is a deliberate, disclosed exception, not an oversight — it has
+ * no `AEG:*` anchor to fall back to at all (`ANCHOR_FIELDS` has no `FOR`
+ * entry) and no existing hardened grammar to reuse (no gate reads or
+ * validates it the way `pr-tier.ts`/`list-tasks.ts` do their fields): its
+ * real, brief-mandated content is free text, structurally incompatible
+ * with a bounded-value fix the way Tier/Project's already-validated
+ * grammars make possible. Round 7 correctly reproduced this as still
+ * live (`**For:** Sonnet 5 (…) — we actually fixed 4500 bugs` scores
+ * zero) and correctly called the round-6 doc comment's "not a reopened
+ * gap" claim inaccurate. Left open pending the Principal's call — see
+ * this PR's own discussion — because closing it trades away real-corpus
+ * compatibility (every existing `For:` line with a model version number,
+ * e.g. `#129`'s `Claude Sonnet 5`, would need backticks) for completeness,
+ * and that tradeoff is not this file's own call to make silently.
  */
-const STRUCTURAL_FIELD = /^\*{0,2}(For|Tier|Project):\*{0,2}/
-const CLAUSE_BOUNDARY = /[,.–—]/
+const PROJECT_LABEL = /^\s*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?\s*:\s*(?:\*\*)?/i
+const FOR_LABEL = /^\s*(?:\*\*)?For(?:\*\*)?\s*:/i
+
+/**
+ * No line-start pre-filter before `TIER_FIELD.exec` — deliberately, because
+ * `TIER_FIELD` isn't line-anchored either. `pr-tier.ts`'s own doc says why:
+ * the field may sit mid-line in metadata (`Tranche: x · Task: 1 · **Tier:**
+ * 3 · Project: y`). Gating this on a line-start match first (tried,
+ * reverted) silently broke exactly that real, documented shape — the
+ * legitimate `3` went unmasked and got flagged, a regression caught
+ * empirically before this ever left the local scratch script.
+ */
+function blankTierField(line: string): string {
+  const m = TIER_FIELD.exec(line)
+  if (!m) return line
+  return line.slice(0, m.index) + ' '.repeat(m[0].length) + line.slice(m.index + m[0].length)
+}
+
+function blankProjectField(line: string): string {
+  const label = PROJECT_LABEL.exec(line)
+  if (!label) return line
+  const valueStart = label.index + label[0].length
+  const segments = line.slice(valueStart).split(',')
+  const blanked = segments.map((seg) => (PROJECT_SLUG.test(unwrapValue(seg)) ? ' '.repeat(seg.length) : seg))
+  return line.slice(0, valueStart) + blanked.join(',')
+}
 
 function blankUnanchoredStructuralFields(body: string): string {
   const lines = body.split('\n')
   const fill = (s: string) => ' '.repeat(s.length)
   return lines
     .map((l) => {
-      const trimmed = l.trim()
-      const match = STRUCTURAL_FIELD.exec(trimmed)
-      if (!match) return l
-      if ((match[1] as string) === 'For') return fill(l)
-      const leadingWs = l.length - l.trimStart().length
-      const valueStart = leadingWs + match[0].length
-      const boundaryOffset = l.slice(valueStart).search(CLAUSE_BOUNDARY)
-      const blankEnd = boundaryOffset === -1 ? l.length : valueStart + boundaryOffset
-      return fill(l.slice(0, blankEnd)) + l.slice(blankEnd)
+      if (FOR_LABEL.test(l)) return fill(l)
+      return blankProjectField(blankTierField(l))
     })
     .join('\n')
 }
