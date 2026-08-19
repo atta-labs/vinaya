@@ -72,6 +72,10 @@ One thing git cannot version is the config itself: **each fresh clone runs `git 
 
 Two shapes deviate: a repo already using **husky** keeps its `.husky/` directory (husky's `prepare` script owns per-clone wiring), and a repo with its own active raw hooks in `.git/hooks` stays on the legacy append-a-managed-block layout there — re-routing `core.hooksPath` would silently disable the adopter's own hooks. On that legacy layout `vinaya doctor` warns that clones have no hooks, and `vinaya upgrade` migrates to the tracked layout as soon as nothing foreign would be disabled.
 
+## Agent skills
+
+`vinaya init` generates skill pointers under `.agents/skills/vinaya-<role>/SKILL.md` for tools natively scanning `.agents/skills/` (Codex, Antigravity, Grok Build). Each file is a 3-line pointer delegating to `vinaya doctrine --role <role>` at read time (full user-facing flag and behavior wired in #152).
+
 Custom checks register under `checks`, one entry per check. **Every key must be namespaced `<yourname>/<id>`** — exactly one `/`, both segments matching `[a-z0-9][a-z0-9-]*`, with `vinaya` reserved as a prefix:
 
 ```json
