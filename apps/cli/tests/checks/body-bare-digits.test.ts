@@ -342,25 +342,10 @@ describe('body-bare-digits — round 6: a decoy AEG:* anchor pair outside its do
     expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
   })
 
-  it('still trusts a real anchor correctly placed under its documented section, for every field', () => {
+  it('still trusts a real CLOSES/TIER/EVIDENCE anchor correctly placed under its documented section', () => {
     const bodies = [
       ['<!-- AEG:CLOSES:START -->', 'Closes #135', '<!-- AEG:CLOSES:END -->', '', '## Summary', 'text'].join('\n'),
       ['## Scope', '', '<!-- AEG:TIER:START -->', '**Tier:** 1', '<!-- AEG:TIER:END -->'].join('\n'),
-      [
-        '## Premise',
-        '',
-        '<!-- AEG:PREMISE:START -->',
-        '**Premise:**',
-        '- a.ts contains: export function f',
-        '<!-- AEG:PREMISE:END -->'
-      ].join('\n'),
-      [
-        '## Test plan',
-        '',
-        '<!-- AEG:TEST-PLAN:START -->',
-        '- [x] **[agent]** 163 pass, 0 fail',
-        '<!-- AEG:TEST-PLAN:END -->'
-      ].join('\n'),
       [
         '## Evidence',
         '',
@@ -370,6 +355,18 @@ describe('body-bare-digits — round 6: a decoy AEG:* anchor pair outside its do
       ].join('\n')
     ]
     for (const body of bodies) expect(checkBareDigits(body).violations).toEqual([])
+  })
+
+  it('PREMISE/TEST-PLAN content with no digit at all still passes trivially — not because of an exemption, because there is nothing to flag', () => {
+    const body = [
+      '## Premise',
+      '',
+      '<!-- AEG:PREMISE:START -->',
+      '**Premise:**',
+      '- a.ts contains: export function f',
+      '<!-- AEG:PREMISE:END -->'
+    ].join('\n')
+    expect(checkBareDigits(body).violations).toEqual([])
   })
 })
 
@@ -455,7 +452,7 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
     }
   )
 
-  it('still trusts real, single-value CLOSES/TIER/PROJECT anchors bounded correctly, and real multi-line PREMISE/TEST-PLAN/EVIDENCE anchors in full', () => {
+  it('still trusts real, single-value CLOSES/TIER/PROJECT anchors bounded correctly', () => {
     const bodies = [
       ['<!-- AEG:CLOSES:START -->', 'Closes #135', '<!-- AEG:CLOSES:END -->', '', '## Summary', 'text'].join('\n'),
       ['## Scope', '', '<!-- AEG:TIER:START -->', '**Tier:** 1', '<!-- AEG:TIER:END -->'].join('\n'),
@@ -464,13 +461,17 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
     for (const body of bodies) expect(checkBareDigits(body).violations).toEqual([])
   })
 
-  // Bounding PREMISE/TEST-PLAN per line (the same way CLOSES/TIER/PROJECT
-  // are bounded above) was tried and reverted: real corpus verification
-  // (#130, #136) found real Test Plan items carry indented, multi-line
-  // continuation prose UNDER the checklist line — fixture output, byte
-  // counts, exit codes — that a first-line-only bound wrongly flagged.
-  // This proves that real shape still passes in full.
-  it('a real Test Plan item with indented multi-line continuation evidence stays fully exempt (the exact real-corpus shape #130/#136 use)', () => {
+  // Round 10, Principal's final direction: PREMISE/TEST-PLAN get ZERO
+  // exemption at all — the identical mechanical treatment For: already
+  // has. Bounding them per line (the same way CLOSES/TIER/PROJECT/
+  // EVIDENCE are bounded above) was tried once and reverted (real corpus
+  // regression, see the module doc); a second bounding attempt would just
+  // be another judgment call for a reviewer to find the next gap in. No
+  // exemption at all has no such gap: a fenced/inline code span inside
+  // these anchors stays exempt only because maskCode (layer 1, general,
+  // unrelated to anchors) already masks it; free-standing prose inside
+  // the anchor is scanned exactly like free-standing prose anywhere else.
+  it('a real Test Plan item: fenced evidence stays exempt via maskCode (unrelated to the anchor), free prose beside it does not', () => {
     const body = [
       '## Test plan',
       '',
@@ -486,38 +487,65 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
       '  (The 9-byte difference is a newline-counting quirk; both captures are the complete payload.)',
       '<!-- AEG:TEST-PLAN:END -->'
     ].join('\n')
-    expect(checkBareDigits(body).violations).toEqual([])
+    // The fenced 1967109/1967118 never trip — maskCode already masks them.
+    // The unfenced "9-byte" is the only violation: real, correct behavior
+    // now that this field has no anchor-specific exemption of its own.
+    expect(checkBareDigits(body).violations.length).toBe(1)
   })
 
-  // Documented, honest residual (not silently reopened) — the identical
-  // trojan shape closed above for CLOSES/TIER/PROJECT stays open for
-  // PREMISE/TEST-PLAN specifically, because their real grammar permits
-  // free text beyond a single bounded line (a Premise "contains" value is
-  // legitimately arbitrary text; a Test Plan item's evidence legitimately
-  // spans multiple lines), so a line-level bound can't be tightened
-  // further without the real-corpus regression proven above.
-  it('a "trojan" PREMISE/TEST-PLAN anchor (real header + smuggled prose line) is a known, documented residual — not yet closed', () => {
-    const trojanPremise = [
-      '## Premise',
-      '',
-      '<!-- AEG:PREMISE:START -->',
-      '**Premise:**',
-      '- a.ts contains: export function f',
-      'We actually shipped 4500 unrelated fixes.',
-      '<!-- AEG:PREMISE:END -->'
-    ].join('\n')
-    expect(checkBareDigits(trojanPremise).violations).toEqual([])
-
-    const trojanTestPlan = [
+  it('the same real Test Plan item passes once its own bare digit is backtick-wrapped, migrated the same way For: lines were', () => {
+    const body = [
       '## Test plan',
       '',
       '<!-- AEG:TEST-PLAN:START -->',
-      '- [x] **[agent]** 163 pass, 0 fail',
-      'By the way we fixed 4500 unrelated bugs.',
+      '- [x] **[agent]** Piped-vs-redirected byte counts on the oversized fixture: `| wc -c` and `> file` now produce the same count.',
+      '',
+      '  ```',
+      '  === piped ===',
+      '     1967109',
+      '  === redirected ===',
+      '     1967118',
+      '  ```',
+      '  (The `9`-byte difference is a newline-counting quirk; both captures are the complete payload.)',
       '<!-- AEG:TEST-PLAN:END -->'
     ].join('\n')
-    expect(checkBareDigits(trojanTestPlan).violations).toEqual([])
+    expect(checkBareDigits(body).violations).toEqual([])
   })
+
+  // The identical trojan shape closed above for CLOSES/TIER/PROJECT/
+  // EVIDENCE is now unconditionally closed for PREMISE/TEST-PLAN too — not
+  // via signature detection (there is none), simply because nothing in
+  // either anchor is exempt any more.
+  it.each([
+    [
+      'PREMISE',
+      [
+        '## Premise',
+        '',
+        '<!-- AEG:PREMISE:START -->',
+        '**Premise:**',
+        '- a.ts contains: export function f',
+        'We actually shipped 4500 unrelated fixes.',
+        '<!-- AEG:PREMISE:END -->'
+      ].join('\n')
+    ],
+    [
+      'TEST-PLAN',
+      [
+        '## Test plan',
+        '',
+        '<!-- AEG:TEST-PLAN:START -->',
+        '- [x] **[agent]** 163 pass, 0 fail',
+        'By the way we fixed 4500 unrelated bugs.',
+        '<!-- AEG:TEST-PLAN:END -->'
+      ].join('\n')
+    ]
+  ])(
+    'a "trojan" %s anchor now fails — every digit in its content is scanned, no signature to satisfy at all',
+    (_field, body) => {
+      expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+    }
+  )
 })
 
 describe('body-bare-digits — round 6: Tier:/Project: no longer blank a claim appended past the value', () => {

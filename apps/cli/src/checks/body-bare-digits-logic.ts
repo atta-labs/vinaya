@@ -85,8 +85,7 @@
  * carve-out from reopening that exact class.
  */
 
-import { anchoredRegionBounds, ANCHOR_FIELDS, TIER_FIELD } from '@attalabs/aeg-core'
-import type { AnchorField } from '@attalabs/aeg-core'
+import { anchoredRegionBounds, TIER_FIELD } from '@attalabs/aeg-core'
 import { PROJECT_SLUG, unwrapValue } from '@attalabs/aeg-forge-state'
 import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
 
@@ -100,10 +99,37 @@ function blankRange(text: string, start: number, end: number): string {
 }
 
 /**
- * The canonical section each `AEG:*` field is documented to live in
+ * The six `AEG:*` fields, split into two groups by Principal direction
+ * (this task's final round): `EXEMPT_ANCHOR_FIELDS` get a real, bounded,
+ * mechanical exemption reusing each field's own already-hardened grammar —
+ * `PREMISE`/`TEST-PLAN` get NONE at all, the identical treatment `For:`
+ * already had (see `blankUnanchoredStructuralFields`'s doc): no anchor
+ * exemption, no section check, no signature check — a digit anywhere in
+ * their content, evidence included (fixture output, byte counts, exit
+ * codes), now needs its own backticks like everywhere else in the body.
+ *
+ * Why: `PREMISE`/`TEST-PLAN` were tried with the same bounded-per-line
+ * approach `CLOSES`/`TIER`/`PROJECT`/`EVIDENCE` use below, and reverted —
+ * real corpus verification found their real content isn't just a single
+ * header/bullet/checklist line, it's genuinely multi-line free text
+ * (indented continuation prose under a Test Plan item; an arbitrary
+ * `contains`/`absent` assertion value). Every bound tried either broke
+ * real usage or left a residual — a judgment call for a reviewer either
+ * way. Per the Principal's final direction: no carve-outs, no residual
+ * left for a reviewer's judgment — the same mechanical rule `For:` already
+ * enforces, applied here too. The real-world cost is identical in kind to
+ * `For:`'s own: existing PR bodies with a bare digit in Premise/Test-Plan
+ * content need backtick-wrapping to keep passing, migrated the same way
+ * `#129`'s `For:` line was for this task's own dogfooding.
+ */
+const EXEMPT_ANCHOR_FIELDS = ['CLOSES', 'TIER', 'PROJECT', 'EVIDENCE'] as const
+type ExemptAnchorField = (typeof EXEMPT_ANCHOR_FIELDS)[number]
+
+/**
+ * The canonical section each exempt field is documented to live in
  * (`aeg-root/templates/pr-report-template.md`): `CLOSES`/`PROJECT` sit in
- * the header block, before the first `##` heading; the rest each sit under
- * their own named heading. `null` marks the header-block case.
+ * the header block, before the first `##` heading; `TIER`/`EVIDENCE` sit
+ * under their own named heading.
  *
  * Round 6 security review, HIGH: `anchoredRegionBounds` trusts ANY
  * well-formed `<!-- AEG:<FIELD>:START -->…<!-- AEG:<FIELD>:END -->` pair
@@ -134,12 +160,10 @@ function blankRange(text: string, start: number, end: number): string {
  * instead, the fail-safe direction per this task's own Constraint (flag
  * when in doubt, never swallow).
  */
-const FIELD_SECTION_HEADING: Record<AnchorField, RegExp | null> = {
+const FIELD_SECTION_HEADING: Record<ExemptAnchorField, RegExp | null> = {
   CLOSES: null,
   PROJECT: null,
   TIER: /^scope$/i,
-  PREMISE: /^premise$/i,
-  'TEST-PLAN': /^test\s*plan$/i,
   EVIDENCE: /^evidence$/i
 }
 
@@ -177,7 +201,7 @@ function namedSectionBounds(body: string, namePattern: RegExp): { start: number;
 }
 
 /** Does this field's anchor pair, starting at `outerStart` in `body`, sit inside the section it's documented to live in? */
-function isInCanonicalSection(body: string, field: AnchorField, outerStart: number): boolean {
+function isInCanonicalSection(body: string, field: ExemptAnchorField, outerStart: number): boolean {
   const pattern = FIELD_SECTION_HEADING[field]
   if (pattern === null) return outerStart < headerBlockEnd(body)
   const bounds = namedSectionBounds(body, pattern)
@@ -206,9 +230,8 @@ function isInCanonicalSection(body: string, field: AnchorField, outerStart: numb
  * that skips reproducing it is the actual, reliable tell. `TIER`/`PROJECT`
  * reuse the exact grammars `blankTierField`/`blankProjectField` already
  * import for the unanchored fallback (`TIER_FIELD`, `PROJECT_LABEL`); the
- * other four check for the literal required text the template mandates as
- * that field's own first content: `Closes #N` (`CLOSES`), `**Premise:**`
- * (`PREMISE`), a markdown checklist item (`TEST-PLAN`), `Head: <sha>`
+ * other two check for the literal required text the template mandates as
+ * that field's own first content: `Closes #N` (`CLOSES`), `Head: <sha>`
  * (`EVIDENCE`, `vinaya pr report --write`'s own emitted, never-hand-typed
  * first line). Content failing its field's own signature is scanned as
  * ordinary prose instead — a decoy carrying no trace of the real field it
@@ -217,25 +240,24 @@ function isInCanonicalSection(body: string, field: AnchorField, outerStart: numb
 /** The `Project:`/`**Project:**` label prefix — shared by `blankProjectField` (the unanchored fallback) and `FIELD_CONTENT_SIGNATURE.PROJECT` (below). */
 const PROJECT_LABEL = /^\s*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?\s*:\s*(?:\*\*)?/i
 
-const FIELD_CONTENT_SIGNATURE: Record<AnchorField, RegExp> = {
+const FIELD_CONTENT_SIGNATURE: Record<ExemptAnchorField, RegExp> = {
   CLOSES: /Closes\s*#\d+/i,
   PROJECT: PROJECT_LABEL,
   TIER: TIER_FIELD,
-  PREMISE: /\*\*Premise:\*\*/i,
-  'TEST-PLAN': /^\s*-\s*\[[ xX]\]/m,
   EVIDENCE: /^Head:\s*\S/m
 }
 
 /**
- * Blanks every present `AEG:*` anchor's outer region — see module doc,
- * layer 3, and the `BOUNDED_ANCHOR_BLANK` doc below for why `CLOSES`/
- * `TIER`/`PROJECT` blank only their own bounded value inside the pair
- * (never the whole span) while `PREMISE`/`TEST-PLAN`/`EVIDENCE` still
- * blank the whole span once their signature is found.
+ * Blanks each `EXEMPT_ANCHOR_FIELDS` anchor's outer region — see module
+ * doc above for why only these four, and the `BOUNDED_ANCHOR_BLANK` doc
+ * below for why every one of them blanks only its own bounded value
+ * inside the pair, never the whole span. `PREMISE`/`TEST-PLAN` are not in
+ * `EXEMPT_ANCHOR_FIELDS` at all — no exemption of any kind, mechanical and
+ * final, per the module doc above.
  */
 function blankAnchoredRegions(body: string): string {
   let masked = body
-  for (const field of ANCHOR_FIELDS) {
+  for (const field of EXEMPT_ANCHOR_FIELDS) {
     // Bounds are computed against `body` each time (never against a
     // shrinking/growing `masked`) because every blank here is same-length —
     // positions never drift, so re-deriving against the immutable original
@@ -247,10 +269,7 @@ function blankAnchoredRegions(body: string): string {
     if (!FIELD_CONTENT_SIGNATURE[field].test(content)) continue
     masked = blankRange(masked, bounds.outerStart, bounds.innerStart)
     masked = blankRange(masked, bounds.innerEnd, bounds.outerEnd)
-    const boundedBlank = BOUNDED_ANCHOR_BLANK[field]
-    const blankedContent = boundedBlank
-      ? content.split('\n').map(boundedBlank).join('\n')
-      : content.replace(/[^\n]/g, ' ')
+    const blankedContent = content.split('\n').map(BOUNDED_ANCHOR_BLANK[field]).join('\n')
     masked = masked.slice(0, bounds.innerStart) + blankedContent + masked.slice(bounds.innerEnd)
   }
   return masked
@@ -419,7 +438,7 @@ function blankEvidenceField(line: string): string {
   return line
 }
 
-const BOUNDED_ANCHOR_BLANK: Partial<Record<AnchorField, (line: string) => string>> = {
+const BOUNDED_ANCHOR_BLANK: Record<ExemptAnchorField, (line: string) => string> = {
   CLOSES: blankClosesField,
   TIER: blankTierField,
   PROJECT: blankProjectField,
