@@ -47,7 +47,6 @@
     "verify-published-lifecycle": "bun scripts/verify-published-lifecycle.ts"
   },
   "dependencies": {
-    "compromise": "^14.16.0",
     "gray-matter": "^4.0.3",
     "zod": "3.25.76"
   },

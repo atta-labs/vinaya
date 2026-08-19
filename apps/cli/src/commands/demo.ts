@@ -183,12 +183,12 @@ Test Plan: unit-tests-only
 ## Stop Conditions
 Autonomy: Do not stop to ask clarifying questions — this is a scripted demo; proceed and clean up automatically.
 
-Illustrative Step 0 (never actually run by this demo):
+Illustrative \`Step 0\` (never actually run by this demo):
 \`\`\`
 git worktree add .worktrees/demo-fixture -b demo/fixture origin/main
 \`\`\`
 
-Closes #0 (fixture value — no real Issue; discarded with the demo branch)
+Closes \`#0\` (fixture value — no real Issue; discarded with the demo branch)
 `
 }
 
