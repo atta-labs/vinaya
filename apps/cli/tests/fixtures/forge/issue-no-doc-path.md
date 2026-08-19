@@ -8,10 +8,10 @@
 
 **Dependency rationale** — Depends-on: 3 (the check runner + CheckError contract).
 
-**Traps** — Adapt the aeg-core bins' semantics, never import them; do not hardcode the brief template.
+**Traps** — Whatever the reviewer flags.
 
 **Suggested agent-class** — Opus, high judgment (contract/schema design).
 
 **Stop-and-escalate** — Halt if the adopter-generic config cannot express a required validation.
 
-**Docs to keep coherent** — §7: `apps/cli/README.md`'s command reference row.
+**Docs to keep coherent** — Check the wiki for anything relevant.

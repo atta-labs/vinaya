@@ -15,3 +15,8 @@
 **Stop-and-escalate** — Halt if the adopter-generic config cannot express a required validation.
 
 **Docs to keep coherent** — §7: `apps/cli/README.md`'s command reference row.
+
+## Technical surface map
+
+- apps/cli/src/lib/forge-write.ts
+- apps/cli/src/commands/issue.ts

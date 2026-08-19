@@ -14,10 +14,10 @@
  * Content gate: past presence, three checks grade what those fields
  * SAY against the surface the task touches, and refuse — `checkBlastRadiusScope`
  * (a shared collision domain — live-derived `packages/*` workspace members,
- * built-in cross-cutting defaults, plus any legacy `.aeg/packages` entries
- * and `vinaya.config.json` `blastRadius.extraDomains`, see
- * `readSharedPackages` below — that no declared project owns, without a
- * second project or a `blast-radius-ack:` line),
+ * built-in cross-cutting defaults, plus `vinaya.config.json`
+ * `blastRadius.extraDomains`, see `readSharedPackages` below — that no
+ * declared project owns, without a second project or a `blast-radius-ack:`
+ * line),
  * `checkNoBriefContent` (brief-shaped sections belong in the brief, not here),
  * `checkRationaleNamesDocs` (name a doc/skill path, or the `no-doc-surface`
  * sentinel — the only read-obligation signal a forge write leaves, since the
@@ -453,24 +453,6 @@ function listWorkspaceChildDirs(dir: string, repoRoot: string = REPO_ROOT): stri
 }
 
 /**
- * The legacy static collision-domain list (`.aeg/packages`) — one path
- * prefix per line, `#` comments and blanks ignored. No longer the sole
- * source: its entries now ADD to the live-derived + built-in-default set
- * below (`readSharedPackages`), never replace it, so an adopter who already
- * has one keeps whatever extra coverage it declares.
- */
-function readLegacyAegPackagesFile(repoRoot: string = REPO_ROOT): string[] {
-  try {
-    return readFileSync(join(repoRoot, '.aeg/packages'), 'utf8')
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && !l.startsWith('#'))
-  } catch {
-    return []
-  }
-}
-
-/**
  * `vinaya.config.json`'s `blastRadius.extraDomains` — the sanctioned path for
  * an adopter to declare a collision domain beyond live derivation and the
  * built-in defaults (a `migrations/` folder, a codegen output dir). Read as
@@ -494,23 +476,21 @@ function readConfigExtraDomains(repoRoot: string = REPO_ROOT): string[] {
  * The full collision-domain list checks A/C consume: every `packages/*`
  * workspace member (live-derived from `package.json`, §Part 1), the
  * built-in cross-cutting defaults (lockfile/monorepo-config/CI/git-hooks
- * presence-checks, §Part 2), `.aeg/packages`'s entries if that legacy file
- * is still present (additive, never required), and `vinaya.config.json`'s
- * `blastRadius.extraDomains` (the sanctioned "one more domain" path going
- * forward). A fresh adopter with none of the optional inputs still gets a
- * live, non-empty list from derivation + defaults alone — the check is no
- * longer dormant by default the way it was when `.aeg/packages` was the only
- * source. `repoRoot` is injectable for tests; every real caller uses the
- * default (`REPO_ROOT`).
+ * presence-checks, §Part 2), and `vinaya.config.json`'s
+ * `blastRadius.extraDomains` (the sanctioned "one more domain" path). No
+ * knowledge of the legacy `.aeg/packages` file — retired, zero backward
+ * compatibility, same wave as `apps/cli`'s equivalent removal. A fresh
+ * adopter with none of the optional inputs still gets a live, non-empty
+ * list from derivation + defaults alone. `repoRoot` is injectable for
+ * tests; every real caller uses the default (`REPO_ROOT`).
  */
 export function readSharedPackages(repoRoot: string = REPO_ROOT): string[] {
   const derived = deriveWorkspacePackageDomains(readWorkspaces(repoRoot), (dir) =>
     listWorkspaceChildDirs(dir, repoRoot)
   )
   const defaults = deriveBuiltinCrossCuttingDefaults((p) => existsSync(join(repoRoot, p)))
-  const legacy = readLegacyAegPackagesFile(repoRoot)
   const configExtra = readConfigExtraDomains(repoRoot)
-  return [...new Set([...derived, ...defaults, ...legacy, ...configExtra])]
+  return [...new Set([...derived, ...defaults, ...configExtra])]
 }
 
 /** Registry rows (`projects.md`) — the authority for which project owns which path. Absent ⇒ nothing is owned. */
@@ -663,7 +643,7 @@ export function main(): void {
     const sharedPackages = readSharedPackages()
     if (sharedPackages.length === 0) {
       console.warn(
-        '[open-issue] no collision domains derived, defaulted, or declared (no `packages/*` workspace, no cross-cutting default present, no `.aeg/packages`, no `vinaya.config.json` blastRadius.extraDomains) — blast-radius check (A) is dormant.'
+        '[open-issue] no collision domains derived, defaulted, or declared (no `packages/*` workspace, no cross-cutting default present, no `vinaya.config.json` blastRadius.extraDomains) — blast-radius check (A) is dormant.'
       )
     }
     const projectPaths = readProjectPaths()
