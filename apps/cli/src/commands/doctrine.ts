@@ -8,7 +8,7 @@
 // physically sits, so the pointer's bytes stay machine-independent while the
 // answer stays machine-correct.
 
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
 import { printJson } from '../lib/envelope.js'
 import { packageRoot } from '../lib/package-root.js'
@@ -45,6 +45,16 @@ export function resolveDoctrineRoot(pkg: string = packageRoot(import.meta.url)):
   return null
 }
 
+/** Role names actually available under `<root>/roles/`, from `*.md` filenames — never a hardcoded list. */
+function listRoleNames(root: string): string[] {
+  const rolesDir = join(root, 'roles')
+  if (!existsSync(rolesDir)) return []
+  return readdirSync(rolesDir)
+    .filter((name) => name.endsWith('.md'))
+    .map((name) => name.slice(0, -'.md'.length))
+    .sort()
+}
+
 export function doctrineCommand(args: string[]): void {
   const root = resolveDoctrineRoot()
   if (root === null) {
@@ -55,6 +65,27 @@ export function doctrineCommand(args: string[]): void {
     )
     process.exit(1)
   }
+
+  const roleFlagIndex = args.indexOf('--role')
+  if (roleFlagIndex !== -1) {
+    const roleName = args[roleFlagIndex + 1]
+    const validRoleNames = listRoleNames(root)
+    if (roleName === undefined || roleName.startsWith('--') || !validRoleNames.includes(roleName)) {
+      process.stderr.write(
+        `vinaya doctrine --role: '${roleName ?? ''}' is not a known role. ` +
+          `Valid role names: ${validRoleNames.join(', ')}\n`
+      )
+      process.exit(1)
+    }
+    const entry = join(root, 'roles', `${roleName}.md`)
+    if (args.includes('--json')) {
+      printJson({ root, entry })
+      return
+    }
+    process.stdout.write(`${entry}\n`)
+    return
+  }
+
   const entry = join(root, ...ENTRY_SEGMENTS)
   if (args.includes('--json')) {
     printJson({ root, entry })

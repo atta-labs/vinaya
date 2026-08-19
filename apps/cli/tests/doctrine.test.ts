@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { doctrineCommand, ENTRY_SEGMENTS, resolveDoctrineRoot } from '../src/commands/doctrine.js'
+
+const CLI_ENTRY = join(import.meta.dir, '..', 'src', 'index.ts')
 
 // NOT in the same file as doctrine-pointer.test.ts, deliberately: that file
 // mock.module()s package-root.js, and this command needs the real resolver.
@@ -37,6 +39,63 @@ describe('vinaya doctrine', () => {
     expect(parsed.schema).toBe(1)
     expect(parsed.data.entry).toBe(join(parsed.data.root, 'skills', 'aeg', 'SKILL.md'))
     expect(existsSync(parsed.data.entry)).toBe(true)
+  })
+
+  it('--role <name> resolves straight to roles/<name>.md under the same root', () => {
+    const root = resolveDoctrineRoot()
+    if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --role')
+    const [firstRole] = readdirSync(join(root, 'roles'))
+      .filter((f) => f.endsWith('.md'))
+      .map((f) => f.slice(0, -3))
+      .sort()
+    if (firstRole === undefined) throw new Error('no role files found under aeg-root/roles')
+
+    const printed = captureStdout(() => doctrineCommand(['--role', firstRole])).trim()
+    expect(isAbsolute(printed)).toBe(true)
+    expect(printed).toBe(join(root, 'roles', `${firstRole}.md`))
+    expect(existsSync(printed)).toBe(true)
+  })
+
+  it('--role <name> --json emits the envelope with a coherent root/entry pair', () => {
+    const root = resolveDoctrineRoot()
+    if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --role')
+    const [firstRole] = readdirSync(join(root, 'roles'))
+      .filter((f) => f.endsWith('.md'))
+      .map((f) => f.slice(0, -3))
+      .sort()
+    if (firstRole === undefined) throw new Error('no role files found under aeg-root/roles')
+
+    const out = captureStdout(() => doctrineCommand(['--role', firstRole, '--json']))
+    const parsed = JSON.parse(out)
+    expect(parsed.schema).toBe(1)
+    expect(parsed.data.entry).toBe(join(parsed.data.root, 'roles', `${firstRole}.md`))
+    expect(existsSync(parsed.data.entry)).toBe(true)
+  })
+
+  it('--role <bad-name> fails cleanly, listing the live-enumerated valid role names', async () => {
+    const proc = Bun.spawn(['bun', CLI_ENTRY, 'doctrine', '--role', 'nonsense-name'], {
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+    const exitCode = await proc.exited
+    const stderr = await new Response(proc.stderr).text()
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain("'nonsense-name' is not a known role")
+    expect(stderr).toContain('reviewer')
+    expect(stderr).toContain('developer')
+  })
+
+  it('--role with no name attached fails cleanly rather than swallowing the next flag', async () => {
+    const proc = Bun.spawn(['bun', CLI_ENTRY, 'doctrine', '--role'], {
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+    const exitCode = await proc.exited
+    const stderr = await new Response(proc.stderr).text()
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain('is not a known role')
   })
 })
 
