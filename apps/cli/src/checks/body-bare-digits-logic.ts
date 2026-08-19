@@ -253,6 +253,14 @@ const COUNT_NOUN =
   /^(tests?|regressions?|bugs?|requests?|defects?|errors?|failures?|issues?|warnings?|crash(?:es)?|vulnerabilit(?:y|ies)|tickets?|hangs?|retr(?:y|ies))$/i
 /** Starts with a letter, ends in a run of digits (optionally dotted) with no letters after — an identifier (`C5`, `R1`, `claude-sonnet-5`, `round-9`), never a claim glued to a hyphenated phrase (`Fixed-42-bugs-in-this-pass`, which ends in letters, not digits). */
 const LETTER_LED_ID = /^[A-Za-z][A-Za-z-]*\p{Nd}[\p{Nd}.]*$/u
+/** The letter segment immediately before a `LETTER_LED_ID` token's trailing digit run — `"step"` from `"step-200"`, `"sonnet"` from `"claude-sonnet-5"`, `"bugs"` from `"bugs-42"`. Used to tell a real identifier apart from a claim laundered via hyphen instead of space — see `isExemptToken`'s `LETTER_LED_ID` branch. */
+function letterLedPrefixWord(core: string): string {
+  const segments = core
+    .replace(/[\p{Nd}.]+$/u, '')
+    .split('-')
+    .filter(Boolean)
+  return segments[segments.length - 1] ?? ''
+}
 
 // Zero-width and other Unicode default-ignorable characters — security
 // review round 4 found one embedded inside an otherwise-recognized count
@@ -488,16 +496,53 @@ function hasDisqualifyingClaim(digitToken: string, followingWords: string[]): bo
  */
 function isExemptToken(rawToken: string, precedingWord: string | null, followingWords: string[]): boolean {
   const core = stripOuterPunct(rawToken)
-  if (
-    ISSUE_REF.test(core) ||
-    ISO_DATE.test(core) ||
-    VERSION.test(core) ||
-    SECTION_SYMBOL.test(core) ||
-    LETTER_LED_ID.test(core)
-  ) {
+  if (ISSUE_REF.test(core) || ISO_DATE.test(core) || VERSION.test(core) || SECTION_SYMBOL.test(core)) {
     return true
   }
-  if (LIST_MARKER_TOKEN.test(rawToken)) return true
+  // Self-discovered proactive audit (not yet reported by any review round):
+  // `LETTER_LED_ID` recognizes a real identifier (`C5`, `claude-sonnet-5`,
+  // `round-9`) purely by shape — letters, then a trailing digit run — with
+  // no dependency on the word itself. That shape is IDENTICAL to a claim
+  // laundered by hyphen instead of space: "step-200 tests failed" and
+  // "bugs-42 were found" both match `LETTER_LED_ID` exactly as "round-9"
+  // does, and were passing at zero violations. This is the same
+  // context-independent-bypass class as round 5 finding 1 (file paths) and
+  // the proactively-fixed `INLINE_ENUM_MARKER` gap, just hyphenated instead
+  // of slashed or bracketed. Fixed the same way the spaced ordinal-word
+  // form already is: the letter segment glued to the digit is checked
+  // against the same two vocabularies. A glued `COUNT_NOUN` ("bugs-42") is
+  // disqualifying unconditionally — stronger evidence than a following
+  // word, since the noun is directly fused to the digit, not just nearby. A
+  // glued `ORDINAL_WORD` ("step-200", "round-9") is ambiguous exactly like
+  // its spaced form and gets the same treatment: exempt unless a
+  // disqualifying count noun follows. Uses `hasDisqualifyingCountNoun`, not
+  // the full `hasDisqualifyingClaim` — the fused token itself (`"step-200"`)
+  // is not a bare digit `compromise` can tag as a Value, so the grammar
+  // half would be a silent no-op here; the vocabulary-only signal is what
+  // actually does the work, same reasoning as the `INLINE_ENUM_MARKER` fix.
+  if (LETTER_LED_ID.test(core)) {
+    const prefixWord = letterLedPrefixWord(core)
+    const prefixIsCountNoun = COUNT_NOUN.test(prefixWord)
+    const prefixIsOrdinalWord = ORDINAL_WORD.test(prefixWord)
+    if (!prefixIsCountNoun && !(prefixIsOrdinalWord && hasDisqualifyingCountNoun(followingWords))) {
+      return true
+    }
+  }
+  // Self-discovered proactive audit (not yet reported by any review round):
+  // this branch used to be `if (LIST_MARKER_TOKEN.test(rawToken)) return
+  // true`, unconditionally — but a TRUE list marker is already handled
+  // correctly, upstream, by `isLineLeadingListMarker`'s position check in
+  // the scan loop (`checkBareDigits` `continue`s before `isExemptToken` is
+  // even called). This second, position-blind check inside `isExemptToken`
+  // only ever mattered for tokens shaped like `N.`/`N)` that are NOT at
+  // line start — meaning it re-exempted a bare mid-sentence claim ending in
+  // a period or closing paren purely because the shape coincidentally
+  // matches a list marker: "We fixed 3." / "There were 5." / "we
+  // identified issue 2) which needs fixing" all passed at zero violations,
+  // the exact ordinary-prose shape this check exists to catch, with no
+  // ordinal-word or grammar dependency at all. Removed entirely — position
+  // is a hard requirement for "this digit is a list marker, not a claim,"
+  // and only the upstream position-aware check may grant that exemption.
   // Self-discovered while re-verifying round 5 (not yet reported by
   // security review, closed proactively): INLINE_ENUM_MARKER's "(1) X;
   // (2) Y" shape used to exempt unconditionally, with the identical
@@ -508,7 +553,24 @@ function isExemptToken(rawToken: string, precedingWord: string | null, following
   // `hasDisqualifyingCountNoun`'s own doc for why the grammar half
   // specifically regresses real corpus text here).
   if (INLINE_ENUM_MARKER.test(rawToken) && !hasDisqualifyingCountNoun(followingWords)) return true
-  if (rawToken.includes('://')) return true // a URL/markdown-link locator, not a claim
+  // A real URI scheme, immediately preceded by nothing but markdown-link
+  // wrapper syntax (`[`, `]`, `(`) or the token's own start — not just
+  // "contains `://` somewhere," which let a deliberately gibberish claim
+  // like `500://bugs` pass unconditionally (self-discovered proactive
+  // audit; unrealistic prose, low practical severity, but cheap to close
+  // correctly with the same "shape must actually resemble the thing, not
+  // just share one substring" discipline round 5's file-path fix already
+  // established). Tested against `rawToken`, not `core` — a markdown link's
+  // full `[text](url)` is one whitespace-bounded token with no space
+  // before the scheme, so `stripOuterPunct` (which only strips the
+  // OUTERMOST punctuation layer) leaves the link text glued to the front
+  // of `core` (`comment](https://…`), putting the scheme past `core`'s
+  // start; anchoring against `rawToken`, allowing the link-wrapper
+  // characters immediately before the scheme, handles both the bare-URL
+  // and the wrapped-markdown-link shape without that false negative on the
+  // real corpus (`[comment](https://…/77#issuecomment-…).`, found
+  // regressed while verifying this exact fix).
+  if (/(?:^|[[\]()])[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(rawToken)) return true
   if (core.includes('/')) {
     // A file path segment — real repo paths (round 5 security review
     // finding, HIGH, the most severe of this round: the old test here,

@@ -401,6 +401,57 @@ describe('body-bare-digits — must fail: narrative quantitative claims', () => 
       []
     )
   })
+
+  // Self-discovered proactive audit (not yet reported by any review round):
+  // LETTER_LED_ID recognized any letter-then-trailing-digit shape as an
+  // identifier with zero dependency on the word itself — identical shape
+  // to a real identifier ("round-9", "claude-sonnet-5") but also to a
+  // claim laundered via hyphen instead of space.
+  it.each([
+    'Fixed step-200 tests today.',
+    'Found bugs-42 in this release.',
+    'There were regressions-138 this quarter.',
+    'We closed failures-5000 before shipping.'
+  ])('does not let a hyphenated word-number shape launder a claim past LETTER_LED_ID: %s', (body) => {
+    expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+  })
+
+  it.each(['claude-sonnet-5 handled this task.', 'See round-9 for the prior discussion.'])(
+    'still exempts a real hyphenated identifier whose glued word is not a count noun/ordinal-with-claim: %s',
+    (body) => {
+      expect(checkBareDigits(body).violations).toEqual([])
+    }
+  )
+
+  // Self-discovered proactive audit (not yet reported by any review round):
+  // isExemptToken's own LIST_MARKER_TOKEN check ignored line position
+  // entirely — a true list marker is already exempted correctly, upstream,
+  // by isLineLeadingListMarker's position check in the scan loop; this
+  // second check re-exempted any mid-sentence "N."/"N)" shaped token
+  // regardless of position, the exact ordinary-prose shape this file
+  // exists to catch.
+  it.each(['We fixed 3.', 'There were 5.', 'Reduced the count to 12.', 'we identified issue 2) which needs fixing'])(
+    'does not exempt a bare digit shaped like a list marker unless it is actually at line start: %s',
+    (body) => {
+      expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+    }
+  )
+
+  // Self-discovered proactive audit (not yet reported by any review round):
+  // the URL exemption only checked "contains ://", not that a real scheme
+  // led the token, letting a gibberish claim like "500://bugs" pass
+  // unconditionally with no ordinal-word or grammar dependency.
+  it('does not let a fake "digit://word" shape pass as a URL', () => {
+    expect(checkBareDigits('Fixed 500://bugs in this release.').violations.length).toBeGreaterThan(0)
+  })
+
+  it('still exempts a real URL wrapped in a markdown link, scheme immediately after the link-wrapper punctuation', () => {
+    expect(
+      checkBareDigits(
+        'Filed as [comment](https://github.com/atta-labs/vinaya/issues/77#issuecomment-5329908188).'
+      ).violations
+    ).toEqual([])
+  })
 })
 
 // ---------- <details> masking — nesting, siblings, decoys, unterminated ----------
