@@ -595,6 +595,30 @@ describe('body-bare-digits — round 7: Tier:/Project: reuse the real field gram
   it('still exempts a real multi-name Project value with no punctuation boundary needed after it', () => {
     expect(checkBareDigits('Project: aeg-core, cli, vinaya, aeg-forge-state').violations).toEqual([])
   })
+
+  // Round 9 code review, BLOCKER: PROJECT_SLUG's own shape
+  // (/^[a-z0-9][a-z0-9-]*$/i) permits digits, so a hyphenated claim needs
+  // no space or comma-adjacency trick at all to launder — it passes the
+  // shape check exactly as a real project name would, unanchored AND
+  // inside a genuinely-signed anchor pair, no decoy required.
+  it.each([
+    ['Project: cli, we-fixed-4500-bugs', 'unanchored'],
+    [
+      ['<!-- AEG:PROJECT:START -->', '**Project:** cli, we-fixed-4500-bugs', '<!-- AEG:PROJECT:END -->'].join('\n'),
+      'anchored, genuinely signed'
+    ]
+  ])('does not let a hyphenated digit-bearing claim launder as a real Project name (%s)', (body) => {
+    expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+  })
+
+  it('still exempts real, digit-free Project names, single and multi, anchored and not', () => {
+    const bodies = [
+      'Project: cli',
+      'Project: aeg-core, cli, vinaya',
+      ['<!-- AEG:PROJECT:START -->', '**Project:** cli, aeg-forge-state', '<!-- AEG:PROJECT:END -->'].join('\n')
+    ]
+    for (const body of bodies) expect(checkBareDigits(body).violations).toEqual([])
+  })
 })
 
 // ---------- mutation proof: masking is load-bearing, not decorative ----------

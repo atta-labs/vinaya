@@ -364,12 +364,36 @@ function blankTierField(line: string): string {
   return line.slice(0, m.index) + ' '.repeat(m[0].length) + line.slice(m.index + m[0].length)
 }
 
+// Round 9 code review, BLOCKER: `PROJECT_SLUG` (`/^[a-z0-9][a-z0-9-]*$/i`)
+// is the real, shared shape every genuine project name in this repo's own
+// registry satisfies — but it's also the shape ANY hyphenated claim
+// satisfies, with no comma or space needed to trip it: `we-fixed-4500-bugs`
+// passes `PROJECT_SLUG` exactly as `aeg-core`/`cli`/`vinaya-sources` do,
+// laundering a claim past a genuinely-signed anchor, no decoy required.
+// `PROJECT_SLUG` is the real shared grammar (`@attalabs/aeg-forge-state`)
+// and stays reused as-is, not re-narrowed here — a repo elsewhere in this
+// ecosystem could legitimately register a digit-bearing project name, and
+// this file is not the place to change what counts as a valid slug
+// project-wide. What changes locally: a segment is trusted as a real name
+// ONLY if it also carries no digit at all — every real name in this
+// repo's own corpus (`aeg-core`, `cli`, `vinaya`, `vinaya-sources`,
+// `aeg-forge-state`, `aeg-types`) already satisfies that, so nothing real
+// is lost; a fake name built specifically to smuggle a digit through the
+// shape check no longer can, the same "don't trust shape alone when shape
+// can hide a real claim" principle this file already applies everywhere
+// else (round 5's file-path fix, `TIER_FIELD`'s closed `[013]` enum).
+const SEGMENT_HAS_DIGIT = /\p{Nd}/u
+
 function blankProjectField(line: string): string {
   const label = PROJECT_LABEL.exec(line)
   if (!label) return line
   const valueStart = label.index + label[0].length
   const segments = line.slice(valueStart).split(',')
-  const blanked = segments.map((seg) => (PROJECT_SLUG.test(unwrapValue(seg)) ? ' '.repeat(seg.length) : seg))
+  const blanked = segments.map((seg) => {
+    const name = unwrapValue(seg)
+    const isRealName = PROJECT_SLUG.test(name) && !SEGMENT_HAS_DIGIT.test(name)
+    return isRealName ? ' '.repeat(seg.length) : seg
+  })
   return line.slice(0, valueStart) + blanked.join(',')
 }
 
@@ -391,35 +415,27 @@ function blankUnanchoredStructuralFields(body: string): string {
  * too — the identical class of gap `FIELD_CONTENT_SIGNATURE` closed for a
  * bare decoy, reopened one level in.
  *
- * `CLOSES`/`TIER`/`PROJECT` are bounded per line inside their anchor,
- * reusing the same short, single-line grammars already reused above for
- * the unanchored fallback. `EVIDENCE` is bounded too — its content is
- * machine-emitted only (`vinaya pr report --write`, never hand-typed) and,
- * past `maskCode`'s own masking of its inline-code/fenced-diff-stat spans
- * (already run, layer 1), the only lines that ever remain are the `Head:
- * <sha>` line and `### Group A/B — …` headings — confirmed against every
- * real corpus body this task has verified against
- * (`#126`/`#129`/`#130`/`#132`/`#136`), not assumed.
- *
- * `PREMISE`/`TEST-PLAN` were tried the same way — `isPremiseHeader`/
- * `PREMISE_LINE` and `TEST_PLAN_CHECKLIST_ITEM` (`@attalabs/aeg-core`,
- * both exported additively for this) — and reverted after re-verifying
- * against the real corpus surfaced a real regression, not a theoretical
- * one: both fields' genuine, legitimate content is NOT just a single
- * header/bullet/checklist line each — real Test Plan items in `#130`/
- * `#136` carry indented, multi-paragraph continuation prose UNDER the
- * checklist line explaining the evidence (fixture output, byte counts,
- * exit codes), and real Premise/Test-Plan sections in `#136` do the same;
- * bounding to just the first-line shape newly flagged that real,
- * already-shipped continuation content as bare violations (`#130` 2→5,
- * `#136` 21→31 on the exact same corpus, re-verified before this landed).
- * These two fields remain whole-span, same as `For:` and for the
- * identical structural reason: their real grammar permits free text
- * beyond a single bounded line, so a line-level bound can't be tightened
- * without breaking real, already-correct usage. The trojan gap for these
- * two specifically is the one honestly documented residual left after
- * this round — narrower than before (four of six fields closed, not
- * zero), not silently reopened.
+ * `CLOSES`/`TIER`/`PROJECT`/`EVIDENCE` — the four fields in
+ * `EXEMPT_ANCHOR_FIELDS` — are bounded per line inside their anchor,
+ * reusing the same short, already-hardened grammars reused above for the
+ * unanchored fallback (`TIER_FIELD`, `PROJECT_LABEL`/`PROJECT_SLUG`) or a
+ * literal required signature (`Closes #N`; `EVIDENCE`'s content is
+ * machine-emitted only — `vinaya pr report --write`, never hand-typed —
+ * and past `maskCode`'s own masking of its inline-code/fenced-diff-stat
+ * spans, layer 1, the only lines that ever remain are the `Head: <sha>`
+ * line and `### Group A/B — …` headings, confirmed against every real
+ * corpus body this task has verified against). `PREMISE`/`TEST-PLAN` are
+ * NOT in `EXEMPT_ANCHOR_FIELDS` at all any more — a bounded per-line
+ * approach was tried for them too (`isPremiseHeader`/`PREMISE_LINE` and a
+ * Test Plan checklist-item regex, both from `@attalabs/aeg-core`) and
+ * reverted after re-verifying against the real corpus surfaced a real
+ * regression: real Test Plan items in `#130`/`#136` carry indented,
+ * multi-paragraph continuation prose UNDER the checklist line (fixture
+ * output, byte counts, exit codes) that a first-line-only bound wrongly
+ * flagged. Per the Principal's final direction for this task, PREMISE/
+ * TEST-PLAN get the same treatment as `For:` instead — zero exemption of
+ * any kind, mechanical, not another bounding attempt — see the module doc
+ * at the top of this file and `blankUnanchoredStructuralFields`'s own doc.
  */
 const CLOSES_REF = /Closes\s*#\d+/i
 const EVIDENCE_HEADING = /^#{1,6}\s/
