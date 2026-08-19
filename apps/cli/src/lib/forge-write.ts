@@ -21,32 +21,41 @@
  * repo's required-section set is just one config instance.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   checkAutonomyClause,
+  checkBlastRadiusScope,
   checkBriefClosesN,
   checkDocUpdateList,
   checkForField,
   checkForgeTitle,
   checkIssueRationale,
+  checkNoBriefContent,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
   checkProjectField,
+  checkRationaleNamesDocs,
   checkStopConditions,
   checkSurfaceMap,
   checkTestPlan,
   checkTestPlanExclusivity,
   checkTierField,
   checkWorktreeStep0,
+  deriveBuiltinCrossCuttingDefaults,
+  deriveWorkspacePackageDomains,
   isBriefShaped,
   isTaskBranch,
+  parsePnpmWorkspaceYaml,
+  parseRegistry,
+  type ProjectPath,
   readTierFromPrBody
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks/contract'
-import { type BriefBuiltin, type BriefSection, loadConfigChecked } from './config'
+import { type BriefBuiltin, type BriefSection, loadConfig, loadConfigChecked } from './config'
 
 // ---------------------------------------------------------------------------
 // Arg errors — a malformed `--body-file` is a refusal in the CheckError shape,
@@ -391,5 +400,149 @@ export function validateForgeWrite(input: ForgeValidationInput): CheckError[] {
     }
   }
 
+  return errors
+}
+
+// ---------------------------------------------------------------------------
+// Issue-only content gate — `checkBlastRadiusScope`, `checkNoBriefContent`,
+// `checkRationaleNamesDocs` (`packages/aeg-core/bin/open-issue.ts`'s A/B/D
+// block; C, `checkConflictCompleteness`, is warn-only and stays out of this
+// gate). These three are NOT `briefSchema` sections and cannot live in
+// `runBuiltin`'s table above: they grade what the rationale fields SAY
+// against the surface the task touches, not whether a section is present —
+// `checkNoBriefContent` in particular REFUSES brief-shaped content, the
+// opposite of what every `runBuiltin` entry proves. Unconditional for a task
+// Issue (`isTaskIssueLabelSet`), exactly like the presence gate one level up:
+// config decides which sections are required, never whether this gate runs.
+// ---------------------------------------------------------------------------
+
+/** Array-form execFileSync — no shell, mirrors `pr.ts`'s own local `git()` helper. */
+function git(args: string[]): string {
+  try {
+    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * The adopter repo's git top-level, or `''` outside a git repo. Resolved at
+ * call time (never this monorepo's own static `REPO_ROOT` the way
+ * `open-issue.ts` does it) because `apps/cli` runs against whichever repo
+ * invokes it — the same reason this file never imports the bin scripts (see
+ * the file header). `''` propagates to a dormant, non-crashing result, same
+ * posture as `checks/bin/check-coherence.ts`'s `readRegisteredProjectNames`.
+ */
+function repoRoot(): string {
+  return git(['rev-parse', '--show-toplevel'])
+}
+
+function readWorkspaceGlobs(root: string): string[] {
+  const fromPackageJson = (): string[] => {
+    try {
+      const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { workspaces?: unknown }
+      return Array.isArray(pkg.workspaces) ? pkg.workspaces.filter((w): w is string => typeof w === 'string') : []
+    } catch {
+      return []
+    }
+  }
+  const fromPnpmWorkspaceYaml = (): string[] => {
+    try {
+      return parsePnpmWorkspaceYaml(readFileSync(join(root, 'pnpm-workspace.yaml'), 'utf8'))
+    } catch {
+      return []
+    }
+  }
+  return [...fromPackageJson(), ...fromPnpmWorkspaceYaml()]
+}
+
+function listWorkspaceChildDirs(dir: string, root: string): string[] {
+  try {
+    return readdirSync(join(root, dir), { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+  } catch {
+    return []
+  }
+}
+
+/** The legacy static collision-domain list (`.aeg/packages`) — additive only, mirrors `open-issue.ts`. */
+function readLegacyAegPackagesFile(root: string): string[] {
+  try {
+    return readFileSync(join(root, '.aeg/packages'), 'utf8')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith('#'))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * The full collision-domain list `checkBlastRadiusScope` consumes: live
+ * workspace derivation + built-in cross-cutting defaults + legacy
+ * `.aeg/packages` + `vinaya.config.json`'s `blastRadius.extraDomains`. Mirrors
+ * `open-issue.ts`'s own `readSharedPackages` (`apps/cli` cannot import that
+ * bin file — see this file's header — so this is the adopter-runtime
+ * equivalent, built from the same public `@attalabs/aeg-core` primitives that
+ * function itself uses). A fresh adopter with none of the optional inputs
+ * still gets the live-derived + built-in-default set; outside a git repo
+ * this returns `[]` and the check goes dormant, never crashes.
+ */
+export function readSharedPackages(root: string = repoRoot()): string[] {
+  if (!root) return []
+  const derived = deriveWorkspacePackageDomains(readWorkspaceGlobs(root), (dir) => listWorkspaceChildDirs(dir, root))
+  const defaults = deriveBuiltinCrossCuttingDefaults((p) => existsSync(join(root, p)))
+  const legacy = readLegacyAegPackagesFile(root)
+  const configExtra = loadConfig()?.blastRadius?.extraDomains ?? []
+  return [...new Set([...derived, ...defaults, ...legacy, ...configExtra])]
+}
+
+/** Registry rows (`.vinaya/projects.md`) — absent ⇒ nothing is owned, the check goes dormant. */
+export function readProjectPaths(root: string = repoRoot()): ProjectPath[] {
+  if (!root) return []
+  try {
+    return parseRegistry(readFileSync(join(root, '.vinaya/projects.md'), 'utf8'))
+  } catch {
+    return []
+  }
+}
+
+const CHECK_ISSUE_CONTENT = 'issue-content'
+
+const ISSUE_CONTENT_RECOVERY = {
+  blastRadius:
+    'Add a second registered `Project(s)` this task also touches, or a `blast-radius-ack: <why one lens is enough>` line, then re-run `{cmd}`.',
+  noBriefContent:
+    "Move the brief-shaped section named above out of the Issue body and into the brief — the Issue carries the Planner's durable rationale, not the brief's just-in-time surface — then re-run `{cmd}`.",
+  rationaleNamesDocs:
+    'Name a concrete doc/skill path (e.g. `aeg-root/…`, `.claude/skills/…/SKILL.md`) in "Docs to keep coherent" or "Traps", or write the `no-doc-surface` sentinel if the surface genuinely has none, then re-run `{cmd}`.'
+} as const
+
+export type IssueContentInput = {
+  body: string
+  labels: string[]
+  sharedPackages: string[]
+  projectPaths: ProjectPath[]
+  retryCommand: string
+}
+
+/**
+ * Runs the three Issue-only content checks and returns every finding as a
+ * `CheckError`. Pure over its inputs, same discipline as `validateForgeWrite`
+ * — the caller (a command file) resolves `sharedPackages`/`projectPaths` from
+ * disk/forge and passes them in.
+ */
+export function validateIssueContent(input: IssueContentInput): CheckError[] {
+  const findings: Array<[string[], keyof typeof ISSUE_CONTENT_RECOVERY]> = [
+    [checkBlastRadiusScope(input.body, input.labels, input.sharedPackages, input.projectPaths).errors, 'blastRadius'],
+    [checkNoBriefContent(input.body).errors, 'noBriefContent'],
+    [checkRationaleNamesDocs(input.body).errors, 'rationaleNamesDocs']
+  ]
+  const errors: CheckError[] = []
+  for (const [messages, kind] of findings) {
+    const recovery = ISSUE_CONTENT_RECOVERY[kind].replace('{cmd}', input.retryCommand)
+    for (const message of messages) errors.push(makeCheckError(CHECK_ISSUE_CONTENT, message, recovery))
+  }
   return errors
 }

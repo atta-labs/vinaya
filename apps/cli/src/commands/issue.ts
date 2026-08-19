@@ -8,10 +8,13 @@ import {
   extractTitle,
   locateBody,
   makeCheckError,
+  readProjectPaths,
+  readSharedPackages,
   refuse,
   resolveSections,
   resolveShippableArgs,
-  validateForgeWrite
+  validateForgeWrite,
+  validateIssueContent
 } from '../lib/forge-write'
 
 const RETRY_CREATE = 'vinaya issue create --validate-only …'
@@ -87,8 +90,15 @@ function runGhWrite(ghCmd: string[], ghArgs: string[], bodyResult: BodyResult | 
  * Runs the task-Issue brief-schema gate for a body whose applicability was
  * already decided from the labels. Non-task Issues never reach here — they
  * pass through unvalidated, exactly like `open-issue.ts`.
+ *
+ * Two stages, same order as `open-issue.ts`: the config-driven presence gate
+ * (rationale fields exist, etc.) refuses first with its own findings; only
+ * once it passes does the unconditional content gate (blast-radius scope,
+ * no-brief-content, rationale-names-docs) run. `labels` feeds
+ * `checkBlastRadiusScope`; `sharedPackages`/`projectPaths` are resolved from
+ * the adopter repo on disk, not threaded through from argv.
  */
-function validateTaskIssue(body: string | null, title: string | null, retryCommand: string): void {
+function validateTaskIssue(body: string | null, title: string | null, labels: string[], retryCommand: string): void {
   if (body === null) {
     refuse([
       makeCheckError(
@@ -99,14 +109,23 @@ function validateTaskIssue(body: string | null, title: string | null, retryComma
     ])
   }
   const sections = resolveSections('issue', retryCommand)
-  const errors = validateForgeWrite({
+  const schemaErrors = validateForgeWrite({
     body,
     title,
     sections,
     changedFiles: [],
     retryCommand
   })
-  if (errors.length > 0) refuse(errors)
+  if (schemaErrors.length > 0) refuse(schemaErrors)
+
+  const contentErrors = validateIssueContent({
+    body,
+    labels,
+    sharedPackages: readSharedPackages(),
+    projectPaths: readProjectPaths(),
+    retryCommand
+  })
+  if (contentErrors.length > 0) refuse(contentErrors)
 }
 
 // --- commands ----------------------------------------------------------------
@@ -122,7 +141,7 @@ export function issueCreateCommand(args: string[]): void {
   const labels = extractLabels(ghArgs)
 
   if (isTaskIssueLabelSet(labels)) {
-    validateTaskIssue(body, title, RETRY_CREATE)
+    validateTaskIssue(body, title, labels, RETRY_CREATE)
   }
 
   if (validateOnly) {
@@ -158,7 +177,7 @@ export function issueEditCommand(args: string[]): void {
   const labels = [...new Set([...fetchForgeLabels(issueRef), ...extractLabels(ghArgs)])]
 
   if (isTaskIssueLabelSet(labels)) {
-    validateTaskIssue(body, title, RETRY_EDIT)
+    validateTaskIssue(body, title, labels, RETRY_EDIT)
   }
 
   if (validateOnly) {
