@@ -53,28 +53,49 @@
  * in this repo's own real usage — when a shape is ambiguous, it is flagged,
  * never quietly exempted.
  *
- * Known, accepted limitation (security review round 3, live on this task —
- * flagged, not silently shipped): the ordinal-word exemption's disqualifying
- * lookahead (`hasDisqualifyingCountNoun`) checks the following words against
- * `COUNT_NOUN`, a closed, named vocabulary — not a general English noun
- * classifier. A narrative claim using a count noun outside that vocabulary
- * ("step 200 tickets were closed", "round 5000 outages occurred") still
- * launders past the exemption. Rounds 1 and 2 patched this same laundering
- * class twice (a plural-suffix regex, then closed-vocabulary + bracket/
- * article handling); round 3 proved a closed vocabulary is fundamentally
- * incomplete by construction, not merely under-populated — no finite list
- * closes an open-ended one. Recognizing "is this word the object a number
- * is quantifying" in full generality is a real natural-language-grammar
- * problem, not a solvable regex-heuristic one; continuing to patch
- * individual escaped words here would repeat the exact whack-a-mole this
- * comment exists to stop. The Principal has this open for a structural
- * redesign decision (a real NLP/POS dependency, or narrowing what the
- * ordinal-word exemption recognizes in the first place, are two live
- * options) rather than a fourth vocabulary patch.
+ * Structural fix (security review round 4; the Principal's direction after
+ * round 3 proved a closed vocabulary is fundamentally incomplete by
+ * construction, not under-populated — "stop patching individual cases,
+ * rethink the exemption's detection strategy structurally"): the
+ * ordinal-word exemption's disqualifying lookahead
+ * (`hasDisqualifyingClaim`) is no longer vocabulary-only. It unions two
+ * independent signals, each covering ground the other structurally can't —
+ *   (a) `COUNT_NOUN`, a named vocabulary — still the full breadth rounds
+ *       1–3 demonstrated, because it alone is what BRACKETED content is
+ *       checked against (`(tests)`, `[regressions]`): grammar adjacency is
+ *       deliberately never extended across a parenthetical (see below),
+ *       so a bracket-wrapped noun only stays caught here. It is also the
+ *       backstop for words `compromise`'s default model mis-tags
+ *       ambiguously with no sentence context ("test"/"bug" read as verbs
+ *       almost as often as nouns) and for a compound noun whose head sits
+ *       one modifier word from the digit ("support tickets" — grammar's
+ *       adjacency requirement can't reach past "support"); and
+ *   (b) a real grammar check (`compromise`, a POS tagger,
+ *       `hasDisqualifyingClaim`) asking whether the digit is immediately
+ *       (`^`-anchored) followed by a tagged noun — a structural, not
+ *       enumerable, signal for OPEN, unbracketed adjacency: it generalizes
+ *       to any English count noun ("outages", "incidents", "people"),
+ *       closing round 3's actual complaint (finding 1) for the common case
+ *       rather than adding three more words to a list a fifth round would
+ *       just find the next gap in.
+ * Both signals are deliberately narrow in ways that matter: grammar
+ * adjacency never crosses a parenthetical (protects real, required-clean
+ * list items like `**exit 0** (pass)` from reading the aside as "0"'s
+ * object), the grammar match is anchored to the digit itself and not just
+ * "found somewhere in the clause" (protects against an unrelated LATER
+ * number+noun pair in a long sentence being misattributed to an earlier
+ * one — found live against #136's own body), and `COUNT_NOUN`'s own
+ * lookahead stays word-budget-bounded rather than clause-unbounded (an
+ * unbounded scan was tried and reverted — it reached six words into a
+ * different real #136 sentence and flagged a required-clean label; see
+ * `hasDisqualifyingClaim`'s doc). That budget remains beatable by a long
+ * enough filler chain (round 4 finding 5) — a narrower, honestly
+ * documented residual than finding 1 ever was, not a reopened one.
  */
 
 import { anchoredRegionBounds, ANCHOR_FIELDS } from '@attalabs/aeg-core'
 import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
+import nlp from 'compromise'
 
 export type BareDigitViolation = { line: number; text: string }
 export type BareDigitScanResult = { violations: BareDigitViolation[] }
@@ -189,7 +210,7 @@ const LIST_MARKER_TOKEN = /^\p{Nd}{1,9}[.)]$/u
  * regressions", "shape 12345 requests" all match this word-precedes-number
  * shape exactly as "Round 2"/"exit 0" do, but are genuine claims, not
  * labels (round 1 security review finding). The `isExemptToken` caller
- * additionally requires `hasDisqualifyingCountNoun` to find nothing after
+ * additionally requires `hasDisqualifyingClaim` to find nothing after
  * the digit before this exemption applies — see that check for why "the
  * countable noun always follows, never precedes" was the wrong invariant
  * to rely on alone.
@@ -202,69 +223,208 @@ const ORDINAL_VALUE = /^\p{Nd}+[a-z]?(?:[-–—]\p{Nd}+[a-z]?)?$/iu
  * plausibly report a count of — singular AND plural, since a singular
  * count noun launders exactly as well as a plural one ("step 200 test
  * failed" is just as fabricatable as "step 200 tests failed"; round 2
- * security review finding). Deliberately a closed list, not a suffix
- * heuristic (round 1 shipped `/^[a-z]{3,}(?<![su])s$/i`, an attempt to
- * detect "looks plural" — round 2 found it: (a) never matches a singular
- * noun at all, and (b) still isn't what "is this word a countable-claim
- * noun" actually means, since plenty of non-count words end in a bare
- * `s` too. A closed list is auditable by inspection instead. Extend it
- * only when a real occurrence demands it, same discipline as a premise
- * pin — the words below are exactly what two adversarial security rounds
- * demonstrated escaping (test, regression, bug, request, defect) plus
- * their obvious close relatives.
+ * security review finding).
+ *
+ * Round 4 added a real grammar check (`hasDisqualifyingClaim`'s `#Value+
+ * #Noun+` match) as the PRIMARY signal for open, unbracketed adjacency —
+ * this list no longer has to anticipate every English count noun for that
+ * case, only the words compromise's own tagger gets wrong standalone
+ * ("test"/"bug" — read as a verb as often as a noun with no sentence
+ * context) and "ticket" (a compound-noun gap, see `hasDisqualifyingClaim`'s
+ * doc). But grammar adjacency is deliberately never extended across a
+ * parenthetical — `(pass)` after "exit 0" is a real, required-clean status
+ * note, not a claim about "0", and a tagger can't tell that case apart
+ * from `(tests)` genuinely counting a redundantly-parenthesized claim by
+ * bracket shape alone. This list is what BRACKETED content is checked
+ * against instead (`stripOuterPunct` already unwraps a single bracket
+ * layer before testing), which is why it still needs the full breadth
+ * rounds 1–3 demonstrated escaping, not just the two grammar-blind-spot
+ * words — `(tests)`/`[regressions]` (round 2 finding 2) only stay caught
+ * because this list, not the grammar check, is what sees inside them.
+ * Extend only when a real occurrence demands it, same discipline as a
+ * premise pin.
  */
 const COUNT_NOUN =
-  /^(tests?|regressions?|bugs?|requests?|defects?|errors?|failures?|issues?|warnings?|crash(?:es)?|vulnerabilit(?:y|ies))$/i
+  /^(tests?|regressions?|bugs?|requests?|defects?|errors?|failures?|issues?|warnings?|crash(?:es)?|vulnerabilit(?:y|ies)|tickets?)$/i
 /** Starts with a letter, ends in a run of digits (optionally dotted) with no letters after — an identifier (`C5`, `R1`, `claude-sonnet-5`, `round-9`), never a claim glued to a hyphenated phrase (`Fixed-42-bugs-in-this-pass`, which ends in letters, not digits). */
 const LETTER_LED_ID = /^[A-Za-z][A-Za-z-]*\p{Nd}[\p{Nd}.]*$/u
 
-// Unicode curly quotes alongside their ASCII equivalents — round 3 security
-// review found a count noun wrapped in curly quotes ('step 200 "tests"
-// failed') evaded every strip pass here the same way the round-2 ASCII-`(`
-// bypass did; a smart-quoting editor produces these routinely, not just an
-// adversarial input.
+// Zero-width and other Unicode default-ignorable characters — security
+// review round 4 found one embedded inside an otherwise-recognized count
+// noun ("te" + U+200B + "sts") defeats every regex classification in this
+// file regardless of vocabulary completeness, a stronger bypass than any
+// single word gap: "not an incomplete word list, a way to defeat any word
+// list this file will ever have." Stripped from the WHOLE body once, in
+// `checkBareDigits`, before any masking or tokenizing — not per-token here
+// — because the same characters could otherwise hide inside a fence marker
+// or an anchor tag too, not just a following-word check. Written as escape
+// sequences, deliberately, never as literal characters in this source file
+// — an actual zero-width character sitting in this regex literal would be
+// exactly as invisible and unauditable here as the bypass it exists to
+// close. U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ, U+2060 word joiner, U+FEFF
+// BOM/zero-width-no-break-space.
+export const ZERO_WIDTH = /[\u200B-\u200D\u2060\uFEFF]/g
+
+// A short list of named HTML entities a PR body could plausibly carry
+// (GitHub renders raw HTML in markdown) that would otherwise wrap a
+// disqualifying word invisibly to every quote/bracket strip below (round 4
+// finding 4: `&quot;tests&quot;`, `&lt;tests&gt;`). Decoded the same place
+// zero-width characters are stripped — once, on the whole body — not
+// reimplemented as a per-token special case.
+const HTML_ENTITIES: Record<string, string> = {
+  '&quot;': '"',
+  '&apos;': "'",
+  '&lt;': '<',
+  '&gt;': '>',
+  '&amp;': '&'
+}
+export function decodeNamedEntities(body: string): string {
+  return body.replace(/&(?:quot|apos|lt|gt|amp);/g, (m) => HTML_ENTITIES[m] ?? m)
+}
+
+// Unicode punctuation BY CATEGORY, not an enumerated character list (round
+// 4's own positive finding: this is what round 3's \d → \p{Nd} fix did
+// right, and what round 4 asked stripOuterPunct to do too — guillemets,
+// fullwidth parens, CJK corner brackets all strip the same way ASCII ones
+// do now). `\p{Ps}`/`\p{Pi}` (open brackets, initial quotes) lead;
+// `\p{Pe}`/`\p{Pf}`/`\p{Po}` (close brackets, final quotes, other
+// punctuation — periods, commas, straight quotes, `*`) trail. `#`/`§` are
+// deliberately EXCLUDED from the leading class even though they are
+// `\p{Po}` too — `ISSUE_REF`/`SECTION_SYMBOL` need them left on `core`, so
+// leading strip stays a narrower category set than trailing. Backtick is a
+// Symbol (`\p{Sk}`), not Punctuation, and is listed explicitly on both
+// sides for the same reason it always was.
 function stripOuterPunct(token: string): string {
   return token
-    .replace(/^[(["'`*“”‘’]+/, '')
-    .replace(/[)\]"'`*.,;:!?“”‘’]+$/, '')
-    .replace(/['’]s$/i, '')
-    .replace(/[)\]"'`*.,;:!?“”‘’]+$/, '')
+    .replace(/^[\p{Ps}\p{Pi}`*]+/u, '')
+    .replace(/[\p{Pe}\p{Pf}\p{Po}`*]+$/u, '')
+    .replace(/['’]s$/iu, '')
+    .replace(/[\p{Pe}\p{Pf}\p{Po}`*]+$/u, '')
 }
 
 /** Articles/prepositions that don't themselves carry the claim — skipped, not counted, when looking for the noun after them ("step 200 of the tests failed"; round 2 security review finding). */
 const FUNCTION_WORD = /^(of|the|a|an|in|on|at|to|for|with|by)$/i
 
 /**
- * Does a `COUNT_NOUN` appear among the (up to) four CONTENT words following
- * the digit? Reads raw words in order, skipping `FUNCTION_WORD`s without
- * spending the content-word budget on them (closes round 2 finding 3's
- * preposition-separated escape), and unwraps a single layer of
- * parens/brackets via the same `stripOuterPunct` every other classification
- * uses rather than treating an opening bracket as an automatic pass
- * (closes round 2 finding 2's `(tests)`/`[regressions]` escape — the round
- * 1 code special-cased `raw.startsWith('(')` to `return false` immediately,
- * which is exactly the hole: it never even looked at the word inside).
- *
- * Budget widened 2 → 4 (round 3 security review finding 4): a two-word
- * budget only skipped FUNCTION_WORDs for free, so any OTHER filler word
- * ("total", "number") still spent it, letting a noun four words out
- * escape ("step 200 of the total number of tests failed" — "of"/"the"
- * skip free, but "total"/"number" burn the whole budget before "tests"
- * is ever reached). Four is a width, not a word list — it does not add
- * another special case to chase, it makes the existing one reach a
- * little further; `COUNT_NOUN` finding 1's fundamental incompleteness is
- * the one the budget itself can't fix, see this file's module doc.
+ * Builds the word sequence handed to the grammar check: `followingWords`,
+ * stopping at the first real clause boundary instead of trusting a fixed
+ * word count to land inside the same clause as the digit. Two boundary
+ * shapes, both found live against the real corpus while validating this
+ * design (a `(a glob technically alive...)` aside must never read as
+ * describing the number before it; `exit 128). The trap...` must not let
+ * the NEXT sentence's subject read as describing the number in THIS one):
+ *   - A parenthetical/bracketed span is skipped whole, not just its
+ *     opening token — depth-tracked, so nesting doesn't close early.
+ *   - A token that is pure punctuation/symbol (nothing alphanumeric at
+ *     all), or that ends in sentence-terminal `.`/`!`/`?`, ends collection
+ *     at that token. This is what stops the vocabulary scan below from
+ *     reaching into a real, unrelated later mention of a `COUNT_NOUN` word
+ *     several clauses down a long sentence — a real false positive found
+ *     against #136's own body while widening the lookahead for round 4
+ *     finding 5: a standalone em dash (`… step 4):** reproduced live
+ *     before writing any test — a plain \`mktemp -d\` …`) is this repo's
+ *     own house style for a clause break, and wasn't being recognized as
+ *     one at all (only bracket-adjacent closing punctuation was).
  */
-function hasDisqualifyingCountNoun(followingWords: string[]): boolean {
-  let checked = 0
+const PURE_PUNCTUATION = /^[\p{P}\p{S}]+$/u
+
+function clauseBoundedFollowing(followingWords: string[]): string[] {
+  const out: string[] = []
+  let depth = 0
   for (const raw of followingWords) {
+    const opens = (raw.match(/[([]/g) ?? []).length
+    const closes = (raw.match(/[)\]]/g) ?? []).length
+    if (depth > 0) {
+      depth = Math.max(0, depth + opens - closes)
+      continue
+    }
+    if (opens > closes) {
+      depth += opens - closes
+      continue
+    }
+    if (PURE_PUNCTUATION.test(raw)) break // standalone punctuation/symbol token — clause boundary
+    out.push(raw)
+    if (/[.!?]$/.test(raw.replace(/[)\]'"`*’”]+$/, ''))) break // sentence-terminal, attached to this word
+  }
+  return out
+}
+
+/**
+ * The real grammar check (round 4; see the module doc for why this
+ * replaced a vocabulary as the primary signal): does a POS tagger
+ * (`compromise`) read the digit as immediately followed, within the same
+ * clause, by a tagged noun? `#Value+ #Noun+` requires direct adjacency —
+ * deliberately not loosened to tolerate an intervening word, because doing
+ * so is what let "shape 2 (a glob technically alive...)" read as a claim
+ * about "2" in testing (an adjective/determiner-tolerant pattern matches
+ * straight into a parenthetical aside). The cost of that strictness is a
+ * compound noun whose head sits one modifier away ("200 support tickets")
+ * — `COUNT_NOUN` and this being a union, not a replacement, is what
+ * covers that gap without loosening the adjacency requirement that keeps
+ * the parenthetical-aside case safe.
+ *
+ * `COUNT_NOUN`'s own lookahead is bounded to four CONTENT words within the
+ * clause (function words skipped free, same as before) — deliberately NOT
+ * unbounded to the whole clause. That was tried (round 4 finding 5's own
+ * fix, briefly): the clause boundary alone is not a tight enough box for
+ * `COUNT_NOUN` specifically, because this repo's own prose runs long
+ * between hard punctuation — re-verifying against the real corpus after
+ * unbounding found `COUNT_NOUN` reaching six words out into #136's own
+ * body ("step 4):** reproduced live before writing any test —") and
+ * flagging a real, required-clean label as a claim. A four-word budget
+ * remains beatable by a long enough filler chain (finding 5's own "of the
+ * grand total final number of tests" needs five) — accepted here as a
+ * narrower, honestly-documented residual: closing it fully would require
+ * either full sentence semantics (out of reach for a word-distance
+ * heuristic by construction) or risks the exact #136 regression just
+ * found. The grammar check below is NOT similarly bounded, and does not
+ * need to be — `#Value+ #Noun+`'s direct-adjacency requirement means a
+ * word six clauses away can never match it regardless of clause length.
+ */
+function hasDisqualifyingClaim(digitToken: string, followingWords: string[]): boolean {
+  const clause = clauseBoundedFollowing(followingWords)
+  if (clause.length === 0) return false
+
+  let checked = 0
+  for (const raw of clause) {
     const core = stripOuterPunct(raw)
     if (FUNCTION_WORD.test(core)) continue
     if (checked >= 4) break
     checked++
     if (COUNT_NOUN.test(core)) return true
   }
-  return false
+
+  // A self-contained bracketed token ("(pass)", both the open and close on
+  // the SAME token) is a parenthetical aside just as much as a bracket
+  // spanning several tokens is — `clauseBoundedFollowing`'s depth tracking
+  // only excludes the multi-token span shape. Left in, "exit 0 (pass)"
+  // read as `#Value+ #Noun+` matching straight across the parenthesis
+  // (compromise tags "pass" a noun) and flagged three real, required-clean
+  // `**exit 0** (pass)` list items in #126 as claims. Grammar adjacency
+  // must never cross a parenthetical, self-contained or not, so these are
+  // dropped before the chunk is built — never fed to `nlp()` at all.
+  const grammarWords = clause.filter((w) => {
+    const opens = (w.match(/[([]/g) ?? []).length
+    const closes = (w.match(/[)\]]/g) ?? []).length
+    return !(opens >= 1 && closes >= 1)
+  })
+  if (grammarWords.length === 0) return false
+  // `ordinalWord` is deliberately NOT in this chunk, and the match is
+  // anchored with `^` — both closing a false positive found live against
+  // #136's own body: "exit 128). The trap applies exactly as §2
+  // describes." is one clause (no sentence break before "§2"), and an
+  // UNANCHORED `#Value+ #Noun+` search matches "§2 describes." — a wholly
+  // different number later in the same clause, misread as evidence about
+  // digit 128 purely because it also satisfies the pattern *somewhere* in
+  // the chunk. Anchoring to the start, with the digit as the chunk's own
+  // first word, makes the match mean "immediately after THIS digit," not
+  // "found this shape anywhere downstream." `ordinalWord` was never load
+  // bearing for the match itself (verified empirically) and only got in
+  // the anchor's way (`^#Value+` cannot match after a leading `step`/
+  // `round` token, which compromise tags as a Verb here, not part of the
+  // Value run).
+  const doc = nlp([digitToken, ...grammarWords].join(' '))
+  return doc.match('^#Value+ #Noun+').found
 }
 
 /**
@@ -272,9 +432,9 @@ function hasDisqualifyingCountNoun(followingWords: string[]): boolean {
  * `precedingWord` is the previous whitespace-separated token on the same
  * (original) line, or `null` at line start. `followingWords` are the
  * whitespace-separated tokens after this one (the caller passes a handful
- * — `hasDisqualifyingCountNoun` skips function words within that budget
- * without spending its own two-content-word limit on them) — both used
- * only by the ordinal-word rule below.
+ * — `hasDisqualifyingClaim` skips function words and clause boundaries
+ * within that budget rather than spending it on them) — both used only by
+ * the ordinal-word rule below.
  */
 function isExemptToken(rawToken: string, precedingWord: string | null, followingWords: string[]): boolean {
   const core = stripOuterPunct(rawToken)
@@ -303,17 +463,18 @@ function isExemptToken(rawToken: string, precedingWord: string | null, following
   // pair ("Round 2", "exit 0", "MAJOR 1 —") never has a comma between the
   // word and the number; a tally's comma-separated items always do.
   //
-  // The count-noun lookahead matters just as much, and independently: a
-  // preceding label word is necessary but not sufficient (security review,
-  // this task — see COUNT_NOUN's doc comment for the empirical proof).
-  // "step 200 tests" has the identical preceding-word shape as "exit 0 on
-  // success"; only checking what follows the number tells them apart.
+  // The disqualifying-claim lookahead matters just as much, and
+  // independently: a preceding label word is necessary but not sufficient
+  // (security review, this task — see `hasDisqualifyingClaim`'s doc for
+  // the empirical proof). "step 200 tests" has the identical
+  // preceding-word shape as "exit 0 on success"; only checking what
+  // follows the number tells them apart.
   if (
     precedingWord &&
     !precedingWord.endsWith(',') &&
     ORDINAL_WORD.test(stripOuterPunct(precedingWord)) &&
     ORDINAL_VALUE.test(core) &&
-    !hasDisqualifyingCountNoun(followingWords)
+    !hasDisqualifyingClaim(rawToken, followingWords)
   ) {
     return true
   }
@@ -342,8 +503,16 @@ const TOKEN_WITH_DIGIT = /\S*\p{Nd}\S*/gu
 /**
  * Scans `body` for bare digits outside every masked region. Returns one
  * violation per surviving digit-bearing token, in document order.
+ *
+ * Normalizes FIRST, before any masking or tokenizing — `ZERO_WIDTH`
+ * stripping and named-HTML-entity decoding both need to happen once, on
+ * the raw body, not per-token: a zero-width character could hide inside a
+ * fence marker or an anchor tag just as easily as inside a following-word
+ * check (round 4 security review, finding 2 — the most severe of that
+ * round, closing a bypass class rather than one instance of it).
  */
-export function checkBareDigits(body: string): BareDigitScanResult {
+export function checkBareDigits(rawBody: string): BareDigitScanResult {
+  const body = decodeNamedEntities(rawBody.replace(ZERO_WIDTH, ''))
   const masked = buildScanMask(body)
   const maskedLines = masked.split('\n')
   const origLines = body.split('\n')
@@ -361,9 +530,10 @@ export function checkBareDigits(body: string): BareDigitScanResult {
       const before = origLine.slice(0, m.index).trimEnd()
       const precedingWord = before.length > 0 ? (before.split(/\s+/).pop() ?? null) : null
       const after = origLine.slice(m.index + m[0].length).trim()
-      // 6 raw tokens, not 2 — `hasDisqualifyingCountNoun` skips function
-      // words (of/the/a/…) without spending its own two-content-word
-      // budget on them, so it needs room past them in the raw slice.
+      // 12 raw tokens, not 2 — `hasDisqualifyingClaim` skips function
+      // words and stops at clause boundaries within that budget rather
+      // than spending it on them, so it needs room past them in the raw
+      // slice.
       const followingWords = after.length > 0 ? after.split(/\s+/).slice(0, 12) : []
       if (isExemptToken(rawToken, precedingWord, followingWords)) continue
       violations.push({ line: i + 1, text: origLine.trim() })

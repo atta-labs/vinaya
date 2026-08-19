@@ -251,23 +251,97 @@ describe('body-bare-digits — must fail: narrative quantitative claims', () => 
   })
 
   // Security review round 3 (this task, live) — three findings distinct
-  // from the ordinal-word laundering findings 1/2/3 fixed above. Finding 1
-  // (a count noun outside the closed COUNT_NOUN vocabulary still escapes)
-  // is NOT closed here — see the module doc's "Known, accepted limitation"
-  // section; it is a structural gap in the exemption design, not a bug a
-  // regression test can pin shut.
-  it('a fullwidth-Unicode-digit claim is not invisible to the scanner (finding 2)', () => {
+  // from the ordinal-word laundering findings 1/2/3 fixed above.
+  it('a fullwidth-Unicode-digit claim is not invisible to the scanner (round 3 finding 2)', () => {
     // U+FF11 U+FF13 U+FF18 = fullwidth "1","3","8" — visually and
     // semantically "138", but NOT in `\d`'s ASCII-only range.
     expect(checkBareDigits('All １３８ tests passed after this change.').violations.length).toBeGreaterThan(0)
   })
 
-  it('a count noun wrapped in Unicode curly quotes does not evade the lookahead (finding 3)', () => {
+  it('a count noun wrapped in Unicode curly quotes does not evade the lookahead (round 3 finding 3)', () => {
     expect(checkBareDigits('step 200 “tests” failed silently.').violations.length).toBeGreaterThan(0)
   })
 
-  it('a count noun past two non-function filler words is still reached (finding 4)', () => {
+  it('a count noun past two non-function filler words is still reached (round 3 finding 4)', () => {
     expect(checkBareDigits('step 200 of the total number of tests failed.').violations.length).toBeGreaterThan(0)
+  })
+
+  // Security review round 4 (this task, live) — round 3 proved COUNT_NOUN
+  // (a closed vocabulary) is structurally incomplete, not under-populated.
+  // The Principal's direction: a real grammar check, not a fourth
+  // vocabulary patch — see the module doc for the full design. These are
+  // the open-vocabulary claims a closed list could never have listed in
+  // advance, all closed by `hasDisqualifyingClaim`'s grammar signal alone.
+  it.each([
+    ['a noun never in any hand-written vocabulary (finding 1)', 'step 200 tickets were closed this sprint.'],
+    ['another open-vocabulary noun (finding 1)', 'round 5000 outages occurred last quarter.'],
+    ['another open-vocabulary noun (finding 1)', 'minor 3 incidents were reported today.'],
+    ['another open-vocabulary noun (finding 1)', 'exit 12 flakes were observed in CI.'],
+    ['another open-vocabulary noun (finding 1)', 'step 7 timeouts happened during the run.'],
+    ['another open-vocabulary noun (finding 1)', 'part 4 commits landed in this pass.'],
+    [
+      'a mass/collective noun the closed list would never have anticipated',
+      'round 5000 people were affected by this outage.'
+    ]
+  ])('grammar alone catches an unlisted open-vocabulary claim: %s', (_label, body) => {
+    expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+  })
+
+  it('a compound noun one modifier word from the digit is still caught, via the vocabulary backstop (round 4 finding 1, compound-noun gap)', () => {
+    expect(checkBareDigits('step 200 support tickets were opened this week.').violations.length).toBeGreaterThan(0)
+  })
+
+  it('a zero-width character embedded inside an otherwise-recognized count noun is stripped before any classification (round 4 finding 2)', () => {
+    // U+200B ZWSP splitting "tests" into "te" + ZWSP + "sts" — invisible on
+    // render, defeats every regex classification if not stripped first.
+    expect(checkBareDigits('step 200 te​sts failed silently.').violations.length).toBeGreaterThan(0)
+  })
+
+  it.each([
+    ['guillemets', 'step 200 «tests» failed silently.'],
+    ['fullwidth parens', 'step 200 （tests） failed silently.']
+  ])(
+    'a count noun wrapped in %s strips the same way ASCII brackets do (round 4 finding 3, generalized by Unicode category)',
+    (_label, body) => {
+      expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+    }
+  )
+
+  it.each([
+    ['&quot;', 'step 200 &quot;tests&quot; failed silently.'],
+    ['&lt;/&gt;', 'step 200 &lt;tests&gt; failed silently.']
+  ])(
+    'a count noun wrapped in the named HTML entity %s is decoded before classification (round 4 finding 4)',
+    (_label, body) => {
+      expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+    }
+  )
+
+  it('does not let an unrelated LATER number+noun pair in the same clause launder the digit under test (grammar-check false positive found while validating round 4, real body: #136)', () => {
+    // "§2 describes." independently satisfies an unanchored noun-phrase
+    // search — anchoring the grammar match to start at the digit itself is
+    // what keeps "exit 128)." from being blamed for a claim about a
+    // wholly different number several words later in the same clause.
+    expect(violationLines('(exit 128). The trap applies exactly as §2 describes.')).toEqual([])
+  })
+
+  it('a self-contained bracketed word right after the digit is not read as its object by the grammar check (real body: #126, "**exit 0** (pass)")', () => {
+    expect(violationLines('**exit 0** (pass)')).toEqual([])
+  })
+
+  it("a standalone em dash ends the clause the vocabulary lookahead can reach, matching this repo's own prose convention (real body: #136)", () => {
+    expect(
+      violationLines('step 4):** reproduced live before writing any test — a plain command produced output.')
+    ).toEqual([])
+  })
+
+  // Round 4 finding 5 (LOW severity): the vocabulary lookahead's four-word
+  // budget remains beatable by a long enough filler chain — a documented,
+  // narrower residual, not silently reopened. See `hasDisqualifyingClaim`'s
+  // doc for why widening or unbounding this specific budget was tried and
+  // reverted (it regressed a real, required-clean #136 sentence).
+  it('documents, rather than silently reopens, the remaining long-filler-chain residual (round 4 finding 5)', () => {
+    expect(checkBareDigits('step 200 of the grand total final number of tests failed.').violations).toEqual([])
   })
 })
 
