@@ -66,8 +66,12 @@ describe('body-bare-digits — must NOT fail: the masking pipeline', () => {
     expect(violationLines('Tier: 1')).toEqual([])
   })
 
-  it('the **For:** header field (model name + version)', () => {
-    expect(violationLines('**For:** Sonnet 5 (Claude Code CLI), dispatched locally, unattended')).toEqual([])
+  it('the **For:** header field, model version number backtick-wrapped (round 7: For: no longer gets whole-line digit tolerance)', () => {
+    expect(violationLines('**For:** Sonnet `5` (Claude Code CLI), dispatched locally, unattended')).toEqual([])
+  })
+
+  it('the **For:** header field with no digit at all', () => {
+    expect(violationLines('**For:** vinaya demo (scripted fixture)')).toEqual([])
   })
 
   it('a markdown ordered-list marker, only at line start', () => {
@@ -379,9 +383,17 @@ describe('body-bare-digits — round 6: Tier:/Project: no longer blank a claim a
     }
   )
 
-  it('For: stays whole-line exempt — it has no AEG:* anchor to fall back to and its real value is free text', () => {
+  it('For: no longer gets special-cased digit tolerance at all (round 7 follow-up, Principal call) — a bare digit in its value now fails like anywhere else', () => {
     expect(
       checkBareDigits('**For:** Sonnet 5 (Claude Code CLI on a dev machine, dispatched locally, unattended)').violations
+        .length
+    ).toBeGreaterThan(0)
+  })
+
+  it('still exempts a For: line once its own version number is backtick-wrapped', () => {
+    expect(
+      checkBareDigits('**For:** Sonnet `5` (Claude Code CLI on a dev machine, dispatched locally, unattended)')
+        .violations
     ).toEqual([])
   })
 })

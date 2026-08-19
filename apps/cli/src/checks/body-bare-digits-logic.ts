@@ -228,7 +228,7 @@ function blankTokenReportSection(body: string): string {
 }
 
 /**
- * Blanks the unanchored `Tier:`/`Project:`/`For:` fallback forms — the
+ * Blanks the unanchored `Tier:`/`Project:` fallback forms — the
  * anchor-optional convention layer 3 doesn't reach (an older, pre-anchor
  * body like `#126` writes them bare, and `vinaya demo`'s own fixture PR
  * body writes a plain, unbolded `Tier: 1`).
@@ -258,23 +258,23 @@ function blankTokenReportSection(body: string): string {
  * as a real name; a segment that doesn't (a claim disguised as an extra
  * "name") stays unmasked and gets scanned like anything else.
  *
- * `For:` is a deliberate, disclosed exception, not an oversight — it has
- * no `AEG:*` anchor to fall back to at all (`ANCHOR_FIELDS` has no `FOR`
- * entry) and no existing hardened grammar to reuse (no gate reads or
- * validates it the way `pr-tier.ts`/`list-tasks.ts` do their fields): its
- * real, brief-mandated content is free text, structurally incompatible
- * with a bounded-value fix the way Tier/Project's already-validated
- * grammars make possible. Round 7 correctly reproduced this as still
- * live (`**For:** Sonnet 5 (…) — we actually fixed 4500 bugs` scores
- * zero) and correctly called the round-6 doc comment's "not a reopened
- * gap" claim inaccurate. Left open pending the Principal's call — see
- * this PR's own discussion — because closing it trades away real-corpus
- * compatibility (every existing `For:` line with a model version number,
- * e.g. `#129`'s `Claude Sonnet 5`, would need backticks) for completeness,
- * and that tradeoff is not this file's own call to make silently.
+ * `For:` used to get the same whole-line treatment `Tier:`/`Project:` had
+ * before round 6. It has no `AEG:*` anchor to fall back to at all
+ * (`ANCHOR_FIELDS` has no `FOR` entry) and no existing hardened grammar to
+ * reuse the way `Tier:`/`Project:` now do (no gate reads or validates it),
+ * so a bounded-value fix isn't available for it the way it was for the
+ * other two. Round 7 correctly reproduced the whole-line exemption as
+ * still live (`**For:** Sonnet 5 (…) — we actually fixed 4500 bugs` scored
+ * zero) and correctly called the prior doc comment's "not a reopened gap"
+ * claim inaccurate. Per the Principal's direct call: `For:` no longer gets
+ * ANY special-cased digit tolerance — the label line still parses (nothing
+ * about it needs blanking; it never itself carries a digit), but any digit
+ * in its value now needs its own backticks, same as everywhere else in the
+ * body. The real cost, same as every other identifier this redesign
+ * stopped exempting: a `For:` line naming a model version bare (`Sonnet
+ * 5`) now needs `Sonnet \`5\``, going forward — disclosed, not silent.
  */
 const PROJECT_LABEL = /^\s*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?\s*:\s*(?:\*\*)?/i
-const FOR_LABEL = /^\s*(?:\*\*)?For(?:\*\*)?\s*:/i
 
 /**
  * No line-start pre-filter before `TIER_FIELD.exec` — deliberately, because
@@ -301,13 +301,9 @@ function blankProjectField(line: string): string {
 }
 
 function blankUnanchoredStructuralFields(body: string): string {
-  const lines = body.split('\n')
-  const fill = (s: string) => ' '.repeat(s.length)
-  return lines
-    .map((l) => {
-      if (FOR_LABEL.test(l)) return fill(l)
-      return blankProjectField(blankTierField(l))
-    })
+  return body
+    .split('\n')
+    .map((l) => blankProjectField(blankTierField(l)))
     .join('\n')
 }
 
