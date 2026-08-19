@@ -242,10 +242,15 @@ const ORDINAL_VALUE = /^\p{Nd}+[a-z]?(?:[-–—]\p{Nd}+[a-z]?)?$/iu
  * words — `(tests)`/`[regressions]` (round 2 finding 2) only stay caught
  * because this list, not the grammar check, is what sees inside them.
  * Extend only when a real occurrence demands it, same discipline as a
- * premise pin.
+ * premise pin — "hang"/"retry" (round 5 security review, HIGH) are the
+ * latest: compromise tags both as a Verb even given the WHOLE surrounding
+ * clause ("12 hangs were observed in the queue" → "hangs" still Verb,
+ * PresentTense), not just standalone — the ambiguity these two specific
+ * words carry is stronger than more context can resolve, the same class
+ * of gap "test"/"bug" demonstrated in round 1.
  */
 const COUNT_NOUN =
-  /^(tests?|regressions?|bugs?|requests?|defects?|errors?|failures?|issues?|warnings?|crash(?:es)?|vulnerabilit(?:y|ies)|tickets?)$/i
+  /^(tests?|regressions?|bugs?|requests?|defects?|errors?|failures?|issues?|warnings?|crash(?:es)?|vulnerabilit(?:y|ies)|tickets?|hangs?|retr(?:y|ies))$/i
 /** Starts with a letter, ends in a run of digits (optionally dotted) with no letters after — an identifier (`C5`, `R1`, `claude-sonnet-5`, `round-9`), never a claim glued to a hyphenated phrase (`Fixed-42-bugs-in-this-pass`, which ends in letters, not digits). */
 const LETTER_LED_ID = /^[A-Za-z][A-Za-z-]*\p{Nd}[\p{Nd}.]*$/u
 
@@ -429,7 +434,27 @@ function hasDisqualifyingClaim(digitToken: string, followingWords: string[]): bo
   // `round` token, which compromise tags as a Verb here, not part of the
   // Value run).
   const doc = nlp([digitToken, ...grammarWords].join(' '))
-  return doc.match('^#Value+ #Noun+').found
+  // Adjective tolerance (round 5 security review, HIGH): strict
+  // Value-then-Noun adjacency missed an adjective wedged in between
+  // ("round 5000 critical outages", "step 200 open incidents") — the
+  // digit still directly quantifies the noun phrase, an adjective doesn't
+  // change what's being counted. Safe to add now specifically because
+  // bracketed content is filtered out of `grammarWords` before this point
+  // (see above) — tolerating an adjective is what originally let a
+  // determiner/adjective-tolerant pattern match straight into a
+  // parenthetical aside ("shape 2 (a glob technically alive...)",
+  // rejected during round 4's own design pass); with brackets excluded at
+  // the source, that specific failure mode no longer applies.
+  //
+  // Two chained `#Adjective?`, not `#Adjective*` or a parenthesized
+  // `(#Adjective)*` — verified empirically that compromise's matcher
+  // mis-parses a star-quantified tag group when it matches ZERO times
+  // here (both forms returned no match at all for the plain, no-adjective
+  // case, silently breaking every prior round's already-passing
+  // "5000 outages" shape). Chained `?` correctly handles zero, one, or
+  // two adjectives; stacking a third is unrealistic English for a
+  // narrative claim and not worth a further-untested pattern shape.
+  return doc.match('^#Value+ #Adjective? #Adjective? #Noun+').found
 }
 
 /**
@@ -455,7 +480,35 @@ function isExemptToken(rawToken: string, precedingWord: string | null, following
   if (INLINE_ENUM_MARKER.test(rawToken) || LIST_MARKER_TOKEN.test(rawToken)) return true
   if (rawToken.includes('://')) return true // a URL/markdown-link locator, not a claim
   if (core.includes('/')) {
-    if (/^[\w./-]+$/.test(core)) return true // a file path segment
+    // A file path segment — real repo paths (round 5 security review
+    // finding, HIGH, the most severe of this round: the old test here,
+    // `/^[\w./-]+$/`, only checked the CHARACTER SET was path-safe, with
+    // no requirement that the shape actually resemble a path. A bare
+    // "<number>/<word>" narrative claim ("5000/bugs were fixed",
+    // "2/failures unrelated to this change") is built entirely from
+    // path-safe characters and slipped through unconditionally, with no
+    // ordinal-word context and no interaction with the grammar/vocabulary
+    // signals at all — the most severe finding of the round precisely
+    // because it bypasses every OTHER defense in this file in one step.
+    // Now requires the shape to actually look like a path: every
+    // slash-separated segment must contain a letter (a real path segment
+    // is an identifier — `packages`, `aeg-forge-state`, `strip-code.ts` —
+    // never bare digits or a digit-led token like `5000x`), AND either
+    // two or more slashes (a real directory depth) or a recognized file
+    // extension on the last segment (`src/index.ts` — one slash is
+    // enough when there's a real filename).
+    const segments = core.split('/')
+    const everySegmentHasALetter = segments.every((seg) => /[a-zA-Z]/.test(seg))
+    const noSegmentDigitLed = segments.every((seg) => !/^\p{Nd}/u.test(seg))
+    const hasExtension = /\.[a-zA-Z]{1,8}$/.test(core)
+    if (
+      /^[\w./-]+$/.test(core) &&
+      everySegmentHasALetter &&
+      noSegmentDigitLed &&
+      (segments.length >= 3 || hasExtension)
+    ) {
+      return true
+    }
     // A slash-separated list of identifiers cited together (`§2/§9`,
     // `#126/#129/#130`) — every part must independently be an identifier
     // shape, not just the first, or a real claim glued to a real ref by a

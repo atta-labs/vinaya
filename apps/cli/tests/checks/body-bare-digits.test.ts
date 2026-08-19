@@ -347,6 +347,40 @@ describe('body-bare-digits — must fail: narrative quantitative claims', () => 
   it('a count noun wrapped in straight ASCII quotes is still caught — a leading-strip regression found re-verifying round 4 against this task\'s own PR body ("0"\'s object)', () => {
     expect(checkBareDigits('step 200 "tests" failed silently.').violations.length).toBeGreaterThan(0)
   })
+
+  // Security review round 5 (this task, live) — two HIGH findings in a
+  // wholly different part of the file than rounds 1–4 ever touched.
+  it('does not let a bare "<number>/<word>" claim launder as a file path segment (round 5 finding 1, HIGH — bypasses every other signal in the file, no ordinal-word context needed)', () => {
+    expect(checkBareDigits('5000/bugs were fixed in this release.').violations.length).toBeGreaterThan(0)
+  })
+
+  it.each([
+    ['All 138/tests passed after this change.', '138/tests'],
+    ['There are 2/failures unrelated to this change.', '2/failures'],
+    ['Coverage increased by 12/percent in this pass.', '12/percent'],
+    ['5000x/bugs were fixed in this release.', '5000x/bugs (digit-LED segment, not merely non-numeric)']
+  ])('does not let %s launder via the file-path exemption (round 5 finding 1 variants)', (body) => {
+    expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+  })
+
+  it.each([
+    ['round 5000 critical outages occurred last quarter.', 'an adjective wedged before an open-vocabulary noun'],
+    ['step 200 open incidents were reported today.', 'a different adjective, different noun'],
+    ['round 5000 new outages occurred last quarter.', 'a third adjective'],
+    ['step 200 recent incidents were reported today.', 'a fourth adjective']
+  ])('does not let %s (%s) break strict grammar adjacency (round 5 finding 2a, HIGH)', (body) => {
+    expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+  })
+
+  it.each([
+    ['step 200 retries were attempted before giving up.', 'retries'],
+    ['exit 12 hangs were observed in the queue.', 'hangs']
+  ])(
+    'does not let compromise mis-tagging %s as a Verb (even given the full clause) escape both signals (round 5 finding 2b, HIGH)',
+    (body) => {
+      expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+    }
+  )
 })
 
 // ---------- <details> masking — nesting, siblings, decoys, unterminated ----------
