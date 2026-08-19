@@ -184,7 +184,55 @@ function isInCanonicalSection(body: string, field: AnchorField, outerStart: numb
   return bounds !== null && outerStart >= bounds.start && outerStart < bounds.end
 }
 
-/** Blanks every present `AEG:*` anchor's outer region (markers included) — see module doc, layer 3. */
+/**
+ * Round 8 security review, HIGH (round 6/7's own recommendation, finally
+ * acted on — not a new finding, a real oversight last round: round 7's
+ * push fixed the unrelated structural-field BLOCKER and never came back to
+ * this one, even though it was reported live at that same head). Location
+ * alone — `isInCanonicalSection` — never closed the decoy-anchor gap, only
+ * narrowed the precondition: an attacker only has to make their decoy the
+ * FIRST anchor pair for that field INSIDE its own legitimate section, since
+ * every one of these sections is itself a legitimate free-text zone.
+ * Reproduced fresh: a decoy `AEG:PROJECT`/`AEG:CLOSES` pair in the header
+ * block, a decoy `AEG:TIER` pair under `## Scope`, a decoy `AEG:EVIDENCE`
+ * pair under `## Evidence`, each wrapping a fabricated quantitative claim
+ * with no trace of the field's own real declaration inside it — all scored
+ * zero violations.
+ *
+ * Closed the way round 7 closed the Tier/Project structural-field gap:
+ * reuse, don't invent a new classifier. Every real anchored body already
+ * repeats that field's own declaration INSIDE the pair, per the canonical
+ * template (`aeg-root/templates/pr-report-template.md`) itself — a decoy
+ * that skips reproducing it is the actual, reliable tell. `TIER`/`PROJECT`
+ * reuse the exact grammars `blankTierField`/`blankProjectField` already
+ * import for the unanchored fallback (`TIER_FIELD`, `PROJECT_LABEL`); the
+ * other four check for the literal required text the template mandates as
+ * that field's own first content: `Closes #N` (`CLOSES`), `**Premise:**`
+ * (`PREMISE`), a markdown checklist item (`TEST-PLAN`), `Head: <sha>`
+ * (`EVIDENCE`, `vinaya pr report --write`'s own emitted, never-hand-typed
+ * first line). Content failing its field's own signature is scanned as
+ * ordinary prose instead — a decoy carrying no trace of the real field it
+ * impersonates no longer borrows its trust.
+ */
+/** The `Project:`/`**Project:**` label prefix — shared by `blankProjectField` (the unanchored fallback) and `FIELD_CONTENT_SIGNATURE.PROJECT` (below). */
+const PROJECT_LABEL = /^\s*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?\s*:\s*(?:\*\*)?/i
+
+const FIELD_CONTENT_SIGNATURE: Record<AnchorField, RegExp> = {
+  CLOSES: /Closes\s*#\d+/i,
+  PROJECT: PROJECT_LABEL,
+  TIER: TIER_FIELD,
+  PREMISE: /\*\*Premise:\*\*/i,
+  'TEST-PLAN': /^\s*-\s*\[[ xX]\]/m,
+  EVIDENCE: /^Head:\s*\S/m
+}
+
+/**
+ * Blanks every present `AEG:*` anchor's outer region — see module doc,
+ * layer 3, and the `BOUNDED_ANCHOR_BLANK` doc below for why `CLOSES`/
+ * `TIER`/`PROJECT` blank only their own bounded value inside the pair
+ * (never the whole span) while `PREMISE`/`TEST-PLAN`/`EVIDENCE` still
+ * blank the whole span once their signature is found.
+ */
 function blankAnchoredRegions(body: string): string {
   let masked = body
   for (const field of ANCHOR_FIELDS) {
@@ -194,9 +242,16 @@ function blankAnchoredRegions(body: string): string {
     // is simpler than threading offset corrections, and can never
     // mis-locate a later anchor because an earlier blank moved something.
     const bounds = anchoredRegionBounds(body, field)
-    if (bounds && isInCanonicalSection(body, field, bounds.outerStart)) {
-      masked = blankRange(masked, bounds.outerStart, bounds.outerEnd)
-    }
+    if (!bounds || !isInCanonicalSection(body, field, bounds.outerStart)) continue
+    const content = body.slice(bounds.innerStart, bounds.innerEnd)
+    if (!FIELD_CONTENT_SIGNATURE[field].test(content)) continue
+    masked = blankRange(masked, bounds.outerStart, bounds.innerStart)
+    masked = blankRange(masked, bounds.innerEnd, bounds.outerEnd)
+    const boundedBlank = BOUNDED_ANCHOR_BLANK[field]
+    const blankedContent = boundedBlank
+      ? content.split('\n').map(boundedBlank).join('\n')
+      : content.replace(/[^\n]/g, ' ')
+    masked = masked.slice(0, bounds.innerStart) + blankedContent + masked.slice(bounds.innerEnd)
   }
   return masked
 }
@@ -274,7 +329,6 @@ function blankTokenReportSection(body: string): string {
  * stopped exempting: a `For:` line naming a model version bare (`Sonnet
  * 5`) now needs `Sonnet \`5\``, going forward — disclosed, not silent.
  */
-const PROJECT_LABEL = /^\s*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?\s*:\s*(?:\*\*)?/i
 
 /**
  * No line-start pre-filter before `TIER_FIELD.exec` — deliberately, because
@@ -305,6 +359,41 @@ function blankUnanchoredStructuralFields(body: string): string {
     .split('\n')
     .map((l) => blankProjectField(blankTierField(l)))
     .join('\n')
+}
+
+/**
+ * Self-discovered proactive audit (not yet reported by any review round):
+ * checking a signature is merely PRESENT inside an anchor's content is not
+ * the same as the content BEING just that value — a "trojan" anchor can
+ * carry a real, valid signature alongside a smuggled claim in the same
+ * pair (`<!-- AEG:TIER:START -->\n**Tier:** 1 and also 500 known
+ * regressions remain untriaged\n<!-- AEG:TIER:END -->`), and blanking the
+ * WHOLE span once the signature is found would hide the smuggled digit
+ * too — the identical class of gap `FIELD_CONTENT_SIGNATURE` closed for a
+ * bare decoy, reopened one level in. `CLOSES`/`TIER`/`PROJECT` have short,
+ * single-line, already-bounded real grammars (reused above for the
+ * unanchored fallback and here for the same reason): blank exactly what
+ * each field's own bounded blanker matches, per line, inside the anchor's
+ * content — never the whole span. `PREMISE`/`TEST-PLAN`/`EVIDENCE` are
+ * deliberately NOT bounded the same way: their real, legitimate content is
+ * inherently multi-line free text (assertions, checklist items, a diff
+ * stat) with no single short value to bound to, the same structural reason
+ * `For:` couldn't be bounded either — closing this for those three would
+ * need real per-field grammar validation this task has not built, and is
+ * left as an honestly documented residual, not a silent gap.
+ */
+const CLOSES_REF = /Closes\s*#\d+/i
+
+function blankClosesField(line: string): string {
+  const m = CLOSES_REF.exec(line)
+  if (!m) return line
+  return line.slice(0, m.index) + ' '.repeat(m[0].length) + line.slice(m.index + m[0].length)
+}
+
+const BOUNDED_ANCHOR_BLANK: Partial<Record<AnchorField, (line: string) => string>> = {
+  CLOSES: blankClosesField,
+  TIER: blankTierField,
+  PROJECT: blankProjectField
 }
 
 /** Full masking pipeline — see module doc for the layer order and why it's load-bearing. */

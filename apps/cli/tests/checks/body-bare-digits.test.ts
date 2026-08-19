@@ -367,6 +367,98 @@ describe('body-bare-digits — round 6: a decoy AEG:* anchor pair outside its do
   })
 })
 
+describe('body-bare-digits — round 8: an anchor placed in its own canonical section still needs its own real content signature', () => {
+  it.each([
+    [
+      'PROJECT',
+      [
+        '## Summary',
+        'text',
+        '',
+        '<!-- AEG:PROJECT:START -->',
+        'We actually observed 4500 regressions in this pass.',
+        '<!-- AEG:PROJECT:END -->'
+      ].join('\n')
+    ],
+    [
+      'CLOSES',
+      ['<!-- AEG:CLOSES:START -->', 'We actually fixed 4500 bugs in this pass.', '<!-- AEG:CLOSES:END -->'].join('\n')
+    ],
+    [
+      'TIER',
+      [
+        '## Scope',
+        '',
+        '<!-- AEG:TIER:START -->',
+        'We actually shipped 4500 unrelated fixes in this pass.',
+        '<!-- AEG:TIER:END -->'
+      ].join('\n')
+    ],
+    [
+      'EVIDENCE',
+      [
+        '## Evidence',
+        '',
+        '<!-- AEG:EVIDENCE:START -->',
+        'We measured 4500 improvements in this pass.',
+        '<!-- AEG:EVIDENCE:END -->'
+      ].join('\n')
+    ]
+  ])(
+    'a decoy %s pair correctly placed in its own section, but carrying no trace of the real field, is not trusted',
+    (_field, body) => {
+      expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+    }
+  )
+
+  // Self-discovered proactive audit (not yet reported by any review round):
+  // a signature merely being PRESENT inside the anchor is not the same as
+  // the content BEING just that value — real signature + a smuggled claim
+  // in the same pair used to blank the whole span, hiding the claim too.
+  it.each([
+    [
+      'CLOSES',
+      [
+        '<!-- AEG:CLOSES:START -->',
+        'Closes #999 -- by the way we also fixed 4500 unrelated bugs.',
+        '<!-- AEG:CLOSES:END -->'
+      ].join('\n')
+    ],
+    [
+      'TIER',
+      [
+        '## Scope',
+        '',
+        '<!-- AEG:TIER:START -->',
+        '**Tier:** 1 and also 500 known regressions remain untriaged',
+        '<!-- AEG:TIER:END -->'
+      ].join('\n')
+    ],
+    [
+      'PROJECT',
+      [
+        '<!-- AEG:PROJECT:START -->',
+        '**Project:** cli, though 500 regressions were found',
+        '<!-- AEG:PROJECT:END -->'
+      ].join('\n')
+    ]
+  ])(
+    'a "trojan" %s anchor (real signature + smuggled claim in the same pair) no longer blanks the whole span',
+    (_field, body) => {
+      expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+    }
+  )
+
+  it('still trusts real, single-value CLOSES/TIER/PROJECT anchors bounded correctly, and real multi-line PREMISE/TEST-PLAN/EVIDENCE anchors in full', () => {
+    const bodies = [
+      ['<!-- AEG:CLOSES:START -->', 'Closes #135', '<!-- AEG:CLOSES:END -->', '', '## Summary', 'text'].join('\n'),
+      ['## Scope', '', '<!-- AEG:TIER:START -->', '**Tier:** 1', '<!-- AEG:TIER:END -->'].join('\n'),
+      ['<!-- AEG:PROJECT:START -->', '**Project:** aeg-core, cli, vinaya', '<!-- AEG:PROJECT:END -->'].join('\n')
+    ]
+    for (const body of bodies) expect(checkBareDigits(body).violations).toEqual([])
+  })
+})
+
 describe('body-bare-digits — round 6: Tier:/Project: no longer blank a claim appended past the value', () => {
   it.each([
     ['Tier: 1, though 500 known regressions remain untriaged.', '500'],
