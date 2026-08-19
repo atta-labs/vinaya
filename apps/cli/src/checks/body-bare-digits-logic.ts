@@ -370,19 +370,41 @@ function blankUnanchoredStructuralFields(body: string): string {
  * regressions remain untriaged\n<!-- AEG:TIER:END -->`), and blanking the
  * WHOLE span once the signature is found would hide the smuggled digit
  * too — the identical class of gap `FIELD_CONTENT_SIGNATURE` closed for a
- * bare decoy, reopened one level in. `CLOSES`/`TIER`/`PROJECT` have short,
- * single-line, already-bounded real grammars (reused above for the
- * unanchored fallback and here for the same reason): blank exactly what
- * each field's own bounded blanker matches, per line, inside the anchor's
- * content — never the whole span. `PREMISE`/`TEST-PLAN`/`EVIDENCE` are
- * deliberately NOT bounded the same way: their real, legitimate content is
- * inherently multi-line free text (assertions, checklist items, a diff
- * stat) with no single short value to bound to, the same structural reason
- * `For:` couldn't be bounded either — closing this for those three would
- * need real per-field grammar validation this task has not built, and is
- * left as an honestly documented residual, not a silent gap.
+ * bare decoy, reopened one level in.
+ *
+ * `CLOSES`/`TIER`/`PROJECT` are bounded per line inside their anchor,
+ * reusing the same short, single-line grammars already reused above for
+ * the unanchored fallback. `EVIDENCE` is bounded too — its content is
+ * machine-emitted only (`vinaya pr report --write`, never hand-typed) and,
+ * past `maskCode`'s own masking of its inline-code/fenced-diff-stat spans
+ * (already run, layer 1), the only lines that ever remain are the `Head:
+ * <sha>` line and `### Group A/B — …` headings — confirmed against every
+ * real corpus body this task has verified against
+ * (`#126`/`#129`/`#130`/`#132`/`#136`), not assumed.
+ *
+ * `PREMISE`/`TEST-PLAN` were tried the same way — `isPremiseHeader`/
+ * `PREMISE_LINE` and `TEST_PLAN_CHECKLIST_ITEM` (`@attalabs/aeg-core`,
+ * both exported additively for this) — and reverted after re-verifying
+ * against the real corpus surfaced a real regression, not a theoretical
+ * one: both fields' genuine, legitimate content is NOT just a single
+ * header/bullet/checklist line each — real Test Plan items in `#130`/
+ * `#136` carry indented, multi-paragraph continuation prose UNDER the
+ * checklist line explaining the evidence (fixture output, byte counts,
+ * exit codes), and real Premise/Test-Plan sections in `#136` do the same;
+ * bounding to just the first-line shape newly flagged that real,
+ * already-shipped continuation content as bare violations (`#130` 2→5,
+ * `#136` 21→31 on the exact same corpus, re-verified before this landed).
+ * These two fields remain whole-span, same as `For:` and for the
+ * identical structural reason: their real grammar permits free text
+ * beyond a single bounded line, so a line-level bound can't be tightened
+ * without breaking real, already-correct usage. The trojan gap for these
+ * two specifically is the one honestly documented residual left after
+ * this round — narrower than before (four of six fields closed, not
+ * zero), not silently reopened.
  */
 const CLOSES_REF = /Closes\s*#\d+/i
+const EVIDENCE_HEADING = /^#{1,6}\s/
+const EVIDENCE_HEAD_LINE = /^Head:\s*\S+$/i
 
 function blankClosesField(line: string): string {
   const m = CLOSES_REF.exec(line)
@@ -390,10 +412,18 @@ function blankClosesField(line: string): string {
   return line.slice(0, m.index) + ' '.repeat(m[0].length) + line.slice(m.index + m[0].length)
 }
 
+function blankEvidenceField(line: string): string {
+  const trimmed = line.trim()
+  if (trimmed === '' || EVIDENCE_HEAD_LINE.test(trimmed) || EVIDENCE_HEADING.test(trimmed))
+    return ' '.repeat(line.length)
+  return line
+}
+
 const BOUNDED_ANCHOR_BLANK: Partial<Record<AnchorField, (line: string) => string>> = {
   CLOSES: blankClosesField,
   TIER: blankTierField,
-  PROJECT: blankProjectField
+  PROJECT: blankProjectField,
+  EVIDENCE: blankEvidenceField
 }
 
 /** Full masking pipeline — see module doc for the layer order and why it's load-bearing. */

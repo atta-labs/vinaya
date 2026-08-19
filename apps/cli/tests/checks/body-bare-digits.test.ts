@@ -1,3 +1,5 @@
+import { statSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { checkBareDigits } from '../../src/checks/body-bare-digits-logic'
 
@@ -352,9 +354,13 @@ describe('body-bare-digits — round 6: a decoy AEG:* anchor pair outside its do
         '- a.ts contains: export function f',
         '<!-- AEG:PREMISE:END -->'
       ].join('\n'),
-      ['## Test plan', '', '<!-- AEG:TEST-PLAN:START -->', '- [x] 163 pass, 0 fail', '<!-- AEG:TEST-PLAN:END -->'].join(
-        '\n'
-      ),
+      [
+        '## Test plan',
+        '',
+        '<!-- AEG:TEST-PLAN:START -->',
+        '- [x] **[agent]** 163 pass, 0 fail',
+        '<!-- AEG:TEST-PLAN:END -->'
+      ].join('\n'),
       [
         '## Evidence',
         '',
@@ -456,6 +462,61 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
       ['<!-- AEG:PROJECT:START -->', '**Project:** aeg-core, cli, vinaya', '<!-- AEG:PROJECT:END -->'].join('\n')
     ]
     for (const body of bodies) expect(checkBareDigits(body).violations).toEqual([])
+  })
+
+  // Bounding PREMISE/TEST-PLAN per line (the same way CLOSES/TIER/PROJECT
+  // are bounded above) was tried and reverted: real corpus verification
+  // (#130, #136) found real Test Plan items carry indented, multi-line
+  // continuation prose UNDER the checklist line — fixture output, byte
+  // counts, exit codes — that a first-line-only bound wrongly flagged.
+  // This proves that real shape still passes in full.
+  it('a real Test Plan item with indented multi-line continuation evidence stays fully exempt (the exact real-corpus shape #130/#136 use)', () => {
+    const body = [
+      '## Test plan',
+      '',
+      '<!-- AEG:TEST-PLAN:START -->',
+      '- [x] **[agent]** Piped-vs-redirected byte counts on the oversized fixture: `| wc -c` and `> file` now produce the same count.',
+      '',
+      '  ```',
+      '  === piped ===',
+      '     1967109',
+      '  === redirected ===',
+      '     1967118',
+      '  ```',
+      '  (The 9-byte difference is a newline-counting quirk; both captures are the complete payload.)',
+      '<!-- AEG:TEST-PLAN:END -->'
+    ].join('\n')
+    expect(checkBareDigits(body).violations).toEqual([])
+  })
+
+  // Documented, honest residual (not silently reopened) — the identical
+  // trojan shape closed above for CLOSES/TIER/PROJECT stays open for
+  // PREMISE/TEST-PLAN specifically, because their real grammar permits
+  // free text beyond a single bounded line (a Premise "contains" value is
+  // legitimately arbitrary text; a Test Plan item's evidence legitimately
+  // spans multiple lines), so a line-level bound can't be tightened
+  // further without the real-corpus regression proven above.
+  it('a "trojan" PREMISE/TEST-PLAN anchor (real header + smuggled prose line) is a known, documented residual — not yet closed', () => {
+    const trojanPremise = [
+      '## Premise',
+      '',
+      '<!-- AEG:PREMISE:START -->',
+      '**Premise:**',
+      '- a.ts contains: export function f',
+      'We actually shipped 4500 unrelated fixes.',
+      '<!-- AEG:PREMISE:END -->'
+    ].join('\n')
+    expect(checkBareDigits(trojanPremise).violations).toEqual([])
+
+    const trojanTestPlan = [
+      '## Test plan',
+      '',
+      '<!-- AEG:TEST-PLAN:START -->',
+      '- [x] **[agent]** 163 pass, 0 fail',
+      'By the way we fixed 4500 unrelated bugs.',
+      '<!-- AEG:TEST-PLAN:END -->'
+    ].join('\n')
+    expect(checkBareDigits(trojanTestPlan).violations).toEqual([])
   })
 })
 
@@ -590,5 +651,15 @@ describe('body-bare-digits — <details> block masking', () => {
   it('a stray unmatched </details> with no opener is left untouched (inert, not a region boundary)', () => {
     const body = ['138 passed.', '', '</details>', '', '163 passed.'].join('\n')
     expect(violationLines(body).length).toBe(2)
+  })
+})
+
+// ---------- check bin ships executable — round 1's own MINOR, open since the very first push ----------
+
+describe('body-bare-digits — check bin file mode', () => {
+  it('check-body-bare-digits.ts ships with mode 100755 — the exact class of bug that caused red CI in round 1 of this PR', () => {
+    const binPath = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin', 'check-body-bare-digits.ts')
+    const mode = statSync(binPath).mode & 0o777
+    expect(mode).toBe(0o755)
   })
 })
