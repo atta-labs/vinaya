@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -9,6 +9,7 @@ import {
   locateBody,
   parseAmendArgs,
   parseEdgeFlag,
+  readSharedPackages,
   resolveMilestoneToAttach,
   resolveShippableArgs,
   runAmendDeps,
@@ -383,5 +384,108 @@ describe('runAmendDeps', () => {
     expect(edited[0]?.issue).toBe('429')
     expect(edited[0]?.body).toContain('**Amendment (2026-07-13, Planner)')
     expect(logs.some((l) => l.includes('Depends-on: [1, 3a, 3b] → [2, 3]'))).toBe(true)
+  })
+})
+
+describe('readSharedPackages', () => {
+  function makeFixtureRepo(): string {
+    return mkdtempSync(join(tmpdir(), 'open-issue-blast-radius-'))
+  }
+
+  it('runs live against this repo — derived packages/* + present built-in defaults, zero-file, no error', () => {
+    // No `.aeg/packages` in this repo, and its `vinaya.config.json` carries no
+    // `blastRadius` field — this is the "brand-new adopter" shape Part 3
+    // exists to make work. The default REPO_ROOT is this checkout.
+    const result = readSharedPackages()
+    expect(result).toContain('packages/aeg-core')
+    expect(result).toContain('packages/aeg-forge-state')
+    expect(result).toContain('bun.lock')
+    expect(result).toContain('turbo.json')
+    expect(result).toContain('.github/workflows')
+    // This repo has no `.husky` directory (hooks are tracked elsewhere) — the
+    // presence-check must not fabricate a domain for a path that isn't there.
+    expect(result).not.toContain('.husky')
+  })
+
+  it('derives + defaults from a fixture repo with zero .aeg/packages and zero vinaya.config.json', () => {
+    const dir = makeFixtureRepo()
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
+      mkdirSync(join(dir, 'packages/foo'), { recursive: true })
+      mkdirSync(join(dir, 'packages/bar'), { recursive: true })
+      writeFileSync(join(dir, 'bun.lock'), '', 'utf8')
+      writeFileSync(join(dir, 'turbo.json'), '{}', 'utf8')
+
+      const result = readSharedPackages(dir)
+      expect(result.sort()).toEqual(['bun.lock', 'packages/bar', 'packages/foo', 'turbo.json'].sort())
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('an empty directory (no package.json, no defaults present) derives nothing — check A stays dormant', () => {
+    const dir = makeFixtureRepo()
+    try {
+      expect(readSharedPackages(dir)).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('legacy .aeg/packages entries ADD to the derived + default set, never replace it', () => {
+    const dir = makeFixtureRepo()
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
+      mkdirSync(join(dir, 'packages/foo'), { recursive: true })
+      writeFileSync(join(dir, 'bun.lock'), '', 'utf8')
+      mkdirSync(join(dir, '.aeg'), { recursive: true })
+      writeFileSync(join(dir, '.aeg/packages'), '# comment\n\nmigrations/legacy\n', 'utf8')
+
+      const result = readSharedPackages(dir)
+      expect(result).toContain('packages/foo')
+      expect(result).toContain('bun.lock')
+      expect(result).toContain('migrations/legacy')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("vinaya.config.json's blastRadius.extraDomains ADDS to the derived + default set", () => {
+    const dir = makeFixtureRepo()
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
+      mkdirSync(join(dir, 'packages/foo'), { recursive: true })
+      writeFileSync(
+        join(dir, 'vinaya.config.json'),
+        JSON.stringify({ blastRadius: { extraDomains: ['migrations/codegen'] } }),
+        'utf8'
+      )
+
+      const result = readSharedPackages(dir)
+      expect(result).toContain('packages/foo')
+      expect(result).toContain('migrations/codegen')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('both legacy .aeg/packages AND vinaya.config.json extraDomains apply together, deduplicated', () => {
+    const dir = makeFixtureRepo()
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
+      mkdirSync(join(dir, 'packages/foo'), { recursive: true })
+      mkdirSync(join(dir, '.aeg'), { recursive: true })
+      writeFileSync(join(dir, '.aeg/packages'), 'migrations/legacy\nshared/extra\n', 'utf8')
+      writeFileSync(
+        join(dir, 'vinaya.config.json'),
+        JSON.stringify({ blastRadius: { extraDomains: ['shared/extra', 'codegen/out'] } }),
+        'utf8'
+      )
+
+      const result = readSharedPackages(dir)
+      expect(result.sort()).toEqual(['packages/foo', 'migrations/legacy', 'shared/extra', 'codegen/out'].sort())
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
