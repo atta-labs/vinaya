@@ -288,15 +288,20 @@ export function decodeNamedEntities(body: string): string {
 // fullwidth parens, CJK corner brackets all strip the same way ASCII ones
 // do now). `\p{Ps}`/`\p{Pi}` (open brackets, initial quotes) lead;
 // `\p{Pe}`/`\p{Pf}`/`\p{Po}` (close brackets, final quotes, other
-// punctuation — periods, commas, straight quotes, `*`) trail. `#`/`§` are
-// deliberately EXCLUDED from the leading class even though they are
-// `\p{Po}` too — `ISSUE_REF`/`SECTION_SYMBOL` need them left on `core`, so
-// leading strip stays a narrower category set than trailing. Backtick is a
-// Symbol (`\p{Sk}`), not Punctuation, and is listed explicitly on both
-// sides for the same reason it always was.
+// punctuation — periods, commas, `*`) trail. Straight ASCII quotes (`"`/`'`,
+// U+0022/U+0027) are `\p{Po}` (Other Punctuation), NOT `\p{Pi}`/`\p{Ps}` —
+// only the curly/directional quote marks are — so they are listed
+// EXPLICITLY on the leading side alongside the two open-bracket
+// categories, or a leading `"tests`/`'tests` would strip on the trailing
+// end only, never the front (found live re-verifying this very fix against
+// this task's own PR body: `"0"'s object` failed to classify at all).
+// `#`/`§` are deliberately still excluded from the leading class even
+// though they are `\p{Po}` too — `ISSUE_REF`/`SECTION_SYMBOL` need them
+// left on `core`. Backtick is a Symbol (`\p{Sk}`), not Punctuation, and is
+// listed explicitly on both sides for the same reason it always was.
 function stripOuterPunct(token: string): string {
   return token
-    .replace(/^[\p{Ps}\p{Pi}`*]+/u, '')
+    .replace(/^[\p{Ps}\p{Pi}"'`*]+/u, '')
     .replace(/[\p{Pe}\p{Pf}\p{Po}`*]+$/u, '')
     .replace(/['’]s$/iu, '')
     .replace(/[\p{Pe}\p{Pf}\p{Po}`*]+$/u, '')

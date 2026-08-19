@@ -343,6 +343,10 @@ describe('body-bare-digits — must fail: narrative quantitative claims', () => 
   it('documents, rather than silently reopens, the remaining long-filler-chain residual (round 4 finding 5)', () => {
     expect(checkBareDigits('step 200 of the grand total final number of tests failed.').violations).toEqual([])
   })
+
+  it('a count noun wrapped in straight ASCII quotes is still caught — a leading-strip regression found re-verifying round 4 against this task\'s own PR body ("0"\'s object)', () => {
+    expect(checkBareDigits('step 200 "tests" failed silently.').violations.length).toBeGreaterThan(0)
+  })
 })
 
 // ---------- <details> masking — nesting, siblings, decoys, unterminated ----------
