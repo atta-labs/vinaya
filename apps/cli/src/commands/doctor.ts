@@ -14,6 +14,8 @@ import { coreCheckRegistry } from '../checks/registry.js'
 import { bareKeyRejectedDiagnostic, overriddenReplacesCoreDiagnostic, resolveChecks } from '../checks/resolver.js'
 import {
   classifyDocOwnersManifest,
+  deriveBuiltinCrossCuttingDefaults,
+  deriveWorkspacePackageDomains,
   DOC_OWNERS_PATH,
   globToRegex,
   isCodeFile,
@@ -415,6 +417,79 @@ function diagnoseDocOwnersHealth(repoRoot: string): Finding[] {
 }
 
 // ---------------------------------------------------------------------------
+// blast-radius diagnostic — permanent, unconditioned on install state:
+// `checkBlastRadiusScope` (`@attalabs/aeg-core`'s `issue-validation.ts`, run
+// from `packages/aeg-core/bin/open-issue.ts`) now derives its `packages/*`
+// collision domains live from `package.json` `workspaces` and ships a
+// built-in cross-cutting default set (lockfile/monorepo-config/CI/git-hooks
+// presence-checks) — see `blast-radius-domains.ts`. The legacy static
+// `.aeg/packages` file is additive, not required, and this diagnostic is what
+// tells an adopter that: an absent file gets an `info` confirming the check
+// is live and not dormant; a present file gets a `warn` naming it deprecated
+// and listing exactly which of its entries (if any) aren't already covered by
+// derivation + defaults + `vinaya.config.json`'s `blastRadius.extraDomains` —
+// the adopter's migration checklist before deleting it.
+// ---------------------------------------------------------------------------
+const LEGACY_AEG_PACKAGES_PATH = '.aeg/packages'
+
+/** Same shape as `open-issue.ts`'s `readWorkspaces` — repeated here rather than shared because doctor's repoRoot is a diagnosed target, not `aeg-core`'s own checkout. */
+function readWorkspacesForDoctor(repoRoot: string): string[] {
+  try {
+    const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8')) as { workspaces?: unknown }
+    return Array.isArray(pkg.workspaces) ? pkg.workspaces.filter((w): w is string => typeof w === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function listChildDirsForDoctor(dir: string, repoRoot: string): string[] {
+  try {
+    return readdirSync(join(repoRoot, dir), { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+  } catch {
+    return []
+  }
+}
+
+function diagnoseBlastRadiusDeprecation(repoRoot: string, config: VinayaConfig | null): Finding[] {
+  const derived = deriveWorkspacePackageDomains(readWorkspacesForDoctor(repoRoot), (dir) =>
+    listChildDirsForDoctor(dir, repoRoot)
+  )
+  const defaults = deriveBuiltinCrossCuttingDefaults((p) => existsSync(join(repoRoot, p)))
+  const covered = new Set([...derived, ...defaults])
+  const configExtra = new Set(config?.blastRadius?.extraDomains ?? [])
+
+  const legacyPath = join(repoRoot, LEGACY_AEG_PACKAGES_PATH)
+  if (!existsSync(legacyPath)) {
+    return [
+      info(
+        'blast-radius',
+        `checkBlastRadiusScope is active via live derivation (${derived.length} packages/* domain(s)) + built-in defaults (${defaults.length} present) — no ${LEGACY_AEG_PACKAGES_PATH}, and the check is not dormant.`
+      )
+    ]
+  }
+
+  const legacyEntries = readFileSync(legacyPath, 'utf-8')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith('#'))
+  const uncovered = legacyEntries.filter((e) => !covered.has(e) && !configExtra.has(e))
+
+  const migrationNote =
+    uncovered.length === 0
+      ? 'every entry is already covered by live derivation, the built-in defaults, or vinaya.config.json blastRadius.extraDomains — the file can be deleted.'
+      : `migrate ${uncovered.length} entr${uncovered.length === 1 ? 'y' : 'ies'} not yet covered before deleting it: ${uncovered.join(', ')}.`
+
+  return [
+    warn(
+      'blast-radius',
+      `${LEGACY_AEG_PACKAGES_PATH} is deprecated — checkBlastRadiusScope now derives packages/* domains live and ships built-in cross-cutting defaults. Declare anything beyond those in vinaya.config.json's blastRadius.extraDomains instead. ${migrationNote}`
+    )
+  ]
+}
+
+// ---------------------------------------------------------------------------
 // env-loss diagnostics — permanent (not warn-phase-only like `vinaya
 // check`'s equivalent print): a check reading `process.env`/`Bun.env`/
 // `Deno.env` directly with no `env` declaration, across BOTH the core
@@ -654,6 +729,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
     findings.push(...diagnoseDocOwnersHealth(repo.repoRoot))
   }
 
+  findings.push(...diagnoseBlastRadiusDeprecation(repo.repoRoot, configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseEnvDeclarations(repo.repoRoot, configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseCheckClassification(configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseGlobalConfigChecks())

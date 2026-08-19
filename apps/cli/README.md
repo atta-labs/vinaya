@@ -45,6 +45,25 @@ Today the schema carries one surface:
 
 Both `rings` fields are plain booleans — no conditional logic. Ring 0 (git hooks) and the CI/branch-protection guarantee are never represented in this schema, by design — they are not configurable.
 
+### Blast-radius collision domains
+
+`checkBlastRadiusScope` (the AEG task-Issue gate that refuses an under-declared blast radius) needs a list of shared collision domains — paths that couple work across project boundaries. It works out of the box, with **zero adopter file**:
+
+- Every `packages/*` `package.json` `workspaces` member is derived live at check time — a shared package is a collision domain by construction, so this needs no declaration.
+- A built-in default set covers the common cross-cutting paths by presence-check: whichever lockfile exists (`bun.lock`/`package-lock.json`/`pnpm-lock.yaml`/`yarn.lock`), `turbo.json`, `biome.json`, `tsconfig.json`, `.github/workflows`, `.husky`.
+
+To declare a domain beyond those two — a `migrations/` folder, a codegen output directory — add it to `vinaya.config.json`:
+
+```json
+{
+  "blastRadius": {
+    "extraDomains": ["migrations", "packages/generated"]
+  }
+}
+```
+
+**`.aeg/packages`** (the legacy static collision-domain file some repos still carry) is deprecated but not removed: if present, its entries still add to the derived + built-in set, so upgrading never silently drops coverage. `vinaya doctor` reports it when found, naming exactly which of its entries (if any) aren't already covered by derivation, the built-in defaults, or `blastRadius.extraDomains` — the migration checklist before deleting it.
+
 ## Where the git hooks live
 
 `vinaya init` installs the ring-0 hooks (`pre-commit`, `pre-push`) into a **tracked** `.vinaya/hooks/` directory and points git at it with `git config core.hooksPath .vinaya/hooks` — commit that directory. Raw `.git/hooks` is never versioned by git, so hooks installed there exist only on the installing machine; tracked hooks travel with the repo into every clone and every linked worktree checkout.
