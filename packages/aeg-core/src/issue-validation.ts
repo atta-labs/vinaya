@@ -488,8 +488,14 @@ const BLAST_RADIUS_ACK_RE = /(?:\*\*)?blast-radius-ack(?:\*\*)?\s*[:—–-]/i
  * the derivation come to disagree about what a task even declares — so do not
  * add a second regex here, nor a pre-clean step that makes one "usually" agree.
  *
- * Dormant when `sharedPackages` is empty (no `.aeg/packages` on disk) — the
- * same seam-is-dormant-when-absent shape `doc-owners` uses. The check cannot be
+ * Dormant when `sharedPackages` is empty. As of `open-issue.ts`'s
+ * `readSharedPackages`, that only happens on a repo with no `packages/*`
+ * workspace member, none of the built-in cross-cutting defaults present, no
+ * legacy `.aeg/packages`, and no `vinaya.config.json` `blastRadius.extraDomains`
+ * — a genuinely edge-case repo, not the common "adopter never wrote the file"
+ * case this dormancy used to hide. This function itself stays source-blind —
+ * it takes the resolved list, never reads disk — the same
+ * seam-is-dormant-when-absent shape `doc-owners` uses. The check cannot be
  * deterministic without its source of truth, and inventing one inline is worse
  * than not running.
  */

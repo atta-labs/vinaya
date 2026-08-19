@@ -55,7 +55,7 @@ A tranche (`aeg-root/tranches/<name>.md`) is a **thin topology file**: task→Is
 
 ## 6. Conflicts and the two dispatch gates
 
-Conflicts are **declared, package-level, and static** (collision domains in `.aeg/packages`) — there is **no dynamic path-overlap scanner**. When unsure two tasks collide, declare the conflict and serialize. Two gates, both forge-answerable with zero stored state:
+Conflicts are **package-level, and mostly derived, not hand-declared** (collision domains live-derived from `package.json`'s `packages/*` workspace members, plus a built-in cross-cutting default set — a legacy static `.aeg/packages` file or `vinaya.config.json`'s `blastRadius.extraDomains` add anything beyond that) — there is **no dynamic path-overlap scanner**. When unsure two tasks collide, declare the conflict and serialize. Two gates, both forge-answerable with zero stored state:
 - never start a task whose `depends-on` isn't **merged**;
 - never start a task while a `conflicts-with` sibling's **PR is open**.
 

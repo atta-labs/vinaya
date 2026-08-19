@@ -502,3 +502,94 @@ describe('vinaya doctor — doc-owners binding health', () => {
     expect(snapshot(root)).toEqual(before)
   })
 })
+
+describe('vinaya doctor — blast-radius deprecation', () => {
+  it('no package.json, no .aeg/packages — check is active with zero derived/default domains, not dormant', async () => {
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'blast-radius')
+    expect(hit?.severity).toBe('info')
+    expect(hit?.message).toContain('0 packages/* domain(s)')
+    expect(hit?.message).toContain('0 present')
+    expect(hit?.message).toContain('not dormant')
+  })
+
+  it('a real package.json + present defaults, no .aeg/packages — reports the live counts, not dormant', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
+    mkdirSync(join(root, 'packages/foo'), { recursive: true })
+    mkdirSync(join(root, 'packages/bar'), { recursive: true })
+    writeFileSync(join(root, 'turbo.json'), '{}', 'utf8')
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'blast-radius')
+    expect(hit?.severity).toBe('info')
+    expect(hit?.message).toContain('2 packages/* domain(s)')
+    expect(hit?.message).toContain('1 present')
+  })
+
+  it('a pnpm adopter (pnpm-workspace.yaml, no `workspaces` key in package.json) still derives packages/* domains', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'root' }), 'utf8')
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n", 'utf8')
+    mkdirSync(join(root, 'packages/foo'), { recursive: true })
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'blast-radius')
+    expect(hit?.severity).toBe('info')
+    expect(hit?.message).toContain('1 packages/* domain(s)')
+  })
+
+  it('.aeg/packages present, fully covered by derivation + defaults — deprecated, safe to delete', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
+    mkdirSync(join(root, 'packages/foo'), { recursive: true })
+    mkdirSync(join(root, '.aeg'), { recursive: true })
+    writeFileSync(join(root, '.aeg/packages'), 'packages/foo\n', 'utf8')
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'blast-radius')
+    expect(hit?.severity).toBe('warn')
+    expect(hit?.message).toContain('deprecated')
+    expect(hit?.message).toContain('the file can be deleted')
+  })
+
+  it('.aeg/packages present with an entry NOT covered — names exactly it as needing migration', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
+    mkdirSync(join(root, 'packages/foo'), { recursive: true })
+    mkdirSync(join(root, '.aeg'), { recursive: true })
+    writeFileSync(join(root, '.aeg/packages'), 'packages/foo\nmigrations/legacy\n', 'utf8')
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'blast-radius')
+    expect(hit?.severity).toBe('warn')
+    expect(hit?.message).toContain('migrate 1 entry')
+    expect(hit?.message).toContain('migrations/legacy')
+    expect(hit?.message).not.toContain('packages/foo not')
+  })
+
+  it('an entry already declared in vinaya.config.json blastRadius.extraDomains does not need migrating', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
+    mkdirSync(join(root, 'packages/foo'), { recursive: true })
+    mkdirSync(join(root, '.aeg'), { recursive: true })
+    writeFileSync(join(root, '.aeg/packages'), 'packages/foo\nmigrations/legacy\n', 'utf8')
+    writeFileSync(
+      join(root, CONFIG_PATH),
+      JSON.stringify({ blastRadius: { extraDomains: ['migrations/legacy'] } }),
+      'utf8'
+    )
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'blast-radius')
+    expect(hit?.severity).toBe('warn')
+    expect(hit?.message).toContain('the file can be deleted')
+  })
+
+  it('never mutates: fixture tree is byte-identical before and after this diagnostic runs', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
+    mkdirSync(join(root, 'packages/foo'), { recursive: true })
+    mkdirSync(join(root, '.aeg'), { recursive: true })
+    writeFileSync(join(root, '.aeg/packages'), 'packages/foo\nmigrations/legacy\n', 'utf8')
+    const before = snapshot(root)
+
+    await runDoctorJson()
+
+    expect(snapshot(root)).toEqual(before)
+  })
+})

@@ -4,6 +4,12 @@ export type { DoctrineContent, DoctrineSource } from './doctrine-source'
 export { ANCHOR_FIELDS, anchoredRegion, anchoredRegionBounds } from './anchored-region'
 export type { AnchorField } from './anchored-region'
 export { parseRegistry } from './parse-registry'
+export {
+  CROSS_CUTTING_CANDIDATES,
+  deriveBuiltinCrossCuttingDefaults,
+  deriveWorkspacePackageDomains,
+  parsePnpmWorkspaceYaml
+} from './blast-radius-domains'
 export { parseTranche } from './parse-tranche'
 export { deriveTranche } from './derive-tranche'
 export { parseLedger, rowFromCells } from './parse-ledger'
