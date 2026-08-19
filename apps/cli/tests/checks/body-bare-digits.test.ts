@@ -228,6 +228,27 @@ describe('body-bare-digits — must fail: narrative quantitative claims', () => 
   it('does not let LETTER_LED_ID launder a claim hyphenated into a pseudo-identifier', () => {
     expect(checkBareDigits('Fixed-42-bugs-in-this-pass.').violations.length).toBeGreaterThan(0)
   })
+
+  // Security review round 2 (this task, live) — the round-1 fix
+  // (PLURAL_NOUNISH) only matched a plural suffix, so a SINGULAR count
+  // noun escaped entirely (finding 1); it also treated any word opening
+  // with `(`/`[` as an unconditional boundary without checking what was
+  // inside it, so a parenthesized/bracketed count noun laundered straight
+  // through (finding 2); and its two-word lookahead never reached a noun
+  // separated from the digit by an article/preposition (finding 3).
+  it.each([
+    ['singular count noun, no plural suffix to match (finding 1)', 'step 200 test failed.'],
+    ['another singular escape (finding 1)', 'round 5000 regression was fixed.'],
+    ['singular noun behind an adjective (finding 1)', 'Finding 999 critical bug was patched.'],
+    ['singular noun (finding 1)', 'shape 12345 request was served.'],
+    ['singular noun (finding 1)', 'exit 42 test failed silently.'],
+    ['singular noun, different ordinal word (finding 1)', 'minor 3 defect count rose sharply this week.'],
+    ['parenthesized count noun (finding 2)', 'step 200 (tests) failed silently.'],
+    ['bracketed count noun (finding 2)', 'round 5000 [regressions] were fixed.'],
+    ['noun separated by an article + preposition (finding 3)', 'step 200 of the tests failed.']
+  ])('does not let a %s escape: %s', (_label, body) => {
+    expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+  })
 })
 
 // ---------- <details> masking — nesting, siblings, decoys, unterminated ----------

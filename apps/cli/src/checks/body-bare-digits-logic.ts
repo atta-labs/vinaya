@@ -163,35 +163,32 @@ const LIST_MARKER_TOKEN = /^\d{1,9}[.)]$/
  * regressions", "shape 12345 requests" all match this word-precedes-number
  * shape exactly as "Round 2"/"exit 0" do, but are genuine claims, not
  * labels (round 1 security review finding). The `isExemptToken` caller
- * additionally requires `PLURAL_NOUNISH` to find nothing in the two words
- * following the digit before this exemption applies — see that check for
- * why "the countable noun always follows, never precedes" was the wrong
- * invariant to rely on alone.
+ * additionally requires `hasDisqualifyingCountNoun` to find nothing after
+ * the digit before this exemption applies — see that check for why "the
+ * countable noun always follows, never precedes" was the wrong invariant
+ * to rely on alone.
  */
 const ORDINAL_WORD = /^(section|part|round|major|minor|blocker|exit|finding|shape|step)s?$/i
 /** A bare ordinal after one of the words above — a single value or an `N-M`/`N–M` range (`Parts 1–3`). */
 const ORDINAL_VALUE = /^\d+[a-z]?(?:[-–—]\d+[a-z]?)?$/i
 /**
- * A word ending in a single, un-doubled, non-`-us` `s` — the surface shape
- * of an English plural count noun ("tests", "regressions", "bugs",
- * "requests"). The `(?<![su])` guard excludes "-ss"/"-us" endings that are
- * NOT plurals (`success`, `process`, `access`, `focus`, `status`) — words
- * that legitimately follow a label in this repo's own real usage ("exit 0
- * on success"). Minimum length 4 additionally excludes short function
- * words that happen to end in `s` ("was", "his", "as") from ever matching
- * at all, since `[a-z]{3,}` alone already requires 4+ total characters
- * once the trailing literal `s` is counted separately.
- *
- * Round 1 security review (this task, live): confirmed empirically that
- * `ORDINAL_WORD` + `ORDINAL_VALUE` alone let "step 200 tests", "round 5000
- * regressions", "Finding 999 critical bugs", "shape 12345 requests", and
- * "exit 42 tests" all escape as non-violations — the shipped guard only
- * covered the comma-adjacent-tally variant of this same laundering, never
- * plain word-adjacency. This is the fix: a plural noun within the two
- * words following the digit disqualifies the label reading regardless of
- * what precedes it.
+ * The closed, domain-specific vocabulary of things a PR body would
+ * plausibly report a count of — singular AND plural, since a singular
+ * count noun launders exactly as well as a plural one ("step 200 test
+ * failed" is just as fabricatable as "step 200 tests failed"; round 2
+ * security review finding). Deliberately a closed list, not a suffix
+ * heuristic (round 1 shipped `/^[a-z]{3,}(?<![su])s$/i`, an attempt to
+ * detect "looks plural" — round 2 found it: (a) never matches a singular
+ * noun at all, and (b) still isn't what "is this word a countable-claim
+ * noun" actually means, since plenty of non-count words end in a bare
+ * `s` too. A closed list is auditable by inspection instead. Extend it
+ * only when a real occurrence demands it, same discipline as a premise
+ * pin — the words below are exactly what two adversarial security rounds
+ * demonstrated escaping (test, regression, bug, request, defect) plus
+ * their obvious close relatives.
  */
-const PLURAL_NOUNISH = /^[a-z]{3,}(?<![su])s$/i
+const COUNT_NOUN =
+  /^(tests?|regressions?|bugs?|requests?|defects?|errors?|failures?|issues?|warnings?|crash(?:es)?|vulnerabilit(?:y|ies))$/i
 /** Starts with a letter, ends in a run of digits (optionally dotted) with no letters after — an identifier (`C5`, `R1`, `claude-sonnet-5`, `round-9`), never a claim glued to a hyphenated phrase (`Fixed-42-bugs-in-this-pass`, which ends in letters, not digits). */
 const LETTER_LED_ID = /^[A-Za-z][A-Za-z-]*\d[\d.]*$/
 
@@ -203,29 +200,28 @@ function stripOuterPunct(token: string): string {
     .replace(/[)\]"'`*.,;:!?]+$/, '')
 }
 
-/** A coordinating conjunction — starts a new clause, so nothing past it still describes the number. */
-const CLAUSE_CONJUNCTION = /^(and|or|but|nor)$/i
+/** Articles/prepositions that don't themselves carry the claim — skipped, not counted, when looking for the noun after them ("step 200 of the tests failed"; round 2 security review finding). */
+const FUNCTION_WORD = /^(of|the|a|an|in|on|at|to|for|with|by)$/i
 
 /**
- * Scans `followingWords` in order for a disqualifying plural-count-noun,
- * but stops at the first clause boundary — a raw word opening with `(`/`[`
- * (a parenthetical aside), or a coordinating conjunction — without
- * examining it or anything past it. A word beyond that boundary describes
- * something else, not the number ("failure shape 2 (globs technically
- * alive...)" — "globs" never modifies "2"; "exit 0 and sends a signal" —
- * "sends" is a new clause's verb, not a plural noun counting "0"). Both
- * are real corpus false-positives this boundary check closes (found while
- * re-verifying the security round 1 fix against #126/#136's real bodies).
+ * Does a `COUNT_NOUN` appear among the (up to) two CONTENT words following
+ * the digit? Reads raw words in order, skipping `FUNCTION_WORD`s without
+ * spending the two-word budget on them (closes round 2 finding 3's
+ * preposition-separated escape), and unwraps a single layer of
+ * parens/brackets via the same `stripOuterPunct` every other classification
+ * uses rather than treating an opening bracket as an automatic pass
+ * (closes round 2 finding 2's `(tests)`/`[regressions]` escape — the round
+ * 1 code special-cased `raw.startsWith('(')` to `return false` immediately,
+ * which is exactly the hole: it never even looked at the word inside).
  */
-function hasDisqualifyingPluralNoun(followingWords: string[]): boolean {
+function hasDisqualifyingCountNoun(followingWords: string[]): boolean {
+  let checked = 0
   for (const raw of followingWords) {
-    if (raw.startsWith('(') || raw.startsWith('[')) return false
     const core = stripOuterPunct(raw)
-    if (CLAUSE_CONJUNCTION.test(core)) return false
-    // A following word that is ITSELF an ordinal-word (`Parts 1–3 and
-    // Section 9` — "Section" right after a range) is the start of the
-    // NEXT label, not a disqualifying countable noun.
-    if (PLURAL_NOUNISH.test(core) && !ORDINAL_WORD.test(core)) return true
+    if (FUNCTION_WORD.test(core)) continue
+    if (checked >= 2) break
+    checked++
+    if (COUNT_NOUN.test(core)) return true
   }
   return false
 }
@@ -233,9 +229,11 @@ function hasDisqualifyingPluralNoun(followingWords: string[]): boolean {
 /**
  * Classifies one digit-bearing token found outside every masked region.
  * `precedingWord` is the previous whitespace-separated token on the same
- * (original) line, or `null` at line start. `followingWords` are the next
- * up to two whitespace-separated tokens after this one, or `[]` at line
- * end — both used only by the ordinal-word rule below.
+ * (original) line, or `null` at line start. `followingWords` are the
+ * whitespace-separated tokens after this one (the caller passes a handful
+ * — `hasDisqualifyingCountNoun` skips function words within that budget
+ * without spending its own two-content-word limit on them) — both used
+ * only by the ordinal-word rule below.
  */
 function isExemptToken(rawToken: string, precedingWord: string | null, followingWords: string[]): boolean {
   const core = stripOuterPunct(rawToken)
@@ -264,9 +262,9 @@ function isExemptToken(rawToken: string, precedingWord: string | null, following
   // pair ("Round 2", "exit 0", "MAJOR 1 —") never has a comma between the
   // word and the number; a tally's comma-separated items always do.
   //
-  // The plural-noun lookahead matters just as much, and independently: a
+  // The count-noun lookahead matters just as much, and independently: a
   // preceding label word is necessary but not sufficient (security review,
-  // this task — see PLURAL_NOUNISH's doc comment for the empirical proof).
+  // this task — see COUNT_NOUN's doc comment for the empirical proof).
   // "step 200 tests" has the identical preceding-word shape as "exit 0 on
   // success"; only checking what follows the number tells them apart.
   if (
@@ -274,7 +272,7 @@ function isExemptToken(rawToken: string, precedingWord: string | null, following
     !precedingWord.endsWith(',') &&
     ORDINAL_WORD.test(stripOuterPunct(precedingWord)) &&
     ORDINAL_VALUE.test(core) &&
-    !hasDisqualifyingPluralNoun(followingWords)
+    !hasDisqualifyingCountNoun(followingWords)
   ) {
     return true
   }
@@ -317,7 +315,10 @@ export function checkBareDigits(body: string): BareDigitScanResult {
       const before = origLine.slice(0, m.index).trimEnd()
       const precedingWord = before.length > 0 ? (before.split(/\s+/).pop() ?? null) : null
       const after = origLine.slice(m.index + m[0].length).trim()
-      const followingWords = after.length > 0 ? after.split(/\s+/).slice(0, 2) : []
+      // 6 raw tokens, not 2 — `hasDisqualifyingCountNoun` skips function
+      // words (of/the/a/…) without spending its own two-content-word
+      // budget on them, so it needs room past them in the raw slice.
+      const followingWords = after.length > 0 ? after.split(/\s+/).slice(0, 6) : []
       if (isExemptToken(rawToken, precedingWord, followingWords)) continue
       violations.push({ line: i + 1, text: origLine.trim() })
     }
