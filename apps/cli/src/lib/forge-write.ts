@@ -55,7 +55,7 @@ import {
   readTierFromPrBody
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks/contract'
-import { type BriefBuiltin, type BriefSection, loadConfig, loadConfigChecked } from './config'
+import { type BriefBuiltin, type BriefSection, VinayaConfigSchema, loadConfigChecked } from './config'
 
 // ---------------------------------------------------------------------------
 // Arg errors — a malformed `--body-file` is a refusal in the CheckError shape,
@@ -479,6 +479,24 @@ function readLegacyAegPackagesFile(root: string): string[] {
 }
 
 /**
+ * `<root>/vinaya.config.json`'s `blastRadius.extraDomains` — read WITHOUT the
+ * cwd-walking, global-fallback `loadConfig()`, same reason `doctor.ts`'s own
+ * `readConfig(repoRoot)` avoids it: this must resolve `root`'s own file, never
+ * an ancestor repo's config and never the adopter's machine-wide
+ * `~/.vinaya/config.json`. `loadConfig()` here would silently fold an
+ * unrelated global `blastRadius.extraDomains` into THIS repo's blast-radius
+ * check — a false refusal on legitimate content.
+ */
+function readConfigExtraDomains(root: string): string[] {
+  try {
+    const parsed = VinayaConfigSchema.safeParse(JSON.parse(readFileSync(join(root, 'vinaya.config.json'), 'utf8')))
+    return parsed.success ? (parsed.data.blastRadius?.extraDomains ?? []) : []
+  } catch {
+    return []
+  }
+}
+
+/**
  * The full collision-domain list `checkBlastRadiusScope` consumes: live
  * workspace derivation + built-in cross-cutting defaults + legacy
  * `.aeg/packages` + `vinaya.config.json`'s `blastRadius.extraDomains`. Mirrors
@@ -494,7 +512,7 @@ export function readSharedPackages(root: string = repoRoot()): string[] {
   const derived = deriveWorkspacePackageDomains(readWorkspaceGlobs(root), (dir) => listWorkspaceChildDirs(dir, root))
   const defaults = deriveBuiltinCrossCuttingDefaults((p) => existsSync(join(root, p)))
   const legacy = readLegacyAegPackagesFile(root)
-  const configExtra = loadConfig()?.blastRadius?.extraDomains ?? []
+  const configExtra = readConfigExtraDomains(root)
   return [...new Set([...derived, ...defaults, ...legacy, ...configExtra])]
 }
 

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { BriefSection } from '../src/lib/config'
 import {
@@ -7,6 +10,7 @@ import {
   extractLabels,
   extractTitle,
   locateBody,
+  readSharedPackages,
   resolveShippableArgs,
   validateForgeWrite,
   validateIssueContent
@@ -191,6 +195,47 @@ describe('validateIssueContent — the three content checks', () => {
       retryCommand: cmd
     })
     expect(errors).toEqual([])
+  })
+})
+
+// Regression for the code-review BLOCKER on PR #159: `readSharedPackages`'s
+// `blastRadius.extraDomains` read must be scoped to the given repo root
+// ONLY — never the cwd-walking, ancestor-resolving `loadConfig()`, which
+// would fold a DIFFERENT repo's (or the adopter's machine-wide) config into
+// this repo's blast-radius check. Same reason `doctor.ts`'s own
+// `readConfig(repoRoot)` avoids it.
+describe('readSharedPackages — config resolution is repo-root-scoped', () => {
+  it("ignores an ANCESTOR directory's vinaya.config.json — never walks up", () => {
+    const outer = mkdtempSync(join(tmpdir(), 'vinaya-outer-'))
+    try {
+      writeFileSync(
+        join(outer, 'vinaya.config.json'),
+        JSON.stringify({ blastRadius: { extraDomains: ['outer-only-domain'] } }),
+        'utf8'
+      )
+      const inner = join(outer, 'repo')
+      execFileSync('git', ['init', '--quiet', inner])
+      // No vinaya.config.json inside `inner` — only the ancestor `outer` has one.
+      const domains = readSharedPackages(inner)
+      expect(domains).not.toContain('outer-only-domain')
+    } finally {
+      rmSync(outer, { recursive: true, force: true })
+    }
+  })
+
+  it("still reads the repo-local vinaya.config.json's blastRadius.extraDomains", () => {
+    const root = mkdtempSync(join(tmpdir(), 'vinaya-local-'))
+    try {
+      writeFileSync(
+        join(root, 'vinaya.config.json'),
+        JSON.stringify({ blastRadius: { extraDomains: ['migrations'] } }),
+        'utf8'
+      )
+      const domains = readSharedPackages(root)
+      expect(domains).toContain('migrations')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 
