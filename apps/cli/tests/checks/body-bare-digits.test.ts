@@ -381,6 +381,26 @@ describe('body-bare-digits — must fail: narrative quantitative claims', () => 
       expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
     }
   )
+
+  // Self-discovered while re-verifying round 5 (not yet reported by
+  // security review, closed proactively — same context-independent-bypass
+  // shape as round 5 finding 1, in a different exemption).
+  it.each([
+    'Fixed (999) bugs in this release.',
+    'Found (163) failing tests today.',
+    'There were (42) regressions this quarter.'
+  ])(
+    'does not let INLINE_ENUM_MARKER exempt a claim unconditionally, regardless of ordinal-word context: %s',
+    (body) => {
+      expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+    }
+  )
+
+  it('still exempts a real inline-enumeration list item, "(N) <technical term>" (real body: #126)', () => {
+    expect(checkBareDigits('(1) check-evidence-fresh.ts was committed without its executable bit.').violations).toEqual(
+      []
+    )
+  })
 })
 
 // ---------- <details> masking — nesting, siblings, decoys, unterminated ----------

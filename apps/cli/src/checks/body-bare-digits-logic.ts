@@ -391,10 +391,23 @@ function clauseBoundedFollowing(followingWords: string[]): string[] {
  * need to be — `#Value+ #Noun+`'s direct-adjacency requirement means a
  * word six clauses away can never match it regardless of clause length.
  */
-function hasDisqualifyingClaim(digitToken: string, followingWords: string[]): boolean {
+/**
+ * The vocabulary-only half of the disqualifying check: does `COUNT_NOUN`
+ * appear among the (up to) four content words of the clause? Split out
+ * from `hasDisqualifyingClaim` (round 5 security review) so `isExemptToken`
+ * can apply this half ALONE to `INLINE_ENUM_MARKER` tokens — the grammar
+ * half is unsafe there. `(1) check-evidence-fresh.ts was committed...` is
+ * real, required-clean #126 text: compromise tags "check" (the first word
+ * of the hyphenated identifier) as a Noun, so the full grammar check would
+ * misread `(1)` as quantifying it — a "(N) <technical-term>" list item is
+ * exactly the shape `INLINE_ENUM_MARKER` exists to recognize as safe, and
+ * grammar tagging cannot reliably tell it apart from a genuine claim by
+ * adjacency alone the way it can for a plain ordinal-word label. The
+ * narrower, vocabulary-only signal is what actually closes the reported
+ * attack (`(999) bugs`, `(163) failing tests`) without that regression.
+ */
+function hasDisqualifyingCountNoun(followingWords: string[]): boolean {
   const clause = clauseBoundedFollowing(followingWords)
-  if (clause.length === 0) return false
-
   let checked = 0
   for (const raw of clause) {
     const core = stripOuterPunct(raw)
@@ -403,6 +416,13 @@ function hasDisqualifyingClaim(digitToken: string, followingWords: string[]): bo
     checked++
     if (COUNT_NOUN.test(core)) return true
   }
+  return false
+}
+
+function hasDisqualifyingClaim(digitToken: string, followingWords: string[]): boolean {
+  const clause = clauseBoundedFollowing(followingWords)
+  if (clause.length === 0) return false
+  if (hasDisqualifyingCountNoun(followingWords)) return true
 
   // A self-contained bracketed token ("(pass)", both the open and close on
   // the SAME token) is a parenthetical aside just as much as a bracket
@@ -477,7 +497,17 @@ function isExemptToken(rawToken: string, precedingWord: string | null, following
   ) {
     return true
   }
-  if (INLINE_ENUM_MARKER.test(rawToken) || LIST_MARKER_TOKEN.test(rawToken)) return true
+  if (LIST_MARKER_TOKEN.test(rawToken)) return true
+  // Self-discovered while re-verifying round 5 (not yet reported by
+  // security review, closed proactively): INLINE_ENUM_MARKER's "(1) X;
+  // (2) Y" shape used to exempt unconditionally, with the identical
+  // context-independent-bypass shape round 5 finding 1 reported for file
+  // paths — "Fixed (999) bugs in this release." passed at zero violations,
+  // no ordinal-word context needed. Gated on the vocabulary-only
+  // disqualifying check (NOT the full grammar check — see
+  // `hasDisqualifyingCountNoun`'s own doc for why the grammar half
+  // specifically regresses real corpus text here).
+  if (INLINE_ENUM_MARKER.test(rawToken) && !hasDisqualifyingCountNoun(followingWords)) return true
   if (rawToken.includes('://')) return true // a URL/markdown-link locator, not a claim
   if (core.includes('/')) {
     // A file path segment — real repo paths (round 5 security review
