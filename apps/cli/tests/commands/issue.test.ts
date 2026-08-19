@@ -128,12 +128,15 @@ describe('vinaya issue create --validate-only — content gate', () => {
   })
 
   it('refuses a rationale that touches a shared package without a second project or ack', () => {
-    // A real git repo with a legacy `.aeg/packages` collision-domain entry and
-    // a single-project registry that does NOT own the named domain — the
-    // shape `checkBlastRadiusScope` exists to catch.
+    // A real git repo with `vinaya.config.json`'s `blastRadius.extraDomains`
+    // declaring a collision domain, and a single-project registry that does
+    // NOT own it — the shape `checkBlastRadiusScope` exists to catch.
     execFileSync('git', ['init', '--quiet'], { cwd })
-    mkdirSync(join(cwd, '.aeg'), { recursive: true })
-    writeFileSync(join(cwd, '.aeg', 'packages'), 'packages/ui\n', 'utf8')
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({ ...ISSUE_CONFIG, blastRadius: { extraDomains: ['packages/ui'] } }),
+      'utf8'
+    )
     mkdirSync(join(cwd, '.vinaya'), { recursive: true })
     writeFileSync(
       join(cwd, '.vinaya', 'projects.md'),

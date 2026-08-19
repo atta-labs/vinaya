@@ -466,18 +466,6 @@ function listWorkspaceChildDirs(dir: string, root: string): string[] {
   }
 }
 
-/** The legacy static collision-domain list (`.aeg/packages`) — additive only, mirrors `open-issue.ts`. */
-function readLegacyAegPackagesFile(root: string): string[] {
-  try {
-    return readFileSync(join(root, '.aeg/packages'), 'utf8')
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && !l.startsWith('#'))
-  } catch {
-    return []
-  }
-}
-
 /**
  * `<root>/vinaya.config.json`'s `blastRadius.extraDomains` — read WITHOUT the
  * cwd-walking, global-fallback `loadConfig()`, same reason `doctor.ts`'s own
@@ -498,22 +486,26 @@ function readConfigExtraDomains(root: string): string[] {
 
 /**
  * The full collision-domain list `checkBlastRadiusScope` consumes: live
- * workspace derivation + built-in cross-cutting defaults + legacy
- * `.aeg/packages` + `vinaya.config.json`'s `blastRadius.extraDomains`. Mirrors
- * `open-issue.ts`'s own `readSharedPackages` (`apps/cli` cannot import that
- * bin file — see this file's header — so this is the adopter-runtime
- * equivalent, built from the same public `@attalabs/aeg-core` primitives that
- * function itself uses). A fresh adopter with none of the optional inputs
- * still gets the live-derived + built-in-default set; outside a git repo
- * this returns `[]` and the check goes dormant, never crashes.
+ * workspace derivation + built-in cross-cutting defaults +
+ * `vinaya.config.json`'s `blastRadius.extraDomains`. No knowledge of the
+ * legacy `.aeg/packages` file — retired here AND in `open-issue.ts`'s own
+ * `readSharedPackages`, in the same wave, zero backward compatibility on
+ * either side (Principal decision: no real adopter depends on it, and it's
+ * being removed from attalabs, the one real consumer, at the same time).
+ * Mirrors `open-issue.ts`'s own `readSharedPackages` otherwise (`apps/cli`
+ * cannot import that bin file — see this file's header — so this is the
+ * adopter-runtime equivalent, built from the same public
+ * `@attalabs/aeg-core` primitives that function itself uses). A fresh
+ * adopter with none of the optional inputs still gets the live-derived +
+ * built-in-default set; outside a git repo this returns `[]` and the check
+ * goes dormant, never crashes.
  */
 export function readSharedPackages(root: string = repoRoot()): string[] {
   if (!root) return []
   const derived = deriveWorkspacePackageDomains(readWorkspaceGlobs(root), (dir) => listWorkspaceChildDirs(dir, root))
   const defaults = deriveBuiltinCrossCuttingDefaults((p) => existsSync(join(root, p)))
-  const legacy = readLegacyAegPackagesFile(root)
   const configExtra = readConfigExtraDomains(root)
-  return [...new Set([...derived, ...defaults, ...legacy, ...configExtra])]
+  return [...new Set([...derived, ...defaults, ...configExtra])]
 }
 
 /** Registry rows (`.vinaya/projects.md`) — absent ⇒ nothing is owned, the check goes dormant. */

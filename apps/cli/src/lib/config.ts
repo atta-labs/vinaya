@@ -251,15 +251,16 @@ export const VinayaConfigSchema = z.object({
   // (`init`/`upgrade`/`doctor`) from the repo-root config only
   // (`readRepoCiSetup`) — a global config's `ci` is never consulted.
   ci: z.object({ setup: z.string().min(1) }).optional(),
-  // The sanctioned "I need one more blast-radius collision domain" path,
-  // replacing `.aeg/packages` going forward. `checkBlastRadiusScope`'s
-  // domain list (`packages/aeg-core/bin/open-issue.ts`'s `readSharedPackages`)
-  // is live-derived from `package.json` workspaces plus a built-in
-  // cross-cutting default set (lockfile, monorepo config, CI, git hooks); an
-  // adopter who needs a domain beyond those (a `migrations/` folder, a
-  // codegen output dir) declares it here rather than authoring a dedicated
-  // file. `.aeg/packages` still works if present — additive, not replaced —
-  // but this is the path for a fresh adopter with no such file.
+  // The sanctioned "I need one more blast-radius collision domain" path —
+  // the legacy `.aeg/packages` static file is retired, zero backward
+  // compatibility, so this is now the ONLY way to declare one beyond
+  // derivation. `checkBlastRadiusScope`'s domain list
+  // (`apps/cli/src/lib/forge-write.ts`'s `readSharedPackages`, mirroring
+  // `packages/aeg-core/bin/open-issue.ts`'s own) is live-derived from
+  // `package.json` workspaces plus a built-in cross-cutting default set
+  // (lockfile, monorepo config, CI, git hooks); an adopter who needs a
+  // domain beyond those (a `migrations/` folder, a codegen output dir)
+  // declares it here.
   blastRadius: z.object({ extraDomains: z.array(z.string()).optional() }).optional()
 })
 
