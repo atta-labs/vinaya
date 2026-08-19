@@ -255,7 +255,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'blastRadius',
     type: 'object (optional)',
     semantics: [
-      '`checkBlastRadiusScope`’s collision-domain declaration surface — the sanctioned "I need one more domain" path, replacing the legacy static `.aeg/packages` file going forward. Every `packages/*` `package.json` workspace member is derived live at check time, and a built-in default set covers the common cross-cutting paths by presence-check (whichever lockfile exists, `turbo.json`/`biome.json`/`tsconfig.json`, `.github/workflows`, `.husky`) — this key is for anything beyond those two.'
+      '`checkBlastRadiusScope`’s collision-domain declaration surface — the sanctioned "I need one more domain" path, replacing the legacy static `.aeg/packages` file going forward. Every `packages/*` workspace member is derived live at check time (from `package.json`’s `workspaces`, or `pnpm-workspace.yaml`’s `packages:` list on a pnpm repo), and a built-in default set covers the common cross-cutting paths by presence-check (whichever lockfile exists, `turbo.json`/`biome.json`/`tsconfig.json`, `.github/workflows`, `.husky`) — this key is for anything beyond those two.'
     ],
     example: `{ "blastRadius": { "extraDomains": ["migrations", "packages/generated"] } }`
   },

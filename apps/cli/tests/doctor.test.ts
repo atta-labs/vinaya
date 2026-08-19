@@ -526,6 +526,17 @@ describe('vinaya doctor — blast-radius deprecation', () => {
     expect(hit?.message).toContain('1 present')
   })
 
+  it('a pnpm adopter (pnpm-workspace.yaml, no `workspaces` key in package.json) still derives packages/* domains', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'root' }), 'utf8')
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n", 'utf8')
+    mkdirSync(join(root, 'packages/foo'), { recursive: true })
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'blast-radius')
+    expect(hit?.severity).toBe('info')
+    expect(hit?.message).toContain('1 packages/* domain(s)')
+  })
+
   it('.aeg/packages present, fully covered by derivation + defaults — deprecated, safe to delete', async () => {
     writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
     mkdirSync(join(root, 'packages/foo'), { recursive: true })

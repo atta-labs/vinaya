@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   CROSS_CUTTING_CANDIDATES,
   deriveBuiltinCrossCuttingDefaults,
-  deriveWorkspacePackageDomains
+  deriveWorkspacePackageDomains,
+  parsePnpmWorkspaceYaml
 } from './blast-radius-domains'
 
 describe('deriveWorkspacePackageDomains', () => {
@@ -98,6 +99,90 @@ describe('deriveWorkspacePackageDomains', () => {
       'packages/ui'
     ]
     expect(deriveWorkspacePackageDomains(attalabsWorkspaces, () => [])).toEqual(staticFileDomains)
+  })
+
+  it('a negated literal entry excludes exactly that domain from a co-occurring glob match', () => {
+    const workspaces = ['packages/*', '!packages/legacy']
+    const listDirs = (dir: string): string[] => (dir === 'packages' ? ['foo', 'legacy'] : [])
+    expect(deriveWorkspacePackageDomains(workspaces, listDirs)).toEqual(['packages/foo'])
+  })
+
+  it('a negated glob excludes every member it resolves to', () => {
+    const workspaces = ['packages/*', '!packages/*']
+    const listDirs = (dir: string): string[] => (dir === 'packages' ? ['foo', 'bar'] : [])
+    expect(deriveWorkspacePackageDomains(workspaces, listDirs)).toEqual([])
+  })
+
+  it('excluding one nested member leaves the shared top-level directory domain intact', () => {
+    const workspaces = [
+      'packages/agents/vada-fusion',
+      'packages/agents/vada-fusion-native',
+      '!packages/agents/vada-fusion-native'
+    ]
+    expect(deriveWorkspacePackageDomains(workspaces, () => [])).toEqual(['packages/agents'])
+  })
+
+  it('excluding every member of a directory removes that directory as a domain entirely', () => {
+    const workspaces = ['packages/agents/vada-fusion', '!packages/agents/vada-fusion']
+    expect(deriveWorkspacePackageDomains(workspaces, () => [])).toEqual([])
+  })
+
+  it('no negation entries behaves exactly as before (regression guard)', () => {
+    const workspaces = ['packages/foo', 'packages/bar']
+    expect(deriveWorkspacePackageDomains(workspaces, () => [])).toEqual(['packages/bar', 'packages/foo'])
+  })
+})
+
+describe('parsePnpmWorkspaceYaml', () => {
+  it('parses the standard block-list form, quoted entries', () => {
+    const yaml = `packages:\n  - 'packages/*'\n  - 'apps/*'\n`
+    expect(parsePnpmWorkspaceYaml(yaml)).toEqual(['packages/*', 'apps/*'])
+  })
+
+  it('parses double-quoted and bare entries in the same block', () => {
+    const yaml = `packages:\n  - "packages/*"\n  - apps/*\n`
+    expect(parsePnpmWorkspaceYaml(yaml)).toEqual(['packages/*', 'apps/*'])
+  })
+
+  it('parses the inline array form', () => {
+    const yaml = `packages: ['packages/*', 'apps/*', '!packages/legacy']\n`
+    expect(parsePnpmWorkspaceYaml(yaml)).toEqual(['packages/*', 'apps/*', '!packages/legacy'])
+  })
+
+  it('strips a trailing # comment on a list-item line', () => {
+    const yaml = `packages:\n  - 'packages/*' # everything shared\n  - 'apps/*'\n`
+    expect(parsePnpmWorkspaceYaml(yaml)).toEqual(['packages/*', 'apps/*'])
+  })
+
+  it('stops the block at the next top-level key', () => {
+    const yaml = `packages:\n  - 'packages/*'\ncatalogMode: strict\n`
+    expect(parsePnpmWorkspaceYaml(yaml)).toEqual(['packages/*'])
+  })
+
+  it('preserves a negation entry verbatim, including the leading !', () => {
+    const yaml = `packages:\n  - 'packages/*'\n  - '!packages/legacy'\n`
+    expect(parsePnpmWorkspaceYaml(yaml)).toEqual(['packages/*', '!packages/legacy'])
+  })
+
+  it('returns [] when there is no packages: key at all', () => {
+    expect(parsePnpmWorkspaceYaml('onlyBuiltDependencies:\n  - foo\n')).toEqual([])
+  })
+
+  it('returns [] on an empty file', () => {
+    expect(parsePnpmWorkspaceYaml('')).toEqual([])
+  })
+
+  it('feeds directly into deriveWorkspacePackageDomains — the real pnpm-adopter path', () => {
+    const yaml = `packages:\n  - 'packages/*'\n  - 'apps/*'\n`
+    const listDirs = (dir: string): string[] => {
+      if (dir === 'packages') return ['core', 'utils']
+      if (dir === 'apps') return ['web']
+      return []
+    }
+    expect(deriveWorkspacePackageDomains(parsePnpmWorkspaceYaml(yaml), listDirs)).toEqual([
+      'packages/core',
+      'packages/utils'
+    ])
   })
 })
 

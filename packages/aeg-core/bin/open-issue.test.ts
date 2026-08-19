@@ -432,6 +432,63 @@ describe('readSharedPackages', () => {
     }
   })
 
+  it('a pnpm adopter (pnpm-workspace.yaml, no `workspaces` key in package.json) still derives packages/* domains', () => {
+    // pnpm does not read a `workspaces` key from package.json at all — its
+    // real workspace glob lives only in pnpm-workspace.yaml. Review finding
+    // on this PR: reading only package.json silently zeroed this out for
+    // every pnpm adopter.
+    const dir = makeFixtureRepo()
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'root' }), 'utf8')
+      writeFileSync(join(dir, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n", 'utf8')
+      mkdirSync(join(dir, 'packages/foo'), { recursive: true })
+      writeFileSync(join(dir, 'pnpm-lock.yaml'), '', 'utf8')
+
+      const result = readSharedPackages(dir)
+      expect(result).toContain('packages/foo')
+      expect(result).toContain('pnpm-lock.yaml')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('package.json workspaces AND pnpm-workspace.yaml packages both contribute when both are present', () => {
+    const dir = makeFixtureRepo()
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
+      writeFileSync(join(dir, 'pnpm-workspace.yaml'), "packages:\n  - 'apps/*'\n", 'utf8')
+      mkdirSync(join(dir, 'packages/foo'), { recursive: true })
+      mkdirSync(join(dir, 'apps/bar'), { recursive: true })
+
+      const result = readSharedPackages(dir)
+      expect(result).toContain('packages/foo')
+      // apps/* has no packages/ prefix — never derived as a domain, same as
+      // any other apps/*-only workspace entry.
+      expect(result).not.toContain('apps/bar')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a workspace negation entry excludes exactly what it names, end to end through readSharedPackages', () => {
+    const dir = makeFixtureRepo()
+    try {
+      writeFileSync(
+        join(dir, 'package.json'),
+        JSON.stringify({ workspaces: ['packages/*', '!packages/legacy'] }),
+        'utf8'
+      )
+      mkdirSync(join(dir, 'packages/foo'), { recursive: true })
+      mkdirSync(join(dir, 'packages/legacy'), { recursive: true })
+
+      const result = readSharedPackages(dir)
+      expect(result).toContain('packages/foo')
+      expect(result).not.toContain('packages/legacy')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('legacy .aeg/packages entries ADD to the derived + default set, never replace it', () => {
     const dir = makeFixtureRepo()
     try {

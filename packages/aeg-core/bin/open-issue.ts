@@ -53,7 +53,11 @@ import {
   type MilestoneFacts,
   parseRationaleDeps
 } from '@attalabs/aeg-forge-state'
-import { deriveBuiltinCrossCuttingDefaults, deriveWorkspacePackageDomains } from '../src/blast-radius-domains'
+import {
+  deriveBuiltinCrossCuttingDefaults,
+  deriveWorkspacePackageDomains,
+  parsePnpmWorkspaceYaml
+} from '../src/blast-radius-domains'
 import { checkForgeTitle } from '../src/brief-validation'
 import {
   checkBlastRadiusScope,
@@ -409,17 +413,32 @@ export function runAmendDeps(flags: AmendDepsFlags, deps: AmendDepsDeps): void {
 // need happens here.
 
 /**
- * `package.json`'s `workspaces` array, or `[]` if unreadable/absent — the
- * source `deriveWorkspacePackageDomains` resolves against. `repoRoot` is
- * injectable for tests; every real caller uses the default.
+ * `package.json`'s `workspaces` array PLUS `pnpm-workspace.yaml`'s
+ * `packages:` list, concatenated — the combined source
+ * `deriveWorkspacePackageDomains` resolves against. Both are read: pnpm does
+ * not honor a `workspaces` key in `package.json` at all, so a pnpm adopter's
+ * real workspace glob lives only in `pnpm-workspace.yaml` — reading just
+ * `package.json` would silently derive zero `packages/*` domains for every
+ * such adopter (review finding on this PR). `repoRoot` is injectable for
+ * tests; every real caller uses the default.
  */
 function readWorkspaces(repoRoot: string = REPO_ROOT): string[] {
-  try {
-    const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as { workspaces?: unknown }
-    return Array.isArray(pkg.workspaces) ? pkg.workspaces.filter((w): w is string => typeof w === 'string') : []
-  } catch {
-    return []
+  const fromPackageJson = (): string[] => {
+    try {
+      const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as { workspaces?: unknown }
+      return Array.isArray(pkg.workspaces) ? pkg.workspaces.filter((w): w is string => typeof w === 'string') : []
+    } catch {
+      return []
+    }
   }
+  const fromPnpmWorkspaceYaml = (): string[] => {
+    try {
+      return parsePnpmWorkspaceYaml(readFileSync(join(repoRoot, 'pnpm-workspace.yaml'), 'utf8'))
+    } catch {
+      return []
+    }
+  }
+  return [...fromPackageJson(), ...fromPnpmWorkspaceYaml()]
 }
 
 /** Immediate child directory names of `dir` (relative to `repoRoot`) — the glob-resolution half of `deriveWorkspacePackageDomains`. */

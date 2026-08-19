@@ -49,7 +49,7 @@ Both `rings` fields are plain booleans — no conditional logic. Ring 0 (git hoo
 
 `checkBlastRadiusScope` (the AEG task-Issue gate that refuses an under-declared blast radius) needs a list of shared collision domains — paths that couple work across project boundaries. It works out of the box, with **zero adopter file**:
 
-- Every `packages/*` `package.json` `workspaces` member is derived live at check time — a shared package is a collision domain by construction, so this needs no declaration.
+- Every `packages/*` workspace member is derived live at check time — from `package.json`'s `workspaces` array, or `pnpm-workspace.yaml`'s `packages:` list on a pnpm repo (pnpm does not read `package.json`'s `workspaces` key at all) — a shared package is a collision domain by construction, so this needs no declaration. A leading `!` negates an entry, same as npm/yarn/pnpm's own workspace-glob syntax.
 - A built-in default set covers the common cross-cutting paths by presence-check: whichever lockfile exists (`bun.lock`/`package-lock.json`/`pnpm-lock.yaml`/`yarn.lock`), `turbo.json`, `biome.json`, `tsconfig.json`, `.github/workflows`, `.husky`.
 
 To declare a domain beyond those two — a `migrations/` folder, a codegen output directory — add it to `vinaya.config.json`:

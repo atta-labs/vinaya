@@ -7,7 +7,8 @@ export { parseRegistry } from './parse-registry'
 export {
   CROSS_CUTTING_CANDIDATES,
   deriveBuiltinCrossCuttingDefaults,
-  deriveWorkspacePackageDomains
+  deriveWorkspacePackageDomains,
+  parsePnpmWorkspaceYaml
 } from './blast-radius-domains'
 export { parseTranche } from './parse-tranche'
 export { deriveTranche } from './derive-tranche'

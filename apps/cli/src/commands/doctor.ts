@@ -21,6 +21,7 @@ import {
   isCodeFile,
   isUrlPointer,
   parseDocOwners,
+  parsePnpmWorkspaceYaml,
   pointerToPath
 } from '@attalabs/aeg-core'
 import {
@@ -432,14 +433,31 @@ function diagnoseDocOwnersHealth(repoRoot: string): Finding[] {
 // ---------------------------------------------------------------------------
 const LEGACY_AEG_PACKAGES_PATH = '.aeg/packages'
 
-/** Same shape as `open-issue.ts`'s `readWorkspaces` — repeated here rather than shared because doctor's repoRoot is a diagnosed target, not `aeg-core`'s own checkout. */
+/**
+ * Same shape as `open-issue.ts`'s `readWorkspaces` — repeated here rather
+ * than shared because doctor's repoRoot is a diagnosed target, not
+ * `aeg-core`'s own checkout. Reads BOTH `package.json`'s `workspaces` array
+ * and `pnpm-workspace.yaml`'s `packages:` list: pnpm does not honor a
+ * `workspaces` key in `package.json` at all, so a pnpm adopter's real
+ * workspace glob lives only in the YAML file.
+ */
 function readWorkspacesForDoctor(repoRoot: string): string[] {
-  try {
-    const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8')) as { workspaces?: unknown }
-    return Array.isArray(pkg.workspaces) ? pkg.workspaces.filter((w): w is string => typeof w === 'string') : []
-  } catch {
-    return []
+  const fromPackageJson = (): string[] => {
+    try {
+      const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8')) as { workspaces?: unknown }
+      return Array.isArray(pkg.workspaces) ? pkg.workspaces.filter((w): w is string => typeof w === 'string') : []
+    } catch {
+      return []
+    }
   }
+  const fromPnpmWorkspaceYaml = (): string[] => {
+    try {
+      return parsePnpmWorkspaceYaml(readFileSync(join(repoRoot, 'pnpm-workspace.yaml'), 'utf-8'))
+    } catch {
+      return []
+    }
+  }
+  return [...fromPackageJson(), ...fromPnpmWorkspaceYaml()]
 }
 
 function listChildDirsForDoctor(dir: string, repoRoot: string): string[] {
