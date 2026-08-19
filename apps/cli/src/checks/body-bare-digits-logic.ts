@@ -86,6 +86,7 @@
  */
 
 import { anchoredRegionBounds, ANCHOR_FIELDS } from '@attalabs/aeg-core'
+import type { AnchorField } from '@attalabs/aeg-core'
 import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
 
 export type BareDigitViolation = { line: number; text: string }
@@ -95,6 +96,91 @@ export type BareDigitScanResult = { violations: BareDigitViolation[] }
 function blankRange(text: string, start: number, end: number): string {
   const region = text.slice(start, end)
   return text.slice(0, start) + region.replace(/[^\n]/g, ' ') + text.slice(end)
+}
+
+/**
+ * The canonical section each `AEG:*` field is documented to live in
+ * (`aeg-root/templates/pr-report-template.md`): `CLOSES`/`PROJECT` sit in
+ * the header block, before the first `##` heading; the rest each sit under
+ * their own named heading. `null` marks the header-block case.
+ *
+ * Round 6 security review, HIGH: `anchoredRegionBounds` trusts ANY
+ * well-formed `<!-- AEG:<FIELD>:START -->…<!-- AEG:<FIELD>:END -->` pair
+ * anywhere in the body — correct and safe for its own designed purpose
+ * (`packages/aeg-core/src/anchored-region.ts`'s own doc: value resolution,
+ * "when a pair is present, it is authoritative"), because every other
+ * consumer (`pr-tier.ts`, `test-plan-section.ts`, `premise-check.ts`,
+ * `brief-validation.ts`, `coherence-checks.ts`) only ever reads a value
+ * FROM inside a trusted pair — it never had to ask "trusted by whom, to
+ * exempt WHAT." This check repurposes that same presence-as-trust for a
+ * different, security-relevant purpose (exempting content from a
+ * false-claim scan), a trust model `anchoredRegionBounds` was never
+ * validated against. Reproduced: a decoy
+ * `<!-- AEG:PROJECT:START -->\nWe actually observed 4500 regressions in
+ * this pass.\n<!-- AEG:PROJECT:END -->` — for a field the body doesn't
+ * otherwise anchor, placed anywhere in ordinary prose — scored zero
+ * violations.
+ *
+ * Fixed locally, in this file, deliberately not in `anchored-region.ts`
+ * itself: that module's own trust model stays correct for its actual,
+ * non-adversarial consumers, all five of which this task must not regress,
+ * and touching a shared primitive for one new consumer's stricter need is
+ * exactly the brief's own named Stop Condition — this is that call, made
+ * the narrower way. An anchor pair is trusted for EXEMPTION here only when
+ * its start marker falls inside the section that field is documented to
+ * live in. A decoy pair placed anywhere else — the exploit shape round 6
+ * found — no longer qualifies; its content is scanned as ordinary prose
+ * instead, the fail-safe direction per this task's own Constraint (flag
+ * when in doubt, never swallow).
+ */
+const FIELD_SECTION_HEADING: Record<AnchorField, RegExp | null> = {
+  CLOSES: null,
+  PROJECT: null,
+  TIER: /^scope$/i,
+  PREMISE: /^premise$/i,
+  'TEST-PLAN': /^test\s*plan$/i,
+  EVIDENCE: /^evidence$/i
+}
+
+const HEADING = /^#{1,6}\s/
+const HEADING_TEXT = /^#{1,6}\s+(.*?)\s*$/
+
+/** Char offset where the body's header block ends — the first heading line, or `body.length` if none. */
+function headerBlockEnd(body: string): number {
+  const lines = body.split('\n')
+  let offset = 0
+  for (const line of lines) {
+    if (HEADING.test(line)) return offset
+    offset += line.length + 1
+  }
+  return body.length
+}
+
+/** `[start, end)` char offsets of the first section whose heading text matches `namePattern`, or `null` if no such heading exists in this body. */
+function namedSectionBounds(body: string, namePattern: RegExp): { start: number; end: number } | null {
+  const lines = body.split('\n')
+  let offset = 0
+  let start = -1
+  let end = body.length
+  for (const line of lines) {
+    const headingText = HEADING_TEXT.exec(line)
+    if (start === -1 && headingText && namePattern.test(headingText[1] as string)) {
+      start = offset
+    } else if (start !== -1 && HEADING.test(line)) {
+      end = offset
+      break
+    }
+    offset += line.length + 1
+  }
+  return start === -1 ? null : { start, end }
+}
+
+/** Does this field's anchor pair, starting at `outerStart` in `body`, sit inside the section it's documented to live in? */
+function isInCanonicalSection(body: string, field: AnchorField, outerStart: number): boolean {
+  const pattern = FIELD_SECTION_HEADING[field]
+  if (pattern === null) return outerStart < headerBlockEnd(body)
+  const bounds = namedSectionBounds(body, pattern)
+  return bounds !== null && outerStart >= bounds.start && outerStart < bounds.end
 }
 
 /** Blanks every present `AEG:*` anchor's outer region (markers included) — see module doc, layer 3. */
@@ -107,7 +193,9 @@ function blankAnchoredRegions(body: string): string {
     // is simpler than threading offset corrections, and can never
     // mis-locate a later anchor because an earlier blank moved something.
     const bounds = anchoredRegionBounds(body, field)
-    if (bounds) masked = blankRange(masked, bounds.outerStart, bounds.outerEnd)
+    if (bounds && isInCanonicalSection(body, field, bounds.outerStart)) {
+      masked = blankRange(masked, bounds.outerStart, bounds.outerEnd)
+    }
   }
   return masked
 }
@@ -155,12 +243,47 @@ function blankTokenReportSection(body: string): string {
  * broader "any `Label:` line is exempt" rule would swallow a genuine claim
  * written as a field (`Result: 138 passed`), which this check exists to
  * catch.
+ *
+ * Round 6 security review, HIGH: this used to blank the WHOLE line once the
+ * label matched, not just the label and its own value — so a real claim
+ * appended after the value on the same line rode along unscanned.
+ * Reproduced: `Tier: 1, though 500 known regressions remain untriaged.` and
+ * `Project: cli — but 12345 tests are currently failing.` both scored zero
+ * violations. `Tier:`/`Project:` are narrowed to a BOUNDED value — blanked
+ * only up to the first clause-boundary character (`,`/`.`/an em or en dash)
+ * after the label, never the rest of the line — because their real values
+ * are always short (a digit; a short, usually digit-free project-name
+ * list), so nothing legitimate is lost, and the repro'd appended claim now
+ * sits past the boundary, unmasked, exactly where it should be scanned.
+ * `For:` is left as whole-line, deliberately not narrowed the same way: it
+ * is the one field with no `AEG:*` anchor to fall back to at all (`ANCHOR_FIELDS`
+ * has no `FOR` entry — this repo's canonical form never anchors it), and
+ * its real, required content is a full free-text sentence describing the
+ * agent/environment, not a bounded value — narrowing it the same way would
+ * break real corpus usage (`**For:** Sonnet 5 (Claude Code CLI on a dev
+ * machine, dispatched locally, unattended)`) for a field that structurally
+ * cannot be expressed as a short bounded token. A narrower, honestly
+ * documented residual specific to this one field, not a reopened gap.
  */
+const STRUCTURAL_FIELD = /^\*{0,2}(For|Tier|Project):\*{0,2}/
+const CLAUSE_BOUNDARY = /[,.–—]/
+
 function blankUnanchoredStructuralFields(body: string): string {
   const lines = body.split('\n')
-  const STRUCTURAL_FIELD = /^\*{0,2}(For|Tier|Project):\*{0,2}/
-  const fill = (line: string) => ' '.repeat(line.length)
-  return lines.map((l) => (STRUCTURAL_FIELD.test(l.trim()) ? fill(l) : l)).join('\n')
+  const fill = (s: string) => ' '.repeat(s.length)
+  return lines
+    .map((l) => {
+      const trimmed = l.trim()
+      const match = STRUCTURAL_FIELD.exec(trimmed)
+      if (!match) return l
+      if ((match[1] as string) === 'For') return fill(l)
+      const leadingWs = l.length - l.trimStart().length
+      const valueStart = leadingWs + match[0].length
+      const boundaryOffset = l.slice(valueStart).search(CLAUSE_BOUNDARY)
+      const blankEnd = boundaryOffset === -1 ? l.length : valueStart + boundaryOffset
+      return fill(l.slice(0, blankEnd)) + l.slice(blankEnd)
+    })
+    .join('\n')
 }
 
 /** Full masking pipeline — see module doc for the layer order and why it's load-bearing. */

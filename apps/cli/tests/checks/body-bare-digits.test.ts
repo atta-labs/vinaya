@@ -289,13 +289,100 @@ describe('body-bare-digits — masking-boundary integrity (normalization runs be
     // corrupt the literal anchor-tag text `blankAnchoredRegions` matches
     // against — this is the surviving, still-real reason `ZERO_WIDTH`
     // stripping runs on the whole body before any masking.
-    const body = ['<!-- AEG:TIER:START -->', '**Tier:** 1', '<!-- AEG:TIER\u200B:END -->'].join('\n')
+    const body = ['## Scope', '', '<!-- AEG:TIER:START -->', '**Tier:** 1', '<!-- AEG:TIER\u200B:END -->'].join('\n')
     expect(checkBareDigits(body).violations).toEqual([])
   })
 
   it('a named HTML entity decodes before masking runs, so it cannot corrupt a real fence marker', () => {
     const body = ['Ran the suite &amp; confirmed:', '', '```', '163 pass, 0 fail', '```'].join('\n')
     expect(violationLines(body)).toEqual([])
+  })
+})
+
+// ---------- round 6 security review: the "kept" masking layers had laundering surface of their own ----------
+
+describe('body-bare-digits — round 6: a decoy AEG:* anchor pair outside its documented section is not trusted', () => {
+  it('does not let a decoy anchor for a field the body otherwise never anchors exempt a fabricated claim', () => {
+    const body = [
+      '## Summary',
+      'Ordinary body.',
+      '',
+      '<!-- AEG:PROJECT:START -->',
+      'We actually observed 4500 regressions in this pass.',
+      '<!-- AEG:PROJECT:END -->'
+    ].join('\n')
+    expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+  })
+
+  it.each([
+    ['PREMISE', 'premise'],
+    ['EVIDENCE', 'evidence'],
+    ['TIER', 'scope']
+  ])('does not trust a decoy %s anchor sitting outside its own ## %s section', (field) => {
+    const body = [
+      '## Summary',
+      '',
+      `<!-- AEG:${field}:START -->`,
+      'We shipped 900 fixes this week.',
+      `<!-- AEG:${field}:END -->`
+    ].join('\n')
+    expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+  })
+
+  it('does not trust a decoy CLOSES anchor placed after the header block', () => {
+    const body = ['## Summary', '', '<!-- AEG:CLOSES:START -->', 'We fixed 4500 bugs.', '<!-- AEG:CLOSES:END -->'].join(
+      '\n'
+    )
+    expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+  })
+
+  it('still trusts a real anchor correctly placed under its documented section, for every field', () => {
+    const bodies = [
+      ['<!-- AEG:CLOSES:START -->', 'Closes #135', '<!-- AEG:CLOSES:END -->', '', '## Summary', 'text'].join('\n'),
+      ['## Scope', '', '<!-- AEG:TIER:START -->', '**Tier:** 1', '<!-- AEG:TIER:END -->'].join('\n'),
+      [
+        '## Premise',
+        '',
+        '<!-- AEG:PREMISE:START -->',
+        '**Premise:**',
+        '- a.ts contains: export function f',
+        '<!-- AEG:PREMISE:END -->'
+      ].join('\n'),
+      ['## Test plan', '', '<!-- AEG:TEST-PLAN:START -->', '- [x] 163 pass, 0 fail', '<!-- AEG:TEST-PLAN:END -->'].join(
+        '\n'
+      ),
+      [
+        '## Evidence',
+        '',
+        '<!-- AEG:EVIDENCE:START -->',
+        'Head: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        '<!-- AEG:EVIDENCE:END -->'
+      ].join('\n')
+    ]
+    for (const body of bodies) expect(checkBareDigits(body).violations).toEqual([])
+  })
+})
+
+describe('body-bare-digits — round 6: Tier:/Project: no longer blank a claim appended past the value', () => {
+  it.each([
+    ['Tier: 1, though 500 known regressions remain untriaged.', '500'],
+    ['Project: cli — but 12345 tests are currently failing.', '12345'],
+    ['**Tier:** 1. We also shipped 42 unrelated fixes.', '42']
+  ])('an appended claim past the clause boundary is scanned: %s', (body) => {
+    expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
+  })
+
+  it.each(['Tier: 1', '**Tier:** 1', 'Project: aeg-core, cli, vinaya', 'Project: cli'])(
+    'the field value itself is still exempt: %s',
+    (body) => {
+      expect(checkBareDigits(body).violations).toEqual([])
+    }
+  )
+
+  it('For: stays whole-line exempt — it has no AEG:* anchor to fall back to and its real value is free text', () => {
+    expect(
+      checkBareDigits('**For:** Sonnet 5 (Claude Code CLI on a dev machine, dispatched locally, unattended)').violations
+    ).toEqual([])
   })
 })
 
