@@ -8,7 +8,8 @@ import {
   extractTitle,
   locateBody,
   resolveShippableArgs,
-  validateForgeWrite
+  validateForgeWrite,
+  validateIssueContent
 } from '../src/lib/forge-write'
 
 const FORGE_FIXTURES = join(import.meta.dir, 'fixtures', 'forge')
@@ -16,6 +17,9 @@ const validPr = readFileSync(join(FORGE_FIXTURES, 'pr-valid.md'), 'utf8')
 const noTierPr = readFileSync(join(FORGE_FIXTURES, 'pr-no-tier.md'), 'utf8')
 const noRationaleIssue = readFileSync(join(FORGE_FIXTURES, 'issue-no-rationale.md'), 'utf8')
 const validIssue = readFileSync(join(FORGE_FIXTURES, 'issue-valid.md'), 'utf8')
+const blastRadiusViolationIssue = readFileSync(join(FORGE_FIXTURES, 'issue-blast-radius-violation.md'), 'utf8')
+const briefContentIssue = readFileSync(join(FORGE_FIXTURES, 'issue-brief-content.md'), 'utf8')
+const noDocPathIssue = readFileSync(join(FORGE_FIXTURES, 'issue-no-doc-path.md'), 'utf8')
 
 const PR_SECTIONS: BriefSection[] = [
   { builtin: 'tier' },
@@ -114,6 +118,79 @@ describe('validateForgeWrite — brief-schema gate', () => {
       changedFiles: ['src/thing.ts']
     })
     expect(unpinned.length).toBe(1)
+  })
+})
+
+// The three Issue-only content checks `packages/aeg-core/bin/open-issue.ts`
+// gates task Issues on — never wired into `apps/cli`'s real validation path
+// until this task. `validateIssueContent` is pure over its inputs;
+// `sharedPackages`/`projectPaths` are supplied directly here rather than
+// resolved from disk (that resolution is exercised end-to-end by
+// `tests/commands/issue.test.ts`'s "content gate" suite instead).
+describe('validateIssueContent — the three content checks', () => {
+  const cmd = 'vinaya issue create --validate-only …'
+
+  it('refuses a rationale naming a shared domain no declared project owns', () => {
+    const errors = validateIssueContent({
+      body: blastRadiusViolationIssue,
+      labels: ['vinaya/tranche:demo'],
+      sharedPackages: ['packages/ui'],
+      projectPaths: [{ name: 'vinaya', path: '.' }],
+      retryCommand: cmd
+    })
+    expect(errors.length).toBe(1)
+    expect(errors[0]?.check).toBe('issue-content')
+    expect(errors[0]?.message).toContain('blast radius')
+    expect(errors[0]?.agent_recovery_prompt).toContain('vinaya issue create')
+  })
+
+  it('passes the same body once a `blast-radius-ack:` line acknowledges the domain', () => {
+    const withAck = `${blastRadiusViolationIssue}\n\n**blast-radius-ack:** single lens is enough here.\n`
+    const errors = validateIssueContent({
+      body: withAck,
+      labels: ['vinaya/tranche:demo'],
+      sharedPackages: ['packages/ui'],
+      projectPaths: [{ name: 'vinaya', path: '.' }],
+      retryCommand: cmd
+    })
+    expect(errors).toEqual([])
+  })
+
+  it('refuses an Issue body carrying a brief-shaped section', () => {
+    const errors = validateIssueContent({
+      body: briefContentIssue,
+      labels: ['vinaya/tranche:demo'],
+      sharedPackages: [],
+      projectPaths: [],
+      retryCommand: cmd
+    })
+    expect(errors.length).toBe(1)
+    expect(errors[0]?.check).toBe('issue-content')
+    expect(errors[0]?.message).toContain('Technical surface map')
+  })
+
+  it('refuses a rationale naming no concrete doc/skill path', () => {
+    const errors = validateIssueContent({
+      body: noDocPathIssue,
+      labels: ['vinaya/tranche:demo'],
+      sharedPackages: [],
+      projectPaths: [],
+      retryCommand: cmd
+    })
+    expect(errors.length).toBe(1)
+    expect(errors[0]?.check).toBe('issue-content')
+    expect(errors[0]?.message).toContain('docs read')
+  })
+
+  it('passes a fully-formed task Issue against all three checks', () => {
+    const errors = validateIssueContent({
+      body: validIssue,
+      labels: ['vinaya/tranche:demo'],
+      sharedPackages: [],
+      projectPaths: [],
+      retryCommand: cmd
+    })
+    expect(errors).toEqual([])
   })
 })
 

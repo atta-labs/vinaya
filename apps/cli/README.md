@@ -64,6 +64,8 @@ To declare a domain beyond those two — a `migrations/` folder, a codegen outpu
 
 **`.aeg/packages`** (the legacy static collision-domain file some repos still carry) is deprecated but not removed: if present, its entries still add to the derived + built-in set, so upgrading never silently drops coverage. `vinaya doctor` reports it when found, naming exactly which of its entries (if any) aren't already covered by derivation, the built-in defaults, or `blastRadius.extraDomains` — the migration checklist before deleting it.
 
+`checkBlastRadiusScope` is one of three content checks `vinaya issue create`/`vinaya issue edit` run automatically on a task Issue (any `vinaya/tranche:*` label) — unconditional, not something `vinaya.config.json`'s `briefSchema` opts into or out of. The other two: `checkNoBriefContent` refuses an Issue body carrying a brief-shaped section (`## References`, `Technical surface map`, `Premise`, `Step 0`, `Test Plan` — those belong in the brief, not the Issue); `checkRationaleNamesDocs` refuses a rationale whose "Docs to keep coherent"/"Traps" fields name no concrete doc/skill path, unless it carries the explicit `no-doc-surface` sentinel. All three grade what the eight-field Planner rationale (`checkIssueRationale`) *says*, once that gate has confirmed the fields exist.
+
 ## Where the git hooks live
 
 `vinaya init` installs the ring-0 hooks (`pre-commit`, `pre-push`) into a **tracked** `.vinaya/hooks/` directory and points git at it with `git config core.hooksPath .vinaya/hooks` — commit that directory. Raw `.git/hooks` is never versioned by git, so hooks installed there exist only on the installing machine; tracked hooks travel with the repo into every clone and every linked worktree checkout.
