@@ -249,6 +249,26 @@ describe('body-bare-digits — must fail: narrative quantitative claims', () => 
   ])('does not let a %s escape: %s', (_label, body) => {
     expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
   })
+
+  // Security review round 3 (this task, live) — three findings distinct
+  // from the ordinal-word laundering findings 1/2/3 fixed above. Finding 1
+  // (a count noun outside the closed COUNT_NOUN vocabulary still escapes)
+  // is NOT closed here — see the module doc's "Known, accepted limitation"
+  // section; it is a structural gap in the exemption design, not a bug a
+  // regression test can pin shut.
+  it('a fullwidth-Unicode-digit claim is not invisible to the scanner (finding 2)', () => {
+    // U+FF11 U+FF13 U+FF18 = fullwidth "1","3","8" — visually and
+    // semantically "138", but NOT in `\d`'s ASCII-only range.
+    expect(checkBareDigits('All １３８ tests passed after this change.').violations.length).toBeGreaterThan(0)
+  })
+
+  it('a count noun wrapped in Unicode curly quotes does not evade the lookahead (finding 3)', () => {
+    expect(checkBareDigits('step 200 “tests” failed silently.').violations.length).toBeGreaterThan(0)
+  })
+
+  it('a count noun past two non-function filler words is still reached (finding 4)', () => {
+    expect(checkBareDigits('step 200 of the total number of tests failed.').violations.length).toBeGreaterThan(0)
+  })
 })
 
 // ---------- <details> masking — nesting, siblings, decoys, unterminated ----------

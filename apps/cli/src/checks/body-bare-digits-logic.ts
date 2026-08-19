@@ -52,6 +52,25 @@
  * is added to that list unless it is a genuine identifier convention found
  * in this repo's own real usage — when a shape is ambiguous, it is flagged,
  * never quietly exempted.
+ *
+ * Known, accepted limitation (security review round 3, live on this task —
+ * flagged, not silently shipped): the ordinal-word exemption's disqualifying
+ * lookahead (`hasDisqualifyingCountNoun`) checks the following words against
+ * `COUNT_NOUN`, a closed, named vocabulary — not a general English noun
+ * classifier. A narrative claim using a count noun outside that vocabulary
+ * ("step 200 tickets were closed", "round 5000 outages occurred") still
+ * launders past the exemption. Rounds 1 and 2 patched this same laundering
+ * class twice (a plural-suffix regex, then closed-vocabulary + bracket/
+ * article handling); round 3 proved a closed vocabulary is fundamentally
+ * incomplete by construction, not merely under-populated — no finite list
+ * closes an open-ended one. Recognizing "is this word the object a number
+ * is quantifying" in full generality is a real natural-language-grammar
+ * problem, not a solvable regex-heuristic one; continuing to patch
+ * individual escaped words here would repeat the exact whack-a-mole this
+ * comment exists to stop. The Principal has this open for a structural
+ * redesign decision (a real NLP/POS dependency, or narrowing what the
+ * ordinal-word exemption recognizes in the first place, are two live
+ * options) rather than a fourth vocabulary patch.
  */
 
 import { anchoredRegionBounds, ANCHOR_FIELDS } from '@attalabs/aeg-core'
@@ -141,13 +160,20 @@ function buildScanMask(body: string): string {
   return masked
 }
 
-const ISSUE_REF = /^#\d+$/
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
-const VERSION = /^v?\d+(?:\.\d+){2,}$/i
-const SECTION_SYMBOL = /^§\d+[a-z]?$/i
-const INLINE_ENUM_MARKER = /^\([1-9]\d{0,2}\)$/
+// `\p{Nd}` (Unicode "decimal digit number"), not `\d` — round 3 security
+// review found `\d`'s ASCII-only match let a fullwidth-digit claim
+// ("１３８ tests passed", U+FF10-FF19) bypass the scanner ENTIRELY: not an
+// exemption gap, a detection gap — the token never even became a
+// candidate. Every regex in this file that recognizes a digit shape uses
+// `\p{Nd}` (`u` flag) for the same reason, from here through
+// `LETTER_LED_ID` and `TOKEN_WITH_DIGIT` below.
+const ISSUE_REF = /^#\p{Nd}+$/u
+const ISO_DATE = /^\p{Nd}{4}-\p{Nd}{2}-\p{Nd}{2}$/u
+const VERSION = /^v?\p{Nd}+(?:\.\p{Nd}+){2,}$/iu
+const SECTION_SYMBOL = /^§\p{Nd}+[a-z]?$/iu
+const INLINE_ENUM_MARKER = /^\([1-9]\p{Nd}{0,2}\)$/u
 /** A markdown ordered-list marker's own digits: `1.` / `2)` etc. */
-const LIST_MARKER_TOKEN = /^\d{1,9}[.)]$/
+const LIST_MARKER_TOKEN = /^\p{Nd}{1,9}[.)]$/u
 /**
  * This repo's own ordinal-labeling vocabulary — a fixed, closed set drawn
  * from real usage found while corpus-testing this check against
@@ -170,7 +196,7 @@ const LIST_MARKER_TOKEN = /^\d{1,9}[.)]$/
  */
 const ORDINAL_WORD = /^(section|part|round|major|minor|blocker|exit|finding|shape|step)s?$/i
 /** A bare ordinal after one of the words above — a single value or an `N-M`/`N–M` range (`Parts 1–3`). */
-const ORDINAL_VALUE = /^\d+[a-z]?(?:[-–—]\d+[a-z]?)?$/i
+const ORDINAL_VALUE = /^\p{Nd}+[a-z]?(?:[-–—]\p{Nd}+[a-z]?)?$/iu
 /**
  * The closed, domain-specific vocabulary of things a PR body would
  * plausibly report a count of — singular AND plural, since a singular
@@ -190,36 +216,51 @@ const ORDINAL_VALUE = /^\d+[a-z]?(?:[-–—]\d+[a-z]?)?$/i
 const COUNT_NOUN =
   /^(tests?|regressions?|bugs?|requests?|defects?|errors?|failures?|issues?|warnings?|crash(?:es)?|vulnerabilit(?:y|ies))$/i
 /** Starts with a letter, ends in a run of digits (optionally dotted) with no letters after — an identifier (`C5`, `R1`, `claude-sonnet-5`, `round-9`), never a claim glued to a hyphenated phrase (`Fixed-42-bugs-in-this-pass`, which ends in letters, not digits). */
-const LETTER_LED_ID = /^[A-Za-z][A-Za-z-]*\d[\d.]*$/
+const LETTER_LED_ID = /^[A-Za-z][A-Za-z-]*\p{Nd}[\p{Nd}.]*$/u
 
+// Unicode curly quotes alongside their ASCII equivalents — round 3 security
+// review found a count noun wrapped in curly quotes ('step 200 "tests"
+// failed') evaded every strip pass here the same way the round-2 ASCII-`(`
+// bypass did; a smart-quoting editor produces these routinely, not just an
+// adversarial input.
 function stripOuterPunct(token: string): string {
   return token
-    .replace(/^[(["'`*]+/, '')
-    .replace(/[)\]"'`*.,;:!?]+$/, '')
+    .replace(/^[(["'`*“”‘’]+/, '')
+    .replace(/[)\]"'`*.,;:!?“”‘’]+$/, '')
     .replace(/['’]s$/i, '')
-    .replace(/[)\]"'`*.,;:!?]+$/, '')
+    .replace(/[)\]"'`*.,;:!?“”‘’]+$/, '')
 }
 
 /** Articles/prepositions that don't themselves carry the claim — skipped, not counted, when looking for the noun after them ("step 200 of the tests failed"; round 2 security review finding). */
 const FUNCTION_WORD = /^(of|the|a|an|in|on|at|to|for|with|by)$/i
 
 /**
- * Does a `COUNT_NOUN` appear among the (up to) two CONTENT words following
+ * Does a `COUNT_NOUN` appear among the (up to) four CONTENT words following
  * the digit? Reads raw words in order, skipping `FUNCTION_WORD`s without
- * spending the two-word budget on them (closes round 2 finding 3's
+ * spending the content-word budget on them (closes round 2 finding 3's
  * preposition-separated escape), and unwraps a single layer of
  * parens/brackets via the same `stripOuterPunct` every other classification
  * uses rather than treating an opening bracket as an automatic pass
  * (closes round 2 finding 2's `(tests)`/`[regressions]` escape — the round
  * 1 code special-cased `raw.startsWith('(')` to `return false` immediately,
  * which is exactly the hole: it never even looked at the word inside).
+ *
+ * Budget widened 2 → 4 (round 3 security review finding 4): a two-word
+ * budget only skipped FUNCTION_WORDs for free, so any OTHER filler word
+ * ("total", "number") still spent it, letting a noun four words out
+ * escape ("step 200 of the total number of tests failed" — "of"/"the"
+ * skip free, but "total"/"number" burn the whole budget before "tests"
+ * is ever reached). Four is a width, not a word list — it does not add
+ * another special case to chase, it makes the existing one reach a
+ * little further; `COUNT_NOUN` finding 1's fundamental incompleteness is
+ * the one the budget itself can't fix, see this file's module doc.
  */
 function hasDisqualifyingCountNoun(followingWords: string[]): boolean {
   let checked = 0
   for (const raw of followingWords) {
     const core = stripOuterPunct(raw)
     if (FUNCTION_WORD.test(core)) continue
-    if (checked >= 2) break
+    if (checked >= 4) break
     checked++
     if (COUNT_NOUN.test(core)) return true
   }
@@ -291,7 +332,12 @@ function isLineLeadingListMarker(line: string, matchStart: number, rawToken: str
   return /^ {0,3}$/.test(before)
 }
 
-const TOKEN_WITH_DIGIT = /\S*\d\S*/g
+// `\p{Nd}`, not `\d` — this is the base candidate-detection regex; every
+// other Unicode fix in this file is downstream of getting THIS one right,
+// since a token this never matches is never even classified (round 3
+// security review, the most severe of the three findings that round
+// produced).
+const TOKEN_WITH_DIGIT = /\S*\p{Nd}\S*/gu
 
 /**
  * Scans `body` for bare digits outside every masked region. Returns one
@@ -318,7 +364,7 @@ export function checkBareDigits(body: string): BareDigitScanResult {
       // 6 raw tokens, not 2 — `hasDisqualifyingCountNoun` skips function
       // words (of/the/a/…) without spending its own two-content-word
       // budget on them, so it needs room past them in the raw slice.
-      const followingWords = after.length > 0 ? after.split(/\s+/).slice(0, 6) : []
+      const followingWords = after.length > 0 ? after.split(/\s+/).slice(0, 12) : []
       if (isExemptToken(rawToken, precedingWord, followingWords)) continue
       violations.push({ line: i + 1, text: origLine.trim() })
     }
