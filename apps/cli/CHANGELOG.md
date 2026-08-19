@@ -1,5 +1,12 @@
 # @attalabs/vinaya
 
+## 0.16.0
+
+### Minor Changes
+
+- acb6021: `checkBlastRadiusScope` no longer requires a hand-authored `.aeg/packages` file. Its collision-domain list now derives live from `package.json`'s `packages/*` workspace members, plus a built-in cross-cutting default set (whichever lockfile exists, `turbo.json`/`biome.json`/`tsconfig.json`, `.github/workflows`, `.husky`). A legacy `.aeg/packages` file, if present, still adds its entries on top — additive, never replaced. `vinaya.config.json` gains an optional `blastRadius.extraDomains: string[]` field for anything beyond the automatic sources (a `migrations/` folder, a codegen output dir). `vinaya doctor` reports a present `.aeg/packages` as deprecated, naming exactly which entries (if any) still need migrating.
+- 285a7ba: `vinaya doctrine --role <name>` resolves straight to a specific role's doctrine (`aeg-root/roles/<name>.md`) under the same root `vinaya doctrine` (no flag) already resolves — the same `resolveDoctrineRoot()` logic, one new join applied after root resolution succeeds. The requested name is validated against the role names actually enumerated under `roles/*.md` at request time, never a hardcoded list, so an unknown name fails cleanly with the valid names listed rather than a silent bad path. This is the shared foundation every future per-agent-CLI doctrine wrapper (Claude Code, Codex, Gemini CLI, …) builds on top of.
+
 ## 0.15.0
 
 ### Minor Changes
