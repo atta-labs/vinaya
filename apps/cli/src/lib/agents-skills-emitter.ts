@@ -6,9 +6,19 @@
 //
 // Role discovery is live-scanned from the package's resolved `aeg-root/roles/*.md`,
 // never hardcoded, so additions to doctrine surface automatically in future upgrades.
+//
+// Human-only roles are excluded, not just skipped by convention. Every role file's
+// frontmatter carries an `actor: human|agent|either` field (`aeg-root/roles/*.md`) —
+// `principal` is `actor: human`, the one seat this doctrine deliberately never grants
+// an agent. A skill file telling a third-party AI tool to "Act as the AEG Principal"
+// would hand that authority to exactly the actor the model withholds it from. Filtered
+// on the same structured signal the doctrine already carries, never a hardcoded name
+// exclusion — a future human-only role is excluded automatically, the same reason role
+// discovery itself is live-scanned rather than hardcoded.
 
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import matter from 'gray-matter'
 import type { CreateFileOp } from './ops.js'
 
 export const AGENTS_SKILLS_GROUP = 'Agent skills (.agents/skills/)'
@@ -26,8 +36,10 @@ export function formatRoleTitle(roleName: string): string {
 }
 
 /**
- * Discover role names available under `<doctrineRoot>/roles/`, from `*.md` filenames.
- * Results are sorted alphabetically for deterministic, idempotent output.
+ * Discover role names available under `<doctrineRoot>/roles/`, from `*.md` filenames —
+ * excluding any role whose frontmatter declares `actor: human` (agent-skill files are
+ * only ever generated for `agent` or `either` actors). Results are sorted alphabetically
+ * for deterministic, idempotent output.
  */
 export function discoverRoleNames(doctrineRoot: string): string[] {
   const rolesDir = join(doctrineRoot, 'roles')
@@ -35,6 +47,10 @@ export function discoverRoleNames(doctrineRoot: string): string[] {
   return readdirSync(rolesDir)
     .filter((name) => name.endsWith('.md'))
     .map((name) => name.slice(0, -'.md'.length))
+    .filter((roleName) => {
+      const { data } = matter(readFileSync(join(rolesDir, `${roleName}.md`), 'utf8'))
+      return data.actor !== 'human'
+    })
     .sort()
 }
 

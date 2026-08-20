@@ -47,6 +47,25 @@ describe('agents-skills-emitter', () => {
     it('returns empty array if roles directory does not exist', () => {
       expect(discoverRoleNames(join(tempDir, 'nonexistent'))).toEqual([])
     })
+
+    it('excludes actor: human roles (principal), includes agent and either', () => {
+      const rolesDir = join(tempDir, 'roles')
+      mkdirSync(rolesDir, { recursive: true })
+      writeFileSync(join(rolesDir, 'developer.md'), '---\nactor: agent\n---\n# Developer\n')
+      writeFileSync(join(rolesDir, 'principal.md'), '---\nactor: human\n---\n# Principal\n')
+      writeFileSync(join(rolesDir, 'archivist.md'), '---\nactor: either\n---\n# Archivist\n')
+
+      const roles = discoverRoleNames(tempDir)
+      expect(roles).toEqual(['archivist', 'developer'])
+      expect(roles).not.toContain('principal')
+    })
+
+    it('excludes principal against the real bundled doctrine', () => {
+      const realRoot = join(import.meta.dir, '..', '..', '..', 'aeg-root')
+      const roles = discoverRoleNames(realRoot)
+      expect(roles).not.toContain('principal')
+      expect(roles).toContain('developer')
+    })
   })
 
   describe('renderAgentSkill', () => {
