@@ -8,8 +8,9 @@
 // physically sits, so the pointer's bytes stay machine-independent while the
 // answer stays machine-correct.
 
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
+import matter from 'gray-matter'
 import { printJson } from '../lib/envelope.js'
 import { packageRoot } from '../lib/package-root.js'
 
@@ -45,13 +46,28 @@ export function resolveDoctrineRoot(pkg: string = packageRoot(import.meta.url)):
   return null
 }
 
-/** Role names actually available under `<root>/roles/`, from `*.md` filenames — never a hardcoded list. */
+/**
+ * Role names actually available under `<root>/roles/`, from `*.md` filenames —
+ * never a hardcoded list. Excludes any role whose frontmatter declares
+ * `actor: human` (`principal`) — `--role` hands its output to a third-party
+ * agent tool as operating instructions (`.agents/skills/`, `.claude/commands/`,
+ * `.gemini/commands/` all shell out to this exact flag), so a human-only role
+ * must never resolve through it: doing so would tell an AI tool to act with
+ * the one authority this doctrine deliberately never grants an agent. Filtered
+ * on the same structured `actor` signal `agents-skills-emitter.ts`'s own
+ * `discoverRoleNames()` already uses, not a hardcoded name exclusion, so a
+ * future human-only role is excluded automatically.
+ */
 function listRoleNames(root: string): string[] {
   const rolesDir = join(root, 'roles')
   if (!existsSync(rolesDir)) return []
   return readdirSync(rolesDir)
     .filter((name) => name.endsWith('.md'))
     .map((name) => name.slice(0, -'.md'.length))
+    .filter((roleName) => {
+      const { data } = matter(readFileSync(join(rolesDir, `${roleName}.md`), 'utf8'))
+      return data.actor !== 'human'
+    })
     .sort()
 }
 
