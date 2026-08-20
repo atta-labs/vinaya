@@ -55,7 +55,7 @@ export type {
   VocabularyHit,
   VocabularyPattern
 } from './vocabulary-citation'
-export { deriveTierFromDiff, overrideActive, readTierFromPrBody } from './pr-tier'
+export { deriveTierFromDiff, overrideActive, readTierFromPrBody, TIER_FIELD } from './pr-tier'
 export {
   checkAutonomyClause,
   checkBriefSections,

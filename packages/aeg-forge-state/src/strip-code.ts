@@ -46,7 +46,78 @@
  */
 export function maskCode(body: string): string {
   const fill = (line: string) => ' '.repeat(line.length)
-  return maskIndentedCode(maskFencedCode(body, fill), fill).replace(/(`+)[^\n]*?\1/g, (m) => ' '.repeat(m.length))
+  const blocksMasked = maskIndentedCode(maskFencedCode(body, fill), fill)
+  return blocksMasked
+    .split('\n')
+    .map((line) => replaceInlineSpans(line, (span) => ' '.repeat(span.length)))
+    .join('\n')
+}
+
+/** A `<details ...>` opening tag (not the self-closed `<details/>` shape — not in real use here). */
+const DETAILS_OPEN = /<details\b[^>]*>/gi
+/** A `</details>` closing tag, tolerant of interior whitespace. */
+const DETAILS_CLOSE = /<\/details\s*>/gi
+
+/**
+ * Blanks (same-length-masks, index-preserving — this function has only one
+ * mode; every caller needs positions, not shortened text) `<details>…</details>`
+ * blocks — this repo's standing convention (`aeg-root/templates/pr-report-template.md`)
+ * for wrapping the frozen, verbatim reference-brief copy below a PR's live
+ * report, "the gates read the anchored fields above, never this block." No
+ * gate needed to make that literally true until now — `body-bare-digits`
+ * scans PR-body prose for bare digits, and a pasted brief is loaded with
+ * dates, sizes, and example figures that are quoted history, not a live
+ * claim about the PR carrying it.
+ *
+ * Tracks real GFM rendering, not CommonMark's own blank-line-terminated
+ * "Type 6" HTML block rule: GitHub renders a `<details>` spanning blank
+ * lines and nested markdown as one real collapsible element (every extant
+ * PR body using the canonical form does exactly this), so this scanner
+ * follows actual tag nesting depth instead of stopping at the first blank
+ * line, which would under-mask and leak real reference-brief prose back
+ * into the scan.
+ *
+ * **MUST run on `maskCode`'s OUTPUT, never the reverse** — call as
+ * `maskDetailsBlocks(maskCode(body))`. A `<details>` tag quoted inside a
+ * fenced block or an inline code span is already inert same-length filler
+ * by the time this runs, so it can never be mistaken for a real region
+ * boundary. Reversing the order reopens the exact decoy class
+ * `anchoredRegionBounds` closed for the `AEG:*` anchors (PR #126 review): a
+ * real narrative digit could sit between a quoted `` `<details>` `` and a
+ * real `</details>`, and this scanner would mask it by mistake, believing a
+ * real block was open when only a code-quoted example was.
+ *
+ * **Nesting.** A `<details>` may contain another `<details>` (valid GFM,
+ * real usage in worked examples). Depth-tracked, not boolean, so an inner
+ * close does not prematurely resume scanning inside a still-open outer
+ * block.
+ *
+ * **An unterminated block fails closed, on purpose** — mirroring
+ * `scanFencedCode`'s identical call for an unclosed fence
+ * (`hasUnterminatedFence`'s doc comment). A `<details>` with no matching
+ * `</details>` before end-of-body is exactly the shape a browser's own HTML
+ * parser resolves by implicitly closing the element at end-of-document, so
+ * masking to end-of-body is not a defensive guess — it matches what GitHub
+ * actually renders.
+ *
+ * A stray, unmatched `</details>` (depth already 0) is left untouched —
+ * inert text, not a region boundary; masking it would blank real prose for
+ * no reason any closer justifies.
+ */
+export function maskDetailsBlocks(body: string): string {
+  const fill = (line: string) => ' '.repeat(line.length)
+  const lines = body.split('\n')
+  let depth = 0
+
+  const out = lines.map((line) => {
+    const opens = line.match(DETAILS_OPEN)?.length ?? 0
+    const closes = line.match(DETAILS_CLOSE)?.length ?? 0
+    const maskThisLine = depth > 0 || opens > 0
+    depth = Math.max(0, depth + opens - closes)
+    return maskThisLine ? fill(line) : line
+  })
+
+  return out.join('\n')
 }
 
 /**
@@ -64,15 +135,18 @@ export function maskCode(body: string): string {
  * regex.
  *
  * Inline spans are matched by CommonMark's rule: an opening run of N backticks
- * is closed by the next run of exactly N backticks on the same line. The
- * `(`+)…\1` backreference is what makes a **double**-backtick span
- * (`` ``Closes #5`` ``) strip as one unit — an earlier `` `[^`\n]*` `` form
- * instead peeled the outer backticks as two empty spans and left the inner
- * `Closes #5` surviving as bare text (a false-green: passed the gate, but
- * GitHub, seeing a code span, refused to auto-close — PR #617 review). Fenced
- * blocks are stripped first (see `maskFencedCode`) so a fence line is never
- * mis-read as an inline span; 4-space **indented** code blocks are stripped in
- * between (see `maskIndentedCode`).
+ * is closed by the next run of exactly N backticks on the same line — see
+ * `replaceInlineSpans`'s own doc comment below for why a naive `` (`+)…\1 ``
+ * backreference gets this wrong (it can match a shorter run against a
+ * *prefix* of a longer one) and what replaced it. That correct run-matching
+ * is what makes a **double**-backtick span (`` ``Closes #5`` ``) strip as one
+ * unit — an earlier `` `[^`\n]*` `` form instead peeled the outer backticks
+ * as two empty spans and left the inner `Closes #5` surviving as bare text (a
+ * false-green: passed the gate, but GitHub, seeing a code span, refused to
+ * auto-close — PR #617 review). Fenced blocks are stripped first (see
+ * `maskFencedCode`) so a fence line is never mis-read as an inline span;
+ * 4-space **indented** code blocks are stripped in between (see
+ * `maskIndentedCode`).
  */
 /*
  * **Call this on a WHOLE body, never on a slice of one.** Every rule here is
@@ -124,7 +198,79 @@ export function stripCode(body: string, options: StripCodeOptions = {}): string 
   const blank = () => ''
   const blocksStripped = maskIndentedCode(maskFencedCode(normalised, blank), blank)
   if (options.inlineSpans === 'keep') return blocksStripped
-  return blocksStripped.replace(/(`+)[^\n]*?\1/g, '')
+  return blocksStripped
+    .split('\n')
+    .map((line) => replaceInlineSpans(line, () => ''))
+    .join('\n')
+}
+
+/**
+ * Finds and replaces CommonMark inline code spans within a single line.
+ *
+ * **Why not `/(`+)[^\n]*?\1/g`.** That regex's backreference matches the
+ * captured backtick characters as a literal substring, not as a maximal
+ * run — so a 2-backtick opener finds "its" closer inside the FIRST TWO
+ * characters of any later run, including a 3-backtick run that is not a
+ * valid closer at all. Per CommonMark, "a code span begins with a backtick
+ * string and ends with a backtick string of equal length" — the closer must
+ * itself be a backtick string (neither preceded nor followed by another
+ * backtick), not merely contain the right number of backtick characters
+ * somewhere inside a longer one. The regex's false-positive closer let a
+ * bare digit inside a mismatched-length backtick pair mask as "code" — and
+ * therefore escape `body-bare-digits`'s scan — while GitHub renders the
+ * exact same text as plain, fully visible prose with literal stray
+ * backticks (security re-review, PR #147, round 9-10).
+ *
+ * This scans backtick runs explicitly instead: an opening run's length is
+ * counted in full (so it can never be a partial run to begin with), and a
+ * candidate closer only counts if ITS run is also counted in full and
+ * matches the opener's length exactly. A run of the wrong length is not a
+ * closer — it is skipped over as ordinary text, and the search for a valid
+ * closer continues past it, exactly as real CommonMark parsers do. An
+ * opener with no valid closer anywhere on the line is left as literal
+ * backtick text (the same "raw backticks remain literal" fallback
+ * CommonMark specifies), and the scan resumes immediately after that
+ * failed run.
+ */
+function replaceInlineSpans(line: string, replace: (span: string) => string): string {
+  let result = ''
+  let i = 0
+  const runLengthAt = (at: number): number => {
+    let j = at
+    while (j < line.length && line[j] === '`') j++
+    return j - at
+  }
+  while (i < line.length) {
+    if (line[i] !== '`') {
+      result += line[i]
+      i++
+      continue
+    }
+    const openLen = runLengthAt(i)
+    const openEnd = i + openLen
+    let j = openEnd
+    let closeEnd = -1
+    while (j < line.length) {
+      if (line[j] !== '`') {
+        j++
+        continue
+      }
+      const runLen = runLengthAt(j)
+      if (runLen === openLen) {
+        closeEnd = j + runLen
+        break
+      }
+      j += runLen
+    }
+    if (closeEnd === -1) {
+      result += line.slice(i, openEnd)
+      i = openEnd
+    } else {
+      result += replace(line.slice(i, closeEnd))
+      i = closeEnd
+    }
+  }
+  return result
 }
 
 /**

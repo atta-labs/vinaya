@@ -37,10 +37,12 @@ export {
   listTasksForSlug,
   listTasksForSlugAsync,
   projectFieldFromBody,
+  PROJECT_SLUG,
   projectsFromBody,
   resolveTaskIssueRef,
   tasksFromIssues,
-  TITLE_PATTERN
+  TITLE_PATTERN,
+  unwrapValue
 } from './list-tasks'
 export type { ProjectField } from './list-tasks'
 // `stripCode` is on the barrel because `aeg-core` re-exports it as public API.

@@ -44,11 +44,20 @@ export function deriveTierFromDiff(changed: string[]): 0 | 1 {
  * mention anywhere else (a pasted reference brief, a quoted example) is
  * ignored. Bodies without the pair parse exactly as before.
  */
+/**
+ * The exact `Tier:` field grammar, exported so a consumer that needs the
+ * MATCH itself (not just the parsed number) — `body-bare-digits`, which
+ * needs to know precisely which substring is the field's real value so it
+ * can exempt exactly that and nothing appended after it — reuses this one
+ * definition rather than a second regex that could silently drift from it.
+ * An optional bold-open, the word Tier, an optional bold-close, a colon, an
+ * optional bold-close (covers `**Tier:**`), optional space, then the digit.
+ */
+export const TIER_FIELD = /(\*\*)?\s*Tier\s*(\*\*)?\s*:\s*(\*\*)?\s*([013])\b/i
+
 export function readTierFromPrBody(prBody: string): 0 | 1 | 3 | null {
   const searchIn = anchoredRegion(prBody, 'TIER') ?? prBody
-  // Match an optional bold-open, the word Tier, an optional bold-close, a colon,
-  // an optional bold-close (covers `**Tier:**`), optional space, then the digit.
-  const m = searchIn.match(/(\*\*)?\s*Tier\s*(\*\*)?\s*:\s*(\*\*)?\s*([013])\b/i)
+  const m = searchIn.match(TIER_FIELD)
   if (!m) return null
   const t = Number(m[4])
   return t === 0 || t === 1 || t === 3 ? (t as 0 | 1 | 3) : null

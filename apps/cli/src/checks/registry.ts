@@ -215,6 +215,20 @@ export function coreCheckRegistry(): CheckSpec[] {
       }
     },
     {
+      name: 'body-bare-digits',
+      run: bin('check-body-bare-digits'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Pre-merge-only: reads the open PR's real body, same reasoning as
+      // `closes-n`/`test-plan`/`evidence-fresh` above — nothing to scan
+      // before a PR (hence its body) exists.
+      requiresOpenPr: true,
+      // `process.env.PR_BODY ?? ''` — plain absence-tolerant fall-through.
+      env: {
+        PR_BODY: { optional: true }
+      }
+    },
+    {
       name: 'no-disk-state',
       run: bin('check-no-disk-state'),
       scope: 'diff',

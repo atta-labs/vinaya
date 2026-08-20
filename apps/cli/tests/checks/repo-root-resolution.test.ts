@@ -66,6 +66,7 @@ describe('RC3 — reader-resolvable-prose is not part of the adopter-facing regi
     const specs = coreCheckRegistry()
     expect(specs.map((s) => s.name).sort()).toEqual(
       [
+        'body-bare-digits',
         'brief-shape',
         'branch-topology',
         'closes-n',

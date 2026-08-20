@@ -9,6 +9,8 @@ sidebar_title: "Template: PR report"
 
 **The `AEG:PREMISE` anchor is not optional when the brief carried a `Premise:` block.** Without it, `premise-recheck` scans the *whole* body for anything premise-shaped — including the brief's own original pins, pasted verbatim into the `<details>` reference copy at the bottom — and re-asserts those against the code you just changed. A premise pinning the *pre-fix* state will correctly fail once your fix lands, because the pin describes what you just changed away from. Put a fresh, post-fix, currently-true assertion inside `<!-- AEG:PREMISE:START -->` / `<!-- AEG:PREMISE:END -->` so the re-check asserts something true of the shipped diff, not the brief's stale snapshot.
 
+**No bare digit outside a fenced block.** `body-bare-digits` (CI) refuses a countable claim — a test count, a file count, a timing figure, "N passed" — written loose in a sentence anywhere in this body. A digit is exempt for exactly one reason: it sits inside an inline code span or a fenced/indented code block (`` `N` `` or a fenced block), or inside `Closes #N`/`Project:` (this header block) / `Tier:` (under `## Scope`) / `Evidence` (under `## Evidence`), correctly placed under its own documented section. **Nowhere else** — including inside `Premise`/`Test plan` (both scanned exactly like ordinary prose, no anchor exemption at all — evidence there, byte counts, exit codes all need their own backticks too), an Issue/PR reference, a date, a version, a file path, or a section number: any of those now needs its own backticks (`` `#N` ``, `` `2026-08-18` ``, `` `0.12.0` ``) the same as any other digit. Write the number inside a fenced block or backticks, or don't write it bare at all.
+
 ---
 
 <!-- AEG:CLOSES:START -->
