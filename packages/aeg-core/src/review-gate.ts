@@ -1,6 +1,6 @@
 /**
  * Required pre-merge review gate (aeg-review-gate-v1 task 1, #474). Blocks a
- * task-branch PR from merging unless a clean code-reviewer `APPROVE` verdict
+ * PR from merging unless a clean code-reviewer `APPROVE` verdict
  * AND a clean security-review `PASS` verdict both exist on the PR — the same
  * `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` detection
  * (`verdict-extraction.ts`) the post-merge Archivist automation already runs,
@@ -106,19 +106,16 @@ export type ReviewGateInput = {
 }
 
 /**
- * True only for `plan/*` branches — topology docs only, ever,
- * by contract (roles/planner.md Step 0): a plan PR has no code to review.
- * Every other branch, INCLUDING `fix/*`, is held to the review gate — `fix/*`
- * carries real code despite not matching `task/<tranche>/<id>`, so reusing
- * `checkClosesN`'s broader "any non-task branch bypasses" idiom here was a
- * gap: a `fix/*` PR could merge with no enforced code-reviewer or
- * security-review verdict. `checkClosesN`'s bypass is correct for itself (it
- * asks "does this PR close a tracked task Issue," which `fix/*` genuinely
- * doesn't) — this function answers a different question ("is there code to
- * review") and must not reuse that bypass.
+ * Branch names are contributor-controlled metadata, so none can exempt an
+ * authority check. The former `plan/*` exemption assumed those branches
+ * contained topology docs only; a contributor could put code on a branch
+ * with that prefix and make the adapter exit before it fetched the PR. Keep
+ * this exported predicate for API compatibility, but fail closed for every
+ * branch. A future plan-only exemption would need server-derived changed-file
+ * validation, not a name prefix.
  */
-export function isReviewGateExemptBranch(branch: string): boolean {
-  return branch.startsWith('plan/')
+export function isReviewGateExemptBranch(_branch: string): boolean {
+  return false
 }
 
 /**

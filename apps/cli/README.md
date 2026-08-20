@@ -130,7 +130,7 @@ The generated command embeds the member's directory and `bin` path. Both come fr
 
 `@` is permitted so an npm-scoped member such as `packages/@attalabs/vinaya` resolves normally; it carries no meaning to the shell, to YAML at the position it appears, or to an Actions expression. The path must also resolve inside the repository, which a textual `..` rule cannot guarantee on its own.
 
-Branch protection is worth enabling, and it does not make the generated review gate unbypassable — a required status check is satisfied by a conclusion reported under its name, and under a `pull_request` trigger the workflow definition comes from the PR. That is true whether CI runs the published package or a vendored build; vendoring widens what the PR controls, it does not open the hole. The full statement, including where the shape degrades silently, is in [`specs/self-hosting.md`](./specs/self-hosting.md) in the source repository — it is not part of the published tarball.
+The generated review-authority workflows run only default-branch code: the required gate uses `pull_request_target`, and the comment-triggered evaluator also checks out the default branch. Neither authority path runs pull-request code or adopter `ci.setup`; ordinary `pull_request` content checks remain unprivileged. Protect `.github/workflows/**` with required CODEOWNERS review as the complementary change-control layer. The full trust-boundary and bootstrap account is in [`specs/self-hosting.md`](./specs/self-hosting.md) in the source repository — it is not part of the published tarball.
 
 ## Doc-owners coverage
 
