@@ -135,15 +135,18 @@ export function maskDetailsBlocks(body: string): string {
  * regex.
  *
  * Inline spans are matched by CommonMark's rule: an opening run of N backticks
- * is closed by the next run of exactly N backticks on the same line. The
- * `(`+)…\1` backreference is what makes a **double**-backtick span
- * (`` ``Closes #5`` ``) strip as one unit — an earlier `` `[^`\n]*` `` form
- * instead peeled the outer backticks as two empty spans and left the inner
- * `Closes #5` surviving as bare text (a false-green: passed the gate, but
- * GitHub, seeing a code span, refused to auto-close — PR #617 review). Fenced
- * blocks are stripped first (see `maskFencedCode`) so a fence line is never
- * mis-read as an inline span; 4-space **indented** code blocks are stripped in
- * between (see `maskIndentedCode`).
+ * is closed by the next run of exactly N backticks on the same line — see
+ * `replaceInlineSpans`'s own doc comment below for why a naive `` (`+)…\1 ``
+ * backreference gets this wrong (it can match a shorter run against a
+ * *prefix* of a longer one) and what replaced it. That correct run-matching
+ * is what makes a **double**-backtick span (`` ``Closes #5`` ``) strip as one
+ * unit — an earlier `` `[^`\n]*` `` form instead peeled the outer backticks
+ * as two empty spans and left the inner `Closes #5` surviving as bare text (a
+ * false-green: passed the gate, but GitHub, seeing a code span, refused to
+ * auto-close — PR #617 review). Fenced blocks are stripped first (see
+ * `maskFencedCode`) so a fence line is never mis-read as an inline span;
+ * 4-space **indented** code blocks are stripped in between (see
+ * `maskIndentedCode`).
  */
 /*
  * **Call this on a WHOLE body, never on a slice of one.** Every rule here is
