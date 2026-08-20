@@ -46,7 +46,11 @@
  */
 export function maskCode(body: string): string {
   const fill = (line: string) => ' '.repeat(line.length)
-  return maskIndentedCode(maskFencedCode(body, fill), fill).replace(/(`+)[^\n]*?\1/g, (m) => ' '.repeat(m.length))
+  const blocksMasked = maskIndentedCode(maskFencedCode(body, fill), fill)
+  return blocksMasked
+    .split('\n')
+    .map((line) => replaceInlineSpans(line, (span) => ' '.repeat(span.length)))
+    .join('\n')
 }
 
 /** A `<details ...>` opening tag (not the self-closed `<details/>` shape — not in real use here). */
@@ -191,7 +195,79 @@ export function stripCode(body: string, options: StripCodeOptions = {}): string 
   const blank = () => ''
   const blocksStripped = maskIndentedCode(maskFencedCode(normalised, blank), blank)
   if (options.inlineSpans === 'keep') return blocksStripped
-  return blocksStripped.replace(/(`+)[^\n]*?\1/g, '')
+  return blocksStripped
+    .split('\n')
+    .map((line) => replaceInlineSpans(line, () => ''))
+    .join('\n')
+}
+
+/**
+ * Finds and replaces CommonMark inline code spans within a single line.
+ *
+ * **Why not `/(`+)[^\n]*?\1/g`.** That regex's backreference matches the
+ * captured backtick characters as a literal substring, not as a maximal
+ * run — so a 2-backtick opener finds "its" closer inside the FIRST TWO
+ * characters of any later run, including a 3-backtick run that is not a
+ * valid closer at all. Per CommonMark, "a code span begins with a backtick
+ * string and ends with a backtick string of equal length" — the closer must
+ * itself be a backtick string (neither preceded nor followed by another
+ * backtick), not merely contain the right number of backtick characters
+ * somewhere inside a longer one. The regex's false-positive closer let a
+ * bare digit inside a mismatched-length backtick pair mask as "code" — and
+ * therefore escape `body-bare-digits`'s scan — while GitHub renders the
+ * exact same text as plain, fully visible prose with literal stray
+ * backticks (security re-review, PR #147, round 9-10).
+ *
+ * This scans backtick runs explicitly instead: an opening run's length is
+ * counted in full (so it can never be a partial run to begin with), and a
+ * candidate closer only counts if ITS run is also counted in full and
+ * matches the opener's length exactly. A run of the wrong length is not a
+ * closer — it is skipped over as ordinary text, and the search for a valid
+ * closer continues past it, exactly as real CommonMark parsers do. An
+ * opener with no valid closer anywhere on the line is left as literal
+ * backtick text (the same "raw backticks remain literal" fallback
+ * CommonMark specifies), and the scan resumes immediately after that
+ * failed run.
+ */
+function replaceInlineSpans(line: string, replace: (span: string) => string): string {
+  let result = ''
+  let i = 0
+  const runLengthAt = (at: number): number => {
+    let j = at
+    while (j < line.length && line[j] === '`') j++
+    return j - at
+  }
+  while (i < line.length) {
+    if (line[i] !== '`') {
+      result += line[i]
+      i++
+      continue
+    }
+    const openLen = runLengthAt(i)
+    const openEnd = i + openLen
+    let j = openEnd
+    let closeEnd = -1
+    while (j < line.length) {
+      if (line[j] !== '`') {
+        j++
+        continue
+      }
+      const runLen = runLengthAt(j)
+      if (runLen === openLen) {
+        closeEnd = j + runLen
+        break
+      }
+      j += runLen
+    }
+    if (closeEnd === -1) {
+      result += line.slice(i, openEnd)
+      i = openEnd
+    } else {
+      result += replace(line.slice(i, closeEnd))
+      i = closeEnd
+    }
+  }
+  return result
 }
 
 /**

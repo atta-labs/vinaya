@@ -22,7 +22,7 @@ describe('body-bare-digits — must NOT fail: the masking pipeline', () => {
   })
 
   it('an inline double-backtick span, needed to quote a literal backtick', () => {
-    expect(violationLines('Renders as ```163`` in the table.')).toEqual([])
+    expect(violationLines('Renders as ``a `163` z`` here.')).toEqual([])
   })
 
   it('a fenced code block', () => {
@@ -184,6 +184,10 @@ describe('body-bare-digits — must fail: narrative quantitative claims', () => 
 
   it('a duration claim (synthetic)', () => {
     expect(violationLines('The build now completes in 4 minutes.').length).toBeGreaterThan(0)
+  })
+
+  it('a mismatched-length backtick run is not a valid code span (security, PR #147 round 9-10): CommonMark requires the closer to be a run of exactly the same length, not merely contain it — GitHub renders this as literal, visible text, so the digit inside must still be flagged', () => {
+    expect(violationLines('Renders as ```163`` in the table.').length).toBeGreaterThan(0)
   })
 
   it('a multi-digit severity tally, real (#126): every one of its five digit tokens is a separate violation, and every one must be wrapped to pass', () => {
