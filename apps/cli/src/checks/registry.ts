@@ -223,20 +223,9 @@ export function coreCheckRegistry(): CheckSpec[] {
       // `closes-n`/`test-plan`/`evidence-fresh` above — nothing to scan
       // before a PR (hence its body) exists.
       requiresOpenPr: true,
-      // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
-      // plain absence-tolerant fall-throughs. BRANCH is half of the
-      // Changesets release-PR skip condition (bin's own module doc); the
-      // other half — the author — is fetched live via `gh pr view`, never
-      // an env var (this check is bundled into a required, non-bypassable
-      // status check, so GH_TOKEN/GITHUB_TOKEN must forward the same way
-      // every other `gh`-shelling check bin's entry does, or that fetch
-      // runs unauthenticated on a CI runner).
+      // `process.env.PR_BODY ?? ''` — plain absence-tolerant fall-through.
       env: {
-        PR_BODY: { optional: true },
-        BRANCH: { optional: true },
-        PR_NUMBER: { optional: true },
-        GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
+        PR_BODY: { optional: true }
       }
     },
     {

@@ -111,7 +111,7 @@ export {
 export type { MergedPrFacts } from './archive-task'
 export { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
 export type { VerdictExtraction } from './verdict-extraction'
-export { checkReviewGate, DEFAULT_RELEASE_ACTOR, isChangesetsReleasePr, isReviewGateExemptBranch } from './review-gate'
+export { checkReviewGate, isReviewGateExemptBranch } from './review-gate'
 export type { ReviewGateComment, ReviewGateInput, ReviewGateResult, ReviewGateVerdict } from './review-gate'
 export {
   checkBlastRadiusScope,

@@ -25,14 +25,9 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import {
-  checkReviewGate,
-  isChangesetsReleasePr,
-  isReviewGateExemptBranch,
-  WAIVER_LABEL_REVIEW
-} from '@attalabs/aeg-core'
+import { checkReviewGate, isReviewGateExemptBranch, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist, resolveReleaseActor } from '../../lib/config'
+import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 
 const CHECK_NAME = 'review-gate'
 
@@ -49,24 +44,15 @@ type PrView = {
   comments: { body: string; author?: { login?: string } | null }[]
   labels: { name: string }[]
   headRefOid: string
-  // Fetched live via `gh pr view`, never from an env var — a `pull_request`-
-  // triggered workflow runs the PR's OWN copy of its YAML, so anything this
-  // check read from `process.env` would just be whatever literal string the
-  // PR's own workflow file chose to set, not a real fact about who opened it.
-  // Same reasoning `loadTrustAnchorConfig` already applies to `principals`
-  // (this file's own module comment, "three rounds of the same bug").
-  author: string | null
 }
 
 function fetchPr(prNumber: number): PrView | null {
   try {
-    const out = execFileSync(
-      'gh',
-      ['pr', 'view', String(prNumber), '--json', 'number,comments,labels,headRefOid,author'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
-    )
-    const raw = JSON.parse(out) as Omit<PrView, 'author'> & { author?: { login?: string } | null }
-    return { ...raw, author: raw.author?.login ?? null }
+    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'number,comments,labels,headRefOid'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    return JSON.parse(out) as PrView
   } catch {
     return null
   }
@@ -92,7 +78,6 @@ function fetchWaiverLabelActor(prNumber: number, label: string): string | null {
 function main(): void {
   const branch = process.env.BRANCH || git(['rev-parse', '--abbrev-ref', 'HEAD'])
   if (isReviewGateExemptBranch(branch)) {
-    // plan/* — no PR fetch needed for this one, same as before this change.
     process.exit(0)
   }
 
@@ -116,34 +101,21 @@ function main(): void {
     process.exit(1)
   }
 
-  // `principals`/`releaseActor` both come from GitHub's API (default-branch,
-  // server-side state), never local git / the PR's checkout / any env var —
-  // all three of those are rewritable by the PR being evaluated, since a
-  // `pull_request`-triggered workflow runs the PR's own YAML. See
-  // `loadTrustAnchorConfig` in lib/config.ts for the three failed attempts
-  // that established this. One fetch, reused for both resolutions below.
-  const trustAnchorConfig = loadTrustAnchorConfig()
-
-  if (isChangesetsReleasePr(branch, pr.author, resolveReleaseActor(trustAnchorConfig))) {
-    // pr.author came from the live `gh pr view` call above, not an env var —
-    // see PrView's own field comment for why that distinction is load-bearing.
-    // The expected value is adopter-configurable, never hardcoded — see
-    // `isChangesetsReleasePr`'s own doc comment (security review, PR #165
-    // round 4: a hardcoded expectation never matched this repo's real
-    // release-PR author).
-    process.exit(0)
-  }
-
   const labels = pr.labels.map((l) => l.name)
   const waiverLabelActor = labels.includes(WAIVER_LABEL_REVIEW)
     ? fetchWaiverLabelActor(prNumber, WAIVER_LABEL_REVIEW)
     : null
 
+  // `principals` comes from GitHub's API (default-branch, server-side state),
+  // never local git / the PR's checkout / any env var — all three of those
+  // are rewritable by the PR being evaluated, since a `pull_request`-triggered
+  // workflow runs the PR's own YAML. See `loadTrustAnchorConfig` in
+  // lib/config.ts for the three failed attempts that established this.
   const result = checkReviewGate({
     comments: pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
     labels,
     waiverLabelActor,
-    principalAllowlist: resolvePrincipalAllowlist(trustAnchorConfig),
+    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig()),
     headSha: pr.headRefOid
   })
 

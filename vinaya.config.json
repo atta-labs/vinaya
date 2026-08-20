@@ -4,7 +4,6 @@
     "ring2_asyncAudits": false
   },
   "checks": {},
-  "releaseActor": "daniboomerang",
   "briefSchema": {
     "pr": {
       "sections": [

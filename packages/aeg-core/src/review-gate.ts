@@ -121,54 +121,6 @@ export function isReviewGateExemptBranch(branch: string): boolean {
   return branch.startsWith('plan/')
 }
 
-const CHANGESET_RELEASE_BRANCH = 'changeset-release/main'
-
-/**
- * The stock Changesets flow's default identity — a release PR opened by
- * `changesets/action` using the ambient `GITHUB_TOKEN` shows this as its
- * author. Only a SANE DEFAULT for adopters who haven't configured
- * `releaseActor` — never assume it matches any specific repo's real setup.
- * A repo that opens release PRs with a custom PAT (this repo's own
- * `RELEASE_TOKEN`, `.github/workflows/release.yml`) has a DIFFERENT real PR
- * author (the token's owner) and must set `releaseActor` in its
- * `vinaya.config.json` — found live, security review, PR #165 round 4: this
- * exemption hardcoded this literal as the EXPECTED value with no
- * adopter override, so it silently never matched this repo's own real
- * release PRs (every one, #14 through #163, opened by the token owner) —
- * the exemption never fired in production, in any of three prior rounds.
- */
-export const DEFAULT_RELEASE_ACTOR = 'github-actions[bot]'
-
-/**
- * True only for the Changesets release PR — deliberately separate from
- * `isReviewGateExemptBranch`, not folded into it, because branch name alone
- * is not a trust boundary here the way it arguably is for `plan/*` (a
- * Planner-owned convention with no attacker incentive on its own): anyone
- * who can push a branch, including an external contributor on a fork, can
- * name it `changeset-release/main` to try to bypass review for arbitrary
- * code. Both `branch` and `author` must match — this function is agnostic to
- * where its caller sources them, but the caller MUST NOT source `author`
- * from an env var. `check-review-gate.ts`'s own module comment ("three
- * rounds of the same bug" for `principals`) documents why: a `pull_request`-
- * triggered workflow runs the PR's own copy of its YAML, so any env var this
- * check trusted could be a hardcoded literal the PR's own workflow file
- * chose to set, not a real fact about who opened it. `author` must come from
- * a live `gh pr view` fetch at check-run time, the same pattern that file
- * already uses for `headRefOid` — see its `fetchPr`. Found live (security
- * review, PR #165): the first version of this exemption trusted a
- * `PR_AUTHOR` env var and would have reopened exactly this hole.
- *
- * `expectedAuthor` is caller-resolved, never hardcoded here — this function
- * ships in the published `@attalabs/vinaya` package, and hardcoding any one
- * identity would be correct for at most one adopter's release-token setup.
- * Callers resolve it the same way `principalAllowlist` is resolved: from
- * `vinaya.config.json`'s trust-anchor read (`resolveReleaseActor` +
- * `loadTrustAnchorConfig`), falling back to `DEFAULT_RELEASE_ACTOR`.
- */
-export function isChangesetsReleasePr(branch: string, author: string | null, expectedAuthor: string): boolean {
-  return branch === CHANGESET_RELEASE_BRANCH && author === expectedAuthor
-}
-
 /**
  * True when `extraction.headSha` covers `headSha` — an exact match, or
  * `headSha` starting with `extraction.headSha` (the abbreviated-sha case:

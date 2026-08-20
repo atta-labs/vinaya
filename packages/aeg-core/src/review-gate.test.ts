@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkReviewGate, isChangesetsReleasePr, isReviewGateExemptBranch } from './review-gate'
+import { checkReviewGate, isReviewGateExemptBranch } from './review-gate'
 
 import type { ReviewGateComment } from './review-gate'
 
@@ -226,31 +226,6 @@ describe('isReviewGateExemptBranch', () => {
   it('does NOT exempt an unrecognized branch — fail closed, not fail open', () => {
     expect(isReviewGateExemptBranch('some-random-branch')).toBe(false)
     expect(isReviewGateExemptBranch('')).toBe(false)
-  })
-})
-
-describe('isChangesetsReleasePr', () => {
-  it('exempts only when BOTH the branch and author match the CALLER-SUPPLIED expected author', () => {
-    expect(isChangesetsReleasePr('changeset-release/main', 'github-actions[bot]', 'github-actions[bot]')).toBe(true)
-  })
-
-  it("the expected author is caller-resolved, not hardcoded — a repo whose real release PRs are opened by a custom token owner exempts on THAT login, not the stock default (security review, PR #165 round 4: the hardcoded default never matched this repo's own release PRs)", () => {
-    expect(isChangesetsReleasePr('changeset-release/main', 'daniboomerang', 'daniboomerang')).toBe(true)
-    expect(isChangesetsReleasePr('changeset-release/main', 'github-actions[bot]', 'daniboomerang')).toBe(false)
-  })
-
-  it('does NOT exempt on branch name alone — the exact hole found live (security review, PR #165)', () => {
-    expect(isChangesetsReleasePr('changeset-release/main', 'some-attacker', 'github-actions[bot]')).toBe(false)
-    expect(isChangesetsReleasePr('changeset-release/main', null, 'github-actions[bot]')).toBe(false)
-  })
-
-  it('does NOT exempt on author alone — a real bot action on a differently-named branch is not this PR', () => {
-    expect(isChangesetsReleasePr('some-other-branch', 'github-actions[bot]', 'github-actions[bot]')).toBe(false)
-  })
-
-  it('fails closed on empty/null input', () => {
-    expect(isChangesetsReleasePr('', null, 'github-actions[bot]')).toBe(false)
-    expect(isChangesetsReleasePr('changeset-release/main', '', 'github-actions[bot]')).toBe(false)
   })
 })
 
