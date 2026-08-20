@@ -223,9 +223,12 @@ export function coreCheckRegistry(): CheckSpec[] {
       // `closes-n`/`test-plan`/`evidence-fresh` above — nothing to scan
       // before a PR (hence its body) exists.
       requiresOpenPr: true,
-      // `process.env.PR_BODY ?? ''` — plain absence-tolerant fall-through.
+      // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
+      // plain absence-tolerant fall-throughs. BRANCH is the Changesets
+      // release-PR skip condition (bin's own module doc).
       env: {
-        PR_BODY: { optional: true }
+        PR_BODY: { optional: true },
+        BRANCH: { optional: true }
       }
     },
     {
