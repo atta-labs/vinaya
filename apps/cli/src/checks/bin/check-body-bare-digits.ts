@@ -20,24 +20,24 @@
  * work. A different category of content, not a second exception for the
  * same failure mode.
  *
- * The skip requires BOTH the branch name AND the author to match — branch
- * name alone is not a trust boundary. `BRANCH`/`PR_AUTHOR` come from
- * `github.head_ref`/`github.event.pull_request.user.login`, set into the env
- * block by this repo's OWN `vinaya-checks.yml` — and a `pull_request`-
- * triggered workflow runs the PR's own copy of that YAML, so an attacker's
- * PR can replace either expression with a hardcoded literal, same class of
- * hole `review-gate.ts`'s own module comment documents taking three rounds
- * to close for `principals`. Deliberately NOT fixed the same way here (a
- * live forge fetch at check-run time, like `check-review-gate.ts`'s
- * `fetchPr` now does) — this check's worst case if spoofed is a stray
- * unformatted digit slipping
- * past ONE check, not an unreviewed merge: `review-gate` (the actual
- * merge-blocking gate) resolves its own author check unspoofably and is the
- * real backstop regardless of this one. Paying for a network call on every
- * run of an otherwise-pure, fast check isn't proportionate to that residual.
- * Revisit if this check ever becomes merge-blocking on its own.
+ * The skip requires BOTH the branch name AND the author to match. `branch`
+ * comes from `BRANCH`/`git rev-parse` — attacker-choosable by design (anyone
+ * can push a branch and name it whatever they want), which is fine as long
+ * as `author` is the real gate. `author` is fetched live via `gh pr view` at
+ * check-run time, never an env var — this check is bundled into
+ * `vinaya-checks`, a required status check with no bypass actors, so its
+ * exemption sits behind the same trust boundary `review-gate.ts` documents
+ * taking three rounds to close for `principals`: a `pull_request`-triggered
+ * workflow runs the PR's own copy of its YAML, so any env var this check
+ * trusted could be a hardcoded literal an attacker's own workflow file chose
+ * to set. An earlier version of this exemption trusted a `PR_AUTHOR` env var
+ * (round 2 security review, PR #165) and would have reopened exactly that
+ * hole, on a required, non-bypassable gate — worse than the same mistake on
+ * `review-gate` alone, not narrower, once code review's finding was
+ * accounted for. Fixed the same way, no accepted residual left.
  */
 
+import { execFileSync } from 'node:child_process'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { checkBareDigits } from '../body-bare-digits-logic'
 
@@ -45,8 +45,39 @@ const CHECK_NAME = 'body-bare-digits'
 const CHANGESET_RELEASE_BRANCH = 'changeset-release/main'
 const CHANGESET_RELEASE_AUTHOR = 'github-actions[bot]'
 
+function git(args: string[]): string {
+  try {
+    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  } catch {
+    return ''
+  }
+}
+
+/** Live-fetched author only — never `process.env.PR_AUTHOR`. See module doc for why. */
+function fetchPrAuthor(prNumber: number): string | null {
+  try {
+    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'author'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    const parsed = JSON.parse(out) as { author?: { login?: string } | null }
+    return parsed.author?.login ?? null
+  } catch {
+    return null
+  }
+}
+
+function isChangesetsReleasePr(branch: string, prNumberStr: string | undefined): boolean {
+  if (branch !== CHANGESET_RELEASE_BRANCH) return false
+  if (!prNumberStr) return false
+  const prNumber = Number(prNumberStr)
+  if (!Number.isFinite(prNumber)) return false
+  return fetchPrAuthor(prNumber) === CHANGESET_RELEASE_AUTHOR
+}
+
 function main(): void {
-  if (process.env.BRANCH === CHANGESET_RELEASE_BRANCH && process.env.PR_AUTHOR === CHANGESET_RELEASE_AUTHOR) {
+  const branch = process.env.BRANCH || git(['rev-parse', '--abbrev-ref', 'HEAD'])
+  if (isChangesetsReleasePr(branch, process.env.PR_NUMBER)) {
     // Machine-rendered changelog, not agent-narrated prose — see module doc.
     process.exit(0)
   }
