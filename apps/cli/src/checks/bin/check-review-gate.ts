@@ -25,7 +25,12 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkReviewGate, isReviewGateExemptBranch, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
+import {
+  checkReviewGate,
+  isChangesetsReleasePr,
+  isReviewGateExemptBranch,
+  WAIVER_LABEL_REVIEW
+} from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 
@@ -44,15 +49,24 @@ type PrView = {
   comments: { body: string; author?: { login?: string } | null }[]
   labels: { name: string }[]
   headRefOid: string
+  // Fetched live via `gh pr view`, never from an env var — a `pull_request`-
+  // triggered workflow runs the PR's OWN copy of its YAML, so anything this
+  // check read from `process.env` would just be whatever literal string the
+  // PR's own workflow file chose to set, not a real fact about who opened it.
+  // Same reasoning `loadTrustAnchorConfig` already applies to `principals`
+  // (this file's own module comment, "three rounds of the same bug").
+  author: string | null
 }
 
 function fetchPr(prNumber: number): PrView | null {
   try {
-    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'number,comments,labels,headRefOid'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-    return JSON.parse(out) as PrView
+    const out = execFileSync(
+      'gh',
+      ['pr', 'view', String(prNumber), '--json', 'number,comments,labels,headRefOid,author'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+    const raw = JSON.parse(out) as Omit<PrView, 'author'> & { author?: { login?: string } | null }
+    return { ...raw, author: raw.author?.login ?? null }
   } catch {
     return null
   }
@@ -78,6 +92,7 @@ function fetchWaiverLabelActor(prNumber: number, label: string): string | null {
 function main(): void {
   const branch = process.env.BRANCH || git(['rev-parse', '--abbrev-ref', 'HEAD'])
   if (isReviewGateExemptBranch(branch)) {
+    // plan/* — no PR fetch needed for this one, same as before this change.
     process.exit(0)
   }
 
@@ -99,6 +114,12 @@ function main(): void {
         'Confirm `gh auth status` passes and PR_NUMBER is correct, then re-run `vinaya check review-gate`.'
     })
     process.exit(1)
+  }
+
+  if (isChangesetsReleasePr(branch, pr.author)) {
+    // pr.author came from the live `gh pr view` call above, not an env var —
+    // see PrView's own field comment for why that distinction is load-bearing.
+    process.exit(0)
   }
 
   const labels = pr.labels.map((l) => l.name)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkReviewGate, isReviewGateExemptBranch } from './review-gate'
+import { checkReviewGate, isChangesetsReleasePr, isReviewGateExemptBranch } from './review-gate'
 
 import type { ReviewGateComment } from './review-gate'
 
@@ -226,6 +226,26 @@ describe('isReviewGateExemptBranch', () => {
   it('does NOT exempt an unrecognized branch — fail closed, not fail open', () => {
     expect(isReviewGateExemptBranch('some-random-branch')).toBe(false)
     expect(isReviewGateExemptBranch('')).toBe(false)
+  })
+})
+
+describe('isChangesetsReleasePr', () => {
+  it('exempts only when BOTH the branch and author match', () => {
+    expect(isChangesetsReleasePr('changeset-release/main', 'github-actions[bot]')).toBe(true)
+  })
+
+  it('does NOT exempt on branch name alone — the exact hole found live (security review, PR #165)', () => {
+    expect(isChangesetsReleasePr('changeset-release/main', 'some-attacker')).toBe(false)
+    expect(isChangesetsReleasePr('changeset-release/main', null)).toBe(false)
+  })
+
+  it('does NOT exempt on author alone — a real bot action on a differently-named branch is not this PR', () => {
+    expect(isChangesetsReleasePr('some-other-branch', 'github-actions[bot]')).toBe(false)
+  })
+
+  it('fails closed on empty/null input', () => {
+    expect(isChangesetsReleasePr('', null)).toBe(false)
+    expect(isChangesetsReleasePr('changeset-release/main', '')).toBe(false)
   })
 })
 

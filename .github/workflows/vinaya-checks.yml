@@ -87,6 +87,15 @@ jobs:
           # vacuously regardless of the PR's real content, on every run.
           PR_BODY: ${{ github.event.pull_request.body }}
           BRANCH: ${{ github.head_ref }}
+          # PR_AUTHOR is a trust signal, not a display value — body-bare-digits'
+          # Changesets-release exemption keys on BOTH this and BRANCH matching,
+          # never BRANCH alone: a branch name is attacker-controlled (anyone
+          # can push a branch literally called changeset-release/main), so
+          # gating only on it would let a forged PR from that branch name
+          # bypass the check for arbitrary content. github.event.pull_request's
+          # own author field is set by GitHub itself from the real opener's
+          # identity, not from anything the PR's branch or body can spoof.
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         # pipefail is load-bearing: this job's default shell is `bash -e`
         # WITHOUT pipefail, so an unguarded pipe through tee would mask the
         # check runner's exit code and report a red suite green.

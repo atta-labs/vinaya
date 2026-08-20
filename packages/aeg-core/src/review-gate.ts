@@ -121,6 +121,32 @@ export function isReviewGateExemptBranch(branch: string): boolean {
   return branch.startsWith('plan/')
 }
 
+const CHANGESET_RELEASE_BRANCH = 'changeset-release/main'
+const CHANGESET_RELEASE_AUTHOR = 'github-actions[bot]'
+
+/**
+ * True only for the Changesets release PR — deliberately separate from
+ * `isReviewGateExemptBranch`, not folded into it, because branch name alone
+ * is not a trust boundary here the way it arguably is for `plan/*` (a
+ * Planner-owned convention with no attacker incentive on its own): anyone
+ * who can push a branch, including an external contributor on a fork, can
+ * name it `changeset-release/main` to try to bypass review for arbitrary
+ * code. Both `branch` and `author` must match — this function is agnostic to
+ * where its caller sources them, but the caller MUST NOT source `author`
+ * from an env var. `check-review-gate.ts`'s own module comment ("three
+ * rounds of the same bug" for `principals`) documents why: a `pull_request`-
+ * triggered workflow runs the PR's own copy of its YAML, so any env var this
+ * check trusted could be a hardcoded literal the PR's own workflow file
+ * chose to set, not a real fact about who opened it. `author` must come from
+ * a live `gh pr view` fetch at check-run time, the same pattern that file
+ * already uses for `headRefOid` — see its `fetchPr`. Found live (security
+ * review, PR #165): the first version of this exemption trusted a
+ * `PR_AUTHOR` env var and would have reopened exactly this hole.
+ */
+export function isChangesetsReleasePr(branch: string, author: string | null): boolean {
+  return branch === CHANGESET_RELEASE_BRANCH && author === CHANGESET_RELEASE_AUTHOR
+}
+
 /**
  * True when `extraction.headSha` covers `headSha` — an exact match, or
  * `headSha` starting with `extraction.headSha` (the abbreviated-sha case:
