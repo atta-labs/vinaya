@@ -23,14 +23,25 @@ afterEach(() => {
   dirs = []
 })
 
-/** A fake `gh` on PATH: `gh pr view` returns the given author. */
-function fakeGh(author: string | null): string {
+/**
+ * A fake `gh` on PATH: `gh pr view` returns the given author. The
+ * trust-anchor `gh api .../contents/vinaya.config.json --jq .content` call
+ * returns `releaseActor`'s base64 content when given, else an empty config
+ * — matching a real adopter with no `vinaya.config.json` on their default
+ * branch yet, which `loadTrustAnchorConfig` falls back to
+ * `DEFAULT_RELEASE_ACTOR` for.
+ */
+function fakeGh(author: string | null, releaseActor?: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'bare-digits-fake-gh-'))
   dirs.push(dir)
   const ghDir = join(dir, 'fakebin')
   mkdirSync(ghDir, { recursive: true })
   const authorJson = author === null ? 'null' : `{"login":${JSON.stringify(author)}}`
-  writeFileSync(join(ghDir, 'gh'), `#!/bin/sh\necho '{"author":${authorJson}}'\n`)
+  const configBase64 = Buffer.from(JSON.stringify(releaseActor ? { releaseActor } : {})).toString('base64')
+  writeFileSync(
+    join(ghDir, 'gh'),
+    `#!/bin/sh\ncase "$*" in\n  "pr view "*) echo '{"author":${authorJson}}' ;;\n  "api "*"contents/vinaya.config.json"*) echo '${configBase64}' ;;\n  *) echo '[]' ;;\nesac\n`
+  )
   chmodSync(join(ghDir, 'gh'), 0o755)
   return ghDir
 }
@@ -109,6 +120,45 @@ describe('check-body-bare-digits (bin) — Changesets release-PR exemption', () 
     const ghDir = fakeGh('github-actions[bot]')
     const env = { PR_BODY: VIOLATING_BODY, BRANCH: undefined, PR_NUMBER: '1' }
     const { exitCode, stderr } = await runCheck(env, ghDir)
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain('body-bare-digits')
+  })
+})
+
+// Round 4 (code review, PR #165): the hardcoded expected author
+// (`github-actions[bot]`) never matched this repo's REAL release PRs — every
+// one of them, live-checked (`gh pr list --head changeset-release/main`), is
+// opened via a custom `RELEASE_TOKEN` whose owner is a real user login. The
+// exemption had never fired in production, in any of the three prior
+// rounds, despite every test above passing. These reproduce that exact
+// production shape and prove the configurable fix closes it.
+describe('check-body-bare-digits — configurable release actor (round 4)', () => {
+  it('exempts on a CONFIGURED non-bot author — the real production shape (a custom release-token owner), not the stock default', async () => {
+    const ghDir = fakeGh('daniboomerang', 'daniboomerang')
+    const { exitCode, stderr } = await runCheck(
+      { PR_BODY: VIOLATING_BODY, BRANCH: 'changeset-release/main', PR_NUMBER: '1' },
+      ghDir
+    )
+    expect(exitCode).toBe(0)
+    expect(stderr).toBe('')
+  })
+
+  it('reproduces the round-4 production failure UNFIXED: a real non-bot release author with NO releaseActor configured stays blocked — this is the exact bug the config field exists to fix', async () => {
+    const ghDir = fakeGh('daniboomerang')
+    const { exitCode, stderr } = await runCheck(
+      { PR_BODY: VIOLATING_BODY, BRANCH: 'changeset-release/main', PR_NUMBER: '1' },
+      ghDir
+    )
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain('body-bare-digits')
+  })
+
+  it('a configured releaseActor does NOT exempt a DIFFERENT author — still two-factor, not author-value-agnostic', async () => {
+    const ghDir = fakeGh('some-attacker', 'daniboomerang')
+    const { exitCode, stderr } = await runCheck(
+      { PR_BODY: VIOLATING_BODY, BRANCH: 'changeset-release/main', PR_NUMBER: '1' },
+      ghDir
+    )
     expect(exitCode).toBe(1)
     expect(stderr).toContain('body-bare-digits')
   })

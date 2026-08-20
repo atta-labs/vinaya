@@ -32,7 +32,7 @@ import {
   WAIVER_LABEL_REVIEW
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { loadTrustAnchorConfig, resolvePrincipalAllowlist, resolveReleaseActor } from '../../lib/config'
 
 const CHECK_NAME = 'review-gate'
 
@@ -116,9 +116,21 @@ function main(): void {
     process.exit(1)
   }
 
-  if (isChangesetsReleasePr(branch, pr.author)) {
+  // `principals`/`releaseActor` both come from GitHub's API (default-branch,
+  // server-side state), never local git / the PR's checkout / any env var —
+  // all three of those are rewritable by the PR being evaluated, since a
+  // `pull_request`-triggered workflow runs the PR's own YAML. See
+  // `loadTrustAnchorConfig` in lib/config.ts for the three failed attempts
+  // that established this. One fetch, reused for both resolutions below.
+  const trustAnchorConfig = loadTrustAnchorConfig()
+
+  if (isChangesetsReleasePr(branch, pr.author, resolveReleaseActor(trustAnchorConfig))) {
     // pr.author came from the live `gh pr view` call above, not an env var —
     // see PrView's own field comment for why that distinction is load-bearing.
+    // The expected value is adopter-configurable, never hardcoded — see
+    // `isChangesetsReleasePr`'s own doc comment (security review, PR #165
+    // round 4: a hardcoded expectation never matched this repo's real
+    // release-PR author).
     process.exit(0)
   }
 
@@ -127,16 +139,11 @@ function main(): void {
     ? fetchWaiverLabelActor(prNumber, WAIVER_LABEL_REVIEW)
     : null
 
-  // `principals` comes from GitHub's API (default-branch, server-side state),
-  // never local git / the PR's checkout / any env var — all three of those
-  // are rewritable by the PR being evaluated, since a `pull_request`-triggered
-  // workflow runs the PR's own YAML. See `loadTrustAnchorConfig` in
-  // lib/config.ts for the three failed attempts that established this.
   const result = checkReviewGate({
     comments: pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
     labels,
     waiverLabelActor,
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig()),
+    principalAllowlist: resolvePrincipalAllowlist(trustAnchorConfig),
     headSha: pr.headRefOid
   })
 

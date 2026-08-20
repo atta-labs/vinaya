@@ -35,15 +35,27 @@
  * hole, on a required, non-bypassable gate — worse than the same mistake on
  * `review-gate` alone, not narrower, once code review's finding was
  * accounted for. Fixed the same way, no accepted residual left.
+ *
+ * The predicate itself (`isChangesetsReleasePr`) is `@attalabs/aeg-core`'s,
+ * the same one `check-review-gate.ts` uses — not a second, duplicate
+ * implementation. Round 4 (code review, PR #165) found this file's OWN
+ * duplicate hardcoded the expected author to `github-actions[bot]` with no
+ * way for an adopter to override it, and this repo's real release PRs are
+ * opened by a custom `RELEASE_TOKEN` (`.github/workflows/release.yml`)
+ * whose owner is a real user login — the exemption had never matched this
+ * repo's own release PRs, in any of the three prior rounds. Sharing the one
+ * implementation, resolved via `resolveReleaseActor(loadTrustAnchorConfig())`
+ * exactly like `principals`, means this can't drift out of sync with
+ * `review-gate`'s copy again.
  */
 
 import { execFileSync } from 'node:child_process'
+import { isChangesetsReleasePr } from '@attalabs/aeg-core'
+import { loadTrustAnchorConfig, resolveReleaseActor } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { checkBareDigits } from '../body-bare-digits-logic'
 
 const CHECK_NAME = 'body-bare-digits'
-const CHANGESET_RELEASE_BRANCH = 'changeset-release/main'
-const CHANGESET_RELEASE_AUTHOR = 'github-actions[bot]'
 
 function git(args: string[]): string {
   try {
@@ -67,17 +79,22 @@ function fetchPrAuthor(prNumber: number): string | null {
   }
 }
 
-function isChangesetsReleasePr(branch: string, prNumberStr: string | undefined): boolean {
+const CHANGESET_RELEASE_BRANCH = 'changeset-release/main'
+
+function isChangesetsReleasePrHere(branch: string, prNumberStr: string | undefined): boolean {
+  // Cheap branch check first — no fetch cost on the overwhelmingly common
+  // non-release-PR path, matching the original design's short-circuit.
   if (branch !== CHANGESET_RELEASE_BRANCH) return false
   if (!prNumberStr) return false
   const prNumber = Number(prNumberStr)
   if (!Number.isFinite(prNumber)) return false
-  return fetchPrAuthor(prNumber) === CHANGESET_RELEASE_AUTHOR
+  const author = fetchPrAuthor(prNumber)
+  return isChangesetsReleasePr(branch, author, resolveReleaseActor(loadTrustAnchorConfig()))
 }
 
 function main(): void {
   const branch = process.env.BRANCH || git(['rev-parse', '--abbrev-ref', 'HEAD'])
-  if (isChangesetsReleasePr(branch, process.env.PR_NUMBER)) {
+  if (isChangesetsReleasePrHere(branch, process.env.PR_NUMBER)) {
     // Machine-rendered changelog, not agent-narrated prose — see module doc.
     process.exit(0)
   }

@@ -22,8 +22,14 @@ afterEach(() => {
   dirs = []
 })
 
-/** A fake `gh` on PATH: `gh pr view` returns the given author; anything else (the waiver timeline fetch) returns empty. */
-function fakeGh(author: string | null): string {
+/**
+ * A fake `gh` on PATH: `gh pr view` returns the given author. The
+ * trust-anchor `gh api .../contents/vinaya.config.json --jq .content` call
+ * returns `releaseActor`'s base64 content when given, else an empty config
+ * (falls back to `DEFAULT_RELEASE_ACTOR`, same as a fresh adopter). Anything
+ * else (the waiver timeline fetch) returns empty.
+ */
+function fakeGh(author: string | null, releaseActor?: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'review-gate-fake-gh-'))
   dirs.push(dir)
   const ghDir = join(dir, 'fakebin')
@@ -36,9 +42,10 @@ function fakeGh(author: string | null): string {
     headRefOid: HEAD,
     author: JSON.parse(authorJson)
   })
+  const configBase64 = Buffer.from(JSON.stringify(releaseActor ? { releaseActor } : {})).toString('base64')
   writeFileSync(
     join(ghDir, 'gh'),
-    `#!/bin/sh\ncase "$*" in\n  "pr view "*) echo '${payload}' ;;\n  *) echo '[]' ;;\nesac\n`
+    `#!/bin/sh\ncase "$*" in\n  "pr view "*) echo '${payload}' ;;\n  "api "*"contents/vinaya.config.json"*) echo '${configBase64}' ;;\n  *) echo '[]' ;;\nesac\n`
   )
   chmodSync(join(ghDir, 'gh'), 0o755)
   return ghDir
@@ -82,6 +89,25 @@ describe('check-review-gate (bin) — Changesets release-PR exemption', () => {
       { BRANCH: 'changeset-release/main', PR_NUMBER: '1', PR_AUTHOR: 'github-actions[bot]' },
       ghDir
     )
+    expect(exitCode).toBe(1)
+  })
+})
+
+// Round 4 (code review, PR #165): the hardcoded expected author
+// (`github-actions[bot]`) never matched this repo's REAL release PRs — every
+// one of them, live-checked (`gh pr list --head changeset-release/main`), is
+// opened via a custom `RELEASE_TOKEN` whose owner is a real user login.
+describe('check-review-gate — configurable release actor (round 4)', () => {
+  it('exempts on a CONFIGURED non-bot author — the real production shape', async () => {
+    const ghDir = fakeGh('daniboomerang', 'daniboomerang')
+    const { exitCode, stderr } = await runCheck({ BRANCH: 'changeset-release/main', PR_NUMBER: '1' }, ghDir)
+    expect(exitCode).toBe(0)
+    expect(stderr).toBe('')
+  })
+
+  it('reproduces the round-4 production failure UNFIXED: a real non-bot release author with NO releaseActor configured falls through to the real gate', async () => {
+    const ghDir = fakeGh('daniboomerang')
+    const { exitCode } = await runCheck({ BRANCH: 'changeset-release/main', PR_NUMBER: '1' }, ghDir)
     expect(exitCode).toBe(1)
   })
 })

@@ -122,7 +122,22 @@ export function isReviewGateExemptBranch(branch: string): boolean {
 }
 
 const CHANGESET_RELEASE_BRANCH = 'changeset-release/main'
-const CHANGESET_RELEASE_AUTHOR = 'github-actions[bot]'
+
+/**
+ * The stock Changesets flow's default identity — a release PR opened by
+ * `changesets/action` using the ambient `GITHUB_TOKEN` shows this as its
+ * author. Only a SANE DEFAULT for adopters who haven't configured
+ * `releaseActor` — never assume it matches any specific repo's real setup.
+ * A repo that opens release PRs with a custom PAT (this repo's own
+ * `RELEASE_TOKEN`, `.github/workflows/release.yml`) has a DIFFERENT real PR
+ * author (the token's owner) and must set `releaseActor` in its
+ * `vinaya.config.json` — found live, security review, PR #165 round 4: this
+ * exemption hardcoded this literal as the EXPECTED value with no
+ * adopter override, so it silently never matched this repo's own real
+ * release PRs (every one, #14 through #163, opened by the token owner) —
+ * the exemption never fired in production, in any of three prior rounds.
+ */
+export const DEFAULT_RELEASE_ACTOR = 'github-actions[bot]'
 
 /**
  * True only for the Changesets release PR — deliberately separate from
@@ -142,9 +157,16 @@ const CHANGESET_RELEASE_AUTHOR = 'github-actions[bot]'
  * already uses for `headRefOid` — see its `fetchPr`. Found live (security
  * review, PR #165): the first version of this exemption trusted a
  * `PR_AUTHOR` env var and would have reopened exactly this hole.
+ *
+ * `expectedAuthor` is caller-resolved, never hardcoded here — this function
+ * ships in the published `@attalabs/vinaya` package, and hardcoding any one
+ * identity would be correct for at most one adopter's release-token setup.
+ * Callers resolve it the same way `principalAllowlist` is resolved: from
+ * `vinaya.config.json`'s trust-anchor read (`resolveReleaseActor` +
+ * `loadTrustAnchorConfig`), falling back to `DEFAULT_RELEASE_ACTOR`.
  */
-export function isChangesetsReleasePr(branch: string, author: string | null): boolean {
-  return branch === CHANGESET_RELEASE_BRANCH && author === CHANGESET_RELEASE_AUTHOR
+export function isChangesetsReleasePr(branch: string, author: string | null, expectedAuthor: string): boolean {
+  return branch === CHANGESET_RELEASE_BRANCH && author === expectedAuthor
 }
 
 /**

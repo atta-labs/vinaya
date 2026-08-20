@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
-import { PRINCIPAL_ALLOWLIST } from '@attalabs/aeg-core'
+import { DEFAULT_RELEASE_ACTOR, PRINCIPAL_ALLOWLIST } from '@attalabs/aeg-core'
 
 // Rings is the only schema surface this task ships — declarative
 // booleans, no conditional logic. Ring 0 (git hooks) and the
@@ -240,6 +240,20 @@ export const VinayaConfigSchema = z.object({
   // counts as a trusted approver must come from the reviewed, committed
   // per-repo file, never a machine-wide personal config.
   principals: z.array(z.string()).min(1).optional(),
+  // The GitHub login expected to author this repo's Changesets release PR
+  // (`changeset-release/main`) — overrides `DEFAULT_RELEASE_ACTOR`
+  // (`github-actions[bot]`, the stock `changesets/action` + ambient
+  // `GITHUB_TOKEN` identity) when this repo opens release PRs some other
+  // way, e.g. a custom PAT (`RELEASE_TOKEN`) whose owner is a real user
+  // login, not a bot. Same trust class as `principals` — repo-local only,
+  // resolved via the same server-side trust-anchor read
+  // (`resolveReleaseActor` + `loadTrustAnchorConfig`), never from local git
+  // or an env var, for the same reason: this value gates the
+  // Changesets-release exemption on `body-bare-digits`/`review-gate`, a
+  // merge-authority decision. Found live (security review, PR #165 round
+  // 4): without this field the exemption's expected author was hardcoded to
+  // the stock default and never matched this repo's own real release PRs.
+  releaseActor: z.string().min(1).optional(),
   // Adopter-declared CI preparation. `ci.setup` is a shell command emitted
   // verbatim as a step in the generated workflows that execute
   // `vinaya check` — the only generated jobs that can spawn the ADOPTER'S
@@ -327,6 +341,11 @@ export function globalPrincipalsIgnoredWarning(path: string): string {
   return `${path}: "principals" in the global config is ignored — principals may only be declared from a repo-local vinaya.config.json.`
 }
 
+/** Same reasoning as `globalPrincipalsIgnoredWarning` — `releaseActor` gates a merge-authority exemption, same trust class as `principals`. */
+export function globalReleaseActorIgnoredWarning(path: string): string {
+  return `${path}: "releaseActor" in the global config is ignored — releaseActor may only be declared from a repo-local vinaya.config.json.`
+}
+
 /**
  * `checks` and `principals` from the global config are both explicitly out
  * of scope for it (`checks`: spec chapter, "Explicitly out of scope for this
@@ -354,6 +373,10 @@ function stripGlobalOnlyKeys(config: VinayaConfig, path: string): VinayaConfig {
     console.error(`⚠ ${globalPrincipalsIgnoredWarning(path)}`)
     result = { ...result, principals: undefined }
   }
+  if (result.releaseActor) {
+    console.error(`⚠ ${globalReleaseActorIgnoredWarning(path)}`)
+    result = { ...result, releaseActor: undefined }
+  }
   return result
 }
 
@@ -374,6 +397,18 @@ function stripGlobalOnlyKeys(config: VinayaConfig, path: string): VinayaConfig {
  */
 export function resolvePrincipalAllowlist(config: VinayaConfig | null): string[] {
   return config?.principals ?? PRINCIPAL_ALLOWLIST
+}
+
+/**
+ * Resolves the expected author of this repo's Changesets release PR: the
+ * repo-local `releaseActor` when set, else `DEFAULT_RELEASE_ACTOR` (the
+ * stock `changesets/action` identity). Same sourcing rule as
+ * `resolvePrincipalAllowlist` — callers MUST pass `loadTrustAnchorConfig()`,
+ * never `loadConfig()` or anything env/local-git-derived, since this gates
+ * the same merge-authority exemption `principals` gates.
+ */
+export function resolveReleaseActor(config: VinayaConfig | null): string {
+  return config?.releaseActor ?? DEFAULT_RELEASE_ACTOR
 }
 
 /**
@@ -547,7 +582,7 @@ function isMissingFileError(err: unknown): boolean {
 export function loadTrustAnchorConfig(fetcher: TrustAnchorFetcher = ghFetchTrustAnchorConfig): VinayaConfig | null {
   const warn = (why: string) =>
     process.stdout.write(
-      `⚠ could not read \`principals\` from the default branch (${why}) — falling back to vinaya's built-in principal allowlist.\n`
+      `⚠ could not read the trust-anchor config (\`principals\`/\`releaseActor\`) from the default branch (${why}) — falling back to vinaya's built-in defaults.\n`
     )
 
   let base64: string
