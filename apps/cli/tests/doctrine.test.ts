@@ -97,6 +97,37 @@ describe('vinaya doctrine', () => {
     expect(exitCode).toBe(1)
     expect(stderr).toContain('is not a known role')
   })
+
+  it('--role principal is refused — actor: human is excluded from the live-enumerated set', async () => {
+    const proc = Bun.spawn(['bun', CLI_ENTRY, 'doctrine', '--role', 'principal'], {
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+    const exitCode = await proc.exited
+    const stderr = await new Response(proc.stderr).text()
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain("'principal' is not a known role")
+    // The valid-names list itself must not suggest it either — a caller
+    // reading the error's own suggestions should never be pointed at the
+    // excluded role. Check only the suggestion list, not the whole message,
+    // since the message legitimately echoes the rejected input by name.
+    const suggestionList = stderr.split('Valid role names:')[1] ?? ''
+    expect(suggestionList).not.toMatch(/\bprincipal\b/)
+  })
+
+  it('actor: agent and actor: either roles both still resolve — the exclusion is actor-specific, not a blanket narrowing', () => {
+    const root = resolveDoctrineRoot()
+    if (root === null) throw new Error('no doctrine root on this machine')
+    // developer.md is actor: agent; archivist.md is actor: either — both must
+    // still be reachable, proving this isn't an accidental narrowing to a
+    // single actor value.
+    for (const role of ['developer', 'archivist']) {
+      const printed = captureStdout(() => doctrineCommand(['--role', role])).trim()
+      expect(printed).toBe(join(root, 'roles', `${role}.md`))
+      expect(existsSync(printed)).toBe(true)
+    }
+  })
 })
 
 // Synthetic-fixture coverage of every resolution shape — the live tests above
