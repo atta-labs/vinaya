@@ -644,6 +644,20 @@ async function diagnoseBranchProtection(deps: DoctorDeps, owner: string, repo: s
 // undo than an internal fallback. This only reports whether the ADOPTER'S
 // own coverage line exists, never suggests or writes one.
 // ---------------------------------------------------------------------------
+/**
+ * True only when `pattern` IS the workflows directory itself (however the
+ * trailing glob/slash is spelled) — never merely a path that mentions it.
+ * `/.github/workflows/deploy.yml` names one file inside the directory and
+ * must NOT count: found live (code review, PR #168) — a bare substring
+ * check (`line.includes('.github/workflows/')`) reported full coverage for
+ * exactly that narrower pattern, a false positive on this diagnostic's own
+ * reason for existing (protecting `vinaya-review.yml`, not one file in it).
+ */
+function coversWorkflowsDir(pattern: string): boolean {
+  const bare = pattern.replace(/\*+$/, '').replace(/\/+$/, '')
+  return bare === '.github/workflows' || bare === '/.github/workflows'
+}
+
 function diagnoseCodeowners(repoRoot: string): Finding {
   const path = join(repoRoot, '.github', 'CODEOWNERS')
   if (!existsSync(path)) {
@@ -652,8 +666,20 @@ function diagnoseCodeowners(repoRoot: string): Finding {
       "no .github/CODEOWNERS — vinaya's workflow files have no required-review protection; see `vinaya init`'s printed recommendation."
     )
   }
-  const body = readFileSync(path, 'utf-8')
-  const covered = body.split('\n').some((line) => !line.trim().startsWith('#') && line.includes('.github/workflows/'))
+  let body: string
+  try {
+    body = readFileSync(path, 'utf-8')
+  } catch (err) {
+    // Present but unreadable (permissions, a broken symlink) — degrade to a
+    // finding, same pattern diagnoseCustomChecks/diagnoseTestCi already use
+    // for a bad file, never let one bad file abort the whole doctor run.
+    return warn('codeowners', `.github/CODEOWNERS exists but could not be read: ${(err as Error).message}`)
+  }
+  const covered = body
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .some((line) => coversWorkflowsDir(line.split(/\s+/)[0] ?? ''))
   return covered
     ? info('codeowners', '.github/CODEOWNERS covers .github/workflows/**.')
     : warn(

@@ -391,6 +391,28 @@ describe('vinaya doctor — never mutates', () => {
     const codeowners = report.findings.find((f) => f.check === 'codeowners')
     expect(codeowners?.severity).toBe('warn')
   })
+
+  it('codeowners: a narrower single-file entry does NOT count as covering the whole directory (code review, PR #168)', async () => {
+    await runInit(['--yes'], initDeps())
+    mkdirSync(join(root, '.github'), { recursive: true })
+    // Names one file inside workflows/, not the directory itself — vinaya-review.yml,
+    // the file this feature exists to protect, stays unprotected by this line.
+    writeFileSync(join(root, '.github', 'CODEOWNERS'), '/.github/workflows/deploy.yml @someone\n')
+
+    const report = await runDoctorJson()
+    const codeowners = report.findings.find((f) => f.check === 'codeowners')
+    expect(codeowners?.severity).toBe('warn')
+  })
+
+  it('codeowners: a bare directory entry with no trailing glob still counts', async () => {
+    await runInit(['--yes'], initDeps())
+    mkdirSync(join(root, '.github'), { recursive: true })
+    writeFileSync(join(root, '.github', 'CODEOWNERS'), '/.github/workflows @someone\n')
+
+    const report = await runDoctorJson()
+    const codeowners = report.findings.find((f) => f.check === 'codeowners')
+    expect(codeowners?.severity).toBe('info')
+  })
 })
 
 // Regression coverage for a real hooks false-negative found live: `roles/developer.md`
