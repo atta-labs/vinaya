@@ -930,6 +930,26 @@ const BRANCH_PROTECTION_NOTE = `Recommended (run yourself — vinaya never appli
     -F 'required_status_checks.contexts[]=vinaya-checks' \\
     -F enforce_admins=true -F restrictions=`
 
+// Workflow files run with elevated trust — vinaya-review.yml's
+// pull_request_target boundary loads them from THIS branch, not the PR's,
+// specifically so a PR cannot rewrite the check that judges it. An
+// unreviewed edit to that file on the default branch defeats the whole
+// boundary from the other side. Printed guidance only, same reasoning as
+// BRANCH_PROTECTION_NOTE and for the same reason vinaya never WRITES the
+// CODEOWNERS entry itself: `principals` already had one incident from a
+// hardcoded identity leaking into every adopter as a wrong default
+// (review-gate.ts's own module comment) — an unreviewed guess at whose
+// GitHub login belongs in every adopter's committed CODEOWNERS file would
+// repeat that mistake in a more visible, harder-to-miss place. The
+// adopter's own login(s) are theirs to choose.
+const CODEOWNERS_NOTE = `Recommended: require review on vinaya's own workflow files.
+
+  echo '/.github/workflows/** @your-github-login' >> .github/CODEOWNERS
+
+Then add this flag to the branch-protection command above:
+
+  -F required_pull_request_reviews.require_code_owner_reviews=true`
+
 // ---------------------------------------------------------------------------
 // Op builders
 // ---------------------------------------------------------------------------
@@ -1028,6 +1048,7 @@ export function buildInitOps(ctx: InitContext): Op[] {
 
   // Branch protection — printed only, never applied.
   ops.push({ kind: 'print', message: BRANCH_PROTECTION_NOTE, group: 'Branch protection (printed, never applied)' })
+  ops.push({ kind: 'print', message: CODEOWNERS_NOTE, group: 'Branch protection (printed, never applied)' })
 
   return ops
 }

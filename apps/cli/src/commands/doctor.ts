@@ -636,6 +636,33 @@ async function diagnoseBranchProtection(deps: DoctorDeps, owner: string, repo: s
 }
 
 // ---------------------------------------------------------------------------
+// Check 9 — CODEOWNERS coverage of .github/workflows/**, report-only, local
+// file read only — never applied, and never a fallback identity: the SAME
+// class of mistake `principals`' hardcoded default already made once
+// (review-gate.ts's own module comment) would be worse here, since a wrong
+// login written into a committed, GitHub-visible file is harder to miss and
+// undo than an internal fallback. This only reports whether the ADOPTER'S
+// own coverage line exists, never suggests or writes one.
+// ---------------------------------------------------------------------------
+function diagnoseCodeowners(repoRoot: string): Finding {
+  const path = join(repoRoot, '.github', 'CODEOWNERS')
+  if (!existsSync(path)) {
+    return info(
+      'codeowners',
+      "no .github/CODEOWNERS — vinaya's workflow files have no required-review protection; see `vinaya init`'s printed recommendation."
+    )
+  }
+  const body = readFileSync(path, 'utf-8')
+  const covered = body.split('\n').some((line) => !line.trim().startsWith('#') && line.includes('.github/workflows/'))
+  return covered
+    ? info('codeowners', '.github/CODEOWNERS covers .github/workflows/**.')
+    : warn(
+        'codeowners',
+        '.github/CODEOWNERS exists but has no entry covering .github/workflows/** — workflow file edits can merge unreviewed.'
+      )
+}
+
+// ---------------------------------------------------------------------------
 // Check 8 — test CI, report-only, a heuristic. Vinaya requires a Test Plan on
 // every PR and enforces it as a blocking gate but never checks whether
 // anything actually runs the adopter's tests — this names that asymmetry.
@@ -753,6 +780,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
   findings.push(...diagnoseGlobalConfigChecks())
   findings.push(...(await diagnoseEnvironment(deps, hasDrift)))
   findings.push(await diagnoseBranchProtection(deps, repo.owner, repo.repo))
+  findings.push(diagnoseCodeowners(repo.repoRoot))
   findings.push(...diagnoseTestCi(repo.repoRoot))
 
   const healthy = findings.every((f) => f.severity === 'ok' || f.severity === 'info')
