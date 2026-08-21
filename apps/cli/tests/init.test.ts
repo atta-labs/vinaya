@@ -375,16 +375,21 @@ describe('never-clobber', () => {
 })
 
 describe('workflows', () => {
-  it('splits the review gate: required half on pull_request only, verdict half on issue_comment', async () => {
+  it('splits review authority into default-branch-only workflows', async () => {
     await runInit(['--yes'], makeDeps())
     const checks = readFileSync(join(root, CHECKS_WORKFLOW_PATH), 'utf-8')
     const review = readFileSync(join(root, REVIEW_WORKFLOW_PATH), 'utf-8')
     const verdict = readFileSync(join(root, REVIEW_VERDICT_WORKFLOW_PATH), 'utf-8')
     expect(checks).toContain('pull_request')
     expect(checks).not.toContain('issue_comment')
-    // Required half: pull_request only — no comment path, so its runs never
-    // list permanently-skipped comment jobs.
-    expect(review).toContain('pull_request')
+    const sigil = '$'
+    // Authority half: pull_request_target + explicit default-branch checkout.
+    // A PR must not choose either the workflow definition or executable code.
+    expect(review).toContain('pull_request_target:')
+    expect(review).not.toContain('\n  pull_request:\n')
+    expect(review).toContain(`ref: ${sigil}{{ github.event.repository.default_branch }}`)
+    expect(review).not.toContain(`ref: ${sigil}{{ github.event.pull_request.head.sha }}`)
+    expect(review).not.toContain('refs/pull/')
     expect(review).not.toContain('issue_comment')
     // Verdict half: comment-triggered, VERDICT-guarded before checkout cost,
     // evaluator holds no write permission, retrigger re-runs the required run.
@@ -393,6 +398,9 @@ describe('workflows', () => {
     expect(verdict).toContain('actions: write')
     expect(verdict).toContain('gh run rerun')
     expect(verdict).toContain('vinaya-review.yml')
+    expect(verdict).toContain(`ref: ${sigil}{{ github.event.repository.default_branch }}`)
+    expect(verdict).not.toContain(`ref: ${sigil}{{ steps.pr.outputs.sha }}`)
+    expect(verdict).not.toContain('refs/pull/')
     // Assert the INVOCATION, pin included — not the bare subcommand string,
     // which also appears as the job's `name:` and would keep passing even if
     // the run step lost its invocation entirely.
@@ -571,25 +579,27 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
 
     expect(verdict).not.toContain('for RUN_ID in')
     expect(verdict).not.toContain('RUN_IDS')
-    expect(verdict).toContain('.[0].databaseId')
-    // Selected by head SHA, not recency: --status completed EXCLUDES a run
-    // that is re-running but INCLUDES cancelled ones, so "newest" can pick a
-    // stale cancelled sibling and cancel the live evaluation.
-    expect(verdict).toContain('--commit "$HEAD_SHA"')
-    // gh's --jq is a single-expression flag, NOT a jq passthrough: --arg is
-    // swallowed as the expression and gh exits 1, killing the step under
-    // bash -e before the empty-RUN_ID no-op can run.
-    expect(verdict).not.toContain('--arg')
-    expect(verdict).toContain('select(.conclusion!="cancelled")')
+    expect(verdict).toContain('set -o pipefail')
+    expect(verdict).toContain('jq -sr')
+    expect(verdict).toContain('| .id][0] // empty')
+    expect(verdict).not.toContain('| head -n 1')
+    // pull_request_target's run SHA is the default-branch SHA, not the PR
+    // head. The immutable run-name carries the PR/head identity instead.
+    expect(verdict).toContain('gh api --paginate')
+    expect(verdict).toContain('event=pull_request_target')
+    expect(verdict).toContain('select(.display_title == $title)')
+    expect(verdict).toContain('select(.conclusion != "cancelled")')
+    expect(verdict).toContain('--arg title "$RUN_TITLE"')
+    expect(verdict).not.toContain('gh run list')
+    expect(verdict).not.toContain('--commit "$HEAD_SHA"')
     // The `${{ }}` below is GitHub Actions expression syntax in the generated
     // workflow, asserted verbatim. Making it a template literal — biome's
     // suggested fix — would interpolate it away and the assertion would stop
     // testing the emitted text.
     // biome-ignore lint/suspicious/noTemplateCurlyInString: asserts emitted Actions syntax, not a JS template
     expect(verdict).toContain('HEAD_SHA: ${{ needs.evaluate.outputs.sha }}')
-    expect(verdict.indexOf('if [ -z "$HEAD_SHA" ]')).toBeLessThan(verdict.indexOf('gh run list'))
-    // The empty-branch guard must still precede the query.
-    expect(verdict.indexOf('if [ -z "$BRANCH" ]')).toBeLessThan(verdict.indexOf('gh run list'))
+    expect(verdict.indexOf('if [ -z "$HEAD_SHA" ]')).toBeLessThan(verdict.indexOf('gh api --paginate'))
+    expect(verdict.indexOf('if [ -z "$PR_NUMBER" ]')).toBeLessThan(verdict.indexOf('gh api --paginate'))
   })
 
   it('the verdict retrigger fires on BOTH verdicts — the gate must close, not only open', async () => {
@@ -607,12 +617,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // checked out, or a failed evaluation would leave it empty.
     expect(verdict.indexOf('id: pr')).toBeLessThan(verdict.indexOf('actions/checkout@v4'))
 
-    // ...and it can still be empty, because running on a failed evaluation
-    // makes `Resolve PR head`'s own failure reachable here for the first
-    // time. `gh run list --branch ""` drops the filter and matches every
-    // branch, so an unguarded rerun lands on an unrelated PR's gate.
-    expect(verdict).toContain('if [ -z "$BRANCH" ]')
-    expect(verdict.indexOf('if [ -z "$BRANCH" ]')).toBeLessThan(verdict.indexOf('gh run list'))
+    // Outputs can still be empty when Resolve PR head fails; both immutable
+    // run-name components must be guarded before querying all workflow runs.
+    expect(verdict).toContain('if [ -z "$PR_NUMBER" ]')
+    expect(verdict.indexOf('if [ -z "$PR_NUMBER" ]')).toBeLessThan(verdict.indexOf('gh api --paginate'))
   })
 
   it('ordinary adopter: gains the credential opt-out, and no vendored token', async () => {
@@ -700,8 +708,8 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
 
   it('every env: wiring survives in BOTH shapes', async () => {
     // PR_BODY/PR_NUMBER are what make the checks EVALUATE rather than pass
-    // vacuously; GH_TOKEN and BRANCH are load-bearing too. Changing how the
-    // binary is reached must not drop any of them.
+    // vacuously. BRANCH remains content-check input but is deliberately
+    // absent from authority workflows: a contributor chooses the head ref.
     for (const vendored of [false, true]) {
       rmSync(root, { recursive: true, force: true })
       mkdirSync(root, { recursive: true })
@@ -716,12 +724,50 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       expect(checks).toContain(expr('PR_NUMBER', 'github.event.pull_request.number'))
       expect(checks).toContain(expr('BRANCH', 'github.head_ref'))
       expect(review).toContain(expr('PR_NUMBER', 'github.event.pull_request.number'))
-      expect(review).toContain(expr('BRANCH', 'github.head_ref'))
       expect(verdict).toContain(expr('PR_NUMBER', 'steps.pr.outputs.number'))
-      expect(verdict).toContain(expr('BRANCH', 'steps.pr.outputs.branch'))
+      expect(verdict).toContain(expr('PR_NUMBER', 'needs.evaluate.outputs.number'))
+      expect(review).not.toContain('BRANCH:')
+      expect(verdict).not.toContain('BRANCH:')
+      expect(verdict).not.toContain('headRefName')
       // GH_TOKEN on every step that talks to the forge: checks 1, review 1,
       // verdict 3 (resolve-head, evaluate, retrigger), archivist 3.
       expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(8)
+    }
+  })
+
+  it('review authority executes only trusted default-branch code in BOTH shapes', async () => {
+    for (const vendored of [false, true]) {
+      rmSync(root, { recursive: true, force: true })
+      mkdirSync(root, { recursive: true })
+      if (vendored) vendorVinaya()
+      await captureStdout(() => runInit(['--yes'], makeDeps()))
+      const files = generated()
+      const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
+      const verdict = files.get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
+      const [evaluate = '', retrigger = ''] = verdict.split('\n  retrigger:')
+
+      expect(review).toContain('pull_request_target:')
+      expect(review).not.toContain('\n  pull_request:\n')
+      expect(review).toContain('run-name: "Vinaya Review Gate PR #')
+      for (const trustedJob of [review, evaluate]) {
+        expect(trustedJob).toContain(expr('ref', 'github.event.repository.default_branch'))
+        expect(trustedJob).not.toContain(expr('ref', 'github.event.pull_request.head.sha'))
+        expect(trustedJob).not.toContain(expr('ref', 'steps.pr.outputs.sha'))
+        expect(trustedJob).not.toContain('refs/pull/')
+        expect(trustedJob).not.toContain('Adopter CI setup')
+        expect(trustedJob).not.toContain('pull-requests: write')
+        expect(trustedJob).not.toContain('contents: write')
+      }
+      expect(retrigger).not.toContain('actions/checkout')
+      expect(retrigger).not.toContain('check review-gate')
+
+      if (vendored) {
+        expect(review).toContain('Build the trusted Vinaya CLI')
+        expect(evaluate).toContain('Build the trusted Vinaya CLI')
+      } else {
+        expect(review).toContain(`${PUBLISHED_RUN} check review-gate`)
+        expect(evaluate).toContain(`${PUBLISHED_RUN} check review-gate`)
+      }
     }
   })
 
@@ -1181,7 +1227,7 @@ describe('partial-failure ownership recording (review finding 3)', () => {
 
 describe('adopter-declared CI setup (ci.setup)', () => {
   const base = { owner: 'acme', repo: 'widget', hookDir: '.husky' as const, selfHost: null }
-  const CHECK_EXECUTING = [CHECKS_WORKFLOW_PATH, REVIEW_WORKFLOW_PATH, REVIEW_VERDICT_WORKFLOW_PATH]
+  const CUSTOM_CHECK_EXECUTING = [CHECKS_WORKFLOW_PATH]
 
   function workflowContent(ciSetup: string | null, path: string): string {
     const op = buildInitOps({ ...base, ciSetup }).find((o) => o.kind === 'create-file' && o.path === path)
@@ -1189,8 +1235,8 @@ describe('adopter-declared CI setup (ci.setup)', () => {
     return op.content
   }
 
-  it('emits the step in every check-executing workflow, before the vinaya invocation', () => {
-    for (const path of CHECK_EXECUTING) {
+  it('emits the step only where adopter-authored custom checks execute', () => {
+    for (const path of CUSTOM_CHECK_EXECUTING) {
       const content = workflowContent('npm ci', path)
       expect(content).toContain('- name: Adopter CI setup')
       expect(content).toContain('          npm ci')
@@ -1198,6 +1244,8 @@ describe('adopter-declared CI setup (ci.setup)', () => {
       // runner finds the adopter's code already installed
       expect(content.indexOf('Adopter CI setup')).toBeLessThan(content.indexOf(PUBLISHED_RUN))
     }
+    expect(workflowContent('npm ci', REVIEW_WORKFLOW_PATH)).not.toContain('Adopter CI setup')
+    expect(workflowContent('npm ci', REVIEW_VERDICT_WORKFLOW_PATH)).not.toContain('Adopter CI setup')
   })
 
   it('never emits the step in the archivist workflow — archive/audit spawn no adopter checks', () => {
@@ -1205,7 +1253,12 @@ describe('adopter-declared CI setup (ci.setup)', () => {
   })
 
   it('emits nothing when undeclared — no trace of the feature in any workflow', () => {
-    for (const path of [...CHECK_EXECUTING, ARCHIVIST_WORKFLOW_PATH]) {
+    for (const path of [
+      ...CUSTOM_CHECK_EXECUTING,
+      REVIEW_WORKFLOW_PATH,
+      REVIEW_VERDICT_WORKFLOW_PATH,
+      ARCHIVIST_WORKFLOW_PATH
+    ]) {
       const content = workflowContent(null, path)
       expect(content).not.toContain('Adopter CI setup')
       expect(content).not.toContain('ci.setup')

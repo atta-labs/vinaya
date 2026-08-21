@@ -1,0 +1,2 @@
+# Governance workflows define merge-authority checks and require principal review.
+/.github/workflows/** @daniboomerang

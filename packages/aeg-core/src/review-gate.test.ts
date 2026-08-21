@@ -211,8 +211,8 @@ describe('checkReviewGate', () => {
 })
 
 describe('isReviewGateExemptBranch', () => {
-  it('exempts a plan branch — topology docs only, no code', () => {
-    expect(isReviewGateExemptBranch('plan/vinaya-v1')).toBe(true)
+  it('does NOT trust a plan prefix — a contributor controls the branch name and may put code on it', () => {
+    expect(isReviewGateExemptBranch('plan/vinaya-v1')).toBe(false)
   })
 
   it('does NOT exempt a fix branch — fix/* carries real code (the gap this closes)', () => {

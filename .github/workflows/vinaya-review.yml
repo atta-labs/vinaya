@@ -1,17 +1,23 @@
 # Managed by Vinaya — created by `vinaya init`. `vinaya upgrade` regenerates it; `vinaya eject` removes it.
 #
-# The required review gate — pull_request events only. The verdict-comment
+# The required review gate. `pull_request_target` is the trust boundary:
+# GitHub loads this workflow and its default checkout from the repository's
+# default branch, never from the pull request being judged. The job does not
+# fetch, check out, install, build, or execute pull-request content.
+#
+# The verdict-comment
 # half lives in its own workflow (vinaya-review-verdict.yml): a new PR
-# comment fires a different GitHub event that this pull_request-only
+# comment fires a different GitHub event that this
 # workflow structurally cannot receive — and keeping the comment path in a
 # separate FILE means this workflow's runs never list permanently-skipped
 # comment jobs on the PR's checks panel. When a clean final verdict lands,
 # the verdict workflow re-runs this one, so the required check below goes
 # green natively with no manual rerun.
 name: Vinaya Review Gate
+run-name: "Vinaya Review Gate PR #${{ github.event.pull_request.number }} @ ${{ github.event.pull_request.head.sha }}"
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
 # One run per pull request COMMIT, always. Several `types:` above can fire in the
@@ -51,34 +57,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # This job executes repo content; don't leave the token in
-          # .git/config for scripts to read.
+          # Explicit trusted ref: never use the PR head/merge ref in this job.
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      # Pinned to a commit, not the mutable `v2` tag. This is the first
-      # THIRD-PARTY action this generator writes into an adopter's repository,
-      # and it runs in the same job that then builds and executes pull-request
-      # code. A repoint of `v2` would execute new upstream code in every
-      # adopter on the next run, with no diff anywhere to review.
-      # Resolved from the `v2` tag on 2026-08-14. Bun's own version still
-      # comes from the repo's `packageManager` field, not from this pin.
+      # Pinned to a commit, not the mutable `v2` tag. A repoint of
+      # `v2` would execute new upstream code in every adopter on the next run,
+      # with no diff anywhere to review. Resolved from the `v2` tag on
+      # 2026-08-14. Bun's own version still comes from the repo's
+      # `packageManager` field, not from this pin.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
       # This repo declares the `@attalabs/vinaya` workspace package itself, so
       # `npx @attalabs/vinaya` resolves to that local member instead of the
-      # registry and dies on its unbuilt `bin`. Build and run this repo's own
-      # CLI — which also makes CI exercise the code in the pull request rather
-      # than a published copy predating it.
+      # registry and dies on its unbuilt `bin`. Build and run the trusted
+      # default-branch copy directly.
       #
-      # `--ignore-scripts` blocks the PR-controlled surface, which is not
-      # the obvious one: bun already declines an untrusted DEPENDENCY's
-      # postinstall (measured, 1.2.14). What this stops is the repo's own
-      # root and workspace lifecycle scripts, plus anything the pull request
-      # adds to `trustedDependencies` — all of it editable in the same PR
-      # this job is checking. The build needs the packages, not the hooks.
-      - name: Build the vendored Vinaya CLI
+      # This workflow executes only a trusted checkout selected by its event:
+      # never the pull request head or merge ref. The review-authority decision
+      # therefore comes from code the pull request cannot alter. `--ignore-scripts`
+      # remains defense in depth against lifecycle hooks in that trusted tree.
+      - name: Build the trusted Vinaya CLI
         run: |
           bun install --frozen-lockfile --ignore-scripts
           bun run --cwd apps/cli build
@@ -89,5 +90,4 @@ jobs:
           # it the adapter reads "no PR yet — local dev" and exits 0, and
           # the gate is green regardless of review state.
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          BRANCH: ${{ github.head_ref }}
         run: node apps/cli/dist/index.js check review-gate

@@ -2,24 +2,15 @@
 
 /**
  * verify-review-gate — required pre-merge CI check (aeg-review-gate-v1 task 1,
- * #474). Blocks a task-branch PR from merging unless a code-reviewer
+ * #474). Blocks a PR from merging unless a code-reviewer
  * `APPROVE` verdict AND a security-review `PASS` verdict both exist on the
  * PR, or an actor-verified `vinaya/waiver:review` label is present (the exact
  * pattern — `isWaiverLabelActorVerified`, reused not duplicated).
  *
- * Only `plan/*` branches bypass (`isReviewGateExemptBranch`) — a plan PR
- * touches only topology docs, never code. Every other branch,
- * INCLUDING `fix/*`, is held to the gate: `fix/*` carries real code despite
- * not matching `task/<tranche>/<id>`, so it must not be waved through the
- * same way a genuinely code-free `plan/*` branch is. This is a going-forward
- * gate, never a re-evaluation of already-merged history.
- *
- * Fail-closed change from the prior bypass logic: a literal `BRANCH=main`
- * used to match the old "any non-task branch" bypass too. It no longer does
- * — `main` isn't `plan/*`, so it now falls through to the real check. Harmless
- * in the one real caller (`forge-lifecycle.yml`'s `pull_request` trigger,
- * where `BRANCH` is always the PR's head ref, never literally `main`), but
- * worth naming explicitly since it IS a behavior change from before.
+ * No branch prefix bypasses the gate. A contributor controls the PR's head
+ * branch name, so treating `plan/*` as proof of a docs-only diff was an
+ * authority bypass. This is a going-forward gate, never a re-evaluation of
+ * already-merged history.
  *
  * Thin CLI/I/O shim, same discipline as `verify-single-plan-pr.ts`: resolves
  * the PR's comments/labels/waiver-label-actor/head sha via `gh`, calls the
@@ -41,7 +32,7 @@
 
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
-import { checkReviewGate, isReviewGateExemptBranch, WAIVER_LABEL_REVIEW } from '../src/index'
+import { checkReviewGate, WAIVER_LABEL_REVIEW } from '../src/index'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)
@@ -100,14 +91,6 @@ export function main(prNumber: number): void {
 }
 
 if (import.meta.main) {
-  const branch = process.env.BRANCH ?? ''
-  if (isReviewGateExemptBranch(branch)) {
-    console.log(
-      `verify-review-gate: branch "${branch}" is a plan branch — bypass (topology docs only, no code to review).`
-    )
-    process.exit(0)
-  }
-
   const prNumberStr = process.env.PR_NUMBER
   if (!prNumberStr) {
     console.error('verify-review-gate: PR_NUMBER env var not set — cannot evaluate. Failing closed.')

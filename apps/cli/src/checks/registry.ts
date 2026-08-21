@@ -266,8 +266,8 @@ export function coreCheckRegistry(): CheckSpec[] {
       // that copy freezes at push-time verdicts and stays red after an
       // approval — measured on atta-labs/vinaya#21.
       ownWorkflow: true,
-      // BRANCH falls back to git; PR_NUMBER's absence takes the explicit
-      // "no PR to evaluate yet (local dev, pre-push before a PR exists)"
+      // PR_NUMBER's absence takes the explicit "no PR to evaluate yet
+      // (local dev, pre-push before a PR exists)"
       // bypass documented in the bin's own module comment. The bin shells
       // to `gh` directly (no `resolveToken()`), and on a CI runner `gh`
       // authenticates ONLY from GH_TOKEN/GITHUB_TOKEN — without forwarding
@@ -286,7 +286,6 @@ export function coreCheckRegistry(): CheckSpec[] {
       // GitHub about, is runner-set in the only context where this is a trust
       // decision, and never selects a commit — see `trustAnchorRepo`.
       env: {
-        BRANCH: { optional: true },
         PR_NUMBER: { optional: true },
         GITHUB_REPOSITORY: { optional: true },
         GITHUB_TOKEN: { optional: true },

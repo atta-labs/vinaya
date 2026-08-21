@@ -25,19 +25,11 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkReviewGate, isReviewGateExemptBranch, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
+import { checkReviewGate, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 
 const CHECK_NAME = 'review-gate'
-
-function git(args: string[]): string {
-  try {
-    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
-  } catch {
-    return ''
-  }
-}
 
 type PrView = {
   number: number
@@ -76,11 +68,6 @@ function fetchWaiverLabelActor(prNumber: number, label: string): string | null {
 }
 
 function main(): void {
-  const branch = process.env.BRANCH || git(['rev-parse', '--abbrev-ref', 'HEAD'])
-  if (isReviewGateExemptBranch(branch)) {
-    process.exit(0)
-  }
-
   const prNumberStr = process.env.PR_NUMBER
   if (!prNumberStr) {
     // No PR to evaluate yet (local dev, pre-push before a PR exists).
@@ -107,10 +94,11 @@ function main(): void {
     : null
 
   // `principals` comes from GitHub's API (default-branch, server-side state),
-  // never local git / the PR's checkout / any env var — all three of those
-  // are rewritable by the PR being evaluated, since a `pull_request`-triggered
-  // workflow runs the PR's own YAML. See `loadTrustAnchorConfig` in
-  // lib/config.ts for the three failed attempts that established this.
+  // never local git / the PR's checkout / any env var. The generated authority
+  // workflows likewise execute only their explicit default-branch checkout;
+  // PR metadata is input data, never the source of the gate implementation or
+  // its trust anchors. See `loadTrustAnchorConfig` in lib/config.ts for the
+  // three failed attempts that established the config half of this boundary.
   const result = checkReviewGate({
     comments: pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
     labels,
