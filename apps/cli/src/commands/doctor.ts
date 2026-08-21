@@ -636,6 +636,59 @@ async function diagnoseBranchProtection(deps: DoctorDeps, owner: string, repo: s
 }
 
 // ---------------------------------------------------------------------------
+// Check 9 — CODEOWNERS coverage of .github/workflows/**, report-only, local
+// file read only — never applied, and never a fallback identity: the SAME
+// class of mistake `principals`' hardcoded default already made once
+// (review-gate.ts's own module comment) would be worse here, since a wrong
+// login written into a committed, GitHub-visible file is harder to miss and
+// undo than an internal fallback. This only reports whether the ADOPTER'S
+// own coverage line exists, never suggests or writes one.
+// ---------------------------------------------------------------------------
+/**
+ * True only when `pattern` IS the workflows directory itself (however the
+ * trailing glob/slash is spelled) — never merely a path that mentions it.
+ * `/.github/workflows/deploy.yml` names one file inside the directory and
+ * must NOT count: found live (code review, PR #168) — a bare substring
+ * check (`line.includes('.github/workflows/')`) reported full coverage for
+ * exactly that narrower pattern, a false positive on this diagnostic's own
+ * reason for existing (protecting `vinaya-review.yml`, not one file in it).
+ */
+function coversWorkflowsDir(pattern: string): boolean {
+  const bare = pattern.replace(/\*+$/, '').replace(/\/+$/, '')
+  return bare === '.github/workflows' || bare === '/.github/workflows'
+}
+
+function diagnoseCodeowners(repoRoot: string): Finding {
+  const path = join(repoRoot, '.github', 'CODEOWNERS')
+  if (!existsSync(path)) {
+    return info(
+      'codeowners',
+      "no .github/CODEOWNERS — vinaya's workflow files have no required-review protection; see `vinaya init`'s printed recommendation."
+    )
+  }
+  let body: string
+  try {
+    body = readFileSync(path, 'utf-8')
+  } catch (err) {
+    // Present but unreadable (permissions, a broken symlink) — degrade to a
+    // finding, same pattern diagnoseCustomChecks/diagnoseTestCi already use
+    // for a bad file, never let one bad file abort the whole doctor run.
+    return warn('codeowners', `.github/CODEOWNERS exists but could not be read: ${(err as Error).message}`)
+  }
+  const covered = body
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .some((line) => coversWorkflowsDir(line.split(/\s+/)[0] ?? ''))
+  return covered
+    ? info('codeowners', '.github/CODEOWNERS covers .github/workflows/**.')
+    : warn(
+        'codeowners',
+        '.github/CODEOWNERS exists but has no entry covering .github/workflows/** — workflow file edits can merge unreviewed.'
+      )
+}
+
+// ---------------------------------------------------------------------------
 // Check 8 — test CI, report-only, a heuristic. Vinaya requires a Test Plan on
 // every PR and enforces it as a blocking gate but never checks whether
 // anything actually runs the adopter's tests — this names that asymmetry.
@@ -753,6 +806,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
   findings.push(...diagnoseGlobalConfigChecks())
   findings.push(...(await diagnoseEnvironment(deps, hasDrift)))
   findings.push(await diagnoseBranchProtection(deps, repo.owner, repo.repo))
+  findings.push(diagnoseCodeowners(repo.repoRoot))
   findings.push(...diagnoseTestCi(repo.repoRoot))
 
   const healthy = findings.every((f) => f.severity === 'ok' || f.severity === 'info')

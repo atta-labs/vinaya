@@ -351,6 +351,68 @@ describe('vinaya doctor — never mutates', () => {
     expect(auth?.severity).toBe('warn')
     expect(bp?.severity).toBe('info')
   })
+
+  it('codeowners: reports info when .github/CODEOWNERS is absent — never a suggested identity, just the gap', async () => {
+    await runInit(['--yes'], initDeps())
+    const report = await runDoctorJson()
+    const codeowners = report.findings.find((f) => f.check === 'codeowners')
+    expect(codeowners?.severity).toBe('info')
+    expect(codeowners?.message).toContain('no .github/CODEOWNERS')
+  })
+
+  it('codeowners: warns when the file exists but has no line covering .github/workflows/**', async () => {
+    await runInit(['--yes'], initDeps())
+    mkdirSync(join(root, '.github'), { recursive: true })
+    writeFileSync(join(root, '.github', 'CODEOWNERS'), '*.md @docs-team\n')
+
+    const report = await runDoctorJson()
+    const codeowners = report.findings.find((f) => f.check === 'codeowners')
+    expect(codeowners?.severity).toBe('warn')
+    expect(codeowners?.message).toContain('no entry covering .github/workflows/**')
+  })
+
+  it('codeowners: reports info when a real (adopter-chosen) coverage line exists', async () => {
+    await runInit(['--yes'], initDeps())
+    mkdirSync(join(root, '.github'), { recursive: true })
+    writeFileSync(join(root, '.github', 'CODEOWNERS'), '/.github/workflows/** @someone-the-adopter-chose\n')
+
+    const report = await runDoctorJson()
+    const codeowners = report.findings.find((f) => f.check === 'codeowners')
+    expect(codeowners?.severity).toBe('info')
+    expect(codeowners?.message).toContain('covers .github/workflows/**')
+  })
+
+  it('codeowners: a commented-out coverage line does not count', async () => {
+    await runInit(['--yes'], initDeps())
+    mkdirSync(join(root, '.github'), { recursive: true })
+    writeFileSync(join(root, '.github', 'CODEOWNERS'), '# /.github/workflows/** @someone\n')
+
+    const report = await runDoctorJson()
+    const codeowners = report.findings.find((f) => f.check === 'codeowners')
+    expect(codeowners?.severity).toBe('warn')
+  })
+
+  it('codeowners: a narrower single-file entry does NOT count as covering the whole directory (code review, PR #168)', async () => {
+    await runInit(['--yes'], initDeps())
+    mkdirSync(join(root, '.github'), { recursive: true })
+    // Names one file inside workflows/, not the directory itself — vinaya-review.yml,
+    // the file this feature exists to protect, stays unprotected by this line.
+    writeFileSync(join(root, '.github', 'CODEOWNERS'), '/.github/workflows/deploy.yml @someone\n')
+
+    const report = await runDoctorJson()
+    const codeowners = report.findings.find((f) => f.check === 'codeowners')
+    expect(codeowners?.severity).toBe('warn')
+  })
+
+  it('codeowners: a bare directory entry with no trailing glob still counts', async () => {
+    await runInit(['--yes'], initDeps())
+    mkdirSync(join(root, '.github'), { recursive: true })
+    writeFileSync(join(root, '.github', 'CODEOWNERS'), '/.github/workflows @someone\n')
+
+    const report = await runDoctorJson()
+    const codeowners = report.findings.find((f) => f.check === 'codeowners')
+    expect(codeowners?.severity).toBe('info')
+  })
 })
 
 // Regression coverage for a real hooks false-negative found live: `roles/developer.md`
