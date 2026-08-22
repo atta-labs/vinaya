@@ -242,8 +242,32 @@ type FileAction = 'current' | 'regenerate' | 'recreate' | 'refuse-foreign' | 'no
 type BlockAction = 'current' | 'regenerate-block' | 'recreate-append' | 'recreate-host' | 'not-installed'
 
 type UpgradeEntry =
-  | { kind: 'create-file'; op: CreateFileOp; action: FileAction }
+  | {
+      kind: 'create-file'
+      op: CreateFileOp
+      action: FileAction
+      /** set only when a regenerated `.github/workflows/*.yml` file's top-level
+       * trigger key is changing — see `extractWorkflowTrigger`. */
+      triggerChange?: { from: string; to: string }
+    }
   | { kind: 'managed-block'; op: ManagedBlockOp; action: BlockAction }
+
+// ---------------------------------------------------------------------------
+// Workflow trigger-type migration detection.
+//
+// Every generated workflow in this repo emits its trigger the same
+// block-style shape: `on:` on its own line, then the trigger key indented
+// two spaces on the next line (`  pull_request:`, `  pull_request_target:`,
+// `  issue_comment:`, `  push:`). Extracting that key from both the on-disk
+// content and the freshly-generated content lets `planUpgrade` notice when a
+// regenerated workflow's trigger TYPE is about to change — the exact
+// situation that leaves the resulting upgrade PR unable to satisfy its own
+// required review-gate check (see `renderUpgradeDiff`'s warning block).
+// ---------------------------------------------------------------------------
+function extractWorkflowTrigger(content: string): string | null {
+  const match = content.match(/^on:\r?\n {2}([A-Za-z0-9_]+):/m)
+  return match?.[1] ?? null
+}
 
 export type UpgradePlan = {
   entries: UpgradeEntry[]
@@ -266,6 +290,7 @@ export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManife
       const exists = existsSync(abs)
       const owned = ownedFiles.has(op.path)
       let action: FileAction
+      let triggerChange: { from: string; to: string } | undefined
       if (op.path === CONFIG_PATH || op.path === DOC_OWNERS_PATH) {
         // CONFIG_PATH: semantic content (rings/checks/briefSchema) is
         // adopter-owned; only the `managed` sub-object is regenerated,
@@ -280,13 +305,21 @@ export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManife
       } else if (!exists) {
         action = 'recreate'
         hasChanges = true
-      } else if (readFileSync(abs, 'utf-8') !== op.content) {
-        action = 'regenerate'
-        hasChanges = true
       } else {
-        action = 'current'
+        const diskContent = readFileSync(abs, 'utf-8')
+        if (diskContent !== op.content) {
+          action = 'regenerate'
+          hasChanges = true
+          if (op.path.startsWith('.github/workflows/')) {
+            const from = extractWorkflowTrigger(diskContent)
+            const to = extractWorkflowTrigger(op.content)
+            if (from && to && from !== to) triggerChange = { from, to }
+          }
+        } else {
+          action = 'current'
+        }
       }
-      entries.push({ kind: 'create-file', op, action })
+      entries.push({ kind: 'create-file', op, action, ...(triggerChange ? { triggerChange } : {}) })
     } else if (op.kind === 'managed-block') {
       const abs = resolveManagedBlockPath(repoRoot, op.path)
       const owned = ownedBlocks.has(blockKey(op.path, op.marker))
@@ -371,6 +404,29 @@ export function renderUpgradeDiff(plan: UpgradePlan): string {
         case 'regenerate':
           lines.push(`  ~ regenerate ${e.op.path}`)
           lines.push(indent(e.op.content))
+          if (e.triggerChange) {
+            lines.push('')
+            lines.push(
+              `  ⚠ TRIGGER CHANGE: ${e.op.path} is moving from \`${e.triggerChange.from}\` to ` +
+                `\`${e.triggerChange.to}\`.`
+            )
+            lines.push(
+              "     GitHub evaluates a `pull_request` trigger from the pull request branch's own copy of the " +
+                'workflow file, but a `pull_request_target` trigger from the copy on the BASE branch — never ' +
+                "the pull request branch's. The pull request that carries this exact change matches NEITHER: " +
+                'as `pull_request` it no longer matches (the pull request branch now declares ' +
+                '`pull_request_target`), and as `pull_request_target` the base branch still declares the old ' +
+                'trigger until this pull request merges. No workflow run fires under either event, so this ' +
+                "file's required check-run never appears for this pull request — not failing, not pending, " +
+                'simply absent — and a ruleset or branch-protection rule that requires it will block this pull ' +
+                'request from merging through the normal flow.'
+            )
+            lines.push(
+              '     To get this pull request merged: temporarily add a ruleset bypass actor (or, under classic ' +
+                'branch protection, a temporary admin override) for the merge, then remove it once this pull ' +
+                'request is in.'
+            )
+          }
           break
         case 'recreate':
           lines.push(`  + recreate   ${e.op.path} (recorded as owned but missing on disk)`)

@@ -10,7 +10,7 @@ import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
 import type { UpgradeDeps } from '../src/commands/upgrade.js'
 import { runUpgrade } from '../src/commands/upgrade.js'
-import { CHECKS_WORKFLOW_PATH, CONFIG_PATH } from '../src/lib/artifacts.js'
+import { CHECKS_WORKFLOW_PATH, CONFIG_PATH, REVIEW_WORKFLOW_PATH } from '../src/lib/artifacts.js'
 import type { LabelGateway } from '../src/lib/ops.js'
 
 let root: string
@@ -204,6 +204,45 @@ describe('vinaya upgrade', () => {
     expect(readFileSync(join(root, 'VINAYA.md'), 'utf-8')).toBe('# my own notes, not vinaya-generated\n')
     // the real drift elsewhere still got regenerated
     expect(readFileSync(join(root, CHECKS_WORKFLOW_PATH), 'utf-8')).not.toBe('name: hand-edited\n')
+  })
+
+  it('does not warn when a regenerated workflow keeps the same trigger type', async () => {
+    await runInit(['--yes'], initDeps())
+    // on-disk drift with the SAME `pull_request` trigger as the generator
+    // emits for this file — a real regenerate, just not a trigger migration.
+    writeFileSync(join(root, CHECKS_WORKFLOW_PATH), 'name: hand-edited\non:\n  pull_request:\n    types: [opened]\n')
+
+    const out = await captureStdout(() => runUpgrade(['--dry-run'], upgradeDeps()))
+    expect(out).toContain(`regenerate ${CHECKS_WORKFLOW_PATH}`)
+    expect(out).not.toContain('TRIGGER CHANGE')
+  })
+
+  it('warns with the correct from/to when a regenerated workflow is migrating trigger types', async () => {
+    await runInit(['--yes'], initDeps())
+    // REVIEW_WORKFLOW_PATH's generator emits `pull_request_target`; hand-edit
+    // the on-disk copy to declare the older `pull_request` trigger, the exact
+    // shape of the atta-labs/attalabs 0.16.0 -> 0.17.1 migration this brief
+    // fixes for.
+    writeFileSync(join(root, REVIEW_WORKFLOW_PATH), 'name: hand-edited\non:\n  pull_request:\n    types: [opened]\n')
+
+    const out = await captureStdout(() => runUpgrade(['--dry-run'], upgradeDeps()))
+    expect(out).toContain('TRIGGER CHANGE')
+    expect(out).toContain(`${REVIEW_WORKFLOW_PATH} is moving from \`pull_request\` to \`pull_request_target\`.`)
+  })
+
+  it('the trigger-change warning is informational only — regenerate and apply proceed unaffected', async () => {
+    await runInit(['--yes'], initDeps())
+    writeFileSync(join(root, REVIEW_WORKFLOW_PATH), 'name: hand-edited\non:\n  pull_request:\n    types: [opened]\n')
+
+    let rc = -1
+    const out = await captureStdout(async () => {
+      rc = await runUpgrade(['--yes'], upgradeDeps())
+    })
+    expect(rc).toBe(0)
+    expect(out).toContain('TRIGGER CHANGE')
+    const content = readFileSync(join(root, REVIEW_WORKFLOW_PATH), 'utf-8')
+    expect(content).not.toContain('hand-edited')
+    expect(content).toContain('pull_request_target')
   })
 
   it('refuses when vinaya is not initialized', async () => {
