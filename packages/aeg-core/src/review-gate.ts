@@ -215,3 +215,46 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
     waived: false
   }
 }
+
+const CHANGESET_RELEASE_BRANCH = 'changeset-release/main'
+
+/**
+ * The stock Changesets flow's default identity — a release PR opened by
+ * `changesets/action` using the ambient `GITHUB_TOKEN` shows this as its
+ * author. Only a SANE DEFAULT for adopters who haven't configured
+ * `releaseActor` — never assume it matches any specific repo's real setup.
+ * A repo that opens release PRs with a custom PAT (this repo's own
+ * `RELEASE_TOKEN`, `.github/workflows/release.yml`) has a DIFFERENT real PR
+ * author (the token's owner) and must set `releaseActor` in its
+ * `vinaya.config.json`.
+ */
+export const DEFAULT_RELEASE_ACTOR = 'github-actions[bot]'
+
+/**
+ * True only for the Changesets release PR. `branch` and `author` must both
+ * match — `branch` alone is not a trust boundary, an attacker can push a
+ * branch literally called `changeset-release/main`. `expectedAuthor` is
+ * caller-resolved, never hardcoded here — this ships in the published
+ * `@attalabs/vinaya` package, and hardcoding any one identity would be
+ * correct for at most one adopter's release-token setup. Callers resolve it
+ * via `resolveReleaseActor(loadTrustAnchorConfig())`, falling back to
+ * `DEFAULT_RELEASE_ACTOR`.
+ *
+ * This predicate is pure and trust-agnostic about ITS OWN inputs — the
+ * caller is entirely responsible for where `branch`/`author` come from.
+ * `check-body-bare-digits.ts` is the one caller, and only reachable in
+ * production from `vinaya-body-checks.yml`'s `pull_request_target` job:
+ * `branch`/`author` there come from a live `gh pr view <PR_NUMBER>` fetch,
+ * with `PR_NUMBER` itself sourced from `github.event.pull_request.number` —
+ * an expression evaluated from the workflow file on the DEFAULT BRANCH, a
+ * pull request cannot edit that file to substitute a different literal
+ * (the same `pull_request_target` boundary `vinaya-review.yml` already
+ * uses). Found live (round 5, PR #165): the identical exemption on a plain
+ * `pull_request` trigger let an attacker redirect `PR_NUMBER`/`BRANCH` to
+ * any already-approved PR by the configured release actor — verified no
+ * env-var or git-state signal inside that trigger type is a safe anchor,
+ * which is why this predicate never runs there again.
+ */
+export function isChangesetsReleasePr(branch: string, author: string | null, expectedAuthor: string): boolean {
+  return branch === CHANGESET_RELEASE_BRANCH && author === expectedAuthor
+}

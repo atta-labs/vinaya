@@ -5,6 +5,7 @@ import { join, relative } from 'node:path'
 import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
 import {
   ARCHIVIST_WORKFLOW_PATH,
+  BODY_CHECKS_WORKFLOW_PATH,
   buildInitOps,
   CHECKS_WORKFLOW_PATH,
   CONFIG_PATH,
@@ -114,7 +115,7 @@ afterEach(() => {
 })
 
 describe('vinaya init', () => {
-  it('installs exactly the 6-item minimal manifest on a clean repo', async () => {
+  it('installs exactly the 7-item minimal manifest on a clean repo', async () => {
     let rc = -1
     await captureStdout(async () => {
       rc = await runInit(['--yes'], makeDeps())
@@ -122,10 +123,13 @@ describe('vinaya init', () => {
     expect(rc).toBe(0)
 
     // The minimal manifest (2026-07-23 re-ruling, +doc-owners #665; the
-    // workflows item grew to three with the archivist workflow #761, and to
-    // four with the review-verdict workflow — the comment half of the review
-    // gate split into its own file so verdict comments can re-trigger the
-    // required run): config + root VINAYA.md + four workflows (tracked) +
+    // workflows item grew to three with the archivist workflow #761, to four
+    // with the review-verdict workflow — the comment half of the review gate
+    // split into its own file so verdict comments can re-trigger the
+    // required run — and to five with vinaya-body-checks.yml, the same
+    // pull_request_target trust boundary carrying body-bare-digits'
+    // Changesets-release exemption, which a plain pull_request job cannot
+    // safely resolve): config + root VINAYA.md + five workflows (tracked) +
     // two hook stubs + the .vinaya/doc-owners starter. Nothing else is
     // written.
     for (const p of [
@@ -135,6 +139,7 @@ describe('vinaya init', () => {
       REVIEW_WORKFLOW_PATH,
       REVIEW_VERDICT_WORKFLOW_PATH,
       ARCHIVIST_WORKFLOW_PATH,
+      BODY_CHECKS_WORKFLOW_PATH,
       '.husky/pre-commit',
       '.husky/pre-push',
       DOC_OWNERS_PATH
@@ -154,6 +159,7 @@ describe('vinaya init', () => {
       REVIEW_WORKFLOW_PATH,
       REVIEW_VERDICT_WORKFLOW_PATH,
       ARCHIVIST_WORKFLOW_PATH,
+      BODY_CHECKS_WORKFLOW_PATH,
       '.husky/pre-commit',
       '.husky/pre-push',
       DOC_OWNERS_PATH

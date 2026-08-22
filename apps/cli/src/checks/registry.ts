@@ -223,9 +223,25 @@ export function coreCheckRegistry(): CheckSpec[] {
       // `closes-n`/`test-plan`/`evidence-fresh` above — nothing to scan
       // before a PR (hence its body) exists.
       requiresOpenPr: true,
+      // Reported by the generated `vinaya-body-checks.yml`, a
+      // `pull_request_target` job — `check --all` must not evaluate it a
+      // second time from `vinaya-checks.yml`'s `pull_request` job: that copy
+      // cannot safely resolve the Changesets-release exemption (its
+      // PR_NUMBER/BRANCH are PR-editable), same reasoning as `review-gate`'s
+      // own `ownWorkflow` entry above.
+      ownWorkflow: true,
       // `process.env.PR_BODY ?? ''` — plain absence-tolerant fall-through.
+      // PR_NUMBER/GITHUB_TOKEN/GH_TOKEN back the live `gh pr view` fetch the
+      // Changesets-release exemption needs (bin's own module comment) —
+      // same reasoning as `review-gate`'s entry: on a CI runner `gh`
+      // authenticates ONLY from GH_TOKEN/GITHUB_TOKEN, and PR_AUTHOR is
+      // deliberately never declared here (registry-env.test.ts's coupling
+      // test bans any check bin from reading it from env at all).
       env: {
-        PR_BODY: { optional: true }
+        PR_BODY: { optional: true },
+        PR_NUMBER: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true }
       }
     },
     {
