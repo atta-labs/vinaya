@@ -145,7 +145,12 @@ describe('registry env declarations', () => {
   })
 
   it('every principals-resolving bin calls loadTrustAnchorConfig() with NO arguments, and never a local-git/env-derived config', () => {
-    const bins = ['check-review-gate.ts', 'check-doc-coverage.ts', 'check-doc-coverage-push.ts']
+    const bins = [
+      'check-review-gate.ts',
+      'check-doc-coverage.ts',
+      'check-doc-coverage-push.ts',
+      'check-body-bare-digits.ts'
+    ]
     for (const name of bins) {
       const src = readCode(name)
       const calls = src.match(/loadTrustAnchorConfig\(([^)]*)\)/g) ?? []
@@ -169,6 +174,19 @@ describe('registry env declarations', () => {
     const fetchAt = src.indexOf('loadTrustAnchorConfig()')
     expect(guardAt, 'must guard on the waiver label before fetching').toBeGreaterThan(-1)
     expect(guardAt, 'label guard must come BEFORE the trust-anchor fetch').toBeLessThan(fetchAt)
+  })
+
+  // Perf regression, PR #169 round 1: `resolveReleaseActor(loadTrustAnchorConfig())`
+  // was inlined as a direct argument to `isChangesetsReleasePr`, so JS's
+  // eager argument evaluation ran the trust-anchor fetch on every ordinary
+  // PR, not just release-branch ones — the exact anti-pattern the
+  // doc-coverage-push test above already guards against.
+  it('body-bare-digits short-circuits on the release branch BEFORE the network-bound trust-anchor read', () => {
+    const src = readCode('check-body-bare-digits.ts')
+    const guardAt = src.indexOf('pr.headRefName !== CHANGESET_RELEASE_BRANCH')
+    const fetchAt = src.indexOf('loadTrustAnchorConfig()')
+    expect(guardAt, 'must guard on the release branch before fetching').toBeGreaterThan(-1)
+    expect(guardAt, 'branch guard must come BEFORE the trust-anchor fetch').toBeLessThan(fetchAt)
   })
 
   // doc-coverage resolves labels live via `gh` (task 4, atta-labs/attalabs#948

@@ -72,6 +72,7 @@ export const CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-checks.yml'
 export const REVIEW_WORKFLOW_PATH = '.github/workflows/vinaya-review.yml'
 export const REVIEW_VERDICT_WORKFLOW_PATH = '.github/workflows/vinaya-review-verdict.yml'
 export const ARCHIVIST_WORKFLOW_PATH = '.github/workflows/vinaya-archivist.yml'
+export const BODY_CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-body-checks.yml'
 
 const MANAGED_NOTE =
   'Managed by Vinaya — created by `vinaya init`. `vinaya upgrade` regenerates it; `vinaya eject` removes it.'
@@ -476,6 +477,74 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate
           # the gate is green regardless of review state.
           PR_NUMBER: \${{ github.event.pull_request.number }}
         run: ${vinayaRun(selfHost, 'check review-gate')}
+`
+}
+
+function bodyChecksWorkflow(selfHost: VendoredVinaya | null): string {
+  return `# ${MANAGED_NOTE}
+#
+# Required, PR-content-independent checks that need a trust anchor no pull
+# request can rewrite. \`pull_request_target\` is the same boundary
+# \`vinaya-review.yml\` uses: GitHub loads this workflow and its default
+# checkout from the repository's default branch, never from the pull
+# request being judged. The job does not fetch, check out, install, build,
+# or execute pull-request content — every check registered here reads only
+# live-fetched PR metadata (\`gh pr view\`), never the diff or repo tree, the
+# same shape \`review-gate\` already requires of its own checks.
+#
+# \`body-bare-digits\` is the one check here today: its Changesets-release
+# exemption live-fetches the PR's real author, keyed on \`PR_NUMBER\` — on a
+# \`pull_request\` trigger that value is PR-editable (the PR's own workflow
+# YAML controls it), so an attacker could redirect it to any
+# already-approved PR by the configured release actor. Found live (round 5,
+# security review, PR #165), and verified no env-var or git-state signal
+# inside a \`pull_request\` job closes it — \`pull_request_target\` does,
+# because the workflow text assigning \`PR_NUMBER\` comes from THIS file on
+# the default branch, which a pull request cannot edit.
+name: Vinaya Body Checks
+run-name: "Vinaya Body Checks PR #\${{ github.event.pull_request.number }} @ \${{ github.event.pull_request.head.sha }}"
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+# Same collapsing rationale as \`vinaya-review.yml\`'s concurrency group — see
+# that file's own comment for the two measured failure modes (duplicate
+# runs from simultaneous event types; an old rerun cancelling the current
+# commit's run) this group exists to prevent.
+concurrency:
+  group: vinaya-body-checks-\${{ github.event.pull_request.number || github.ref }}-\${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  vinaya-body-checks:
+    name: vinaya check body-bare-digits
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Explicit trusted ref: never use the PR head/merge ref in this job.
+          ref: \${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+${vinayaSetupSteps(selfHost, 'trusted')}      - name: Body checks
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          # PR_NUMBER is what makes the Changesets-release exemption
+          # EVALUATE its live gh pr view fetch: without it the check reads
+          # "no PR yet — local dev" and falls through to the ordinary
+          # bare-digit scan.
+          PR_NUMBER: \${{ github.event.pull_request.number }}
+          # PR_BODY is what makes body-bare-digits EVALUATE at all — the bin
+          # reads \`process.env.PR_BODY\` only, never fetches it itself.
+          PR_BODY: \${{ github.event.pull_request.body }}
+        run: ${vinayaRun(selfHost, 'check body-bare-digits')}
 `
 }
 
@@ -988,6 +1057,12 @@ export function buildInitOps(ctx: InitContext): Op[] {
     kind: 'create-file',
     path: ARCHIVIST_WORKFLOW_PATH,
     content: archivistWorkflow(ctx.selfHost),
+    group: 'CI workflows'
+  })
+  ops.push({
+    kind: 'create-file',
+    path: BODY_CHECKS_WORKFLOW_PATH,
+    content: bodyChecksWorkflow(ctx.selfHost),
     group: 'CI workflows'
   })
 

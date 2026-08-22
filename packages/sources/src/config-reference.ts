@@ -230,6 +230,17 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "principals": ["alice", "bob"] }`
   },
   {
+    key: 'releaseActor',
+    type: 'string (optional, min 1)',
+    semantics: [
+      'The GitHub login expected to author THIS repo’s Changesets release PR (branch `changeset-release/main`) — the identity `body-bare-digits` checks before treating that PR as machine-rendered, already-reviewed content instead of agent-narrated prose. Overrides the package’s default (`github-actions[bot]`, the identity `changesets/action` shows when it opens a release PR using the ambient `GITHUB_TOKEN`).',
+      'Set this when your repository opens release PRs some other way — most commonly a custom PAT (e.g. a `RELEASE_TOKEN` secret) whose owner is a real user login, not a bot. Without it, the release-PR exemption silently never fires for a repo like that, and every release PR stays blocked by its own auto-generated bare version numbers and commit shas.',
+      'Same trust class and sourcing rule as `principals` — repo-local only (a global `~/.vinaya/config.json`’s `releaseActor` is stripped at load time with a loud stderr warning), and read from your repository’s DEFAULT BRANCH via the GitHub API, never from the pull request’s own checkout, local git, or an env var. A PR that introduces or changes this field takes effect only once it merges.',
+      'The exemption itself only runs from `vinaya-body-checks.yml`, a `pull_request_target` workflow — the same trust boundary `principals`/review-gate already use. `body-bare-digits` never trusts this decision from `vinaya-checks.yml`’s ordinary `pull_request` job, because that job runs the pull request’s own copy of the workflow file.'
+    ],
+    example: `{ "releaseActor": "your-release-bot-or-token-owner" }`
+  },
+  {
     key: 'ci',
     type: 'object (optional)',
     semantics: [

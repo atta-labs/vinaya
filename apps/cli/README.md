@@ -130,7 +130,7 @@ The generated command embeds the member's directory and `bin` path. Both come fr
 
 `@` is permitted so an npm-scoped member such as `packages/@attalabs/vinaya` resolves normally; it carries no meaning to the shell, to YAML at the position it appears, or to an Actions expression. The path must also resolve inside the repository, which a textual `..` rule cannot guarantee on its own.
 
-The generated review-authority workflows run only default-branch code: the required gate uses `pull_request_target`, and the comment-triggered evaluator also checks out the default branch. Neither authority path runs pull-request code or adopter `ci.setup`; ordinary `pull_request` content checks remain unprivileged. Protect `.github/workflows/**` with required CODEOWNERS review as the complementary change-control layer. The full trust-boundary and bootstrap account is in [`specs/self-hosting.md`](./specs/self-hosting.md) in the source repository — it is not part of the published tarball.
+The generated review-authority workflows run only default-branch code: the required review gate and the Changesets-release exemption on `body-bare-digits` both use `pull_request_target`, and the comment-triggered evaluator also checks out the default branch. None of these authority paths run pull-request code or adopter `ci.setup`; ordinary `pull_request` content checks remain unprivileged. Protect `.github/workflows/**` with required CODEOWNERS review as the complementary change-control layer. The full trust-boundary and bootstrap account is in [`specs/self-hosting.md`](./specs/self-hosting.md) in the source repository — it is not part of the published tarball.
 
 ## Doc-owners coverage
 
