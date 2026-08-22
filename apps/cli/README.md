@@ -138,9 +138,9 @@ The generated review-authority workflows run only default-branch code: the requi
 
 ## Brief-schema divergence
 
-`briefSchema` in `vinaya.config.json` is yours: `vinaya upgrade` preserves it wholesale and will never rewrite it. That ownership used to have a silent cost — nothing else looked at it either, so a builtin deleted to work around a defect stayed deleted and stayed invisible, with no later upgrade to repair it.
+`briefSchema` in `vinaya.config.json` is yours: `vinaya upgrade` preserves it wholesale and never rewrites it. On its own that ownership has a silent cost — nothing else reads it either, so a builtin deleted to work around a defect stays deleted, with no later upgrade to repair it and nothing to surface it.
 
-`vinaya doctor` now reports the divergence. It compares your `briefSchema.pr` and `briefSchema.issue` against the set `vinaya init` ships and names any builtin that is absent — nothing more. Extra sections, whether a second builtin or your own `heading`/`field`/`phrase` matcher, are additions rather than weakenings and are never reported. The finding is `info` severity and can never fail your CI: running without a builtin is legitimate configuration, and the goal is to make the choice visible once, not to argue you back to the default.
+`vinaya doctor` reports the divergence. It compares your `briefSchema.pr` and `briefSchema.issue` against the set `vinaya init` ships and names any builtin that is absent — nothing more. Extra sections, whether a second builtin or your own `heading`/`field`/`phrase` matcher, are additions rather than weakenings and are never reported. The finding is `info` severity and can never fail your CI: running without a builtin is legitimate configuration, and the goal is to make the choice visible, not to argue you back to the default.
 
 Once an omission is deliberate, name it in `briefSchema.ack` and it goes quiet:
 
@@ -148,7 +148,11 @@ Once an omission is deliberate, name it in `briefSchema.ack` and it goes quiet:
 { "briefSchema": { "ack": ["closesN"] } }
 ```
 
-`ack` grants nothing and gates nothing — it only silences this report, and acking a builtin you still declare changes no behaviour anywhere. An accidental deletion, having no ack, keeps surfacing. Report-only, like every other `vinaya doctor` diagnostic: it restores nothing itself.
+`ack` grants nothing and gates nothing — it only silences this report, and acking a builtin you still declare changes no behaviour anywhere. A deletion you did not intend, having no ack, keeps surfacing.
+
+Two things worth knowing about its shape. `ack` is one flat list rather than per-kind, so acking a name that the shipped default declares for **both** kinds — `project` is the only such name today — silences it for both. And a config carrying no `briefSchema` key at all diverges on every builtin, so it reports on every run until you either declare the sections or ack them; that is the one shape where this becomes standing output rather than a one-time notice.
+
+Report-only, like every other `vinaya doctor` diagnostic: it restores nothing itself.
 
 ## Known limits
 
