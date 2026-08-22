@@ -74,6 +74,8 @@ One thing git cannot version is the config itself: **each fresh clone runs `git 
 
 Two shapes deviate: a repo already using **husky** keeps its `.husky/` directory (husky's `prepare` script owns per-clone wiring), and a repo with its own active raw hooks in `.git/hooks` stays on the legacy append-a-managed-block layout there — re-routing `core.hooksPath` would silently disable the adopter's own hooks. On that legacy layout `vinaya doctor` warns that clones have no hooks, and `vinaya upgrade` migrates to the tracked layout as soon as nothing foreign would be disabled.
 
+On that legacy `.git/hooks` layout, note where the hook actually lives: hooks are never per-worktree, so its real home is the main checkout's shared hooks directory (`git rev-parse --git-common-dir`), which from a linked worktree is outside that worktree's own root. `vinaya eject` follows the hook there and bounds the removal to that directory's `hooks/` subtree, rather than to the worktree root — so ejecting from a linked worktree strips the hook instead of leaving it armed. A recorded block path resolving anywhere else is refused, and the refusal is whole-run: `eject` removes nothing at all rather than making a partial destructive pass.
+
 ## Agent skills
 
 The emitter that will generate skill pointers under `.agents/skills/vinaya-<role>/SKILL.md`, for tools natively scanning `.agents/skills/` (Codex, Antigravity, Grok Build), is built — `vinaya init` does not call it yet. Each file, once wired, is a 3-line pointer delegating to `vinaya doctrine --role <role>` at read time. User-facing flag, `init`/`upgrade`/`eject`/`doctor` wiring, and the `--agents` selection flag land in #152.

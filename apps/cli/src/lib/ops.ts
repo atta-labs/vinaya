@@ -106,14 +106,30 @@ function abs(repoRoot: string, relPath: string): string {
  */
 export function resolveManagedBlockPath(repoRoot: string, opPath: string): string {
   if (!opPath.startsWith('.git/')) return join(repoRoot, opPath)
+  return join(gitCommonDir(repoRoot), opPath.slice('.git/'.length))
+}
+
+/**
+ * The git common directory — the main checkout's `.git`, shared by every
+ * linked worktree. Falls back to `<repoRoot>/.git` when `git` cannot answer,
+ * which is exactly what a literal join would have produced, so a git failure
+ * degrades to the old behavior rather than to nothing.
+ *
+ * Extracted so `resolveManagedBlockPath` (which builds a hook's path) and
+ * `containedManagedBlockAbs` (which decides whether that path is in bounds)
+ * derive from ONE answer. Two callers each shelling out separately could
+ * disagree — one falling back while the other succeeded — and a containment
+ * check that disagrees with the resolver it guards is worse than no check.
+ */
+function gitCommonDir(repoRoot: string): string {
   try {
     const commonDir = execFileSync('git', ['-C', repoRoot, 'rev-parse', '--git-common-dir'], {
       encoding: 'utf8'
     }).trim()
-    const gitDir = isAbsolute(commonDir) ? commonDir : join(repoRoot, commonDir)
-    return join(gitDir, opPath.slice('.git/'.length))
+    if (commonDir === '') return join(repoRoot, '.git')
+    return isAbsolute(commonDir) ? commonDir : join(repoRoot, commonDir)
   } catch {
-    return join(repoRoot, opPath)
+    return join(repoRoot, '.git')
   }
 }
 
@@ -130,6 +146,43 @@ export function containedAbs(repoRoot: string, relPath: string): string | null {
   const target = resolve(root, relPath)
   if (target === root) return null
   return target === root || target.startsWith(root + sep) ? target : null
+}
+
+/**
+ * The containment guarantee for a MANAGED BLOCK path, which `containedAbs`
+ * cannot express (Issue #68).
+ *
+ * `containedAbs` resolves a path and requires it to stay inside `repoRoot`.
+ * That is exactly right for the whole files vinaya owns. It is wrong for a
+ * `.git/hooks/*` block in a LINKED WORKTREE: hooks are never per-worktree, so
+ * the hook's real home is the main checkout's shared hooks directory
+ * (`git rev-parse --git-common-dir`), which is legitimately OUTSIDE the
+ * worktree's `repoRoot`. `containedAbs` therefore rejected the very path
+ * `eject` needed to strip — correctly by its own logic — and an "ejected"
+ * install silently left an active commit-time execution surface behind.
+ *
+ * So the rule is re-based, not relaxed: a `.git/`-prefixed block must resolve
+ * inside the git common dir's own `hooks/` subtree. That is strictly TIGHTER
+ * than the old rule in the ordinary non-worktree case, where `<repoRoot>/.git`
+ * IS the common dir: `.git/config` and `.git/objects/…` were previously
+ * "contained" and are now refused, since no managed block has any business
+ * outside `hooks/`. The hooks directory itself is refused too, mirroring
+ * `containedAbs`'s refusal of the repo root.
+ *
+ * `.husky/*` is untouched and still goes through `containedAbs`: husky's
+ * directory is a real, git-tracked directory present in every worktree
+ * checkout, so the naive join was already correct there.
+ *
+ * Returns `null` for any escape, and no fs mutation is ever performed on a
+ * path this rejects — the same guarantee `containedAbs` carries, re-stated
+ * for the paths it could not reason about.
+ */
+export function containedManagedBlockAbs(repoRoot: string, relPath: string): string | null {
+  if (!relPath.startsWith('.git/')) return containedAbs(repoRoot, relPath)
+  const hooksRoot = resolve(join(gitCommonDir(repoRoot), 'hooks'))
+  const target = resolve(resolveManagedBlockPath(repoRoot, relPath))
+  if (target === hooksRoot) return null
+  return target.startsWith(hooksRoot + sep) ? target : null
 }
 
 /** Only ever called with a managed-block (hook) path — see `planInstall`. */
@@ -440,7 +493,7 @@ export function planEject(manifest: ManagedManifest, repoRoot: string): EjectPla
   const escapes: string[] = []
 
   for (const b of manifest.blocks) {
-    const p = containedAbs(repoRoot, b.path)
+    const p = containedManagedBlockAbs(repoRoot, b.path)
     if (p === null) {
       escapes.push(b.path)
       continue
@@ -507,14 +560,22 @@ export function renderEjectDiff(plan: EjectPlan): string {
  * Apply the inverse plan. Labels are only reported (returned), never deleted.
  * Callers MUST refuse when `plan.escapes` is non-empty before calling this; as
  * a second guard, every fs mutation re-checks containment and skips any path
- * that resolves outside the repo — a delete outside `repoRoot` is impossible
- * regardless of what the manifest claims.
+ * its containment function rejects, regardless of what the manifest claims.
+ *
+ * "Contained" is per-kind, and deliberately not one rule: a whole file must
+ * stay inside `repoRoot` (`containedAbs`), while a `.git/hooks/*` managed
+ * block must stay inside the git common dir's `hooks/` subtree
+ * (`containedManagedBlockAbs`). The second is genuinely outside `repoRoot`
+ * from a linked worktree — that is the point, since hooks are shared rather
+ * than per-worktree — so this is not "a delete outside `repoRoot` is
+ * impossible"; it is "every delete is inside the one directory its own kind
+ * is allowed to touch".
  */
 export function applyEject(plan: EjectPlan, repoRoot: string): { removedLabelsToReport: string[] } {
   for (const a of plan.actions) {
     if (a.kind === 'strip-block') {
       if (!a.present) continue
-      const p = containedAbs(repoRoot, a.path)
+      const p = containedManagedBlockAbs(repoRoot, a.path)
       if (p === null) continue
       const content = readFileSync(p, 'utf-8')
       const stripped = stripBlockFromContent(content, a.marker, a.comment)
