@@ -188,4 +188,21 @@ describe('registry env declarations', () => {
     expect(guardAt, 'PR_NUMBER guard must come BEFORE fetching the waiver actor').toBeLessThan(fetchActorAt)
     expect(guardAt, 'PR_NUMBER guard must come BEFORE the trust-anchor fetch').toBeLessThan(trustAnchorAt)
   })
+
+  // `PR_AUTHOR` is banned outright, not just discouraged: a `pull_request`-
+  // triggered workflow runs the PR's OWN copy of its YAML, so any env var it
+  // sets — however it's computed — can be replaced with a hardcoded literal
+  // by the PR being evaluated. `review-gate.ts`'s own module comment
+  // documents three real rounds closing this exact hole for `principals`;
+  // `check-body-bare-digits.ts` reopened it once already (security review,
+  // PR #165 round 2) by trusting this exact variable before switching to a
+  // live `gh pr view` fetch. This is the mechanical guard that should have
+  // caught that the first time — no check bin may read this variable, full
+  // stop; an identity/author decision must be fetched live, every time.
+  it('no check bin reads process.env.PR_AUTHOR — identity must be fetched live, never trusted from env', () => {
+    const offenders = specs
+      .map((s) => `${basename(s.run).replace(/\.(js|ts)$/, '')}.ts`)
+      .filter((binName) => readCode(binName).includes('PR_AUTHOR'))
+    expect(offenders).toEqual([])
+  })
 })
