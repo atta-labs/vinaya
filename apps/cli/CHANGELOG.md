@@ -1,5 +1,17 @@
 # @attalabs/vinaya
 
+## 0.17.1
+
+### Patch Changes
+
+- 0ee0056: Add `.agents/skills/` emitter producing role skill pointers for Codex, Antigravity, and Grok Build
+- 0584f82: `body-bare-digits` is dormant again on the Changesets release PR (`changeset-release/main`) — safely this time. The exemption now runs only from a new `vinaya-body-checks.yml`, a `pull_request_target` workflow that checks out and executes only trusted default-branch code, the same boundary `vinaya-review.yml` already uses for the required review gate. `vinaya-checks.yml`'s ordinary `pull_request` job never runs `body-bare-digits` at all — that check is `ownWorkflow: true` — because that job runs the pull request's own copy of the workflow file, which cannot safely resolve the exemption's live-fetched PR author.
+  
+  A new `vinaya.config.json` field, `releaseActor`, lets an adopter whose release PRs are opened by a custom token (rather than the stock `changesets/action` + ambient `GITHUB_TOKEN` identity) configure the expected author — resolved the same way `principals` already is, from the default branch via the GitHub API, never from local git or an env var.
+- 8681fea: `vinaya doctrine --role <name>` now excludes roles whose frontmatter declares `actor: human` (`principal`) from its live-enumerated valid set. Every `--role` consumer — the CLI itself, and the `.agents/skills/`/`.claude/commands/`/`.gemini/commands/` emitters that shell out to it — is fixed by this one change: a third-party AI tool can no longer be told to act as the human-only Principal role.
+- 6e4de2b: `vinaya init`/`vinaya doctor` now recommend protecting `.github/workflows/**` with a `CODEOWNERS` entry, alongside the existing branch-protection recommendation — printed guidance only, never applied and never a suggested identity. `vinaya-review.yml`'s `pull_request_target` boundary loads workflow files from the default branch specifically so a PR cannot rewrite the check that judges it; an unreviewed edit to that file on the default branch itself defeats the same boundary from the other side. `doctor` gained a matching diagnostic reporting whether `.github/CODEOWNERS` covers `.github/workflows/**`.
+- 10bef23: Run review-authority workflows exclusively from trusted default-branch source, while keeping pull-request content checks unprivileged.
+
 ## 0.17.0
 
 ### Minor Changes

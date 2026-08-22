@@ -1,5 +1,13 @@
 # @atta/vinaya-sources
 
+## 0.17.1
+
+### Patch Changes
+
+- @attalabs/aeg-core@0.17.1
+  - @attalabs/aeg-forge-state@0.17.1
+  - @attalabs/aeg-types@0.17.1
+
 ## 0.17.0
 
 ### Patch Changes
