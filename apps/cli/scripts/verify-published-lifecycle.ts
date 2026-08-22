@@ -43,8 +43,17 @@
  * fixed commit, and `demo.ts`'s requirement that the fixed commit succeed makes
  * the row red and the run exit 1.
  *
- * So: 22 of the 23 rows are provable before a publish; `demo break` is provable
- * only once that exact version exists on the registry. The failure direction is
+ * So: every row but `demo break` is provable before a publish, and `demo break`
+ * is provable only once that exact version exists on the registry.
+ *
+ * Stated as a rule rather than a count on purpose. This sentence carried a
+ * hand-maintained integer pair and went stale TWICE — the registry grew, the
+ * number did not, and a later edit incremented the stale value instead of
+ * re-deriving it. Everything else measured here (the version under test, the
+ * check-name set, the coverage set) is derived from the registry precisely so
+ * it cannot drift; a prose count is the one place that rule was not applied.
+ * `printReport`'s own footer counts the rows at runtime, from `COMMANDS`, and
+ * that is the number to trust. The failure direction is
  * safe — a loud red, never a false green — but do not read a green `demo break`
  * in this mode as evidence about the tarball. It means the registry already has
  * that version, and the hook exercised the registry copy.
@@ -390,11 +399,13 @@ const EXEMPTIONS: Record<string, string> = {
     '`--pr`/`--task-id`/`--model`/`--tokens-in`/`--tokens-out`/`--cost` — and exercising a command rejecting a ' +
     'bad flag is not exercising the command. Same boundary as `issue edit`; exempt for the same reason. ' +
     "What `tests/review-post.test.ts` covers against this workspace's source is the PURE surface it imports: " +
-    'findings parsing, flag parsing, comment rendering, and the two self-verify predicates. It does NOT import ' +
-    "`reviewPostCommand`, so that function's own refusals — a BLOCKER finding with `--verdict APPROVE`, a " +
-    'CRITICAL/HIGH finding with `--verdict PASS` — are proven neither here nor there. That is a real, stated ' +
-    'coverage gap in the role-guard layer, not a claim of coverage; closing it needs a unit test around ' +
-    "`reviewPostCommand` with its `gh` seam injected, which is its own change, not this script's.",
+    'findings parsing, flag parsing, comment rendering, `isNoneFoundClaim`, and the two self-verify ' +
+    'predicates. It does NOT import `reviewPostCommand`, so every refusal that function holds is proven ' +
+    'neither here nor there: a BLOCKER finding with `--verdict APPROVE`, a CRITICAL/HIGH finding with ' +
+    '`--verdict PASS`, and `--secrets` claiming "none found" with no `--secrets-evidence-file`. Those three ' +
+    'are the mechanical guards `reviewer.md` and `security.md` delegate to this command. That is a real, ' +
+    'stated coverage gap in the role-guard layer, not a claim of coverage; closing it needs a unit test ' +
+    "around `reviewPostCommand` with its `gh` seam injected, which is its own change, not this script's.",
   'issue edit':
     "`issue edit` fetches the target Issue's real labels from the forge (`gh issue view`) UNCONDITIONALLY, " +
     'even under --validate-only — there is no code path that skips it. Exercising it genuinely would require a ' +
@@ -558,7 +569,7 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
     // runs `gh pr list` unconditionally. That call fails on local repo
     // resolution before any API request precisely BECAUSE the fixture has no
     // remote, and the check fails open to UNKNOWN. Do not restate this as
-    // "no gh" — the `audit` EXEMPTION below exempts a command for reaching
+    // "no gh" — the `audit` EXEMPTION above exempts a command for reaching
     // `gh` through that very code path, and the two claims cannot both hold.
     // The added forge surface is nil either way: the `check` exercise above
     // already runs the strictly larger `check --all --json` on this fixture.
@@ -576,9 +587,12 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
     // both still fail this row, because the block assertion below is what
     // carries it.
     //
-    // `rev-parse` is guarded rather than left to `git()`'s throw: every other
-    // helper here reddens its own row, and an exception escaping into the run
-    // loop would abort the whole sweep over one row's setup step.
+    // `rev-parse` is guarded rather than left to `git()`'s throw: an exception
+    // escaping into the run loop would abort the whole sweep over one row's
+    // setup step, and a row that cannot establish its own precondition should
+    // redden itself, not take the other rows with it. Not yet a file-wide
+    // property — `demo break` still makes unguarded `git()` calls from inside
+    // the same loop — so this is the shape to copy, not one to assume.
     let head = ''
     try {
       head = git(fixtureDir, ['rev-parse', 'HEAD'])
