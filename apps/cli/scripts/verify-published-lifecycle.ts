@@ -43,7 +43,7 @@
  * fixed commit, and `demo.ts`'s requirement that the fixed commit succeed makes
  * the row red and the run exit 1.
  *
- * So: 20 of the 21 rows are provable before a publish; `demo break` is provable
+ * So: 22 of the 23 rows are provable before a publish; `demo break` is provable
  * only once that exact version exists on the registry. The failure direction is
  * safe — a loud red, never a false green — but do not read a green `demo break`
  * in this mode as evidence about the tarball. It means the registry already has
@@ -385,11 +385,16 @@ const EXEMPTIONS: Record<string, string> = {
     'caller-supplied, so there is no flag that skips it and no honest way to add one. It then POSTS a comment ' +
     'and re-reads it back to self-verify, which is a forge WRITE against a real PR — further outside this ' +
     "script's credential-free boundary than the read-only exemptions above. `pr edit`'s escape (pass only " +
-    '`--title`, skipping the body fetch) has no analogue here: the only pre-`gh` code path is argument ' +
-    "rejection (`--role` validation), and exercising a command's refusal to accept a bad flag is not " +
-    'exercising the command. Same boundary as `issue edit`; exempt for the same reason. Its rendering, ' +
-    'verdict/severity coupling and self-verify logic are covered by `tests/review-post.test.ts` against this ' +
-    "workspace's own source.",
+    '`--title`, skipping the body fetch) has no analogue here: everything reachable before `resolveHeadSha` is ' +
+    'argument validation — `parseFlags`, the `--role` enum, and the `requireFlag`/`requireTokenField` calls for ' +
+    '`--pr`/`--task-id`/`--model`/`--tokens-in`/`--tokens-out`/`--cost` — and exercising a command rejecting a ' +
+    'bad flag is not exercising the command. Same boundary as `issue edit`; exempt for the same reason. ' +
+    "What `tests/review-post.test.ts` covers against this workspace's source is the PURE surface it imports: " +
+    'findings parsing, flag parsing, comment rendering, and the two self-verify predicates. It does NOT import ' +
+    "`reviewPostCommand`, so that function's own refusals — a BLOCKER finding with `--verdict APPROVE`, a " +
+    'CRITICAL/HIGH finding with `--verdict PASS` — are proven neither here nor there. That is a real, stated ' +
+    'coverage gap in the role-guard layer, not a claim of coverage; closing it needs a unit test around ' +
+    "`reviewPostCommand` with its `gh` seam injected, which is its own change, not this script's.",
   'issue edit':
     "`issue edit` fetches the target Issue's real labels from the forge (`gh issue view`) UNCONDITIONALLY, " +
     'even under --validate-only — there is no code path that skips it. Exercising it genuinely would require a ' +
@@ -544,11 +549,19 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
     // `replaceEvidenceBlock`; what is under test here is that the PUBLISHED
     // artifact can produce the block at all.
     //
-    // Network-free, and provably so rather than incidentally: Group A's
-    // `resolveMergeBase` tries `origin/main` first, gets nothing (the fixture
-    // adds no remote, §11), and falls back to plain `main`, which the fixture
-    // does have. Group B shells to this same installed CLI's own
-    // `check --all --diff-only` via `resolveSelfEntry` — no `gh`, no registry.
+    // This row reaches `gh`, and stays offline only INCIDENTALLY. Group A is
+    // genuinely git-only — `resolveMergeBase` tries `origin/main`, gets
+    // nothing (the fixture adds no remote, §11), and falls back to plain
+    // `main`, which the fixture has. Group B is not: it shells to this same
+    // installed CLI's `check --all --diff-only`, and `dead-branch-push` is
+    // `scope: 'full'`, which `--diff-only` never skips, so its `fetchPrState`
+    // runs `gh pr list` unconditionally. That call fails on local repo
+    // resolution before any API request precisely BECAUSE the fixture has no
+    // remote, and the check fails open to UNKNOWN. Do not restate this as
+    // "no gh" — the `audit` EXEMPTION below exempts a command for reaching
+    // `gh` through that very code path, and the two claims cannot both hold.
+    // The added forge surface is nil either way: the `check` exercise above
+    // already runs the strictly larger `check --all --json` on this fixture.
     //
     // The assertion is on the HEAD SHA, not merely on the block's delimiters:
     // an emitter that printed a well-formed but empty Group A would satisfy a
@@ -562,7 +575,16 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
     // works. Exit 2 (usage) and a refusal (exit 1 with no block on stdout)
     // both still fail this row, because the block assertion below is what
     // carries it.
-    const head = git(fixtureDir, ['rev-parse', 'HEAD'])
+    //
+    // `rev-parse` is guarded rather than left to `git()`'s throw: every other
+    // helper here reddens its own row, and an exception escaping into the run
+    // loop would abort the whole sweep over one row's setup step.
+    let head = ''
+    try {
+      head = git(fixtureDir, ['rev-parse', 'HEAD'])
+    } catch {
+      head = ''
+    }
     const r = run(bin, ['pr', 'report'], fixtureDir)
     const hasBlock = r.stdout.includes('<!-- AEG:EVIDENCE:START -->') && r.stdout.includes('<!-- AEG:EVIDENCE:END -->')
     const bindsHead = head.length > 0 && r.stdout.includes(head)
