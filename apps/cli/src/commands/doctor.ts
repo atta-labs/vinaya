@@ -30,10 +30,12 @@ import {
   DOCTRINE_POINTER_PATH,
   type HookDir,
   type InitContext,
+  starterConfig,
   TRACKED_HOOK_DIR
 } from '../lib/artifacts.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import {
+  type BriefSection,
   GLOBAL_CONFIG_PATH,
   globalChecksIgnoredWarning,
   type ManagedManifest,
@@ -508,6 +510,74 @@ function diagnoseBlastRadiusDeprecation(repoRoot: string, config: VinayaConfig |
 }
 
 // ---------------------------------------------------------------------------
+// brief-schema divergence — REPORT, never mutate (#70).
+//
+// `briefSchema` is adopter-owned, so `upgrade` correctly never rewrites it.
+// Before this diagnostic, nothing else looked at it either, and the two
+// facts got conflated: ownership means vinaya must not OVERWRITE the key, not
+// that vinaya cannot REPORT on it. A builtin deleted to work around a vinaya
+// defect therefore stayed deleted and stayed invisible — no command surfaced
+// it, no later upgrade repaired it. Found live on `siot-david-marino/poc-executor`,
+// where `closesN` was dropped to get an upgrade PR open at all, merged in that
+// state, and left `closes-n` silently unenforced on every task branch.
+//
+// `info` severity, deliberately: an adopter running without a builtin is
+// exercising legitimate configuration and must not be failed into a shape they
+// rejected. The goal is to make the divergence visible once, not to restore the
+// default. `briefSchema.ack` is how a considered choice goes quiet while an
+// accidental one keeps surfacing.
+//
+// Only ABSENCE relative to `starterConfig()` is reported. Extra sections — a
+// second builtin, or an adopter's own heading/field/phrase matcher — are
+// additions, not weakenings, and naming them would be exactly the nagging this
+// is built to avoid. Custom matcher forms are ignored entirely: they carry no
+// `builtin` key, so they can neither satisfy nor contradict a shipped default.
+// ---------------------------------------------------------------------------
+const BRIEF_KIND_LABEL: Record<'pr' | 'issue', string> = {
+  pr: 'PR bodies',
+  issue: 'task Issue bodies'
+}
+
+/** The `builtin` names in a section list, in declaration order. Non-builtin matcher forms yield nothing. */
+function builtinsIn(sections: BriefSection[] | undefined): string[] {
+  return (sections ?? []).flatMap((s) => ('builtin' in s ? [s.builtin] : []))
+}
+
+export function diagnoseBriefSchemaDrift(config: VinayaConfig | null): Finding[] {
+  // A missing/invalid config is already an `error` finding from the caller;
+  // re-reporting every builtin as absent there would bury it in noise.
+  if (!config) return []
+
+  const shipped = starterConfig().briefSchema
+  const acked = new Set<string>(config.briefSchema?.ack ?? [])
+  const findings: Finding[] = []
+
+  for (const kind of ['pr', 'issue'] as const) {
+    const expected = builtinsIn(shipped?.[kind]?.sections)
+    if (expected.length === 0) continue
+
+    // `undefined` sections and `[]` sections are the same weakening here —
+    // an absent `briefSchema.pr` block means `forge-write.ts` validates a PR
+    // body against an empty section set, which is the gate being off, not the
+    // gate being adopter-shaped. Both paths land on the same missing list.
+    const present = new Set(builtinsIn(config.briefSchema?.[kind]?.sections))
+    const missing = expected.filter((b) => !present.has(b) && !acked.has(b))
+    if (missing.length === 0) continue
+
+    findings.push(
+      info(
+        'brief-schema',
+        `briefSchema.${kind} is missing ${missing.length} builtin${missing.length === 1 ? '' : 's'} the shipped default declares for ${BRIEF_KIND_LABEL[kind]}: ${missing.join(', ')}. ` +
+          'This is adopter-owned config — `vinaya upgrade` will never restore it, and nothing else reports it. ' +
+          'If the omission is deliberate, list those names in `briefSchema.ack` to silence this; if it was a workaround for a vinaya defect, check whether that defect is fixed and the builtin can come back.'
+      )
+    )
+  }
+
+  return findings
+}
+
+// ---------------------------------------------------------------------------
 // env-loss diagnostics — permanent (not warn-phase-only like `vinaya
 // check`'s equivalent print): a check reading `process.env`/`Bun.env`/
 // `Deno.env` directly with no `env` declaration, across BOTH the core
@@ -801,6 +871,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
   }
 
   findings.push(...diagnoseBlastRadiusDeprecation(repo.repoRoot, configRead.kind === 'ok' ? configRead.config : null))
+  findings.push(...diagnoseBriefSchemaDrift(configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseEnvDeclarations(repo.repoRoot, configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseCheckClassification(configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseGlobalConfigChecks())

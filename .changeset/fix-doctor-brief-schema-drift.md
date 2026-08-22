@@ -1,0 +1,6 @@
+---
+"@attalabs/vinaya": patch
+"@attalabs/vinaya-sources": patch
+---
+
+`vinaya doctor` now reports when `briefSchema` has lost a builtin the shipped default declares, naming each absent one per kind (`briefSchema.pr`, `briefSchema.issue`). `briefSchema` is adopter-owned and `vinaya upgrade` correctly never rewrites it — but nothing else looked at it either, so a builtin deleted to work around a defect stayed deleted and stayed permanently invisible: no command surfaced it and no later upgrade repaired it. Found live where `closesN` was dropped to get an upgrade PR open at all, merged in that state, and left `closes-n` silently unenforced on every task branch afterwards. Ownership means vinaya must not overwrite the key, not that it cannot report on it; the two were conflated. The finding is `info` severity and never affects `vinaya doctor`'s exit code — running without a builtin is legitimate configuration, and the goal is to make the divergence visible once rather than argue an adopter back to a shape they rejected. Only absence relative to the shipped default is reported: extra sections, builtin or custom matcher, are additions and are never named. A new `briefSchema.ack` key lists builtins whose omission is deliberate and silences exactly those; it grants nothing, gates nothing, and an un-acked accidental deletion keeps surfacing.

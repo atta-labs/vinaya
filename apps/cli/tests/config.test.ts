@@ -615,3 +615,23 @@ describe('readRepoCiSetup', () => {
     expect(readRepoCiSetup(dir)).toBeNull()
   })
 })
+
+describe('briefSchema.ack', () => {
+  it('accepts a list of real builtin names', () => {
+    const parsed = VinayaConfigSchema.safeParse({ briefSchema: { ack: ['closesN', 'tier'] } })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('is optional — a briefSchema without it still parses', () => {
+    const parsed = VinayaConfigSchema.safeParse({ briefSchema: { pr: { sections: [{ builtin: 'tier' }] } } })
+    expect(parsed.success).toBe(true)
+  })
+
+  // Guards the enum: loosened to `z.string()`, a typo'd ack ("closesn") would
+  // silently fail to silence anything, and `doctor` would keep reporting a
+  // divergence the adopter believes they already acknowledged.
+  it('rejects a name that is not a builtin', () => {
+    const parsed = VinayaConfigSchema.safeParse({ briefSchema: { ack: ['closesn'] } })
+    expect(parsed.success).toBe(false)
+  })
+})

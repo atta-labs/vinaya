@@ -154,7 +154,17 @@ export type BriefSection = z.infer<typeof BriefSectionSchema>
 
 const BriefSchemaSchema = z.object({
   pr: z.object({ sections: z.array(BriefSectionSchema) }).optional(),
-  issue: z.object({ sections: z.array(BriefSectionSchema) }).optional()
+  issue: z.object({ sections: z.array(BriefSectionSchema) }).optional(),
+  // Builtins this adopter has DELIBERATELY dropped, by builtin name
+  // (`closesN`, `tier`, …). Purely a silencer for `vinaya doctor`'s
+  // brief-schema divergence report — it grants nothing and gates nothing, so
+  // acking a builtin that is still present in `sections` changes no
+  // behaviour anywhere. `briefSchema` is adopter-owned and `upgrade` never
+  // rewrites it, which is correct; before this key existed, that ownership
+  // also meant a dropped builtin was permanently invisible (#70). The report
+  // makes the divergence visible; this makes a considered choice quiet while
+  // an accidental one keeps surfacing.
+  ack: z.array(z.enum(BRIEF_BUILTINS)).optional()
 })
 export type BriefSchema = z.infer<typeof BriefSchemaSchema>
 

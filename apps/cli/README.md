@@ -136,6 +136,20 @@ The generated review-authority workflows run only default-branch code: the requi
 
 `.vinaya/doc-owners` binds code globs to the docs that must change with them; `vinaya check`'s C5 gate enforces that binding against each pull request's own diff — it fires only when a changed file matches a bound glob. That leaves a gap C5 cannot close on its own: a binding whose code was deleted or renamed wholesale matches nothing on any later diff, ever again, and reads as healthy forever. `vinaya doctor` closes it separately — it never fails `vinaya check` — by walking every binding against the repo's full tracked-file list and reporting any whose code glob matches zero tracked files anywhere in the repo, or whose in-repo doc pointer doesn't exist on disk. Report-only, like every other `vinaya doctor` diagnostic: it repoints or removes nothing itself.
 
+## Brief-schema divergence
+
+`briefSchema` in `vinaya.config.json` is yours: `vinaya upgrade` preserves it wholesale and will never rewrite it. That ownership used to have a silent cost — nothing else looked at it either, so a builtin deleted to work around a defect stayed deleted and stayed invisible, with no later upgrade to repair it.
+
+`vinaya doctor` now reports the divergence. It compares your `briefSchema.pr` and `briefSchema.issue` against the set `vinaya init` ships and names any builtin that is absent — nothing more. Extra sections, whether a second builtin or your own `heading`/`field`/`phrase` matcher, are additions rather than weakenings and are never reported. The finding is `info` severity and can never fail your CI: running without a builtin is legitimate configuration, and the goal is to make the choice visible once, not to argue you back to the default.
+
+Once an omission is deliberate, name it in `briefSchema.ack` and it goes quiet:
+
+```json
+{ "briefSchema": { "ack": ["closesN"] } }
+```
+
+`ack` grants nothing and gates nothing — it only silences this report, and acking a builtin you still declare changes no behaviour anywhere. An accidental deletion, having no ack, keeps surfacing. Report-only, like every other `vinaya doctor` diagnostic: it restores nothing itself.
+
 ## Known limits
 
 The five core AEG checks (`coherence`, `dispatch-readiness`, and siblings) are bound to the Vinaya development repository — they read governance documents relative to it. Outside a Vinaya workspace, `vinaya check --all` reports those checks as `status: 'error'` rather than crashing.
