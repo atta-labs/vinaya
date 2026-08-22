@@ -29,7 +29,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { isChangesetsReleasePr } from '@attalabs/aeg-core'
+import { CHANGESET_RELEASE_BRANCH, isChangesetsReleasePr } from '@attalabs/aeg-core'
 import { loadTrustAnchorConfig, resolveReleaseActor } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { checkBareDigits } from '../body-bare-digits-logic'
@@ -56,7 +56,13 @@ function isExemptChangesetsReleasePr(prNumberStr: string | undefined): boolean {
   const prNumber = Number(prNumberStr)
   if (!Number.isFinite(prNumber)) return false
   const pr = fetchPr(prNumber)
-  if (!pr) return false
+  if (!pr || pr.headRefName !== CHANGESET_RELEASE_BRANCH) return false
+  // Only reached once the branch already matches — `resolveReleaseActor`
+  // triggers a SECOND network round-trip (the trust-anchor `vinaya.config.json`
+  // fetch), which must not run on every ordinary PR just because it is one
+  // of `isChangesetsReleasePr`'s three arguments. Found live (code review,
+  // PR #169): JS evaluates function arguments eagerly, so inlining it there
+  // paid that fetch unconditionally, regardless of branch.
   return isChangesetsReleasePr(pr.headRefName, pr.author?.login ?? null, resolveReleaseActor(loadTrustAnchorConfig()))
 }
 

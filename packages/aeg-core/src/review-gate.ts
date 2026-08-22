@@ -216,7 +216,16 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   }
 }
 
-const CHANGESET_RELEASE_BRANCH = 'changeset-release/main'
+/**
+ * Exported so a caller can cheaply pre-check the branch BEFORE paying for
+ * whatever it takes to resolve `expectedAuthor` — resolving that value is a
+ * network round-trip (`resolveReleaseActor(loadTrustAnchorConfig())`) that
+ * must not run on every ordinary PR just because it is one of three
+ * arguments to `isChangesetsReleasePr`. Found live (code review, PR #169):
+ * evaluating it inline as a function argument runs it unconditionally,
+ * regardless of branch, since JS evaluates arguments eagerly.
+ */
+export const CHANGESET_RELEASE_BRANCH = 'changeset-release/main'
 
 /**
  * The stock Changesets flow's default identity — a release PR opened by

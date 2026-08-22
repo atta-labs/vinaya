@@ -112,6 +112,7 @@ export type { MergedPrFacts } from './archive-task'
 export { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
 export type { VerdictExtraction } from './verdict-extraction'
 export {
+  CHANGESET_RELEASE_BRANCH,
   checkReviewGate,
   DEFAULT_RELEASE_ACTOR,
   isChangesetsReleasePr,

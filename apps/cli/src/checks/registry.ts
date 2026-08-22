@@ -237,9 +237,16 @@ export function coreCheckRegistry(): CheckSpec[] {
       // authenticates ONLY from GH_TOKEN/GITHUB_TOKEN, and PR_AUTHOR is
       // deliberately never declared here (registry-env.test.ts's coupling
       // test bans any check bin from reading it from env at all).
+      // GITHUB_REPOSITORY addresses the trust-anchor read
+      // (`loadTrustAnchorConfig`, lib/config.ts) — a `gh api` fetch of
+      // `releaseActor` from the DEFAULT BRANCH, same as `review-gate`'s own
+      // entry. Found live (code review, PR #169): omitted here, the runner
+      // strips it before the check ever runs, and the trust-anchor read
+      // silently falls to its local-dev fallback path on every CI run.
       env: {
         PR_BODY: { optional: true },
         PR_NUMBER: { optional: true },
+        GITHUB_REPOSITORY: { optional: true },
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true }
       }
