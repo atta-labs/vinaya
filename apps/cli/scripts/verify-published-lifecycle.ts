@@ -43,7 +43,7 @@
  * fixed commit, and `demo.ts`'s requirement that the fixed commit succeed makes
  * the row red and the run exit 1.
  *
- * So: 19 of the 20 rows are provable before a publish; `demo break` is provable
+ * So: 20 of the 21 rows are provable before a publish; `demo break` is provable
  * only once that exact version exists on the registry. The failure direction is
  * safe — a loud red, never a false green — but do not read a green `demo break`
  * in this mode as evidence about the tarball. It means the registry already has
@@ -379,6 +379,17 @@ const EXEMPTIONS: Record<string, string> = {
     '`audit` is a ring-2 scheduled mechanism: dead-branch drift and direct-main-push detection both derive ' +
     'from live forge state (`gh` branch/PR reads) UNCONDITIONALLY — no offline path exists. Same forge/' +
     'credential boundary as `archive` above; exempt for the same reason as `issue edit`.',
+  'review post':
+    "`review post` resolves the target PR's real head via `gh pr view <n> --json headRefOid` UNCONDITIONALLY, " +
+    'before it renders anything — the whole point of the command is that the sha is forge-resolved and never ' +
+    'caller-supplied, so there is no flag that skips it and no honest way to add one. It then POSTS a comment ' +
+    'and re-reads it back to self-verify, which is a forge WRITE against a real PR — further outside this ' +
+    "script's credential-free boundary than the read-only exemptions above. `pr edit`'s escape (pass only " +
+    '`--title`, skipping the body fetch) has no analogue here: the only pre-`gh` code path is argument ' +
+    "rejection (`--role` validation), and exercising a command's refusal to accept a bad flag is not " +
+    'exercising the command. Same boundary as `issue edit`; exempt for the same reason. Its rendering, ' +
+    'verdict/severity coupling and self-verify logic are covered by `tests/review-post.test.ts` against this ' +
+    "workspace's own source.",
   'issue edit':
     "`issue edit` fetches the target Issue's real labels from the forge (`gh issue view`) UNCONDITIONALLY, " +
     'even under --validate-only — there is no code path that skips it. Exercising it genuinely would require a ' +
@@ -481,10 +492,24 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
   },
 
   'new check': ({ bin, fixtureDir }) => {
-    const r = run(bin, ['new', 'check', 'proof-check'], fixtureDir)
+    // `lifecycle/proof-check`, NOT a bare `proof-check`. `newCheckCommand`
+    // refuses any key that is not `<namespace>/<name>` (`isValidNamespacedKey`)
+    // — `vinaya check` refuses a whole run over a key it cannot resolve, so a
+    // bare name would brick every check invocation in the adopting repo. This
+    // row sat red against the published artifact and nobody could see it: the
+    // script had already refused to start over the `pr report` coverage gap,
+    // so the stale argument here was never reached. Restoring the script
+    // surfaced it on the first run.
+    //
+    // The file on disk is named for the segment AFTER the slash, so the
+    // scaffold path — and `SCRATCH_FIXTURE_PATHS`' entry for it — is unchanged.
+    const r = run(bin, ['new', 'check', 'lifecycle/proof-check'], fixtureDir)
     const created = existsSync(join(fixtureDir, 'scripts', 'vinaya-checks', 'proof-check.ts'))
     const ok = r.status === 0 && created
-    return { status: ok ? 'pass' : 'fail', detail: `exit ${r.status}, scaffold created: ${created}` }
+    return {
+      status: ok ? 'pass' : 'fail',
+      detail: `exit ${r.status}, scaffold created: ${created}${ok ? '' : ` — ${(r.stderr.trim() || r.stdout.trim()).slice(0, 200)}`}`
+    }
   },
 
   'pr create': ({ bin, fixtureDir }) => {
@@ -510,6 +535,44 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
     )
     const ok = r.status === 0 && /PASS/i.test(r.stdout)
     return { status: ok ? 'pass' : 'fail', detail: `exit ${r.status}: ${r.stdout.trim() || r.stderr.trim()}` }
+  },
+
+  'pr report': ({ bin, fixtureDir }) => {
+    // No `--write`: the block goes to stdout, so this exercise leaves the
+    // fixture untouched and stays out of Part 4's byte-identity diff. The
+    // write path is the same `buildReport` output routed through
+    // `replaceEvidenceBlock`; what is under test here is that the PUBLISHED
+    // artifact can produce the block at all.
+    //
+    // Network-free, and provably so rather than incidentally: Group A's
+    // `resolveMergeBase` tries `origin/main` first, gets nothing (the fixture
+    // adds no remote, §11), and falls back to plain `main`, which the fixture
+    // does have. Group B shells to this same installed CLI's own
+    // `check --all --diff-only` via `resolveSelfEntry` — no `gh`, no registry.
+    //
+    // The assertion is on the HEAD SHA, not merely on the block's delimiters:
+    // an emitter that printed a well-formed but empty Group A would satisfy a
+    // marker-only check, and "verified: no changes" versus "never verified
+    // anything" being the same bytes is the exact failure `computeGroupA`
+    // refuses. Comparing against the fixture's real HEAD proves Group A ran.
+    //
+    // Exit code is deliberately not asserted: `pr report` exits 1 when any
+    // attested gate fails, and whether the fixture's own gate suite is green
+    // is a fact about the fixture, not about whether the published command
+    // works. Exit 2 (usage) and a refusal (exit 1 with no block on stdout)
+    // both still fail this row, because the block assertion below is what
+    // carries it.
+    const head = git(fixtureDir, ['rev-parse', 'HEAD'])
+    const r = run(bin, ['pr', 'report'], fixtureDir)
+    const hasBlock = r.stdout.includes('<!-- AEG:EVIDENCE:START -->') && r.stdout.includes('<!-- AEG:EVIDENCE:END -->')
+    const bindsHead = head.length > 0 && r.stdout.includes(head)
+    const ok = hasBlock && bindsHead
+    return {
+      status: ok ? 'pass' : 'fail',
+      detail: ok
+        ? `exit ${r.status}, AEG:EVIDENCE block emitted and bound to fixture head ${head.slice(0, 7)}`
+        : `exit ${r.status}, block delimiters: ${hasBlock}, bound to head ${head.slice(0, 7) || '<unresolved>'}: ${bindsHead} — ${(r.stdout.trim() || r.stderr.trim()).slice(0, 200)}`
+    }
   },
 
   'issue create': ({ bin, fixtureDir }) => {
@@ -766,6 +829,7 @@ async function main(): Promise<void> {
       'new check',
       'pr create',
       'pr edit',
+      'pr report',
       'issue create',
       'doctor',
       'upgrade',
