@@ -501,12 +501,24 @@ export const FLAG_TABLES = { value: VALUE_FLAGS, nullary: NULLARY_FLAGS } as con
  */
 export function unknownFlags(args: string[], known: readonly string[] = [...VALUE_FLAGS, ...NULLARY_FLAGS]): string[] {
   const out: string[] = []
-  for (const a of args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string
+    // Position first, shape second. A token consumed as the VALUE of a known
+    // value flag is never a flag, whatever it looks like — `--scope "- clean"`,
+    // `--cost "-$1.20"` and `--tests "-.5% regression"` are all legitimate, and
+    // a shape-only heuristic refused every one of them with no way to pass the
+    // text at all.
+    if (known.includes(a) && !NULLARY_FLAGS.includes(a as (typeof NULLARY_FLAGS)[number])) {
+      // Skip the value exactly as `parseFlags` consumes it — and it declines a
+      // `--`-prefixed token, so `--pr --bogus 178` still reports `--bogus`
+      // rather than swallowing it as a value.
+      const next = args[i + 1]
+      if (next !== undefined && !next.startsWith('--')) i++
+      continue
+    }
     // A single dash is the near-miss that motivated this: `-print-only` is one
     // keystroke from the spelling that shipped a verdict nobody asked for.
-    // `-` alone is a legitimate value (the token fields use it for "unknown"),
-    // and a negative number is a value too, so neither is a flag.
-    const looksLikeFlag = a.startsWith('--') || (a.startsWith('-') && a.length > 1 && !/^-\d/.test(a))
+    const looksLikeFlag = a.startsWith('--') || (a.startsWith('-') && a.length > 1)
     if (!looksLikeFlag) continue
     const name = a.split('=')[0] as string
     if (!known.includes(name)) {

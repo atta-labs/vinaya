@@ -138,7 +138,7 @@ describe('symbol-collision gate over this package', () => {
     const found = packageCollisions().map((c) => c.name)
     expect(
       found,
-      'A name is now declared in more than one file of @attalabs/aeg-core. Rename or consolidate it, or add it to KNOWN_COLLISIONS with a reason. A name that resolves to two files cannot be checked by reading one of them.'
+      'A name is now declared in more than one non-test source file of @attalabs/aeg-core (test files are not scanned). Rename or consolidate it, or add it to KNOWN_COLLISIONS with a reason. A name that resolves to two files cannot be checked by reading one of them.'
     ).toEqual([...KNOWN_COLLISIONS].sort((a, b) => a.localeCompare(b)))
   })
 

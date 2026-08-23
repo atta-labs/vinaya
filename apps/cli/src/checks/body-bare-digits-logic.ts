@@ -600,12 +600,14 @@ export function checkBareDigits(rawBody: string): BareDigitScanResult {
  * the region must sit in its documented section, and its content must carry
  * that field's own signature.
  *
- * Returns `null` when the line is not inside any `AEG:*` region, which is the
- * ordinary case — then the generic advice is the right advice.
+ * Returns `null` only when the line is not inside any `AEG:*` region — the
+ * ordinary case, where the generic advice is the right advice. A line inside a
+ * region that DID earn its exemption still gets a hint, because "fence it" is
+ * wrong there too.
  */
 export type AnchorExemptionDiagnosis = {
   field: ExemptAnchorField
-  reason: 'outside-canonical-section' | 'content-signature'
+  reason: 'outside-canonical-section' | 'content-signature' | 'exempt-region'
   hint: string
 }
 
@@ -647,7 +649,14 @@ export function diagnoseAnchorExemption(body: string, line: number): AnchorExemp
         hint: `This line is inside the \`AEG:${field}\` region, but that region does not carry the field's own declaration, so it is scanned as ordinary prose rather than trusted. Restore the declaration the template requires for \`AEG:${field}\`.`
       }
     }
-    return null
+    // The region DID earn its exemption, so this line is unexempted content
+    // inside a machine-emitted block — narrative prose someone added to it.
+    // The generic advice would say "fence it", which corrupts the block.
+    return {
+      field,
+      reason: 'exempt-region',
+      hint: `This line sits inside a valid \`AEG:${field}\` region but is not one of the lines that region exempts, so it is scanned as ordinary prose. Move the sentence out of the region — do not fence or reword the region's own contents, which \`vinaya pr report --write\` regenerates and other gates byte-compare.`
+    }
   }
   return null
 }

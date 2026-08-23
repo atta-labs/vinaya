@@ -337,9 +337,15 @@ describe('the flag tables cover what the command actually reads', () => {
 
   function flagsReadBySource(): string[] {
     const reads = [
-      ...SOURCE.matchAll(/require(?:Flag|TokenField)\(flags,\s*'(--[a-z-]+)'\)/g),
-      ...SOURCE.matchAll(/flags\.get\('(--[a-z-]+)'\)/g)
+      ...SOURCE.matchAll(/require(?:Flag|TokenField)\(\s*flags,\s*'(--[\w-]+)'\s*\)/g),
+      ...SOURCE.matchAll(/flags\.get\(\s*'(--[\w-]+)'\s*\)/g)
     ]
+    return [...new Set(reads.map((m) => m[1] as string))].sort()
+  }
+
+  /** The nullary surface, read through `args.includes` rather than the flag map. */
+  function nullaryReadBySource(): string[] {
+    const reads = [...SOURCE.matchAll(/args\.includes\(\s*'(--[\w-]+)'\s*\)/g)]
     return [...new Set(reads.map((m) => m[1] as string))].sort()
   }
 
@@ -347,6 +353,17 @@ describe('the flag tables cover what the command actually reads', () => {
     const read = flagsReadBySource()
     expect(read.length).toBeGreaterThan(10)
     expect(read).toContain('--tokens-in')
+  })
+
+  // Without this, adding `const dryRun = args.includes('--dry-run')` and
+  // nothing else reproduces the original BLOCKER exactly — `rejectUnknownFlags`
+  // refusing a flag the command itself reads — with the value-side guard green.
+  it('declares every flag read through `args.includes` as a nullary flag', () => {
+    const read = nullaryReadBySource()
+    expect(read.length).toBeGreaterThan(0)
+    const declared = new Set<string>(FLAG_TABLES.nullary)
+    const missing = read.filter((f) => !declared.has(f))
+    expect(missing, `read via args.includes but absent from NULLARY_FLAGS: ${missing.join(', ')}`).toEqual([])
   })
 
   it('declares every flag the command reads as a value flag', () => {
@@ -423,5 +440,23 @@ describe('the `=` spelling reaches the flag map, not just the refusal check', ()
     const m = parseFlags(['--scope=', '--tests', 'ok'])
     expect(m.get('--scope')).toBe('')
     expect(m.get('--tests')).toBe('ok')
+  })
+})
+
+describe('a value is not a flag, whatever it looks like', () => {
+  // The shape-only heuristic refused every one of these, so a reviewer whose
+  // --scope text opened with a markdown bullet had no way to pass it at all.
+  it('accepts values that begin with a dash', () => {
+    expect(unknownFlags(['--scope', '- clean'])).toEqual([])
+    expect(unknownFlags(['--cost', '-$1.20'])).toEqual([])
+    expect(unknownFlags(['--tests', '-.5% regression'])).toEqual([])
+  })
+
+  it('still catches an unknown flag sitting in value position', () => {
+    expect(unknownFlags(['--pr', '--bogus', '178'])).toEqual(['--bogus'])
+  })
+
+  it('still catches a single-dash near-miss in flag position', () => {
+    expect(unknownFlags(['-print-only'])).toEqual(['-print-only'])
   })
 })
