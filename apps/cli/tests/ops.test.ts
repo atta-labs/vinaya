@@ -263,7 +263,7 @@ describe('containedManagedBlockAbs — per-kind bounds for a managed block (#68)
       // come from `gitCommonDir`, so they agree in whichever form git used —
       // but the test's own `root` is the unresolved form.
       expect(containedManagedBlockAbs(wt, '.git/hooks/pre-commit')).toBe(
-        realpathSync(join(root, '.git/hooks')) + '/pre-commit'
+        join(realpathSync(join(root, '.git/hooks')), 'pre-commit')
       )
       // The old rule, for contrast: it answers with a path inside the
       // WORKTREE, where no hook has ever lived — the worktree's `.git` is a
@@ -276,5 +276,61 @@ describe('containedManagedBlockAbs — per-kind bounds for a managed block (#68)
       rmSync(wt, { recursive: true, force: true })
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('containedManagedBlockAbs resolves the common dir exactly once', () => {
+  /**
+   * Pins the BLOCKER the code review on PR #175 disproved with a `git` shim.
+   *
+   * An earlier revision let the target and the bound each call `gitCommonDir`
+   * independently. They share the same *code*, which is not the same as
+   * sharing the same *answer*: a shim that succeeds on the first call and
+   * fails on the second puts them on opposite sides of the fallback, and a
+   * valid hook in a linked worktree then resolves outside its own hooks root
+   * and reads as an escape. It fails closed — nothing wrong is deleted — but
+   * `eject` tells the adopter their manifest is corrupt when it is not.
+   *
+   * Counting spawns is the assertion because the property IS "one call".
+   * Asserting only on the returned path would keep passing the moment someone
+   * reintroduces a second call, which is exactly how this shipped.
+   *
+   * It runs in a CHILD process because mutating `process.env.PATH` in-process
+   * does not change how Bun resolves `execFileSync('git', …)` — measured: a
+   * shim first on the mutated PATH is never reached. The child gets the shim
+   * through its own spawn `env`, which does take effect.
+   */
+  it('spawns `git rev-parse --git-common-dir` once per call, not once per half', () => {
+    const root = scratch()
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root })
+
+    const shimDir = join(root, 'shim')
+    const log = join(root, 'calls.log')
+    mkdirSync(shimDir, { recursive: true })
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()
+    writeFileSync(
+      join(shimDir, 'git'),
+      `#!/bin/sh\ncase " $* " in *" rev-parse "*) echo call >> ${log} ;; esac\nexec ${realGit} "$@"\n`
+    )
+    execFileSync('chmod', ['755', join(shimDir, 'git')])
+
+    const probe = join(root, 'probe.ts')
+    const modulePath = join(import.meta.dirname, '../src/lib/ops.ts')
+    writeFileSync(
+      probe,
+      `import { containedManagedBlockAbs } from ${JSON.stringify(modulePath)}\n` +
+        `containedManagedBlockAbs(${JSON.stringify(root)}, '.git/hooks/pre-commit')\n`
+    )
+
+    execFileSync(process.execPath, [probe], {
+      cwd: root,
+      env: { ...process.env, PATH: `${shimDir}:${process.env.PATH ?? ''}` }
+    })
+
+    const calls = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).length : 0
+    // The shim must actually be reachable, or `0` would "pass" a broken probe.
+    expect(calls).toBeGreaterThan(0)
+    expect(calls).toBe(1)
+    rmSync(root, { recursive: true, force: true })
   })
 })

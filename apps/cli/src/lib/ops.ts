@@ -91,6 +91,20 @@ function abs(repoRoot: string, relPath: string): string {
 }
 
 /**
+ * The prefix that marks a managed-block path as living in the git directory
+ * rather than the working tree. Byte-exact and case-SENSITIVE, which is
+ * correct on a case-sensitive filesystem and incomplete on a case-insensitive
+ * one: there `.GIT/config` is the same file as `.git/config` but takes the
+ * working-tree branch instead, skipping the common-dir resolution and the
+ * hooks-subtree bound alike. Pre-existing, tracked separately — every path
+ * `buildInitOps` records is one of three lower-case literals, so no
+ * vinaya-generated manifest can reach it, and the answer is a parse-layer
+ * question rather than a resolver one. Shared by the two functions below so
+ * they cannot disagree about what counts as a git path.
+ */
+const GIT_DIR_PREFIX = '.git/'
+
+/**
  * A raw git hook's real on-disk path — resolved through `git rev-parse
  * --git-common-dir` rather than a literal `join(repoRoot, '.git/hooks/…')`.
  * Hooks are never per-worktree: every linked worktree shares the main
@@ -105,8 +119,8 @@ function abs(repoRoot: string, relPath: string): string {
  * correct there — this only special-cases the `.git/`-prefixed form.
  */
 export function resolveManagedBlockPath(repoRoot: string, opPath: string): string {
-  if (!opPath.startsWith('.git/')) return join(repoRoot, opPath)
-  return join(gitCommonDir(repoRoot), opPath.slice('.git/'.length))
+  if (!opPath.startsWith(GIT_DIR_PREFIX)) return join(repoRoot, opPath)
+  return join(gitCommonDir(repoRoot), opPath.slice(GIT_DIR_PREFIX.length))
 }
 
 /**
@@ -117,9 +131,13 @@ export function resolveManagedBlockPath(repoRoot: string, opPath: string): strin
  *
  * Extracted so `resolveManagedBlockPath` (which builds a hook's path) and
  * `containedManagedBlockAbs` (which decides whether that path is in bounds)
- * derive from ONE answer. Two callers each shelling out separately could
- * disagree — one falling back while the other succeeded — and a containment
- * check that disagrees with the resolver it guards is worse than no check.
+ * each call it from one place rather than each shelling out for themselves.
+ * `containedManagedBlockAbs` calls it ONCE and threads the result into both
+ * the target and the bound; an earlier revision let each half call it and a
+ * `git` shim that succeeded then failed drove them onto opposite sides of the
+ * fallback. It failed closed — a valid hook read as an escape and `eject`
+ * refused — but a containment check that can disagree with the resolver it
+ * guards is worth less than its docstring claimed.
  */
 function gitCommonDir(repoRoot: string): string {
   try {
@@ -139,7 +157,12 @@ function gitCommonDir(repoRoot: string): string {
  * Returns null for any escape (`..`, absolute path). This is the runtime half
  * of the eject-safety guarantee (the schema refinement in config.ts is the
  * parse-layer half): no fs mutation is ever performed on a path this rejects,
- * so a malicious/hand-edited manifest can never drive a delete outside the repo.
+ * so a malicious/hand-edited manifest can never drive a delete outside the repo
+ * THROUGH THIS FUNCTION. It is no longer the only containment rule: a
+ * managed-block path goes through `containedManagedBlockAbs` instead, whose
+ * bound is the git common dir's `hooks/` subtree and is deliberately outside
+ * `repoRoot` from a linked worktree. Read this guarantee as scoped to the
+ * whole files vinaya owns, which is every caller it still has.
  */
 export function containedAbs(repoRoot: string, relPath: string): string | null {
   const root = resolve(repoRoot)
@@ -162,7 +185,8 @@ export function containedAbs(repoRoot: string, relPath: string): string | null {
  * install silently left an active commit-time execution surface behind.
  *
  * So the rule is re-based, not relaxed: a `.git/`-prefixed block must resolve
- * inside the git common dir's own `hooks/` subtree. That is strictly TIGHTER
+ * inside the git common dir's own `hooks/` subtree. For a canonically spelled
+ * path that is strictly TIGHTER
  * than the old rule in the ordinary non-worktree case, where `<repoRoot>/.git`
  * IS the common dir: `.git/config` and `.git/objects/…` were previously
  * "contained" and are now refused, since no managed block has any business
@@ -178,9 +202,17 @@ export function containedAbs(repoRoot: string, relPath: string): string | null {
  * for the paths it could not reason about.
  */
 export function containedManagedBlockAbs(repoRoot: string, relPath: string): string | null {
-  if (!relPath.startsWith('.git/')) return containedAbs(repoRoot, relPath)
-  const hooksRoot = resolve(join(gitCommonDir(repoRoot), 'hooks'))
-  const target = resolve(resolveManagedBlockPath(repoRoot, relPath))
+  if (!relPath.startsWith(GIT_DIR_PREFIX)) return containedAbs(repoRoot, relPath)
+  // ONE `gitCommonDir` call, its answer threaded into both halves. Calling it
+  // twice — once here and once inside `resolveManagedBlockPath` — is what the
+  // review disproved with a `git` shim that succeeded on the first call and
+  // failed on the second: the bound and the target then straddled the
+  // fallback, a valid hook resolved outside its own hooks root, and `eject`
+  // told the adopter their manifest was corrupt. It failed closed, but it
+  // failed, and "they cannot disagree" has to be structural to be worth saying.
+  const commonDir = gitCommonDir(repoRoot)
+  const hooksRoot = resolve(join(commonDir, 'hooks'))
+  const target = resolve(join(commonDir, relPath.slice(GIT_DIR_PREFIX.length)))
   if (target === hooksRoot) return null
   return target.startsWith(hooksRoot + sep) ? target : null
 }
@@ -454,8 +486,11 @@ export type EjectAction =
 
 export type EjectPlan = {
   actions: EjectAction[]
-  /** recorded paths that resolve OUTSIDE the repo — a corrupt/hostile manifest;
-   *  their presence makes the whole eject refuse (never a partial destructive run) */
+  /** recorded paths that resolve OUTSIDE the bounds their own kind allows — a
+   *  whole file outside `repoRoot`, or a managed block outside the git common
+   *  dir's `hooks/` subtree, which is itself outside `repoRoot` from a linked
+   *  worktree. A corrupt/hostile manifest; their presence makes the whole eject
+   *  refuse (never a partial destructive run) */
   escapes: string[]
 }
 
