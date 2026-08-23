@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { LabelGateway, Op } from '../src/lib/ops.js'
-import { applyEject, applyInstall, containedAbs, planEject, planInstall, renderInstallDiff } from '../src/lib/ops.js'
+import {
+  applyEject,
+  applyInstall,
+  containedAbs,
+  containedManagedBlockAbs,
+  planEject,
+  planInstall,
+  renderInstallDiff
+} from '../src/lib/ops.js'
 import type { ManagedManifest } from '../src/lib/config.js'
 
 function scratch(): string {
@@ -161,7 +170,7 @@ describe('planEject on a corrupt/missing manifest is caller-guarded', () => {
   })
 })
 
-describe('path-traversal containment (eject cannot delete outside the repo)', () => {
+describe('path-traversal containment (a whole file eject deletes stays inside the repo)', () => {
   it('containedAbs rejects `..`, absolute paths, and the repo root itself', () => {
     const root = scratch()
     expect(containedAbs(root, 'a/b.txt')).toBe(join(root, 'a/b.txt'))
@@ -192,5 +201,149 @@ describe('path-traversal containment (eject cannot delete outside the repo)', ()
     applyEject({ actions: [{ kind: 'delete-file', path: '../OUTSIDE.txt', present: true }], escapes: [] }, root)
     expect(existsSync(outside)).toBe(true)
     rmSync(parent, { recursive: true, force: true })
+  })
+})
+
+describe('containedManagedBlockAbs — per-kind bounds for a managed block (#68)', () => {
+  function gitRepo(): string {
+    const root = scratch()
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root })
+    return root
+  }
+
+  it('delegates a non-`.git/` path to containedAbs unchanged', () => {
+    const root = gitRepo()
+    expect(containedManagedBlockAbs(root, '.husky/pre-commit')).toBe(join(root, '.husky/pre-commit'))
+    expect(containedManagedBlockAbs(root, '../OUTSIDE')).toBeNull()
+    expect(containedManagedBlockAbs(root, '/etc/passwd')).toBeNull()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('resolves a `.git/hooks/*` path into the git common dir', () => {
+    const root = gitRepo()
+    expect(containedManagedBlockAbs(root, '.git/hooks/pre-commit')).toBe(join(root, '.git/hooks/pre-commit'))
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  // Strictly TIGHTER than the old repoRoot rule: in a primary checkout
+  // `<repoRoot>/.git` IS the common dir, so these were previously "contained".
+  // No managed block has any business outside `hooks/`.
+  it('refuses a `.git/` path outside the hooks subtree, and the hooks dir itself', () => {
+    const root = gitRepo()
+    expect(containedManagedBlockAbs(root, '.git/config')).toBeNull()
+    expect(containedManagedBlockAbs(root, '.git/objects/ab/cdef')).toBeNull()
+    expect(containedManagedBlockAbs(root, '.git/hooks')).toBeNull()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('refuses a traversal that climbs back out of the hooks subtree', () => {
+    const root = gitRepo()
+    expect(containedManagedBlockAbs(root, '.git/hooks/../../../OUTSIDE')).toBeNull()
+    expect(containedManagedBlockAbs(root, '.git/hooks/../config')).toBeNull()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  // The whole point of the fix: from a linked worktree the hook's real home is
+  // the MAIN checkout's shared hooks dir, legitimately outside `repoRoot`.
+  it('resolves to the shared common dir from a linked worktree, where containedAbs answers a worktree-local phantom', () => {
+    const root = gitRepo()
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root })
+    writeFileSync(join(root, 'README.md'), '# x\n')
+    execFileSync('git', ['add', 'README.md'], { cwd: root })
+    execFileSync('git', ['commit', '-q', '-m', 'Chore: initial commit'], { cwd: root })
+    const wt = `${root}-wt`
+    execFileSync('git', ['worktree', 'add', '-q', wt, '-b', 'task/demo/1'], { cwd: root })
+
+    try {
+      // `realpathSync` on the expectation only: `git rev-parse
+      // --git-common-dir` answers with a fully resolved path, and on macOS
+      // the tmpdir is a `/var` -> `/private/var` symlink. Nothing in the
+      // product compares across that boundary — `target` and `hooksRoot` both
+      // come from `gitCommonDir`, so they agree in whichever form git used —
+      // but the test's own `root` is the unresolved form.
+      expect(containedManagedBlockAbs(wt, '.git/hooks/pre-commit')).toBe(
+        join(realpathSync(join(root, '.git/hooks')), 'pre-commit')
+      )
+      // The old rule, for contrast: it answers with a path inside the
+      // WORKTREE, where no hook has ever lived — the worktree's `.git` is a
+      // gitlink file. Resolving there is what silently skipped the strip and
+      // left an active hook behind in the shared dir.
+      expect(containedAbs(wt, '.git/hooks/pre-commit')).toBe(join(wt, '.git/hooks/pre-commit'))
+      expect(containedManagedBlockAbs(wt, '.git/hooks/pre-commit')).not.toBe(join(wt, '.git/hooks/pre-commit'))
+    } finally {
+      execFileSync('git', ['worktree', 'remove', '--force', wt], { cwd: root })
+      rmSync(wt, { recursive: true, force: true })
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('containedManagedBlockAbs resolves the common dir exactly once', () => {
+  /**
+   * Pins the BLOCKER the code review on PR #175 disproved with a `git` shim.
+   *
+   * An earlier revision let the target and the bound each call `gitCommonDir`
+   * independently. They share the same *code*, which is not the same as
+   * sharing the same *answer*: a shim that succeeds on the first call and
+   * fails on the second puts them on opposite sides of the fallback, and a
+   * valid hook in a linked worktree then resolves outside its own hooks root
+   * and reads as an escape. It fails closed — nothing wrong is deleted — but
+   * `eject` tells the adopter their manifest is corrupt when it is not.
+   *
+   * Counting spawns is the assertion because the property IS "one call".
+   * Asserting only on the returned path would keep passing the moment someone
+   * reintroduces a second call, which is exactly how this shipped.
+   *
+   * It runs in a CHILD process because mutating `process.env.PATH` in-process
+   * does not change how Bun resolves `execFileSync('git', …)` — measured: a
+   * shim first on the mutated PATH is never reached. The child gets the shim
+   * through its own spawn `env`, which does take effect.
+   */
+  it('spawns `git rev-parse --git-common-dir` once per call, not once per half', () => {
+    // `mkdtempSync`, not `scratch()`: this writes an EXECUTABLE `git` and puts
+    // it first on a child's PATH, so a predictable directory name on a shared
+    // `/tmp` would be a plant-and-win. Matches the discipline
+    // `tests/checks/body-bare-digits-changeset-exempt.test.ts` already uses.
+    const root = mkdtempSync(join(tmpdir(), 'vinaya-ops-shim-'))
+    try {
+      execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root })
+
+      const shimDir = join(root, 'shim')
+      const log = join(root, 'calls.log')
+      mkdirSync(shimDir)
+      const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()
+      // Both interpolations are quoted inside the script: they are
+      // `mkdtempSync`/`command -v` output, not attacker input, but an unquoted
+      // path in a generated shell script is a habit worth not having.
+      writeFileSync(
+        join(shimDir, 'git'),
+        `#!/bin/sh\ncase " $* " in *" rev-parse "*) echo call >> "${log}" ;; esac\nexec "${realGit}" "$@"\n`
+      )
+      execFileSync('chmod', ['755', join(shimDir, 'git')])
+
+      const probe = join(root, 'probe.ts')
+      const modulePath = join(import.meta.dirname, '../src/lib/ops.ts')
+      writeFileSync(
+        probe,
+        `import { containedManagedBlockAbs } from ${JSON.stringify(modulePath)}\n` +
+          `containedManagedBlockAbs(${JSON.stringify(root)}, '.git/hooks/pre-commit')\n`
+      )
+
+      // PATH is set on THIS spawn's env only — `process.env` is never mutated,
+      // so the shim cannot leak into a sibling test or the parent process.
+      execFileSync(process.execPath, [probe], {
+        cwd: root,
+        env: { ...process.env, PATH: `${shimDir}:${process.env.PATH ?? ''}` }
+      })
+
+      const calls = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).length : 0
+      // The shim must actually be reachable, or `0` would "pass" a broken probe.
+      expect(calls).toBeGreaterThan(0)
+      expect(calls).toBe(1)
+    } finally {
+      // `finally`, so an assertion failure still removes the executable shim.
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

@@ -201,7 +201,10 @@ export const MANAGED_MANIFEST_VERSION = 2
 // escape the repo — no absolute path, no `..` segment. This is the parse-layer
 // half of the eject-safety guarantee: a hand-edited or malicious manifest
 // carrying `../OUTSIDE` fails validation here, so `eject`'s readManifest sees a
-// corrupt manifest and refuses rather than deleting outside the repo. The
+// corrupt manifest and refuses rather than deleting outside the bounds each
+// path kind is allowed (`containedAbs` for files, `containedManagedBlockAbs`
+// for managed blocks — the latter bounded by the git common dir's `hooks/`
+// subtree, which is outside `repoRoot` from a linked worktree). The
 // runtime containment check in lib/ops.ts is the belt-and-suspenders half.
 export function isSafeRepoRelPath(p: string): boolean {
   if (p.length === 0) return false

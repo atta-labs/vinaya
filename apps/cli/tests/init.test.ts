@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
@@ -1301,5 +1302,96 @@ describe('adopter-declared CI setup (ci.setup)', () => {
     const workflow = readFileSync(join(root, CHECKS_WORKFLOW_PATH), 'utf-8')
     expect(workflow).toContain('- name: Adopter CI setup')
     expect(workflow).toContain('          npm ci')
+  })
+})
+
+describe('vinaya eject — raw git hooks inside a linked worktree', () => {
+  function git(cwd: string, args: string[]): string {
+    return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+  }
+
+  /**
+   * Mirrors `upgrade.test.ts`'s linked-worktree test for the eject side (#68).
+   *
+   * The defect it pins: hooks are never per-worktree, so a `.git/hooks/*`
+   * managed block's real home is the MAIN checkout's shared hooks directory.
+   * From a linked worktree that path is legitimately outside the worktree's
+   * `repoRoot`.
+   *
+   * `planEject`'s old `containedAbs` guard did NOT reject it — that account is
+   * wrong and this test is the reason to state it right. `resolve()` never
+   * sees that the worktree's `.git` is a gitlink FILE, so
+   * `<repoRoot>/.git/hooks/pre-commit` is textually contained and PASSES. It
+   * just names a file that does not exist there, so `planEject` recorded
+   * `present: false`, the diff printed `gone (managed block already
+   * removed)`, and `eject` exited 0 having stripped nothing while the real
+   * hook stayed armed in the shared directory. An escape would have refused
+   * the whole run and said so; this reported success — which is why the
+   * assertion below is on the hook's CONTENT in the shared dir, not on the
+   * exit code.
+   */
+  it('strips the shared-common-dir hook block when ejecting from a linked worktree', async () => {
+    git(root, ['init', '-q', '-b', 'main'])
+    git(root, ['config', 'user.email', 'test@example.com'])
+    git(root, ['config', 'user.name', 'Test'])
+    git(root, ['add', 'README.md'])
+    git(root, ['commit', '-q', '-m', 'Chore: initial commit'])
+
+    await runInit(['--yes'], makeDeps({ hookDirFor: () => '.git/hooks' }))
+    git(root, ['add', '-A'])
+    // --no-verify: the real hook shells to a network-dependent `npx`, which is
+    // irrelevant to what this test verifies (eject's own path resolution).
+    git(root, ['commit', '-q', '-m', 'Chore: install Vinaya', '--no-verify'])
+
+    const hookPath = join(root, '.git/hooks/pre-commit')
+    expect(existsSync(hookPath)).toBe(true)
+    expect(readFileSync(hookPath, 'utf-8')).toContain('vinaya')
+
+    const wtRoot = join(tmpdir(), `vinaya-eject-wt-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    git(root, ['worktree', 'add', '-q', wtRoot, '-b', 'task/demo/1'])
+
+    try {
+      // The worktree's own `.git` is a gitlink FILE, so a naive join resolves
+      // nothing — this is exactly the shape that used to defeat containment.
+      expect(statSync(join(wtRoot, '.git')).isFile()).toBe(true)
+
+      let rc = -1
+      await captureStdout(async () => {
+        rc = await runEject(
+          ['--yes'],
+          ejectDeps({ detectRepo: async () => ({ repoRoot: wtRoot, owner: 'acme', repo: 'widget' }) })
+        )
+      })
+      expect(rc).toBe(0)
+
+      // The load-bearing assertion: the hook in the SHARED common dir is gone.
+      // Before the fix this file survived eject with its managed block intact.
+      expect(existsSync(hookPath) && readFileSync(hookPath, 'utf-8').includes('vinaya')).toBe(false)
+    } finally {
+      git(root, ['worktree', 'remove', '--force', wtRoot])
+      rmSync(wtRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses to eject rather than partially strip when a block path escapes its bounds', async () => {
+    git(root, ['init', '-q', '-b', 'main'])
+    git(root, ['config', 'user.email', 'test@example.com'])
+    git(root, ['config', 'user.name', 'Test'])
+    await runInit(['--yes'], makeDeps({ hookDirFor: () => '.git/hooks' }))
+
+    // A `.git/`-prefixed block outside `hooks/` — no managed block has any
+    // business there, and the old repoRoot-based rule would have accepted it
+    // in a primary checkout, where `<repoRoot>/.git` IS the common dir.
+    const config = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    config.managed.blocks.push({ path: '.git/config', marker: 'evil', comment: 'hash' })
+    writeFileSync(join(root, CONFIG_PATH), JSON.stringify(config, null, 2), 'utf-8')
+
+    let rc = -1
+    await captureStdout(async () => {
+      rc = await runEject(['--yes'], ejectDeps())
+    })
+    expect(rc).toBe(1)
+    // Refusal is whole-run: nothing was removed, not even the legitimate rows.
+    expect(existsSync(join(root, CONFIG_PATH))).toBe(true)
   })
 })

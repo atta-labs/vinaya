@@ -107,13 +107,19 @@ export async function runEject(args: string[], deps: EjectDeps): Promise<number>
     read.manifest.blocks.some((b) => b.path.startsWith(`${TRACKED_HOOK_DIR}/`)) &&
     (await deps.readHooksPath(repo.repoRoot)) === TRACKED_HOOK_DIR
 
-  // A recorded path that resolves outside the repo means the manifest is
-  // corrupt or hostile — refuse the whole eject rather than run a partial
-  // destructive pass (Section 10: never a destructive guess). Belt-and-
-  // suspenders with the schema refinement (which already rejects `..` at parse)
-  // and applyEject's per-op containment recheck.
+  // A recorded path that resolves outside the bounds its own kind is allowed
+  // means the manifest is corrupt or hostile — refuse the whole eject rather
+  // than run a partial destructive pass (Section 10: never a destructive
+  // guess). Belt-and-suspenders with the schema refinement (which already
+  // rejects `..` at parse) and applyEject's per-op containment recheck.
+  //
+  // Bounds are per-kind: a vinaya-owned file must be inside `repoRoot`, a
+  // `.git/hooks/*` managed block inside the git common dir's `hooks/` subtree
+  // — which, from a linked worktree, is legitimately outside `repoRoot`
+  // (#68). Saying "outside this repo" here would now be wrong for the block
+  // case and would send someone hunting for corruption that isn't there.
   if (plan.escapes.length > 0) {
-    console.error('Error: the ownership manifest records paths that resolve OUTSIDE this repo:')
+    console.error('Error: the ownership manifest records paths that resolve OUTSIDE the bounds vinaya may touch:')
     for (const p of plan.escapes) console.error(`  ${p}`)
     console.error(
       'Refusing to remove anything. This manifest is corrupt or hand-edited — fix vinaya.config.json, then re-run.'
