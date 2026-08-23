@@ -497,8 +497,8 @@ function buildAnchorLookupMask(body: string): string {
 }
 
 /** Full masking pipeline — see module doc for the layer order and why it's load-bearing. */
-function buildScanMask(body: string): string {
-  let masked = buildAnchorLookupMask(body)
+function buildScanMask(ctx: ScanContext): string {
+  let masked = ctx.masked
   masked = blankAnchoredRegions(masked)
   masked = blankTokenReportSection(masked)
   masked = blankUnanchoredStructuralFields(masked)
@@ -606,11 +606,22 @@ export type ResolvedAnchoredRegion = {
  *
  * A guard over a hand-kept list of today's stage names cannot catch that; it is
  * the same closed-list shape this module's own docstring argues cannot
- * terminate. So the composition stops being something a caller performs. Both
- * consumers take this pair whole and neither names a stage, which is what lets
- * the test assert the exact expression each one uses.
+ * terminate. Each tighter assertion only moved the divergence one line: first
+ * earlier (a stage added to one side), then later (`buildScanMask(wrap(body))`,
+ * past every pinned entry expression).
+ *
+ * So the composition stops being something a caller performs, and the guarantee
+ * stops resting on a test. `ScanContext` is the only way to obtain this pair,
+ * and `buildScanMask` takes the context rather than a string — a wrapped or
+ * re-derived body does not type-check. The remaining bound is stated rather
+ * than papered over: nothing prevents a NEW consumer from mangling `rawBody`
+ * before calling `scanContext`. That is a smaller surface than "any of the
+ * stages, at any point in either pipeline", and it is the honest limit of what
+ * construction can close here.
  */
-function scanContext(rawBody: string): { normalised: string; masked: string } {
+type ScanContext = { readonly normalised: string; readonly masked: string }
+
+function scanContext(rawBody: string): ScanContext {
   const normalised = normalizeBody(rawBody)
   return { normalised, masked: buildAnchorLookupMask(normalised) }
 }
@@ -656,16 +667,14 @@ export function resolveAnchoredRegionForScan(
 }
 
 export function checkBareDigits(rawBody: string): BareDigitScanResult {
-  // `normalizeBody`, not an inlined copy of it. Both reviewers reproduced
-  // stage eight from this one line: add a stage to `normalizeBody` and the two
-  // sides diverge again, which is the exact failure the resolver was extracted
-  // to make impossible. One caller inlining the stages meant "both sides call
-  // it" was a claim about one side.
-  // Takes the pair whole and names no stage. `body-bare-digits.test.ts`
-  // asserts this exact expression, so wrapping it — the decoupling that
-  // defeated the previous guard — changes the line and fails.
-  const { normalised: body } = scanContext(rawBody)
-  const masked = buildScanMask(body)
+  // The context is obtained once and handed on whole. Nothing here names a
+  // stage, and `buildScanMask` takes the context rather than a string — so
+  // `buildScanMask(stripSoftHyphens(body))`, the decoupling that survived the
+  // previous two guards, does not compile. That is the point: this is closed
+  // by the type, not by a test asserting the absence of a wrapper.
+  const ctx = scanContext(rawBody)
+  const body = ctx.normalised
+  const masked = buildScanMask(ctx)
   const maskedLines = masked.split('\n')
   const origLines = body.split('\n')
   const violations: BareDigitViolation[] = []

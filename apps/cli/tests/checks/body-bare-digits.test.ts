@@ -832,7 +832,7 @@ describe('the Summary exemption is exactly as narrow as its verification', () =>
   })
 })
 
-describe('there is one normalisation path, not two that agree', () => {
+describe('the two sides cannot read different text — what is closed, and by what', () => {
   /**
    * Source-derived, because a behavioural fixture cannot test this.
    *
@@ -876,7 +876,7 @@ describe('there is one normalisation path, not two that agree', () => {
    * text. Anything wrapping, unwrapping or re-ordering these changes the line.
    */
   const CONSUMER_ENTRY: [string, string][] = [
-    ['export function checkBareDigits', 'const { normalised: body } = scanContext(rawBody)'],
+    ['export function checkBareDigits', 'const ctx = scanContext(rawBody)'],
     ['export function resolveAnchoredRegionForScan', 'const { normalised, masked: maskedBody } = scanContext(rawBody)']
   ]
 
@@ -902,19 +902,18 @@ describe('there is one normalisation path, not two that agree', () => {
       normaliseCalls.length,
       `normalizeBody called from ${normaliseCalls.length} places; expected only scanContext`
     ).toBe(1)
-    // `buildAnchorLookupMask` legitimately has two: `scanContext` and
-    // `buildScanMask`, which masks an ALREADY-normalised body. Both are named,
-    // so a third call site fails here rather than passing as "one of the two".
+    // `buildAnchorLookupMask` has one call site too, now that `buildScanMask`
+    // takes the context instead of recomputing the mask from a string. That
+    // second input was the channel both reviewers used: pin the entry line and
+    // wrap the NEXT one — `buildScanMask(stripSoftHyphens(body))` — and the
+    // sides diverged with every assertion green.
     const maskCalls = CODE_LINES.filter(
       (l) => l.includes('buildAnchorLookupMask(') && !l.includes('function buildAnchorLookupMask')
     )
     expect(
       maskCalls.length,
-      `buildAnchorLookupMask called from ${maskCalls.length} places; expected scanContext and buildScanMask`
-    ).toBe(2)
-    for (const decl of ['function scanContext', 'function buildScanMask']) {
-      expect(bodyOf(decl), `${decl} does not call buildAnchorLookupMask`).toContain('buildAnchorLookupMask(')
-    }
+      `buildAnchorLookupMask called from ${maskCalls.length} places; expected only scanContext`
+    ).toBe(1)
     // And neither consumer may name a stage itself.
     for (const [decl] of CONSUMER_ENTRY) {
       for (const stage of [
@@ -976,5 +975,25 @@ describe('there is one normalisation path, not two that agree', () => {
     const ZW = '​'
     expect(normalizeBody(`a${ZW}b`)).toBe('ab')
     expect(normalizeBody('&lt;details&gt;')).toBe('<details>')
+  })
+
+  /**
+   * The bound, stated rather than implied.
+   *
+   * Ten rounds alternated between the divergence appearing one stage earlier
+   * and one line later, each answered by a tighter assertion over source text —
+   * the same enumeration this module's docstring argues cannot terminate. So
+   * the load-bearing guarantee is a TYPE, not this file: `buildScanMask` takes
+   * a `ScanContext`, so a wrapped or re-derived body does not compile.
+   *
+   * What these tests add is narrower and worth naming: they catch a stage being
+   * re-inlined or the entry expression being wrapped, both of which still
+   * type-check. What NOTHING here closes is a new consumer mangling `rawBody`
+   * before it reaches `scanContext`. That is the honest limit.
+   */
+  it('makes the exit channel a compile error, not an assertion', () => {
+    // `buildScanMask(body)` would type-check if the parameter were a string.
+    expect(bodyOf('function buildScanMask')).toContain('ctx: ScanContext')
+    expect(bodyOf('function buildScanMask')).toContain('let masked = ctx.masked')
   })
 })
