@@ -18,6 +18,7 @@ import {
   hasProvenance,
   isEligibleForProvenance,
   taskRefFromBranch,
+  trancheLabel,
   type MergedPrFacts
 } from '@attalabs/aeg-core'
 import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
@@ -173,15 +174,17 @@ export async function archiveCommand(args: string[]): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// vinaya archive tranche <slug> — the tranche-level bookend, closing the
-// GitHub Milestone. Refuses (no --force) if any task Issue attached to it is
-// still open — closing a tranche with unresolved work is never silently
-// allowed, matching this product's refuse-by-default posture everywhere
-// else. --yes skips the confirm prompt, same convention as init/eject/upgrade.
+// vinaya archive tranche <slug> — the tranche-level bookend. Refuses (no
+// --force) if any Issue carrying `vinaya/tranche:<slug>` is still open —
+// closing a tranche with unresolved work is never silently allowed, matching
+// this product's refuse-by-default posture everywhere else. When the
+// tranche is complete AND a legacy Milestone titled exactly the slug exists,
+// closes that Milestone (the archival mechanism this repo has today). --yes
+// skips the confirm prompt, same convention as init/eject/upgrade.
 // ---------------------------------------------------------------------------
 
 type Milestone = { number: number; title: string }
-type OpenIssueRef = { number: number; title: string }
+type LabeledIssueRef = { number: number; title: string; state: 'OPEN' | 'CLOSED' }
 
 function parseTrancheArgs(args: string[]): { slug: string | null; yes: boolean } {
   const yes = args.includes('--yes')
@@ -189,6 +192,44 @@ function parseTrancheArgs(args: string[]): { slug: string | null; yes: boolean }
   return { slug, yes }
 }
 
+/**
+ * The pure derivation this command now runs on: given every Issue carrying
+ * `vinaya/tranche:<slug>` (any state), which of the three archival outcomes
+ * applies. Split out from `runArchiveTranche` so the exact new logic — "is
+ * this tranche done" answered from its own labeled Issues rather than from
+ * a Milestone — is unit-testable with no `gh`/`execFileSync` mocking at all,
+ * matching this repo's pure-evaluator/I-O-shim split used throughout
+ * `packages/aeg-core` (`coherence-checks.ts`, `fetch-milestone.ts`, …).
+ */
+export function trancheArchivalStatus(
+  issues: LabeledIssueRef[]
+): { kind: 'no-tranche' } | { kind: 'open'; openIssues: LabeledIssueRef[] } | { kind: 'complete' } {
+  if (issues.length === 0) return { kind: 'no-tranche' }
+  const openIssues = issues.filter((i) => i.state === 'OPEN')
+  if (openIssues.length > 0) return { kind: 'open', openIssues }
+  return { kind: 'complete' }
+}
+
+/**
+ * A tranche's identity is its `vinaya/tranche:<slug>` label
+ * (vinaya-milestone-model-v1 task 1), not a Milestone number: this command
+ * used to find an open Milestone titled the slug FIRST and list its Issues
+ * via `?milestone=<number>` — a query that returns every Issue the Milestone
+ * holds, not just this tranche's, so once one Milestone can legitimately
+ * hold several tranches that query would silently close siblings the moment
+ * their own task Issues (correctly) still showed open. Both the matching
+ * rule and the Issue listing now go through the label instead: "is this
+ * tranche done" is answered from its OWN Issues, before anything asks
+ * whether a Milestone exists to close.
+ *
+ * Closing a Milestone is still this command's mechanism for legacy
+ * (title-equals-slug) tranches — the only kind that exist today, since the
+ * write side that can create a shared or label-only tranche is task 2's
+ * scope, not this one's. A complete tranche with no matching Milestone
+ * (unreachable today, reachable once task 2 ships) reports done with
+ * nothing to close, rather than erroring — there is no archival mechanism
+ * for it yet to invoke.
+ */
 export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Promise<number> {
   const { slug, yes } = parseTrancheArgs(args)
   if (!slug) {
@@ -207,24 +248,41 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
   }
   const repoFlag = `${repo.owner}/${repo.repo}`
 
-  const milestones = shJson<Milestone[]>(['gh', 'api', `repos/${repoFlag}/milestones?state=open&per_page=100`])
-  const milestone = milestones.find((m) => m.title === slug)
-  if (!milestone) {
-    console.error(`Error: no open tranche milestone named '${slug}' found in ${repoFlag}.`)
+  const issues = shJson<LabeledIssueRef[]>([
+    'gh',
+    'issue',
+    'list',
+    '-R',
+    repoFlag,
+    '--label',
+    trancheLabel(slug),
+    '--state',
+    'all',
+    '--json',
+    'number,title,state',
+    '--limit',
+    '200'
+  ])
+  const status = trancheArchivalStatus(issues)
+  if (status.kind === 'no-tranche') {
+    console.error(`Error: no tranche found for '${slug}' in ${repoFlag} — no Issues carry ${trancheLabel(slug)}.`)
+    return 1
+  }
+  if (status.kind === 'open') {
+    console.error(
+      `Error: tranche '${slug}' still has ${status.openIssues.length} open task(s) — refusing to close:\n` +
+        status.openIssues.map((i) => `  #${i.number} — ${i.title}`).join('\n')
+    )
     return 1
   }
 
-  const openIssues = shJson<OpenIssueRef[]>([
-    'gh',
-    'api',
-    `repos/${repoFlag}/issues?milestone=${milestone.number}&state=open&per_page=100`
-  ])
-  if (openIssues.length > 0) {
-    console.error(
-      `Error: tranche '${slug}' still has ${openIssues.length} open task(s) — refusing to close:\n` +
-        openIssues.map((i) => `  #${i.number} — ${i.title}`).join('\n')
+  const milestones = shJson<Milestone[]>(['gh', 'api', `repos/${repoFlag}/milestones?state=open&per_page=100`])
+  const milestone = milestones.find((m) => m.title === slug)
+  if (!milestone) {
+    process.stdout.write(
+      `Tranche '${slug}' is complete (${issues.length} task(s), all closed) — no open Milestone to close.\n`
     )
-    return 1
+    return 0
   }
 
   if (!yes) {

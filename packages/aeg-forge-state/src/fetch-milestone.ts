@@ -1,11 +1,4 @@
-import {
-  type GhIssue,
-  ghApiGet,
-  ghApiGetAllPagesAsync,
-  ghApiGetAsync,
-  ghIssueListByLabel,
-  ghIssueListByLabelAsync
-} from './gh'
+import { type GhIssue, ghApiGet, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } from './gh'
 import { trancheLabel, trancheSlugOf } from './labels'
 import type { Lifecycle } from '@attalabs/aeg-types'
 

@@ -5,8 +5,9 @@ import { createGhMock } from './test-support/mock-gh'
 
 vi.mock('./gh', () => createGhMock())
 
-const { ghApiGet, ghApiGetAsync, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } =
-  await import('./gh')
+const { ghApiGet, ghApiGetAsync, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } = await import(
+  './gh'
+)
 const { findMilestoneForSlug, indexTrancheMilestonesAsync, listActiveTrancheSlugs, listArchivedTrancheSlugs } =
   await import('./fetch-milestone')
 
