@@ -179,40 +179,93 @@ function gitFetchMainQuiet(): void {
  * intermediate shell process at all, so no `IFS`/`PATH` expansion sits between
  * this file and `git`.
  */
+/**
+ * An ABSENT path is the expected answer from both probes below, not an error
+ * (#173): the forge-native cutover deleted every `aeg-root/tranches/*.md` and
+ * `no-disk-state.ts` now actively forbids re-adding one, so they miss on every
+ * healthy run and `git` says so on stderr. Both callers already degrade
+ * correctly via their `catch`; what the noise cost was a caller downstream,
+ * which concatenated the streams before parsing and read a clean run as
+ * `UNAVAILABLE` on every dispatch check.
+ *
+ * Silencing the child wholesale would have fixed that and hidden the rest — a
+ * corrupt object, an unreachable ref, a broken `git` all print here too.
+ *
+ * **Classifying by message does not work, and this is the load-bearing
+ * detail.** `git` emits the SAME text for both cases:
+ *
+ *     $ git ls-tree --name-only origin/main:aeg-root/tranches   # expected miss
+ *     fatal: Not a valid object name origin/main:aeg-root/tranches
+ *     $ git ls-tree --name-only deadbeef…:aeg-root               # unreachable ref
+ *     fatal: Not a valid object name deadbeef…:aeg-root
+ *
+ * So the discriminator is not the message, it is whether the REF resolves. A
+ * miss under a ref that resolves is the expected answer; a miss under a ref
+ * that does not is an infrastructure problem the sweep must not swallow —
+ * which is exactly the adopter case, where a corrupt object would otherwise
+ * silently narrow the input instead of failing visibly.
+ *
+ * The ref check is memoized per ref (one `rev-parse` per distinct ref, not per
+ * probe), and a bad ref is reported once rather than once per path.
+ *
+ * Surfacing is only safe because the downstream parse was fixed too: with
+ * stdout parsed alone, a diagnostic on stderr can no longer corrupt a caller's
+ * payload, so honesty here costs nothing.
+ */
+const refResolves = new Map<string, boolean>()
+const badRefReported = new Set<string>()
+
+function refIsResolvable(ref: string): boolean {
+  const cached = refResolves.get(ref)
+  if (cached !== undefined) return cached
+  let ok: boolean
+  try {
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    ok = true
+  } catch {
+    ok = false
+  }
+  refResolves.set(ref, ok)
+  return ok
+}
+
+function reportUnexpectedProbeFailure(err: unknown, ref: string, what: string): void {
+  if (refIsResolvable(ref)) return // a path miss under a good ref — the expected answer
+  if (badRefReported.has(ref)) return // one line per bad ref, not one per probe
+  badRefReported.add(ref)
+  const stderr = String((err as { stderr?: Buffer | string })?.stderr ?? '').trim()
+  console.error(
+    `[verify-coherence] ref "${ref}" does not resolve — every probe against it will miss, ` +
+      `so this sweep's file-topology input is incomplete rather than empty (${what}): ${stderr.split('\n')[0] ?? ''}`
+  )
+}
+
 function listDirAtRef(ref: string, relDir: string): string[] {
   try {
-    // `stdio` stderr: 'ignore' — an ABSENT directory is the normal case here,
-    // not an error (#173). The forge-native cutover deleted every
-    // `aeg-root/tranches/*.md`, and `no-disk-state.ts` now actively forbids
-    // re-adding one, so both probes below miss on every healthy run and `git`
-    // prints `fatal: Not a valid object name` per probe. The `catch` already
-    // degrades correctly; without this the child's stderr inherits the
-    // parent's and the line escapes anyway. It escaped into `verify-dispatch`,
-    // which concatenated the streams before parsing and therefore reported a
-    // clean run as `UNAVAILABLE` on every dispatch check.
     return execFileSync('git', ['ls-tree', '--name-only', `${ref}:${relDir}`], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['ignore', 'pipe', 'pipe']
     })
       .split('\n')
       .map((s) => s.trim())
       .filter(Boolean)
-  } catch {
+  } catch (err) {
+    reportUnexpectedProbeFailure(err, ref, `ls-tree ${ref}:${relDir}`)
     return []
   }
 }
 
 function readFileAtRef(ref: string, relPath: string): string | null {
   try {
-    // Same reasoning as `listDirAtRef` above: a path absent at `ref` is an
-    // expected answer, and `null` already says so. Silence the child so the
-    // expected miss does not print a `fatal:` line the caller has to parse
-    // around (#173).
     return execFileSync('git', ['show', `${ref}:${relPath}`], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['ignore', 'pipe', 'pipe']
     })
-  } catch {
+  } catch (err) {
+    reportUnexpectedProbeFailure(err, ref, `show ${ref}:${relPath}`)
     return null
   }
 }

@@ -373,7 +373,7 @@ function computeLeftover(trancheSlug: string, taskId: string) {
 type CaptureResult = { stdout: string; stderr: string; exitCode: number; ranAtAll: boolean }
 
 /**
- * Non-throwing combined stdout+stderr capture, used ONLY by
+ * Non-throwing capture of a child's two streams, kept APART, used ONLY by
  * `currentFindingCounts()`. `sh()`/`shJson()` above deliberately swallow any
  * non-zero exit to `''` — every other call site of theirs relies on that
  * ("not found / not applicable"). Finding counts need the opposite: a
@@ -406,6 +406,29 @@ function captureStreams(cmd: string, args: string[]): CaptureResult {
     exitCode: result.status ?? 1,
     ranAtAll: true
   }
+}
+
+/**
+ * `verify-coherence --json`'s finding count, or `null` when `text` is not that
+ * report. Deliberately stricter than "did `JSON.parse` succeed": the payload
+ * must be an object carrying a numeric `summary.failed`. Anything else — a
+ * scalar, an array, an object of another shape — means the tool did not
+ * produce its contract, which is exactly what `unavailable` is for.
+ *
+ * Exit code is deliberately NOT consulted. `verify-coherence` exits non-zero
+ * precisely when findings exist, so a non-zero exit with a well-formed report
+ * is the normal finding-carrying case, not a failure. That asymmetry with
+ * `docsUnavailable` (which does cross-check the exit code) is intentional:
+ * `verify-docs` has no machine-readable payload to validate, so its exit code
+ * is the only corroboration available there.
+ */
+function coherenceFailedCount(stdout: string): number | null {
+  const parsed = parseJsonSafe<unknown>(stdout)
+  if (typeof parsed !== 'object' || parsed === null) return null
+  const summary = (parsed as { summary?: unknown }).summary
+  if (typeof summary !== 'object' || summary === null) return null
+  const failed = (summary as { failed?: unknown }).failed
+  return typeof failed === 'number' ? failed : null
 }
 
 function parseJsonSafe<T>(text: string): T | null {
@@ -442,9 +465,16 @@ export function currentFindingCounts(): FindingCount[] {
   // and is not part of the payload. Including it is what made a healthy run
   // report UNAVAILABLE (#173).
   const coherence = captureStreams('bun', ['packages/aeg-core/bin/verify-coherence.ts', '--json'])
-  const coherenceParsed = coherence.ranAtAll ? parseJsonSafe<{ summary: { failed: number } }>(coherence.stdout) : null
-  const coherenceUnavailable = !coherence.ranAtAll || coherenceParsed === null
-  const coherenceFindingCount = coherenceParsed?.summary.failed ?? 0
+  const coherenceFailed = coherence.ranAtAll ? coherenceFailedCount(coherence.stdout) : null
+  // Two ways to be unavailable, matching `docsUnavailable`'s own shape:
+  // the tool could not run, or its stdout is not the report this expects.
+  // The second is a SHAPE check, not just `JSON.parse` succeeding — a scalar
+  // or an object without `summary.failed` is valid JSON and would otherwise
+  // throw a TypeError on property access. Reachable only since the streams
+  // were split: concatenated stderr used to make every such stdout
+  // unparseable, so the wrong-shape case never got that far.
+  const coherenceUnavailable = !coherence.ranAtAll || coherenceFailed === null
+  const coherenceFindingCount = coherenceFailed ?? 0
 
   return [
     { tool: 'verify-docs-full', findingCount: docsFindingCount, unavailable: docsUnavailable },

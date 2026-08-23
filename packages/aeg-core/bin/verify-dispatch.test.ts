@@ -136,13 +136,44 @@ describe('currentFindingCounts', () => {
     ])
   })
 
+  // Non-discriminating by construction — it passes under the old concatenating
+  // code too, and is not among the mutation-proof failures. Kept deliberately
+  // as a REGRESSION GUARD: splitting the streams removed the accidental
+  // fail-closed that any stderr byte used to provide, and this pins that the
+  // deliberate one replaced it.
   it('(#173) a genuinely unparseable stdout is still UNAVAILABLE — the signal is not lost', () => {
-    // The point of splitting the streams is that a real crash and a chatty
-    // healthy run stop being indistinguishable. This is the other half of that.
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
       if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
       if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
         return { stdout: 'Segmentation fault', stderr: 'fatal: something else\n', status: 139 }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    expect(coherence).toEqual({ tool: 'verify-coherence', findingCount: 0, unavailable: true })
+  })
+
+  /**
+   * These ARE discriminating, and they are the ones the split made necessary.
+   * Concatenated stderr used to make every stdout unparseable, so valid JSON of
+   * the WRONG shape never reached the property access. Once stdout is parsed
+   * alone, `{}` or a scalar parses fine and `summary.failed` throws a
+   * TypeError — a crash where a clean UNAVAILABLE belongs.
+   */
+  it.each([
+    ['a JSON scalar', '0'],
+    ['a JSON string', '"done"'],
+    ['an array', '[]'],
+    ['an object with no summary', '{}'],
+    ['a summary with no failed', '{"summary":{"passed":3}}'],
+    ['a non-numeric failed', '{"summary":{"failed":"three"}}'],
+    ['null', 'null']
+  ])('(#173) %s on stdout is UNAVAILABLE, not a crash and not a 0 count', (_label, payload) => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return { stdout: payload, stderr: '', status: 0 }
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
     })
@@ -225,7 +256,16 @@ describe('(d) sh()/shJson() other call sites are untouched', () => {
     // #173: the two streams must stay apart. A concatenation here is what made
     // one `fatal:` line from a healthy `verify-coherence` read as UNAVAILABLE.
     expect(src).not.toContain("(result.stdout ?? '') + (result.stderr ?? '')")
-    expect(src).toContain('parseJsonSafe<{ summary: { failed: number } }>(coherence.stdout)')
+    // The coherence payload is PARSED, so it must read stdout and never stderr.
+    // Asserted on the call, not on a type argument, so refactoring the parser
+    // does not silently retire the guard.
+    expect(src).toContain('coherenceFailedCount(coherence.stdout)')
+    expect(src).not.toContain('coherence.stderr')
+    // verify-docs is line-COUNTED, and writes its `✗` findings to stderr
+    // (`console.error`), so scanning both streams there is required — a
+    // stdout-only read would report zero findings forever.
+    expect(src).toContain('docs.stdout')
+    expect(src).toContain('docs.stderr')
   })
 })
 
