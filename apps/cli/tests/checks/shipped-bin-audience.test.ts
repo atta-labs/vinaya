@@ -26,6 +26,13 @@ function shippedBinNames(): string[] {
   const out: string[] = []
   const walk = (dir: string, prefix: string): void => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
+      // `isDirectory()` is false for a symlink to a directory, so an unfollowed
+      // symlink falls through to the extension filters, fails them on a bare
+      // directory name, and is skipped in silence — a symlinked directory
+      // holding an undeclared gate passed both suites green. Refused rather
+      // than followed: following one would enumerate files git does not track
+      // here, and skipping one is the fail-open this gate exists to remove.
+      if (e.isSymbolicLink()) throw new Error(`symlink in bin/, cannot enumerate honestly: ${prefix}${e.name}`)
       if (e.isDirectory()) {
         walk(join(dir, e.name), `${prefix}${e.name}/`)
         continue
@@ -79,16 +86,52 @@ describe('every `shippedAs` names a check that exists', () => {
   /** Every core-check name a declaration claims to ship as, with the bin that claims it. */
   function claimedNames(): [string, string][] {
     const out: [string, string][] = []
-    for (const [bin, audience] of Object.entries({ ...GATE_AUDIENCE, ...SHIPPED_BIN_AUDIENCE })) {
-      if (!('shippedAs' in audience)) continue
-      const names = Array.isArray(audience.shippedAs) ? audience.shippedAs : [audience.shippedAs]
-      for (const n of names) out.push([bin, n])
+    // Iterated as two maps, never spread into one. A spread lets the second
+    // map SHADOW an identically-keyed entry in the first, dropping its
+    // `shippedAs` from validation entirely — and the two namespaces really do
+    // overlap (`check-branch-topology`, `check-first-push-dispatch`,
+    // `check-no-disk-state` exist in both directories), so a bogus name in the
+    // shadowed entry validated green.
+    for (const [label, map] of [
+      ['GATE_AUDIENCE', GATE_AUDIENCE],
+      ['SHIPPED_BIN_AUDIENCE', SHIPPED_BIN_AUDIENCE]
+    ] as const) {
+      for (const [bin, audience] of Object.entries(map)) {
+        if (!('shippedAs' in audience)) continue
+        const names = Array.isArray(audience.shippedAs) ? audience.shippedAs : [audience.shippedAs]
+        for (const n of names) out.push([`${label}:${bin}`, n])
+      }
     }
     return out
   }
 
-  it('finds claims to check — a guard on the extraction itself', () => {
-    expect(claimedNames().length).toBeGreaterThan(5)
+  /** A bin declared in both maps, where the two declarations disagree about what it is. */
+  function crossMapContradictions(): string[] {
+    const out: string[] = []
+    for (const [bin, shipped] of Object.entries(SHIPPED_BIN_AUDIENCE)) {
+      const core = (GATE_AUDIENCE as Record<string, unknown>)[bin]
+      if (core === undefined) continue
+      if (JSON.stringify(core) !== JSON.stringify(shipped)) out.push(bin)
+    }
+    return out
+  }
+
+  // A tripwire set well below the real corpus is not a tripwire. Half the
+  // claims could stop being extracted without a `> 5` guard noticing.
+  it('extracts every shippedAs declaration in both maps — a guard on the extraction itself', () => {
+    const declared = [...Object.values(GATE_AUDIENCE), ...Object.values(SHIPPED_BIN_AUDIENCE)].filter(
+      (a) => 'shippedAs' in a
+    ).length
+    expect(declared).toBeGreaterThan(5)
+    const extractedBins = new Set(claimedNames().map(([bin]) => bin))
+    expect(extractedBins.size).toBe(declared)
+  })
+
+  it('never lets one map shadow the other — a bin declared twice must agree', () => {
+    expect(
+      crossMapContradictions(),
+      'A bin is declared in both GATE_AUDIENCE and SHIPPED_BIN_AUDIENCE with different audiences. One of them is wrong, and nothing else reports which.'
+    ).toEqual([])
   })
 
   it('resolves every claimed name in coreCheckRegistry()', () => {

@@ -27,6 +27,13 @@ function binBasenames(): string[] {
   const out: string[] = []
   const walk = (dir: string, prefix: string): void => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
+      // `isDirectory()` is false for a symlink to a directory, so an unfollowed
+      // symlink falls through to the extension filters, fails them on a bare
+      // directory name, and is skipped in silence — a symlinked directory
+      // holding an undeclared gate passed both suites green. Refused rather
+      // than followed: following one would enumerate files git does not track
+      // here, and skipping one is the fail-open this gate exists to remove.
+      if (e.isSymbolicLink()) throw new Error(`symlink in bin/, cannot enumerate honestly: ${prefix}${e.name}`)
       if (e.isDirectory()) {
         walk(join(dir, e.name), `${prefix}${e.name}/`)
         continue
