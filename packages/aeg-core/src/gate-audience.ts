@@ -87,7 +87,7 @@ export const GATE_AUDIENCE: Record<string, GateAudience> = {
 export const SHIPPED_BIN_AUDIENCE: Record<string, GateAudience> = {
   'check-reader-resolvable-prose': {
     internal:
-      "Built, executable, and deliberately NOT in `coreCheckRegistry()`: it hardcodes this monorepo's own doctrine layout (`aeg-root/glossary.md`, `aeg-root/tranches/completed/`) and this monorepo's own site source path. No `packageRoot()`-style fix makes those paths exist in an arbitrary adopter's repo — a scope-registration fact, not a pathing bug. Reachable here by direct invocation as an internal doc-quality tool."
+      "Built, executable, and deliberately NOT in `coreCheckRegistry()`: it hardcodes this monorepo's own doctrine layout — it reads `aeg-root/glossary.md` directly and sweeps `aeg-root/**`. No `packageRoot()`-style fix makes those paths exist in an arbitrary adopter's repo — a scope-registration fact, not a pathing bug. (Its reader-facing half is a declared no-op here: `READER_FACING_ROOT` is `null`, because this repo has no `apps/<name>/web`.) Reachable here by direct invocation as an internal doc-quality tool."
   }
 }
 

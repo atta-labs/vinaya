@@ -33,7 +33,12 @@ function binBasenames(): string[] {
       }
       if (/\.test\.[cm]?ts$/.test(e.name)) continue
       if (!/\.[cm]?ts$/.test(e.name)) continue
-      out.push(`${prefix}${e.name}`.replace(/\.[cm]?ts$/, ''))
+      // Same reasoning as `shipped-bin-audience.test.ts`: stripping the
+      // extension is what matches a bin to its declaration, so two bins
+      // differing only by extension would share one row. Refused, not deduped.
+      const name = `${prefix}${e.name}`.replace(/\.[cm]?ts$/, '')
+      if (out.includes(name)) throw new Error(`two bins collapse to one name: ${name}`)
+      out.push(name)
     }
   }
   walk(BIN_DIR, '')
