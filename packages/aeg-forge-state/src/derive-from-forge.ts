@@ -26,10 +26,16 @@ export function trancheFromIssues(slug: string, issues: GhIssue[], known?: Miles
 
 /**
  * Derives an `@attalabs/aeg-types` `Tranche` purely from forge objects:
- *   - a Milestone titled exactly `slug` → `goal` + `lifecycle` (absent when no
- *     Milestone exists yet for this tranche — a real transitional state,
- *     not an error; `goal`/`lifecycle` then degrade to `''`/`'active'`,
- *     mirroring `parseTranche`'s own no-marker default)
+ *   - the tranche's identity is its `vinaya/tranche:<slug>` label
+ *     (vinaya-milestone-model-v1 task 1) → `goal` + `lifecycle`, via
+ *     `findMilestoneForSlug`: a Milestone titled exactly `slug` (the legacy
+ *     regime, kept forever) supplies both; otherwise both are derived from
+ *     the label's own Issues (`goal` is always `''` for a label-only
+ *     tranche — display-only, and this task invents no new home for it;
+ *     `lifecycle` is `planned`/`active`/`complete` per the at-least-one
+ *     guard). Never absent any more — a slug with nothing yet resolves as
+ *     `planned`, not as a missing fact for this function's `?? 'active'`
+ *     default to silently paper over.
  *   - `vinaya/tranche:<slug>`-labeled Issues → the task list, including
  *     `Depends-on`/`Conflicts-with` edges parsed from each Issue's
  *     "Dependency rationale" section
@@ -38,14 +44,15 @@ export function trancheFromIssues(slug: string, issues: GhIssue[], known?: Miles
  * project-level prose with no owning Issue) — always `[]` here.
  *
  * `known` (optional `{ goal, lifecycle }`): when the caller already holds the
- * Milestone facts — e.g. a Studio enumeration that listed every open/closed
- * Milestone up front, so goal comes from the Milestone description and
- * lifecycle from which list the slug came from — passing them skips the
- * redundant per-slug `findMilestoneForSlug` re-fetch (which otherwise re-pulls
- * the entire Milestone list once per slug). Omit it and the Milestone is
- * fetched here as before. The task fetch is now async (`listTasksForSlugAsync`)
- * so the fan-outs that call this genuinely parallelize; the signature is
- * unchanged for existing 3-arg callers (already `async`, already awaited).
+ * slug's facts — e.g. `indexTrancheMilestonesAsync`'s repo-wide sweep, which
+ * indexes every Milestone AND every `vinaya/tranche:*` label up front —
+ * passing them skips the redundant per-slug `findMilestoneForSlug` re-fetch
+ * (which otherwise re-pulls the entire Milestone list, the entire label
+ * list, and — for a label-only slug — that slug's Issues a second time).
+ * Omit it and the facts are derived here as before. The task fetch is now
+ * async (`listTasksForSlugAsync`) so the fan-outs that call this genuinely
+ * parallelize; the signature is unchanged for existing 3-arg callers
+ * (already `async`, already awaited).
  */
 export async function deriveTrancheFromForge(
   owner: string,
