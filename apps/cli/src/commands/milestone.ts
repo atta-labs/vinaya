@@ -1,6 +1,5 @@
-// `vinaya milestone create` — the write side of vinaya-milestone-model-v1
-// task 2: a Milestone means a product goal, and the Architect is the role
-// that creates one. `checkMilestoneShape` (`@attalabs/aeg-core`) refuses a
+// `vinaya milestone create` — a Milestone means a product goal, and the
+// Architect is the role that creates one. `checkMilestoneShape` (`@attalabs/aeg-core`) refuses a
 // malformed body — goal absent, `Release:` present but malformed, the
 // `### Tranche intents` section unparseable — before any `gh` call, exactly
 // like the Issue-only content gate refuses before `issue.ts`'s forge write.
