@@ -31,6 +31,36 @@ export const PRIMARY_PORT = 3008
 export const FALLBACK_PORT = 3108
 
 /**
+ * `--port <n>`, or `null` when unset. Explicit means explicit: the caller is
+ * pinning a port, so the `PRIMARY → FALLBACK` dance below is skipped and a
+ * taken port is a loud refusal rather than a silent move.
+ *
+ * That asymmetry is the point. The default pair exists so a casual `vinaya
+ * studio` still comes up when something else holds `3008`; but a caller who
+ * NAMED a port did so to know which server they are talking to, and silently
+ * answering on a different one reintroduces exactly the ambiguity they were
+ * removing. Measured live: with two Studio servers up, one on `*:3008` and one
+ * on `127.0.0.1:3008`, a `200` from `/studio` proved nothing about which
+ * process served it without inspecting the established connection.
+ *
+ * This repo's own `dev:vinaya-studio` script pins a port for that reason —
+ * attalabs' Studio dev server owns `3008`, and the two must not collide.
+ */
+export function parsePortFlag(args: string[]): number | null {
+  const i = args.indexOf('--port')
+  if (i === -1) return null
+  const raw = args[i + 1]
+  if (raw === undefined || raw.startsWith('-')) throw new PortFlagError('`--port` requires a port number.')
+  if (!/^\d+$/.test(raw)) throw new PortFlagError(`\`--port ${raw}\` is not a port number.`)
+  const port = Number(raw)
+  if (port < 1 || port > 65535) throw new PortFlagError(`\`--port ${raw}\` is outside the valid range 1-65535.`)
+  return port
+}
+
+/** Thrown for a malformed `--port`; the caller renders it and exits non-zero rather than binding something unintended. */
+export class PortFlagError extends Error {}
+
+/**
  * THE resolution seam. One function, three outcomes, in this order:
  *   1. workspace — walk up from `cwd` for `apps/vinaya-studio/web/package.json`
  *      whose `name` is `@atta/vinaya-studio-web`. Studio's SOURCE does not
@@ -185,14 +215,34 @@ function ensureStudioNodeModules(bundleRoot: string): void {
  *  "No projects registered" despite a real `.vinaya/projects.md` existing).
  *  Same fix shape as `AEG_REPO`: capture `cwd` here, before the chdir,
  *  force it into the child's env. */
-async function spawnStandalone(cwd: string, serverPath: string, bundleRoot: string): Promise<number> {
+async function spawnStandalone(
+  cwd: string,
+  serverPath: string,
+  bundleRoot: string,
+  explicitPort: number | null
+): Promise<number> {
   ensureStudioNodeModules(bundleRoot)
 
   const repo = await resolveRepo(() => execFileForRepo(cwd))
-  const primaryFree = await isPortFree(PRIMARY_PORT)
-  const port = primaryFree ? PRIMARY_PORT : FALLBACK_PORT
-  if (!primaryFree) {
-    console.info(`[studio] port ${PRIMARY_PORT} is taken — falling back to ${FALLBACK_PORT}`)
+
+  let port: number
+  if (explicitPort !== null) {
+    // No fallback: see `parsePortFlag`. A pinned port that quietly became a
+    // different port is worse than a refusal, because the caller would then
+    // attribute another server's responses to this one.
+    if (!(await isPortFree(explicitPort))) {
+      console.error(
+        `[studio] port ${explicitPort} is taken, and \`--port\` was given explicitly — refusing to bind elsewhere.`
+      )
+      return 1
+    }
+    port = explicitPort
+  } else {
+    const primaryFree = await isPortFree(PRIMARY_PORT)
+    port = primaryFree ? PRIMARY_PORT : FALLBACK_PORT
+    if (!primaryFree) {
+      console.info(`[studio] port ${PRIMARY_PORT} is taken — falling back to ${FALLBACK_PORT}`)
+    }
   }
 
   const env: NodeJS.ProcessEnv = { HOSTNAME: '127.0.0.1', ...process.env, PORT: String(port), VINAYA_REPO_ROOT: cwd }
@@ -209,10 +259,33 @@ async function spawnStandalone(cwd: string, serverPath: string, bundleRoot: stri
  *  prints the one-line install hint and resolves 1. `moduleUrl` forwards to
  *  `resolveStudioTarget` — see its own doc comment for why it's a param. */
 export async function runStudio(cwd: string, args: string[], moduleUrl: string = import.meta.url): Promise<number> {
+  let explicitPort: number | null
+  try {
+    explicitPort = parsePortFlag(args)
+  } catch (err) {
+    if (err instanceof PortFlagError) {
+      console.error(`[studio] ${err.message}`)
+      return 2
+    }
+    throw err
+  }
+
   const target = resolveStudioTarget(cwd, moduleUrl)
 
   switch (target.kind) {
     case 'workspace':
+      // `--port` cannot take effect here, and saying so is the honest move.
+      // This branch execs the resolved workspace's OWN `dev` script (attalabs'
+      // `apps/vinaya-studio/web/scripts/dev.ts`), which execs `next dev` with
+      // its own `--port` and ignores argv — the same reason this branch gets no
+      // loopback forcing above. Accepting the flag silently would report a port
+      // the server never binds.
+      if (explicitPort !== null) {
+        console.error(
+          `[studio] \`--port ${explicitPort}\` cannot apply here: this is a workspace checkout, and Studio's own dev script chooses the port. Set it there, or run against a published install.`
+        )
+        return 2
+      }
       return spawnDev(target.webDir, args)
     case 'package': {
       // packageDir is <bundleRoot>/apps/vinaya-studio/web — the same
@@ -220,7 +293,7 @@ export async function runStudio(cwd: string, args: string[], moduleUrl: string =
       // bundle-studio.ts preserved when it fetched and assembled the
       // artifact.
       const bundleRoot = join(target.packageDir, '..', '..', '..')
-      return spawnStandalone(cwd, join(target.packageDir, 'server.js'), bundleRoot)
+      return spawnStandalone(cwd, join(target.packageDir, 'server.js'), bundleRoot, explicitPort)
     }
     case 'missing':
       console.error(

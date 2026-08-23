@@ -14,7 +14,7 @@
     "format-and-lint": "biome check .",
     "test": "turbo test",
     "clean": "turbo clean",
-    "dev:vinaya-studio": "bun apps/cli/src/index.ts studio",
+    "dev:vinaya-studio": "bun apps/cli/src/index.ts studio --port 3208",
     "changeset": "changeset",
     "changeset:version": "changeset version",
     "changeset:publish": "changeset publish"
