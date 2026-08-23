@@ -595,6 +595,27 @@ export type ResolvedAnchoredRegion = {
 }
 
 /**
+ * The scan context: the normalised body and its anchor-lookup mask, computed
+ * together, once.
+ *
+ * `normalizeBody` and `buildAnchorLookupMask` were already shared, and it was
+ * still not enough. Review defeated that arrangement by WRAPPING rather than
+ * re-inlining — `stripSoftHyphens(normalizeBody(rawBody))` in one consumer and
+ * not the other passed every structural check while the two sides resolved
+ * different text, reopening the bypass this whole change exists to close.
+ *
+ * A guard over a hand-kept list of today's stage names cannot catch that; it is
+ * the same closed-list shape this module's own docstring argues cannot
+ * terminate. So the composition stops being something a caller performs. Both
+ * consumers take this pair whole and neither names a stage, which is what lets
+ * the test assert the exact expression each one uses.
+ */
+function scanContext(rawBody: string): { normalised: string; masked: string } {
+  const normalised = normalizeBody(rawBody)
+  return { normalised, masked: buildAnchorLookupMask(normalised) }
+}
+
+/**
  * The one resolver. Normalise, mask, locate the pair, slice both views.
  *
  * Every previous fix made `check-evidence-fresh` agree with `body-bare-digits`
@@ -603,16 +624,15 @@ export type ResolvedAnchoredRegion = {
  * earlier. Agreement by convention cannot terminate; there is always another
  * stage.
  *
- * Precisely what is and is not true, because the looser version of this
- * sentence was itself a finding: `check-evidence-fresh.ts` is this function's
- * only non-test caller. `checkBareDigits` does NOT call it — it needs the
- * masked body for scanning, not one region — so the pipeline is still composed
- * twice, here and across `checkBareDigits` + `blankAnchoredRegions`. What is
- * guaranteed is that both compositions call the same two named stage functions,
- * `normalizeBody` and `buildAnchorLookupMask`, and `body-bare-digits.test.ts`
- * reads this source and fails if either grows a second inlined copy. The
- * coupling is enforced, not conventional — but it is enforced by a test, not by
- * there being one call path.
+ * Precisely what is and is not true, because two looser versions of this
+ * sentence were each themselves a finding: `check-evidence-fresh.ts` is this
+ * function's only non-test caller. `checkBareDigits` does NOT call it — it
+ * needs the masked body for scanning, not one region. What both DO share is
+ * `scanContext`, the single helper that normalises and masks, and neither names
+ * a stage itself. `body-bare-digits.test.ts` asserts the exact expression each
+ * one uses, so re-inlining a stage, recomposing by hand, or wrapping the call
+ * all fail it. The coupling is enforced by a test rather than by a single call
+ * path — that is the guarantee, and it is not the same as "one caller".
  *
  * Returns `'hidden'` when the body carries the anchor but masking removed it —
  * the region is inside a `<details>` block, where `body-bare-digits` blanks
@@ -624,8 +644,7 @@ export function resolveAnchoredRegionForScan(
   rawBody: string,
   field: AnchorField
 ): ResolvedAnchoredRegion | 'hidden' | null {
-  const normalised = normalizeBody(rawBody)
-  const maskedBody = buildAnchorLookupMask(normalised)
+  const { normalised, masked: maskedBody } = scanContext(rawBody)
   const bounds = anchoredRegionBounds(maskedBody, field)
   if (bounds === null) {
     return anchoredRegionBounds(normalised, field) !== null ? 'hidden' : null
@@ -642,7 +661,10 @@ export function checkBareDigits(rawBody: string): BareDigitScanResult {
   // sides diverge again, which is the exact failure the resolver was extracted
   // to make impossible. One caller inlining the stages meant "both sides call
   // it" was a claim about one side.
-  const body = normalizeBody(rawBody)
+  // Takes the pair whole and names no stage. `body-bare-digits.test.ts`
+  // asserts this exact expression, so wrapping it — the decoupling that
+  // defeated the previous guard — changes the line and fails.
+  const { normalised: body } = scanContext(rawBody)
   const masked = buildScanMask(body)
   const maskedLines = masked.split('\n')
   const origLines = body.split('\n')

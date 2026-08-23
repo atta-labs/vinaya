@@ -853,51 +853,99 @@ describe('there is one normalisation path, not two that agree', () => {
     'utf8'
   )
 
-  /** The stage expressions that must appear exactly once, inside `normalizeBody`. */
-  const NORMALISE_STAGES = ['ZERO_WIDTH', 'decodeNamedEntities(']
-
   /** Source lines that are code — prose in a docstring names these symbols too. */
   const CODE_LINES = SOURCE.split('\n').filter((l) => {
     const t = l.trim()
     return t !== '' && !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/*')
   })
 
-  it('declares each normalisation stage exactly once outside its own definition', () => {
-    for (const stage of NORMALISE_STAGES) {
-      // One use site each: inside `normalizeBody`. A second is an inlined copy,
-      // which is exactly what stage eight was.
-      const uses = CODE_LINES.filter(
-        (l) => l.includes(stage) && !l.includes('const ZERO_WIDTH') && !l.includes('function decodeNamedEntities')
-      )
-      expect(uses.length, `${stage} appears on ${uses.length} lines; expected one use site inside normalizeBody`).toBe(
-        1
-      )
+  /** The body of a named function, as source text. */
+  function bodyOf(decl: string): string {
+    const start = SOURCE.indexOf(decl)
+    expect(start, `${decl} not found — this guard is reading the wrong source`).toBeGreaterThan(-1)
+    return SOURCE.slice(start, SOURCE.indexOf('\n}', start))
+  }
+
+  /**
+   * The exact expression each consumer uses to obtain its text.
+   *
+   * Asserting the EXPRESSION, not that a name appears somewhere in the
+   * function, is what catches wrapping. Review defeated the previous guard with
+   * `stripSoftHyphens(normalizeBody(rawBody))` — every name it looked for was
+   * still present, so it stayed green while the two sides resolved different
+   * text. Anything wrapping, unwrapping or re-ordering these changes the line.
+   */
+  const CONSUMER_ENTRY: [string, string][] = [
+    ['export function checkBareDigits', 'const { normalised: body } = scanContext(rawBody)'],
+    ['export function resolveAnchoredRegionForScan', 'const { normalised, masked: maskedBody } = scanContext(rawBody)']
+  ]
+
+  it('gives each consumer exactly one way to obtain its text', () => {
+    for (const [decl, entry] of CONSUMER_ENTRY) {
+      const lines = bodyOf(decl)
+        .split('\n')
+        .map((l) => l.trim())
+      expect(lines, `${decl} does not use the exact expression \`${entry}\``).toContain(entry)
     }
   })
 
-  it('routes both consumers through normalizeBody', () => {
-    // `checkBareDigits` is the scanner, `resolveAnchoredRegionForScan` the
-    // resolver. Both must call the function, not reproduce what it does.
-    for (const fn of ['export function checkBareDigits', 'export function resolveAnchoredRegionForScan']) {
-      const start = SOURCE.indexOf(fn)
-      expect(start, `${fn} not found — this guard is reading the wrong source`).toBeGreaterThan(-1)
-      const bodyText = SOURCE.slice(start, SOURCE.indexOf('\n}', start))
-      expect(bodyText, `${fn} does not call normalizeBody`).toContain('normalizeBody(')
-    }
-  })
-
-  it('composes the anchor-lookup mask in exactly one place', () => {
-    // The other half of the same property: `buildScanMask` and the resolver
-    // must not each spell out `maskDetailsBlocks(maskCode(...))`.
-    const composed = CODE_LINES.filter(
-      (l) => l.includes('maskDetailsBlocks(maskCode(') && !l.includes('function buildAnchorLookupMask')
+  it('composes normalisation and masking in exactly one place', () => {
+    // Call sites, not bare names: a string or comment mentioning one of these
+    // decouples nothing and must not turn the suite red — a guard that fails on
+    // code it has no opinion about gets edited to stay quiet.
+    // `normalizeBody` has exactly one call site — `scanContext`. A second is
+    // the inlined-copy regression.
+    const normaliseCalls = CODE_LINES.filter(
+      (l) => l.includes('normalizeBody(') && !l.includes('function normalizeBody')
     )
-    expect(composed.length, 'the mask composition is written more than once').toBe(1)
-    for (const fn of ['function buildScanMask', 'export function resolveAnchoredRegionForScan']) {
-      const start = SOURCE.indexOf(fn)
-      const bodyText = SOURCE.slice(start, SOURCE.indexOf('\n}', start))
-      expect(bodyText, `${fn} does not call buildAnchorLookupMask`).toContain('buildAnchorLookupMask(')
+    expect(
+      normaliseCalls.length,
+      `normalizeBody called from ${normaliseCalls.length} places; expected only scanContext`
+    ).toBe(1)
+    // `buildAnchorLookupMask` legitimately has two: `scanContext` and
+    // `buildScanMask`, which masks an ALREADY-normalised body. Both are named,
+    // so a third call site fails here rather than passing as "one of the two".
+    const maskCalls = CODE_LINES.filter(
+      (l) => l.includes('buildAnchorLookupMask(') && !l.includes('function buildAnchorLookupMask')
+    )
+    expect(
+      maskCalls.length,
+      `buildAnchorLookupMask called from ${maskCalls.length} places; expected scanContext and buildScanMask`
+    ).toBe(2)
+    for (const decl of ['function scanContext', 'function buildScanMask']) {
+      expect(bodyOf(decl), `${decl} does not call buildAnchorLookupMask`).toContain('buildAnchorLookupMask(')
     }
+    // And neither consumer may name a stage itself.
+    for (const [decl] of CONSUMER_ENTRY) {
+      for (const stage of [
+        'normalizeBody(',
+        'buildAnchorLookupMask(',
+        'maskCode(',
+        'ZERO_WIDTH',
+        'decodeNamedEntities('
+      ]) {
+        const code = bodyOf(decl)
+          .split('\n')
+          .filter((l) => {
+            const t = l.trim()
+            return t !== '' && !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/*')
+          })
+        expect(
+          code.some((l) => l.includes(stage)),
+          `${decl} names the stage ${stage} itself`
+        ).toBe(false)
+      }
+    }
+  })
+
+  // The false-positive direction, which security review rated first to fix: a
+  // guard that fails on code it has no opinion about gets edited to stay quiet.
+  it('ignores a comment that merely mentions a stage', () => {
+    const synthetic = ['// normalizeBody( is what scanContext calls', 'const x = 1'].filter((l) => {
+      const t = l.trim()
+      return t !== '' && !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/*')
+    })
+    expect(synthetic.filter((l) => l.includes('normalizeBody(')).length).toBe(0)
   })
 
   it('scans the same text the resolver resolves', () => {
