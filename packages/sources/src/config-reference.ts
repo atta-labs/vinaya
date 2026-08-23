@@ -201,6 +201,15 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "issue": { "sections": [{ "builtin": "issueRationale" }] } }`
   },
   {
+    key: 'briefSchema.ack',
+    type: 'BriefBuiltin[] (optional)',
+    semantics: [
+      "Builtin names this repo has deliberately dropped from `briefSchema.pr`/`briefSchema.issue`. Purely a silencer for `vinaya doctor`'s brief-schema divergence report — it grants nothing, gates nothing, and acking a builtin that is still declared changes no behaviour.",
+      "`briefSchema` is yours: `vinaya upgrade` never rewrites it. That also means a builtin deleted as a workaround stays deleted and, without this report, stays invisible — no command surfaces it and no later upgrade repairs it. `doctor` reports the divergence at `info` severity, so it never fails anyone's CI; list a name here once the omission is a considered choice, and an accidental one keeps surfacing."
+    ],
+    example: `{ "briefSchema": { "ack": ["closesN"] } }`
+  },
+  {
     key: 'managed',
     type: 'object (optional)',
     semantics: [

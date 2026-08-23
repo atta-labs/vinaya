@@ -655,3 +655,118 @@ describe('vinaya doctor — blast-radius deprecation', () => {
     expect(snapshot(root)).toEqual(before)
   })
 })
+
+describe('vinaya doctor — brief-schema divergence', () => {
+  /** `vinaya init`'s own config, minus whichever `briefSchema.pr` builtins the caller names. */
+  function dropPrBuiltins(...drop: string[]): void {
+    const config = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf8'))
+    config.briefSchema.pr.sections = config.briefSchema.pr.sections.filter(
+      (s: { builtin?: string }) => !(s.builtin && drop.includes(s.builtin))
+    )
+    writeFileSync(join(root, CONFIG_PATH), JSON.stringify(config, null, 2), 'utf8')
+  }
+
+  it('a pristine install reports no divergence — the shipped default is not its own finding', async () => {
+    await runInit(['--yes'], initDeps())
+
+    const report = await runDoctorJson()
+    expect(report.findings.filter((f) => f.check === 'brief-schema')).toEqual([])
+  })
+
+  it('names a deleted builtin, at info severity, and stays healthy', async () => {
+    await runInit(['--yes'], initDeps())
+    dropPrBuiltins('closesN')
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'brief-schema')
+    expect(hit?.severity).toBe('info')
+    expect(hit?.message).toContain('briefSchema.pr')
+    expect(hit?.message).toContain('closesN')
+    // The whole point: an adopter running without a builtin is exercising
+    // legitimate configuration and must not be failed into a shape they
+    // rejected. If this ever becomes `warn`/`error` it breaks their CI.
+    expect(report.healthy).toBe(true)
+  })
+
+  it('names every deleted builtin, not just the first', async () => {
+    await runInit(['--yes'], initDeps())
+    dropPrBuiltins('closesN', 'tier')
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'brief-schema')
+    expect(hit?.message).toContain('closesN')
+    expect(hit?.message).toContain('tier')
+    expect(hit?.message).toContain('2 builtins')
+  })
+
+  it('briefSchema.ack silences exactly the acked builtin and nothing else', async () => {
+    await runInit(['--yes'], initDeps())
+    dropPrBuiltins('closesN', 'tier')
+    const config = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf8'))
+    config.briefSchema.ack = ['closesN']
+    writeFileSync(join(root, CONFIG_PATH), JSON.stringify(config, null, 2), 'utf8')
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'brief-schema')
+    expect(hit?.message).not.toContain('closesN')
+    expect(hit?.message).toContain('tier')
+  })
+
+  it('acking every dropped builtin removes the finding entirely', async () => {
+    await runInit(['--yes'], initDeps())
+    dropPrBuiltins('closesN')
+    const config = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf8'))
+    config.briefSchema.ack = ['closesN']
+    writeFileSync(join(root, CONFIG_PATH), JSON.stringify(config, null, 2), 'utf8')
+
+    const report = await runDoctorJson()
+    expect(report.findings.filter((f) => f.check === 'brief-schema')).toEqual([])
+  })
+
+  it('an absent briefSchema.pr block reads as every builtin missing — the gate is off, not adopter-shaped', async () => {
+    await runInit(['--yes'], initDeps())
+    const config = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf8'))
+    config.briefSchema.pr = undefined
+    writeFileSync(join(root, CONFIG_PATH), JSON.stringify(config, null, 2), 'utf8')
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'brief-schema' && f.message.includes('briefSchema.pr'))
+    expect(hit?.severity).toBe('info')
+    for (const builtin of ['tier', 'testPlan', 'testPlanExclusivity', 'closesN', 'project']) {
+      expect(hit?.message).toContain(builtin)
+    }
+  })
+
+  it('reports the issue kind independently of the pr kind', async () => {
+    await runInit(['--yes'], initDeps())
+    const config = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf8'))
+    config.briefSchema.issue.sections = []
+    writeFileSync(join(root, CONFIG_PATH), JSON.stringify(config, null, 2), 'utf8')
+
+    const report = await runDoctorJson()
+    const hits = report.findings.filter((f) => f.check === 'brief-schema')
+    expect(hits).toHaveLength(1)
+    expect(hits[0]?.message).toContain('briefSchema.issue')
+    expect(hits[0]?.message).toContain('issueRationale')
+  })
+
+  it('an adopter-added section is an addition, never reported as divergence', async () => {
+    await runInit(['--yes'], initDeps())
+    const config = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf8'))
+    config.briefSchema.pr.sections.push({ heading: 'Rollback Plan' })
+    writeFileSync(join(root, CONFIG_PATH), JSON.stringify(config, null, 2), 'utf8')
+
+    const report = await runDoctorJson()
+    expect(report.findings.filter((f) => f.check === 'brief-schema')).toEqual([])
+  })
+
+  it('never mutates: the config is byte-identical after the diagnostic runs', async () => {
+    await runInit(['--yes'], initDeps())
+    dropPrBuiltins('closesN')
+    const before = readFileSync(join(root, CONFIG_PATH), 'utf8')
+
+    await runDoctorJson()
+
+    expect(readFileSync(join(root, CONFIG_PATH), 'utf8')).toBe(before)
+  })
+})
