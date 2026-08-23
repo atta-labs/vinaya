@@ -216,27 +216,24 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
   // `governance/products/<name>/` path segment and a manifest record — are
   // both gone: the governance scaffold was cut by the minimal-manifest
   // re-ruling, and this command no longer writes the manifest at all (#72).
-  // It still guards a real surface, though a different one than it used to.
   // The name is written verbatim into a markdown table cell in
-  // `.vinaya/projects.md` (`rowLine` interpolates it unescaped) and read back
-  // by three consumers that do not agree on what a name may contain:
+  // `.vinaya/projects.md` (`rowLine` interpolates it unescaped). Two consumers
+  // read it back, and between them three different characters are hostile:
   //
   //   - `parseRegistry` splits on pipes and line boundaries, so a `|` shifts
-  //     every column and a newline splices in a row nobody declared;
-  //   - it also runs `stripBackticks` on every cell, so a backtick is
-  //     silently removed and the row no longer round-trips — which is what
-  //     `planRegistryRow`'s duplicate check compares (#181, reachable via
-  //     `--path`, which is NOT slug-constrained);
-  //   - `declaredProjects` splits an Issue's `**Project:**` field on comma
-  //     OR SLASH, so a name `a/b` resolves to `["a", "b"]` and can never
-  //     match the row it was written from.
+  //     every column and a newline splices in a row nobody declared. It also
+  //     strips backticks from every cell, so a backtick makes the value stop
+  //     round-tripping — reachable through `--path`, which is NOT
+  //     slug-constrained (#181), never through the name.
+  //   - `declaredProjects` splits an Issue's `**Project:**` field on comma OR
+  //     SLASH, so a name `a/b` resolves to `["a", "b"]` and can never match
+  //     the row it was written from.
   //
-  // The filesystem rationale this comment used to give is genuinely gone —
-  // `name` reaches no path at this head. Do not read that as "only `|` and a
-  // newline matter": three consumers, three different hostile characters, and
-  // the slug is the one guard that satisfies all of them at once. Widening it
-  // to whichever set today's consumers happen to need is how the next
-  // consumer inherits a hole.
+  // `name` reaches no filesystem path here, so the slug is not guarding a
+  // path traversal. It is guarding the one value both consumers key on, and
+  // it is the single constraint that satisfies both at once — which is why it
+  // stays as-is rather than being narrowed to whichever characters the
+  // consumer in front of you happens to care about.
   if (!PRODUCT_NAME_RE.test(name)) {
     console.error(
       `Error: invalid product name '${name}'. Use a lower-case slug: letters, digits, and hyphens (e.g. mobile, web-app).`
@@ -262,7 +259,7 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
 
   // `init product` reaches no forge at all. Its one forge op used to be a
   // `project:<name>` label; that label is gone (#72) because project is a
-  // FIELD, not a label — #614 dropped the `project:*` family outright, and
+  // FIELD, not a label — the `project:*` family was retired outright, and
   // `declaredProjects`/`list-tasks.ts` both read the Issue body's
   // `**Project:**` field. Creating a label nothing reads made `init product`
   // require a GitHub remote to do a job that is a pure local write. It no
