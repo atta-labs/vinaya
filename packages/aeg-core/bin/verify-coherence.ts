@@ -191,8 +191,9 @@ function gitFetchMainQuiet(): void {
  * Silencing the child wholesale would have fixed that and hidden the rest — a
  * corrupt object, an unreachable ref, a broken `git` all print here too.
  *
- * **Classifying by message does not work, and this is the load-bearing
- * detail.** `git` emits the SAME text for both cases:
+ * **Classifying by message does not work for the case that matters, and this
+ * is the load-bearing detail.** `git` emits the SAME text for an expected miss
+ * and an unreachable ref:
  *
  *     $ git ls-tree --name-only origin/main:aeg-root/tranches   # expected miss
  *     fatal: Not a valid object name origin/main:aeg-root/tranches
@@ -206,7 +207,19 @@ function gitFetchMainQuiet(): void {
  * silently narrow the input instead of failing visibly.
  *
  * The ref check is memoized per ref (one `rev-parse` per distinct ref, not per
- * probe), and a bad ref is reported once rather than once per path.
+ * probe), and a bad ref is reported once rather than once per path. Memoizing
+ * a `true` means a ref that goes bad DURING a run stays silent for the rest of
+ * it — a seconds-wide window, accepted against one `rev-parse` per probe.
+ *
+ * What this does NOT catch: corruption BENEATH a ref that still resolves. With
+ * a tree object missing under an intact commit, `rev-parse HEAD^{commit}`
+ * succeeds and `ls-tree HEAD:sub` says `fatal: not a tree object` — different
+ * text, so a message rule could catch it where the ref rule cannot. That case
+ * is still swallowed. It is a narrower gap than the one closed here (the ref
+ * rule catches every unreachable-ref class, which is what an adopter with a
+ * damaged clone actually hits) and is left rather than bolting a second
+ * classifier on: two overlapping rules that disagree is how this file's
+ * containment sibling got its own BLOCKER.
  *
  * Surfacing is only safe because the downstream parse was fixed too: with
  * stdout parsed alone, a diagnostic on stderr can no longer corrupt a caller's

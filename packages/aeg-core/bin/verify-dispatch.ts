@@ -428,7 +428,12 @@ function coherenceFailedCount(stdout: string): number | null {
   const summary = (parsed as { summary?: unknown }).summary
   if (typeof summary !== 'object' || summary === null) return null
   const failed = (summary as { failed?: unknown }).failed
-  return typeof failed === 'number' ? failed : null
+  // Finite and non-negative, not merely `typeof 'number'`: `{"failed": -1}`
+  // and `1e999` (→ Infinity) both parse and are not counts. Unreachable from
+  // the real producer; rejected here so the guard's contract is the shape it
+  // claims, not the shape today's producer happens to emit.
+  if (typeof failed !== 'number' || !Number.isFinite(failed) || failed < 0) return null
+  return failed
 }
 
 function parseJsonSafe<T>(text: string): T | null {
@@ -439,7 +444,32 @@ function parseJsonSafe<T>(text: string): T | null {
   }
 }
 
-type FindingCount = { tool: string; findingCount: number; unavailable: boolean }
+type FindingCount = {
+  tool: string
+  findingCount: number
+  unavailable: boolean
+  /**
+   * The child's first stderr line, when it wrote one. Carried so the callers
+   * that RENDER this baseline can show WHY a tool is unavailable, and can
+   * surface a diagnostic from a tool that otherwise succeeded.
+   *
+   * Splitting the streams stopped stderr corrupting the parse; it also meant
+   * nothing read stderr at all, so a `verify-coherence` diagnostic — an
+   * unresolvable ref, say — was captured here and dropped on the floor. A
+   * diagnostic that reaches no operator is not a diagnostic (review finding,
+   * PR #179).
+   */
+  diagnostic?: string
+}
+
+/** The child's first non-empty stderr line, or `undefined` — what the baseline shows an operator. */
+function firstStderrLine(stderr: string): string | undefined {
+  const line = stderr
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l !== '')
+  return line === undefined ? undefined : line.slice(0, 300)
+}
 
 /**
  * Counts findings regardless of exit code — `verify-docs` and
@@ -476,9 +506,26 @@ export function currentFindingCounts(): FindingCount[] {
   const coherenceUnavailable = !coherence.ranAtAll || coherenceFailed === null
   const coherenceFindingCount = coherenceFailed ?? 0
 
+  const docsDiagnostic = firstStderrLine(docs.stderr)
+  const coherenceDiagnostic = firstStderrLine(coherence.stderr)
   return [
-    { tool: 'verify-docs-full', findingCount: docsFindingCount, unavailable: docsUnavailable },
-    { tool: 'verify-coherence', findingCount: coherenceFindingCount, unavailable: coherenceUnavailable }
+    {
+      tool: 'verify-docs-full',
+      findingCount: docsFindingCount,
+      unavailable: docsUnavailable,
+      // verify-docs writes its own findings to stderr, so a diagnostic is only
+      // worth showing when the run is unavailable — otherwise every clean run
+      // would echo its first finding as if it were an error.
+      ...(docsUnavailable && docsDiagnostic ? { diagnostic: docsDiagnostic } : {})
+    },
+    {
+      tool: 'verify-coherence',
+      findingCount: coherenceFindingCount,
+      // Shown whether or not the run is unavailable: `--json` puts the report
+      // on stdout, so ANY stderr here is a diagnostic the operator should see.
+      ...(coherenceDiagnostic ? { diagnostic: coherenceDiagnostic } : {}),
+      unavailable: coherenceUnavailable
+    }
   ]
 }
 
@@ -619,7 +666,10 @@ function runCheckBaselineMode(baselineFile: string): void {
   const unavailable = current.filter((c) => c.unavailable)
   if (unavailable.length > 0) {
     console.error('\nverify-dispatch --check-baseline FAILED — tool(s) produced no honest count to compare:')
-    for (const u of unavailable) console.error(`  ✗ ${u.tool}: UNAVAILABLE (tool failed to run)`)
+    for (const u of unavailable) {
+      console.error(`  ✗ ${u.tool}: UNAVAILABLE (tool failed to run)`)
+      if (u.diagnostic) console.error(`      ↳ ${u.diagnostic}`)
+    }
     console.error(
       '\nAn unavailable tool is never compared as if it scored 0. Fix the tool, then re-run --check-baseline.'
     )
@@ -726,6 +776,7 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
         ? `  ${raw.tool}: UNAVAILABLE (tool failed to run) at ${capturedAt}`
         : `  ${raw.tool}: ${raw.findingCount} finding(s) at ${capturedAt}`
     )
+    if (raw.diagnostic) console.log(`    ↳ ${raw.diagnostic}`)
   }
 
   const overallReady = gateResult.ready && leftover.verdict !== 'stop'
