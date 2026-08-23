@@ -115,19 +115,32 @@ function matchesLegacyMilestone(milestones: GhMilestone[], slug: string): GhMile
 }
 
 /**
- * Lowercase, digits, and hyphens only, with AT LEAST ONE hyphen (two or more
- * segments) — every real tranche slug in this repo's own forge is shaped
- * this way (`aeg-forge-state-v1`, `done-v1`, `tranche-0`, …), and no real one
- * is a single bare word. Deliberately NOT `list-tasks.ts`'s `PROJECT_SLUG`
- * (`/^[a-z0-9][a-z0-9-]*$/i`): that shape is right for a `Project:` field
- * value, which a human may type in any case, but wrong here — its `i` flag
- * let a single-word, mixed-case Architect title (`MilestoneModel`, `Vinaya`)
- * pass as slug-shaped in an earlier version of this guard (code review round
- * 2 caught it live), and its single-segment tolerance would pass a lowercase
- * one-word title the same way. Requiring a hyphen is the one property every
- * real slug shares that an ordinary short free-text title is unlikely to.
+ * Lowercase, digits, and hyphens, ending in a `-v<N>` version suffix — every
+ * one of this repo's real legacy-titled Milestones is shaped exactly this
+ * way (`aeg-forge-state-v1`, `vinaya-milestone-model-v1`, …; confirmed
+ * against the live forge, round 3 of code review), with no exception. This
+ * is deliberately tighter than "any kebab-case string": an earlier version
+ * of this guard accepted any lowercase, hyphenated title, which still
+ * phantom-matched a plausible Architect product-goal title like
+ * `improve-onboarding-flow` (round 3 finding) — the `-v<N>` suffix is a
+ * narrower, still-real-data-precedented signal a free-text title is
+ * unlikely to end with by accident. `open_issues`/`closed_issues` (also
+ * present on the Milestone API response) was considered and rejected as a
+ * stronger signal: checked live, this repo's OWN active legacy Milestone
+ * (`vinaya-milestone-model-v1`) has zero natively-attached Issues — its
+ * tasks are label-tracked, not milestone-attached — so gating on that count
+ * would have misclassified a real, currently-active tranche.
+ *
+ * Residual, knowingly accepted gap: an Architect who deliberately titles a
+ * product-goal Milestone to end in `-v<N>` still slips through. No
+ * shape-only heuristic can fully close this without cross-referencing real
+ * forge state per candidate (an extra fetch per Milestone, out of this
+ * task's surface) — the same class of trade-off `tranche-model.md` §5
+ * already documents openly for conflict detection: shape catches the
+ * overwhelmingly common case; a deliberately adversarial title is not
+ * defended against.
  */
-const TRANCHE_SLUG_SHAPE = /^[a-z0-9]+(?:-[a-z0-9]+)+$/
+const TRANCHE_SLUG_SHAPE = /^[a-z0-9]+(?:-[a-z0-9]+)*-v\d+$/
 
 /**
  * Every Milestone whose title is even SLUG-SHAPED — the candidate universe

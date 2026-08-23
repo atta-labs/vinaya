@@ -278,6 +278,18 @@ describe('listActiveTrancheSlugs', () => {
 
     expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
   })
+
+  it('a lowercase, hyphenated free-text title with no version suffix is also never listed as a phantom tranche', () => {
+    // Code review round 3: a plausible kebab-case product-goal title
+    // ("improve-onboarding-flow") still phantom-matched, since every real
+    // tranche slug is ALSO lowercase and hyphenated — the shape guard needed
+    // one more property that distinguishes them: every real slug in this
+    // repo ends in a `-v<N>` version suffix, which an ordinary free-text
+    // title is unlikely to carry by accident.
+    mockGh([{ title: 'improve-onboarding-flow', description: 'A product goal, not a tranche.', state: 'open' }], [])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
 })
 
 describe('listArchivedTrancheSlugs', () => {
@@ -461,8 +473,13 @@ describe('indexTrancheMilestonesAsync reads every page', () => {
 
   it('indexes a legacy Milestone population larger than one page', async () => {
     // What the paginated reader returns once it has walked past page 1.
+    // Titled `tranche-N-v1` (not bare `tranche-N`) so this fixture still
+    // matches TRANCHE_SLUG_SHAPE now that it requires the `-v<N>` suffix
+    // every real legacy Milestone title in this repo actually carries
+    // (round 3 code review) — the pagination behaviour under test is
+    // unaffected by the title shape.
     const many = Array.from({ length: 137 }, (_, i) => ({
-      title: `tranche-${i}`,
+      title: `tranche-${i}-v1`,
       description: null,
       state: i % 2 === 0 ? 'open' : 'closed'
     }))
@@ -475,7 +492,7 @@ describe('indexTrancheMilestonesAsync reads every page', () => {
     expect(index.archived).toHaveLength(68)
     // The entries that only exist beyond the first page must be present, in
     // both lifecycles (even index ⇒ open ⇒ active, odd ⇒ closed ⇒ complete).
-    expect(index.facts.get('tranche-136')).toEqual({ goal: '', lifecycle: 'active' })
-    expect(index.facts.get('tranche-135')).toEqual({ goal: '', lifecycle: 'complete' })
+    expect(index.facts.get('tranche-136-v1')).toEqual({ goal: '', lifecycle: 'active' })
+    expect(index.facts.get('tranche-135-v1')).toEqual({ goal: '', lifecycle: 'complete' })
   })
 })
