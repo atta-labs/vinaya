@@ -818,7 +818,7 @@ describe('the Summary exemption is exactly as narrow as its verification', () =>
     const prose = 'Summary: all 47 gates green, 0 known regressions, 3 waivers used'
     expect(checkBareDigits(region(prose)).violations).toEqual([])
     const r = compareEvidenceBlock(
-      ['Head: ' + 'a'.repeat(40), prose, '', '```', '1\t0\ta.ts', '```'].join('\n'),
+      [`Head: ${'a'.repeat(40)}`, prose, '', '```', '1\t0\ta.ts', '```'].join('\n'),
       'a'.repeat(40),
       '1\t0\ta.ts'
     )
