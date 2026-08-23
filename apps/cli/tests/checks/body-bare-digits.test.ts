@@ -2,7 +2,12 @@ import { statSync } from 'node:fs'
 import { compareEvidenceBlock } from '../../src/checks/evidence-fresh-logic'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { diagnoseAnchorExemption, checkBareDigits } from '../../src/checks/body-bare-digits-logic'
+import {
+  normalizeBody,
+  resolveAnchoredRegionForScan,
+  diagnoseAnchorExemption,
+  checkBareDigits
+} from '../../src/checks/body-bare-digits-logic'
 
 function violationLines(body: string): number[] {
   return checkBareDigits(body).violations.map((v) => v.line)
@@ -823,5 +828,43 @@ describe('the Summary exemption is exactly as narrow as its verification', () =>
       '1\t0\ta.ts'
     )
     expect(r.status).toBe('fail')
+  })
+})
+
+describe('there is one normalisation path, not two that agree', () => {
+  /**
+   * The whole point of `resolveAnchoredRegionForScan`. While `checkBareDigits`
+   * inlined the stages, adding one to `normalizeBody` moved the resolver and
+   * left the scanner behind — stage eight, reproduced by both reviewers in a
+   * single edit. This asserts the coupling directly rather than trusting it.
+   */
+  it('scans the same text the resolver resolves', () => {
+    const ZW = '​'
+    const body = [
+      '## Evidence',
+      '',
+      `<!-- AEG:EVIDENCE:STA${ZW}RT -->`,
+      `Head: ${'a'.repeat(40)}`,
+      'Summary: 900 files changed, 12000 insertions(+), 3 deletions(-)',
+      '',
+      '```',
+      '1\t0\ta.ts',
+      '```',
+      '<!-- AEG:EVIDENCE:END -->'
+    ].join('\n')
+    // The resolver sees the anchor through the zero-width character...
+    const resolved = resolveAnchoredRegionForScan(body, 'EVIDENCE')
+    expect(resolved).not.toBeNull()
+    expect(resolved).not.toBe('hidden')
+    // ...and so does the scanner, so the fabricated Summary is the exempted
+    // line AND the compared one, rather than exempt on one side and invisible
+    // on the other.
+    expect(checkBareDigits(body).violations).toEqual([])
+  })
+
+  it('exposes the normalisation as one exported function', () => {
+    const ZW = '​'
+    expect(normalizeBody(`a${ZW}b`)).toBe('ab')
+    expect(normalizeBody('&lt;details&gt;')).toBe('<details>')
   })
 })

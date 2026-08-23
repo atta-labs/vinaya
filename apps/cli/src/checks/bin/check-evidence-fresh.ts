@@ -144,9 +144,9 @@ function main(): void {
       check: CHECK_NAME,
       severity: 'error',
       message:
-        'evidence-fresh: the AEG:EVIDENCE region is enclosed by a `<details>` block, so nothing can verify what it claims. Three ways to land here: the region really is inside a block; an UNCLOSED `<details>` tag above it encloses it (an unterminated tag runs to the end of the body); or the only anchor pair in this body is a quoted copy inside a `<details>` reference brief. For the last one, put the quoted anchors in a code fence instead — a fenced copy is correctly ignored.',
+        'evidence-fresh: the AEG:EVIDENCE anchor is in the body but masking removed it, so nothing can verify what the region claims. Usually a `<details>` block encloses it — the region really is inside one, an UNCLOSED `<details>` tag above it encloses it (an unterminated tag runs to the end of the body), or the only anchor pair here is a quoted copy inside a `<details>` reference brief. Other constructs can mask it too, so treat this list as the common causes rather than all of them. For the quoted-copy case, put the anchors in a code fence instead — a fenced copy is correctly ignored.',
       agent_recovery_prompt:
-        'If the region is genuinely inside a `<details>` block, move it into the body. If you did not open one, find the unclosed `<details>` tag above it and wrap that tag in backticks. If the anchors are only a quoted copy inside a reference brief, put that copy in a code fence rather than a `<details>` block. Then re-run `vinaya check evidence-fresh`.'
+        'If the region is genuinely inside a `<details>` block, move it into the body. If you did not open one, find the unclosed `<details>` tag above it and wrap that tag in backticks. If the anchors are only a quoted copy inside a reference brief, put that copy in a code fence rather than a `<details>` block. If none of those apply, look for markup immediately before the START marker that could read as code. Then re-run `vinaya check evidence-fresh`.'
     })
     process.exit(1)
   }

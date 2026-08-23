@@ -6,6 +6,14 @@
  * `check-evidence-fresh.ts` bin is the thin wiring that gathers those facts
  * via `gh`/`git` and calls this.
  *
+ * One caveat on the text compared: the region reaches this function already
+ * normalised (zero-width stripped, named entities decoded), because it has to
+ * be the same text `body-bare-digits` scanned. Group A is byte-compared against
+ * verbatim `git` output, so a path containing a named-entity sequence would be
+ * decoded on one side and not the other. That needs a filename like
+ * `a&amp;lt;b`, so it is a documented edge rather than a live risk, and it
+ * fails closed.
+ *
  * Scope, deliberately narrow (see `aeg-root/roles/developer.md`'s brief for
  * fix/pr-report-emitter, §6 Part 2): this closes fabrication for Group A (the
  * recomputed diff stat) by exact-comparing recomputed text against the

@@ -626,7 +626,12 @@ export function resolveAnchoredRegionForScan(
 }
 
 export function checkBareDigits(rawBody: string): BareDigitScanResult {
-  const body = decodeNamedEntities(rawBody.replace(ZERO_WIDTH, ''))
+  // `normalizeBody`, not an inlined copy of it. Both reviewers reproduced
+  // stage eight from this one line: add a stage to `normalizeBody` and the two
+  // sides diverge again, which is the exact failure the resolver was extracted
+  // to make impossible. One caller inlining the stages meant "both sides call
+  // it" was a claim about one side.
+  const body = normalizeBody(rawBody)
   const masked = buildScanMask(body)
   const maskedLines = masked.split('\n')
   const origLines = body.split('\n')
