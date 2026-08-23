@@ -1,0 +1,110 @@
+/**
+ * Who each governance gate under `packages/aeg-core/bin/` is FOR.
+ *
+ * The problem this closes: this repository holds two parallel worlds — the
+ * gates it runs on itself (`packages/aeg-core/bin/*`) and the checks an
+ * adopter runs through the published CLI (`apps/cli/src/checks/bin/*`) — and
+ * nothing asserted a relationship between them. Membership of the shipped set
+ * was defined by ABSENCE from `coreCheckRegistry()`, which means a deliberate
+ * exclusion and a forgotten port left exactly the same trace.
+ *
+ * `reader-resolvable-prose` is the instructive case, and the reason this file
+ * exists. That call was made carefully and its reasoning written up well — in
+ * a paragraph of prose inside `registry.ts`. It is right, and it is invisible
+ * to tooling. A good decision and an unmade decision looked identical, so the
+ * next one might simply not get made.
+ *
+ * So `internal` is a thing you must SAY, with a reason, rather than something
+ * you can forget to notice. `gate-audience.test.ts` enumerates the bin
+ * directory and fails when a gate is in neither column.
+ *
+ * **This is deliberately NOT a field on `CheckSpec`.** Adopter-defined checks
+ * in `vinaya.config.json` produce that same shape (`lib/config.ts`), so an
+ * `audience` field there would push an internal-governance concept into
+ * adopter-facing config, where it means nothing and cannot be answered.
+ * The question is about THIS repo's own bins, so the declaration lives here.
+ *
+ * Adding a gate to `bin/` and nothing else is now a failing build, naming the
+ * file. That is the whole mechanism; deciding which column a given gate
+ * belongs in stays a human judgement, which is the point.
+ */
+
+/** A gate that adopters run, and the `coreCheckRegistry()` name it ships under. */
+export type ShippedGate = { shippedAs: string | string[] }
+/** A gate this repo runs on itself, and why it cannot or should not ship. */
+export type InternalGate = { internal: string }
+export type GateAudience = ShippedGate | InternalGate
+
+/**
+ * Keyed by basename (no extension) of each `packages/aeg-core/bin/*.ts` that
+ * is a GATE — something that inspects a repo and passes or fails. Non-gate
+ * tooling in the same directory (forge writers, one-shot reporters) is listed
+ * in `NON_GATE_BINS` below rather than given a fake audience.
+ */
+export const GATE_AUDIENCE: Record<string, GateAudience> = {
+  'check-branch-topology': { shippedAs: 'branch-topology' },
+  'check-first-push-dispatch': { shippedAs: 'first-push-dispatch' },
+  'check-no-disk-state': { shippedAs: 'no-disk-state' },
+  'verify-brief': { shippedAs: 'brief-shape' },
+  'verify-coherence': { shippedAs: 'coherence' },
+  'verify-dispatch': { shippedAs: 'dispatch-readiness' },
+  'verify-docs': { shippedAs: ['doc-coverage', 'doc-coverage-push'] },
+  'verify-registry': { shippedAs: 'registry-gates' },
+  'verify-review-gate': { shippedAs: 'review-gate' },
+  'verify-single-plan-pr': { shippedAs: 'single-plan-pr' },
+  'verify-test-plan': { shippedAs: 'test-plan' },
+
+  'check-direct-main-push': {
+    internal:
+      'Reaches adopters through `vinaya audit --only=direct-push`, not the check registry: it is a ring-2 sweep over merge history keyed on `GITHUB_SHA`, run by the generated archivist job on push to the default branch. It has no diff to key on, so there is nothing for `vinaya check` to run it against.'
+  },
+  'check-push-target': {
+    internal:
+      'A pre-push hook helper: it takes a branch name as `argv[2]` and answers one `gh pr list --head <branch>` question, for a caller that already knows which ref is being pushed. Adopters reach the same question through the registered `dead-branch-push`, which resolves the branch itself when `BRANCH` is unset. Registering this one too would add a second entry answering an identical forge query with a worse interface.'
+  },
+  'verify-task': {
+    internal:
+      "A composite that shells this repo's own `typecheck`/`lint`/`test`/`build` scripts by name. Those names are this monorepo's toolchain (bun + turbo + biome), not an adopter's; the shipped equivalent of its intent is `vinaya check --all`, which is portable by construction."
+  }
+}
+
+/**
+ * The other half, and the one the motivating case actually lives in.
+ *
+ * `reader-resolvable-prose` has no bin under `packages/aeg-core/bin/` at all —
+ * its logic is `src/reader-resolvable-prose.ts` and its only executable is
+ * `apps/cli/src/checks/bin/check-reader-resolvable-prose.ts`. So the map above
+ * would never have seen it, and an earlier revision of this file claimed it as
+ * the reason the file exists while leaving it uncovered. Review caught that;
+ * this is the fix, not a re-wording.
+ *
+ * Enumerating the SHIPPED check bins asks the question that case actually
+ * poses: here is an executable adopters could run — is it registered, and if
+ * not, why not? `coreCheckRegistry()` lives in `apps/cli`, which `aeg-core`
+ * cannot import without closing a dependency cycle, so the declaration lives
+ * here and `apps/cli`'s own suite does the asserting.
+ */
+export const SHIPPED_BIN_AUDIENCE: Record<string, GateAudience> = {
+  'check-reader-resolvable-prose': {
+    internal:
+      "Built, executable, and deliberately NOT in `coreCheckRegistry()`: it hardcodes this monorepo's own doctrine layout — it reads `aeg-root/glossary.md` directly and sweeps `aeg-root/**`. No `packageRoot()`-style fix makes those paths exist in an arbitrary adopter's repo — a scope-registration fact, not a pathing bug. (Its reader-facing half is a declared no-op here: `READER_FACING_ROOT` is `null`, because this repo has no `apps/<name>/web`.) Reachable here by direct invocation as an internal doc-quality tool."
+  }
+}
+
+/**
+ * Files in `bin/` that are not gates and therefore have no audience: forge
+ * writers and one-shot reporters. Listed explicitly rather than pattern-matched
+ * so a NEW file cannot slip through by being named unlike a gate.
+ */
+export const NON_GATE_BINS = [
+  'archive-task',
+  'assign-task-issue',
+  'dead-branch-audit',
+  'open-issue',
+  'open-pr',
+  'report-tokens'
+] as const
+
+export function isShipped(a: GateAudience): a is ShippedGate {
+  return 'shippedAs' in a
+}

@@ -1,6 +1,8 @@
 export * from './types'
 export type { StateSource } from './state-source'
 export type { DoctrineContent, DoctrineSource } from './doctrine-source'
+export { GATE_AUDIENCE, NON_GATE_BINS, SHIPPED_BIN_AUDIENCE, isShipped } from './gate-audience'
+export type { GateAudience, InternalGate, ShippedGate } from './gate-audience'
 export { ANCHOR_FIELDS, anchoredRegion, anchoredRegionBounds } from './anchored-region'
 export type { AnchorField } from './anchored-region'
 export { parseRegistry } from './parse-registry'
