@@ -47,11 +47,37 @@ export const FALLBACK_PORT = 3108
  * attalabs' Studio dev server owns `3008`, and the two must not collide.
  */
 export function parsePortFlag(args: string[]): number | null {
-  const i = args.indexOf('--port')
-  if (i === -1) return null
-  const raw = args[i + 1]
-  if (raw === undefined || raw.startsWith('-')) throw new PortFlagError('`--port` requires a port number.')
-  if (!/^\d+$/.test(raw)) throw new PortFlagError(`\`--port ${raw}\` is not a port number.`)
+  // Both spellings. `--port=3208` is accepted elsewhere in this CLI
+  // (`forge-write.ts` parses `--flag=value`), and a parser that silently
+  // returned `null` for it would bind the DEFAULT port — which is precisely
+  // the collision this flag exists to prevent, arrived at silently. A caller
+  // who wrote `--port=3208` gets that port or an error, never `3008`.
+  const found: string[] = []
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k] as string
+    if (a === '--port') {
+      const raw = args[k + 1]
+      if (raw === undefined || raw.startsWith('-')) throw new PortFlagError('`--port` requires a port number.')
+      found.push(raw)
+      k++
+    } else if (a.startsWith('--port=')) {
+      found.push(a.slice('--port='.length))
+    }
+  }
+  if (found.length === 0) return null
+  // Two different values is an unresolvable instruction, not a precedence
+  // question. Picking one silently discards the other, and the whole point of
+  // an explicit port is that the caller knows which one they got.
+  if (found.length > 1 && new Set(found).size > 1) {
+    throw new PortFlagError(`\`--port\` given more than once with different values (${found.join(', ')}).`)
+  }
+  const raw = found[0] as string
+  if (raw === '') throw new PortFlagError('`--port` requires a port number.')
+  if (!/^[0-9]+$/.test(raw)) throw new PortFlagError(`\`--port ${raw}\` is not a port number.`)
+  // Reject leading zeros rather than normalising them: `--port 03208` reads as
+  // a typo, and quietly binding 3208 would hide it.
+  if (raw.length > 1 && raw.startsWith('0'))
+    throw new PortFlagError(`\`--port ${raw}\` has a leading zero — write it as ${Number(raw)}.`)
   const port = Number(raw)
   if (port < 1 || port > 65535) throw new PortFlagError(`\`--port ${raw}\` is outside the valid range 1-65535.`)
   return port

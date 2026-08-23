@@ -321,7 +321,7 @@ export const COMMANDS: readonly Command[] = [
       {
         flag: '--port <n>',
         description:
-          "Bind this exact port instead of the default 3008, falling back to 3108. Explicit means explicit: a taken port is refused rather than silently moved, so you always know which server answered. Applies to a published install; in a workspace checkout Studio's own dev script owns the port and the flag is refused."
+          "Bind this exact port. Without the flag the default is unchanged — 3008, falling back to 3108 when it is taken. With it there is no fallback: a taken port is refused, so you always know which server answered. Accepts `--port 3208` and `--port=3208`. Applies to a published install; in a workspace checkout Studio's own dev script owns the port and the flag is refused."
       }
     ],
     details: [

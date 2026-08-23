@@ -236,8 +236,27 @@ describe('runStudio', () => {
 })
 
 describe('vinaya studio --port', () => {
-  it('parses an explicit port', () => {
+  it('parses an explicit port, in both spellings', () => {
     expect(parsePortFlag(['--port', '3208'])).toBe(3208)
+    // `--port=3208` returning null would bind the DEFAULT port — the exact
+    // collision the flag exists to prevent, reached silently (review, PR #185).
+    expect(parsePortFlag(['--port=3208'])).toBe(3208)
+  })
+
+  it('refuses two different ports rather than silently picking one', () => {
+    expect(() => parsePortFlag(['--port', '3208', '--port', '4000'])).toThrow(PortFlagError)
+    expect(() => parsePortFlag(['--port=3208', '--port=4000'])).toThrow(PortFlagError)
+    // The same value twice is not ambiguous, so it is not an error.
+    expect(parsePortFlag(['--port', '3208', '--port=3208'])).toBe(3208)
+  })
+
+  it('refuses a leading zero instead of normalising a probable typo', () => {
+    expect(() => parsePortFlag(['--port', '03208'])).toThrow(PortFlagError)
+    expect(() => parsePortFlag(['--port=03208'])).toThrow(PortFlagError)
+  })
+
+  it('refuses an empty value in the = spelling', () => {
+    expect(() => parsePortFlag(['--port='])).toThrow(PortFlagError)
   })
 
   it('returns null when the flag is absent — the default 3008/3108 dance still applies', () => {
