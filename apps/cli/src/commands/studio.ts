@@ -57,7 +57,13 @@ export function parsePortFlag(args: string[]): number | null {
     const a = args[k] as string
     if (a === '--port') {
       const raw = args[k + 1]
-      if (raw === undefined || raw.startsWith('-')) throw new PortFlagError('`--port` requires a port number.')
+      if (raw === undefined) throw new PortFlagError('`--port` requires a port number.')
+      // A `-`-led token is named for what it is. Reporting `--port -1` as
+      // "requires a port number" states the wrong reason and sends the caller
+      // looking at the wrong thing.
+      if (raw.startsWith('-')) {
+        throw new PortFlagError(`\`--port ${raw}\` is not a port number — a port is a positive integer.`)
+      }
       found.push(raw)
       k++
     } else if (a.startsWith('--port=')) {
@@ -77,7 +83,10 @@ export function parsePortFlag(args: string[]): number | null {
   // Reject leading zeros rather than normalising them: `--port 03208` reads as
   // a typo, and quietly binding 3208 would hide it.
   if (raw.length > 1 && raw.startsWith('0'))
-    throw new PortFlagError(`\`--port ${raw}\` has a leading zero — write it as ${Number(raw)}.`)
+    // Deliberately not echoing `Number(raw)` as the suggestion: for `--port 00`
+    // that renders "write it as 0", and obeying it hits the range refusal. A
+    // correction that fails when followed is worse than no correction.
+    throw new PortFlagError(`\`--port ${raw}\` has a leading zero — write the port without it.`)
   const port = Number(raw)
   if (port < 1 || port > 65535) throw new PortFlagError(`\`--port ${raw}\` is outside the valid range 1-65535.`)
   return port
