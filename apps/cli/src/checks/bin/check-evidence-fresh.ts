@@ -39,8 +39,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
+import { anchoredRegion } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { resolveAnchoredRegionForScan } from '../body-bare-digits-logic'
 import { compareEvidenceBlock } from '../evidence-fresh-logic'
 
 const CHECK_NAME = 'evidence-fresh'
@@ -123,34 +123,12 @@ function main(): void {
     process.exit(0)
   }
 
-  // One resolver, shared with `body-bare-digits`. Four review rounds each made
-  // these two sides agree at one more layer — same masker, same masker input,
-  // same normalisation — and each time the disagreement reappeared one stage
-  // earlier, because agreement by convention has no last layer. Calling the
-  // same function is what ends that.
-  const resolved = resolveAnchoredRegionForScan(body, 'EVIDENCE')
-  if (resolved === null) {
-    // No anchor at all. Opt-in, like every other AEG anchor — a body that
+  const region = anchoredRegion(body, 'EVIDENCE')
+  if (region === null) {
+    // The anchor is opt-in, like every other AEG anchor — a body that
     // hasn't adopted it yet is not broken by not adopting it.
     process.exit(0)
   }
-  if (resolved === 'hidden') {
-    // The anchor is there but masking removed it: the region is inside a
-    // `<details>` block, where `body-bare-digits` blanks every digit and
-    // nothing can verify what it claims. Refuse rather than skip — an
-    // unverifiable region is not an unadopted one.
-    emitCheckError({
-      schema: CHECK_SCHEMA_VERSION,
-      check: CHECK_NAME,
-      severity: 'error',
-      message:
-        'evidence-fresh: the AEG:EVIDENCE anchor is in the body but masking removed it, so nothing can verify what the region claims. Usually a `<details>` block encloses it — the region really is inside one, an UNCLOSED `<details>` tag above it encloses it (an unterminated tag runs to the end of the body), or the only anchor pair here is a quoted copy inside a `<details>` reference brief. Other constructs can mask it too, so treat this list as the common causes rather than all of them. For the quoted-copy case, put the anchors in a code fence instead — a fenced copy is correctly ignored.',
-      agent_recovery_prompt:
-        'If the region is genuinely inside a `<details>` block, move it into the body. If you did not open one, find the unclosed `<details>` tag above it and wrap that tag in backticks. If the anchors are only a quoted copy inside a reference brief, put that copy in a code fence rather than a `<details>` block. If none of those apply, look for markup immediately before the START marker that could read as code. Then re-run `vinaya check evidence-fresh`.'
-    })
-    process.exit(1)
-  }
-  const { region, maskedRegion } = resolved
 
   const prNumberStr = process.env.PR_NUMBER
   if (!prNumberStr) {
@@ -195,7 +173,7 @@ function main(): void {
     process.exit(1)
   }
 
-  const result = compareEvidenceBlock(region, resolvedHead, actualNumstat, maskedRegion)
+  const result = compareEvidenceBlock(region, resolvedHead, actualNumstat)
   if (result.status === 'fail') {
     for (const message of result.errors) {
       emitCheckError({

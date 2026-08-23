@@ -1,30 +1,12 @@
 ---
-'@attalabs/aeg-core': patch
-'@attalabs/vinaya': patch
+"@attalabs/vinaya": patch
 ---
 
-Close gaps where a verification tool could return a confident wrong answer.
+Three surfaces where a verification tool could return a confident answer that was wrong.
 
-- `pr report` derives a `Summary:` line (files, insertions, deletions, binary
-  count) into the evidence block, so a PR body never needs a hand-written count
-  that goes stale when a later commit lands. `evidence-fresh` recomputes and
-  compares it, and `body-bare-digits` exempts it as machine-emitted. Both derive
-  the text they read from one internal helper that normalises and masks
-  together, so the line that is exempt is the line that is compared;
-  `evidence-fresh` locates its region through the exported
-  `resolveAnchoredRegionForScan`. `evidence-fresh` refuses a region enclosed by a
-  `<details>` block, where nothing could verify what it claims, rather than
-  skipping it as unadopted.
-- `review post` rejects unknown flags instead of silently ignoring them, so a
-  typo'd flag fails loudly rather than posting a verdict with a default.
-- New `symbol-collisions` module in `@attalabs/aeg-core` reports names declared
-  in more than one file — the condition that makes a grep-based check
-  unresolvable. It is a library function plus a repo-internal gate over
-  `aeg-core/src`; it registers no `vinaya check` and runs on no adopter's code.
-- `parse-registry.ts` held a NUL byte, which made git treat it as binary: no
-  reviewable diff on any PR touching it, and no line numbers from `git grep`.
-  The sentinel is now an escape, and a repo-internal test keeps any tracked file
-  from carrying one again. Repo-internal: no adopter-facing check is added.
-- `body-bare-digits` now explains why an `AEG:*` region lost its exemption
-  instead of giving generic advice. The generic advice — fence it — corrupts a
-  machine-emitted block and trades one red check for another.
+- `vinaya review post` refuses unknown flags. A misspelled flag was silently dropped, so
+  `--print-only` — which does not exist — posted a real verdict.
+- A new gate refuses any tracked file that is binary to git. A source file invisible to
+  `git grep` is a hole under every text-based verification in the repo.
+- A new gate reports a name declared in more than one non-test source file of
+  `@attalabs/aeg-core`. Its reach is that package, not the repo.

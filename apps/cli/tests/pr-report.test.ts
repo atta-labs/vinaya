@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import {
-  summariseNumstat,
   anyGateFailed,
   buildReport,
   computeGroupA,
@@ -310,35 +309,5 @@ describe('computeGroupA refuses rather than degrading', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
-  })
-})
-
-describe('(#186 follow-up) the block carries its own summary, so prose need not restate it', () => {
-  it('counts files and lines from the numstat', () => {
-    expect(summariseNumstat('10\t0\ta.md\n111\t7\tb.ts')).toBe('2 files changed, 121 insertions(+), 7 deletions(-)')
-  })
-
-  it('singularises one file and one line', () => {
-    expect(summariseNumstat('1\t0\tonly.ts')).toBe('1 file changed, 1 insertion(+), 0 deletions(-)')
-  })
-
-  // `--numstat` writes `-` for a binary file. It counts as a changed file and
-  // contributes no line totals, matching `git diff --shortstat`.
-  it('counts a binary file without inventing line counts for it', () => {
-    expect(summariseNumstat('-\t-\timg.png\n2\t1\tx.ts')).toBe(
-      '2 files changed, 2 insertions(+), 1 deletion(-), 1 binary'
-    )
-  })
-
-  it('handles an empty diff without claiming anything', () => {
-    expect(summariseNumstat('')).toBe('0 files changed, 0 insertions(+), 0 deletions(-)')
-  })
-
-  // The property that makes it worth having: same input, same bytes. A summary
-  // that drifted between two runs at one sha would be a second rotting copy,
-  // which is the thing it exists to remove.
-  it('is byte-identical across repeated derivations', () => {
-    const n = '3\t1\ta.ts\n-\t-\tb.png\n0\t9\tc.md'
-    expect(summariseNumstat(n)).toBe(summariseNumstat(n))
   })
 })

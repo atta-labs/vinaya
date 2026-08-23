@@ -85,8 +85,7 @@
  * carve-out from reopening that exact class.
  */
 
-import { type AnchorField, anchoredRegionBounds, TIER_FIELD } from '@attalabs/aeg-core'
-import { EVIDENCE_SUMMARY_PREFIX } from '../lib/numstat'
+import { anchoredRegionBounds, TIER_FIELD } from '@attalabs/aeg-core'
 import { PROJECT_SLUG, unwrapValue } from '@attalabs/aeg-forge-state'
 import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
 
@@ -270,11 +269,7 @@ function blankAnchoredRegions(body: string): string {
     if (!FIELD_CONTENT_SIGNATURE[field].test(content)) continue
     masked = blankRange(masked, bounds.outerStart, bounds.innerStart)
     masked = blankRange(masked, bounds.innerEnd, bounds.outerEnd)
-    const blankLine = BOUNDED_ANCHOR_BLANK[field]()
-    const blankedContent = content
-      .split('\n')
-      .map((l) => blankLine(l))
-      .join('\n')
+    const blankedContent = content.split('\n').map(BOUNDED_ANCHOR_BLANK[field]).join('\n')
     masked = masked.slice(0, bounds.innerStart) + blankedContent + masked.slice(bounds.innerEnd)
   }
   return masked
@@ -452,53 +447,23 @@ function blankClosesField(line: string): string {
   return line.slice(0, m.index) + ' '.repeat(m[0].length) + line.slice(m.index + m[0].length)
 }
 
-/**
- * A fresh blanker per region, because the `Summary:` exemption is
- * first-occurrence-only.
- *
- * `evidence-fresh` verifies the FIRST emitted `Summary:` line and no other
- * (`region.match` on a non-global regex). Exempting every occurrence would
- * leave a second, unverified `Summary:` line free to carry any figure at all —
- * exempt because a different line was checked. So the second one is scanned as
- * ordinary prose, which is what it is. The prefix test is `startsWith` on the
- * RAW line against the shared `EVIDENCE_SUMMARY_PREFIX`: column 0,
- * case-sensitive, exactly the shape the emitter writes and the verifier reads.
- */
-function makeBlankEvidenceField(): (line: string) => string {
-  let summarySeen = false
-  return (line: string): string => {
-    const trimmed = line.trim()
-    if (line.startsWith(EVIDENCE_SUMMARY_PREFIX) && !summarySeen) {
-      summarySeen = true
-      return ' '.repeat(line.length)
-    }
-    if (trimmed === '' || EVIDENCE_HEAD_LINE.test(trimmed) || EVIDENCE_HEADING.test(trimmed))
-      return ' '.repeat(line.length)
-    return line
-  }
+function blankEvidenceField(line: string): string {
+  const trimmed = line.trim()
+  if (trimmed === '' || EVIDENCE_HEAD_LINE.test(trimmed) || EVIDENCE_HEADING.test(trimmed))
+    return ' '.repeat(line.length)
+  return line
 }
 
-/** Factories, not functions: `EVIDENCE` needs per-region state (see `makeBlankEvidenceField`). */
-const BOUNDED_ANCHOR_BLANK: Record<ExemptAnchorField, () => (line: string) => string> = {
-  CLOSES: () => blankClosesField,
-  TIER: () => blankTierField,
-  PROJECT: () => blankProjectField,
-  EVIDENCE: makeBlankEvidenceField
-}
-
-/**
- * The masking every anchor lookup shares: code first, then `<details>` — the
- * order is load-bearing (a `<details>` tag quoted inside a fence must be inert
- * before `maskDetailsBlocks` runs). Named so the resolver and the scan mask
- * cannot drift into two compositions of the same two calls.
- */
-function buildAnchorLookupMask(body: string): string {
-  return maskDetailsBlocks(maskCode(body))
+const BOUNDED_ANCHOR_BLANK: Record<ExemptAnchorField, (line: string) => string> = {
+  CLOSES: blankClosesField,
+  TIER: blankTierField,
+  PROJECT: blankProjectField,
+  EVIDENCE: blankEvidenceField
 }
 
 /** Full masking pipeline — see module doc for the layer order and why it's load-bearing. */
-function buildScanMask(ctx: ScanContext): string {
-  let masked = ctx.masked
+function buildScanMask(body: string): string {
+  let masked = maskDetailsBlocks(maskCode(body))
   masked = blankAnchoredRegions(masked)
   masked = blankTokenReportSection(masked)
   masked = blankUnanchoredStructuralFields(masked)
@@ -574,107 +539,9 @@ function isLineLeadingListMarker(line: string, matchStart: number, rawToken: str
  * security review, finding 2 — the most severe of that round, closing a
  * bypass class rather than one instance of it).
  */
-/**
- * Normalise a PR body the way every consumer of these anchors must.
- *
- * Zero-width stripping and named-entity decoding, in that order, before any
- * masking or anchor lookup. Exported because a second consumer that skips this
- * stage does not merely miss a character class — it resolves a DIFFERENT
- * region, which is how four review rounds each closed one layer and opened the
- * next.
- */
-export function normalizeBody(rawBody: string): string {
-  return decodeNamedEntities(rawBody.replace(ZERO_WIDTH, ''))
-}
-
-export type ResolvedAnchoredRegion = {
-  /** The region's text, from the normalised body. */
-  region: string
-  /** The same span from the masked body — code and `<details>` blanked, offsets preserved. */
-  maskedRegion: string
-}
-
-/**
- * The scan context: the normalised body and its anchor-lookup mask, computed
- * together, once.
- *
- * `normalizeBody` and `buildAnchorLookupMask` were already shared, and it was
- * still not enough. Review defeated that arrangement by WRAPPING rather than
- * re-inlining — `stripSoftHyphens(normalizeBody(rawBody))` in one consumer and
- * not the other passed every structural check while the two sides resolved
- * different text, reopening the bypass this whole change exists to close.
- *
- * A guard over a hand-kept list of today's stage names cannot catch that; it is
- * the same closed-list shape this module's own docstring argues cannot
- * terminate. Each tighter assertion only moved the divergence one line: first
- * earlier (a stage added to one side), then later (`buildScanMask(wrap(body))`,
- * past every pinned entry expression).
- *
- * So the composition stops being something a caller performs, and the guarantee
- * stops resting on a test. `ScanContext` is the only way to obtain this pair,
- * and `buildScanMask` takes the context rather than a string — a wrapped or
- * re-derived body does not type-check. The remaining bound is stated rather
- * than papered over: nothing prevents a NEW consumer from mangling `rawBody`
- * before calling `scanContext`. That is a smaller surface than "any of the
- * stages, at any point in either pipeline", and it is the honest limit of what
- * construction can close here.
- */
-type ScanContext = { readonly normalised: string; readonly masked: string }
-
-function scanContext(rawBody: string): ScanContext {
-  const normalised = normalizeBody(rawBody)
-  return { normalised, masked: buildAnchorLookupMask(normalised) }
-}
-
-/**
- * The one resolver. Normalise, mask, locate the pair, slice both views.
- *
- * Every previous fix made `check-evidence-fresh` agree with `body-bare-digits`
- * at one more layer — the same masker, then the same masker input, then the
- * same normalisation — and each time the disagreement reappeared one stage
- * earlier. Agreement by convention cannot terminate; there is always another
- * stage.
- *
- * Precisely what is and is not true, because two looser versions of this
- * sentence were each themselves a finding: `check-evidence-fresh.ts` is this
- * function's only non-test caller. `checkBareDigits` does NOT call it — it
- * needs the masked body for scanning, not one region. What both DO share is
- * `scanContext`, the single helper that normalises and masks, and neither names
- * a stage itself. `body-bare-digits.test.ts` asserts the exact expression each
- * one uses, so re-inlining a stage, recomposing by hand, or wrapping the call
- * all fail it. The coupling is enforced by a test rather than by a single call
- * path — that is the guarantee, and it is not the same as "one caller".
- *
- * Returns `'hidden'` when the body carries the anchor but masking removed it —
- * the region is inside a `<details>` block, where `body-bare-digits` blanks
- * every digit in it and nothing can verify what it claims. That is a distinct
- * outcome from `null` (no anchor at all), because "unverifiable" and
- * "not adopted" must not be handled the same way.
- */
-export function resolveAnchoredRegionForScan(
-  rawBody: string,
-  field: AnchorField
-): ResolvedAnchoredRegion | 'hidden' | null {
-  const { normalised, masked: maskedBody } = scanContext(rawBody)
-  const bounds = anchoredRegionBounds(maskedBody, field)
-  if (bounds === null) {
-    return anchoredRegionBounds(normalised, field) !== null ? 'hidden' : null
-  }
-  return {
-    region: normalised.slice(bounds.innerStart, bounds.innerEnd),
-    maskedRegion: maskedBody.slice(bounds.innerStart, bounds.innerEnd)
-  }
-}
-
 export function checkBareDigits(rawBody: string): BareDigitScanResult {
-  // The context is obtained once and handed on whole. Nothing here names a
-  // stage, and `buildScanMask` takes the context rather than a string — so
-  // `buildScanMask(stripSoftHyphens(body))`, the decoupling that survived the
-  // previous two guards, does not compile. That is the point: this is closed
-  // by the type, not by a test asserting the absence of a wrapper.
-  const ctx = scanContext(rawBody)
-  const body = ctx.normalised
-  const masked = buildScanMask(ctx)
+  const body = decodeNamedEntities(rawBody.replace(ZERO_WIDTH, ''))
+  const masked = buildScanMask(body)
   const maskedLines = masked.split('\n')
   const origLines = body.split('\n')
   const violations: BareDigitViolation[] = []
@@ -693,79 +560,4 @@ export function checkBareDigits(rawBody: string): BareDigitScanResult {
   }
 
   return { violations }
-}
-
-/**
- * Why the anchored region containing this line did not earn its exemption.
- *
- * The check's generic remediation — fence it, or restate it as a symbol — is
- * correct for narrative prose and actively wrong for a machine-generated
- * region. `vinaya pr report --write` emits `Head: <sha>` as the first line of
- * the `AEG:EVIDENCE` block; fencing or rewriting that line corrupts the block
- * the `evidence-fresh` gate byte-compares, so an author following the generic
- * advice trades one red check for another. The real cause is one of the two
- * preconditions `blankAnchoredRegions` applies beyond the anchor pair itself:
- * the region must sit in its documented section, and its content must carry
- * that field's own signature.
- *
- * Returns `null` when the line is not inside one of the `EXEMPT_ANCHOR_FIELDS`
- * regions — which includes `AEG:PREMISE` and `AEG:TEST-PLAN`, `AEG:*` regions
- * that are hand-typed and carry no exemption, so the generic advice is the
- * right advice there. A line inside a region that DID earn its exemption still
- * gets a hint, because "fence it" is wrong there too.
- */
-export type AnchorExemptionDiagnosis = {
-  field: ExemptAnchorField
-  reason: 'outside-canonical-section' | 'content-signature' | 'exempt-region'
-  hint: string
-}
-
-/** Where each field's region must live, in the words an author would use. */
-const FIELD_SECTION_LABEL: Record<ExemptAnchorField, string> = {
-  CLOSES: 'the header block, above the first `##` heading',
-  PROJECT: 'the header block, above the first `##` heading',
-  TIER: 'the `## Scope` section',
-  EVIDENCE: 'the `## Evidence` section'
-}
-
-/** Char offset of the first character of 1-indexed `line`, or `null` if the body has no such line. */
-function lineStartOffset(body: string, line: number): number | null {
-  if (line < 1) return null
-  const lines = body.split('\n')
-  if (line > lines.length) return null
-  let offset = 0
-  for (let i = 0; i < line - 1; i++) offset += (lines[i] as string).length + 1
-  return offset
-}
-
-export function diagnoseAnchorExemption(body: string, line: number): AnchorExemptionDiagnosis | null {
-  const offset = lineStartOffset(body, line)
-  if (offset === null) return null
-  for (const field of EXEMPT_ANCHOR_FIELDS) {
-    const bounds = anchoredRegionBounds(body, field)
-    if (!bounds || offset < bounds.outerStart || offset >= bounds.outerEnd) continue
-    if (!isInCanonicalSection(body, field, bounds.outerStart)) {
-      return {
-        field,
-        reason: 'outside-canonical-section',
-        hint: `This line is inside the \`AEG:${field}\` region, but that region is not in ${FIELD_SECTION_LABEL[field]}, so it is scanned as ordinary prose. Move the region there — do not fence or reword its contents, which \`vinaya pr report --write\` regenerates and other gates byte-compare.`
-      }
-    }
-    if (!FIELD_CONTENT_SIGNATURE[field].test(body.slice(bounds.innerStart, bounds.innerEnd))) {
-      return {
-        field,
-        reason: 'content-signature',
-        hint: `This line is inside the \`AEG:${field}\` region, but that region does not carry the field's own declaration, so it is scanned as ordinary prose rather than trusted. Restore the declaration the template requires for \`AEG:${field}\`.`
-      }
-    }
-    // The region DID earn its exemption, so this line is unexempted content
-    // inside a machine-emitted block — narrative prose someone added to it.
-    // The generic advice would say "fence it", which corrupts the block.
-    return {
-      field,
-      reason: 'exempt-region',
-      hint: `This line sits inside a valid \`AEG:${field}\` region but is not one of the lines that region exempts, so it is scanned as ordinary prose. Move the sentence out of the region — do not fence or reword the region's own contents, which \`vinaya pr report --write\` regenerates and other gates byte-compare.`
-    }
-  }
-  return null
 }

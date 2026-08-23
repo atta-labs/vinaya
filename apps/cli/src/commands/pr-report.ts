@@ -1,5 +1,4 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { summariseNumstat } from '../lib/numstat'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { anchoredRegionBounds } from '@attalabs/aeg-core'
@@ -291,17 +290,8 @@ function renderGroupB(outcomes: GateOutcome[]): string {
   )
 }
 
-export { summariseNumstat }
-
 function buildBlockInner(groupA: GroupA, gateOutcomes: GateOutcome[]): string {
-  return [
-    `Head: ${groupA.head}`,
-    `Summary: ${summariseNumstat(groupA.numstat)}`,
-    '',
-    renderGroupA(groupA),
-    '',
-    renderGroupB(gateOutcomes)
-  ].join('\n')
+  return [`Head: ${groupA.head}`, '', renderGroupA(groupA), '', renderGroupB(gateOutcomes)].join('\n')
 }
 
 /**
