@@ -1,0 +1,5 @@
+---
+"@attalabs/aeg-core": minor
+---
+
+Every governance gate under `packages/aeg-core/bin/` now declares who it is for, and a test fails the build when one does not. Membership of the adopter-facing set was previously defined by ABSENCE from `coreCheckRegistry()`, so a deliberate exclusion and a forgotten port left exactly the same trace — nothing could tell "adopters should not run this" from "we forgot to ship it". `GATE_AUDIENCE` makes the second column something you have to say, with a reason: `{ shippedAs: '<core check name>' }` for gates adopters run, `{ internal: '<why not>' }` for the ones this repo keeps to itself, and a separate `NON_GATE_BINS` list for the forge writers and reporters in that directory that are not gates at all. Adding a file to `bin/` and nothing else is now a failing test that names it. Deliberately not a field on `CheckSpec`: adopter-defined checks in `vinaya.config.json` produce that same shape, so an audience field there would push an internal-governance question into adopter config, where it cannot be answered.
