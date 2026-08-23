@@ -172,6 +172,23 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'milestone create',
+    description: 'Create a GitHub Milestone from a validated body',
+    flags: [
+      { flag: '--title', description: 'Milestone title — free text, never parsed for a version' },
+      {
+        flag: '--body-file',
+        description: 'Path to the Milestone description (stream-safe; same bytes validated and sent)'
+      },
+      { flag: '--validate-only', description: 'Run every gate and report PASS without creating the Milestone' },
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
+    ],
+    details: [
+      "Refuses before any `gh` call when the goal is absent, an optional `Release:` field is present but not a version, or an optional `### Tranche intents` section (`- <slug>: <intent text>`) doesn't parse. `Release:` is the sole authority for the milestone's version — the title is never parsed for one."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'review post',
     description: 'Render, post, and self-verify a code-reviewer or security-review verdict comment on a PR',
     flags: [
