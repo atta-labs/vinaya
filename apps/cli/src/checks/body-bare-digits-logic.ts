@@ -85,7 +85,7 @@
  * carve-out from reopening that exact class.
  */
 
-import { anchoredRegionBounds, TIER_FIELD } from '@attalabs/aeg-core'
+import { type AnchorField, anchoredRegionBounds, TIER_FIELD } from '@attalabs/aeg-core'
 import { EVIDENCE_SUMMARY_PREFIX } from '../lib/numstat'
 import { PROJECT_SLUG, unwrapValue } from '@attalabs/aeg-forge-state'
 import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
@@ -486,9 +486,19 @@ const BOUNDED_ANCHOR_BLANK: Record<ExemptAnchorField, () => (line: string) => st
   EVIDENCE: makeBlankEvidenceField
 }
 
+/**
+ * The masking every anchor lookup shares: code first, then `<details>` — the
+ * order is load-bearing (a `<details>` tag quoted inside a fence must be inert
+ * before `maskDetailsBlocks` runs). Named so the resolver and the scan mask
+ * cannot drift into two compositions of the same two calls.
+ */
+function buildAnchorLookupMask(body: string): string {
+  return maskDetailsBlocks(maskCode(body))
+}
+
 /** Full masking pipeline — see module doc for the layer order and why it's load-bearing. */
 function buildScanMask(body: string): string {
-  let masked = maskDetailsBlocks(maskCode(body))
+  let masked = buildAnchorLookupMask(body)
   masked = blankAnchoredRegions(masked)
   masked = blankTokenReportSection(masked)
   masked = blankUnanchoredStructuralFields(masked)
@@ -564,6 +574,57 @@ function isLineLeadingListMarker(line: string, matchStart: number, rawToken: str
  * security review, finding 2 — the most severe of that round, closing a
  * bypass class rather than one instance of it).
  */
+/**
+ * Normalise a PR body the way every consumer of these anchors must.
+ *
+ * Zero-width stripping and named-entity decoding, in that order, before any
+ * masking or anchor lookup. Exported because a second consumer that skips this
+ * stage does not merely miss a character class — it resolves a DIFFERENT
+ * region, which is how four review rounds each closed one layer and opened the
+ * next.
+ */
+export function normalizeBody(rawBody: string): string {
+  return decodeNamedEntities(rawBody.replace(ZERO_WIDTH, ''))
+}
+
+export type ResolvedAnchoredRegion = {
+  /** The region's text, from the normalised body. */
+  region: string
+  /** The same span from the masked body — code and `<details>` blanked, offsets preserved. */
+  maskedRegion: string
+}
+
+/**
+ * The one resolver. Normalise, mask, locate the pair, slice both views.
+ *
+ * Every previous fix made `check-evidence-fresh` agree with `body-bare-digits`
+ * at one more layer — the same masker, then the same masker input, then the
+ * same normalisation — and each time the disagreement reappeared one stage
+ * earlier. Agreement by convention cannot terminate; there is always another
+ * stage. This function IS the stage list, so a caller cannot skip one.
+ *
+ * Returns `'hidden'` when the body carries the anchor but masking removed it —
+ * the region is inside a `<details>` block, where `body-bare-digits` blanks
+ * every digit in it and nothing can verify what it claims. That is a distinct
+ * outcome from `null` (no anchor at all), because "unverifiable" and
+ * "not adopted" must not be handled the same way.
+ */
+export function resolveAnchoredRegionForScan(
+  rawBody: string,
+  field: AnchorField
+): ResolvedAnchoredRegion | 'hidden' | null {
+  const normalised = normalizeBody(rawBody)
+  const maskedBody = buildAnchorLookupMask(normalised)
+  const bounds = anchoredRegionBounds(maskedBody, field)
+  if (bounds === null) {
+    return anchoredRegionBounds(normalised, field) !== null ? 'hidden' : null
+  }
+  return {
+    region: normalised.slice(bounds.innerStart, bounds.innerEnd),
+    maskedRegion: maskedBody.slice(bounds.innerStart, bounds.innerEnd)
+  }
+}
+
 export function checkBareDigits(rawBody: string): BareDigitScanResult {
   const body = decodeNamedEntities(rawBody.replace(ZERO_WIDTH, ''))
   const masked = buildScanMask(body)

@@ -364,6 +364,18 @@ function requireTokenField(flags: Map<string, string>, name: string): string {
 }
 
 function readFindingsFile(path: string | undefined, allowedSeverities: readonly string[]): Finding[] {
+  if (path === undefined) return []
+  // `--findings-file=` and `--findings-file` with nothing after it both yield
+  // `''`, which used to collapse onto "flag omitted" — so a caller who meant to
+  // pass findings silently posted none, and the BLOCKER-versus-APPROVE and
+  // CRITICAL/HIGH-versus-PASS cross-checks had nothing to fire on. Naming the
+  // flag and passing no path is a mistake, not a choice.
+  if (path.trim() === '') {
+    refuseCmd(
+      '`--findings-file` was given with no path.',
+      'Pass the path to the findings file, or omit the flag entirely if there are no findings.'
+    )
+  }
   if (!path) return []
   let content: string
   try {

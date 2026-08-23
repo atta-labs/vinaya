@@ -71,6 +71,3 @@ export function summariseNumstat(numstat: string): string {
  * Whether that is now exhaustive is a claim this comment does not make.
  */
 export const EVIDENCE_SUMMARY_PREFIX = 'Summary: '
-
-/** Matches the first emitted `Summary:` line in a region, capturing its value. */
-export const EVIDENCE_SUMMARY_LINE = /^Summary: (.+)$/m

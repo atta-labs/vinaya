@@ -39,9 +39,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { anchoredRegionBounds } from '@attalabs/aeg-core'
-import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { resolveAnchoredRegionForScan } from '../body-bare-digits-logic'
 import { compareEvidenceBlock } from '../evidence-fresh-logic'
 
 const CHECK_NAME = 'evidence-fresh'
@@ -124,46 +123,34 @@ function main(): void {
     process.exit(0)
   }
 
-  // `maskDetailsBlocks` first, then locate the pair. `anchoredRegionBounds`
-  // masks code only, while `body-bare-digits` runs `maskDetailsBlocks` before
-  // it locates the same pair — so an honest, complete `AEG:EVIDENCE` pair
-  // hidden inside a `<details>` block was the region THIS check verified while
-  // the digit check read the real pair below it, exempting a fabricated
-  // `Summary:` that nothing compared. Same class as the decoy-anchor findings
-  // the module doc records: both sides must resolve the SAME pair, not merely
-  // agree on how to read one.
-  // Masked ONCE, body-wide, exactly as `body-bare-digits` does it — then both
-  // the pair location and the summary scan are read off that same result.
-  // Masking is context-sensitive: a `<details>` pair straddling the region's
-  // anchors is invisible from inside the region, so masking the region alone
-  // is a different operation from slicing it out of a masked body.
-  const maskedBody = maskDetailsBlocks(maskCode(body))
-  const bounds = anchoredRegionBounds(maskedBody, 'EVIDENCE')
-  if (bounds === null) {
-    // Absent is fine — the anchor is opt-in, like every other AEG anchor, and
-    // a body that hasn't adopted it yet is not broken by not adopting it.
-    // PRESENT-BUT-MASKED is not fine: a `<details>` pair wrapping the whole
-    // region hides it from this check while `body-bare-digits` blanks every
-    // digit in it, so a fabricated `Summary:` would be neither flagged nor
-    // compared. Refuse rather than skip.
-    if (anchoredRegionBounds(body, 'EVIDENCE') !== null) {
-      emitCheckError({
-        schema: CHECK_SCHEMA_VERSION,
-        check: CHECK_NAME,
-        severity: 'error',
-        message:
-          'evidence-fresh: the AEG:EVIDENCE region is inside a `<details>` block or a code fence, where nothing can verify it. Move the region into the body itself.',
-        agent_recovery_prompt:
-          'Move the `AEG:EVIDENCE` region out of the `<details>` block or code fence that encloses it, then re-run `vinaya check evidence-fresh`.'
-      })
-      process.exit(1)
-    }
+  // One resolver, shared with `body-bare-digits`. Four review rounds each made
+  // these two sides agree at one more layer — same masker, same masker input,
+  // same normalisation — and each time the disagreement reappeared one stage
+  // earlier, because agreement by convention has no last layer. Calling the
+  // same function is what ends that.
+  const resolved = resolveAnchoredRegionForScan(body, 'EVIDENCE')
+  if (resolved === null) {
+    // No anchor at all. Opt-in, like every other AEG anchor — a body that
+    // hasn't adopted it yet is not broken by not adopting it.
     process.exit(0)
   }
-  // Sliced from the RAW body: the mask is a same-length space-fill, so the
-  // offsets address the same text.
-  const region = body.slice(bounds.innerStart, bounds.innerEnd)
-  const maskedRegion = maskedBody.slice(bounds.innerStart, bounds.innerEnd)
+  if (resolved === 'hidden') {
+    // The anchor is there but masking removed it: the region is inside a
+    // `<details>` block, where `body-bare-digits` blanks every digit and
+    // nothing can verify what it claims. Refuse rather than skip — an
+    // unverifiable region is not an unadopted one.
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message:
+        'evidence-fresh: the AEG:EVIDENCE region is enclosed by a `<details>` block, so nothing can verify what it claims. Three ways to land here: the region really is inside a block; an UNCLOSED `<details>` tag above it encloses it (an unterminated tag runs to the end of the body); or the only anchor pair in this body is a quoted copy inside a `<details>` reference brief. For the last one, put the quoted anchors in a code fence instead — a fenced copy is correctly ignored.',
+      agent_recovery_prompt:
+        'If the region is genuinely inside a `<details>` block, move it into the body. If you did not open one, find the unclosed `<details>` tag above it and wrap that tag in backticks. If the anchors are only a quoted copy inside a reference brief, put that copy in a code fence rather than a `<details>` block. Then re-run `vinaya check evidence-fresh`.'
+    })
+    process.exit(1)
+  }
+  const { region, maskedRegion } = resolved
 
   const prNumberStr = process.env.PR_NUMBER
   if (!prNumberStr) {

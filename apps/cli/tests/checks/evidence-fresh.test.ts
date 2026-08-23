@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { resolveAnchoredRegionForScan } from '../../src/checks/body-bare-digits-logic'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -266,5 +267,84 @@ describe('the masked region comes from the masked body, not from masking the reg
   it('falls back to masking the region when no masked region is supplied', () => {
     const region = [`Head: ${HEAD}`, HONEST, '', '```', NUMSTAT, '```'].join('\n')
     expect(compareEvidenceBlock(region, HEAD, NUMSTAT).status).toBe('pass')
+  })
+})
+
+describe('normalisation runs before masking, on the same stage as the digit check', () => {
+  const HEAD = 'a'.repeat(40)
+  const NUMSTAT = '1\t0\ta.ts'
+  const HONEST = 'Summary: 1 file changed, 1 insertion(+), 0 deletions(-)'
+  const FAKE = 'Summary: 900 files changed, 12000 insertions(+), 3 deletions(-)'
+  const ZW = '​'
+
+  /**
+   * `checkBareDigits` strips zero-width characters and decodes named HTML
+   * entities BEFORE masking. While this check masked the raw body, a
+   * `&lt;details&gt;` or one zero-width space inside an anchor marker was a
+   * real tag to one side and inert text to the other. The sharpest form needs
+   * no decoy at all: the digit check resolves the region and exempts a
+   * fabricated `Summary:` while this side sees no anchor and exits 0.
+   *
+   * This mirrors the bin's pipeline rather than calling it, so the assertion is
+   * about the stage order, not about `gh`.
+   */
+  function resolve(body: string): string {
+    const resolved = resolveAnchoredRegionForScan(body, 'EVIDENCE')
+    if (resolved === null) return 'unadopted'
+    if (resolved === 'hidden') return 'refuse'
+    return compareEvidenceBlock(resolved.region, HEAD, NUMSTAT, resolved.maskedRegion).status
+  }
+
+  const region = (summary: string) => [`Head: ${HEAD}`, summary, '', '```', NUMSTAT, '```'].join('\n')
+  const anchored = (summary: string) =>
+    ['<!-- AEG:EVIDENCE:START -->', region(summary), '<!-- AEG:EVIDENCE:END -->'].join('\n')
+
+  it('catches a decoy pair hidden by an entity-encoded <details>', () => {
+    const body = ['## Evidence', '', '&lt;details&gt;', anchored(HONEST), '&lt;/details&gt;', '', anchored(FAKE)].join(
+      '\n'
+    )
+    expect(resolve(body)).toBe('fail')
+  })
+
+  it('catches a decoy pair hidden by a zero-width character inside the <details> tag', () => {
+    const body = ['## Evidence', '', `<de${ZW}tails>`, anchored(HONEST), '</details>', '', anchored(FAKE)].join('\n')
+    expect(resolve(body)).toBe('fail')
+  })
+
+  // No decoy at all — one invisible character in the START marker used to make
+  // this check exit 0 while the digit check exempted the fabricated line.
+  it('catches a zero-width character inside the START marker', () => {
+    const body = [
+      '## Evidence',
+      '',
+      `<!-- AEG:EVIDENCE:STA${ZW}RT -->`,
+      region(FAKE),
+      '<!-- AEG:EVIDENCE:END -->'
+    ].join('\n')
+    expect(resolve(body)).toBe('fail')
+  })
+
+  it('still passes an honest body', () => {
+    expect(resolve(['## Evidence', '', anchored(HONEST)].join('\n'))).toBe('pass')
+  })
+
+  // An unterminated tag encloses everything after it, for `maskDetailsBlocks`
+  // and for a renderer alike — so refusing is right. The message has to say so,
+  // because the author never opened a block around the region.
+  it('refuses when an unclosed <details> above the region encloses it', () => {
+    expect(resolve(['## Evidence', '', '<details>', '', anchored(HONEST)].join('\n'))).toBe('refuse')
+  })
+
+  it('ignores an anchor pair quoted inside a code fence — the safe way to show one', () => {
+    const body = ['## Evidence', '', '```', anchored(FAKE), '```'].join('\n')
+    expect(resolve(body)).toBe('unadopted')
+  })
+
+  // Structurally indistinguishable from hiding a region, so it refuses — but
+  // the message names this case and points at the fence, which is why the test
+  // above exists beside it.
+  it('refuses when the only pair is a quoted copy inside a <details> reference brief', () => {
+    const body = ['## Evidence', '', '<details>', anchored(HONEST), '</details>'].join('\n')
+    expect(resolve(body)).toBe('refuse')
   })
 })
