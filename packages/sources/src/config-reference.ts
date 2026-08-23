@@ -201,6 +201,15 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "issue": { "sections": [{ "builtin": "issueRationale" }] } }`
   },
   {
+    key: 'briefSchema.milestone',
+    type: '{ sections: BriefSection[] } (optional)',
+    semantics: [
+      'Required sections for a Milestone body — checked by `vinaya milestone create` before any `gh` write, same shape as `briefSchema.pr`/`briefSchema.issue`.',
+      "`checkMilestoneShape`'s own refusal (goal absent, `Release:` present but malformed, the `### Tranche intents` section unparseable) is unconditional and runs whether or not this key is set — mirroring the Issue-only content gate (`checkBlastRadiusScope`/`checkNoBriefContent`/`checkRationaleNamesDocs`), config decides which EXTRA sections are required, never whether that check runs. This key only adds an adopter's own custom `heading`/`field`/`phrase` sections, or opts into the `milestoneShape` builtin explicitly for the same check surfaced through this path too."
+    ],
+    example: `{ "milestone": { "sections": [{ "builtin": "milestoneShape" }] } }`
+  },
+  {
     key: 'briefSchema.ack',
     type: 'BriefBuiltin[] (optional)',
     semantics: [

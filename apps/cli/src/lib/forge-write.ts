@@ -34,6 +34,7 @@ import {
   checkForField,
   checkForgeTitle,
   checkIssueRationale,
+  checkMilestoneShape,
   checkNoBriefContent,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
@@ -182,7 +183,7 @@ export function refuse(errors: CheckError[]): never {
  * config print green over an unvalidated forge write. No config / no
  * `briefSchema` for this kind → an empty set (adopter-generic pass-through).
  */
-export function resolveSections(kind: 'pr' | 'issue', retryCommand: string): BriefSection[] {
+export function resolveSections(kind: 'pr' | 'issue' | 'milestone', retryCommand: string): BriefSection[] {
   const result = loadConfigChecked()
   if (!result.ok) {
     refuse([
@@ -260,7 +261,11 @@ function runBuiltin(name: BriefBuiltin, input: ForgeValidationInput): string[] {
     for: () => checkForField(body),
     closesN: () => checkBriefClosesN(body),
     premiseCoverage: () => checkPremiseCoverage(body, changedFiles),
-    issueRationale: () => checkIssueRationale(body)
+    issueRationale: () => checkIssueRationale(body),
+    milestoneShape: () => {
+      const result = checkMilestoneShape(body)
+      return { errors: result.status === 'fail' ? result.errors : [] }
+    }
   }
   return table[name]().errors
 }
@@ -286,7 +291,9 @@ const BUILTIN_RECOVERY: Record<BriefBuiltin, string> = {
   closesN: 'Add a `Closes #<N>` reference naming the task Issue to the body, then re-run `{cmd}`.',
   premiseCoverage: 'Add a `Premise:` assertion whose path matches a file this change touches, then re-run `{cmd}`.',
   issueRationale:
-    'Add the missing Planner-rationale field named above (every task Issue carries all eight fields), then re-run `{cmd}`.'
+    'Add the missing Planner-rationale field named above (every task Issue carries all eight fields), then re-run `{cmd}`.',
+  milestoneShape:
+    'Fix the Milestone description as named above — a goal, an optional well-formed `Release:` field, and an optional parseable `### Tranche intents` section — then re-run `{cmd}`.'
 }
 
 function escapeRegExp(literal: string): string {

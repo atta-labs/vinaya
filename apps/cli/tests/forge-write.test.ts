@@ -125,6 +125,28 @@ describe('validateForgeWrite — brief-schema gate', () => {
   })
 })
 
+describe('validateForgeWrite — milestoneShape builtin', () => {
+  it('passes a well-formed milestone body', () => {
+    const body = ['Ship the milestone model.', '', 'Release: 1.0.0'].join('\n')
+    const errors = validateForgeWrite({ ...base, body, sections: [{ builtin: 'milestoneShape' }] })
+    expect(errors).toEqual([])
+  })
+
+  it('refuses a milestone body with no goal', () => {
+    const body = 'Release: 1.0.0'
+    const errors = validateForgeWrite({ ...base, body, sections: [{ builtin: 'milestoneShape' }] })
+    expect(errors.length).toBe(1)
+    expect(errors[0]?.message).toContain('goal')
+  })
+
+  it('refuses a milestone body with a malformed Release:', () => {
+    const body = 'The goal.\n\nRelease: soon'
+    const errors = validateForgeWrite({ ...base, body, sections: [{ builtin: 'milestoneShape' }] })
+    expect(errors.length).toBe(1)
+    expect(errors[0]?.message).toContain('Release')
+  })
+})
+
 // The three Issue-only content checks `packages/aeg-core/bin/open-issue.ts`
 // gates task Issues on — never wired into `apps/cli`'s real validation path
 // until this task. `validateIssueContent` is pure over its inputs;

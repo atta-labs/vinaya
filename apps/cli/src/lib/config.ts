@@ -134,7 +134,8 @@ export const BRIEF_BUILTINS = [
   'for',
   'closesN',
   'premiseCoverage',
-  'issueRationale'
+  'issueRationale',
+  'milestoneShape'
 ] as const
 export type BriefBuiltin = (typeof BRIEF_BUILTINS)[number]
 
@@ -155,6 +156,13 @@ export type BriefSection = z.infer<typeof BriefSectionSchema>
 const BriefSchemaSchema = z.object({
   pr: z.object({ sections: z.array(BriefSectionSchema) }).optional(),
   issue: z.object({ sections: z.array(BriefSectionSchema) }).optional(),
+  // Same shape as pr/issue — an adopter's required sections for `vinaya
+  // milestone create` bodies. `checkMilestoneShape`'s own goal/Release:/
+  // intents refusal is unconditional (called directly by the command, not
+  // config-gated, mirroring the Issue-only A/B/D content gate) — this key
+  // only lets an adopter layer their own custom `heading`/`field`/`phrase`
+  // sections on top, or opt into the `milestoneShape` builtin explicitly.
+  milestone: z.object({ sections: z.array(BriefSectionSchema) }).optional(),
   // Builtins this adopter has DELIBERATELY dropped, by builtin name
   // (`closesN`, `tier`, …). Purely a silencer for `vinaya doctor`'s
   // brief-schema divergence report — it grants nothing and gates nothing, so
