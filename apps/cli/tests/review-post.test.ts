@@ -482,3 +482,24 @@ describe('`--` is the end-of-options marker, not a flag', () => {
     expect(unknownFlags(['--bogus', '--'])).toEqual(['--bogus'])
   })
 })
+
+describe('`--` ends the options for BOTH the refusal and the parser', () => {
+  // The refusal stopped at `--` while `parseFlags` read straight past it, so
+  // `--verdict X -- --verdict Y` posted Y with the refusal blind to it, and
+  // `-- --print-only` disabled the refusal wholesale — #184 behind two
+  // characters. The comment asserting they agreed was the false part.
+  it('does not let a token past `--` override a real flag', () => {
+    const m = parseFlags(['--verdict', 'REQUEST_CHANGES', '--', '--verdict', 'APPROVE'])
+    expect(m.get('--verdict')).toBe('REQUEST_CHANGES')
+  })
+
+  it('parses nothing at all after the marker', () => {
+    const m = parseFlags(['--', '--role', 'security'])
+    expect(m.size).toBe(0)
+  })
+
+  it('still parses everything before it', () => {
+    const m = parseFlags(['--role', 'security', '--'])
+    expect(m.get('--role')).toBe('security')
+  })
+})

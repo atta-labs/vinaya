@@ -232,3 +232,39 @@ describe('the exempt Summary line is the compared Summary line', () => {
     expect(compareEvidenceBlock(region, HEAD, NUMSTAT).status).toBe('pass')
   })
 })
+
+describe('the masked region comes from the masked body, not from masking the region', () => {
+  const HEAD = 'a'.repeat(40)
+  const NUMSTAT = '1\t0\ta.ts'
+  const HONEST = 'Summary: 1 file changed, 1 insertion(+), 0 deletions(-)'
+  const FAKE = 'Summary: 900 files changed, 12000 insertions(+), 3 deletions(-)'
+
+  /**
+   * Masking is context-sensitive: a `<details>` pair whose tags sit OUTSIDE the
+   * region is invisible when the region is masked alone, while the other side —
+   * which masks the whole body and slices — sees the region blanked entirely.
+   * The honest line was read here and the fabricated one was exempt there.
+   */
+  it('uses a caller-supplied masked region when the enclosing context is masked', () => {
+    const region = [`Head: ${HEAD}`, HONEST, FAKE, '', '```', NUMSTAT, '```'].join('\n')
+    const maskedRegion = region
+      .split('\n')
+      .map((l) => ' '.repeat(l.length))
+      .join('\n')
+    // Every line blanked: no Summary survives, so there is nothing to compare
+    // and the block is not silently blessed on the strength of a hidden line.
+    expect(compareEvidenceBlock(region, HEAD, NUMSTAT, maskedRegion).status).toBe('pass')
+  })
+
+  it('compares the raw text of whichever line the mask leaves standing', () => {
+    const region = [`Head: ${HEAD}`, FAKE, '', '```', NUMSTAT, '```'].join('\n')
+    const r = compareEvidenceBlock(region, HEAD, NUMSTAT, region)
+    expect(r.status).toBe('fail')
+    if (r.status === 'fail') expect(r.errors.join('\n')).toContain('900 files changed')
+  })
+
+  it('falls back to masking the region when no masked region is supplied', () => {
+    const region = [`Head: ${HEAD}`, HONEST, '', '```', NUMSTAT, '```'].join('\n')
+    expect(compareEvidenceBlock(region, HEAD, NUMSTAT).status).toBe('pass')
+  })
+})

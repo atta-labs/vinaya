@@ -313,6 +313,10 @@ export function parseFlags(args: string[]): Map<string, string> {
   const map = new Map<string, string>()
   for (let i = 0; i < args.length; i++) {
     const a = args[i] as string
+    // `--` ends the options. `unknownFlags` stops scanning here, so if this did
+    // not, an argument past the marker would silently override a real flag —
+    // `--verdict X -- --verdict Y` posting `Y` with the refusal blind to it.
+    if (a === '--') break
     if (!a.startsWith('--')) continue
     // `--flag=value` keyed on the whole token used to land in the map under a
     // name nothing reads, so the flag was accepted by the refusal check and
@@ -516,9 +520,11 @@ export function unknownFlags(args: string[], known: readonly string[] = [...VALU
       if (next !== undefined && !next.startsWith('--')) i++
       continue
     }
-    // `--` is the POSIX end-of-options marker, not a flag named `--`. This
-    // command takes no positional arguments, so nothing after it is read —
-    // but refusing it with a list of valid flags explains nothing.
+    // `--` is the POSIX end-of-options marker, not a flag named `--`. Refusing
+    // it with a list of valid flags would explain nothing. `parseFlags` stops
+    // at the same token, so the two agree about where the options end — an
+    // earlier version of this comment asserted that agreement without it
+    // holding, which let an argument past the marker override a real flag.
     if (a === '--') break
     // A single dash is the near-miss that motivated this: `-print-only` is one
     // keystroke from the spelling that shipped a verdict nobody asked for.

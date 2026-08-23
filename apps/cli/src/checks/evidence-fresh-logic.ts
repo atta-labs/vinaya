@@ -44,10 +44,19 @@ const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
  * of the same hole. `maskCode` blanks with same-length spaces, so a line index
  * in the masked text addresses the same line in the raw text, and the value
  * compared is the real one.
+ *
+ * `maskedRegion` matters because masking is CONTEXT-SENSITIVE. `body-bare-digits`
+ * masks the whole body and slices the region out of the result; masking the
+ * region alone is not the same operation. A `<details>` pair wrapping the
+ * region — one tag above the START anchor, one below the END — is invisible
+ * from inside the region, so this side saw no masking and read the honest
+ * line while the other side saw the entire region blanked. The bin passes the
+ * body-masked slice; the fallback is for callers holding a region alone, where
+ * no straddling context exists to miss.
  */
-export function firstScannableSummary(region: string): string | null {
+export function firstScannableSummary(region: string, maskedRegion?: string): string | null {
   const raw = region.split('\n')
-  const masked = maskDetailsBlocks(maskCode(region)).split('\n')
+  const masked = (maskedRegion ?? maskDetailsBlocks(maskCode(region))).split('\n')
   for (let i = 0; i < masked.length; i++) {
     if ((masked[i] as string).startsWith(EVIDENCE_SUMMARY_PREFIX)) {
       return (raw[i] as string).slice(EVIDENCE_SUMMARY_PREFIX.length).trimEnd()
@@ -65,7 +74,8 @@ export function firstScannableSummary(region: string): string | null {
 export function compareEvidenceBlock(
   region: string,
   resolvedHead: string,
-  actualNumstat: string
+  actualNumstat: string,
+  maskedRegion?: string
 ): EvidenceCompareResult {
   const headMatch = region.match(HEAD_LINE)
   const fences = [...region.matchAll(FENCE)].map((m) => (m[1] ?? '').trim())
@@ -106,7 +116,7 @@ export function compareEvidenceBlock(
   // rather than attested — and it must be, or the block's headline figure
   // would be its only unverified claim. Absent is fine: bodies written before
   // the emitter produced this line are still valid.
-  const stored = firstScannableSummary(region)
+  const stored = firstScannableSummary(region, maskedRegion)
   if (stored !== null) {
     const expected = summariseNumstat(actual)
     if (stored !== expected) {

@@ -39,7 +39,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { anchoredRegion } from '@attalabs/aeg-core'
+import { anchoredRegionBounds } from '@attalabs/aeg-core'
+import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { compareEvidenceBlock } from '../evidence-fresh-logic'
 
@@ -123,12 +124,46 @@ function main(): void {
     process.exit(0)
   }
 
-  const region = anchoredRegion(body, 'EVIDENCE')
-  if (region === null) {
-    // The anchor is opt-in, like every other AEG anchor — a body that
-    // hasn't adopted it yet is not broken by not adopting it.
+  // `maskDetailsBlocks` first, then locate the pair. `anchoredRegionBounds`
+  // masks code only, while `body-bare-digits` runs `maskDetailsBlocks` before
+  // it locates the same pair — so an honest, complete `AEG:EVIDENCE` pair
+  // hidden inside a `<details>` block was the region THIS check verified while
+  // the digit check read the real pair below it, exempting a fabricated
+  // `Summary:` that nothing compared. Same class as the decoy-anchor findings
+  // the module doc records: both sides must resolve the SAME pair, not merely
+  // agree on how to read one.
+  // Masked ONCE, body-wide, exactly as `body-bare-digits` does it — then both
+  // the pair location and the summary scan are read off that same result.
+  // Masking is context-sensitive: a `<details>` pair straddling the region's
+  // anchors is invisible from inside the region, so masking the region alone
+  // is a different operation from slicing it out of a masked body.
+  const maskedBody = maskDetailsBlocks(maskCode(body))
+  const bounds = anchoredRegionBounds(maskedBody, 'EVIDENCE')
+  if (bounds === null) {
+    // Absent is fine — the anchor is opt-in, like every other AEG anchor, and
+    // a body that hasn't adopted it yet is not broken by not adopting it.
+    // PRESENT-BUT-MASKED is not fine: a `<details>` pair wrapping the whole
+    // region hides it from this check while `body-bare-digits` blanks every
+    // digit in it, so a fabricated `Summary:` would be neither flagged nor
+    // compared. Refuse rather than skip.
+    if (anchoredRegionBounds(body, 'EVIDENCE') !== null) {
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'error',
+        message:
+          'evidence-fresh: the AEG:EVIDENCE region is inside a `<details>` block or a code fence, where nothing can verify it. Move the region into the body itself.',
+        agent_recovery_prompt:
+          'Move the `AEG:EVIDENCE` region out of the `<details>` block or code fence that encloses it, then re-run `vinaya check evidence-fresh`.'
+      })
+      process.exit(1)
+    }
     process.exit(0)
   }
+  // Sliced from the RAW body: the mask is a same-length space-fill, so the
+  // offsets address the same text.
+  const region = body.slice(bounds.innerStart, bounds.innerEnd)
+  const maskedRegion = maskedBody.slice(bounds.innerStart, bounds.innerEnd)
 
   const prNumberStr = process.env.PR_NUMBER
   if (!prNumberStr) {
@@ -173,7 +208,7 @@ function main(): void {
     process.exit(1)
   }
 
-  const result = compareEvidenceBlock(region, resolvedHead, actualNumstat)
+  const result = compareEvidenceBlock(region, resolvedHead, actualNumstat, maskedRegion)
   if (result.status === 'fail') {
     for (const message of result.errors) {
       emitCheckError({
