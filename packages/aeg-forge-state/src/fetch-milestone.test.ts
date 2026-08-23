@@ -267,6 +267,17 @@ describe('listActiveTrancheSlugs', () => {
 
     expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
   })
+
+  it('a single-word, mixed-case free-text title is also never listed as a phantom tranche', () => {
+    // Code review round 2: the shape guard first shipped by reusing
+    // PROJECT_SLUG, whose `i` flag matches capital letters — so a one-word
+    // title with no space and no dash ("MilestoneModel", "Vinaya") slipped
+    // through and still phantom-matched. Every real tranche slug in this
+    // repo is lowercase, so the guard must be case-sensitive.
+    mockGh([{ title: 'MilestoneModel', description: 'The goal.', state: 'open' }], [])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
 })
 
 describe('listArchivedTrancheSlugs', () => {

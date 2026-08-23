@@ -50,30 +50,40 @@ function pathText(body: string): string {
   return stripCode(body, { inlineSpans: 'keep' })
 }
 
+/** The actual reader, over already-stripped text — shared so `checkMilestoneShape` (which already holds `text`) never pays for a second `stripCode` pass over the same body. */
+function releaseFieldFromText(text: string): ReleaseField {
+  const m = text.match(RELEASE_FIELD)
+  if (!m) return { declared: false, value: null }
+  const raw = unwrapValue(m[1] ?? '')
+  return { declared: true, value: RELEASE_VALUE.test(raw) ? raw : null }
+}
+
 /**
  * Reads the `Release:` field. `declared: true, value: null` is the malformed
  * case — the field exists but its value isn't a version — distinct from
  * `declared: false` (no field at all, which is a valid, versionless milestone).
  */
 export function releaseFieldFromBody(body: string): ReleaseField {
-  const m = pathText(body).match(RELEASE_FIELD)
-  if (!m) return { declared: false, value: null }
-  const raw = unwrapValue(m[1] ?? '')
-  return { declared: true, value: RELEASE_VALUE.test(raw) ? raw : null }
+  return releaseFieldFromText(pathText(body))
 }
 
 const INTENTS_HEADING = /^#{1,6}\s*Tranche intents\s*$/im
 const NEXT_HEADING = /^#{1,6}\s+\S/m
 const INTENT_BULLET = /^-\s+([a-z0-9][a-z0-9-]*)\s*:\s*(.+)$/i
 
-/** Slices the intents section out of `pathText(body)` — from just after the heading to the next heading or end. */
-function intentsSectionText(text: string): string | null {
+/** The intents heading's own span plus its section body — `null` when there is no heading at all. */
+function intentsBlock(text: string): { start: number; end: number; section: string } | null {
   const start = text.match(INTENTS_HEADING)
   if (!start || start.index === undefined) return null
   const rest = text.slice(start.index + start[0].length)
   const next = rest.match(NEXT_HEADING)
-  const end = next && next.index !== undefined ? next.index : rest.length
-  return rest.slice(0, end)
+  const sectionEnd = next && next.index !== undefined ? next.index : rest.length
+  return { start: start.index, end: start.index + start[0].length + sectionEnd, section: rest.slice(0, sectionEnd) }
+}
+
+/** Slices the intents section out of `pathText(body)` — from just after the heading to the next heading or end. */
+function intentsSectionText(text: string): string | null {
+  return intentsBlock(text)?.section ?? null
 }
 
 /**
@@ -100,14 +110,9 @@ function parseIntents(text: string): { intents: MilestoneIntent[]; malformed: bo
 
 /** Removes the first `Release:` line and the whole intents section (heading included) from `pathText(body)`. */
 function goalRemainder(text: string): string {
-  let remainder = text.replace(RELEASE_FIELD, '')
-  const start = remainder.match(INTENTS_HEADING)
-  if (start && start.index !== undefined) {
-    const rest = remainder.slice(start.index + start[0].length)
-    const next = rest.match(NEXT_HEADING)
-    const end = next && next.index !== undefined ? next.index : rest.length
-    remainder = remainder.slice(0, start.index) + rest.slice(end)
-  }
+  const withoutRelease = text.replace(RELEASE_FIELD, '')
+  const block = intentsBlock(withoutRelease)
+  const remainder = block ? withoutRelease.slice(0, block.start) + withoutRelease.slice(block.end) : withoutRelease
   return remainder.trim()
 }
 
@@ -121,7 +126,7 @@ export function checkMilestoneShape(body: string): MilestoneShapeResult {
   const errors: string[] = []
   const text = pathText(body)
 
-  const release = releaseFieldFromBody(body)
+  const release = releaseFieldFromText(text)
   if (release.declared && release.value === null) {
     errors.push(
       'milestone-validation Release: the `Release:` field is present but is not a version — ' +

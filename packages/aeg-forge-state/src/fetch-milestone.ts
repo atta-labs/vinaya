@@ -1,6 +1,6 @@
 import { type GhIssue, ghApiGet, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } from './gh'
 import { trancheLabel, trancheSlugOf } from './labels'
-import { PROJECT_SLUG, unwrapValue } from './list-tasks'
+import { unwrapValue } from './list-tasks'
 import { stripCode } from './strip-code'
 import type { Lifecycle } from '@attalabs/aeg-types'
 
@@ -115,6 +115,21 @@ function matchesLegacyMilestone(milestones: GhMilestone[], slug: string): GhMile
 }
 
 /**
+ * Lowercase, digits, and hyphens only, with AT LEAST ONE hyphen (two or more
+ * segments) — every real tranche slug in this repo's own forge is shaped
+ * this way (`aeg-forge-state-v1`, `done-v1`, `tranche-0`, …), and no real one
+ * is a single bare word. Deliberately NOT `list-tasks.ts`'s `PROJECT_SLUG`
+ * (`/^[a-z0-9][a-z0-9-]*$/i`): that shape is right for a `Project:` field
+ * value, which a human may type in any case, but wrong here — its `i` flag
+ * let a single-word, mixed-case Architect title (`MilestoneModel`, `Vinaya`)
+ * pass as slug-shaped in an earlier version of this guard (code review round
+ * 2 caught it live), and its single-segment tolerance would pass a lowercase
+ * one-word title the same way. Requiring a hyphen is the one property every
+ * real slug shares that an ordinary short free-text title is unlikely to.
+ */
+const TRANCHE_SLUG_SHAPE = /^[a-z0-9]+(?:-[a-z0-9]+)+$/
+
+/**
  * Every Milestone whose title is even SLUG-SHAPED — the candidate universe
  * for "is this title a legacy tranche" enumeration (vinaya-milestone-model-v1
  * task 2, fixing a live bug a code review caught). Before this guard, the
@@ -124,16 +139,11 @@ function matchesLegacyMilestone(milestones: GhMilestone[], slug: string): GhMile
  * only while every Milestone was created 1:1 by the Planner with
  * title-equals-slug. Once the Architect can create a Milestone with an
  * arbitrary free-text title (a product goal, not a tranche), that title
- * trivially legacy-matched itself and the Milestone was listed as a phantom
- * tranche, its raw description read as the "goal". `PROJECT_SLUG` (this
- * package's own `list-tasks.ts`) is reused rather than a second shape regex
- * — it already excludes anything with a space, an em dash, or a capital
- * letter, which covers every real free-text Milestone title while still
- * accepting the loosely-shaped legacy titles this repo actually has
- * (`tranche-0`, `done-v1`, `sprint-42`, …).
+ * could trivially legacy-match itself and the Milestone would be listed as a
+ * phantom tranche, its raw description read as the "goal".
  */
 function slugShapedTitles(milestones: GhMilestone[]): string[] {
-  return milestones.map((m) => m.title).filter((t) => PROJECT_SLUG.test(t))
+  return milestones.map((m) => m.title).filter((t) => TRANCHE_SLUG_SHAPE.test(t))
 }
 
 function factsFromLegacyMilestone(milestone: GhMilestone): MilestoneFacts {
