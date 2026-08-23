@@ -8,7 +8,9 @@ purely from GitHub forge objects — no topology file required:
   for that slug (a real, expected transitional state during rollout)
 - `tranche:<slug>`-labeled Issues → the `Task[]` list, with `id`/`title`
   parsed from the `[<slug>] <id> — <title>` Issue-title convention,
-  `projects` from `project:<name>` labels, and `dependsOn`/`conflictsWith`
+  `projects` from the Issue body's `**Project:**` field (a FIELD, never a
+  label — `#614` dropped the `project:*` family, and `list-tasks.ts`
+  explicitly ignores a residual one), and `dependsOn`/`conflictsWith`
   edges parsed from each Issue's "Dependency rationale" section — hardened
   against both the topology file's single comma-joined backtick-span form
   and the multi-span prose form real Issue bodies also use
