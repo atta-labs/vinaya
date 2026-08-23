@@ -422,7 +422,7 @@ function captureStreams(cmd: string, args: string[]): CaptureResult {
  * `verify-docs` has no machine-readable payload to validate, so its exit code
  * is the only corroboration available there.
  */
-function coherenceFailedCount(stdout: string): number | null {
+function coherenceFailedCount(stdout: string): number | 'forge-unavailable' | null {
   const parsed = parseJsonSafe<unknown>(stdout)
   if (typeof parsed !== 'object' || parsed === null) return null
   // A forge-degraded sweep is INCOMPLETE, not clean. `verify-coherence` emits
@@ -439,7 +439,7 @@ function coherenceFailedCount(stdout: string): number | null {
   // property on purpose, and matches `--check-baseline`'s own stated doctrine:
   // an unavailable tool carries no honest count, so it is never compared as if
   // it scored 0.
-  if ((parsed as { forgeUnavailable?: unknown }).forgeUnavailable === true) return null
+  if ((parsed as { forgeUnavailable?: unknown }).forgeUnavailable === true) return 'forge-unavailable'
   const summary = (parsed as { summary?: unknown }).summary
   if (typeof summary !== 'object' || summary === null) return null
   const failed = (summary as { failed?: unknown }).failed
@@ -515,7 +515,8 @@ export function currentFindingCounts(): FindingCount[] {
   // and is not part of the payload. Including it is what made a healthy run
   // report UNAVAILABLE (#173).
   const coherence = captureStreams('bun', ['packages/aeg-core/bin/verify-coherence.ts', '--json'])
-  const coherenceFailed = coherence.ranAtAll ? coherenceFailedCount(coherence.stdout) : null
+  const coherenceRead = coherence.ranAtAll ? coherenceFailedCount(coherence.stdout) : null
+  const coherenceFailed = typeof coherenceRead === 'number' ? coherenceRead : null
   // Three ways to be unavailable: the tool could not run, its stdout is not
   // the report this expects, or it ran against a forge it could not reach and
   // its count is therefore incomplete (`forgeUnavailable`, see above).
@@ -525,6 +526,15 @@ export function currentFindingCounts(): FindingCount[] {
   // were split: concatenated stderr used to make every such stdout
   // unparseable, so the wrong-shape case never got that far.
   const coherenceUnavailable = !coherence.ranAtAll || coherenceFailed === null
+  // `unavailable` covers two different facts and the operator needs to know
+  // which: a tool that could not run, and a tool that ran fine against a forge
+  // it could not reach. `fetchForgeFacts`'s own `reason` never reaches stderr,
+  // so without this the second case renders as a bare "tool failed to run" for
+  // a run that succeeded — a false statement this file's own fix introduced.
+  const coherenceReason =
+    coherenceRead === 'forge-unavailable'
+      ? 'ran, but could not reach the forge — its finding count is incomplete, not clean'
+      : undefined
   const coherenceFindingCount = coherenceFailed ?? 0
 
   const docsDiagnostic = firstStderrLine(docs.stderr)
@@ -544,7 +554,9 @@ export function currentFindingCounts(): FindingCount[] {
       findingCount: coherenceFindingCount,
       // Shown whether or not the run is unavailable: `--json` puts the report
       // on stdout, so ANY stderr here is a diagnostic the operator should see.
-      ...(coherenceDiagnostic ? { diagnostic: coherenceDiagnostic } : {}),
+      // The forge-outage reason wins when both exist — it explains the verdict,
+      // where a stderr line only accompanies it.
+      ...((coherenceReason ?? coherenceDiagnostic) ? { diagnostic: coherenceReason ?? coherenceDiagnostic } : {}),
       unavailable: coherenceUnavailable
     }
   ]
@@ -688,7 +700,7 @@ function runCheckBaselineMode(baselineFile: string): void {
   if (unavailable.length > 0) {
     console.error('\nverify-dispatch --check-baseline FAILED — tool(s) produced no honest count to compare:')
     for (const u of unavailable) {
-      console.error(`  ✗ ${u.tool}: UNAVAILABLE (tool failed to run)`)
+      console.error(`  ✗ ${u.tool}: UNAVAILABLE (no usable finding count)`)
       if (u.diagnostic) console.error(`      ↳ ${u.diagnostic}`)
     }
     console.error(
@@ -794,7 +806,7 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
     const capturedAt = captured?.capturedAt ?? nowIso
     console.log(
       raw.unavailable
-        ? `  ${raw.tool}: UNAVAILABLE (tool failed to run) at ${capturedAt}`
+        ? `  ${raw.tool}: UNAVAILABLE (no usable finding count) at ${capturedAt}`
         : `  ${raw.tool}: ${raw.findingCount} finding(s) at ${capturedAt}`
     )
     if (raw.diagnostic) console.log(`    ↳ ${raw.diagnostic}`)

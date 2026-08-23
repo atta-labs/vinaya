@@ -433,7 +433,13 @@ describe('(#179) a forge-degraded coherence sweep is UNAVAILABLE, not a small co
     const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
     // Not `findingCount: 1` — that number is real but incomplete, and the
     // whole point of `unavailable` is that it is never compared as a count.
-    expect(coherence).toEqual({ tool: 'verify-coherence', findingCount: 0, unavailable: true })
+    // The diagnostic must say the tool RAN: `fetchForgeFacts`'s reason never
+    // reaches stderr, so without it the operator reads "failed to run" for a
+    // run that succeeded.
+    expect(coherence?.unavailable).toBe(true)
+    expect(coherence?.findingCount).toBe(0)
+    expect(coherence?.diagnostic).toContain('could not reach the forge')
+    expect(coherence?.diagnostic).toContain('incomplete, not clean')
   })
 
   it('accepts the same report when the forge WAS reachable', () => {
@@ -503,5 +509,26 @@ describe('(#179) verify-docs surfaces its stderr only when unavailable', () => {
       unavailable: true,
       diagnostic: 'bun: cannot find module'
     })
+  })
+})
+
+/** The forge-outage reason explains the verdict; a stderr line only accompanies it. */
+describe('(#179) an outage reason outranks an incidental stderr line', () => {
+  it('reports the outage, not the probe noise, when both are present', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return {
+          stdout: JSON.stringify({ forgeUnavailable: true, summary: { failed: 0 } }),
+          stderr: 'fatal: Not a valid object name origin/main:aeg-root/tranches\n',
+          status: 1
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    expect(coherence?.diagnostic).toContain('could not reach the forge')
+    expect(coherence?.diagnostic).not.toContain('Not a valid object name')
   })
 })
