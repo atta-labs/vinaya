@@ -202,6 +202,19 @@ describe('the exempt Summary line is the compared Summary line', () => {
     if (r.status === 'fail') expect(r.errors.join('\n')).toContain('`Summary:` line does not match')
   })
 
+  // Every spelling of "hidden from the digit check": a local
+  // re-implementation closed backticks and `<details>` and still left tilde
+  // fences and indented fences open. Sharing `maskCode` closes the class.
+  it.each([
+    ['backtick fence', ['```', HONEST, '```']],
+    ['tilde fence', ['~~~', HONEST, '~~~']],
+    ['three-space-indented fence', ['   ```', HONEST, '   ```']],
+    ['details span', ['<details>', HONEST, '</details>']]
+  ])('ignores a Summary hidden by a %s, so the fabricated one below is compared', (_label, decoy) => {
+    const region = [`Head: ${HEAD}`, '', '```', NUMSTAT, '```', '', ...decoy, '', FAKE].join('\n')
+    expect(compareEvidenceBlock(region, HEAD, NUMSTAT).status).toBe('fail')
+  })
+
   it('ignores a Summary line inside a <details> span for the same reason', () => {
     const region = [`Head: ${HEAD}`, '', '```', NUMSTAT, '```', '', '<details>', HONEST, '</details>', '', FAKE].join(
       '\n'

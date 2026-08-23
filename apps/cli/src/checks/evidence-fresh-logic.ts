@@ -17,6 +17,7 @@
  * this function; only a STALE one is.
  */
 
+import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../lib/numstat'
 
 export type EvidenceCompareResult = { status: 'pass' } | { status: 'fail'; errors: string[] }
@@ -26,37 +27,31 @@ const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
 
 /**
  * The first `Summary:` line that `body-bare-digits` would exempt — which is the
- * first one OUTSIDE a fenced block or a `<details>` span, not simply the first
- * one in the text.
+ * first one that survives the SAME masking that check applies, not simply the
+ * first one in the text.
  *
- * The distinction is the whole point. `body-bare-digits` blanks fenced and
- * `<details>` content before it ever looks for the summary, so a `Summary:`
- * line inside the Group B fence is invisible to it and the next one — in prose
- * — becomes the line it exempts. Matching the raw region here instead made the
- * two sides disagree about which line "first" means: the fenced one was
- * verified while the prose one was exempted, so a fabricated headline figure
- * scored zero violations AND a passing `evidence-fresh`. Both sides now skip
- * the same spans, so the line that is exempt is the line that is compared.
+ * The distinction is the whole finding. `body-bare-digits` runs `maskCode` and
+ * `maskDetailsBlocks` before it ever looks for the summary, so a `Summary:`
+ * line hidden inside a fence or a `<details>` block is invisible to it and the
+ * next one — in prose — becomes the line it exempts. While this side matched
+ * the raw region, the two disagreed about which line "first" meant: the hidden
+ * one was verified while a fabricated prose line was exempted, scoring zero
+ * violations AND a passing `evidence-fresh` on a false headline figure.
+ *
+ * Reusing the very functions the other side calls is the point. A local
+ * re-implementation closed backtick fences and `<details>` and still left tilde
+ * fences, three-space-indented fences and CRLF open — each a separate spelling
+ * of the same hole. `maskCode` blanks with same-length spaces, so a line index
+ * in the masked text addresses the same line in the raw text, and the value
+ * compared is the real one.
  */
 export function firstScannableSummary(region: string): string | null {
-  let inFence = false
-  let detailsDepth = 0
-  for (const line of region.split('\n')) {
-    const trimmed = line.trim()
-    if (trimmed.startsWith('```')) {
-      inFence = !inFence
-      continue
+  const raw = region.split('\n')
+  const masked = maskDetailsBlocks(maskCode(region)).split('\n')
+  for (let i = 0; i < masked.length; i++) {
+    if ((masked[i] as string).startsWith(EVIDENCE_SUMMARY_PREFIX)) {
+      return (raw[i] as string).slice(EVIDENCE_SUMMARY_PREFIX.length).trimEnd()
     }
-    if (inFence) continue
-    // Counted rather than flagged: `<details>` blocks nest in real PR bodies.
-    const opens = (line.match(/<details[\s>]/gi) ?? []).length
-    const closes = (line.match(/<\/details>/gi) ?? []).length
-    if (opens > 0 || closes > 0) {
-      detailsDepth = Math.max(0, detailsDepth + opens - closes)
-      continue
-    }
-    if (detailsDepth > 0) continue
-    if (line.startsWith(EVIDENCE_SUMMARY_PREFIX)) return line.slice(EVIDENCE_SUMMARY_PREFIX.length).trimEnd()
   }
   return null
 }
