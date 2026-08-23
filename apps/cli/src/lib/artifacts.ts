@@ -1134,8 +1134,11 @@ export function buildInitOps(ctx: InitContext): Op[] {
   return ops
 }
 
-/**
- * `vinaya init product <name>` writes ONE thing, and it is not an `Op`.
+// ---------------------------------------------------------------------------
+// `vinaya init product <name>` — why there is no op-builder here
+// ---------------------------------------------------------------------------
+/*
+ * It writes ONE thing, and it is not an `Op`.
  *
  * There used to be a `buildInitProductOps` returning a single
  * `project:<name>` label. It is gone (#72). Project is a **field, not a

@@ -58,7 +58,7 @@ export const COMMANDS: readonly Command[] = [
     details: [
       "Writes (or appends to) `.vinaya/projects.md` — the registry Vinaya Studio's tranche board resolves a project's board link against. Idempotent: re-running with the same name updates nothing.",
       'Reaches no forge and needs no GitHub remote or credentials: the registry row is a pure local file write, and it is deliberately NOT recorded in the ownership manifest, so `eject` does not reverse adopter-declared data.',
-      "Creates no label. It used to create a `project:<name>` one; that was removed because project is a field, not a label — the `project:*` family was dropped outright, `declaredProjects` reads the Issue body's `**Project:**` field, and Studio ignores a residual label. Existing labels in already-registered repos are left alone."
+      "Creates no label. Project is a field, not a label: a task Issue declares its project in the body's `**Project:**` field, and a `project:*` label is ignored wherever one still exists."
     ],
     status: 'shipped'
   },

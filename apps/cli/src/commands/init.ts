@@ -212,9 +212,16 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
     return 2
   }
   const specsPath = productPath === '.' ? 'specs/' : `${productPath}/specs/`
-  // Strict slug — the name becomes a filesystem path segment
-  // (governance/products/<name>/…) and a manifest record, so a `..` or path
-  // separator would let user input escape the intended directory.
+  // Strict slug. The two things this used to guard — a
+  // `governance/products/<name>/` path segment and a manifest record — are
+  // both gone: the governance scaffold was cut by the minimal-manifest
+  // re-ruling, and this command no longer writes the manifest at all (#72).
+  // It still guards a real surface: the name is written verbatim into a
+  // markdown table cell in `.vinaya/projects.md` and is read back by
+  // `parseRegistry`, so a `|`, a newline, or a path separator would either
+  // corrupt the row or make it parse as something else. Kept strict rather
+  // than relaxed to match what it now protects, because a registry row is
+  // adopter-facing data every downstream consumer trusts.
   if (!PRODUCT_NAME_RE.test(name)) {
     console.error(
       `Error: invalid product name '${name}'. Use a lower-case slug: letters, digits, and hyphens (e.g. mobile, web-app).`
