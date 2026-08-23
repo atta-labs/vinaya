@@ -30,7 +30,7 @@
  */
 
 /** A gate that adopters run, and the `coreCheckRegistry()` name it ships under. */
-export type ShippedGate = { shippedAs: string }
+export type ShippedGate = { shippedAs: string | string[] }
 /** A gate this repo runs on itself, and why it cannot or should not ship. */
 export type InternalGate = { internal: string }
 export type GateAudience = ShippedGate | InternalGate
@@ -48,7 +48,7 @@ export const GATE_AUDIENCE: Record<string, GateAudience> = {
   'verify-brief': { shippedAs: 'brief-shape' },
   'verify-coherence': { shippedAs: 'coherence' },
   'verify-dispatch': { shippedAs: 'dispatch-readiness' },
-  'verify-docs': { shippedAs: 'doc-coverage' },
+  'verify-docs': { shippedAs: ['doc-coverage', 'doc-coverage-push'] },
   'verify-registry': { shippedAs: 'registry-gates' },
   'verify-review-gate': { shippedAs: 'review-gate' },
   'verify-single-plan-pr': { shippedAs: 'single-plan-pr' },
@@ -56,15 +56,38 @@ export const GATE_AUDIENCE: Record<string, GateAudience> = {
 
   'check-direct-main-push': {
     internal:
-      'Reaches adopters through `vinaya audit --only=direct-push`, not the check registry: it is a ring-2 scheduled sweep over merge history, not a per-PR gate, so it has no diff to key on and nothing for `vinaya check` to run it against.'
+      'Reaches adopters through `vinaya audit --only=direct-push`, not the check registry: it is a ring-2 sweep over merge history keyed on `GITHUB_SHA`, run by the generated archivist job on push to the default branch. It has no diff to key on, so there is nothing for `vinaya check` to run it against.'
   },
   'check-push-target': {
     internal:
-      'Its adopter-facing half is `dead-branch-push`, which re-derives the same question from forge state. This bin additionally reads local push refs, which only exist in a working checkout mid-push — an adopter running `vinaya check` in CI has no such state.'
+      'A pre-push hook helper: it takes a branch name as `argv[2]` and answers one `gh pr list --head <branch>` question, for a caller that already knows which ref is being pushed. Adopters reach the same question through the registered `dead-branch-push`, which resolves the branch itself when `BRANCH` is unset. Registering this one too would add a second entry answering an identical forge query with a worse interface.'
   },
   'verify-task': {
     internal:
       "A composite that shells this repo's own `typecheck`/`lint`/`test`/`build` scripts by name. Those names are this monorepo's toolchain (bun + turbo + biome), not an adopter's; the shipped equivalent of its intent is `vinaya check --all`, which is portable by construction."
+  }
+}
+
+/**
+ * The other half, and the one the motivating case actually lives in.
+ *
+ * `reader-resolvable-prose` has no bin under `packages/aeg-core/bin/` at all —
+ * its logic is `src/reader-resolvable-prose.ts` and its only executable is
+ * `apps/cli/src/checks/bin/check-reader-resolvable-prose.ts`. So the map above
+ * would never have seen it, and an earlier revision of this file claimed it as
+ * the reason the file exists while leaving it uncovered. Review caught that;
+ * this is the fix, not a re-wording.
+ *
+ * Enumerating the SHIPPED check bins asks the question that case actually
+ * poses: here is an executable adopters could run — is it registered, and if
+ * not, why not? `coreCheckRegistry()` lives in `apps/cli`, which `aeg-core`
+ * cannot import without closing a dependency cycle, so the declaration lives
+ * here and `apps/cli`'s own suite does the asserting.
+ */
+export const SHIPPED_BIN_AUDIENCE: Record<string, GateAudience> = {
+  'check-reader-resolvable-prose': {
+    internal:
+      "Built, executable, and deliberately NOT in `coreCheckRegistry()`: it hardcodes this monorepo's own doctrine layout (`aeg-root/glossary.md`, `aeg-root/tranches/completed/`) and this monorepo's own site source path. No `packageRoot()`-style fix makes those paths exist in an arbitrary adopter's repo — a scope-registration fact, not a pathing bug. Reachable here by direct invocation as an internal doc-quality tool."
   }
 }
 

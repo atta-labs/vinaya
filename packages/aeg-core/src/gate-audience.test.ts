@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { GATE_AUDIENCE, isShipped, NON_GATE_BINS } from './gate-audience'
+import { GATE_AUDIENCE, isShipped, NON_GATE_BINS, SHIPPED_BIN_AUDIENCE } from './gate-audience'
 
 /**
  * The fail-closed half of `gate-audience.ts` (atta-labs/vinaya#186).
@@ -15,11 +16,28 @@ import { GATE_AUDIENCE, isShipped, NON_GATE_BINS } from './gate-audience'
  */
 const BIN_DIR = fileURLToPath(new URL('../bin', import.meta.url))
 
+/**
+ * RECURSIVE, and every extension — not `readdirSync` + `endsWith('.ts')`.
+ * Review defeated the first version two ways that both left the suite green: a
+ * nested `bin/nested/check-probe.ts`, and a `bin/check-probe.mts`. A gate whose
+ * enumeration is narrower than the directory it guards is a gate with a door in
+ * the back.
+ */
 function binBasenames(): string[] {
-  return readdirSync(BIN_DIR)
-    .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
-    .map((f) => f.replace(/\.ts$/, ''))
-    .sort()
+  const out: string[] = []
+  const walk = (dir: string, prefix: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.isDirectory()) {
+        walk(join(dir, e.name), `${prefix}${e.name}/`)
+        continue
+      }
+      if (/\.test\.[cm]?ts$/.test(e.name)) continue
+      if (!/\.[cm]?ts$/.test(e.name)) continue
+      out.push(`${prefix}${e.name}`.replace(/\.[cm]?ts$/, ''))
+    }
+  }
+  walk(BIN_DIR, '')
+  return out.sort()
 }
 
 describe('every gate under aeg-core/bin declares who it is for', () => {
@@ -57,5 +75,21 @@ describe('every gate under aeg-core/bin declares who it is for', () => {
   it('does not list a non-gate as a gate', () => {
     const overlap = NON_GATE_BINS.filter((b) => b in GATE_AUDIENCE)
     expect(overlap).toEqual([])
+  })
+})
+
+describe('the shipped-side declaration is complete too', () => {
+  it('gives every internal entry a substantive reason', () => {
+    const thin = Object.entries(SHIPPED_BIN_AUDIENCE)
+      .filter(([, a]) => !isShipped(a) && (a as { internal: string }).internal.trim().length < 40)
+      .map(([n]) => n)
+    expect(thin).toEqual([])
+  })
+
+  it('never claims both audiences', () => {
+    const both = Object.entries(SHIPPED_BIN_AUDIENCE)
+      .filter(([, a]) => 'shippedAs' in a && 'internal' in a)
+      .map(([n]) => n)
+    expect(both).toEqual([])
   })
 })
