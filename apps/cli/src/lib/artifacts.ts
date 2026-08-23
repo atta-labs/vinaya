@@ -1142,7 +1142,7 @@ export function buildInitOps(ctx: InitContext): Op[] {
  *
  * There used to be a `buildInitProductOps` returning a single
  * `project:<name>` label. It is gone (#72). Project is a **field, not a
- * label** — #614 dropped the `project:*` family outright, `declaredProjects`
+ * label** — the `project:*` family was retired outright, `declaredProjects`
  * (`issue-validation.ts`) reads the Issue body's `**Project:**` field, and
  * `@attalabs/aeg-forge-state`'s `list-tasks.ts` explicitly ignores a residual
  * `project:*` label. So the command's only forge-reaching op created a label
@@ -1154,7 +1154,7 @@ export function buildInitOps(ctx: InitContext): Op[] {
  * `commands/init.ts`), never modeled as an `Op` here, and deliberately not
  * recorded in the ownership manifest: the registry is adopter-declared data,
  * not vinaya-owned scaffolding, so `eject` does not reverse it. Vinaya
- * Studio's tranche board reads it (#829).
+ * Studio's tranche board reads it.
  *
  * Existing repos keep whatever `project:*` labels they already have; nothing
  * deletes a forge label that may be in use elsewhere.

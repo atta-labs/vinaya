@@ -56,7 +56,7 @@ function flags(args: string[]): Flags {
   return { dryRun: args.includes('--dry-run'), yes: args.includes('--yes') }
 }
 
-/** A product name must be a safe slug — it becomes a path segment + a manifest record. */
+/** A product name must be a safe slug — see `runInitProduct` for what that still guards. */
 const PRODUCT_NAME_RE = /^[a-z0-9][a-z0-9-]*$/
 
 /**
@@ -216,17 +216,27 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
   // `governance/products/<name>/` path segment and a manifest record — are
   // both gone: the governance scaffold was cut by the minimal-manifest
   // re-ruling, and this command no longer writes the manifest at all (#72).
-  // It still guards a real surface, though a narrower one than it used to:
-  // the name is written verbatim into a markdown table cell in
+  // It still guards a real surface, though a different one than it used to.
+  // The name is written verbatim into a markdown table cell in
   // `.vinaya/projects.md` (`rowLine` interpolates it unescaped) and read back
-  // by `parseRegistry`, which splits on pipes and line boundaries. So a `|`
-  // corrupts the row and a newline splices in a fabricated one. A path
-  // separator no longer matters — `name` reaches no filesystem path at this
-  // head, and `parseRegistry` treats `/` as an ordinary character — but the
-  // slug stays strict rather than being relaxed to exactly the two dangerous
-  // characters: a registry row is adopter-facing data every downstream
-  // consumer trusts, and widening an input guard to match today's single
-  // consumer is how the next one inherits a hole.
+  // by three consumers that do not agree on what a name may contain:
+  //
+  //   - `parseRegistry` splits on pipes and line boundaries, so a `|` shifts
+  //     every column and a newline splices in a row nobody declared;
+  //   - it also runs `stripBackticks` on every cell, so a backtick is
+  //     silently removed and the row no longer round-trips — which is what
+  //     `planRegistryRow`'s duplicate check compares (#181, reachable via
+  //     `--path`, which is NOT slug-constrained);
+  //   - `declaredProjects` splits an Issue's `**Project:**` field on comma
+  //     OR SLASH, so a name `a/b` resolves to `["a", "b"]` and can never
+  //     match the row it was written from.
+  //
+  // The filesystem rationale this comment used to give is genuinely gone —
+  // `name` reaches no path at this head. Do not read that as "only `|` and a
+  // newline matter": three consumers, three different hostile characters, and
+  // the slug is the one guard that satisfies all of them at once. Widening it
+  // to whichever set today's consumers happen to need is how the next
+  // consumer inherits a hole.
   if (!PRODUCT_NAME_RE.test(name)) {
     console.error(
       `Error: invalid product name '${name}'. Use a lower-case slug: letters, digits, and hyphens (e.g. mobile, web-app).`
