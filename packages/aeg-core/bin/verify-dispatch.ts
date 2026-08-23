@@ -280,17 +280,25 @@ function resolvePriorTask(
 }
 
 /**
- * Milestone-aware candidate discovery (aeg-review-gate-v1 task 1, #474,
- * amendment): "active" is a GitHub Milestone titled exactly the tranche
- * slug, open — the SAME `listActiveTrancheSlugs` Studio's
- * `readOtherActiveTranches` (`apps/vinaya/web/src/lib/forge/
- * dispatch-readiness.ts`, task 5, #429) already calls, shared rather than
- * duplicated per this task's own "no parallel implementation" discipline.
- * Previously read the local `aeg-root/tranches/*.md` file listing —
- * file-based and unaware of Milestone state, so closing a tranche's
- * topology file to `completed/` WITHOUT also closing its Milestone left this
- * CLI saying READY while Studio correctly said BLOCKED (reproduced live on
- * `aeg-forge-state-v1`/`aeg-review-gate-v1`, 2026-07-08).
+ * Label-aware candidate discovery (aeg-review-gate-v1 task 1, #474,
+ * amendment; re-keyed off the derived tranche lifecycle by
+ * vinaya-milestone-model-v1 task 1): "active" is every tranche whose
+ * `vinaya/tranche:<slug>` label resolves to lifecycle `active` — a Milestone
+ * titled exactly the slug and open (the legacy regime, unchanged) OR, for a
+ * label with no such Milestone, at least one open Issue. The SAME
+ * `listActiveTrancheSlugs` Studio's `readOtherActiveTranches`
+ * (`apps/vinaya/web/src/lib/forge/dispatch-readiness.ts`, task 5, #429)
+ * already calls, shared rather than duplicated per this task's own "no
+ * parallel implementation" discipline. Before aeg-review-gate-v1 task 1 this
+ * read the local `aeg-root/tranches/*.md` file listing — file-based and
+ * unaware of Milestone state, so closing a tranche's topology file to
+ * `completed/` WITHOUT also closing its Milestone left this CLI saying READY
+ * while Studio correctly said BLOCKED (reproduced live on
+ * `aeg-forge-state-v1`/`aeg-review-gate-v1`, 2026-07-08). "The Milestone is
+ * open" stopped being the whole story once one Milestone could hold several
+ * tranches (a Milestone closing no longer implies every tranche it held is
+ * finished) — `listActiveTrancheSlugs` now answers from the derived
+ * lifecycle directly, so this call site needed no change of its own.
  */
 function otherActiveTrancheSlugs(excludeSlug: string, repo: RepoRef): string[] {
   return listActiveTrancheSlugs(repo.owner, repo.repo)

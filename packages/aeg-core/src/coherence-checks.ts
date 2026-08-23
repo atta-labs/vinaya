@@ -476,7 +476,7 @@ export function checkR1(
  * L1: Active tranche with zero open task-Issues → should be archived.
  * **Advisory (info-only)** per `state-machine.md` §12 (L1/L2 are lifecycle-hygiene
  * signals, not the done-lifecycle gate). Findings are surfaced for a human to
- * investigate; they never fail CI. Only A1/A2/A3/M1/M3 block.
+ * investigate; they never fail CI. Only A1/A2/A3/M1/M3/L5 block (L5 promoted, vinaya-milestone-model-v1 task 1).
  *
  * An active tranche (file not in completed/) where every task with a
  * known issue has `issueState === 'closed'`.
@@ -511,7 +511,7 @@ export function checkL1(files: TrancheFile[], entriesBySlug: Map<string, TaskEnt
  * L2: Archived tranche with any open task-Issue → premature archive.
  * **Advisory (info-only)** per `state-machine.md` §12 (L1/L2 are lifecycle-hygiene
  * signals, not the done-lifecycle gate). Findings are surfaced for a human to
- * investigate; they never fail CI. Only A1/A2/A3/M1/M3 block.
+ * investigate; they never fail CI. Only A1/A2/A3/M1/M3/L5 block (L5 promoted, vinaya-milestone-model-v1 task 1).
  */
 export function checkL2(files: TrancheFile[], entriesBySlug: Map<string, TaskEntry[]>): CheckResult {
   const failures: CheckFailure[] = []
@@ -560,6 +560,18 @@ export function checkL3(files: TrancheFile[]): CheckResult {
  * tranche (open Milestone titled the slug) whose GitHub-native
  * `milestone` field doesn't match that same Milestone.
  *
+ * **Scope changed (vinaya-milestone-model-v1 task 1): the exact-title-match
+ * invariant this check evaluates is only meaningful for LEGACY tranches** —
+ * a Milestone titled exactly the tranche slug, the 1:1 regime that predates
+ * the label model. Once one Milestone can legitimately hold several
+ * tranches, an Issue attached to a shared Milestone will never have a
+ * `milestone.title` equal to any one of the several slugs it might carry,
+ * so flagging that as drift would be noise on every label-only tranche. The
+ * restriction to legacy slugs is applied by the CALLER
+ * (`verify-coherence.ts`, via `TrancheMilestoneIndex.legacySlugs`) — this
+ * function's own logic is unchanged and still trusts whatever
+ * `activeTrancheSlugs` it is handed.
+ *
  * **Advisory (info-only)**, same framing as L1/L2 (`state-machine.md` §12):
  * confirmed NOT functionally load-bearing — `deriveTrancheFromForge`/
  * `listActiveTrancheSlugs` never read an Issue's milestone field, only the
@@ -601,22 +613,33 @@ export function checkL4(
 }
 
 /**
- * L5: Open Milestone whose every task Issue is closed → the tranche is
- * effectively complete but its Milestone was never closed / archived
- * (Issue #481, drift class #2; 1 live incident this session —
- * `aeg-forge-state-v1`'s Milestone left open after full archive).
+ * L5: an active tranche whose every task Issue is closed → the tranche is
+ * effectively complete but was never archived (Issue #481, drift class #2;
+ * 1 live incident this session — `aeg-forge-state-v1`'s Milestone left open
+ * after full archive).
  *
  * This is the FORGE-NATIVE analogue of file-based L1: L1 reads `TrancheFile[]`
  * (a `!f.archived` file location), but post-cutover most tranches have no
  * topology file at all, so their Milestone-object drift is invisible to L1.
- * L5 keys off `listActiveTrancheSlugs` (open Milestones — the
+ * L5 keys off `activeTrancheSlugs` (the derived-active population — the
  * authority) instead, so it sees exactly the tranches L1 no longer can.
  *
- * **Advisory (info-only)**, same framing as L1/L2/L4 (`state-machine.md` §12):
- * a real completion may simply not be archived yet, so this never fails CI —
- * only A1/A2/A3/M1/M3 block. Slugs whose facts are unavailable (forge
- * outage) are skipped, mirroring L1's `withFacts.length === 0` guard — an
- * outage is not a finding.
+ * **Promoted from advisory to authoritative (vinaya-milestone-model-v1 task
+ * 1): `status` is now `'fail'`, joining A1/A2/A3/M1/M3 as CI-blocking.**
+ * Before this task, "the tranche is complete" meant "its Milestone is
+ * closed" — a fact a Milestone shared by several tranches can no longer
+ * carry reliably (closing it would close every tranche it holds, not just
+ * the one that finished). This check's underlying signal was ALREADY the
+ * correct one even before this task — per-task-Issue state from
+ * `entriesBySlug`, never the Milestone's own open/closed field — so
+ * promoting it is a severity change, not a logic change: the signal is now
+ * trustworthy enough to be the completeness answer other consumers should
+ * defer to, rather than a maybe-stale hint. Applies uniformly to legacy and
+ * label-only tranches alike; unlike L4, no legacy restriction is needed here,
+ * since Issue state (not Milestone attachment) is what this check reads.
+ *
+ * Slugs whose facts are unavailable (forge outage) are skipped, mirroring
+ * L1's `withFacts.length === 0` guard — an outage is not a finding.
  */
 export function checkL5(activeTrancheSlugs: string[], entriesBySlug: Map<string, TaskEntry[]>): CheckResult {
   const failures: CheckFailure[] = []
@@ -628,18 +651,17 @@ export function checkL5(activeTrancheSlugs: string[], entriesBySlug: Map<string,
     if (allClosed) {
       failures.push({
         tranche: slug,
-        reason:
-          'Milestone still open but every task Issue is closed — close the Milestone / archive the tranche (advisory)'
+        reason: 'Every task Issue is closed but the tranche is not recorded as complete — archive it'
       })
     }
   }
   return {
     check: 'L5',
-    status: 'info',
+    status: failures.length > 0 ? 'fail' : 'pass',
     failures,
     note:
       failures.length > 0
-        ? `${failures.length} open Milestone(s) whose task Issues are all closed — close/archive (advisory)`
+        ? `${failures.length} tranche(s) whose task Issues are all closed but were never archived`
         : undefined
   }
 }

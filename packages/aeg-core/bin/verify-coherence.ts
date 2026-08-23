@@ -844,6 +844,13 @@ export async function runCoherenceChecks(
   // (file location), so this never flags a tranche whose file predates
   // the Milestone birth rule but has no live Milestone yet.
   //
+  // Restricted to LEGACY slugs only (vinaya-milestone-model-v1 task 1):
+  // `sweep.milestones.active` now also carries label-only active tranches,
+  // for which the exact-title-match invariant L4 evaluates is meaningless (a
+  // Milestone shared by several tranches will never be titled any one of
+  // their slugs). `TrancheMilestoneIndex.legacySlugs` is the set L4 still
+  // applies to — everything else is silently out of scope, not a finding.
+  //
   // Both halves read the sweep's own data rather than re-fetching it: the open
   // Milestone list is the index it already pulled, and each slug's
   // Milestone-attachment facts derive from the very Issue list its task
@@ -875,9 +882,12 @@ export async function runCoherenceChecks(
     })
   } else {
     const milestoneActiveSlugs = (sweep.milestones?.active ?? []).map((m) => m.slug)
+    const legacyActiveSlugs = milestoneActiveSlugs.filter((slug) => sweep.milestones?.legacySlugs.has(slug))
     // The sweep fetches only the slugs its own composition needed, so a tranche
     // resolved entirely from the PR head (or already present in `files` without
     // consulting the forge) may have no entry here — top up just those, bounded.
+    // Scoped to legacy slugs: a label-only active tranche is never an L4 input,
+    // so its Issue list is never fetched here on L4's account.
     //
     // Deliberately NOT wrapped in a catch that substitutes an empty list: to L4
     // an empty Issue list is indistinguishable from "this tranche has no
@@ -885,7 +895,7 @@ export async function runCoherenceChecks(
     // report a clean advisory rather than an unavailable one. The pre-refactor
     // path (`listIssueMilestonesForSlug`, a synchronous uncaught `gh` call)
     // propagated and failed the run; that fail-closed behaviour is preserved.
-    const missingIssueSlugs = milestoneActiveSlugs.filter((slug) => !sweep.issuesBySlug.has(slug))
+    const missingIssueSlugs = legacyActiveSlugs.filter((slug) => !sweep.issuesBySlug.has(slug))
     const toppedUp = await mapWithConcurrency(missingIssueSlugs, FORGE_FETCH_CONCURRENCY, async (slug) => {
       try {
         return { slug, issues: await fetchTrancheIssuesAsync(owner, repoName, slug) }
@@ -904,7 +914,7 @@ export async function runCoherenceChecks(
     // throwing would empty this process's stdout, which in `--json` mode must
     // stay parseable JSON for the CI job that pipes it to `jq`. So the tranche is
     // withheld from L4's inputs and the gap is reported below.
-    const l4Slugs = milestoneActiveSlugs.filter((slug) => !l4UnavailableSlugs.includes(slug))
+    const l4Slugs = legacyActiveSlugs.filter((slug) => !l4UnavailableSlugs.includes(slug))
     const issueMilestones = l4Slugs.flatMap((slug) =>
       issueMilestonesFromIssues(sweep.issuesBySlug.get(slug) ?? []).map((f) => ({ tranche: slug, ...f }))
     )
@@ -922,9 +932,15 @@ export async function runCoherenceChecks(
       })
     }
 
-    // L5 — forge-native Milestone-state coherence (Issue #481, drift class #2):
-    // an open Milestone whose every task Issue is closed. Advisory analogue of
-    // file-based L1 for post-cutover tranches that have no topology file.
+    // L5 — forge-native completeness coherence (Issue #481, drift class #2):
+    // an active tranche whose every task Issue is closed. Forge-native
+    // analogue of file-based L1 for post-cutover tranches that have no
+    // topology file. Uses the FULL `milestoneActiveSlugs` (legacy AND
+    // label-only), unlike L4 above — L5 reads per-task Issue state, not
+    // Milestone attachment, so it applies uniformly regardless of whether a
+    // tranche has a legacy Milestone. Authoritative as of
+    // vinaya-milestone-model-v1 task 1 (`checkL5` now returns `status: 'fail'`
+    // on any finding) — a `fail` here blocks CI the same as A1/A2/A3/M1/M3.
     results.push(checkL5(milestoneActiveSlugs, entriesBySlug))
   }
 
