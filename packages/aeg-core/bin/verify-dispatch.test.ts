@@ -405,3 +405,103 @@ describe('(#179) the shape guard rejects a number that is not a count', () => {
     expect(coherence?.findingCount).toBe(0)
   })
 })
+
+/**
+ * PR #179 security review, MEDIUM. A forge-degraded `verify-coherence` run
+ * reports a SMALLER `failed` count, honestly arrived at from the tranches it
+ * could see. Read as a finding count it under-reports, and `--check-baseline`
+ * would compare it as if it were complete.
+ *
+ * Splitting the streams removed an accidental fail-closed here: an outage also
+ * printed to stderr, so the old concatenated parse threw and the tool read as
+ * unavailable. This pins the deliberate replacement.
+ */
+describe('(#179) a forge-degraded coherence sweep is UNAVAILABLE, not a small count', () => {
+  it('rejects a report flagged forgeUnavailable even though its shape is valid', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return {
+          stdout: JSON.stringify({ forgeUnavailable: true, summary: { passed: 2, failed: 1, info: 0 } }),
+          stderr: '',
+          status: 1
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    // Not `findingCount: 1` — that number is real but incomplete, and the
+    // whole point of `unavailable` is that it is never compared as a count.
+    expect(coherence).toEqual({ tool: 'verify-coherence', findingCount: 0, unavailable: true })
+  })
+
+  it('accepts the same report when the forge WAS reachable', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return {
+          stdout: JSON.stringify({ forgeUnavailable: false, summary: { passed: 2, failed: 1, info: 0 } }),
+          stderr: '',
+          status: 1
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    expect(coherence).toEqual({ tool: 'verify-coherence', findingCount: 1, unavailable: false })
+  })
+})
+
+describe('(#179) a diagnostic that is cut says so', () => {
+  it('marks a truncated line instead of ending mid-token', () => {
+    const long = `x${'y'.repeat(400)}`
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return { stdout: JSON.stringify({ summary: { failed: 0 } }), stderr: `${long}\n`, status: 0 }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    expect(coherence?.diagnostic).toMatch(/… \(truncated\)$/)
+    expect(coherence?.diagnostic?.length).toBeLessThan(long.length)
+  })
+
+  it('leaves a short line untouched', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return { stdout: JSON.stringify({ summary: { failed: 0 } }), stderr: 'short line\n', status: 0 }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    expect(currentFindingCounts().find((f) => f.tool === 'verify-coherence')?.diagnostic).toBe('short line')
+  })
+})
+
+/** The one previously-untested arm: verify-docs shows a diagnostic ONLY when unavailable. */
+describe('(#179) verify-docs surfaces its stderr only when unavailable', () => {
+  it('carries the reason when a non-zero exit produced no findings (a crash)', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) {
+        return { stdout: '', stderr: 'bun: cannot find module\n', status: 1 }
+      }
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return { stdout: JSON.stringify({ summary: { failed: 0 } }), stderr: '', status: 0 }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const docs = currentFindingCounts().find((f) => f.tool === 'verify-docs-full')
+    expect(docs).toEqual({
+      tool: 'verify-docs-full',
+      findingCount: 0,
+      unavailable: true,
+      diagnostic: 'bun: cannot find module'
+    })
+  })
+})

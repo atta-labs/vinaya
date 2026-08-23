@@ -425,6 +425,21 @@ function captureStreams(cmd: string, args: string[]): CaptureResult {
 function coherenceFailedCount(stdout: string): number | null {
   const parsed = parseJsonSafe<unknown>(stdout)
   if (typeof parsed !== 'object' || parsed === null) return null
+  // A forge-degraded sweep is INCOMPLETE, not clean. `verify-coherence` emits
+  // `forgeUnavailable: true` when it could not reach the forge for one or more
+  // tranches; its checks then run against whatever it could see, so `failed`
+  // is a smaller number arrived at honestly and reported honestly — and read
+  // as a finding COUNT it is a lie by omission.
+  //
+  // Before the streams were split, an outage happened to fail closed: the run
+  // also printed to stderr, the concatenated parse threw, and the tool read as
+  // unavailable. That was an accident, and removing it (#173) left this case
+  // uncovered — the deliberate guard below only catches unparseable or
+  // wrong-shaped stdout. Treating an outage as unavailable restores the
+  // property on purpose, and matches `--check-baseline`'s own stated doctrine:
+  // an unavailable tool carries no honest count, so it is never compared as if
+  // it scored 0.
+  if ((parsed as { forgeUnavailable?: unknown }).forgeUnavailable === true) return null
   const summary = (parsed as { summary?: unknown }).summary
   if (typeof summary !== 'object' || summary === null) return null
   const failed = (summary as { failed?: unknown }).failed
@@ -468,7 +483,12 @@ function firstStderrLine(stderr: string): string | undefined {
     .split('\n')
     .map((l) => l.trim())
     .find((l) => l !== '')
-  return line === undefined ? undefined : line.slice(0, 300)
+  if (line === undefined) return undefined
+  // Marked, not silently cut: an unmarked truncation reads as the whole
+  // message, and these lines carry shas and paths that a mid-token cut makes
+  // look like different values than they are.
+  const LIMIT = 300
+  return line.length <= LIMIT ? line : `${line.slice(0, LIMIT)}… (truncated)`
 }
 
 /**
@@ -496,8 +516,9 @@ export function currentFindingCounts(): FindingCount[] {
   // report UNAVAILABLE (#173).
   const coherence = captureStreams('bun', ['packages/aeg-core/bin/verify-coherence.ts', '--json'])
   const coherenceFailed = coherence.ranAtAll ? coherenceFailedCount(coherence.stdout) : null
-  // Two ways to be unavailable, matching `docsUnavailable`'s own shape:
-  // the tool could not run, or its stdout is not the report this expects.
+  // Three ways to be unavailable: the tool could not run, its stdout is not
+  // the report this expects, or it ran against a forge it could not reach and
+  // its count is therefore incomplete (`forgeUnavailable`, see above).
   // The second is a SHAPE check, not just `JSON.parse` succeeding — a scalar
   // or an object without `summary.failed` is valid JSON and would otherwise
   // throw a TypeError on property access. Reachable only since the streams
