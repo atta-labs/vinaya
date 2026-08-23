@@ -1076,20 +1076,21 @@ describe('round-trip: init then eject returns the repo to pre-init state', () =>
 })
 
 describe('vinaya init product', () => {
-  it('refuses before init, then creates the project:<name> label and a .vinaya/projects.md row after', async () => {
+  it('refuses before init, then writes a .vinaya/projects.md row and nothing else', async () => {
     // before init
     const rcBefore = await runInitProduct(['mobile'], makeDeps())
     expect(rcBefore).toBe(1)
 
     await runInit(['--yes'], makeDeps())
     const treeAfterInit = snapshot(root)
+    const labelsAfterInit = [...createdLabels]
     createdLabels = [] // isolate what `init product` creates
 
     const rc = await runInitProduct(['mobile', '--path', 'apps/mobile', '--yes'], makeDeps())
     expect(rc).toBe(0)
-    // minimal manifest: init product's only forge-reaching op is the
-    // project:<name> label — no governance/ files are written.
-    expect(createdLabels).toEqual(['project:mobile'])
+    // No forge op at all (#72). The `project:<name>` label is gone: project is
+    // a field, not a label, so it created something no shipped consumer read.
+    expect(createdLabels).toEqual([])
     expect(existsSync(join(root, 'governance'))).toBe(false)
     // the registry row IS a new local file, so the tree grows by exactly
     // `.vinaya/projects.md` — it is deliberately not tracked in the managed
@@ -1100,8 +1101,25 @@ describe('vinaya init product', () => {
     const registry = readFileSync(join(root, '.vinaya/projects.md'), 'utf-8')
     expect(registry).toContain('| mobile | `apps/mobile` | `apps/mobile/specs/` |')
     const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
-    expect(cfg.managed.labels).toContain('project:mobile')
+    // `init`'s own labels survive untouched; `init product` adds none.
+    expect(cfg.managed.labels).toEqual(labelsAfterInit)
+    expect(cfg.managed.labels).not.toContain('project:mobile')
     expect(cfg.managed.files).not.toContain('.vinaya/projects.md')
+  })
+
+  it('works with no GitHub remote at all — the registry row is a pure local write', async () => {
+    await runInit(['--yes'], makeDeps())
+    createdLabels = []
+
+    // Previously this warned and skipped the label; with no forge op left
+    // there is nothing to skip, and the command simply succeeds.
+    const rc = await runInitProduct(
+      ['mobile', '--path', 'apps/mobile', '--yes'],
+      makeDeps({ detectRepo: async () => ({ repoRoot: root, owner: '', repo: '' }) })
+    )
+    expect(rc).toBe(0)
+    expect(createdLabels).toEqual([])
+    expect(readFileSync(join(root, '.vinaya/projects.md'), 'utf-8')).toContain('| mobile |')
   })
 
   it('re-running init product for the same name is idempotent (no duplicate row)', async () => {

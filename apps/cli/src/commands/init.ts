@@ -9,14 +9,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  buildInitOps,
-  buildInitProductOps,
-  CONFIG_PATH,
-  type HookDir,
-  type InitContext,
-  TRACKED_HOOK_DIR
-} from '../lib/artifacts.js'
+import { buildInitOps, CONFIG_PATH, type HookDir, type InitContext, TRACKED_HOOK_DIR } from '../lib/artifacts.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import { type ManagedManifest, readRepoCiSetup, VinayaConfigSchema } from '../lib/config.js'
 import {
@@ -245,24 +238,16 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
     return 1
   }
 
-  // A missing/non-GitHub remote only blocks the LABEL (the one forge-reaching
-  // op) — the `.vinaya/projects.md` row is a pure local write, so it still
-  // happens (spec D3 was scoped to "the only op here is a label", which
-  // stopped being true once this command started writing the registry too).
-  const noRemote = !repo.owner || !repo.repo
-  if (noRemote) {
-    console.warn(
-      'Warning: no `origin` remote (or it is not a GitHub URL) — skipping label creation. ' +
-        `Re-run 'vinaya init product ${name}' after adding a GitHub remote to create it.`
-    )
-  }
-
-  const ops = noRemote ? [] : buildInitProductOps(name)
-  const plan = planInstall(ops, repo.repoRoot, new Set(existing.files))
+  // `init product` reaches no forge at all. Its one forge op used to be a
+  // `project:<name>` label; that label is gone (#72) because project is a
+  // FIELD, not a label — #614 dropped the `project:*` family outright, and
+  // `declaredProjects`/`list-tasks.ts` both read the Issue body's
+  // `**Project:**` field. Creating a label nothing reads made `init product`
+  // require a GitHub remote to do a job that is a pure local write. It no
+  // longer does: no remote, no `gh`, no credentials.
   const registryPlan = planRegistryRow(repo.repoRoot, name, productPath, specsPath)
 
   process.stdout.write(`vinaya init product ${name} — the full diff:\n\n`)
-  process.stdout.write(`${renderInstallDiff(plan)}\n`)
   process.stdout.write('── Project registry ─────────────────────────────\n')
   process.stdout.write(`${renderRegistryRowDiffLine(registryPlan)}\n\n`)
 
@@ -280,27 +265,12 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
   }
 
   applyRegistryRow(repo.repoRoot, registryPlan, name, productPath, specsPath)
-  const added = await applyInstall(plan, repo.repoRoot, deps.labelGateway(repo.repoRoot))
-  const merged: ManagedManifest = {
-    version: existing.version,
-    files: [...new Set([...existing.files, ...added.files])],
-    blocks: dedupeBlocks([...existing.blocks, ...added.blocks]),
-    labels: [...new Set([...existing.labels, ...added.labels])]
-  }
-  writeManifest(repo.repoRoot, merged)
+  // No manifest write: this command now creates nothing vinaya owns. The
+  // registry row is adopter-declared data, deliberately outside the manifest
+  // (so `eject` never reverses it), and there is no longer a label to record.
 
   process.stdout.write(`\nGoverned product area '${name}' scaffolded.\n`)
   return 0
-}
-
-function dedupeBlocks<T extends { path: string; marker: string }>(bs: T[]): T[] {
-  const seen = new Set<string>()
-  return bs.filter((b) => {
-    const k = `${b.path}::${b.marker}`
-    if (seen.has(k)) return false
-    seen.add(k)
-    return true
-  })
 }
 
 export async function initCommand(args: string[]): Promise<void> {

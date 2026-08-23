@@ -48,8 +48,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'init product',
-    description:
-      'Register a project in .vinaya/projects.md (and its project:<name> label) in an already-initialized repo',
+    description: 'Register a project in .vinaya/projects.md in an already-initialized repo',
     flags: [
       {
         flag: '--path <path>',
@@ -58,8 +57,8 @@ export const COMMANDS: readonly Command[] = [
     ],
     details: [
       "Writes (or appends to) `.vinaya/projects.md` — the registry Vinaya Studio's tranche board resolves a project's board link against. Idempotent: re-running with the same name updates nothing.",
-      'Also creates a `project:<name>` label (create-if-absent) — informational only, not read by any shipped check or by Studio.',
-      'A missing GitHub remote skips the label (the one forge-reaching op) but still writes the registry row, which is a pure local file write.'
+      'Reaches no forge and needs no GitHub remote or credentials: the registry row is a pure local file write, and it is deliberately NOT recorded in the ownership manifest, so `eject` does not reverse adopter-declared data.',
+      "Creates no label. It used to create a `project:<name>` one; that was removed because project is a field, not a label — the `project:*` family was dropped outright, `declaredProjects` reads the Issue body's `**Project:**` field, and Studio ignores a residual label. Existing labels in already-registered repos are left alone."
     ],
     status: 'shipped'
   },
