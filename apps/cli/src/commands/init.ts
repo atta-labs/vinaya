@@ -216,31 +216,30 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
   // `governance/products/<name>/` path segment and a manifest record — are
   // both gone: the governance scaffold was cut by the minimal-manifest
   // re-ruling, and this command no longer writes the manifest at all (#72).
-  // The name is written verbatim into a markdown table cell in
-  // `.vinaya/projects.md` (`rowLine` interpolates it unescaped), and two
-  // places later compare against it. Each is hostile to different characters:
+  // Why the slug stays strict, stated as the property rather than the
+  // mechanism. The name is written verbatim into a markdown table cell in
+  // `.vinaya/projects.md` (`rowLine` interpolates it unescaped) and is later
+  // compared, literally, against values parsed back out of that cell and out
+  // of an Issue body's `**Project:**` field. Several characters break one of
+  // those paths or the other — measured, not assumed: a `|` shifts every
+  // column, a newline splices in a row nobody declared, a backtick is
+  // stripped so the value stops round-tripping, and a `/` makes the Issue
+  // field parse to nothing at all so the task declares no project.
   //
-  //   - `parseRegistry` (`packages/aeg-core/src/parse-registry.ts`) reads the
-  //     row back. It splits on pipes and line boundaries, so a `|` shifts
-  //     every column and a newline splices in a row nobody declared; it also
-  //     strips backticks from every cell, so a backtick stops the value
-  //     round-tripping — reachable through `--path`, which is NOT
-  //     slug-constrained (#181), never through the name.
-  //   - `declaredProjects` (`issue-validation.ts`) reads an Issue body's
-  //     `**Project:**` field — not this file — and splits it on comma OR
-  //     slash before matching it against the registered set. So a name
-  //     containing either can never match the row it was written from.
+  // Deliberately NOT enumerating which consumer does which. Six revisions of
+  // this comment tried, and every one was wrong in a different way: there are
+  // two unexported `stripBackticks` in files whose names are transpositions
+  // of each other (`parse-registry.ts` is the registry one), and a
+  // `declaredProjects` that looks authoritative but has no shipped caller —
+  // the live parser is `projectsFromBody`, and the two deliberately disagree
+  // on their split sets. A comment that reproduces that map is a copy that
+  // rots; the parsers are the authority.
   //
-  // Deliberately no count here. Four revisions of this comment each stated
-  // one, each disagreed with its own list, and each was corrected into a new
-  // wrong number. The list is the specification; a tally beside it is a
-  // second claim that can rot independently of the thing it describes.
-  //
-  // `name` reaches no filesystem path, so the slug is not guarding traversal.
-  // It guards the one value both comparisons key on, and it is the single
-  // constraint that satisfies all of them at once — which is why it stays as
-  // written rather than being narrowed to whichever characters the consumer
-  // in front of you happens to care about.
+  // `name` reaches no filesystem path, so this is not guarding traversal. It
+  // guards the one value every downstream comparison keys on, and it is the
+  // single constraint that satisfies all of them at once — which is why it
+  // stays as written rather than being narrowed to whichever characters the
+  // consumer in front of you happens to care about.
   if (!PRODUCT_NAME_RE.test(name)) {
     console.error(
       `Error: invalid product name '${name}'. Use a lower-case slug: letters, digits, and hyphens (e.g. mobile, web-app).`
