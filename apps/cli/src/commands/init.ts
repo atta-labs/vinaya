@@ -216,30 +216,10 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
   // `governance/products/<name>/` path segment and a manifest record — are
   // both gone: the governance scaffold was cut by the minimal-manifest
   // re-ruling, and this command no longer writes the manifest at all (#72).
-  // Why the slug stays strict, stated as the property rather than the
-  // mechanism. The name is written verbatim into a markdown table cell in
-  // `.vinaya/projects.md` (`rowLine` interpolates it unescaped) and is later
-  // compared, literally, against values parsed back out of that cell and out
-  // of an Issue body's `**Project:**` field. Several characters break one of
-  // those paths or the other — measured, not assumed: a `|` shifts every
-  // column, a newline splices in a row nobody declared, a backtick is
-  // stripped so the value stops round-tripping, and a `/` makes the Issue
-  // field parse to nothing at all so the task declares no project.
-  //
-  // Deliberately NOT enumerating which consumer does which. Six revisions of
-  // this comment tried, and every one was wrong in a different way: there are
-  // two unexported `stripBackticks` in files whose names are transpositions
-  // of each other (`parse-registry.ts` is the registry one), and a
-  // `declaredProjects` that looks authoritative but has no shipped caller —
-  // the live parser is `projectsFromBody`, and the two deliberately disagree
-  // on their split sets. A comment that reproduces that map is a copy that
-  // rots; the parsers are the authority.
-  //
-  // `name` reaches no filesystem path, so this is not guarding traversal. It
-  // guards the one value every downstream comparison keys on, and it is the
-  // single constraint that satisfies all of them at once — which is why it
-  // stays as written rather than being narrowed to whichever characters the
-  // consumer in front of you happens to care about.
+  // Strict because the name is written verbatim into a markdown table cell
+  // and every downstream consumer compares it literally. Which characters
+  // break which parser is the parsers' own business — `list-tasks.ts`'s
+  // `projectsFromBody` docstring documents where they deliberately disagree.
   if (!PRODUCT_NAME_RE.test(name)) {
     console.error(
       `Error: invalid product name '${name}'. Use a lower-case slug: letters, digits, and hyphens (e.g. mobile, web-app).`
@@ -265,11 +245,11 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
 
   // `init product` reaches no forge at all. Its one forge op used to be a
   // `project:<name>` label; that label is gone (#72) because project is a
-  // FIELD, not a label — the `project:*` family was retired outright, and
-  // `declaredProjects`/`list-tasks.ts` both read the Issue body's
-  // `**Project:**` field. Creating a label nothing reads made `init product`
-  // require a GitHub remote to do a job that is a pure local write. It no
-  // longer does: no remote, no `gh`, no credentials.
+  // FIELD, not a label — the `project:*` family was retired outright, and a
+  // task's project is read from the Issue body's `**Project:**` field.
+  // Creating a label nothing reads made `init product` require a GitHub
+  // remote to do a job that is a pure local write. It no longer does: no
+  // remote, no `gh`, no credentials.
   const registryPlan = planRegistryRow(repo.repoRoot, name, productPath, specsPath)
 
   process.stdout.write(`vinaya init product ${name} — the full diff:\n\n`)
