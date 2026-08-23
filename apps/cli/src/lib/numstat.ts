@@ -52,9 +52,13 @@ export function summariseNumstat(numstat: string): string {
  * content before looking for the summary, so while `evidence-fresh` matched the
  * raw region the two disagreed about which line came "first" — a `Summary:`
  * inside the Group B fence was verified while a fabricated one in prose was
- * exempted. `firstScannableSummary` in `evidence-fresh-logic.ts` skips the same
- * spans, and that is what makes "exempt because it is verified" true rather
- * than merely intended.
+ * exempted. `firstScannableSummary` in `evidence-fresh-logic.ts` calls the very
+ * same `maskCode`/`maskDetailsBlocks` the other side calls, rather than
+ * reckoning those spans itself — a local re-implementation closed backtick
+ * fences and `<details>` and still left tilde fences, three-space-indented
+ * fences and CRLF open, each a separate spelling of one hole. Sharing the
+ * constant AND the substrate is what makes "exempt because it is verified"
+ * true rather than merely intended.
  */
 export const EVIDENCE_SUMMARY_PREFIX = 'Summary: '
 
