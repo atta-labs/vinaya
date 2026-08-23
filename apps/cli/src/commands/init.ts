@@ -217,23 +217,30 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
   // both gone: the governance scaffold was cut by the minimal-manifest
   // re-ruling, and this command no longer writes the manifest at all (#72).
   // The name is written verbatim into a markdown table cell in
-  // `.vinaya/projects.md` (`rowLine` interpolates it unescaped). Two consumers
-  // read it back, and between them three different characters are hostile:
+  // `.vinaya/projects.md` (`rowLine` interpolates it unescaped), and two
+  // places later compare against it. Each is hostile to different characters:
   //
-  //   - `parseRegistry` splits on pipes and line boundaries, so a `|` shifts
-  //     every column and a newline splices in a row nobody declared. It also
-  //     strips backticks from every cell, so a backtick makes the value stop
+  //   - `parseRegistry` (`packages/aeg-core/src/parse-registry.ts`) reads the
+  //     row back. It splits on pipes and line boundaries, so a `|` shifts
+  //     every column and a newline splices in a row nobody declared; it also
+  //     strips backticks from every cell, so a backtick stops the value
   //     round-tripping — reachable through `--path`, which is NOT
   //     slug-constrained (#181), never through the name.
-  //   - `declaredProjects` splits an Issue's `**Project:**` field on comma OR
-  //     SLASH, so a name `a/b` resolves to `["a", "b"]` and can never match
-  //     the row it was written from.
+  //   - `declaredProjects` (`issue-validation.ts`) reads an Issue body's
+  //     `**Project:**` field — not this file — and splits it on comma OR
+  //     slash before matching it against the registered set. So a name
+  //     containing either can never match the row it was written from.
   //
-  // `name` reaches no filesystem path here, so the slug is not guarding a
-  // path traversal. It is guarding the one value both consumers key on, and
-  // it is the single constraint that satisfies both at once — which is why it
-  // stays as-is rather than being narrowed to whichever characters the
-  // consumer in front of you happens to care about.
+  // Deliberately no count here. Four revisions of this comment each stated
+  // one, each disagreed with its own list, and each was corrected into a new
+  // wrong number. The list is the specification; a tally beside it is a
+  // second claim that can rot independently of the thing it describes.
+  //
+  // `name` reaches no filesystem path, so the slug is not guarding traversal.
+  // It guards the one value both comparisons key on, and it is the single
+  // constraint that satisfies all of them at once — which is why it stays as
+  // written rather than being narrowed to whichever characters the consumer
+  // in front of you happens to care about.
   if (!PRODUCT_NAME_RE.test(name)) {
     console.error(
       `Error: invalid product name '${name}'. Use a lower-case slug: letters, digits, and hyphens (e.g. mobile, web-app).`
