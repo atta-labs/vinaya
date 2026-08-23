@@ -245,7 +245,7 @@ describe('containedManagedBlockAbs — per-kind bounds for a managed block (#68)
 
   // The whole point of the fix: from a linked worktree the hook's real home is
   // the MAIN checkout's shared hooks dir, legitimately outside `repoRoot`.
-  it('resolves to the shared common dir from a linked worktree, where containedAbs returns null', () => {
+  it('resolves to the shared common dir from a linked worktree, where containedAbs answers a worktree-local phantom', () => {
     const root = gitRepo()
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root })

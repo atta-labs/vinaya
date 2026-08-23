@@ -1316,10 +1316,19 @@ describe('vinaya eject — raw git hooks inside a linked worktree', () => {
    * The defect it pins: hooks are never per-worktree, so a `.git/hooks/*`
    * managed block's real home is the MAIN checkout's shared hooks directory.
    * From a linked worktree that path is legitimately outside the worktree's
-   * `repoRoot`, and `planEject`'s old `containedAbs` guard rejected it —
-   * correctly by its own logic — so the block was reported as an escape and
-   * never stripped. An "ejected" install silently kept an active commit-time
-   * execution surface.
+   * `repoRoot`.
+   *
+   * `planEject`'s old `containedAbs` guard did NOT reject it — that account is
+   * wrong and this test is the reason to state it right. `resolve()` never
+   * sees that the worktree's `.git` is a gitlink FILE, so
+   * `<repoRoot>/.git/hooks/pre-commit` is textually contained and PASSES. It
+   * just names a file that does not exist there, so `planEject` recorded
+   * `present: false`, the diff printed `gone (managed block already
+   * removed)`, and `eject` exited 0 having stripped nothing while the real
+   * hook stayed armed in the shared directory. An escape would have refused
+   * the whole run and said so; this reported success — which is why the
+   * assertion below is on the hook's CONTENT in the shared dir, not on the
+   * exit code.
    */
   it('strips the shared-common-dir hook block when ejecting from a linked worktree', async () => {
     git(root, ['init', '-q', '-b', 'main'])

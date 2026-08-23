@@ -92,15 +92,25 @@ function abs(repoRoot: string, relPath: string): string {
 
 /**
  * The prefix that marks a managed-block path as living in the git directory
- * rather than the working tree. Byte-exact and case-SENSITIVE, which is
- * correct on a case-sensitive filesystem and incomplete on a case-insensitive
- * one: there `.GIT/config` is the same file as `.git/config` but takes the
- * working-tree branch instead, skipping the common-dir resolution and the
- * hooks-subtree bound alike. Pre-existing, tracked separately — every path
- * `buildInitOps` records is one of three lower-case literals, so no
- * vinaya-generated manifest can reach it, and the answer is a parse-layer
- * question rather than a resolver one. Shared by the two functions below so
- * they cannot disagree about what counts as a git path.
+ * rather than the working tree. It is a byte-exact `startsWith`, and TWO
+ * spellings slip past it — this is a prefix-matching gap of which case is
+ * only one instance, so do not read it as a case-only caveat:
+ *
+ *   - `.GIT/config` on a case-INSENSITIVE filesystem (macOS, Windows) is the
+ *     same file as `.git/config` yet takes the working-tree branch;
+ *   - a bare `.git`, with no trailing separator, fails `startsWith('.git/')`
+ *     on EVERY filesystem including case-sensitive ones, and in a primary
+ *     checkout resolves to a real directory — so the caller reaches
+ *     `readFileSync` on it and throws `EISDIR` instead of refusing.
+ *
+ * Both skip the common-dir resolution and the hooks-subtree bound alike. Both
+ * are pre-existing and tracked separately (#177); neither is reachable from a
+ * vinaya-generated manifest, whose block paths are always one of three
+ * lower-case literals with the separator. The fix belongs at the parse layer,
+ * not here — a resolver that started accepting `.GIT/` would be inventing a
+ * rule on a case-sensitive filesystem, where it IS a different directory.
+ * Shared by the two functions below so they cannot disagree about what counts
+ * as a git path.
  */
 const GIT_DIR_PREFIX = '.git/'
 
@@ -161,8 +171,11 @@ function gitCommonDir(repoRoot: string): string {
  * THROUGH THIS FUNCTION. It is no longer the only containment rule: a
  * managed-block path goes through `containedManagedBlockAbs` instead, whose
  * bound is the git common dir's `hooks/` subtree and is deliberately outside
- * `repoRoot` from a linked worktree. Read this guarantee as scoped to the
- * whole files vinaya owns, which is every caller it still has.
+ * `repoRoot` from a linked worktree. Read this guarantee as scoped to whole
+ * files vinaya owns — plus the `.husky/*` and `.vinaya/hooks/*` block paths
+ * `containedManagedBlockAbs` delegates back here, whose directories are
+ * tracked and present in every worktree checkout, so `repoRoot` is the right
+ * bound for them too.
  */
 export function containedAbs(repoRoot: string, relPath: string): string | null {
   const root = resolve(repoRoot)
