@@ -1134,29 +1134,30 @@ export function buildInitOps(ctx: InitContext): Op[] {
   return ops
 }
 
-/**
- * The change-set for `vinaya init product <name>` — a new governed area.
- * Per the 2026-07-23 minimal-manifest re-ruling this shrank to a single
- * `project:<name>` label (create-if-absent): the governance/ scaffold the old
- * op-list wrote (a per-product decision record + the rest of the governance
- * folder) is cut — no shipped check consumed it. The `.vinaya/projects.md`
- * row is back, though, as a SEPARATE write (`lib/registry-write.ts`, called
- * from `runInitProduct` in `commands/init.ts`, not modeled as an `Op` here):
- * Vinaya Studio's tranche board started reading it (#829) — a shipped
- * consumer, distinct from a "check", which the
- * 2026-07-23 premise didn't anticipate.
+// ---------------------------------------------------------------------------
+// `vinaya init product <name>` — why there is no op-builder here
+// ---------------------------------------------------------------------------
+/*
+ * It writes ONE thing, and it is not an `Op`.
+ *
+ * There used to be a `buildInitProductOps` returning a single
+ * `project:<name>` label. It is gone (#72). Project is a **field, not a
+ * label** — the `project:*` family was retired outright, `declaredProjects`
+ * (`issue-validation.ts`) reads the Issue body's `**Project:**` field, and
+ * `@attalabs/aeg-forge-state`'s `list-tasks.ts` explicitly ignores a residual
+ * `project:*` label. So the command's only forge-reaching op created a label
+ * that no shipped consumer read, while making an otherwise purely local
+ * command require a GitHub remote and credentials.
+ *
+ * What it does write is the `.vinaya/projects.md` row — a SEPARATE local
+ * write (`lib/registry-write.ts`, called from `runInitProduct` in
+ * `commands/init.ts`), never modeled as an `Op` here, and deliberately not
+ * recorded in the ownership manifest: the registry is adopter-declared data,
+ * not vinaya-owned scaffolding, so `eject` does not reverse it. Vinaya
+ * Studio's tranche board reads it.
+ *
+ * Existing repos keep whatever `project:*` labels they already have; nothing
+ * deletes a forge label that may be in use elsewhere.
  */
-export function buildInitProductOps(name: string): Op[] {
-  const safe = name.trim()
-  return [
-    {
-      kind: 'create-label',
-      name: `project:${safe}`,
-      color: '0e8a16',
-      description: `Governed product area: ${safe}`,
-      group: `Governed product area: ${safe}`
-    }
-  ]
-}
 
 export { BRANCH_PROTECTION_NOTE }

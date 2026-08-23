@@ -9,14 +9,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  buildInitOps,
-  buildInitProductOps,
-  CONFIG_PATH,
-  type HookDir,
-  type InitContext,
-  TRACKED_HOOK_DIR
-} from '../lib/artifacts.js'
+import { buildInitOps, CONFIG_PATH, type HookDir, type InitContext, TRACKED_HOOK_DIR } from '../lib/artifacts.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import { type ManagedManifest, readRepoCiSetup, VinayaConfigSchema } from '../lib/config.js'
 import {
@@ -63,7 +56,7 @@ function flags(args: string[]): Flags {
   return { dryRun: args.includes('--dry-run'), yes: args.includes('--yes') }
 }
 
-/** A product name must be a safe slug — it becomes a path segment + a manifest record. */
+/** A product name must be a safe slug — see `runInitProduct` for what that still guards. */
 const PRODUCT_NAME_RE = /^[a-z0-9][a-z0-9-]*$/
 
 /**
@@ -219,9 +212,14 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
     return 2
   }
   const specsPath = productPath === '.' ? 'specs/' : `${productPath}/specs/`
-  // Strict slug — the name becomes a filesystem path segment
-  // (governance/products/<name>/…) and a manifest record, so a `..` or path
-  // separator would let user input escape the intended directory.
+  // Strict slug. The two things this used to guard — a
+  // `governance/products/<name>/` path segment and a manifest record — are
+  // both gone: the governance scaffold was cut by the minimal-manifest
+  // re-ruling, and this command no longer writes the manifest at all (#72).
+  // Strict because the name is written verbatim into a markdown table cell
+  // and every downstream consumer compares it literally. Which characters
+  // break which parser is the parsers' own business — `list-tasks.ts`'s
+  // `projectsFromBody` docstring documents where they deliberately disagree.
   if (!PRODUCT_NAME_RE.test(name)) {
     console.error(
       `Error: invalid product name '${name}'. Use a lower-case slug: letters, digits, and hyphens (e.g. mobile, web-app).`
@@ -245,24 +243,16 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
     return 1
   }
 
-  // A missing/non-GitHub remote only blocks the LABEL (the one forge-reaching
-  // op) — the `.vinaya/projects.md` row is a pure local write, so it still
-  // happens (spec D3 was scoped to "the only op here is a label", which
-  // stopped being true once this command started writing the registry too).
-  const noRemote = !repo.owner || !repo.repo
-  if (noRemote) {
-    console.warn(
-      'Warning: no `origin` remote (or it is not a GitHub URL) — skipping label creation. ' +
-        `Re-run 'vinaya init product ${name}' after adding a GitHub remote to create it.`
-    )
-  }
-
-  const ops = noRemote ? [] : buildInitProductOps(name)
-  const plan = planInstall(ops, repo.repoRoot, new Set(existing.files))
+  // `init product` reaches no forge at all. Its one forge op used to be a
+  // `project:<name>` label; that label is gone (#72) because project is a
+  // FIELD, not a label — the `project:*` family was retired outright, and a
+  // task's project is read from the Issue body's `**Project:**` field.
+  // Creating a label nothing reads made `init product` require a GitHub
+  // remote to do a job that is a pure local write. It no longer does: no
+  // remote, no `gh`, no credentials.
   const registryPlan = planRegistryRow(repo.repoRoot, name, productPath, specsPath)
 
   process.stdout.write(`vinaya init product ${name} — the full diff:\n\n`)
-  process.stdout.write(`${renderInstallDiff(plan)}\n`)
   process.stdout.write('── Project registry ─────────────────────────────\n')
   process.stdout.write(`${renderRegistryRowDiffLine(registryPlan)}\n\n`)
 
@@ -280,27 +270,12 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
   }
 
   applyRegistryRow(repo.repoRoot, registryPlan, name, productPath, specsPath)
-  const added = await applyInstall(plan, repo.repoRoot, deps.labelGateway(repo.repoRoot))
-  const merged: ManagedManifest = {
-    version: existing.version,
-    files: [...new Set([...existing.files, ...added.files])],
-    blocks: dedupeBlocks([...existing.blocks, ...added.blocks]),
-    labels: [...new Set([...existing.labels, ...added.labels])]
-  }
-  writeManifest(repo.repoRoot, merged)
+  // No manifest write: this command now creates nothing vinaya owns. The
+  // registry row is adopter-declared data, deliberately outside the manifest
+  // (so `eject` never reverses it), and there is no longer a label to record.
 
   process.stdout.write(`\nGoverned product area '${name}' scaffolded.\n`)
   return 0
-}
-
-function dedupeBlocks<T extends { path: string; marker: string }>(bs: T[]): T[] {
-  const seen = new Set<string>()
-  return bs.filter((b) => {
-    const k = `${b.path}::${b.marker}`
-    if (seen.has(k)) return false
-    seen.add(k)
-    return true
-  })
 }
 
 export async function initCommand(args: string[]): Promise<void> {

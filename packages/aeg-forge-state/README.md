@@ -8,7 +8,9 @@ purely from GitHub forge objects — no topology file required:
   for that slug (a real, expected transitional state during rollout)
 - `tranche:<slug>`-labeled Issues → the `Task[]` list, with `id`/`title`
   parsed from the `[<slug>] <id> — <title>` Issue-title convention,
-  `projects` from `project:<name>` labels, and `dependsOn`/`conflictsWith`
+  `projects` from the Issue body's `**Project:**` field — a FIELD, never a
+  label: the `project:*` label family was retired, and a residual one is
+  ignored outright rather than merged — and `dependsOn`/`conflictsWith`
   edges parsed from each Issue's "Dependency rationale" section — hardened
   against both the topology file's single comma-joined backtick-span form
   and the multi-span prose form real Issue bodies also use
@@ -23,7 +25,7 @@ octokit-based access path.
 1. **This repo's own migration** (`aeg-forge-state-v1` tasks 3/4/5) — the live
    The gates and Vinaya Studio cut over from reading `aeg-root/tranches/*.md`
    files to calling this package directly.
-2. **`vinaya-cli-v1`'s shippable CLI** (task 2, #382) — imports or re-homes
+2. **`vinaya-cli-v1`'s shippable CLI** — imports or re-homes
    this package as the forge-backed half of Vinaya's `StateSource` seam, for
    arbitrary adopter repos, not only the one it was written in.
 
