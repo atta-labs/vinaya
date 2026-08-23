@@ -192,7 +192,7 @@ describe('CLI --json mode produces pure JSON on stdout (PR #378 review)', () => 
     const scriptPath = join(import.meta.dirname, 'verify-coherence.ts')
     // Exit code is 1 when the oracle finds a real `fail` — not a script
     // error. Read stdout from the thrown error in that case too (mirrors
-    // `verify-dispatch.ts`'s `captureCombinedOutput`), so this test asserts
+    // `verify-dispatch.ts`'s `captureStreams`), so this test asserts
     // JSON purity independent of the repo's current coherence state.
     let out: string
     try {

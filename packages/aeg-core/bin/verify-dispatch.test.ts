@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  * Both tools exit non-zero exactly when findings exist, so the baseline
  * silently reported 0 in the one case it was supposed to catch. This mocks
  * `node:child_process`'s `spawnSync` (the array-form, no-shell primitive
- * `captureCombinedOutput` uses since `tranche-rename-v1` task 2) to exercise
+ * `captureStreams` uses since `tranche-rename-v1` task 2) to exercise
  * every observable outcome without needing the real tools to be in a
  * specific state.
  */
@@ -85,6 +85,120 @@ describe('currentFindingCounts', () => {
     ])
   })
 
+  /**
+   * atta-labs/vinaya#173. `captureStreams` used to concatenate stdout and
+   * stderr before parsing, on the stated premise that neither tool writes to
+   * stderr on its clean `--json` path. `verify-coherence` does: it probes
+   * `aeg-root/tranches` off the base ref, the forge-native cutover deleted
+   * those directories, and `git` prints a `fatal:` line per probe while the
+   * tool itself exits 0 with correct results. One such line made `JSON.parse`
+   * throw and the baseline reported UNAVAILABLE on EVERY dispatch check.
+   */
+  it('(#173) a healthy verify-coherence that also writes to stderr is NOT unavailable', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return {
+          stdout: JSON.stringify({ summary: { passed: 10, failed: 0, info: 6 } }),
+          stderr: [
+            'fatal: Not a valid object name origin/main:aeg-root/tranches',
+            "fatal: path 'aeg-root/tranches/x.md' does not exist in 'origin/main'",
+            ''
+          ].join('\n'),
+          status: 0
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    // The noise is both non-fatal AND surfaced — dropping it on the floor is
+    // the defect PR #179 found in the first cut of this fix.
+    expect(currentFindingCounts()).toEqual([
+      { tool: 'verify-docs-full', findingCount: 0, unavailable: false },
+      {
+        tool: 'verify-coherence',
+        findingCount: 0,
+        unavailable: false,
+        diagnostic: 'fatal: Not a valid object name origin/main:aeg-root/tranches'
+      }
+    ])
+  })
+
+  it('(#173) stderr noise does not hide a REAL finding count either', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return {
+          stdout: JSON.stringify({ summary: { passed: 2, failed: 4, info: 0 } }),
+          stderr: 'fatal: Not a valid object name origin/main:aeg-root/tranches\n',
+          status: 1
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    expect(currentFindingCounts()).toEqual([
+      { tool: 'verify-docs-full', findingCount: 0, unavailable: false },
+      {
+        tool: 'verify-coherence',
+        findingCount: 4,
+        unavailable: false,
+        diagnostic: 'fatal: Not a valid object name origin/main:aeg-root/tranches'
+      }
+    ])
+  })
+
+  // Non-discriminating by construction — it passes under the old concatenating
+  // code too, and is not among the mutation-proof failures. Kept deliberately
+  // as a REGRESSION GUARD: splitting the streams removed the accidental
+  // fail-closed that any stderr byte used to provide, and this pins that the
+  // deliberate one replaced it.
+  it('(#173) a genuinely unparseable stdout is still UNAVAILABLE — the signal is not lost', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return { stdout: 'Segmentation fault', stderr: 'fatal: something else\n', status: 139 }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    expect(coherence).toEqual({
+      tool: 'verify-coherence',
+      findingCount: 0,
+      unavailable: true,
+      diagnostic: 'fatal: something else'
+    })
+  })
+
+  /**
+   * These ARE discriminating, and they are the ones the split made necessary.
+   * Concatenated stderr used to make every stdout unparseable, so valid JSON of
+   * the WRONG shape never reached the property access. Once stdout is parsed
+   * alone, `{}` or a scalar parses fine and `summary.failed` throws a
+   * TypeError — a crash where a clean UNAVAILABLE belongs.
+   */
+  it.each([
+    ['a JSON scalar', '0'],
+    ['a JSON string', '"done"'],
+    ['an array', '[]'],
+    ['an object with no summary', '{}'],
+    ['a summary with no failed', '{"summary":{"passed":3}}'],
+    ['a non-numeric failed', '{"summary":{"failed":"three"}}'],
+    ['null', 'null']
+  ])('(#173) %s on stdout is UNAVAILABLE, not a crash and not a 0 count', (_label, payload) => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return { stdout: payload, stderr: '', status: 0 }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    expect(coherence).toEqual({ tool: 'verify-coherence', findingCount: 0, unavailable: true })
+  })
+
   it('(c) reports UNAVAILABLE, never 0, when a tool cannot run at all (spawn failure)', () => {
     spawnSyncMock.mockImplementation(() => spawnFailureResult())
 
@@ -152,10 +266,31 @@ describe('(d) sh()/shJson() other call sites are untouched', () => {
     ]) {
       expect(src).toContain(needle)
     }
-    // The new capture helper is scoped to currentFindingCounts's two tool
+    // The capture helper is scoped to currentFindingCounts's two tool
     // invocations only — defined once, called exactly twice.
-    const occurrences = src.split('captureCombinedOutput(').length - 1
+    const occurrences = src.split('captureStreams(').length - 1
     expect(occurrences).toBe(3)
+    // #173: the two streams must stay apart. A concatenation here is what made
+    // one `fatal:` line from a healthy `verify-coherence` read as UNAVAILABLE.
+    expect(src).not.toContain("(result.stdout ?? '') + (result.stderr ?? '')")
+    // The coherence payload is PARSED, so the PARSE must read stdout alone.
+    // Asserted on the call, not on a type argument, so refactoring the parser
+    // does not silently retire the guard.
+    expect(src).toContain('coherenceFailedCount(coherence.stdout)')
+    // Deliberately NOT `not.toContain('coherence.stderr')`. That was the first
+    // shape of this guard and it was too blunt: the property is "stderr never
+    // reaches the parse", not "stderr is never read". Stated as the former, it
+    // forbade the diagnostic that PR #179 added — a `verify-coherence` stderr
+    // line an operator needs to see — and so pinned a real gap in place.
+    // The parse is guarded by the assertion above; these forbid the two ways
+    // stderr could get back INTO it.
+    expect(src).not.toContain('coherenceFailedCount(coherence.stderr)')
+    expect(src).not.toContain('coherence.stdout}${coherence.stderr')
+    // verify-docs is line-COUNTED, and writes its `✗` findings to stderr
+    // (`console.error`), so scanning both streams there is required — a
+    // stdout-only read would report zero findings forever.
+    expect(src).toContain('docs.stdout')
+    expect(src).toContain('docs.stderr')
   })
 })
 
@@ -192,5 +327,208 @@ describe('(e) every gh invocation carries an explicit repo target (Part 1, task 
       expect(argsText).toContain("'-R'")
       expect(argsText).toMatch(/`\$\{repo\.owner\}\/\$\{repo\.repo\}`/)
     }
+  })
+})
+
+/**
+ * PR #179 review: splitting the streams stopped stderr corrupting the parse,
+ * and in doing so meant nothing read stderr at all — so a `verify-coherence`
+ * diagnostic (an unresolvable ref, say) was captured by the caller and dropped.
+ * A diagnostic that reaches no operator is not a diagnostic.
+ */
+describe("(#179) the baseline carries the child's diagnostic", () => {
+  it('surfaces stderr from a coherence run that otherwise SUCCEEDED', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return {
+          stdout: JSON.stringify({ summary: { passed: 10, failed: 0, info: 6 } }),
+          stderr: '[verify-coherence] ref "deadbeef" does not resolve — input incomplete\n',
+          status: 0
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    expect(coherence?.unavailable).toBe(false)
+    expect(coherence?.diagnostic).toContain('does not resolve')
+  })
+
+  it('carries the reason a tool is unavailable, not just the fact', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return { stdout: 'Segmentation fault', stderr: 'bun: fatal error\n', status: 139 }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    expect(coherence?.unavailable).toBe(true)
+    expect(coherence?.diagnostic).toBe('bun: fatal error')
+  })
+
+  it('does not echo a verify-docs finding as a diagnostic on a clean run', () => {
+    // verify-docs writes its own `✗` findings to stderr, so an unconditional
+    // diagnostic there would report every ordinary finding as an error.
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) {
+        return { stdout: '', stderr: '  ✗ a real finding\n', status: 1 }
+      }
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return { stdout: JSON.stringify({ summary: { failed: 0 } }), stderr: '', status: 0 }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const docs = currentFindingCounts().find((f) => f.tool === 'verify-docs-full')
+    expect(docs).toEqual({ tool: 'verify-docs-full', findingCount: 1, unavailable: false })
+  })
+})
+
+describe('(#179) the shape guard rejects a number that is not a count', () => {
+  it.each([
+    ['a negative failed', '{"summary":{"failed":-1}}'],
+    ['an overflowing failed', '{"summary":{"failed":1e999}}']
+  ])('%s is UNAVAILABLE, not a count', (_label, payload) => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return { stdout: payload, stderr: '', status: 0 }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    expect(coherence?.unavailable).toBe(true)
+    expect(coherence?.findingCount).toBe(0)
+  })
+})
+
+/**
+ * PR #179 security review, MEDIUM. A forge-degraded `verify-coherence` run
+ * reports a SMALLER `failed` count, honestly arrived at from the tranches it
+ * could see. Read as a finding count it under-reports, and `--check-baseline`
+ * would compare it as if it were complete.
+ *
+ * Splitting the streams removed an accidental fail-closed here: an outage also
+ * printed to stderr, so the old concatenated parse threw and the tool read as
+ * unavailable. This pins the deliberate replacement.
+ */
+describe('(#179) a forge-degraded coherence sweep is UNAVAILABLE, not a small count', () => {
+  it('rejects a report flagged forgeUnavailable even though its shape is valid', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return {
+          stdout: JSON.stringify({ forgeUnavailable: true, summary: { passed: 2, failed: 1, info: 0 } }),
+          stderr: '',
+          status: 1
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    // Not `findingCount: 1` — that number is real but incomplete, and the
+    // whole point of `unavailable` is that it is never compared as a count.
+    // The diagnostic must say the tool RAN: `fetchForgeFacts`'s reason never
+    // reaches stderr, so without it the operator reads "failed to run" for a
+    // run that succeeded.
+    expect(coherence?.unavailable).toBe(true)
+    expect(coherence?.findingCount).toBe(0)
+    expect(coherence?.diagnostic).toContain('could not reach the forge')
+    expect(coherence?.diagnostic).toContain('incomplete, not clean')
+  })
+
+  it('accepts the same report when the forge WAS reachable', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return {
+          stdout: JSON.stringify({ forgeUnavailable: false, summary: { passed: 2, failed: 1, info: 0 } }),
+          stderr: '',
+          status: 1
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    expect(coherence).toEqual({ tool: 'verify-coherence', findingCount: 1, unavailable: false })
+  })
+})
+
+describe('(#179) a diagnostic that is cut says so', () => {
+  it('marks a truncated line instead of ending mid-token', () => {
+    const long = `x${'y'.repeat(400)}`
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return { stdout: JSON.stringify({ summary: { failed: 0 } }), stderr: `${long}\n`, status: 0 }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    expect(coherence?.diagnostic).toMatch(/… \(truncated\)$/)
+    expect(coherence?.diagnostic?.length).toBeLessThan(long.length)
+  })
+
+  it('leaves a short line untouched', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return { stdout: JSON.stringify({ summary: { failed: 0 } }), stderr: 'short line\n', status: 0 }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    expect(currentFindingCounts().find((f) => f.tool === 'verify-coherence')?.diagnostic).toBe('short line')
+  })
+})
+
+/** The one previously-untested arm: verify-docs shows a diagnostic ONLY when unavailable. */
+describe('(#179) verify-docs surfaces its stderr only when unavailable', () => {
+  it('carries the reason when a non-zero exit produced no findings (a crash)', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) {
+        return { stdout: '', stderr: 'bun: cannot find module\n', status: 1 }
+      }
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return { stdout: JSON.stringify({ summary: { failed: 0 } }), stderr: '', status: 0 }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const docs = currentFindingCounts().find((f) => f.tool === 'verify-docs-full')
+    expect(docs).toEqual({
+      tool: 'verify-docs-full',
+      findingCount: 0,
+      unavailable: true,
+      diagnostic: 'bun: cannot find module'
+    })
+  })
+})
+
+/** The forge-outage reason explains the verdict; a stderr line only accompanies it. */
+describe('(#179) an outage reason outranks an incidental stderr line', () => {
+  it('reports the outage, not the probe noise, when both are present', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return {
+          stdout: JSON.stringify({ forgeUnavailable: true, summary: { failed: 0 } }),
+          stderr: 'fatal: Not a valid object name origin/main:aeg-root/tranches\n',
+          status: 1
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    expect(coherence?.diagnostic).toContain('could not reach the forge')
+    expect(coherence?.diagnostic).not.toContain('Not a valid object name')
   })
 })

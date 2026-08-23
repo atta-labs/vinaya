@@ -370,26 +370,85 @@ function computeLeftover(trancheSlug: string, taskId: string) {
 
 // ---- baseline capture ----------------------------------------------------------
 
-type CaptureResult = { output: string; exitCode: number; ranAtAll: boolean }
+type CaptureResult = { stdout: string; stderr: string; exitCode: number; ranAtAll: boolean }
 
 /**
- * Non-throwing combined stdout+stderr capture, used ONLY by
+ * Non-throwing capture of a child's two streams, kept APART, used ONLY by
  * `currentFindingCounts()`. `sh()`/`shJson()` above deliberately swallow any
  * non-zero exit to `''` — every other call site of theirs relies on that
  * ("not found / not applicable"). Finding counts need the opposite: a
  * non-zero exit from `verify-docs`/`verify-coherence` means "here are the
  * findings," not "nothing to report," so this helper harvests output
  * regardless of exit code instead of throwing it away. Array-form
- * `spawnSync` — no shell, so no `2>&1` redirect is available; stdout and
- * stderr are captured separately and concatenated instead. Equivalent for
- * both tools' finding output, since neither writes to stderr on its
- * clean/`--json` path (module docstring above).
+ * `spawnSync` — no shell, so no `2>&1` redirect is available.
+ *
+ * The two streams are kept APART, and that separation is the whole point
+ * (#173). They used to be concatenated, on the stated premise that "neither
+ * writes to stderr on its clean `--json` path". That premise was false:
+ * `verify-coherence` probes `aeg-root/tranches` and `aeg-root/tranches/completed`
+ * off the base ref, and the forge-native cutover deleted those directories —
+ * `no-disk-state.ts` now actively forbids re-adding one — so `git` prints a
+ * `fatal:` line per probe while the tool itself exits 0 with correct results.
+ * Concatenated, one such line made `JSON.parse` throw, and the caller reported
+ * `verify-coherence: UNAVAILABLE (tool failed to run)` on EVERY dispatch check.
+ *
+ * Worse than the false line: it made a genuinely-crashed run and a healthy but
+ * chatty one indistinguishable, so the field could no longer surface the thing
+ * it exists to surface. Each caller now picks the stream its own parse needs —
+ * see `currentFindingCounts`.
  */
-function captureCombinedOutput(cmd: string, args: string[]): CaptureResult {
+function captureStreams(cmd: string, args: string[]): CaptureResult {
   const result = spawnSync(cmd, args, { encoding: 'utf8' })
-  if (result.error) return { output: '', exitCode: -1, ranAtAll: false }
-  const output = (result.stdout ?? '') + (result.stderr ?? '')
-  return { output, exitCode: result.status ?? 1, ranAtAll: true }
+  if (result.error) return { stdout: '', stderr: '', exitCode: -1, ranAtAll: false }
+  return {
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    exitCode: result.status ?? 1,
+    ranAtAll: true
+  }
+}
+
+/**
+ * `verify-coherence --json`'s finding count, or `null` when `text` is not that
+ * report. Deliberately stricter than "did `JSON.parse` succeed": the payload
+ * must be an object carrying a numeric `summary.failed`. Anything else — a
+ * scalar, an array, an object of another shape — means the tool did not
+ * produce its contract, which is exactly what `unavailable` is for.
+ *
+ * Exit code is deliberately NOT consulted. `verify-coherence` exits non-zero
+ * precisely when findings exist, so a non-zero exit with a well-formed report
+ * is the normal finding-carrying case, not a failure. That asymmetry with
+ * `docsUnavailable` (which does cross-check the exit code) is intentional:
+ * `verify-docs` has no machine-readable payload to validate, so its exit code
+ * is the only corroboration available there.
+ */
+function coherenceFailedCount(stdout: string): number | 'forge-unavailable' | null {
+  const parsed = parseJsonSafe<unknown>(stdout)
+  if (typeof parsed !== 'object' || parsed === null) return null
+  // A forge-degraded sweep is INCOMPLETE, not clean. `verify-coherence` emits
+  // `forgeUnavailable: true` when it could not reach the forge for one or more
+  // tranches; its checks then run against whatever it could see, so `failed`
+  // is a smaller number arrived at honestly and reported honestly — and read
+  // as a finding COUNT it is a lie by omission.
+  //
+  // Before the streams were split, an outage happened to fail closed: the run
+  // also printed to stderr, the concatenated parse threw, and the tool read as
+  // unavailable. That was an accident, and removing it (#173) left this case
+  // uncovered — the deliberate guard below only catches unparseable or
+  // wrong-shaped stdout. Treating an outage as unavailable restores the
+  // property on purpose, and matches `--check-baseline`'s own stated doctrine:
+  // an unavailable tool carries no honest count, so it is never compared as if
+  // it scored 0.
+  if ((parsed as { forgeUnavailable?: unknown }).forgeUnavailable === true) return 'forge-unavailable'
+  const summary = (parsed as { summary?: unknown }).summary
+  if (typeof summary !== 'object' || summary === null) return null
+  const failed = (summary as { failed?: unknown }).failed
+  // Finite and non-negative, not merely `typeof 'number'`: `{"failed": -1}`
+  // and `1e999` (→ Infinity) both parse and are not counts. Unreachable from
+  // the real producer; rejected here so the guard's contract is the shape it
+  // claims, not the shape today's producer happens to emit.
+  if (typeof failed !== 'number' || !Number.isFinite(failed) || failed < 0) return null
+  return failed
 }
 
 function parseJsonSafe<T>(text: string): T | null {
@@ -400,7 +459,37 @@ function parseJsonSafe<T>(text: string): T | null {
   }
 }
 
-type FindingCount = { tool: string; findingCount: number; unavailable: boolean }
+type FindingCount = {
+  tool: string
+  findingCount: number
+  unavailable: boolean
+  /**
+   * The child's first stderr line, when it wrote one. Carried so the callers
+   * that RENDER this baseline can show WHY a tool is unavailable, and can
+   * surface a diagnostic from a tool that otherwise succeeded.
+   *
+   * Splitting the streams stopped stderr corrupting the parse; it also meant
+   * nothing read stderr at all, so a `verify-coherence` diagnostic — an
+   * unresolvable ref, say — was captured here and dropped on the floor. A
+   * diagnostic that reaches no operator is not a diagnostic (review finding,
+   * PR #179).
+   */
+  diagnostic?: string
+}
+
+/** The child's first non-empty stderr line, or `undefined` — what the baseline shows an operator. */
+function firstStderrLine(stderr: string): string | undefined {
+  const line = stderr
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l !== '')
+  if (line === undefined) return undefined
+  // Marked, not silently cut: an unmarked truncation reads as the whole
+  // message, and these lines carry shas and paths that a mid-token cut makes
+  // look like different values than they are.
+  const LIMIT = 300
+  return line.length <= LIMIT ? line : `${line.slice(0, LIMIT)}… (truncated)`
+}
 
 /**
  * Counts findings regardless of exit code — `verify-docs` and
@@ -411,21 +500,65 @@ type FindingCount = { tool: string; findingCount: number; unavailable: boolean }
  * into the numeric count — see `docsUnavailable`/`coherenceUnavailable` below.
  */
 export function currentFindingCounts(): FindingCount[] {
-  const docs = captureCombinedOutput('bun', ['packages/aeg-core/bin/verify-docs.ts'])
-  const docsFindingCount = docs.ranAtAll ? countErrorLines(docs.output) : 0
+  // verify-docs is COUNTED, not parsed: `✗` lines are scanned, and a stray
+  // stderr line cannot corrupt a line count the way it corrupts a JSON parse.
+  // Both streams are scanned so a finding printed to stderr still counts.
+  const docs = captureStreams('bun', ['packages/aeg-core/bin/verify-docs.ts'])
+  const docsFindingCount = docs.ranAtAll ? countErrorLines(`${docs.stdout}${docs.stderr}`) : 0
   // verify-docs's own contract: exit 1 iff errors.length > 0 (bin/verify-docs.ts).
   // A non-zero exit with zero ✗ lines means it crashed before reaching that
   // contract, not that it ran and found nothing.
   const docsUnavailable = !docs.ranAtAll || (docs.exitCode !== 0 && docsFindingCount === 0)
 
-  const coherence = captureCombinedOutput('bun', ['packages/aeg-core/bin/verify-coherence.ts', '--json'])
-  const coherenceParsed = coherence.ranAtAll ? parseJsonSafe<{ summary: { failed: number } }>(coherence.output) : null
-  const coherenceUnavailable = !coherence.ranAtAll || coherenceParsed === null
-  const coherenceFindingCount = coherenceParsed?.summary.failed ?? 0
+  // verify-coherence is PARSED, so it reads stdout ALONE. `--json` writes the
+  // document to stdout; anything on stderr is a subprocess's diagnostic noise
+  // and is not part of the payload. Including it is what made a healthy run
+  // report UNAVAILABLE (#173).
+  const coherence = captureStreams('bun', ['packages/aeg-core/bin/verify-coherence.ts', '--json'])
+  const coherenceRead = coherence.ranAtAll ? coherenceFailedCount(coherence.stdout) : null
+  const coherenceFailed = typeof coherenceRead === 'number' ? coherenceRead : null
+  // Three ways to be unavailable: the tool could not run, its stdout is not
+  // the report this expects, or it ran against a forge it could not reach and
+  // its count is therefore incomplete (`forgeUnavailable`, see above).
+  // The second is a SHAPE check, not just `JSON.parse` succeeding — a scalar
+  // or an object without `summary.failed` is valid JSON and would otherwise
+  // throw a TypeError on property access. Reachable only since the streams
+  // were split: concatenated stderr used to make every such stdout
+  // unparseable, so the wrong-shape case never got that far.
+  const coherenceUnavailable = !coherence.ranAtAll || coherenceFailed === null
+  // `unavailable` covers two different facts and the operator needs to know
+  // which: a tool that could not run, and a tool that ran fine against a forge
+  // it could not reach. `fetchForgeFacts`'s own `reason` never reaches stderr,
+  // so without this the second case renders as a bare "tool failed to run" for
+  // a run that succeeded — a false statement this file's own fix introduced.
+  const coherenceReason =
+    coherenceRead === 'forge-unavailable'
+      ? 'ran, but could not reach the forge — its finding count is incomplete, not clean'
+      : undefined
+  const coherenceFindingCount = coherenceFailed ?? 0
 
+  const docsDiagnostic = firstStderrLine(docs.stderr)
+  const coherenceDiagnostic = firstStderrLine(coherence.stderr)
   return [
-    { tool: 'verify-docs-full', findingCount: docsFindingCount, unavailable: docsUnavailable },
-    { tool: 'verify-coherence', findingCount: coherenceFindingCount, unavailable: coherenceUnavailable }
+    {
+      tool: 'verify-docs-full',
+      findingCount: docsFindingCount,
+      unavailable: docsUnavailable,
+      // verify-docs writes its own findings to stderr, so a diagnostic is only
+      // worth showing when the run is unavailable — otherwise every clean run
+      // would echo its first finding as if it were an error.
+      ...(docsUnavailable && docsDiagnostic ? { diagnostic: docsDiagnostic } : {})
+    },
+    {
+      tool: 'verify-coherence',
+      findingCount: coherenceFindingCount,
+      // Shown whether or not the run is unavailable: `--json` puts the report
+      // on stdout, so ANY stderr here is a diagnostic the operator should see.
+      // The forge-outage reason wins when both exist — it explains the verdict,
+      // where a stderr line only accompanies it.
+      ...((coherenceReason ?? coherenceDiagnostic) ? { diagnostic: coherenceReason ?? coherenceDiagnostic } : {}),
+      unavailable: coherenceUnavailable
+    }
   ]
 }
 
@@ -566,7 +699,10 @@ function runCheckBaselineMode(baselineFile: string): void {
   const unavailable = current.filter((c) => c.unavailable)
   if (unavailable.length > 0) {
     console.error('\nverify-dispatch --check-baseline FAILED — tool(s) produced no honest count to compare:')
-    for (const u of unavailable) console.error(`  ✗ ${u.tool}: UNAVAILABLE (tool failed to run)`)
+    for (const u of unavailable) {
+      console.error(`  ✗ ${u.tool}: UNAVAILABLE (no usable finding count)`)
+      if (u.diagnostic) console.error(`      ↳ ${u.diagnostic}`)
+    }
     console.error(
       '\nAn unavailable tool is never compared as if it scored 0. Fix the tool, then re-run --check-baseline.'
     )
@@ -670,9 +806,10 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
     const capturedAt = captured?.capturedAt ?? nowIso
     console.log(
       raw.unavailable
-        ? `  ${raw.tool}: UNAVAILABLE (tool failed to run) at ${capturedAt}`
+        ? `  ${raw.tool}: UNAVAILABLE (no usable finding count) at ${capturedAt}`
         : `  ${raw.tool}: ${raw.findingCount} finding(s) at ${capturedAt}`
     )
+    if (raw.diagnostic) console.log(`    ↳ ${raw.diagnostic}`)
   }
 
   const overallReady = gateResult.ready && leftover.verdict !== 'stop'
