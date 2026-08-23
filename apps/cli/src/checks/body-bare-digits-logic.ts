@@ -601,7 +601,18 @@ export type ResolvedAnchoredRegion = {
  * at one more layer — the same masker, then the same masker input, then the
  * same normalisation — and each time the disagreement reappeared one stage
  * earlier. Agreement by convention cannot terminate; there is always another
- * stage. This function IS the stage list, so a caller cannot skip one.
+ * stage.
+ *
+ * Precisely what is and is not true, because the looser version of this
+ * sentence was itself a finding: `check-evidence-fresh.ts` is this function's
+ * only non-test caller. `checkBareDigits` does NOT call it — it needs the
+ * masked body for scanning, not one region — so the pipeline is still composed
+ * twice, here and across `checkBareDigits` + `blankAnchoredRegions`. What is
+ * guaranteed is that both compositions call the same two named stage functions,
+ * `normalizeBody` and `buildAnchorLookupMask`, and `body-bare-digits.test.ts`
+ * reads this source and fails if either grows a second inlined copy. The
+ * coupling is enforced, not conventional — but it is enforced by a test, not by
+ * there being one call path.
  *
  * Returns `'hidden'` when the body carries the anchor but masking removed it —
  * the region is inside a `<details>` block, where `body-bare-digits` blanks

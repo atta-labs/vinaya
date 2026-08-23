@@ -1,4 +1,5 @@
-import { statSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { compareEvidenceBlock } from '../../src/checks/evidence-fresh-logic'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
@@ -833,11 +834,72 @@ describe('the Summary exemption is exactly as narrow as its verification', () =>
 
 describe('there is one normalisation path, not two that agree', () => {
   /**
-   * The whole point of `resolveAnchoredRegionForScan`. While `checkBareDigits`
-   * inlined the stages, adding one to `normalizeBody` moved the resolver and
-   * left the scanner behind — stage eight, reproduced by both reviewers in a
-   * single edit. This asserts the coupling directly rather than trusting it.
+   * Source-derived, because a behavioural fixture cannot test this.
+   *
+   * The first version of this guard pinned a zero-width space — a stage BOTH
+   * copies already applied — so it stayed green through every way of
+   * decoupling the two sides: re-inlining the stages, re-inlining plus adding a
+   * stage, and adding a stage inside the resolver. Code review broke it three
+   * ways and got `104 pass, 0 fail` each time. A guard that reports green on
+   * the precise regression it exists to catch is this PR's own subject.
+   *
+   * Any fixture has the same flaw: it can only exercise the stages that exist
+   * TODAY, and the regression is a stage added TOMORROW to one side. So this
+   * reads the source and asserts the structure instead — the same move
+   * `review-post.test.ts`'s flag-coverage guard already makes.
    */
+  const SOURCE = readFileSync(
+    fileURLToPath(new URL('../../src/checks/body-bare-digits-logic.ts', import.meta.url)),
+    'utf8'
+  )
+
+  /** The stage expressions that must appear exactly once, inside `normalizeBody`. */
+  const NORMALISE_STAGES = ['ZERO_WIDTH', 'decodeNamedEntities(']
+
+  /** Source lines that are code — prose in a docstring names these symbols too. */
+  const CODE_LINES = SOURCE.split('\n').filter((l) => {
+    const t = l.trim()
+    return t !== '' && !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/*')
+  })
+
+  it('declares each normalisation stage exactly once outside its own definition', () => {
+    for (const stage of NORMALISE_STAGES) {
+      // One use site each: inside `normalizeBody`. A second is an inlined copy,
+      // which is exactly what stage eight was.
+      const uses = CODE_LINES.filter(
+        (l) => l.includes(stage) && !l.includes('const ZERO_WIDTH') && !l.includes('function decodeNamedEntities')
+      )
+      expect(uses.length, `${stage} appears on ${uses.length} lines; expected one use site inside normalizeBody`).toBe(
+        1
+      )
+    }
+  })
+
+  it('routes both consumers through normalizeBody', () => {
+    // `checkBareDigits` is the scanner, `resolveAnchoredRegionForScan` the
+    // resolver. Both must call the function, not reproduce what it does.
+    for (const fn of ['export function checkBareDigits', 'export function resolveAnchoredRegionForScan']) {
+      const start = SOURCE.indexOf(fn)
+      expect(start, `${fn} not found — this guard is reading the wrong source`).toBeGreaterThan(-1)
+      const bodyText = SOURCE.slice(start, SOURCE.indexOf('\n}', start))
+      expect(bodyText, `${fn} does not call normalizeBody`).toContain('normalizeBody(')
+    }
+  })
+
+  it('composes the anchor-lookup mask in exactly one place', () => {
+    // The other half of the same property: `buildScanMask` and the resolver
+    // must not each spell out `maskDetailsBlocks(maskCode(...))`.
+    const composed = CODE_LINES.filter(
+      (l) => l.includes('maskDetailsBlocks(maskCode(') && !l.includes('function buildAnchorLookupMask')
+    )
+    expect(composed.length, 'the mask composition is written more than once').toBe(1)
+    for (const fn of ['function buildScanMask', 'export function resolveAnchoredRegionForScan']) {
+      const start = SOURCE.indexOf(fn)
+      const bodyText = SOURCE.slice(start, SOURCE.indexOf('\n}', start))
+      expect(bodyText, `${fn} does not call buildAnchorLookupMask`).toContain('buildAnchorLookupMask(')
+    }
+  })
+
   it('scans the same text the resolver resolves', () => {
     const ZW = '​'
     const body = [
