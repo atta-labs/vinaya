@@ -404,3 +404,24 @@ describe('the flag tables cover what the command actually reads', () => {
     expect(unknownFlags(['--api-key=ghp_ABCDEFGHIJKLMNOP'])).toEqual(['--api-key'])
   })
 })
+
+describe('the `=` spelling reaches the flag map, not just the refusal check', () => {
+  // `--findings-file=x` was accepted by `rejectUnknownFlags` and then dropped
+  // by `parseFlags`, which keyed on the whole token. The comment rendered
+  // "FINDINGS … None." and the BLOCKER-versus-APPROVE cross-check became a
+  // no-op — a silent default in the command that posts verdicts.
+  it('parses `--flag=value` into the same key as `--flag value`', () => {
+    expect(parseFlags(['--findings-file=/tmp/f.txt']).get('--findings-file')).toBe('/tmp/f.txt')
+    expect(parseFlags(['--findings-file', '/tmp/f.txt']).get('--findings-file')).toBe('/tmp/f.txt')
+  })
+
+  it('keeps a value that itself contains `=`', () => {
+    expect(parseFlags(['--scope=a=b']).get('--scope')).toBe('a=b')
+  })
+
+  it('accepts an empty value after `=` without swallowing the next token', () => {
+    const m = parseFlags(['--scope=', '--tests', 'ok'])
+    expect(m.get('--scope')).toBe('')
+    expect(m.get('--tests')).toBe('ok')
+  })
+})

@@ -1,4 +1,5 @@
 import { statSync } from 'node:fs'
+import { compareEvidenceBlock } from '../../src/checks/evidence-fresh-logic'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { diagnoseAnchorExemption, checkBareDigits } from '../../src/checks/body-bare-digits-logic'
@@ -767,5 +768,60 @@ describe('anchor-exemption diagnosis — why the region did not count', () => {
   it('returns null for a line number that is not in the body', () => {
     expect(diagnoseAnchorExemption('one line', 99)).toBeNull()
     expect(diagnoseAnchorExemption('one line', 0)).toBeNull()
+  })
+})
+
+describe('the Summary exemption is exactly as narrow as its verification', () => {
+  /**
+   * Every case here was a live bypass found by security review at `72bf01a`:
+   * the exemption was case-insensitive, trimmed, and applied to every
+   * occurrence, while `evidence-fresh` verifies only the first column-0,
+   * case-sensitive line. Anything in that gap was exempt from the digit check
+   * and compared against nothing.
+   */
+  const region = (...lines: string[]) =>
+    ['## Evidence', '', '<!-- AEG:EVIDENCE:START -->', 'Head: 995a4552', ...lines, '<!-- AEG:EVIDENCE:END -->'].join(
+      '\n'
+    )
+
+  it('exempts the emitted line', () => {
+    expect(checkBareDigits(region('Summary: 2 files changed, 12 insertions(+), 1 deletion(-)')).violations).toEqual([])
+  })
+
+  it('does not exempt a lowercase `summary:`', () => {
+    const v = checkBareDigits(region('summary: 900 files changed, 45000 insertions(+)')).violations
+    expect(v.length).toBeGreaterThan(0)
+  })
+
+  it('does not exempt an indented Summary line', () => {
+    const v = checkBareDigits(region('  Summary: 900 files changed, 45000 insertions(+)')).violations
+    expect(v.length).toBeGreaterThan(0)
+  })
+
+  it('does not exempt a SECOND Summary line — only the first is verified', () => {
+    const v = checkBareDigits(
+      region(
+        'Summary: 2 files changed, 12 insertions(+), 1 deletion(-)',
+        'Summary: 900 files changed, 45000 insertions(+)'
+      )
+    ).violations
+    // One violation per bare digit token, so the count is not the assertion —
+    // that the honest first line is exempt and the second is not, is.
+    expect(v.every((x) => x.text.includes('900 files'))).toBe(true)
+    expect(v.length).toBeGreaterThan(0)
+  })
+
+  // Free prose in the Summary slot is exempt from the digit check, but it can
+  // no longer be false: `evidence-fresh` compares the same first line against a
+  // fresh derivation, so anything but the derived string fails there.
+  it('leaves free prose in the Summary slot to evidence-fresh, which rejects it', () => {
+    const prose = 'Summary: all 47 gates green, 0 known regressions, 3 waivers used'
+    expect(checkBareDigits(region(prose)).violations).toEqual([])
+    const r = compareEvidenceBlock(
+      ['Head: ' + 'a'.repeat(40), prose, '', '```', '1\t0\ta.ts', '```'].join('\n'),
+      'a'.repeat(40),
+      '1\t0\ta.ts'
+    )
+    expect(r.status).toBe('fail')
   })
 })

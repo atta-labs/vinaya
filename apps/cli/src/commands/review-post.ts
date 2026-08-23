@@ -313,15 +313,25 @@ export function parseFlags(args: string[]): Map<string, string> {
   const map = new Map<string, string>()
   for (let i = 0; i < args.length; i++) {
     const a = args[i] as string
-    if (a.startsWith('--')) {
-      const value = args[i + 1]
-      if (value === undefined || value.startsWith('--')) {
-        map.set(a, '')
-        continue
-      }
-      map.set(a, value)
-      i++
+    if (!a.startsWith('--')) continue
+    // `--flag=value` keyed on the whole token used to land in the map under a
+    // name nothing reads, so the flag was accepted by the refusal check and
+    // then silently dropped — `--findings-file=x` rendered `FINDINGS … None.`
+    // and the BLOCKER-versus-APPROVE cross-check quietly became a no-op. The
+    // `=` spelling is accepted elsewhere in this CLI, so it is parsed, not
+    // refused.
+    const eq = a.indexOf('=')
+    if (eq > 2) {
+      map.set(a.slice(0, eq), a.slice(eq + 1))
+      continue
     }
+    const value = args[i + 1]
+    if (value === undefined || value.startsWith('--')) {
+      map.set(a, '')
+      continue
+    }
+    map.set(a, value)
+    i++
   }
   return map
 }

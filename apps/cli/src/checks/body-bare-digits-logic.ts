@@ -86,6 +86,7 @@
  */
 
 import { anchoredRegionBounds, TIER_FIELD } from '@attalabs/aeg-core'
+import { EVIDENCE_SUMMARY_PREFIX } from '../lib/numstat'
 import { PROJECT_SLUG, unwrapValue } from '@attalabs/aeg-forge-state'
 import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
 
@@ -269,7 +270,11 @@ function blankAnchoredRegions(body: string): string {
     if (!FIELD_CONTENT_SIGNATURE[field].test(content)) continue
     masked = blankRange(masked, bounds.outerStart, bounds.innerStart)
     masked = blankRange(masked, bounds.innerEnd, bounds.outerEnd)
-    const blankedContent = content.split('\n').map(BOUNDED_ANCHOR_BLANK[field]).join('\n')
+    const blankLine = BOUNDED_ANCHOR_BLANK[field]()
+    const blankedContent = content
+      .split('\n')
+      .map((l) => blankLine(l))
+      .join('\n')
     masked = masked.slice(0, bounds.innerStart) + blankedContent + masked.slice(bounds.innerEnd)
   }
   return masked
@@ -440,14 +445,6 @@ function blankUnanchoredStructuralFields(body: string): string {
 const CLOSES_REF = /Closes\s*#\d+/i
 const EVIDENCE_HEADING = /^#{1,6}\s/
 const EVIDENCE_HEAD_LINE = /^Head:\s*\S+$/i
-/**
- * `vinaya pr report --write` emits this line beside `Head:` — files, lines and
- * binary count derived from the numstat in the same block. Machine-rendered,
- * never hand-typed, and `evidence-fresh` recomputes it, so it is the opposite
- * of the unbacked narrative figure this check exists to catch. Without this it
- * would be flagged, and the generic remedy (fence it) would corrupt the block.
- */
-const EVIDENCE_SUMMARY_LINE = /^Summary:\s*\S/i
 
 function blankClosesField(line: string): string {
   const m = CLOSES_REF.exec(line)
@@ -455,23 +452,38 @@ function blankClosesField(line: string): string {
   return line.slice(0, m.index) + ' '.repeat(m[0].length) + line.slice(m.index + m[0].length)
 }
 
-function blankEvidenceField(line: string): string {
-  const trimmed = line.trim()
-  if (
-    trimmed === '' ||
-    EVIDENCE_HEAD_LINE.test(trimmed) ||
-    EVIDENCE_SUMMARY_LINE.test(trimmed) ||
-    EVIDENCE_HEADING.test(trimmed)
-  )
-    return ' '.repeat(line.length)
-  return line
+/**
+ * A fresh blanker per region, because the `Summary:` exemption is
+ * first-occurrence-only.
+ *
+ * `evidence-fresh` verifies the FIRST emitted `Summary:` line and no other
+ * (`region.match` on a non-global regex). Exempting every occurrence would
+ * leave a second, unverified `Summary:` line free to carry any figure at all —
+ * exempt because a different line was checked. So the second one is scanned as
+ * ordinary prose, which is what it is. The prefix test is `startsWith` on the
+ * RAW line against the shared `EVIDENCE_SUMMARY_PREFIX`: column 0,
+ * case-sensitive, exactly the shape the emitter writes and the verifier reads.
+ */
+function makeBlankEvidenceField(): (line: string) => string {
+  let summarySeen = false
+  return (line: string): string => {
+    const trimmed = line.trim()
+    if (line.startsWith(EVIDENCE_SUMMARY_PREFIX) && !summarySeen) {
+      summarySeen = true
+      return ' '.repeat(line.length)
+    }
+    if (trimmed === '' || EVIDENCE_HEAD_LINE.test(trimmed) || EVIDENCE_HEADING.test(trimmed))
+      return ' '.repeat(line.length)
+    return line
+  }
 }
 
-const BOUNDED_ANCHOR_BLANK: Record<ExemptAnchorField, (line: string) => string> = {
-  CLOSES: blankClosesField,
-  TIER: blankTierField,
-  PROJECT: blankProjectField,
-  EVIDENCE: blankEvidenceField
+/** Factories, not functions: `EVIDENCE` needs per-region state (see `makeBlankEvidenceField`). */
+const BOUNDED_ANCHOR_BLANK: Record<ExemptAnchorField, () => (line: string) => string> = {
+  CLOSES: () => blankClosesField,
+  TIER: () => blankTierField,
+  PROJECT: () => blankProjectField,
+  EVIDENCE: makeBlankEvidenceField
 }
 
 /** Full masking pipeline — see module doc for the layer order and why it's load-bearing. */

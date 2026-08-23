@@ -3,7 +3,7 @@
 '@attalabs/vinaya': patch
 ---
 
-Close four gaps where a verification tool could return a confident wrong answer.
+Close gaps where a verification tool could return a confident wrong answer.
 
 - `pr report` derives a `Summary:` line (files, insertions, deletions, binary
   count) into the evidence block, so a PR body never needs a hand-written count

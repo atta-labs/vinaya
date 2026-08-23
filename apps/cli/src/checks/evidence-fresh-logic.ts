@@ -17,13 +17,12 @@
  * this function; only a STALE one is.
  */
 
-import { summariseNumstat } from '../lib/numstat'
+import { EVIDENCE_SUMMARY_LINE, summariseNumstat } from '../lib/numstat'
 
 export type EvidenceCompareResult = { status: 'pass' } | { status: 'fail'; errors: string[] }
 
 const HEAD_LINE = /^Head:\s*([0-9a-f]{7,40})\s*$/m
 const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
-const SUMMARY_LINE = /^Summary:\s*(.+?)\s*$/m
 
 /**
  * Compares an already-located `AEG:EVIDENCE` region against the facts a
@@ -75,7 +74,7 @@ export function compareEvidenceBlock(
   // rather than attested — and it must be, or the block's headline figure
   // would be its only unverified claim. Absent is fine: bodies written before
   // the emitter produced this line are still valid.
-  const summaryMatch = region.match(SUMMARY_LINE)
+  const summaryMatch = region.match(EVIDENCE_SUMMARY_LINE)
   if (summaryMatch) {
     const expected = summariseNumstat(actual)
     const stored = summaryMatch[1] as string

@@ -36,3 +36,21 @@ export function summariseNumstat(numstat: string): string {
   const bin = binary > 0 ? `, ${binary} binary` : ''
   return `${files}, ${added} insertion${added === 1 ? '' : 's'}(+), ${deleted} deletion${deleted === 1 ? '' : 's'}(-)${bin}`
 }
+
+/**
+ * The exact shape `buildBlockInner` emits: column 0, one space, case-sensitive.
+ *
+ * Exported because `body-bare-digits` exempts this line and `evidence-fresh`
+ * verifies it, and those two must describe the SAME set of lines. When the
+ * exemption was written independently it was broader — case-insensitive, any
+ * leading whitespace, every occurrence — while the verifier matched only the
+ * first, column-0, case-sensitive one. A lowercase `summary: 900 files
+ * changed…`, an indented one, or a second one after the honest one was
+ * therefore exempt from the digit check and never compared against anything.
+ * A shared constant is what makes "exempt because it is verified" true rather
+ * than merely intended.
+ */
+export const EVIDENCE_SUMMARY_PREFIX = 'Summary: '
+
+/** Matches the first emitted `Summary:` line in a region, capturing its value. */
+export const EVIDENCE_SUMMARY_LINE = /^Summary: (.+)$/m

@@ -69,7 +69,21 @@ describe('no tracked file is binary to git', () => {
     ).toEqual([])
   })
 
-  it('reads a non-trivial number of files — a guard on the enumeration itself', () => {
-    expect(trackedFiles().length).toBeGreaterThan(100)
+  // Counting what `ls-files` LISTS proves nothing: a sparse checkout lists
+  // every path and reads none, so the sweep above would pass vacuously. This
+  // counts files actually opened.
+  it('actually reads a non-trivial number of files — a guard on the sweep, not the listing', () => {
+    let read = 0
+    for (const rel of trackedFiles()) {
+      const abs = join(REPO_ROOT, rel)
+      try {
+        if (!lstatSync(abs).isFile()) continue
+      } catch {
+        continue
+      }
+      readFileSync(abs)
+      read++
+    }
+    expect(read).toBeGreaterThan(100)
   })
 })
