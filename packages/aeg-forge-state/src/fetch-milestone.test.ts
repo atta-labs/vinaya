@@ -1,12 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { createGhMock } from './test-support/mock-gh'
 
-vi.mock('./gh', () => ({
-  ghApiGet: vi.fn(),
-  ghApiGetAsync: vi.fn(),
-  ghApiGetAllPagesAsync: vi.fn()
-}))
+vi.mock('./gh', () => createGhMock())
 
 const { ghApiGet, ghApiGetAsync, ghApiGetAllPagesAsync } = await import('./gh')
 const { findMilestoneForSlug, indexTrancheMilestonesAsync, listActiveTrancheSlugs } = await import('./fetch-milestone')
