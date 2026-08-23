@@ -117,8 +117,9 @@ function matchesLegacyMilestone(milestones: GhMilestone[], slug: string): GhMile
 /**
  * Lowercase, digits, and hyphens, ending in a `-v<N>` version suffix — every
  * one of this repo's real legacy-titled Milestones is shaped exactly this
- * way (`aeg-forge-state-v1`, `vinaya-milestone-model-v1`, …; confirmed
- * against the live forge, round 3 of code review), with no exception. This
+ * way (`vinaya-milestone-model-v1`, `vinaya-selfgov-v1`, `aeg-seam-hardening-v1`,
+ * …; confirmed live against this repo's real Milestones, round 4 of code
+ * review), with no exception. This
  * is deliberately tighter than "any kebab-case string": an earlier version
  * of this guard accepted any lowercase, hyphenated title, which still
  * phantom-matched a plausible Architect product-goal title like
