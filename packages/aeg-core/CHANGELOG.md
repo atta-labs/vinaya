@@ -1,5 +1,28 @@
 # @atta/aeg-core
 
+## 0.18.0
+
+### Minor Changes
+
+- f93674c: Every governance gate under `packages/aeg-core/bin/` now declares who it is for, and a test fails the build when one does not. Membership of the adopter-facing set was previously defined by ABSENCE from `coreCheckRegistry()`, so a deliberate exclusion and a forgotten port left exactly the same trace — nothing could tell "adopters should not run this" from "we forgot to ship it". `GATE_AUDIENCE` makes the second column something you have to say, with a reason: `{ shippedAs: '<core check name>' }` for gates adopters run, `{ internal: '<why not>' }` for the ones this repo keeps to itself, and a separate `NON_GATE_BINS` list for the forge writers and reporters in that directory that are not gates at all. Adding a file to `bin/` and nothing else is now a failing test that names it. Deliberately not a field on `CheckSpec`: adopter-defined checks in `vinaya.config.json` produce that same shape, so an audience field there would push an internal-governance question into adopter config, where it cannot be answered.
+  
+  Covers both sides of the boundary. `GATE_AUDIENCE` accounts for every bin under `packages/aeg-core/bin/`, and `SHIPPED_BIN_AUDIENCE` for every executable under `apps/cli/src/checks/bin/` — both asserted in the CLI's own suite, where `coreCheckRegistry()` is in scope, so a `shippedAs` naming a check that does not exist fails a test rather than being trusted. The shipped side is where the motivating case actually lives: `reader-resolvable-prose` has no bin in aeg-core at all, so an aeg-core-only enumeration would never have seen the exclusion it was built to make visible. Both enumerations walk recursively and accept `.ts`/`.mts`/`.cts`, because a gate whose enumeration is narrower than the directory it guards has a door in the back.
+  
+  Both enumerations refuse a symlink rather than skipping it. `readdirSync(dir, { withFileTypes: true })` reports a symlink-to-directory as `isDirectory() === false`, so an unfollowed symlink fell through to the extension filters and was dropped in silence — a symlinked directory holding an undeclared gate passed both suites green. The `shippedAs` validation iterates the two maps separately rather than spreading them into one, because the namespaces overlap and a spread let the second map shadow the first, dropping the shadowed entry's declaration from validation entirely.
+
+### Patch Changes
+
+- c844163: `verify-dispatch`'s baseline no longer reports a healthy `verify-coherence` as `UNAVAILABLE (tool failed to run)`. It captured the child's stdout and stderr and concatenated them before `JSON.parse`, on the stated premise that neither tool writes to stderr on its clean `--json` path. That premise was false: `verify-coherence` probes `aeg-root/tranches` and `aeg-root/tranches/completed` off the base ref, the forge-native cutover deleted those directories — `no-disk-state.ts` now actively forbids re-adding one — so `git` prints a `fatal:` line per probe while the tool itself exits 0 with correct results. One such line made the parse throw, and every dispatch check reported the oracle as dead. The two streams are now kept apart and each caller reads the one its own parse needs: `verify-coherence` is parsed, so it reads stdout alone; `verify-docs` is line-counted, so it still scans both and a finding printed to stderr still counts. Separately, the two probes in `verify-coherence` that legitimately miss on every healthy run now silence the child's stderr rather than letting an expected absence print a `fatal:` line the caller has to parse around. The load-bearing consequence is not the cosmetic line: concatenation made a genuinely crashed run and a chatty healthy one indistinguishable, so the field could no longer surface the thing it exists to surface — an unparseable stdout is still reported `UNAVAILABLE`, and there is now a test pinning that.
+  
+  Two further changes to the same baseline, both adopter-visible. The reported count is now validated as a **shape**, not merely as parseable JSON — a scalar, an array, or an object without a numeric non-negative `summary.failed` reads as `UNAVAILABLE` rather than throwing a `TypeError` on property access, which splitting the streams had newly made reachable. And a sweep that ran but could not reach the forge (`forgeUnavailable`) is now `UNAVAILABLE` too: its checks evaluate against only the tranches it could see, so `failed` is a smaller number arrived at honestly, and comparing it as a finding count under-reports. Before the streams were split an outage happened to fail closed, because it also wrote to stderr and the concatenated parse threw; this restores that on purpose.
+  
+  **This can make `verify-dispatch --check-baseline` refuse where it previously compared** — a forge outage, or a malformed report, now blocks the comparison instead of scoring it. That is the intended direction (an unavailable tool carries no honest count), but it is a behaviour change for anyone running that mode. The gate-mode baseline is informational and unaffected in verdict, only in what it prints.
+  
+  The `UNAVAILABLE` line no longer claims "tool failed to run", because that is now sometimes false — a forge-degraded run *did* run. It reads "no usable finding count", and the accompanying diagnostic says which of the two happened. Diagnostics from the child are surfaced rather than dropped, and one over `300` characters is marked as truncated instead of ending mid-token.
+- Updated dependencies [70e887e]
+  - @attalabs/aeg-forge-state@0.18.0
+  - @attalabs/aeg-types@0.18.0
+
 ## 0.17.1
 
 ### Patch Changes
