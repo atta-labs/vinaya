@@ -317,6 +317,13 @@ export const COMMANDS: readonly Command[] = [
     name: 'studio',
     description:
       'Launch Vinaya Studio — runs the Studio dev app when its source (apps/vinaya-studio/web) is in a checkout above the current directory; a published install launches its bundled standalone server instead',
+    flags: [
+      {
+        flag: '--port <n>',
+        description:
+          "Bind this exact port. Without the flag the default is unchanged — 3008, falling back to 3108 when it is taken. With it there is no fallback: a taken port is refused, so you always know which server answered. Accepts `--port 3208` and `--port=3208`. Applies to a published install; in a workspace checkout Studio's own dev script owns the port and the flag is refused."
+      }
+    ],
     details: [
       "Resolution happens in this order: a workspace checkout carrying `apps/vinaya-studio/web` (Studio's source, which lives in the attalabs monorepo — not this repository) runs the dev app directly; a published install's `studio-standalone/` bundle (fetched from attalabs' release artifact at publish time, see `scripts/bundle-studio.ts`) runs that bundled server; anything else — a publish that shipped without the bundle — gets an explicit refusal and exit 1 rather than a silent no-op.",
       'Every published `@attalabs/vinaya` build ships the `studio-standalone/` bundle: `prepack` fetches attalabs’ latest CI-built standalone Studio artifact and assembles it into the tarball before publish.'

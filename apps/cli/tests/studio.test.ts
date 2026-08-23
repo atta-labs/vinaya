@@ -4,7 +4,14 @@ import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { resolveStudioTarget, runStudio } from '../src/commands/studio.js'
+import {
+  FALLBACK_PORT,
+  parsePortFlag,
+  PortFlagError,
+  PRIMARY_PORT,
+  resolveStudioTarget,
+  runStudio
+} from '../src/commands/studio.js'
 
 describe('resolveStudioTarget', () => {
   let tmpDir: string
@@ -225,5 +232,57 @@ describe('runStudio', () => {
         process.env.HOSTNAME = originalHostname
       }
     }
+  })
+})
+
+describe('vinaya studio --port', () => {
+  it('parses an explicit port, in both spellings', () => {
+    expect(parsePortFlag(['--port', '3208'])).toBe(3208)
+    // `--port=3208` returning null would bind the DEFAULT port — the exact
+    // collision the flag exists to prevent, reached silently (review, PR #185).
+    expect(parsePortFlag(['--port=3208'])).toBe(3208)
+  })
+
+  it('refuses two different ports rather than silently picking one', () => {
+    expect(() => parsePortFlag(['--port', '3208', '--port', '4000'])).toThrow(PortFlagError)
+    expect(() => parsePortFlag(['--port=3208', '--port=4000'])).toThrow(PortFlagError)
+    // The same value twice is not ambiguous, so it is not an error.
+    expect(parsePortFlag(['--port', '3208', '--port=3208'])).toBe(3208)
+  })
+
+  it('refuses a leading zero instead of normalising a probable typo', () => {
+    expect(() => parsePortFlag(['--port', '03208'])).toThrow(PortFlagError)
+    expect(() => parsePortFlag(['--port=03208'])).toThrow(PortFlagError)
+  })
+
+  it('refuses an empty value in the = spelling', () => {
+    expect(() => parsePortFlag(['--port='])).toThrow(PortFlagError)
+  })
+
+  it('returns null when the flag is absent — the default 3008/3108 dance still applies', () => {
+    expect(parsePortFlag([])).toBeNull()
+    expect(parsePortFlag(['--something', 'else'])).toBeNull()
+  })
+
+  it('refuses a missing, non-numeric, or out-of-range value rather than binding something unintended', () => {
+    expect(() => parsePortFlag(['--port'])).toThrow(PortFlagError)
+    expect(() => parsePortFlag(['--port', '--other'])).toThrow(PortFlagError)
+    expect(() => parsePortFlag(['--port', 'abc'])).toThrow(PortFlagError)
+    expect(() => parsePortFlag(['--port', '0'])).toThrow(PortFlagError)
+    expect(() => parsePortFlag(['--port', '70000'])).toThrow(PortFlagError)
+  })
+
+  // The whole reason the flag exists: this repo's `dev:vinaya-studio` must not
+  // land on the port attalabs' Studio dev server already owns. Measured live —
+  // with one server on `*:3008` and one on `127.0.0.1:3008`, a 200 from
+  // `/studio` proved nothing about which process served it.
+  it('the root dev script pins a port rather than relying on the fallback', () => {
+    const root = JSON.parse(readFileSync(join(import.meta.dirname, '../../../package.json'), 'utf8'))
+    const script = root.scripts['dev:vinaya-studio'] as string
+    expect(script).toContain('--port')
+    const pinned = parsePortFlag(script.split(/\s+/))
+    expect(pinned).not.toBeNull()
+    expect(pinned).not.toBe(PRIMARY_PORT)
+    expect(pinned).not.toBe(FALLBACK_PORT)
   })
 })
