@@ -216,12 +216,17 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
   // `governance/products/<name>/` path segment and a manifest record — are
   // both gone: the governance scaffold was cut by the minimal-manifest
   // re-ruling, and this command no longer writes the manifest at all (#72).
-  // It still guards a real surface: the name is written verbatim into a
-  // markdown table cell in `.vinaya/projects.md` and is read back by
-  // `parseRegistry`, so a `|`, a newline, or a path separator would either
-  // corrupt the row or make it parse as something else. Kept strict rather
-  // than relaxed to match what it now protects, because a registry row is
-  // adopter-facing data every downstream consumer trusts.
+  // It still guards a real surface, though a narrower one than it used to:
+  // the name is written verbatim into a markdown table cell in
+  // `.vinaya/projects.md` (`rowLine` interpolates it unescaped) and read back
+  // by `parseRegistry`, which splits on pipes and line boundaries. So a `|`
+  // corrupts the row and a newline splices in a fabricated one. A path
+  // separator no longer matters — `name` reaches no filesystem path at this
+  // head, and `parseRegistry` treats `/` as an ordinary character — but the
+  // slug stays strict rather than being relaxed to exactly the two dangerous
+  // characters: a registry row is adopter-facing data every downstream
+  // consumer trusts, and widening an input guard to match today's single
+  // consumer is how the next one inherits a hole.
   if (!PRODUCT_NAME_RE.test(name)) {
     console.error(
       `Error: invalid product name '${name}'. Use a lower-case slug: letters, digits, and hyphens (e.g. mobile, web-app).`

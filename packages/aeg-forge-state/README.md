@@ -25,7 +25,7 @@ octokit-based access path.
 1. **This repo's own migration** (`aeg-forge-state-v1` tasks 3/4/5) — the live
    The gates and Vinaya Studio cut over from reading `aeg-root/tranches/*.md`
    files to calling this package directly.
-2. **`vinaya-cli-v1`'s shippable CLI** (task 2, #382) — imports or re-homes
+2. **`vinaya-cli-v1`'s shippable CLI** — imports or re-homes
    this package as the forge-backed half of Vinaya's `StateSource` seam, for
    arbitrary adopter repos, not only the one it was written in.
 
