@@ -8,8 +8,15 @@ vi.mock('./gh', () => createGhMock())
 const { ghApiGet, ghApiGetAsync, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } = await import(
   './gh'
 )
-const { findMilestoneForSlug, indexTrancheMilestonesAsync, listActiveTrancheSlugs, listArchivedTrancheSlugs } =
-  await import('./fetch-milestone')
+const {
+  findMilestoneForSlug,
+  indexTrancheMilestonesAsync,
+  listActiveTrancheSlugs,
+  listArchivedTrancheSlugs,
+  intentGoalForSlug,
+  milestoneLifecycleFromTrancheLifecycles,
+  releaseFromDescription
+} = await import('./fetch-milestone')
 
 const OWNER = 'daniboomerang'
 const REPO = 'attalabs'
@@ -94,6 +101,93 @@ describe('findMilestoneForSlug', () => {
 
     expect(findMilestoneForSlug(OWNER, REPO, 'tranche-a')).toEqual({ goal: '', lifecycle: 'active' })
     expect(findMilestoneForSlug(OWNER, REPO, 'tranche-b')).toEqual({ goal: '', lifecycle: 'complete' })
+  })
+
+  it('a label-derived tranche picks up its goal from the matching intent line in a non-legacy Milestone', () => {
+    const description = [
+      'Ship the milestone model.',
+      '',
+      '### Tranche intents',
+      '- vinaya-milestone-model-v1: A milestone can be created and refused when malformed.'
+    ].join('\n')
+    vi.mocked(ghApiGet).mockReturnValue([{ title: 'sprint-42', description, state: 'open' }])
+    vi.mocked(ghIssueListByLabel).mockReturnValue([issue('OPEN')])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'vinaya-milestone-model-v1')).toEqual({
+      goal: 'A milestone can be created and refused when malformed.',
+      lifecycle: 'active'
+    })
+  })
+
+  it('a label with no matching intent line keeps the empty goal, exactly as before', () => {
+    const description = ['Ship something else.', '', '### Tranche intents', '- other-slug: unrelated.'].join('\n')
+    vi.mocked(ghApiGet).mockReturnValue([{ title: 'sprint-42', description, state: 'open' }])
+    vi.mocked(ghIssueListByLabel).mockReturnValue([issue('OPEN')])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'vinaya-milestone-model-v1')).toEqual({ goal: '', lifecycle: 'active' })
+  })
+})
+
+describe('releaseFromDescription', () => {
+  it('returns null when no Release: field exists', () => {
+    expect(releaseFromDescription('A milestone with no version.')).toBeNull()
+  })
+
+  it('reads a bold-inline Release: field', () => {
+    expect(releaseFromDescription('The goal.\n\n**Release:** 1.2.0')).toBe('1.2.0')
+  })
+
+  it('reads a plain Release: field', () => {
+    expect(releaseFromDescription('The goal.\n\nRelease: 1.2.0')).toBe('1.2.0')
+  })
+
+  it('returns null for a malformed version', () => {
+    expect(releaseFromDescription('Release: whenever it ships')).toBeNull()
+  })
+
+  it('never matches inside a fenced code example', () => {
+    const body = ['The goal.', '', '```', 'Release: 1.0.0', '```', ''].join('\n')
+    expect(releaseFromDescription(body)).toBeNull()
+  })
+})
+
+describe('intentGoalForSlug', () => {
+  it('returns empty string when there is no Tranche intents section', () => {
+    expect(intentGoalForSlug('Just a goal, no intents.', 'some-slug')).toBe('')
+  })
+
+  it('returns the matching intent line', () => {
+    const description = ['Ship the milestone model.', '', '### Tranche intents', '- a-slug: Its intent text.'].join(
+      '\n'
+    )
+    expect(intentGoalForSlug(description, 'a-slug')).toBe('Its intent text.')
+  })
+
+  it('returns empty string when the section exists but no line matches this slug', () => {
+    const description = ['Goal.', '', '### Tranche intents', '- other-slug: unrelated.'].join('\n')
+    expect(intentGoalForSlug(description, 'a-slug')).toBe('')
+  })
+})
+
+describe('milestoneLifecycleFromTrancheLifecycles', () => {
+  it('derives planned when the milestone holds zero tranches — the at-least-one guard, one altitude up', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles([])).toBe('planned')
+  })
+
+  it('derives planned when every declared tranche is itself still planned', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles(['planned', 'planned'])).toBe('planned')
+  })
+
+  it('derives active when any tranche is active', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles(['planned', 'active'])).toBe('active')
+  })
+
+  it('derives complete only when every tranche is complete', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles(['complete', 'complete'])).toBe('complete')
+  })
+
+  it('derives active for a mix of complete and planned — not yet fully done', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles(['complete', 'planned'])).toBe('active')
   })
 })
 

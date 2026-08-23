@@ -1,10 +1,78 @@
 import { type GhIssue, ghApiGet, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } from './gh'
 import { trancheLabel, trancheSlugOf } from './labels'
+import { stripCode } from './strip-code'
 import type { Lifecycle } from '@attalabs/aeg-types'
 
 export type MilestoneFacts = {
   goal: string
   lifecycle: Lifecycle
+}
+
+/**
+ * Reads the `Release:` field from a Milestone description — this package's
+ * own copy of the grammar `@attalabs/aeg-core`'s `milestone-validation.ts`
+ * defines (`vinaya-milestone-model-v1` task 2): line-anchored, `**`-optional
+ * on both sides, code fences stripped first, first match wins. Duplicated
+ * rather than imported because this package sits BELOW `aeg-core` in the
+ * dependency graph (`aeg-core → aeg-forge-state`) and cannot import back up
+ * — the same layering that already gives `Project:` two independent readers
+ * (`list-tasks.ts`'s `PROJECT_FIELD` and `issue-validation.ts`'s
+ * `declaredProjects`). This reader is tolerant, not a gate: a malformed or
+ * absent field both read as `null` here — refusing a malformed value at
+ * write time is `checkMilestoneShape`'s job, not this one's.
+ */
+const RELEASE_FIELD = /^\s*(?:\*\*)?Release(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.+)$/im
+const RELEASE_VALUE_EDGE = /^[`.;\s]+|[`.;\s]+$/g
+const RELEASE_VALUE = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/
+
+export function releaseFromDescription(description: string): string | null {
+  const m = stripCode(description, { inlineSpans: 'keep' }).match(RELEASE_FIELD)
+  if (!m) return null
+  const raw = (m[1] ?? '').replace(/\*\*/g, '').replace(RELEASE_VALUE_EDGE, '')
+  return RELEASE_VALUE.test(raw) ? raw : null
+}
+
+const INTENTS_HEADING = /^#{1,6}\s*Tranche intents\s*$/im
+const NEXT_HEADING = /^#{1,6}\s+\S/m
+const INTENT_BULLET = /^-\s+([a-z0-9][a-z0-9-]*)\s*:\s*(.+)$/i
+
+/**
+ * The tranche goal is never stored — it is the `### Tranche intents` line
+ * matching `slug` in a Milestone's description (vinaya-milestone-model-v1
+ * task 2, settled decision). A label with no intent line resolves to `''`,
+ * exactly as an unmilestoned tranche did before this task. Same intents
+ * grammar as `@attalabs/aeg-core`'s `milestone-validation.ts`, duplicated for
+ * the same layering reason `releaseFromDescription` is.
+ */
+export function intentGoalForSlug(description: string, slug: string): string {
+  const text = stripCode(description, { inlineSpans: 'keep' })
+  const start = text.match(INTENTS_HEADING)
+  if (!start || start.index === undefined) return ''
+  const rest = text.slice(start.index + start[0].length)
+  const next = rest.match(NEXT_HEADING)
+  const section = rest.slice(0, next && next.index !== undefined ? next.index : rest.length)
+
+  for (const line of section.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) continue
+    const m = trimmed.match(INTENT_BULLET)
+    if (m && (m[1] ?? '').toLowerCase() === slug.toLowerCase()) return (m[2] ?? '').trim()
+  }
+  return ''
+}
+
+/**
+ * A Milestone's OWN lifecycle, aggregated one altitude above
+ * `lifecycleFromIssues`: a Milestone holding zero tranches — or holding only
+ * tranches that are themselves still `planned` — derives `planned`, never
+ * `complete`. Without the explicit zero-length/all-planned guard,
+ * `[].every(...)` is vacuously `true` in JS, which is exactly the bug this
+ * guard exists to close: a freshly created, empty milestone must not report
+ * itself finished.
+ */
+export function milestoneLifecycleFromTrancheLifecycles(lifecycles: Lifecycle[]): Lifecycle {
+  if (lifecycles.length === 0 || lifecycles.every((l) => l === 'planned')) return 'planned'
+  return lifecycles.every((l) => l === 'complete') ? 'complete' : 'active'
 }
 
 type GhMilestone = {
@@ -53,6 +121,20 @@ function lifecycleFromIssues(issues: GhIssue[]): Lifecycle {
 }
 
 /**
+ * The goal for a label-derived (non-legacy) tranche: the first matching
+ * `### Tranche intents` line found across every fetched Milestone, in list
+ * order — `''` when none declares one, exactly as an unmilestoned tranche
+ * read before this task (vinaya-milestone-model-v1 task 2).
+ */
+function goalFromMilestones(milestones: GhMilestone[], slug: string): string {
+  for (const m of milestones) {
+    const goal = intentGoalForSlug(m.description ?? '', slug)
+    if (goal) return goal
+  }
+  return ''
+}
+
+/**
  * Matching rule: exact title match against the tranche slug wins first
  * (the legacy path, forever). Otherwise the tranche is derived from its
  * `vinaya/tranche:<slug>`-labeled Issues — never `null` any more: a slug
@@ -68,7 +150,7 @@ export function findMilestoneForSlug(owner: string, repo: string, slug: string):
   if (legacy) return factsFromLegacyMilestone(legacy)
 
   const issues = ghIssueListByLabel(owner, repo, trancheLabel(slug))
-  return { goal: '', lifecycle: lifecycleFromIssues(issues) }
+  return { goal: goalFromMilestones(milestones, slug), lifecycle: lifecycleFromIssues(issues) }
 }
 
 export type ActiveTrancheRef = { slug: string; goal: string }
@@ -127,7 +209,7 @@ export function listActiveTrancheSlugs(owner: string, repo: string): ActiveTranc
       continue
     }
     const issues = ghIssueListByLabel(owner, repo, trancheLabel(slug))
-    if (lifecycleFromIssues(issues) === 'active') active.push({ slug, goal: '' })
+    if (lifecycleFromIssues(issues) === 'active') active.push({ slug, goal: goalFromMilestones(milestones, slug) })
   }
   return active
 }
@@ -153,7 +235,7 @@ export function listArchivedTrancheSlugs(owner: string, repo: string): ActiveTra
       continue
     }
     const issues = ghIssueListByLabel(owner, repo, trancheLabel(slug))
-    if (lifecycleFromIssues(issues) === 'complete') archived.push({ slug, goal: '' })
+    if (lifecycleFromIssues(issues) === 'complete') archived.push({ slug, goal: goalFromMilestones(milestones, slug) })
   }
   return archived
 }
@@ -209,10 +291,11 @@ export async function indexTrancheMilestonesAsync(owner: string, repo: string): 
   uniqueNewPathSlugs.forEach((slug, i) => {
     const issues = fetchedIssues[i] ?? []
     const lifecycle = lifecycleFromIssues(issues)
-    const f: MilestoneFacts = { goal: '', lifecycle }
+    const goal = goalFromMilestones(milestones, slug)
+    const f: MilestoneFacts = { goal, lifecycle }
     facts.set(slug, f)
-    if (lifecycle === 'active') active.push({ slug, goal: '' })
-    else if (lifecycle === 'complete') archived.push({ slug, goal: '' })
+    if (lifecycle === 'active') active.push({ slug, goal })
+    else if (lifecycle === 'complete') archived.push({ slug, goal })
     // 'planned' (zero Issues) appears in neither list — same degrade as
     // before this task, when a slug with no Milestone appeared in neither.
   })
