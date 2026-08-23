@@ -257,6 +257,16 @@ describe('listActiveTrancheSlugs', () => {
 
     expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
   })
+
+  it('a free-text-titled Architect Milestone is never listed as a phantom tranche', () => {
+    // vinaya-milestone-model-v1 task 2: an Architect Milestone's title is
+    // free text, not a tranche slug. Before the shape guard, EVERY
+    // Milestone's title fed the candidate-slug set, so this title
+    // trivially legacy-matched itself and was listed as a fake tranche.
+    mockGh([{ title: 'Vinaya milestone model — Test Plan proof', description: 'The goal.', state: 'open' }], [])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
 })
 
 describe('listArchivedTrancheSlugs', () => {
@@ -283,6 +293,12 @@ describe('listArchivedTrancheSlugs', () => {
   it('excludes a label-only tranche with zero Issues — planned is neither active nor archived', () => {
     mockGh([], ['vinaya/tranche:planned-v1'])
     vi.mocked(ghIssueListByLabel).mockReturnValue([])
+
+    expect(listArchivedTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+
+  it('a free-text-titled Architect Milestone is never listed as a phantom archived tranche', () => {
+    mockGh([{ title: 'Vinaya milestone model — Test Plan proof', description: 'The goal.', state: 'closed' }], [])
 
     expect(listArchivedTrancheSlugs(OWNER, REPO)).toEqual([])
   })
@@ -386,6 +402,27 @@ describe('indexTrancheMilestonesAsync', () => {
     expect(index.archived).toEqual([])
     expect(index.facts.size).toBe(0)
     expect(index.legacySlugs.size).toBe(0)
+  })
+
+  it('a free-text-titled Architect Milestone is never indexed as a phantom tranche', async () => {
+    // vinaya-milestone-model-v1 task 2: before the shape guard, every real
+    // Milestone in the paginated fetch was unconditionally treated as a
+    // legacy tranche (`legacySlugs = new Set(milestones.map(m => m.title))`,
+    // no `matchesLegacyMilestone` gate at all in this async path) — so an
+    // Architect's free-text-titled goal Milestone landed in `active`/`archived`
+    // with its raw description as the "goal".
+    mockPages(
+      [...MILESTONES, { title: 'Vinaya milestone model — Test Plan proof', description: 'The goal.', state: 'open' }],
+      []
+    )
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    const phantomSlug = 'Vinaya milestone model — Test Plan proof'
+    expect(index.legacySlugs.has(phantomSlug)).toBe(false)
+    expect(index.active.some((r) => r.slug === phantomSlug)).toBe(false)
+    expect(index.archived.some((r) => r.slug === phantomSlug)).toBe(false)
+    expect(index.facts.has(phantomSlug)).toBe(false)
   })
 })
 

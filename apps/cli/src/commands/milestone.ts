@@ -31,6 +31,19 @@ function sh(args: string[], input?: string): string {
   return execFileSync(args[0] as string, args.slice(1), { encoding: 'utf8', input }).trim()
 }
 
+/**
+ * `execFileSync`'s thrown `.message` is `"Command failed: <the whole argv>\n<stderr>"`
+ * — `gh`'s actual diagnostic (a validation error, a duplicate title, an auth
+ * failure) is never on the first line, so truncating to it reports the same
+ * content-free "Command failed" text on every failure. Prefers `.stderr`
+ * (what `gh` actually wrote) when present, falling back to the full message.
+ */
+function ghErrorDetail(e: unknown): string {
+  const stderr = (e as { stderr?: Buffer | string })?.stderr
+  const text = typeof stderr === 'string' ? stderr : stderr?.toString()
+  return (text && text.trim().length > 0 ? text : ((e as Error)?.message ?? 'unknown error')).trim()
+}
+
 function locateBodyOrRefuse(args: string[]): BodyResult {
   let result: BodyResult | null
   try {
@@ -119,7 +132,7 @@ export async function milestoneCreateCommand(args: string[]): Promise<void> {
     refuse([
       makeCheckError(
         'forge-fetch',
-        `\`gh api repos/${repoFlag}/milestones\` failed: ${((e as Error).message ?? '').split('\n')[0]}`,
+        `\`gh api repos/${repoFlag}/milestones\` failed: ${ghErrorDetail(e)}`,
         `Check \`gh auth status\` and network, then re-run \`${RETRY_CREATE}\`.`
       )
     ])

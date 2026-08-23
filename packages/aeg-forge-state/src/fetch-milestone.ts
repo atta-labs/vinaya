@@ -1,5 +1,6 @@
 import { type GhIssue, ghApiGet, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } from './gh'
 import { trancheLabel, trancheSlugOf } from './labels'
+import { PROJECT_SLUG, unwrapValue } from './list-tasks'
 import { stripCode } from './strip-code'
 import type { Lifecycle } from '@attalabs/aeg-types'
 
@@ -20,15 +21,20 @@ export type MilestoneFacts = {
  * `declaredProjects`). This reader is tolerant, not a gate: a malformed or
  * absent field both read as `null` here — refusing a malformed value at
  * write time is `checkMilestoneShape`'s job, not this one's.
+ *
+ * No production caller reads this yet: `MilestoneFacts.goal` stays the raw
+ * description, deliberately, so the legacy 1:1 path's output is unchanged by
+ * this task. This is the read-side counterpart the future adopt-a-Milestone
+ * work (out of this task's surface) will consume — shipped now, proven by
+ * its own tests, so that work does not also have to invent the parser.
  */
 const RELEASE_FIELD = /^\s*(?:\*\*)?Release(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.+)$/im
-const RELEASE_VALUE_EDGE = /^[`.;\s]+|[`.;\s]+$/g
 const RELEASE_VALUE = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/
 
 export function releaseFromDescription(description: string): string | null {
   const m = stripCode(description, { inlineSpans: 'keep' }).match(RELEASE_FIELD)
   if (!m) return null
-  const raw = (m[1] ?? '').replace(/\*\*/g, '').replace(RELEASE_VALUE_EDGE, '')
+  const raw = unwrapValue(m[1] ?? '')
   return RELEASE_VALUE.test(raw) ? raw : null
 }
 
@@ -69,6 +75,14 @@ export function intentGoalForSlug(description: string, slug: string): string {
  * `[].every(...)` is vacuously `true` in JS, which is exactly the bug this
  * guard exists to close: a freshly created, empty milestone must not report
  * itself finished.
+ *
+ * No production caller aggregates a live Milestone's tranches into this yet
+ * — that requires enumerating which tranches a Milestone declares and
+ * fetching each one's own lifecycle, the adopt-a-Milestone read pipeline
+ * this task does not build (out of surface). Proven directly against its
+ * own unit tests instead, which is what the zero-tranche case actually
+ * needs today: a Milestone declaring no intents derives `planned` by
+ * construction, with nothing to fetch.
  */
 export function milestoneLifecycleFromTrancheLifecycles(lifecycles: Lifecycle[]): Lifecycle {
   if (lifecycles.length === 0 || lifecycles.every((l) => l === 'planned')) return 'planned'
@@ -98,6 +112,28 @@ type GhLabel = {
  */
 function matchesLegacyMilestone(milestones: GhMilestone[], slug: string): GhMilestone | null {
   return milestones.find((m) => m.title === slug) ?? null
+}
+
+/**
+ * Every Milestone whose title is even SLUG-SHAPED — the candidate universe
+ * for "is this title a legacy tranche" enumeration (vinaya-milestone-model-v1
+ * task 2, fixing a live bug a code review caught). Before this guard, the
+ * three enumeration functions below (`listActiveTrancheSlugs`,
+ * `listArchivedTrancheSlugs`, `indexTrancheMilestonesAsync`) fed EVERY
+ * Milestone's title into their candidate-slug set unconditionally — safe
+ * only while every Milestone was created 1:1 by the Planner with
+ * title-equals-slug. Once the Architect can create a Milestone with an
+ * arbitrary free-text title (a product goal, not a tranche), that title
+ * trivially legacy-matched itself and the Milestone was listed as a phantom
+ * tranche, its raw description read as the "goal". `PROJECT_SLUG` (this
+ * package's own `list-tasks.ts`) is reused rather than a second shape regex
+ * — it already excludes anything with a space, an em dash, or a capital
+ * letter, which covers every real free-text Milestone title while still
+ * accepting the loosely-shaped legacy titles this repo actually has
+ * (`tranche-0`, `done-v1`, `sprint-42`, …).
+ */
+function slugShapedTitles(milestones: GhMilestone[]): string[] {
+  return milestones.map((m) => m.title).filter((t) => PROJECT_SLUG.test(t))
 }
 
 function factsFromLegacyMilestone(milestone: GhMilestone): MilestoneFacts {
@@ -198,7 +234,7 @@ function trancheSlugsFromLabels(labels: GhLabel[]): string[] {
 export function listActiveTrancheSlugs(owner: string, repo: string): ActiveTrancheRef[] {
   const milestones = ghApiGet<GhMilestone[]>(`repos/${owner}/${repo}/milestones?state=all&per_page=100`)
   const labels = ghApiGet<GhLabel[]>(`repos/${owner}/${repo}/labels?per_page=100`)
-  const slugs = new Set<string>([...milestones.map((m) => m.title), ...trancheSlugsFromLabels(labels)])
+  const slugs = new Set<string>([...slugShapedTitles(milestones), ...trancheSlugsFromLabels(labels)])
 
   const active: ActiveTrancheRef[] = []
   for (const slug of slugs) {
@@ -224,7 +260,7 @@ export function listActiveTrancheSlugs(owner: string, repo: string): ActiveTranc
 export function listArchivedTrancheSlugs(owner: string, repo: string): ActiveTrancheRef[] {
   const milestones = ghApiGet<GhMilestone[]>(`repos/${owner}/${repo}/milestones?state=all&per_page=100`)
   const labels = ghApiGet<GhLabel[]>(`repos/${owner}/${repo}/labels?per_page=100`)
-  const slugs = new Set<string>([...milestones.map((m) => m.title), ...trancheSlugsFromLabels(labels)])
+  const slugs = new Set<string>([...slugShapedTitles(milestones), ...trancheSlugsFromLabels(labels)])
 
   const archived: ActiveTrancheRef[] = []
   for (const slug of slugs) {
@@ -272,9 +308,13 @@ export async function indexTrancheMilestonesAsync(owner: string, repo: string): 
   const active: ActiveTrancheRef[] = []
   const archived: ActiveTrancheRef[] = []
   const facts = new Map<string, MilestoneFacts>()
-  const legacySlugs = new Set<string>(milestones.map((m) => m.title))
+  const legacySlugs = new Set<string>(slugShapedTitles(milestones))
 
   for (const m of milestones) {
+    // Skip a free-text-titled (Architect) Milestone entirely — it is not a
+    // tranche and must not be indexed as one. See `slugShapedTitles`'s doc
+    // comment.
+    if (!legacySlugs.has(m.title)) continue
     const ref = { slug: m.title, goal: m.description ?? '' }
     const f = factsFromLegacyMilestone(m)
     if (f.lifecycle === 'complete') archived.push(ref)
