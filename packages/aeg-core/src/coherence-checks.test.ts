@@ -1112,42 +1112,49 @@ describe('L4: Issue-level Milestone-attachment drift', () => {
   })
 })
 
-// ---------- L5: open Milestone, all Issues closed (forge-native L1) -----------
+// ---------- L5: active tranche, all Issues closed (forge-native L1; authoritative) ----
 
-describe('L5: open-Milestone-all-closed (advisory — info, never fail)', () => {
-  it('info + finding — open Milestone whose every task Issue is closed', () => {
+describe('L5: active-tranche-all-closed (promoted to authoritative — fail, blocks CI)', () => {
+  it('fail + finding — active tranche whose every task Issue is closed', () => {
     const entries = [
       makeEntry('iter-5', '1', 101, makeFacts({ issueState: 'closed' })),
       makeEntry('iter-5', '2', 102, makeFacts({ issueState: 'closed' }))
     ]
     const r = checkL5(['iter-5'], new Map([['iter-5', entries]]))
-    expect(r.status).toBe('info')
+    expect(r.status).toBe('fail')
     expect(r.failures).toHaveLength(1)
     expect(r.failures[0]?.tranche).toBe('iter-5')
-    expect(r.failures[0]?.reason).toMatch(/Milestone still open but every task Issue is closed/)
+    expect(r.failures[0]?.reason).toMatch(/Every task Issue is closed/)
   })
 
-  it('info + no findings — at least one task Issue still open', () => {
+  it('pass + no findings — at least one task Issue still open', () => {
     const entries = [
       makeEntry('iter-5', '1', 101, makeFacts({ issueState: 'closed' })),
       makeEntry('iter-5', '2', 102, makeFacts({ issueState: 'open' }))
     ]
     const r = checkL5(['iter-5'], new Map([['iter-5', entries]]))
-    expect(r.status).toBe('info')
+    expect(r.status).toBe('pass')
     expect(r.failures).toHaveLength(0)
   })
 
   it('skips a slug whose facts are all unavailable — a forge outage is not a finding', () => {
     const entries = [makeEntry('iter-5', '1', 101, undefined)]
     const r = checkL5(['iter-5'], new Map([['iter-5', entries]]))
-    expect(r.status).toBe('info')
+    expect(r.status).toBe('pass')
     expect(r.failures).toHaveLength(0)
   })
 
   it('skips a slug with no entries at all (no tasks with issues)', () => {
     const r = checkL5(['iter-5'], new Map())
-    expect(r.status).toBe('info')
+    expect(r.status).toBe('pass')
     expect(r.failures).toHaveLength(0)
+  })
+
+  it('applies identically to a label-only tranche slug — no Milestone-attachment special-casing', () => {
+    const entries = [makeEntry('label-only-v1', '1', 201, makeFacts({ issueState: 'closed' }))]
+    const r = checkL5(['label-only-v1'], new Map([['label-only-v1', entries]]))
+    expect(r.status).toBe('fail')
+    expect(r.failures[0]?.tranche).toBe('label-only-v1')
   })
 })
 
