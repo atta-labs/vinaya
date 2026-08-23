@@ -1,11 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createGhMock } from './test-support/mock-gh'
 
-vi.mock('./gh', () => ({
-  ghApiGet: vi.fn(),
-  ghIssueListByAnyLabelAsync: vi.fn()
-}))
+vi.mock('./gh', () => createGhMock())
 
-const { ghApiGet, ghIssueListByAnyLabelAsync } = await import('./gh')
+const { ghApiGet, ghIssueListByAnyLabelAsync, ghIssueListByLabel } = await import('./gh')
 const { deriveTrancheFromForge, trancheFromIssues } = await import('./derive-from-forge')
 
 const OWNER = 'atta-labs'
@@ -63,6 +61,11 @@ describe('trancheFromIssues', () => {
   it('degrades exactly as the fetching path does when no Milestone exists for the slug', async () => {
     vi.mocked(ghApiGet).mockReturnValue([])
     vi.mocked(ghIssueListByAnyLabelAsync).mockResolvedValue(ISSUES)
+    // findMilestoneForSlug's own label-Issue fallback (a sync, separate gh
+    // call from the task-listing fetch above) sees the same live Issues —
+    // both open, so lifecycle derives 'active', same as `trancheFromIssues`'s
+    // own no-Milestone-known default below.
+    vi.mocked(ghIssueListByLabel).mockReturnValue(ISSUES)
 
     const fetched = await deriveTrancheFromForge(OWNER, REPO, SLUG)
     const composed = trancheFromIssues(SLUG, ISSUES, undefined)

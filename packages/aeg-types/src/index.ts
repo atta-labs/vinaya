@@ -8,7 +8,15 @@
  * other. Zero dependencies, zero I/O.
  */
 
-export type Lifecycle = 'active' | 'complete'
+/**
+ * `'planned'` (vinaya-milestone-model-v1 task 1): a tranche whose
+ * `vinaya/tranche:<slug>` label carries zero Issues yet — the at-least-one
+ * guard's third state, distinct from `'complete'` (which requires at least
+ * one Issue, all closed). Unreachable via a Milestone alone (a Milestone
+ * always has a real open/closed state); only the label-derived path in
+ * `@attalabs/aeg-forge-state`'s `fetch-milestone.ts` produces it.
+ */
+export type Lifecycle = 'active' | 'complete' | 'planned'
 
 export type Task = {
   /**
