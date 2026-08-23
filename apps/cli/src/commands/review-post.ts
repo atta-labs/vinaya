@@ -468,16 +468,46 @@ const VALUE_FLAGS = [
   '--spec-conformance',
   '--task-id',
   '--tests',
+  '--tokens-in',
+  '--tokens-out',
   '--verdict'
 ] as const
 const NULLARY_FLAGS = ['--json'] as const
+
+/**
+ * Exported so `review-post.test.ts` can re-derive this surface from the source
+ * and prove the tables cover it. The first version of this table omitted
+ * `--tokens-in`/`--tokens-out`, which made the command refuse the exact
+ * invocation `roles/reviewer.md` prescribes AND that `requireTokenField`
+ * demands two lines later — a refusal loop with no way out, in the one command
+ * whose job is to post an honest verdict. A hand-kept list of a thing the file
+ * already states is a second copy, and the second copy is the one that rots.
+ */
+export const FLAG_TABLES = { value: VALUE_FLAGS, nullary: NULLARY_FLAGS } as const
 
 /**
  * Every unrecognised `--flag` in `args`, in order. PURE — it decides, it does
  * not exit, so the decision is unit-testable without a process boundary.
  */
 export function unknownFlags(args: string[], known: readonly string[] = [...VALUE_FLAGS, ...NULLARY_FLAGS]): string[] {
-  return args.filter((a) => a.startsWith('--') && !known.includes(a.split('=')[0] as string))
+  const out: string[] = []
+  for (const a of args) {
+    // A single dash is the near-miss that motivated this: `-print-only` is one
+    // keystroke from the spelling that shipped a verdict nobody asked for.
+    // `-` alone is a legitimate value (the token fields use it for "unknown"),
+    // and a negative number is a value too, so neither is a flag.
+    const looksLikeFlag = a.startsWith('--') || (a.startsWith('-') && a.length > 1 && !/^-\d/.test(a))
+    if (!looksLikeFlag) continue
+    const name = a.split('=')[0] as string
+    if (!known.includes(name)) {
+      out.push(name)
+      continue
+    }
+    // `--json=true` reads as known, then `args.includes('--json')` is false and
+    // the caller silently gets no JSON. A nullary flag takes no value.
+    if (NULLARY_FLAGS.includes(name as (typeof NULLARY_FLAGS)[number]) && a.includes('=')) out.push(name)
+  }
+  return out
 }
 
 /** Refuses when `unknownFlags` finds any, naming all of them. */
@@ -485,6 +515,8 @@ export function rejectUnknownFlags(
   args: string[],
   known: readonly string[] = [...VALUE_FLAGS, ...NULLARY_FLAGS]
 ): void {
+  // `unknownFlags` returns names only, never `--flag=value` — a refusal is
+  // printed to stderr and lands in CI logs, and an argv value can be a token.
   const unknown = unknownFlags(args, known)
   if (unknown.length === 0) return
   refuseCmd(

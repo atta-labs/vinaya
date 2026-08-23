@@ -157,3 +157,26 @@ describe('the check refuses when the diff cannot be recomputed', () => {
     }
   })
 })
+
+describe('the Summary line is verified, not attested', () => {
+  const HEAD = 'a'.repeat(40)
+  const NUMSTAT = '10\t0\ta.ts\n2\t1\tb.ts'
+  const block = (summary: string | null) =>
+    [`Head: ${HEAD}`, ...(summary === null ? [] : [`Summary: ${summary}`]), '', '```', NUMSTAT, '```'].join('\n')
+
+  it('passes when the summary agrees with the numstat', () => {
+    const r = compareEvidenceBlock(block('2 files changed, 12 insertions(+), 1 deletion(-)'), HEAD, NUMSTAT)
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails a summary that overstates the change', () => {
+    const r = compareEvidenceBlock(block('9 files changed, 900 insertions(+), 0 deletions(-)'), HEAD, NUMSTAT)
+    expect(r.status).toBe('fail')
+    if (r.status === 'fail') expect(r.errors.join('\n')).toContain('`Summary:` line does not match')
+  })
+
+  // A body written before the emitter produced this line is still valid.
+  it('accepts a block with no summary at all', () => {
+    expect(compareEvidenceBlock(block(null), HEAD, NUMSTAT).status).toBe('pass')
+  })
+})

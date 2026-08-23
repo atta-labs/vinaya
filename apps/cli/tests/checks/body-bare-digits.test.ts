@@ -1,7 +1,7 @@
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { checkBareDigits } from '../../src/checks/body-bare-digits-logic'
+import { diagnoseAnchorExemption, checkBareDigits } from '../../src/checks/body-bare-digits-logic'
 
 function violationLines(body: string): number[] {
   return checkBareDigits(body).violations.map((v) => v.line)
@@ -717,5 +717,55 @@ describe('body-bare-digits — check bin file mode', () => {
     const binPath = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin', 'check-body-bare-digits.ts')
     const mode = statSync(binPath).mode & 0o777
     expect(mode).toBe(0o755)
+  })
+})
+
+describe('anchor-exemption diagnosis — why the region did not count', () => {
+  const EVIDENCE = ['<!-- AEG:EVIDENCE:START -->', 'Head: 995a4552', '<!-- AEG:EVIDENCE:END -->'].join('\n')
+
+  it('names the missing section when an EVIDENCE region sits outside `## Evidence`', () => {
+    const body = ['## What this is', '', 'Prose.', '', EVIDENCE].join('\n')
+    const scan = checkBareDigits(body)
+    expect(scan.violations.length).toBeGreaterThan(0)
+    const d = diagnoseAnchorExemption(body, scan.violations[0]?.line as number)
+    expect(d?.field).toBe('EVIDENCE')
+    expect(d?.reason).toBe('outside-canonical-section')
+    expect(d?.hint).toContain('`## Evidence`')
+  })
+
+  // The whole reason this exists: the generic advice tells you to fence the
+  // block, and fencing a machine-emitted block breaks `evidence-fresh`.
+  it('tells the author NOT to fence or reword the region', () => {
+    const body = ['## What this is', '', EVIDENCE].join('\n')
+    const scan = checkBareDigits(body)
+    const d = diagnoseAnchorExemption(body, scan.violations[0]?.line as number)
+    expect(d?.hint).toContain('do not fence or reword')
+  })
+
+  it('says nothing for a violation that is ordinary prose', () => {
+    const body = ['## Evidence', '', 'We changed 4 files.', '', EVIDENCE].join('\n')
+    const scan = checkBareDigits(body)
+    const prose = scan.violations.find((v) => v.text.includes('We changed'))
+    expect(prose).toBeDefined()
+    expect(diagnoseAnchorExemption(body, prose?.line as number)).toBeNull()
+  })
+
+  it('reports content-signature when the region carries no `Head:` declaration', () => {
+    const body = [
+      '## Evidence',
+      '',
+      '<!-- AEG:EVIDENCE:START -->',
+      'A fabricated claim about 12 files.',
+      '<!-- AEG:EVIDENCE:END -->'
+    ].join('\n')
+    const scan = checkBareDigits(body)
+    expect(scan.violations.length).toBeGreaterThan(0)
+    const d = diagnoseAnchorExemption(body, scan.violations[0]?.line as number)
+    expect(d?.reason).toBe('content-signature')
+  })
+
+  it('returns null for a line number that is not in the body', () => {
+    expect(diagnoseAnchorExemption('one line', 99)).toBeNull()
+    expect(diagnoseAnchorExemption('one line', 0)).toBeNull()
   })
 })

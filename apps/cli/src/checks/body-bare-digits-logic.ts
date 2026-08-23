@@ -440,6 +440,14 @@ function blankUnanchoredStructuralFields(body: string): string {
 const CLOSES_REF = /Closes\s*#\d+/i
 const EVIDENCE_HEADING = /^#{1,6}\s/
 const EVIDENCE_HEAD_LINE = /^Head:\s*\S+$/i
+/**
+ * `vinaya pr report --write` emits this line beside `Head:` — files, lines and
+ * binary count derived from the numstat in the same block. Machine-rendered,
+ * never hand-typed, and `evidence-fresh` recomputes it, so it is the opposite
+ * of the unbacked narrative figure this check exists to catch. Without this it
+ * would be flagged, and the generic remedy (fence it) would corrupt the block.
+ */
+const EVIDENCE_SUMMARY_LINE = /^Summary:\s*\S/i
 
 function blankClosesField(line: string): string {
   const m = CLOSES_REF.exec(line)
@@ -449,7 +457,12 @@ function blankClosesField(line: string): string {
 
 function blankEvidenceField(line: string): string {
   const trimmed = line.trim()
-  if (trimmed === '' || EVIDENCE_HEAD_LINE.test(trimmed) || EVIDENCE_HEADING.test(trimmed))
+  if (
+    trimmed === '' ||
+    EVIDENCE_HEAD_LINE.test(trimmed) ||
+    EVIDENCE_SUMMARY_LINE.test(trimmed) ||
+    EVIDENCE_HEADING.test(trimmed)
+  )
     return ' '.repeat(line.length)
   return line
 }
@@ -560,4 +573,69 @@ export function checkBareDigits(rawBody: string): BareDigitScanResult {
   }
 
   return { violations }
+}
+
+/**
+ * Why the anchored region containing this line did not earn its exemption.
+ *
+ * The check's generic remediation — fence it, or restate it as a symbol — is
+ * correct for narrative prose and actively wrong for a machine-generated
+ * region. `vinaya pr report --write` emits `Head: <sha>` as the first line of
+ * the `AEG:EVIDENCE` block; fencing or rewriting that line corrupts the block
+ * the `evidence-fresh` gate byte-compares, so an author following the generic
+ * advice trades one red check for another. The real cause is one of the two
+ * preconditions `blankAnchoredRegions` applies beyond the anchor pair itself:
+ * the region must sit in its documented section, and its content must carry
+ * that field's own signature.
+ *
+ * Returns `null` when the line is not inside any `AEG:*` region, which is the
+ * ordinary case — then the generic advice is the right advice.
+ */
+export type AnchorExemptionDiagnosis = {
+  field: ExemptAnchorField
+  reason: 'outside-canonical-section' | 'content-signature'
+  hint: string
+}
+
+/** Where each field's region must live, in the words an author would use. */
+const FIELD_SECTION_LABEL: Record<ExemptAnchorField, string> = {
+  CLOSES: 'the header block, above the first `##` heading',
+  PROJECT: 'the header block, above the first `##` heading',
+  TIER: 'the `## Scope` section',
+  EVIDENCE: 'the `## Evidence` section'
+}
+
+/** Char offset of the first character of 1-indexed `line`, or `null` if the body has no such line. */
+function lineStartOffset(body: string, line: number): number | null {
+  if (line < 1) return null
+  const lines = body.split('\n')
+  if (line > lines.length) return null
+  let offset = 0
+  for (let i = 0; i < line - 1; i++) offset += (lines[i] as string).length + 1
+  return offset
+}
+
+export function diagnoseAnchorExemption(body: string, line: number): AnchorExemptionDiagnosis | null {
+  const offset = lineStartOffset(body, line)
+  if (offset === null) return null
+  for (const field of EXEMPT_ANCHOR_FIELDS) {
+    const bounds = anchoredRegionBounds(body, field)
+    if (!bounds || offset < bounds.outerStart || offset >= bounds.outerEnd) continue
+    if (!isInCanonicalSection(body, field, bounds.outerStart)) {
+      return {
+        field,
+        reason: 'outside-canonical-section',
+        hint: `This line is inside the \`AEG:${field}\` region, but that region is not in ${FIELD_SECTION_LABEL[field]}, so it is scanned as ordinary prose. Move the region there — do not fence or reword its contents, which \`vinaya pr report --write\` regenerates and other gates byte-compare.`
+      }
+    }
+    if (!FIELD_CONTENT_SIGNATURE[field].test(body.slice(bounds.innerStart, bounds.innerEnd))) {
+      return {
+        field,
+        reason: 'content-signature',
+        hint: `This line is inside the \`AEG:${field}\` region, but that region does not carry the field's own declaration, so it is scanned as ordinary prose rather than trusted. Restore the declaration the template requires for \`AEG:${field}\`.`
+      }
+    }
+    return null
+  }
+  return null
 }

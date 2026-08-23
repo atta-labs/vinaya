@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 import {
+  FLAG_TABLES,
   FindingsParseError,
   type Finding,
   isNoneFoundClaim,
@@ -306,8 +309,10 @@ describe('(#184) review post refuses an unknown flag instead of posting anyway',
     expect(unknownFlags(['--pr', '--bogus', '178'], known)).toEqual(['--bogus'])
   })
 
-  it('catches the = spelling too', () => {
-    expect(unknownFlags(['--bogus=1'], known)).toEqual(['--bogus=1'])
+  it('catches the = spelling too, reporting the name without the value', () => {
+    // The value is not echoed: a refusal goes to stderr and into CI logs, and
+    // an argv value can be a token.
+    expect(unknownFlags(['--bogus=1'], known)).toEqual(['--bogus'])
   })
 
   it('names every unknown flag, not just the first', () => {
@@ -316,5 +321,86 @@ describe('(#184) review post refuses an unknown flag instead of posting anyway',
 
   it('does not mistake a value for a flag', () => {
     expect(unknownFlags(['--role', 'security'], known)).toEqual([])
+  })
+})
+
+describe('the flag tables cover what the command actually reads', () => {
+  /**
+   * Derived, not hand-listed. The first version of `VALUE_FLAGS` omitted
+   * `--tokens-in`/`--tokens-out`, so the command refused the invocation
+   * `roles/reviewer.md` documents and `requireTokenField` requires — an
+   * unresolvable refusal loop. A hand-kept copy of a set the source already
+   * states is exactly the drift this whole change exists to stop, so this test
+   * re-reads the source and compares.
+   */
+  const SOURCE = readFileSync(fileURLToPath(new URL('../src/commands/review-post.ts', import.meta.url)), 'utf8')
+
+  function flagsReadBySource(): string[] {
+    const reads = [
+      ...SOURCE.matchAll(/require(?:Flag|TokenField)\(flags,\s*'(--[a-z-]+)'\)/g),
+      ...SOURCE.matchAll(/flags\.get\('(--[a-z-]+)'\)/g)
+    ]
+    return [...new Set(reads.map((m) => m[1] as string))].sort()
+  }
+
+  it('finds the reads at all — a guard on the extraction itself', () => {
+    const read = flagsReadBySource()
+    expect(read.length).toBeGreaterThan(10)
+    expect(read).toContain('--tokens-in')
+  })
+
+  it('declares every flag the command reads as a value flag', () => {
+    const declared = new Set<string>(FLAG_TABLES.value)
+    const missing = flagsReadBySource().filter((f) => !declared.has(f))
+    expect(missing, `read from \`flags\` but absent from VALUE_FLAGS: ${missing.join(', ')}`).toEqual([])
+  })
+
+  it('accepts the full invocation roles/reviewer.md prescribes', () => {
+    const documented = [
+      '--role',
+      'code-reviewer',
+      '--pr',
+      '188',
+      '--verdict',
+      'APPROVE',
+      '--brief-conformance',
+      'x',
+      '--spec-conformance',
+      'x',
+      '--scope',
+      'x',
+      '--tests',
+      'x',
+      '--docs',
+      'x',
+      '--task-id',
+      '188',
+      '--model',
+      'claude-opus-5',
+      '--tokens-in',
+      '-',
+      '--tokens-out',
+      '-',
+      '--cost',
+      '-'
+    ]
+    expect(unknownFlags(documented)).toEqual([])
+  })
+
+  it('catches a single-dash near-miss', () => {
+    expect(unknownFlags(['-print-only'])).toEqual(['-print-only'])
+  })
+
+  it('does not mistake a bare `-` or a negative number for a flag', () => {
+    expect(unknownFlags(['--tokens-in', '-', '--pr', '-1'])).toEqual([])
+  })
+
+  it('refuses `--json=true`, which would otherwise parse as known and do nothing', () => {
+    expect(unknownFlags(['--json=true'])).toEqual(['--json'])
+    expect(unknownFlags(['--json'])).toEqual([])
+  })
+
+  it('reports the flag name only, never the value — refusals reach CI logs', () => {
+    expect(unknownFlags(['--api-key=ghp_ABCDEFGHIJKLMNOP'])).toEqual(['--api-key'])
   })
 })

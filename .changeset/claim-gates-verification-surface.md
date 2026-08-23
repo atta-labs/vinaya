@@ -5,13 +5,20 @@
 
 Close four gaps where a verification tool could return a confident wrong answer.
 
-- `pr report` now derives a `Summary:` line (files, insertions, deletions,
-  binary count) into the evidence block, so a PR body never needs a
-  hand-written count that goes stale when a later commit lands.
+- `pr report` derives a `Summary:` line (files, insertions, deletions, binary
+  count) into the evidence block, so a PR body never needs a hand-written count
+  that goes stale when a later commit lands. `evidence-fresh` recomputes and
+  compares it, and `body-bare-digits` exempts it as machine-emitted.
 - `review post` rejects unknown flags instead of silently ignoring them, so a
   typo'd flag fails loudly rather than posting a verdict with a default.
-- New `symbol-collisions` detector reports names declared in more than one file
-  in a package — the condition that makes a grep-based check unresolvable.
-- No tracked file may contain a NUL byte. One did (`parse-registry.ts`), which
-  made git treat it as binary: no reviewable diff on any PR touching it, and no
-  line numbers from `git grep`.
+- New `symbol-collisions` module in `@attalabs/aeg-core` reports names declared
+  in more than one file — the condition that makes a grep-based check
+  unresolvable. It is a library function plus a repo-internal gate over
+  `aeg-core/src`; it registers no `vinaya check` and runs on no adopter's code.
+- `parse-registry.ts` held a NUL byte, which made git treat it as binary: no
+  reviewable diff on any PR touching it, and no line numbers from `git grep`.
+  The sentinel is now an escape, and a repo-internal test keeps any tracked file
+  from carrying one again. Repo-internal: no adopter-facing check is added.
+- `body-bare-digits` now explains why an `AEG:*` region lost its exemption
+  instead of giving generic advice. The generic advice — fence it — corrupts a
+  machine-emitted block and trades one red check for another.

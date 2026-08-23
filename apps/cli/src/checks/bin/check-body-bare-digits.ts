@@ -32,7 +32,7 @@ import { execFileSync } from 'node:child_process'
 import { CHANGESET_RELEASE_BRANCH, isChangesetsReleasePr } from '@attalabs/aeg-core'
 import { loadTrustAnchorConfig, resolveReleaseActor } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { checkBareDigits } from '../body-bare-digits-logic'
+import { diagnoseAnchorExemption, checkBareDigits } from '../body-bare-digits-logic'
 
 const CHECK_NAME = 'body-bare-digits'
 
@@ -84,14 +84,22 @@ function main(): void {
     process.exit(0)
   }
 
+  const GENERIC_RECOVERY =
+    'Move this into a fenced code block, or state it as a symbol reference instead of a narrative claim (e.g. `N`), then re-run `vinaya check body-bare-digits`.'
+
   for (const v of result.violations) {
+    // A violation inside an `AEG:*` region has a specific cause, and the
+    // generic advice is wrong for it: fencing or rewording a machine-emitted
+    // block trades this red check for a red `evidence-fresh`.
+    const diagnosis = diagnoseAnchorExemption(body, v.line)
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
       severity: 'error',
       message: `body-bare-digits: bare digit outside a fenced block, line ${v.line}: ${v.text}`,
-      agent_recovery_prompt:
-        'Move this into a fenced code block, or state it as a symbol reference instead of a narrative claim (e.g. `N`), then re-run `vinaya check body-bare-digits`.',
+      agent_recovery_prompt: diagnosis
+        ? `${diagnosis.hint} Then re-run \`vinaya check body-bare-digits\`.`
+        : GENERIC_RECOVERY,
       line: v.line
     })
   }

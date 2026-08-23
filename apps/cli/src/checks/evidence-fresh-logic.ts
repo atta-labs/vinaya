@@ -17,10 +17,13 @@
  * this function; only a STALE one is.
  */
 
+import { summariseNumstat } from '../lib/numstat'
+
 export type EvidenceCompareResult = { status: 'pass' } | { status: 'fail'; errors: string[] }
 
 const HEAD_LINE = /^Head:\s*([0-9a-f]{7,40})\s*$/m
 const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
+const SUMMARY_LINE = /^Summary:\s*(.+?)\s*$/m
 
 /**
  * Compares an already-located `AEG:EVIDENCE` region against the facts a
@@ -66,6 +69,25 @@ export function compareEvidenceBlock(
         `  actual: ${JSON.stringify(actual)}`
       ].join('\n')
     )
+  }
+
+  // The `Summary:` line is derived from the same numstat, so it is checkable
+  // rather than attested — and it must be, or the block's headline figure
+  // would be its only unverified claim. Absent is fine: bodies written before
+  // the emitter produced this line are still valid.
+  const summaryMatch = region.match(SUMMARY_LINE)
+  if (summaryMatch) {
+    const expected = summariseNumstat(actual)
+    const stored = summaryMatch[1] as string
+    if (stored !== expected) {
+      errors.push(
+        [
+          "evidence-fresh: the block's `Summary:` line does not match its own numstat.",
+          `  block:  ${JSON.stringify(stored)}`,
+          `  actual: ${JSON.stringify(expected)}`
+        ].join('\n')
+      )
+    }
   }
 
   return errors.length > 0 ? { status: 'fail', errors } : { status: 'pass' }

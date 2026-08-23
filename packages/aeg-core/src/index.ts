@@ -24,6 +24,8 @@ export type { TokensLineInput, TranscriptSummary, UsageComponents } from './repo
 // host's way to produce a `TranscriptSummary`, exported beside the portable
 // renderers it feeds, never as a requirement of the contract.
 export { summarizeTranscript } from './claude-code-transcript'
+export { declarationsIn, findCollisions } from './symbol-collisions'
+export type { SymbolCollision, SymbolDeclaration } from './symbol-collisions'
 export { isCodeFile, isDocFile, isSpecFile } from './file-classify'
 export { hasStatusBlock } from './status-block'
 export {

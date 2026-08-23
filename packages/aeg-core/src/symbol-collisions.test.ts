@@ -4,6 +4,37 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { declarationsIn, findCollisions } from './symbol-collisions'
 
+/**
+ * Every source file under `dir`, recursively, as `[relative, absolute]`.
+ * Recursive because a nested directory is precisely how a file escapes a flat
+ * `readdirSync` while the gate goes on reporting green. `.mts`/`.cts` for the
+ * same reason.
+ */
+function sourceFiles(dir: string, prefix = ''): [string, string][] {
+  const out: [string, string][] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+    const abs = join(dir, entry.name)
+    // `isDirectory()` is false for a symlinked directory, so one would be
+    // dropped silently. Reported as a hard failure instead of skipped: a
+    // silent skip is the fail-open this gate exists to prevent.
+    if (entry.isSymbolicLink()) throw new Error(`symlink in source tree, cannot enumerate honestly: ${rel}`)
+    if (entry.isDirectory()) {
+      out.push(...sourceFiles(abs, rel))
+      continue
+    }
+    if (!/\.(ts|mts|cts)$/.test(entry.name) || /\.test\.(ts|mts|cts)$/.test(entry.name)) continue
+    out.push([rel, abs])
+  }
+  return out
+}
+
+/** Every collision in this package, from the recursive scan — shared by the live case above and the gate below. */
+function packageCollisions() {
+  const dir = fileURLToPath(new URL('.', import.meta.url))
+  return findCollisions(sourceFiles(dir).flatMap(([rel, abs]) => declarationsIn(rel, readFileSync(abs, 'utf8'))))
+}
+
 describe('symbol-collision detection', () => {
   it('finds a name declared in two files', () => {
     const decls = [
@@ -26,6 +57,26 @@ describe('symbol-collision detection', () => {
     const src =
       'export const A = 1\nfunction b() {}\nexport async function c() {}\ntype D = string\ninterface E {}\nclass F {}'
     expect(declarationsIn('x.ts', src).map((d) => d.name)).toEqual(['A', 'b', 'c', 'D', 'E', 'F'])
+  })
+
+  it('reads the declaration forms a wider grammar allows', () => {
+    const src = [
+      'export default function d() {}',
+      'export async function* g() {}',
+      'var v = 1',
+      'enum E {}',
+      'export const enum CE {}',
+      'declare const dc: number',
+      'export abstract class AC {}'
+    ].join('\n')
+    expect(declarationsIn('x.ts', src).map((d) => d.name)).toEqual(['d', 'g', 'v', 'E', 'CE', 'dc', 'AC'])
+  })
+
+  // `export const enum E` must yield `E`, not the keyword `enum` — the bare
+  // `const` alternative would otherwise win and capture the next word.
+  it('does not report a keyword as a symbol name', () => {
+    const names = declarationsIn('x.ts', 'export const enum E {}').map((d) => d.name)
+    expect(names).not.toContain('enum')
   })
 
   it('ignores indented declarations — only top level', () => {
@@ -54,11 +105,7 @@ describe('symbol-collision detection', () => {
    * copy appeared, or one was consolidated away — not maintenance noise.
    */
   it('detects the real stripBackticks collision in this package', () => {
-    const dir = fileURLToPath(new URL('.', import.meta.url))
-    const decls = readdirSync(dir)
-      .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
-      .flatMap((f) => declarationsIn(f, readFileSync(join(dir, f), 'utf8')))
-    const hit = findCollisions(decls).find((c) => c.name === 'stripBackticks')
+    const hit = packageCollisions().find((c) => c.name === 'stripBackticks')
     expect(hit?.files).toEqual(['parse-registry.ts', 'parse-tranche.ts', 'registry-parse.ts'])
   })
 })
@@ -87,14 +134,6 @@ describe('symbol-collision detection', () => {
 const KNOWN_COLLISIONS = ['checkClosesN', 'isEmDashOrDash', 'isSpecFile', 'stripBackticks', 'TASK_BRANCH_PATTERN']
 
 describe('symbol-collision gate over this package', () => {
-  function packageCollisions() {
-    const dir = fileURLToPath(new URL('.', import.meta.url))
-    const decls = readdirSync(dir)
-      .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
-      .flatMap((f) => declarationsIn(f, readFileSync(join(dir, f), 'utf8')))
-    return findCollisions(decls)
-  }
-
   it('declares no name in two files beyond the known set', () => {
     const found = packageCollisions().map((c) => c.name)
     expect(
@@ -104,7 +143,6 @@ describe('symbol-collision gate over this package', () => {
   })
 
   it('scans enough files to be meaningful — a guard on the enumeration', () => {
-    const dir = fileURLToPath(new URL('.', import.meta.url))
-    expect(readdirSync(dir).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts')).length).toBeGreaterThan(20)
+    expect(sourceFiles(fileURLToPath(new URL('.', import.meta.url))).length).toBeGreaterThan(20)
   })
 })

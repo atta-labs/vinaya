@@ -23,8 +23,27 @@
 export type SymbolDeclaration = { name: string; file: string; exported: boolean }
 export type SymbolCollision = { name: string; files: string[]; anyExported: boolean }
 
-/** `function f`, `export function f`, `const f =`, `class`/`type`/`interface` — top-level declarations only (no leading whitespace). */
-const DECLARATION = /^(export\s+)?(?:async\s+)?(?:function|class|interface|type|const|let)\s+([A-Za-z_$][\w$]*)/gm
+/**
+ * A top-level declaration — no leading whitespace, so nested and block-scoped
+ * declarations are out of scope by construction.
+ *
+ * `const enum` is matched before bare `const`, or `export const enum E` would
+ * capture the keyword `enum` as the symbol name.
+ *
+ * KNOWN BLIND SPOTS, stated rather than papered over — a detector that implies
+ * coverage it does not have is the failure class it was built to catch:
+ *   - a multi-declarator statement (`const a = 1, b = 2`) reports only the
+ *     first name;
+ *   - column-0 text inside a template literal or a block comment is read as
+ *     code, so either can produce a false hit;
+ *   - `export { x } from './y'` re-exports are not declarations and are not
+ *     reported — correct for this purpose, but it means this does not measure
+ *     a module's export surface.
+ * Closing these needs a real parse, which is the compiler API and a far larger
+ * job than this file.
+ */
+const DECLARATION =
+  /^(export\s+)?(?:default\s+)?(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?(?:function\s*\*?|class|interface|type|const\s+enum|enum|const|let|var)\s+([A-Za-z_$][\w$]*)/gm
 
 export function declarationsIn(file: string, source: string): SymbolDeclaration[] {
   const out: SymbolDeclaration[] = []

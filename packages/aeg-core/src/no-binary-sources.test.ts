@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, statSync } from 'node:fs'
+import { lstatSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -52,7 +52,9 @@ describe('no tracked file is binary to git', () => {
       // a submodule gitlink, which `ls-files` reports as an ordinary entry.
       let size: number
       try {
-        const st = statSync(abs)
+        // `lstat`, not `stat`: a tracked symlink is a link, and following one
+        // reads a file outside the worktree that git does not track.
+        const st = lstatSync(abs)
         if (!st.isFile()) continue
         size = st.size
       } catch {
