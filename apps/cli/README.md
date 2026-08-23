@@ -20,7 +20,7 @@ npx @attalabs/vinaya init        # or: pnpm dlx / yarn dlx / bunx
 | `vinaya check <name> \| --all` | Run one check, or every registered check (core + `vinaya.config.json`-registered). `--json` for the enveloped `{ checks: CheckOutcome[] }` form; `--diff-only` scopes `scope: 'diff'` checks to changed files; `--parallel[=n]` caps concurrency (default: cpu-derived). Findings always print as the check contract's JSON lines on stderr, regardless of `--json`. Exit 0 iff every check passed. |
 | `vinaya new check <yourname>/<id>` | Scaffold a self-contained custom check into `./scripts/vinaya-checks/<id>.ts`, ready to register in `vinaya.config.json` under that namespaced key |
 | `vinaya review post --role code-reviewer \| security --pr <n> ...` | Render, post, and self-verify a code-reviewer or security-review verdict comment on a PR from structured flags (verdict, findings, per-field text) instead of a hand-typed comment. Resolves the PR's real head itself (`gh pr view --json headRefOid`); renders every structural `VERDICT:`/`Judged head:` line from validated inputs, never from caller-supplied text; refuses a contradictory verdict (a BLOCKER/CRITICAL-or-HIGH finding with a clean verdict) before posting anything; and after posting, re-fetches the comment and refuses to exit 0 unless it re-parses through the exact `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` functions the merge gate calls. `--json` for the enveloped machine form. |
-| `vinaya studio` | Launch Vinaya Studio. Inside a checkout that carries Studio's source (`apps/vinaya-studio/web` — it lives in the attalabs monorepo, not this repository) it runs the dev app; a published install runs its bundled standalone server instead, fetched from attalabs' published release artifact at publish time. |
+| `vinaya studio` | Launch Vinaya Studio. Inside a checkout that carries Studio's source (`apps/vinaya-studio/web` — it lives in the attalabs monorepo, not this repository) it runs the dev app; a published install runs its bundled standalone server instead, fetched from attalabs' published release artifact at publish time. `--port <n>` binds an exact port — see below. |
 
 ## Config
 
@@ -155,6 +155,20 @@ Once an omission is deliberate, name it in `briefSchema.ack` and it goes quiet:
 Two things worth knowing about its shape. `ack` is one flat list rather than per-kind, so acking a name that the shipped default declares for **both** kinds — `project` is the only such name today — silences it for both. And a config carrying no `briefSchema` key at all diverges on every builtin, so it reports on every run until you either declare the sections or ack them; that is the one shape where this becomes standing output rather than a one-time notice.
 
 Report-only, like every other `vinaya doctor` diagnostic: it restores nothing itself.
+
+## Pinning Studio's port
+
+`vinaya studio` binds `3008`, or `3108` when that is taken. `--port <n>` overrides both, and the override does **not** fall back: if the port you named is busy, the command refuses instead of quietly binding a different one.
+
+That asymmetry is deliberate. The default pair exists so a casual `vinaya studio` still comes up when something else holds `3008`. But naming a port is how you buy certainty about which server answered you — and silently moving to another port spends exactly that. Run two Studio servers on one machine without it and a `200` from `/studio` tells you nothing about which process replied.
+
+```bash
+vinaya studio --port 3208     # or --port=3208
+```
+
+A malformed value exits `2` before anything starts: no value, a non-number, one outside `1`–`65535`, a leading zero, or the flag given twice with different values.
+
+The flag applies to a published install, where this CLI launches the bundled server and owns the port. In a checkout carrying Studio's source it is refused, because that path runs Studio's own dev script, which picks its own port and ignores what it is passed — accepting the flag there would report a port nothing ever binds.
 
 ## Known limits
 
