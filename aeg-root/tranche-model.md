@@ -81,7 +81,7 @@ So: there is **no status column anywhere.** The Developer does not "flip to in-r
 
 **A plan is a Milestone plus labeled Issues. There is no topology file, and `aeg-root/tranches/` holds nothing but the archive.** This section is kept because the *rules* the file encoded still bind — they simply bind the forge objects now. Read it as the reasoning behind the shape, not as a file to create.
 
-> **Qualified as of `vinaya-milestone-model-v1` task 1:** a tranche's identity is its `vinaya/tranche:<slug>` label, not a Milestone — the one-Milestone-one-tranche reading above is the LEGACY case, still true forever for a Milestone titled exactly a tranche slug, but no longer the only case. A Milestone is no longer required for a tranche to exist, and one Milestone may legitimately hold several tranches' labels at once. The full rewrite of this section for the label-first model lands with task 2, alongside the write side (the Architect role that creates a Milestone) this reading half depends on.
+> **Qualified:** a tranche's identity is its `vinaya/tranche:<slug>` label, not a Milestone — the one-Milestone-one-tranche reading above is the LEGACY case, still true forever for a Milestone titled exactly a tranche slug, but no longer the only case. A Milestone is no longer required for a tranche to exist, and one Milestone may legitimately hold several tranches' labels at once. The full rewrite of this section for the label-first model lands with the Architect role that creates a Milestone, which this reading half depends on and does not itself add.
 
 
 

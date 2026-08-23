@@ -211,9 +211,8 @@ export function trancheArchivalStatus(
 }
 
 /**
- * A tranche's identity is its `vinaya/tranche:<slug>` label
- * (vinaya-milestone-model-v1 task 1), not a Milestone number: this command
- * used to find an open Milestone titled the slug FIRST and list its Issues
+ * A tranche's identity is its `vinaya/tranche:<slug>` label, not a Milestone
+ * number: this command used to find an open Milestone titled the slug FIRST and list its Issues
  * via `?milestone=<number>` — a query that returns every Issue the Milestone
  * holds, not just this tranche's, so once one Milestone can legitimately
  * hold several tranches that query would silently close siblings the moment
