@@ -181,7 +181,19 @@ function gitFetchMainQuiet(): void {
  */
 function listDirAtRef(ref: string, relDir: string): string[] {
   try {
-    return execFileSync('git', ['ls-tree', '--name-only', `${ref}:${relDir}`], { encoding: 'utf8' })
+    // `stdio` stderr: 'ignore' — an ABSENT directory is the normal case here,
+    // not an error (#173). The forge-native cutover deleted every
+    // `aeg-root/tranches/*.md`, and `no-disk-state.ts` now actively forbids
+    // re-adding one, so both probes below miss on every healthy run and `git`
+    // prints `fatal: Not a valid object name` per probe. The `catch` already
+    // degrades correctly; without this the child's stderr inherits the
+    // parent's and the line escapes anyway. It escaped into `verify-dispatch`,
+    // which concatenated the streams before parsing and therefore reported a
+    // clean run as `UNAVAILABLE` on every dispatch check.
+    return execFileSync('git', ['ls-tree', '--name-only', `${ref}:${relDir}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
       .split('\n')
       .map((s) => s.trim())
       .filter(Boolean)
@@ -192,7 +204,14 @@ function listDirAtRef(ref: string, relDir: string): string[] {
 
 function readFileAtRef(ref: string, relPath: string): string | null {
   try {
-    return execFileSync('git', ['show', `${ref}:${relPath}`], { encoding: 'utf8' })
+    // Same reasoning as `listDirAtRef` above: a path absent at `ref` is an
+    // expected answer, and `null` already says so. Silence the child so the
+    // expected miss does not print a `fatal:` line the caller has to parse
+    // around (#173).
+    return execFileSync('git', ['show', `${ref}:${relPath}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
   } catch {
     return null
   }

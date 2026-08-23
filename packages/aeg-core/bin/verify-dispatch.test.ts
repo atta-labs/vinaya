@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  * Both tools exit non-zero exactly when findings exist, so the baseline
  * silently reported 0 in the one case it was supposed to catch. This mocks
  * `node:child_process`'s `spawnSync` (the array-form, no-shell primitive
- * `captureCombinedOutput` uses since `tranche-rename-v1` task 2) to exercise
+ * `captureStreams` uses since `tranche-rename-v1` task 2) to exercise
  * every observable outcome without needing the real tools to be in a
  * specific state.
  */
@@ -85,6 +85,72 @@ describe('currentFindingCounts', () => {
     ])
   })
 
+  /**
+   * atta-labs/vinaya#173. `captureStreams` used to concatenate stdout and
+   * stderr before parsing, on the stated premise that neither tool writes to
+   * stderr on its clean `--json` path. `verify-coherence` does: it probes
+   * `aeg-root/tranches` off the base ref, the forge-native cutover deleted
+   * those directories, and `git` prints a `fatal:` line per probe while the
+   * tool itself exits 0 with correct results. One such line made `JSON.parse`
+   * throw and the baseline reported UNAVAILABLE on EVERY dispatch check.
+   */
+  it('(#173) a healthy verify-coherence that also writes to stderr is NOT unavailable', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return {
+          stdout: JSON.stringify({ summary: { passed: 10, failed: 0, info: 6 } }),
+          stderr: [
+            'fatal: Not a valid object name origin/main:aeg-root/tranches',
+            "fatal: path 'aeg-root/tranches/x.md' does not exist in 'origin/main'",
+            ''
+          ].join('\n'),
+          status: 0
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    expect(currentFindingCounts()).toEqual([
+      { tool: 'verify-docs-full', findingCount: 0, unavailable: false },
+      { tool: 'verify-coherence', findingCount: 0, unavailable: false }
+    ])
+  })
+
+  it('(#173) stderr noise does not hide a REAL finding count either', () => {
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return {
+          stdout: JSON.stringify({ summary: { passed: 2, failed: 4, info: 0 } }),
+          stderr: 'fatal: Not a valid object name origin/main:aeg-root/tranches\n',
+          status: 1
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    expect(currentFindingCounts()).toEqual([
+      { tool: 'verify-docs-full', findingCount: 0, unavailable: false },
+      { tool: 'verify-coherence', findingCount: 4, unavailable: false }
+    ])
+  })
+
+  it('(#173) a genuinely unparseable stdout is still UNAVAILABLE — the signal is not lost', () => {
+    // The point of splitting the streams is that a real crash and a chatty
+    // healthy run stop being indistinguishable. This is the other half of that.
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
+      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+        return { stdout: 'Segmentation fault', stderr: 'fatal: something else\n', status: 139 }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
+    })
+
+    const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
+    expect(coherence).toEqual({ tool: 'verify-coherence', findingCount: 0, unavailable: true })
+  })
+
   it('(c) reports UNAVAILABLE, never 0, when a tool cannot run at all (spawn failure)', () => {
     spawnSyncMock.mockImplementation(() => spawnFailureResult())
 
@@ -152,10 +218,14 @@ describe('(d) sh()/shJson() other call sites are untouched', () => {
     ]) {
       expect(src).toContain(needle)
     }
-    // The new capture helper is scoped to currentFindingCounts's two tool
+    // The capture helper is scoped to currentFindingCounts's two tool
     // invocations only — defined once, called exactly twice.
-    const occurrences = src.split('captureCombinedOutput(').length - 1
+    const occurrences = src.split('captureStreams(').length - 1
     expect(occurrences).toBe(3)
+    // #173: the two streams must stay apart. A concatenation here is what made
+    // one `fatal:` line from a healthy `verify-coherence` read as UNAVAILABLE.
+    expect(src).not.toContain("(result.stdout ?? '') + (result.stderr ?? '')")
+    expect(src).toContain('parseJsonSafe<{ summary: { failed: number } }>(coherence.stdout)')
   })
 })
 

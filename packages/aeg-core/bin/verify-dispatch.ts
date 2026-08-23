@@ -370,7 +370,7 @@ function computeLeftover(trancheSlug: string, taskId: string) {
 
 // ---- baseline capture ----------------------------------------------------------
 
-type CaptureResult = { output: string; exitCode: number; ranAtAll: boolean }
+type CaptureResult = { stdout: string; stderr: string; exitCode: number; ranAtAll: boolean }
 
 /**
  * Non-throwing combined stdout+stderr capture, used ONLY by
@@ -380,16 +380,32 @@ type CaptureResult = { output: string; exitCode: number; ranAtAll: boolean }
  * non-zero exit from `verify-docs`/`verify-coherence` means "here are the
  * findings," not "nothing to report," so this helper harvests output
  * regardless of exit code instead of throwing it away. Array-form
- * `spawnSync` — no shell, so no `2>&1` redirect is available; stdout and
- * stderr are captured separately and concatenated instead. Equivalent for
- * both tools' finding output, since neither writes to stderr on its
- * clean/`--json` path (module docstring above).
+ * `spawnSync` — no shell, so no `2>&1` redirect is available.
+ *
+ * The two streams are kept APART, and that separation is the whole point
+ * (#173). They used to be concatenated, on the stated premise that "neither
+ * writes to stderr on its clean `--json` path". That premise was false:
+ * `verify-coherence` probes `aeg-root/tranches` and `aeg-root/tranches/completed`
+ * off the base ref, and the forge-native cutover deleted those directories —
+ * `no-disk-state.ts` now actively forbids re-adding one — so `git` prints a
+ * `fatal:` line per probe while the tool itself exits 0 with correct results.
+ * Concatenated, one such line made `JSON.parse` throw, and the caller reported
+ * `verify-coherence: UNAVAILABLE (tool failed to run)` on EVERY dispatch check.
+ *
+ * Worse than the false line: it made a genuinely-crashed run and a healthy but
+ * chatty one indistinguishable, so the field could no longer surface the thing
+ * it exists to surface. Each caller now picks the stream its own parse needs —
+ * see `currentFindingCounts`.
  */
-function captureCombinedOutput(cmd: string, args: string[]): CaptureResult {
+function captureStreams(cmd: string, args: string[]): CaptureResult {
   const result = spawnSync(cmd, args, { encoding: 'utf8' })
-  if (result.error) return { output: '', exitCode: -1, ranAtAll: false }
-  const output = (result.stdout ?? '') + (result.stderr ?? '')
-  return { output, exitCode: result.status ?? 1, ranAtAll: true }
+  if (result.error) return { stdout: '', stderr: '', exitCode: -1, ranAtAll: false }
+  return {
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    exitCode: result.status ?? 1,
+    ranAtAll: true
+  }
 }
 
 function parseJsonSafe<T>(text: string): T | null {
@@ -411,15 +427,22 @@ type FindingCount = { tool: string; findingCount: number; unavailable: boolean }
  * into the numeric count — see `docsUnavailable`/`coherenceUnavailable` below.
  */
 export function currentFindingCounts(): FindingCount[] {
-  const docs = captureCombinedOutput('bun', ['packages/aeg-core/bin/verify-docs.ts'])
-  const docsFindingCount = docs.ranAtAll ? countErrorLines(docs.output) : 0
+  // verify-docs is COUNTED, not parsed: `✗` lines are scanned, and a stray
+  // stderr line cannot corrupt a line count the way it corrupts a JSON parse.
+  // Both streams are scanned so a finding printed to stderr still counts.
+  const docs = captureStreams('bun', ['packages/aeg-core/bin/verify-docs.ts'])
+  const docsFindingCount = docs.ranAtAll ? countErrorLines(`${docs.stdout}${docs.stderr}`) : 0
   // verify-docs's own contract: exit 1 iff errors.length > 0 (bin/verify-docs.ts).
   // A non-zero exit with zero ✗ lines means it crashed before reaching that
   // contract, not that it ran and found nothing.
   const docsUnavailable = !docs.ranAtAll || (docs.exitCode !== 0 && docsFindingCount === 0)
 
-  const coherence = captureCombinedOutput('bun', ['packages/aeg-core/bin/verify-coherence.ts', '--json'])
-  const coherenceParsed = coherence.ranAtAll ? parseJsonSafe<{ summary: { failed: number } }>(coherence.output) : null
+  // verify-coherence is PARSED, so it reads stdout ALONE. `--json` writes the
+  // document to stdout; anything on stderr is a subprocess's diagnostic noise
+  // and is not part of the payload. Including it is what made a healthy run
+  // report UNAVAILABLE (#173).
+  const coherence = captureStreams('bun', ['packages/aeg-core/bin/verify-coherence.ts', '--json'])
+  const coherenceParsed = coherence.ranAtAll ? parseJsonSafe<{ summary: { failed: number } }>(coherence.stdout) : null
   const coherenceUnavailable = !coherence.ranAtAll || coherenceParsed === null
   const coherenceFindingCount = coherenceParsed?.summary.failed ?? 0
 
