@@ -180,9 +180,19 @@ export function containedAbs(repoRoot: string, relPath: string): string | null {
  * `.git/hooks/*` block in a LINKED WORKTREE: hooks are never per-worktree, so
  * the hook's real home is the main checkout's shared hooks directory
  * (`git rev-parse --git-common-dir`), which is legitimately OUTSIDE the
- * worktree's `repoRoot`. `containedAbs` therefore rejected the very path
- * `eject` needed to strip — correctly by its own logic — and an "ejected"
- * install silently left an active commit-time execution surface behind.
+ * worktree's `repoRoot`.
+ *
+ * What went wrong was quieter than a refusal, and worse. `containedAbs`
+ * ACCEPTED `.git/hooks/pre-commit` from a linked worktree — `resolve()` never
+ * sees that `<repoRoot>/.git` is a gitlink FILE there, so the path is
+ * textually inside `repoRoot` and passes. It just pointed at a file that does
+ * not exist. `planEject` then recorded `present: false`, `renderEjectDiff`
+ * printed `gone (managed block already removed)`, and `eject` exited 0 having
+ * stripped nothing — while the real hook stayed armed in the shared directory.
+ * Had it been classified as an escape the run would at least have refused and
+ * said so; instead it reported success. (A refusal IS what happens once the
+ * path is resolved to its real home, unless the containment rule is re-based
+ * with it — which is why the two halves had to land together.)
  *
  * So the rule is re-based, not relaxed: a `.git/`-prefixed block must resolve
  * inside the git common dir's own `hooks/` subtree. For a canonically spelled

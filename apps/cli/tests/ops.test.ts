@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { LabelGateway, Op } from '../src/lib/ops.js'
@@ -170,7 +170,7 @@ describe('planEject on a corrupt/missing manifest is caller-guarded', () => {
   })
 })
 
-describe('path-traversal containment (eject cannot delete outside the repo)', () => {
+describe('path-traversal containment (a whole file eject deletes stays inside the repo)', () => {
   it('containedAbs rejects `..`, absolute paths, and the repo root itself', () => {
     const root = scratch()
     expect(containedAbs(root, 'a/b.txt')).toBe(join(root, 'a/b.txt'))
@@ -301,36 +301,49 @@ describe('containedManagedBlockAbs resolves the common dir exactly once', () => 
    * through its own spawn `env`, which does take effect.
    */
   it('spawns `git rev-parse --git-common-dir` once per call, not once per half', () => {
-    const root = scratch()
-    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root })
+    // `mkdtempSync`, not `scratch()`: this writes an EXECUTABLE `git` and puts
+    // it first on a child's PATH, so a predictable directory name on a shared
+    // `/tmp` would be a plant-and-win. Matches the discipline
+    // `tests/checks/body-bare-digits-changeset-exempt.test.ts` already uses.
+    const root = mkdtempSync(join(tmpdir(), 'vinaya-ops-shim-'))
+    try {
+      execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root })
 
-    const shimDir = join(root, 'shim')
-    const log = join(root, 'calls.log')
-    mkdirSync(shimDir, { recursive: true })
-    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()
-    writeFileSync(
-      join(shimDir, 'git'),
-      `#!/bin/sh\ncase " $* " in *" rev-parse "*) echo call >> ${log} ;; esac\nexec ${realGit} "$@"\n`
-    )
-    execFileSync('chmod', ['755', join(shimDir, 'git')])
+      const shimDir = join(root, 'shim')
+      const log = join(root, 'calls.log')
+      mkdirSync(shimDir)
+      const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()
+      // Both interpolations are quoted inside the script: they are
+      // `mkdtempSync`/`command -v` output, not attacker input, but an unquoted
+      // path in a generated shell script is a habit worth not having.
+      writeFileSync(
+        join(shimDir, 'git'),
+        `#!/bin/sh\ncase " $* " in *" rev-parse "*) echo call >> "${log}" ;; esac\nexec "${realGit}" "$@"\n`
+      )
+      execFileSync('chmod', ['755', join(shimDir, 'git')])
 
-    const probe = join(root, 'probe.ts')
-    const modulePath = join(import.meta.dirname, '../src/lib/ops.ts')
-    writeFileSync(
-      probe,
-      `import { containedManagedBlockAbs } from ${JSON.stringify(modulePath)}\n` +
-        `containedManagedBlockAbs(${JSON.stringify(root)}, '.git/hooks/pre-commit')\n`
-    )
+      const probe = join(root, 'probe.ts')
+      const modulePath = join(import.meta.dirname, '../src/lib/ops.ts')
+      writeFileSync(
+        probe,
+        `import { containedManagedBlockAbs } from ${JSON.stringify(modulePath)}\n` +
+          `containedManagedBlockAbs(${JSON.stringify(root)}, '.git/hooks/pre-commit')\n`
+      )
 
-    execFileSync(process.execPath, [probe], {
-      cwd: root,
-      env: { ...process.env, PATH: `${shimDir}:${process.env.PATH ?? ''}` }
-    })
+      // PATH is set on THIS spawn's env only — `process.env` is never mutated,
+      // so the shim cannot leak into a sibling test or the parent process.
+      execFileSync(process.execPath, [probe], {
+        cwd: root,
+        env: { ...process.env, PATH: `${shimDir}:${process.env.PATH ?? ''}` }
+      })
 
-    const calls = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).length : 0
-    // The shim must actually be reachable, or `0` would "pass" a broken probe.
-    expect(calls).toBeGreaterThan(0)
-    expect(calls).toBe(1)
-    rmSync(root, { recursive: true, force: true })
+      const calls = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).length : 0
+      // The shim must actually be reachable, or `0` would "pass" a broken probe.
+      expect(calls).toBeGreaterThan(0)
+      expect(calls).toBe(1)
+    } finally {
+      // `finally`, so an assertion failure still removes the executable shim.
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
