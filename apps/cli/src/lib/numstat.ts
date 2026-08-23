@@ -47,7 +47,13 @@ export function summariseNumstat(numstat: string): string {
  * first, column-0, case-sensitive one. A lowercase `summary: 900 files
  * changed…`, an indented one, or a second one after the honest one was
  * therefore exempt from the digit check and never compared against anything.
- * A shared constant is what makes "exempt because it is verified" true rather
+ * A shared constant is necessary but was not sufficient: the two sides also
+ * have to read the same TEXT. `body-bare-digits` blanks fenced and `<details>`
+ * content before looking for the summary, so while `evidence-fresh` matched the
+ * raw region the two disagreed about which line came "first" — a `Summary:`
+ * inside the Group B fence was verified while a fabricated one in prose was
+ * exempted. `firstScannableSummary` in `evidence-fresh-logic.ts` skips the same
+ * spans, and that is what makes "exempt because it is verified" true rather
  * than merely intended.
  */
 export const EVIDENCE_SUMMARY_PREFIX = 'Summary: '

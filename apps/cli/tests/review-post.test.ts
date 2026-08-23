@@ -345,7 +345,15 @@ describe('the flag tables cover what the command actually reads', () => {
 
   /** The nullary surface, read through `args.includes` rather than the flag map. */
   function nullaryReadBySource(): string[] {
-    const reads = [...SOURCE.matchAll(/args\.includes\(\s*'(--[\w-]+)'\s*\)/g)]
+    // Every way this file could ask "was this flag present?". Bound to
+    // `args.includes` alone, the guard missed `args.indexOf(...) !== -1` and
+    // `flags.has(...)` — either reproduces the original defect (the refusal
+    // rejecting a flag the command itself reads) with the guard green.
+    const reads = [
+      ...SOURCE.matchAll(/args\.(?:includes|indexOf)\(\s*'(--[\w-]+)'\s*\)/g),
+      ...SOURCE.matchAll(/args\.some\(\s*\([^)]*\)\s*=>[^)]*===\s*'(--[\w-]+)'/g),
+      ...SOURCE.matchAll(/flags\.has\(\s*'(--[\w-]+)'\s*\)/g)
+    ]
     return [...new Set(reads.map((m) => m[1] as string))].sort()
   }
 
@@ -458,5 +466,19 @@ describe('a value is not a flag, whatever it looks like', () => {
 
   it('still catches a single-dash near-miss in flag position', () => {
     expect(unknownFlags(['-print-only'])).toEqual(['-print-only'])
+  })
+})
+
+describe('`--` is the end-of-options marker, not a flag', () => {
+  it('accepts a bare `--` instead of refusing a flag named `--`', () => {
+    expect(unknownFlags(['--'])).toEqual([])
+  })
+
+  it('stops scanning after it, as POSIX specifies', () => {
+    expect(unknownFlags(['--', '--bogus'])).toEqual([])
+  })
+
+  it('still refuses an unknown flag before it', () => {
+    expect(unknownFlags(['--bogus', '--'])).toEqual(['--bogus'])
   })
 })

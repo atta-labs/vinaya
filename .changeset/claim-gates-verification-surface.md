@@ -8,7 +8,9 @@ Close gaps where a verification tool could return a confident wrong answer.
 - `pr report` derives a `Summary:` line (files, insertions, deletions, binary
   count) into the evidence block, so a PR body never needs a hand-written count
   that goes stale when a later commit lands. `evidence-fresh` recomputes and
-  compares it, and `body-bare-digits` exempts it as machine-emitted.
+  compares it, and `body-bare-digits` exempts it as machine-emitted. Both sides
+  skip fenced and `<details>` spans, so the line that is exempt is the line that
+  is compared.
 - `review post` rejects unknown flags instead of silently ignoring them, so a
   typo'd flag fails loudly rather than posting a verdict with a default.
 - New `symbol-collisions` module in `@attalabs/aeg-core` reports names declared

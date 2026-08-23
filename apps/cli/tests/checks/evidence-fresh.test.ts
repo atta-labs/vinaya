@@ -180,3 +180,42 @@ describe('the Summary line is verified, not attested', () => {
     expect(compareEvidenceBlock(block(null), HEAD, NUMSTAT).status).toBe('pass')
   })
 })
+
+describe('the exempt Summary line is the compared Summary line', () => {
+  const HEAD = 'a'.repeat(40)
+  const NUMSTAT = '1\t0\ta.ts'
+  const HONEST = 'Summary: 1 file changed, 1 insertion(+), 0 deletions(-)'
+  const FAKE = 'Summary: 900 files changed, 5000 insertions(+), 0 deletions(-)'
+
+  /**
+   * The bypass this closes: `body-bare-digits` blanks fenced and `<details>`
+   * content before it looks for the summary, so a `Summary:` inside the Group B
+   * fence is invisible to it and the next one — in prose — is the line it
+   * exempts. While this side matched the raw region, the two disagreed about
+   * which line came first: the fenced one was verified and the fabricated one
+   * was exempted, scoring zero violations AND a passing evidence-fresh.
+   */
+  it('ignores a Summary line inside a fence, so a fabricated one below it is compared', () => {
+    const region = [`Head: ${HEAD}`, '', '```', NUMSTAT, '```', '', '```', HONEST, '```', '', FAKE].join('\n')
+    const r = compareEvidenceBlock(region, HEAD, NUMSTAT)
+    expect(r.status).toBe('fail')
+    if (r.status === 'fail') expect(r.errors.join('\n')).toContain('`Summary:` line does not match')
+  })
+
+  it('ignores a Summary line inside a <details> span for the same reason', () => {
+    const region = [`Head: ${HEAD}`, '', '```', NUMSTAT, '```', '', '<details>', HONEST, '</details>', '', FAKE].join(
+      '\n'
+    )
+    expect(compareEvidenceBlock(region, HEAD, NUMSTAT).status).toBe('fail')
+  })
+
+  it('still accepts the emitted shape, where Summary precedes every fence', () => {
+    const region = [`Head: ${HEAD}`, HONEST, '', '```', NUMSTAT, '```'].join('\n')
+    expect(compareEvidenceBlock(region, HEAD, NUMSTAT).status).toBe('pass')
+  })
+
+  it('treats a block whose only Summary is fenced as having none', () => {
+    const region = [`Head: ${HEAD}`, '', '```', NUMSTAT, '```', '', '```', FAKE, '```'].join('\n')
+    expect(compareEvidenceBlock(region, HEAD, NUMSTAT).status).toBe('pass')
+  })
+})

@@ -17,12 +17,49 @@
  * this function; only a STALE one is.
  */
 
-import { EVIDENCE_SUMMARY_LINE, summariseNumstat } from '../lib/numstat'
+import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../lib/numstat'
 
 export type EvidenceCompareResult = { status: 'pass' } | { status: 'fail'; errors: string[] }
 
 const HEAD_LINE = /^Head:\s*([0-9a-f]{7,40})\s*$/m
 const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
+
+/**
+ * The first `Summary:` line that `body-bare-digits` would exempt — which is the
+ * first one OUTSIDE a fenced block or a `<details>` span, not simply the first
+ * one in the text.
+ *
+ * The distinction is the whole point. `body-bare-digits` blanks fenced and
+ * `<details>` content before it ever looks for the summary, so a `Summary:`
+ * line inside the Group B fence is invisible to it and the next one — in prose
+ * — becomes the line it exempts. Matching the raw region here instead made the
+ * two sides disagree about which line "first" means: the fenced one was
+ * verified while the prose one was exempted, so a fabricated headline figure
+ * scored zero violations AND a passing `evidence-fresh`. Both sides now skip
+ * the same spans, so the line that is exempt is the line that is compared.
+ */
+export function firstScannableSummary(region: string): string | null {
+  let inFence = false
+  let detailsDepth = 0
+  for (const line of region.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('```')) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    // Counted rather than flagged: `<details>` blocks nest in real PR bodies.
+    const opens = (line.match(/<details[\s>]/gi) ?? []).length
+    const closes = (line.match(/<\/details>/gi) ?? []).length
+    if (opens > 0 || closes > 0) {
+      detailsDepth = Math.max(0, detailsDepth + opens - closes)
+      continue
+    }
+    if (detailsDepth > 0) continue
+    if (line.startsWith(EVIDENCE_SUMMARY_PREFIX)) return line.slice(EVIDENCE_SUMMARY_PREFIX.length).trimEnd()
+  }
+  return null
+}
 
 /**
  * Compares an already-located `AEG:EVIDENCE` region against the facts a
@@ -74,10 +111,9 @@ export function compareEvidenceBlock(
   // rather than attested — and it must be, or the block's headline figure
   // would be its only unverified claim. Absent is fine: bodies written before
   // the emitter produced this line are still valid.
-  const summaryMatch = region.match(EVIDENCE_SUMMARY_LINE)
-  if (summaryMatch) {
+  const stored = firstScannableSummary(region)
+  if (stored !== null) {
     const expected = summariseNumstat(actual)
-    const stored = summaryMatch[1] as string
     if (stored !== expected) {
       errors.push(
         [

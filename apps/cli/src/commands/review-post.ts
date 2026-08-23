@@ -516,6 +516,10 @@ export function unknownFlags(args: string[], known: readonly string[] = [...VALU
       if (next !== undefined && !next.startsWith('--')) i++
       continue
     }
+    // `--` is the POSIX end-of-options marker, not a flag named `--`. This
+    // command takes no positional arguments, so nothing after it is read —
+    // but refusing it with a list of valid flags explains nothing.
+    if (a === '--') break
     // A single dash is the near-miss that motivated this: `-print-only` is one
     // keystroke from the spelling that shipped a verdict nobody asked for.
     const looksLikeFlag = a.startsWith('--') || (a.startsWith('-') && a.length > 1)

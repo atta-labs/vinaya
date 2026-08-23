@@ -600,10 +600,11 @@ export function checkBareDigits(rawBody: string): BareDigitScanResult {
  * the region must sit in its documented section, and its content must carry
  * that field's own signature.
  *
- * Returns `null` only when the line is not inside any `AEG:*` region — the
- * ordinary case, where the generic advice is the right advice. A line inside a
- * region that DID earn its exemption still gets a hint, because "fence it" is
- * wrong there too.
+ * Returns `null` when the line is not inside one of the `EXEMPT_ANCHOR_FIELDS`
+ * regions — which includes `AEG:PREMISE` and `AEG:TEST-PLAN`, `AEG:*` regions
+ * that are hand-typed and carry no exemption, so the generic advice is the
+ * right advice there. A line inside a region that DID earn its exemption still
+ * gets a hint, because "fence it" is wrong there too.
  */
 export type AnchorExemptionDiagnosis = {
   field: ExemptAnchorField
