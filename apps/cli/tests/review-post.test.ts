@@ -4,6 +4,7 @@ import {
   FindingsParseError,
   type Finding,
   isNoneFoundClaim,
+  unknownFlags,
   parseFindingsFile,
   parseFlags,
   renderCodeReviewComment,
@@ -282,5 +283,38 @@ describe('self-verification — the mutation-proof: catches malformed renders th
       PRINCIPALS
     )
     expect(result.ok).toBe(true)
+  })
+})
+
+describe('(#184) review post refuses an unknown flag instead of posting anyway', () => {
+  const known = ['--role', '--pr', '--json']
+
+  it('accepts every declared flag', () => {
+    expect(unknownFlags(['--role', 'security', '--pr', '178'], known)).toEqual([])
+    expect(unknownFlags(['--json'], known)).toEqual([])
+  })
+
+  // The live incident: `--print-only` is real on `vinaya waiver`, so it is a
+  // reasonable thing to type here. Ignoring it meant the caller asked for a
+  // dry run and got a governance verdict on a real PR.
+  it('names --print-only', () => {
+    expect(unknownFlags(['--role', 'security', '--print-only'], known)).toEqual(['--print-only'])
+  })
+
+  it('catches an unknown flag in VALUE position, where it would eat a real value', () => {
+    // `--pr --bogus 178` makes `--pr` empty and hands `178` to `--bogus`.
+    expect(unknownFlags(['--pr', '--bogus', '178'], known)).toEqual(['--bogus'])
+  })
+
+  it('catches the = spelling too', () => {
+    expect(unknownFlags(['--bogus=1'], known)).toEqual(['--bogus=1'])
+  })
+
+  it('names every unknown flag, not just the first', () => {
+    expect(unknownFlags(['--aaa', '--bbb'], known)).toEqual(['--aaa', '--bbb'])
+  })
+
+  it('does not mistake a value for a flag', () => {
+    expect(unknownFlags(['--role', 'security'], known)).toEqual([])
   })
 })

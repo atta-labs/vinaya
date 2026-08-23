@@ -434,13 +434,72 @@ function fetchComments(pr: string): ReviewGateComment[] {
   return parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
 }
 
+/**
+ * Every flag this command reads, plus the nullary ones stripped before the
+ * pairwise scan. An argument starting with `--` that is not here is refused
+ * (`rejectUnknownFlags`) rather than ignored.
+ *
+ * Silently ignoring was the old behaviour and it cost a real forge write: a
+ * reviewer passed `--print-only` — a genuine flag on `vinaya waiver`, and a
+ * reasonable guess here — intending a dry run, and this command posted the
+ * verdict anyway (atta-labs/vinaya#184). The failure direction is the wrong
+ * one: the caller's intent was "do not post", and the outcome was a governance
+ * verdict on a real PR, consumed by a blocking merge gate.
+ *
+ * Declaring the VALUE-taking flags separately also retires the `--json`
+ * special case rather than adding a second one beside it. The scan consumes
+ * the next token as a value, so a nullary flag left in it is misread as the
+ * next flag's value and the flag after that vanishes — found live in PR #144,
+ * fixed then for `--json` alone. Knowing which flags take values fixes the
+ * class.
+ */
+const VALUE_FLAGS = [
+  '--brief-conformance',
+  '--config-scan',
+  '--cost',
+  '--docs',
+  '--findings-file',
+  '--model',
+  '--pr',
+  '--role',
+  '--scope',
+  '--secrets',
+  '--secrets-evidence-file',
+  '--spec-conformance',
+  '--task-id',
+  '--tests',
+  '--verdict'
+] as const
+const NULLARY_FLAGS = ['--json'] as const
+
+/**
+ * Every unrecognised `--flag` in `args`, in order. PURE — it decides, it does
+ * not exit, so the decision is unit-testable without a process boundary.
+ */
+export function unknownFlags(args: string[], known: readonly string[] = [...VALUE_FLAGS, ...NULLARY_FLAGS]): string[] {
+  return args.filter((a) => a.startsWith('--') && !known.includes(a.split('=')[0] as string))
+}
+
+/** Refuses when `unknownFlags` finds any, naming all of them. */
+export function rejectUnknownFlags(
+  args: string[],
+  known: readonly string[] = [...VALUE_FLAGS, ...NULLARY_FLAGS]
+): void {
+  const unknown = unknownFlags(args, known)
+  if (unknown.length === 0) return
+  refuseCmd(
+    `unrecognised flag${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}.`,
+    `\`vinaya review post\` accepts: ${[...known].sort().join(', ')}. If you meant to preview without posting, note that this command has no dry-run flag — see atta-labs/vinaya#184.`
+  )
+}
+
 export async function reviewPostCommand(args: string[]): Promise<void> {
+  // Before anything is rendered or resolved: an unknown flag here means the
+  // caller asked for something this command does not do, and posting anyway
+  // is the one outcome that cannot be taken back.
+  rejectUnknownFlags(args)
   const json = args.includes('--json')
-  // Nullary flags are stripped BEFORE parseFlags's pairwise scan — `pr.ts`'s
-  // established pattern. Left in, `--json` immediately preceding a real flag
-  // would be misread as that flag's un-provided value, and the flag after IT
-  // would vanish silently (review finding, PR #144).
-  const flags = parseFlags(args.filter((a) => a !== '--json'))
+  const flags = parseFlags(args.filter((a) => !NULLARY_FLAGS.includes(a as (typeof NULLARY_FLAGS)[number])))
 
   const role = flags.get('--role')
   if (role !== 'code-reviewer' && role !== 'security') {
