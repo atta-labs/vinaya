@@ -1,9 +1,13 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 import {
+  FLAG_TABLES,
   FindingsParseError,
   type Finding,
   isNoneFoundClaim,
+  unknownFlags,
   parseFindingsFile,
   parseFlags,
   renderCodeReviewComment,
@@ -282,5 +286,220 @@ describe('self-verification — the mutation-proof: catches malformed renders th
       PRINCIPALS
     )
     expect(result.ok).toBe(true)
+  })
+})
+
+describe('(#184) review post refuses an unknown flag instead of posting anyway', () => {
+  const known = ['--role', '--pr', '--json']
+
+  it('accepts every declared flag', () => {
+    expect(unknownFlags(['--role', 'security', '--pr', '178'], known)).toEqual([])
+    expect(unknownFlags(['--json'], known)).toEqual([])
+  })
+
+  // The live incident: `--print-only` is real on `vinaya waiver`, so it is a
+  // reasonable thing to type here. Ignoring it meant the caller asked for a
+  // dry run and got a governance verdict on a real PR.
+  it('names --print-only', () => {
+    expect(unknownFlags(['--role', 'security', '--print-only'], known)).toEqual(['--print-only'])
+  })
+
+  it('catches an unknown flag in VALUE position, where it would eat a real value', () => {
+    // `--pr --bogus 178` makes `--pr` empty and hands `178` to `--bogus`.
+    expect(unknownFlags(['--pr', '--bogus', '178'], known)).toEqual(['--bogus'])
+  })
+
+  it('catches the = spelling too, reporting the name without the value', () => {
+    // The value is not echoed: a refusal goes to stderr and into CI logs, and
+    // an argv value can be a token.
+    expect(unknownFlags(['--bogus=1'], known)).toEqual(['--bogus'])
+  })
+
+  it('names every unknown flag, not just the first', () => {
+    expect(unknownFlags(['--aaa', '--bbb'], known)).toEqual(['--aaa', '--bbb'])
+  })
+
+  it('does not mistake a value for a flag', () => {
+    expect(unknownFlags(['--role', 'security'], known)).toEqual([])
+  })
+})
+
+describe('the flag tables cover what the command actually reads', () => {
+  /**
+   * Derived, not hand-listed. The first version of `VALUE_FLAGS` omitted
+   * `--tokens-in`/`--tokens-out`, so the command refused the invocation
+   * `roles/reviewer.md` documents and `requireTokenField` requires — an
+   * unresolvable refusal loop. A hand-kept copy of a set the source already
+   * states is exactly the drift this whole change exists to stop, so this test
+   * re-reads the source and compares.
+   */
+  const SOURCE = readFileSync(fileURLToPath(new URL('../src/commands/review-post.ts', import.meta.url)), 'utf8')
+
+  function flagsReadBySource(): string[] {
+    const reads = [
+      ...SOURCE.matchAll(/require(?:Flag|TokenField)\(\s*flags,\s*'(--[\w-]+)'\s*\)/g),
+      ...SOURCE.matchAll(/flags\.get\(\s*'(--[\w-]+)'\s*\)/g)
+    ]
+    return [...new Set(reads.map((m) => m[1] as string))].sort()
+  }
+
+  /** The nullary surface, read through `args.includes` rather than the flag map. */
+  function nullaryReadBySource(): string[] {
+    // Every way this file could ask "was this flag present?". Bound to
+    // `args.includes` alone, the guard missed `args.indexOf(...) !== -1` and
+    // `flags.has(...)` — either reproduces the original defect (the refusal
+    // rejecting a flag the command itself reads) with the guard green.
+    const reads = [
+      ...SOURCE.matchAll(/args\.(?:includes|indexOf)\(\s*'(--[\w-]+)'\s*\)/g),
+      ...SOURCE.matchAll(/args\.some\(\s*\([^)]*\)\s*=>[^)]*===\s*'(--[\w-]+)'/g),
+      ...SOURCE.matchAll(/flags\.has\(\s*'(--[\w-]+)'\s*\)/g)
+    ]
+    return [...new Set(reads.map((m) => m[1] as string))].sort()
+  }
+
+  it('finds the reads at all — a guard on the extraction itself', () => {
+    const read = flagsReadBySource()
+    expect(read.length).toBeGreaterThan(10)
+    expect(read).toContain('--tokens-in')
+  })
+
+  // Without this, adding `const dryRun = args.includes('--dry-run')` and
+  // nothing else reproduces the original BLOCKER exactly — `rejectUnknownFlags`
+  // refusing a flag the command itself reads — with the value-side guard green.
+  it('declares every flag read through `args.includes` as a nullary flag', () => {
+    const read = nullaryReadBySource()
+    expect(read.length).toBeGreaterThan(0)
+    const declared = new Set<string>(FLAG_TABLES.nullary)
+    const missing = read.filter((f) => !declared.has(f))
+    expect(missing, `read via args.includes but absent from NULLARY_FLAGS: ${missing.join(', ')}`).toEqual([])
+  })
+
+  it('declares every flag the command reads as a value flag', () => {
+    const declared = new Set<string>(FLAG_TABLES.value)
+    const missing = flagsReadBySource().filter((f) => !declared.has(f))
+    expect(missing, `read from \`flags\` but absent from VALUE_FLAGS: ${missing.join(', ')}`).toEqual([])
+  })
+
+  it('accepts the full invocation roles/reviewer.md prescribes', () => {
+    const documented = [
+      '--role',
+      'code-reviewer',
+      '--pr',
+      '188',
+      '--verdict',
+      'APPROVE',
+      '--brief-conformance',
+      'x',
+      '--spec-conformance',
+      'x',
+      '--scope',
+      'x',
+      '--tests',
+      'x',
+      '--docs',
+      'x',
+      '--task-id',
+      '188',
+      '--model',
+      'claude-opus-5',
+      '--tokens-in',
+      '-',
+      '--tokens-out',
+      '-',
+      '--cost',
+      '-'
+    ]
+    expect(unknownFlags(documented)).toEqual([])
+  })
+
+  it('catches a single-dash near-miss', () => {
+    expect(unknownFlags(['-print-only'])).toEqual(['-print-only'])
+  })
+
+  it('does not mistake a bare `-` or a negative number for a flag', () => {
+    expect(unknownFlags(['--tokens-in', '-', '--pr', '-1'])).toEqual([])
+  })
+
+  it('refuses `--json=true`, which would otherwise parse as known and do nothing', () => {
+    expect(unknownFlags(['--json=true'])).toEqual(['--json'])
+    expect(unknownFlags(['--json'])).toEqual([])
+  })
+
+  it('reports the flag name only, never the value — refusals reach CI logs', () => {
+    expect(unknownFlags(['--api-key=ghp_ABCDEFGHIJKLMNOP'])).toEqual(['--api-key'])
+  })
+})
+
+describe('the `=` spelling reaches the flag map, not just the refusal check', () => {
+  // `--findings-file=x` was accepted by `rejectUnknownFlags` and then dropped
+  // by `parseFlags`, which keyed on the whole token. The comment rendered
+  // "FINDINGS … None." and the BLOCKER-versus-APPROVE cross-check became a
+  // no-op — a silent default in the command that posts verdicts.
+  it('parses `--flag=value` into the same key as `--flag value`', () => {
+    expect(parseFlags(['--findings-file=/tmp/f.txt']).get('--findings-file')).toBe('/tmp/f.txt')
+    expect(parseFlags(['--findings-file', '/tmp/f.txt']).get('--findings-file')).toBe('/tmp/f.txt')
+  })
+
+  it('keeps a value that itself contains `=`', () => {
+    expect(parseFlags(['--scope=a=b']).get('--scope')).toBe('a=b')
+  })
+
+  it('accepts an empty value after `=` without swallowing the next token', () => {
+    const m = parseFlags(['--scope=', '--tests', 'ok'])
+    expect(m.get('--scope')).toBe('')
+    expect(m.get('--tests')).toBe('ok')
+  })
+})
+
+describe('a value is not a flag, whatever it looks like', () => {
+  // The shape-only heuristic refused every one of these, so a reviewer whose
+  // --scope text opened with a markdown bullet had no way to pass it at all.
+  it('accepts values that begin with a dash', () => {
+    expect(unknownFlags(['--scope', '- clean'])).toEqual([])
+    expect(unknownFlags(['--cost', '-$1.20'])).toEqual([])
+    expect(unknownFlags(['--tests', '-.5% regression'])).toEqual([])
+  })
+
+  it('still catches an unknown flag sitting in value position', () => {
+    expect(unknownFlags(['--pr', '--bogus', '178'])).toEqual(['--bogus'])
+  })
+
+  it('still catches a single-dash near-miss in flag position', () => {
+    expect(unknownFlags(['-print-only'])).toEqual(['-print-only'])
+  })
+})
+
+describe('`--` is the end-of-options marker, not a flag', () => {
+  it('accepts a bare `--` instead of refusing a flag named `--`', () => {
+    expect(unknownFlags(['--'])).toEqual([])
+  })
+
+  it('stops scanning after it, as POSIX specifies', () => {
+    expect(unknownFlags(['--', '--bogus'])).toEqual([])
+  })
+
+  it('still refuses an unknown flag before it', () => {
+    expect(unknownFlags(['--bogus', '--'])).toEqual(['--bogus'])
+  })
+})
+
+describe('`--` ends the options for BOTH the refusal and the parser', () => {
+  // The refusal stopped at `--` while `parseFlags` read straight past it, so
+  // `--verdict X -- --verdict Y` posted Y with the refusal blind to it, and
+  // `-- --print-only` disabled the refusal wholesale — #184 behind two
+  // characters. The comment asserting they agreed was the false part.
+  it('does not let a token past `--` override a real flag', () => {
+    const m = parseFlags(['--verdict', 'REQUEST_CHANGES', '--', '--verdict', 'APPROVE'])
+    expect(m.get('--verdict')).toBe('REQUEST_CHANGES')
+  })
+
+  it('parses nothing at all after the marker', () => {
+    const m = parseFlags(['--', '--role', 'security'])
+    expect(m.size).toBe(0)
+  })
+
+  it('still parses everything before it', () => {
+    const m = parseFlags(['--role', 'security', '--'])
+    expect(m.get('--role')).toBe('security')
   })
 })

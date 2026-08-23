@@ -313,15 +313,29 @@ export function parseFlags(args: string[]): Map<string, string> {
   const map = new Map<string, string>()
   for (let i = 0; i < args.length; i++) {
     const a = args[i] as string
-    if (a.startsWith('--')) {
-      const value = args[i + 1]
-      if (value === undefined || value.startsWith('--')) {
-        map.set(a, '')
-        continue
-      }
-      map.set(a, value)
-      i++
+    // `--` ends the options. `unknownFlags` stops scanning here, so if this did
+    // not, an argument past the marker would silently override a real flag —
+    // `--verdict X -- --verdict Y` posting `Y` with the refusal blind to it.
+    if (a === '--') break
+    if (!a.startsWith('--')) continue
+    // `--flag=value` keyed on the whole token used to land in the map under a
+    // name nothing reads, so the flag was accepted by the refusal check and
+    // then silently dropped — `--findings-file=x` rendered `FINDINGS … None.`
+    // and the BLOCKER-versus-APPROVE cross-check quietly became a no-op. The
+    // `=` spelling is accepted elsewhere in this CLI, so it is parsed, not
+    // refused.
+    const eq = a.indexOf('=')
+    if (eq > 2) {
+      map.set(a.slice(0, eq), a.slice(eq + 1))
+      continue
     }
+    const value = args[i + 1]
+    if (value === undefined || value.startsWith('--')) {
+      map.set(a, '')
+      continue
+    }
+    map.set(a, value)
+    i++
   }
   return map
 }
@@ -350,6 +364,18 @@ function requireTokenField(flags: Map<string, string>, name: string): string {
 }
 
 function readFindingsFile(path: string | undefined, allowedSeverities: readonly string[]): Finding[] {
+  if (path === undefined) return []
+  // `--findings-file=` and `--findings-file` with nothing after it both yield
+  // `''`, which used to collapse onto "flag omitted" — so a caller who meant to
+  // pass findings silently posted none, and the BLOCKER-versus-APPROVE and
+  // CRITICAL/HIGH-versus-PASS cross-checks had nothing to fire on. Naming the
+  // flag and passing no path is a mistake, not a choice.
+  if (path.trim() === '') {
+    refuseCmd(
+      '`--findings-file` was given with no path.',
+      'Pass the path to the findings file, or omit the flag entirely if there are no findings.'
+    )
+  }
   if (!path) return []
   let content: string
   try {
@@ -434,13 +460,122 @@ function fetchComments(pr: string): ReviewGateComment[] {
   return parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
 }
 
+/**
+ * Every flag this command reads, plus the nullary ones stripped before the
+ * pairwise scan. An argument starting with `--` that is not here is refused
+ * (`rejectUnknownFlags`) rather than ignored.
+ *
+ * Silently ignoring was the old behaviour and it cost a real forge write: a
+ * reviewer passed `--print-only` — a genuine flag on `vinaya waiver`, and a
+ * reasonable guess here — intending a dry run, and this command posted the
+ * verdict anyway (atta-labs/vinaya#184). The failure direction is the wrong
+ * one: the caller's intent was "do not post", and the outcome was a governance
+ * verdict on a real PR, consumed by a blocking merge gate.
+ *
+ * Declaring the VALUE-taking flags separately also retires the `--json`
+ * special case rather than adding a second one beside it. The scan consumes
+ * the next token as a value, so a nullary flag left in it is misread as the
+ * next flag's value and the flag after that vanishes — found live in PR #144,
+ * fixed then for `--json` alone. Knowing which flags take values fixes the
+ * class.
+ */
+const VALUE_FLAGS = [
+  '--brief-conformance',
+  '--config-scan',
+  '--cost',
+  '--docs',
+  '--findings-file',
+  '--model',
+  '--pr',
+  '--role',
+  '--scope',
+  '--secrets',
+  '--secrets-evidence-file',
+  '--spec-conformance',
+  '--task-id',
+  '--tests',
+  '--tokens-in',
+  '--tokens-out',
+  '--verdict'
+] as const
+const NULLARY_FLAGS = ['--json'] as const
+
+/**
+ * Exported so `review-post.test.ts` can re-derive this surface from the source
+ * and prove the tables cover it. The first version of this table omitted
+ * `--tokens-in`/`--tokens-out`, which made the command refuse the exact
+ * invocation `roles/reviewer.md` prescribes AND that `requireTokenField`
+ * demands two lines later — a refusal loop with no way out, in the one command
+ * whose job is to post an honest verdict. A hand-kept list of a thing the file
+ * already states is a second copy, and the second copy is the one that rots.
+ */
+export const FLAG_TABLES = { value: VALUE_FLAGS, nullary: NULLARY_FLAGS } as const
+
+/**
+ * Every unrecognised `--flag` in `args`, in order. PURE — it decides, it does
+ * not exit, so the decision is unit-testable without a process boundary.
+ */
+export function unknownFlags(args: string[], known: readonly string[] = [...VALUE_FLAGS, ...NULLARY_FLAGS]): string[] {
+  const out: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string
+    // Position first, shape second. A token consumed as the VALUE of a known
+    // value flag is never a flag, whatever it looks like — `--scope "- clean"`,
+    // `--cost "-$1.20"` and `--tests "-.5% regression"` are all legitimate, and
+    // a shape-only heuristic refused every one of them with no way to pass the
+    // text at all.
+    if (known.includes(a) && !NULLARY_FLAGS.includes(a as (typeof NULLARY_FLAGS)[number])) {
+      // Skip the value exactly as `parseFlags` consumes it — and it declines a
+      // `--`-prefixed token, so `--pr --bogus 178` still reports `--bogus`
+      // rather than swallowing it as a value.
+      const next = args[i + 1]
+      if (next !== undefined && !next.startsWith('--')) i++
+      continue
+    }
+    // `--` is the POSIX end-of-options marker, not a flag named `--`. Refusing
+    // it with a list of valid flags would explain nothing. `parseFlags` stops
+    // at the same token, so the two agree about where the options end — an
+    // earlier version of this comment asserted that agreement without it
+    // holding, which let an argument past the marker override a real flag.
+    if (a === '--') break
+    // A single dash is the near-miss that motivated this: `-print-only` is one
+    // keystroke from the spelling that shipped a verdict nobody asked for.
+    const looksLikeFlag = a.startsWith('--') || (a.startsWith('-') && a.length > 1)
+    if (!looksLikeFlag) continue
+    const name = a.split('=')[0] as string
+    if (!known.includes(name)) {
+      out.push(name)
+      continue
+    }
+    // `--json=true` reads as known, then `args.includes('--json')` is false and
+    // the caller silently gets no JSON. A nullary flag takes no value.
+    if (NULLARY_FLAGS.includes(name as (typeof NULLARY_FLAGS)[number]) && a.includes('=')) out.push(name)
+  }
+  return out
+}
+
+/** Refuses when `unknownFlags` finds any, naming all of them. */
+export function rejectUnknownFlags(
+  args: string[],
+  known: readonly string[] = [...VALUE_FLAGS, ...NULLARY_FLAGS]
+): void {
+  // `unknownFlags` returns names only, never `--flag=value` — a refusal is
+  // printed to stderr and lands in CI logs, and an argv value can be a token.
+  const unknown = unknownFlags(args, known)
+  if (unknown.length === 0) return
+  refuseCmd(
+    `unrecognised flag${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}.`,
+    `\`vinaya review post\` accepts: ${[...known].sort().join(', ')}. If you meant to preview without posting, note that this command has no dry-run flag — see atta-labs/vinaya#184.`
+  )
+}
+
 export async function reviewPostCommand(args: string[]): Promise<void> {
+  // Before anything is rendered or resolved: an unknown flag here means the
+  // caller asked for something this command does not do, and posting anyway
+  // is the one outcome that cannot be taken back.
+  rejectUnknownFlags(args)
   const json = args.includes('--json')
-  // Nullary flags are stripped BEFORE parseFlags's pairwise scan — `pr.ts`'s
-  // established pattern. Left in, `--json` immediately preceding a real flag
-  // would be misread as that flag's un-provided value, and the flag after IT
-  // would vanish silently (review finding, PR #144).
-  const flags = parseFlags(args.filter((a) => a !== '--json'))
+  const flags = parseFlags(args.filter((a) => !NULLARY_FLAGS.includes(a as (typeof NULLARY_FLAGS)[number])))
 
   const role = flags.get('--role')
   if (role !== 'code-reviewer' && role !== 'security') {
