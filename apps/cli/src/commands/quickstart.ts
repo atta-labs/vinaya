@@ -101,6 +101,24 @@ function stepHeader(n: number, title: string, caption: string): string {
   return `\n${rule}\n${bold(cyan(`STEP ${n} of ${TOTAL_STEPS}`))} — ${bold(title)}\n${rule}\n${caption}\n`
 }
 
+/**
+ * `--yes` / `--dry-run` passthrough (found live, not in the brief): before
+ * this, `runQuickstart` always called `runInit([], deps.initDeps)` — it
+ * could never forward `init`'s own already-supported `--yes` flag, so a
+ * non-interactive run (piped/closed stdin) hit `init`'s confirm prompt,
+ * got back the empty-answer default (`false`), and aborted with "Nothing
+ * was written" — steps 5-7 then ran against a repo that was never
+ * installed and reported cascading failures that misdescribed the cause.
+ * `--yes` here also drives quickstart's OWN prompts (steps 2/3/5/7) to
+ * their documented default answer without calling `deps.confirm`/
+ * `deps.ask` at all — required so `vinaya quickstart --yes` completes with
+ * no human at the keyboard, not merely with stdin closed.
+ */
+type QuickstartFlags = { dryRun: boolean; yes: boolean }
+function quickstartFlags(args: string[]): QuickstartFlags {
+  return { dryRun: args.includes('--dry-run'), yes: args.includes('--yes') }
+}
+
 const GLOB_INJECTION_RE = /[\s\r\n]/
 const POINTER_INJECTION_RE = /[\r\n]/
 // Mirrors `commands/init.ts`'s own `validPathFlag`/`PRODUCT_NAME_RE` — quickstart
@@ -265,7 +283,19 @@ function commitInstall(repoRoot: string): { committed: boolean; message: string 
   }
 }
 
-function pushInstall(repoRoot: string): { pushed: boolean; message: string } {
+/**
+ * `git push` exits `0` both when it genuinely transfers commits and when
+ * the branch already matches its upstream — a real, common case right
+ * here, since `commitInstall` above is allowed to no-op ("Nothing to
+ * commit"). Reporting `✓ Pushed.` for that no-op case claimed work that
+ * never happened (found live). When an upstream exists, check the ahead
+ * count FIRST and skip the push (and the false claim) entirely when it's
+ * zero. A branch with no upstream yet cannot be "already up to date" —
+ * skip the check and let the first push create it.
+ */
+type PushResult = { status: 'pushed' | 'up-to-date' | 'failed'; message: string }
+
+function pushInstall(repoRoot: string): PushResult {
   try {
     const branch = execGit(repoRoot, ['symbolic-ref', '--short', 'HEAD'])
     let hasUpstream = true
@@ -274,14 +304,28 @@ function pushInstall(repoRoot: string): { pushed: boolean; message: string } {
     } catch {
       hasUpstream = false
     }
+    if (hasUpstream) {
+      const ahead = execGit(repoRoot, ['rev-list', '--count', '@{u}..HEAD'])
+      if (ahead === '0') {
+        return { status: 'up-to-date', message: 'Nothing to push — already up to date with the remote.' }
+      }
+    }
     execGit(repoRoot, hasUpstream ? ['push'] : ['push', '-u', 'origin', branch])
-    return { pushed: true, message: '✓ Pushed.' }
+    return { status: 'pushed', message: '✓ Pushed.' }
   } catch (err) {
-    return { pushed: false, message: `git push failed: ${errorDetail(err)}` }
+    return { status: 'failed', message: `git push failed: ${errorDetail(err)}` }
   }
 }
 
-export async function runQuickstart(_args: string[], deps: QuickstartDeps): Promise<number> {
+export async function runQuickstart(args: string[], deps: QuickstartDeps): Promise<number> {
+  const { dryRun, yes } = quickstartFlags(args)
+  // Skips `deps.confirm`/`deps.ask` entirely under `--yes` — resolving from
+  // closed/empty stdin (rather than never calling the prompt) still blocks
+  // forever on a real TTY with no redirect, which would silently defeat
+  // "completes end to end without a human".
+  const autoConfirm = (question: string, defaultYes: boolean): Promise<boolean> =>
+    yes ? Promise.resolve(defaultYes) : deps.confirm(question, defaultYes)
+
   const repo = await deps.detectRepo()
   if (!repo) {
     console.error('Error: not a git repository. Run `vinaya quickstart` from inside your repo.')
@@ -298,11 +342,18 @@ export async function runQuickstart(_args: string[], deps: QuickstartDeps): Prom
         'Runs `vinaya init` — shows the full diff of what would be installed (config, workflows, git hooks, doctrine pointer), then asks you to confirm before writing anything.'
       )
     )
-    await deps.ask('Press Enter to see the diff and continue: ')
-    const initRc = await runInit([], deps.initDeps)
+    if (!yes) await deps.ask('Press Enter to see the diff and continue: ')
+    const initArgs = [...(yes ? ['--yes'] : []), ...(dryRun ? ['--dry-run'] : [])]
+    const initRc = await runInit(initArgs, deps.initDeps)
     if (initRc !== 0) {
       console.error(red(`\n\`vinaya init\` exited with code ${initRc} — quickstart cannot continue.`))
       return initRc
+    }
+    if (dryRun) {
+      process.stdout.write(
+        `\n${bold('--dry-run: stopping here — nothing was installed, so there is nothing for the remaining steps to act on.')}\n`
+      )
+      return 0
     }
 
     process.stdout.write(
@@ -312,7 +363,7 @@ export async function runQuickstart(_args: string[], deps: QuickstartDeps): Prom
         "Optional. Tells Vinaya which code maps to which doc, so the doc-coverage check can enforce it later. Skip with N — you'll be asked to bind another after each one."
       )
     )
-    const bindDoc = await deps.confirm('Bind a doc→code pair now?', false)
+    const bindDoc = await autoConfirm('Bind a doc→code pair now?', false)
     if (bindDoc) await bindDocOwnerLoop(deps, repo.repoRoot)
 
     process.stdout.write(
@@ -322,7 +373,7 @@ export async function runQuickstart(_args: string[], deps: QuickstartDeps): Prom
         "Optional. Writes `.vinaya/projects.md` so Studio's board can resolve this project. Skip with N — you'll be asked to register another after each one."
       )
     )
-    const registerProject = await deps.confirm('Register this as a tracked project?', false)
+    const registerProject = await autoConfirm('Register this as a tracked project?', false)
     if (registerProject) await registerProjectLoop(deps)
 
     process.stdout.write(
@@ -347,7 +398,7 @@ export async function runQuickstart(_args: string[], deps: QuickstartDeps): Prom
         'Runs a real broken commit through the hook just installed, shows it get refused, fixes it, and cleans up — proves the install actually works. Recommended, defaults to Y.'
       )
     )
-    const ranDemoBreak = await deps.confirm(
+    const ranDemoBreak = await autoConfirm(
       'Run the refusal-then-fix proof now? (recommended — proves the install actually works)',
       true
     )
@@ -368,18 +419,22 @@ export async function runQuickstart(_args: string[], deps: QuickstartDeps): Prom
     process.stdout.write(
       stepHeader(7, 'Push', 'Pushes the install commit to your remote, if you have one. Recommended, defaults to Y.')
     )
-    let pushed = false
-    const wantsPush = await deps.confirm('Push to the remote now?', true)
+    // `up-to-date` and `pushed` both mean the remote already holds
+    // everything local — neither leaves anything for the `git push` hint
+    // below to name; only `failed` does.
+    let pushSatisfied = false
+    const wantsPush = await autoConfirm('Push to the remote now?', true)
     if (wantsPush) {
       const pushResult = pushInstall(repo.repoRoot)
-      process.stdout.write(`\n${pushResult.pushed ? green(pushResult.message) : red(pushResult.message)}\n`)
-      pushed = pushResult.pushed
+      const paint = pushResult.status === 'failed' ? red : pushResult.status === 'pushed' ? green : cyan
+      process.stdout.write(`\n${paint(pushResult.message)}\n`)
+      pushSatisfied = pushResult.status !== 'failed'
     }
 
     process.stdout.write(`\n${bold('Next steps:')}\n`)
     if (!ranDemoBreak) process.stdout.write('  vinaya demo break\n')
     process.stdout.write('  vinaya check --all\n')
-    if (!pushed) process.stdout.write('  git push\n')
+    if (!pushSatisfied) process.stdout.write('  git push\n')
 
     return 0
   } finally {

@@ -475,3 +475,134 @@ describe('vinaya quickstart', () => {
     expect(closeStdinCalls()).toBe(0)
   })
 })
+
+describe('vinaya quickstart --yes / --dry-run passthrough (Issue #53)', () => {
+  it('--yes completes the full flow with no prompt EVER opened — install, demo break, push all run on their documented defaults', async () => {
+    const { deps, questions, closeStdinCalls } = makeDeps(root, [])
+    // Under `--yes`, quickstart never calls `deps.confirm`/`deps.ask` (proven
+    // below via `questions`), so the swap this file's other tests hang off
+    // quickstart's own first `confirm` call never fires. `applyInstall`
+    // (lib/ops.ts) writes every file — including the hook — in Pass 1, then
+    // makes its network-bound label calls in Pass 2, so hooking the swap onto
+    // the label gateway's `exists()` (called once per label, all in Pass 2)
+    // still lands it before the FIRST post-install `git commit`.
+    let hookSwapped = false
+    const realLabelGateway = deps.initDeps.labelGateway
+    deps.initDeps.labelGateway = (repoRoot: string) => {
+      const real = realLabelGateway(repoRoot)
+      return {
+        async exists(name: string) {
+          if (!hookSwapped) {
+            makeHookLocal(repoRoot)
+            hookSwapped = true
+          }
+          return real.exists(name)
+        },
+        async create(name: string, color: string, description: string) {
+          return real.create(name, color, description)
+        }
+      }
+    }
+
+    let rc = -1
+    const out = await captureStdout(async () => {
+      rc = await runQuickstart(['--yes'], deps)
+    })
+    expect(rc, out).toBe(0)
+
+    // the whole point: zero questions asked, human or otherwise.
+    expect(questions).toEqual([])
+
+    // init actually installed — `--yes` reached `runInit`, which is the bug
+    // this task fixes (previously `runInit([], ...)` always got empty args).
+    expect(existsSync(join(root, 'vinaya.config.json'))).toBe(true)
+    expect(existsSync(join(root, '.git/hooks/pre-commit'))).toBe(true)
+
+    // bind/register both default to declined — no sub-prompts, no project
+    // registration written.
+    expect(existsSync(join(root, PROJECTS_REGISTRY_PATH))).toBe(false)
+
+    // the install landed as a real commit.
+    const log = git(root, ['log', '--oneline'])
+    expect(log.split('\n').length).toBe(2)
+    expect(git(root, ['log', '-1', '--format=%s'])).toBe('Chore: install Vinaya')
+
+    // demo break defaults to true and ran for real against the swapped hook.
+    expect(out).toContain('✗ Commit refused')
+    expect(out).toContain('✓ Commit passed — the fix worked.')
+
+    // push defaults to true and was attempted (fails gracefully — no remote).
+    expect(out).toContain('git push failed')
+
+    expect(closeStdinCalls()).toBe(1)
+  }, 30_000)
+
+  it('--dry-run previews the install and stops — no commit, no further steps, only the press-enter pause is asked', async () => {
+    const { deps, questions } = makeDeps(root, [''])
+
+    let rc = -1
+    const out = await captureStdout(async () => {
+      rc = await runQuickstart(['--dry-run'], deps)
+    })
+    expect(rc, out).toBe(0)
+    expect(questions).toEqual(['Press Enter to see the diff and continue: '])
+
+    expect(out).toContain('--dry-run: nothing was written.')
+    expect(out).toContain('stopping here')
+    expect(existsSync(join(root, 'vinaya.config.json'))).toBe(false)
+
+    const log = git(root, ['log', '--oneline'])
+    expect(log.split('\n').length).toBe(1) // only the fixture's own initial commit
+  })
+
+  it('--yes --dry-run previews with no prompt opened at all', async () => {
+    const { deps, questions } = makeDeps(root, [])
+
+    let rc = -1
+    await captureStdout(async () => {
+      rc = await runQuickstart(['--yes', '--dry-run'], deps)
+    })
+    expect(rc).toBe(0)
+    expect(questions).toEqual([])
+    expect(existsSync(join(root, 'vinaya.config.json'))).toBe(false)
+  })
+})
+
+describe('vinaya quickstart — push status honesty (Issue #53)', () => {
+  it('reports "Nothing to push" — never "✓ Pushed." — on a second run with nothing new to send', async () => {
+    const bareRoot = join(tmpdir(), `vinaya-quickstart-bare-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    execFileSync('git', ['init', '-q', '--bare', bareRoot])
+    git(root, ['remote', 'add', 'origin', bareRoot])
+
+    try {
+      const first = makeDeps(root, [
+        '', // press-enter
+        'y', // init
+        'n', // bind doc-owner — declined
+        'n', // register project — declined
+        'n', // demo break — declined, keep this run fast/offline
+        'y' // push
+      ])
+      let rc1 = -1
+      const out1 = await captureStdout(async () => {
+        rc1 = await runQuickstart([], first.deps)
+      })
+      expect(rc1, out1).toBe(0)
+      expect(out1).toContain('✓ Pushed.')
+
+      // second run: install is already current, nothing new is committed,
+      // and the branch already matches its upstream from the first push.
+      const second = makeDeps(root, ['', 'y', 'n', 'n', 'n', 'y'])
+      let rc2 = -1
+      const out2 = await captureStdout(async () => {
+        rc2 = await runQuickstart([], second.deps)
+      })
+      expect(rc2, out2).toBe(0)
+      expect(out2).toContain('Nothing to commit')
+      expect(out2).toContain('Nothing to push — already up to date with the remote.')
+      expect(out2).not.toContain('✓ Pushed.')
+    } finally {
+      rmSync(bareRoot, { recursive: true, force: true })
+    }
+  }, 30_000)
+})
