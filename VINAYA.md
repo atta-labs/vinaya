@@ -33,7 +33,13 @@ enforcement rings.
 - `vinaya new check <yourname>/<id>` — scaffolds a custom check into
   `./scripts/vinaya-checks/` and prints the `checks` entry to paste into
   `vinaya.config.json`.
-- A role's contract can be overridden, or a new one added, from
+- `vinaya new noop-check <core-check-id>` — the only sanctioned way to
+  silence a core check: scaffolds an explicit, contract-satisfying no-op
+  into `vinaya/checks/` and prints the `checks` entry that REPLACES the
+  core check with it.
+- `vinaya new role <yourname>/<id>` — scaffolds an additive role contract
+  into `vinaya/roles/` and prints the `roles` entry to paste into
+  `vinaya.config.json`. A role's contract can also be overridden by hand from
   `vinaya.config.json`'s `roles` block. What a contract must satisfy is
   documented inside the resolved doctrine below.
 
@@ -68,6 +74,9 @@ machine with:
    CLI first if that file is missing:
    `bun install --frozen-lockfile && bun run --cwd apps/cli build`);
    the `aeg-root/` directory above it is the full doctrine.
+
+If your agent tool supports slash-style commands, it may also expose these
+as `/vinaya <role>` — check your tool's command list.
 
 Live task status is derived from the forge (Issues, labels, comments) via
 `vinaya check` — it is never written into a file here.
