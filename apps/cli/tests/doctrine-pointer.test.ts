@@ -63,3 +63,45 @@ describe('doctrine pointer machine-independence (atta-labs/attalabs#928)', () =>
     expect(vendored).toContain('node apps/cli/dist/index.js doctrine')
   })
 })
+
+describe('doctrine pointer content (atta-labs/vinaya#41 — honest adopter entry point)', () => {
+  it('names all three rings, one sentence each', () => {
+    const content = doctrinePointer(null)
+    expect(content).toContain('Ring 0 (git hooks)')
+    expect(content).toContain('Ring 1 (forge-write interception)')
+    expect(content).toContain('Ring 2 (async audits)')
+  })
+
+  it('points at real, shipped governance surfaces in THIS repo — never attalabs-internal aeg-root/', () => {
+    const content = doctrinePointer(null)
+    const governanceSection = content.split('## Where governance lives in this repo')[1]?.split('##')[0] ?? ''
+    expect(content).toContain('vinaya.config.json')
+    expect(content).toContain('.vinaya/hooks')
+    expect(content).toContain('.vinaya/doc-owners')
+    // Every aeg-root/ mention lives under "where the full doctrine lives" —
+    // never framed as something present in the adopter's own repo tree.
+    expect(governanceSection).not.toContain('aeg-root/')
+    const fullDoctrineSection = content.split('## Where the full doctrine lives')[1] ?? ''
+    const aegRootMentions = content.split('aeg-root/').length - 1
+    const aegRootMentionsInFullDoctrineSection = fullDoctrineSection.split('aeg-root/').length - 1
+    expect(aegRootMentions).toBe(aegRootMentionsInFullDoctrineSection)
+  })
+
+  it('names how to see what is running and how to extend, using only shipped commands', () => {
+    const content = doctrinePointer(null)
+    expect(content).toContain('vinaya check --plan')
+    expect(content).toContain('vinaya doctor')
+    expect(content).toContain('vinaya new check')
+    // `vinaya new role` is not shipped yet (task 8) — must not be named as
+    // though usable (the #684 trap this task supersedes).
+    expect(content).not.toContain('new role')
+  })
+
+  it('carries the security paragraph: env allowlist, literal-never-secret, audit-trail caveat', () => {
+    const content = doctrinePointer(null)
+    expect(content).toContain('never the full parent')
+    expect(content).toContain('breaking-change tightening')
+    expect(content).toContain('must never be a secret')
+    expect(content).toContain('pull request review is actually enforced')
+  })
+})
