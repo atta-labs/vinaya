@@ -76,14 +76,16 @@ export const COMMANDS: readonly Command[] = [
       { flag: '--parallel[=n]', description: 'Concurrency cap (default: cpu-derived)' },
       {
         flag: '--plan',
-        description: 'Print the resolved check registry (default/overridden/additive) without running anything'
+        description:
+          'Print the resolved check registry and the resolved `roles` registry (default/overridden/additive) without running anything'
       }
     ],
     details: [
       "Each spawned check's child process sees only a fixed baseline (`PATH`, `LANG`, `HOME`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `TMPDIR`) plus whatever its `CheckSpec['env']` declaration explicitly forwards — never the full parent environment. A required (`true`) or unsatisfied `anyOf` declaration missing from the caller's environment synthesizes a `CheckError` before the check ever spawns. Declare `env` (a core check's own registration, or `vinaya.config.json`'s `checks.<name>.env` for a custom one) for any check that reads `process.env`/`Bun.env`/`Deno.env` directly — `vinaya doctor` carries the permanent diagnostic for one that doesn't.",
       'The resolved registry IS what runs. A `checks` key that exactly matches a core check id REPLACES that core check (the core one does not run); any other key must be namespaced `<yourname>/<id>`. Anything the resolver cannot classify — a malformed entry, a bare un-namespaced key matching no core id, a duplicate id — makes `vinaya check` refuse the ENTIRE run: exit 1, nothing executes, never a partial ruleset and never a core-only fallback. `vinaya doctor` carries the permanent diagnostic for each rejected entry, so a refused config is still diagnosable.',
       '`--plan` composes with `--json`. It requires zero env vars and never prints an env value — only how each one resolves (passthrough, optional, literal, or anyOf). A `FAIL_CLOSED` entry always renders inline rather than being dropped, and exits non-zero. `--plan` and execution read the same resolution, so what the plan prints is what runs.',
-      "`--local` exists because a `requiresOpenPr` check (the core `closes-n`/`test-plan`, or a custom check declaring the same field) can only evaluate for real once a pull request exists — the generated `pre-commit`/`pre-push` hooks pass it so the first commit on a fresh task branch is never asked to satisfy a PR-body field before a PR can possibly exist. CI's `vinaya-checks.yml` omits it, so these checks always run for real once a PR is open."
+      "`--local` exists because a `requiresOpenPr` check (the core `closes-n`/`test-plan`, or a custom check declaring the same field) can only evaluate for real once a pull request exists — the generated `pre-commit`/`pre-push` hooks pass it so the first commit on a fresh task branch is never asked to satisfy a PR-body field before a PR can possibly exist. CI's `vinaya-checks.yml` omits it, so these checks always run for real once a PR is open.",
+      "`--plan`'s `roles` half resolves `vinaya.config.json`'s `roles` block against bundled doctrine — same override/additive shape as `checks`, with its own RENDERS AS column (the registry key and the role's own `role_id` differ for an additive entry) and a GATING column (`core` vs. `inert` — an additive role carries no core `ACTIONS` wiring). `roles.available` is `false` only when no bundled doctrine can be found next to this CLI install."
     ],
     status: 'shipped'
   },
