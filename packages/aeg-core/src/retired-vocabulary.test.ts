@@ -7,6 +7,17 @@ import { describe, expect, it } from 'vitest'
 /**
  * The doctrine sweep, as a check instead of a habit.
  *
+ * `retired-vocabulary.ts` (task 7, Issue #56) gives this suite's `RETIRED`
+ * array, plus `RETIRED_IN_PRODUCT`'s non-citation members, a CheckSpec
+ * adapter (`apps/cli/src/checks/bin/check-retired-vocabulary.ts`) — a
+ * deliberate copy of the pattern/exempt content here, not an import, so this
+ * suite's own `grep -E` proof (below) stays independent of that module's
+ * native-`RegExp` evaluator. `RETIRED_IN_PRODUCT`'s citation members
+ * (`FORGE_NUMBER_PATTERN`/`TRANCHE_SLUG_VN_PATTERN`/`LEGACY_SLUG_PATTERN`)
+ * are NOT copied there — those ban a live, unexplained citation, not a
+ * retired concept, and are already `reader-resolvable-prose.ts`'s own
+ * `checkUnresolvableReferences`.
+ *
  * Five review rounds each declared the decision-log claim swept, and each time
  * it resurfaced a few lines from where the previous pass fixed it — usually in
  * a more authoritative document than the last. That is the signature of a rule
@@ -314,6 +325,15 @@ const EXEMPT = [
   'aeg-root/tranches/completed/',
   'packages/aeg-core/src/docs/published-prose',
   'packages/aeg-core/src/retired-vocabulary.test.ts',
+  // The task 7 CheckSpec adapter (see the module header above) — it
+  // legitimately names every retired term as pattern data, the same
+  // self-reference reason this file exempts itself, one line up.
+  'packages/aeg-core/src/retired-vocabulary.ts',
+  // The task 7 CheckSpec adapter bin, and its own pure-evaluator test —
+  // same self-reference reason: both legitimately name every retired term
+  // as pattern data or a matching sample.
+  'apps/cli/src/checks/bin/check-retired-vocabulary.ts',
+  'packages/aeg-core/src/retired-vocabulary-scan.test.ts',
   '/fixtures/',
   '/node_modules/',
   '/.next/',
