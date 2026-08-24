@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
-import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
+import { DOC_OWNERS_PATH, LABELS } from '@attalabs/aeg-core'
 import {
   ARCHIVIST_WORKFLOW_PATH,
   BODY_CHECKS_WORKFLOW_PATH,
@@ -11,6 +11,7 @@ import {
   CHECKS_WORKFLOW_PATH,
   CONFIG_PATH,
   DOCTRINE_POINTER_PATH,
+  labelOps,
   REVIEW_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
   SETUP_BUN_SHA,
@@ -178,6 +179,14 @@ describe('vinaya init', () => {
     // labels created-if-absent
     expect(createdLabels).toContain('vinaya/tier:0')
     expect(createdLabels).toContain('vinaya/needs:principal-input')
+    // the full declared literal set, not just the tier + needs families
+    // (Issue #54's 6-of-16 gap) — every `form: 'literal'` LABELS entry is
+    // seeded, and the open-ended `tranche:` prefix family is not (its suffix
+    // is unknowable at install time; it has its own creation path instead).
+    for (const l of LABELS.filter((entry) => entry.form === 'literal')) {
+      expect(createdLabels).toContain(l.id)
+    }
+    expect(createdLabels).not.toContain('vinaya/tranche:')
     // starter config ships no example checks (empty `checks`)
     const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
     expect(cfg.checks).toEqual({})
@@ -188,6 +197,37 @@ describe('vinaya init', () => {
     expect(cfg.managed.blocks.some((b: { path: string }) => b.path === '.husky/pre-commit')).toBe(true)
     // hooks are executable
     expect(statSync(join(root, '.husky/pre-commit')).mode & 0o111).not.toBe(0)
+  })
+
+  it('labelOps() seeds every literal (non-prefix) label in the declared vocabulary — the 6-of-16 gap cannot silently reopen', () => {
+    const literalLabelIds = LABELS.filter((l) => l.form === 'literal').map((l) => l.id)
+    const seededNames = labelOps().map((op) => op.name)
+    expect(new Set(seededNames)).toEqual(new Set(literalLabelIds))
+  })
+
+  it('re-running init on an already-initialized repo creates no label a second time — real create-if-absent idempotency', async () => {
+    const existing = new Set<string>()
+    const statefulLabels: LabelGateway = {
+      async exists(name) {
+        return existing.has(name)
+      },
+      async create(name) {
+        existing.add(name)
+        createdLabels.push(name)
+      }
+    }
+    const deps = makeDeps({ labelGateway: () => statefulLabels })
+
+    await captureStdout(async () => {
+      await runInit(['--yes'], deps)
+    })
+    expect(createdLabels.length).toBe(labelOps().length)
+
+    createdLabels = []
+    await captureStdout(async () => {
+      await runInit(['--yes'], deps)
+    })
+    expect(createdLabels).toEqual([]) // every label already exists — none re-created
   })
 
   it('hook stubs pin the exact installed version with --yes (npx cache-key regression)', () => {

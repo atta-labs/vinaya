@@ -20,7 +20,7 @@
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { DOC_OWNERS_PATH, label } from '@attalabs/aeg-core'
+import { DOC_OWNERS_PATH, LABELS, type LabelKey } from '@attalabs/aeg-core'
 import type { VinayaConfig } from './config.js'
 import type { CreateLabelOp, Op } from './ops.js'
 import { packageRoot } from './package-root.js'
@@ -972,29 +972,52 @@ function starterDocOwners(): string {
 
 // ---------------------------------------------------------------------------
 // Labels — create-if-absent, existing never modified (amendment-4 manifest).
-// The names come from the code-owned vocabulary (`@attalabs/aeg-core`'s re-exported
-// `LABELS`), never written here as literals, so an adopter's repo is seeded
-// with exactly the namespaced set this repo runs on. Only the
-// tier + needs families are installed: no tier:2 (vestigial), no status:*
-// (status is derived), no project:* (project is a body field).
+// Names and the fixed set come from the code-owned vocabulary
+// (`@attalabs/aeg-core`'s re-exported `LABELS`), never written here as
+// literals, so an adopter's repo is seeded with exactly the namespaced set
+// this repo runs on. Every `form: 'literal'` entry is seeded — the ONE
+// exception is the `tranche` key (`form: 'prefix'`): its suffix is
+// open-ended by design (cut per-tranche, not at install), so it has its own
+// creation path in `packages/aeg-core/bin/open-issue.ts` instead. Metadata
+// is a `Record` keyed by every literal `LabelKey`, so a future addition to
+// `LABELS` fails to typecheck here until it is given a color + description —
+// the exact 6-of-16 gap this task closes cannot silently reopen.
 // ---------------------------------------------------------------------------
+type LabelMeta = { color: string; description: string }
+
+const FIXED_LABEL_METADATA: Record<Exclude<LabelKey, 'tranche'>, LabelMeta> = {
+  blocked: { color: 'e11d21', description: 'Execution halted pending an external unblock' },
+  'tier-0': { color: 'ededed', description: 'Trivial / mechanical change' },
+  'tier-1': { color: 'c5def5', description: 'Standard task — code + tests + docs' },
+  'tier-3': { color: 'd93f0b', description: 'Records a decision; ratification-gated' },
+  'needs-execution-input': { color: 'fbca04', description: 'Blocked on a missing execution detail' },
+  'needs-strategy-input': { color: 'fbca04', description: 'Blocked on a strategy/approach decision' },
+  'needs-principal-input': { color: 'b60205', description: 'Blocked on a Principal decision' },
+  'needs-brief-correction': {
+    color: 'fbca04',
+    description: 'Blocked on the Brief Author — brief contradicts the surface'
+  },
+  'waiver-docs': { color: '0e8a16', description: 'Doc-coverage gate excused for this PR (principal-applied)' },
+  'waiver-review': { color: '0e8a16', description: 'Review gate excused for this PR (principal-applied)' },
+  'override-docs': {
+    color: '5319e7',
+    description: 'Whole verify-docs gate suppressed for this PR (principal-only)'
+  },
+  incoherent: { color: 'e99695', description: 'Closed COMPLETED with no merged-PR link — needs a human look' },
+  'direct-main-push': { color: 'b60205', description: 'A commit landed on main with no associated merged PR' },
+  'dead-branch-push': {
+    color: 'fbca04',
+    description: 'Commits landed on a branch after its PR already resolved'
+  },
+  'state-object': { color: 'ededed', description: 'A permanent forge-native storage object — never actionable work' }
+}
+
 export function labelOps(): CreateLabelOp[] {
   const g = 'Labels (create-if-absent; existing labels never modified)'
-  const mk = (name: string, color: string, description: string): CreateLabelOp => ({
-    kind: 'create-label',
-    name,
-    color,
-    description,
-    group: g
+  return LABELS.filter((l) => l.form === 'literal').map((l) => {
+    const meta = FIXED_LABEL_METADATA[l.key as Exclude<LabelKey, 'tranche'>]
+    return { kind: 'create-label', name: l.id, color: meta.color, description: meta.description, group: g }
   })
-  return [
-    mk(label('tier-0'), 'ededed', 'Trivial / mechanical change'),
-    mk(label('tier-1'), 'c5def5', 'Standard task — code + tests + docs'),
-    mk(label('tier-3'), 'd93f0b', 'Records a decision; ratification-gated'),
-    mk(label('needs-execution-input'), 'fbca04', 'Blocked on a missing execution detail'),
-    mk(label('needs-strategy-input'), 'fbca04', 'Blocked on a strategy/approach decision'),
-    mk(label('needs-principal-input'), 'b60205', 'Blocked on a Principal decision')
-  ]
 }
 
 const BRANCH_PROTECTION_NOTE = `Recommended (run yourself — vinaya never applies branch protection):
