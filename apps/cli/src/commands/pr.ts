@@ -11,6 +11,8 @@ import {
   resolveShippableArgs,
   validateForgeWrite
 } from '../lib/forge-write'
+import { CHANGESET_RELEASE_BRANCH } from '@attalabs/aeg-core'
+import { checkBareDigits } from '../checks/body-bare-digits-logic'
 
 const RETRY_CREATE = 'vinaya pr create --validate-only …'
 const RETRY_EDIT = 'vinaya pr edit <n> --validate-only …'
@@ -125,6 +127,39 @@ function fetchPrForgeContext(prRef: string): { changedFiles: string[]; branch: s
 
 // --- commands ----------------------------------------------------------------
 
+/**
+ * Every check CI will run against this body, run here first.
+ *
+ * `body-bare-digits` is `requiresOpenPr`, so the ring-0 hooks skip it — there is
+ * no PR body at commit time. But there IS one here, at the moment the body is
+ * written, and it is a pure function of that text. Leaving it to CI meant this
+ * command reported success and the gate then failed on the forge — the wrapper
+ * claiming something it had not checked.
+ *
+ * The other three `requiresOpenPr` checks genuinely cannot run at this point and
+ * are deliberately absent: `test-plan` reads `[principal]` boxes nobody can tick
+ * before the PR exists, `evidence-fresh` compares against a head SHA the PR does
+ * not have yet, and `closes-n` already runs as a configured section.
+ *
+ * The Changesets release branch is exempt for the same reason the CI check
+ * exempts it: that body is machine-generated from changeset files, and its
+ * counts are real rather than narrative claims.
+ */
+function refuseOnBareDigits(body: string, branch: string, retryCommand: string): void {
+  if (branch === CHANGESET_RELEASE_BRANCH) return
+  const { violations } = checkBareDigits(body)
+  if (violations.length === 0) return
+  refuse(
+    violations.map((v) =>
+      makeCheckError(
+        'body-bare-digits',
+        `body-bare-digits: bare digit outside a fenced block, line ${v.line}: ${v.text}`,
+        `Backtick the digit, move it into a fenced block, or state it as a symbol, then re-run \`${retryCommand}\`.`
+      )
+    )
+  )
+}
+
 export function prCreateCommand(args: string[]): void {
   const json = args.includes('--json')
   const validateOnly = args.includes('--validate-only')
@@ -179,6 +214,7 @@ export function prCreateCommand(args: string[]): void {
     branch
   })
   if (errors.length > 0) refuse(errors)
+  refuseOnBareDigits(body, branch, RETRY_CREATE)
 
   if (validateOnly) {
     reportPass(json, 'pr create')
@@ -236,6 +272,7 @@ export function prEditCommand(args: string[]): void {
     branch
   })
   if (errors.length > 0) refuse(errors)
+  if (body !== null) refuseOnBareDigits(body, branch, RETRY_EDIT)
 
   if (validateOnly) {
     reportPass(json, 'pr edit')

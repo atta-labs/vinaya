@@ -1,8 +1,16 @@
-**For:** Opus 4.8 (coding-agent CLI, interactive session)
+<!-- AEG:FOR:START -->
+**For:** `Opus 4.8` (coding-agent CLI, interactive session)
+<!-- AEG:FOR:END -->
+<!-- AEG:PROJECT:START -->
 **Project:** vinaya
+<!-- AEG:PROJECT:END -->
+<!-- AEG:TIER:START -->
 **Tier:** 1
+<!-- AEG:TIER:END -->
 
+<!-- AEG:CLOSES:START -->
 Closes #385
+<!-- AEG:CLOSES:END -->
 
 ## Summary
 

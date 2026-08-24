@@ -5,25 +5,40 @@ import { describe, expect, it } from 'vitest'
 import { gatePlanForBranch, locateBody, resolveShippableArgs } from './open-pr'
 
 describe('gatePlanForBranch (aeg-governance-hardening task 25, #365)', () => {
-  it('runs the original two-gate set for a non-task branch — byte-identical to before verify-task was wired in', () => {
-    expect(gatePlanForBranch('fix/some-bug')).toEqual(['verify-brief', 'verify-docs'])
+  const BASE = ['verify-brief', 'verify-docs', 'body-bare-digits']
+
+  it('runs the base gate set for a non-task branch', () => {
+    expect(gatePlanForBranch('fix/some-bug')).toEqual(BASE)
   })
 
-  it('runs the original two-gate set for a plan branch', () => {
-    expect(gatePlanForBranch('plan/aeg-governance-hardening')).toEqual(['verify-brief', 'verify-docs'])
+  it('runs the base gate set for a plan branch', () => {
+    expect(gatePlanForBranch('plan/aeg-governance-hardening')).toEqual(BASE)
   })
 
-  it('runs the original two-gate set for an archive branch', () => {
-    expect(gatePlanForBranch('archive/aeg-governance-hardening')).toEqual(['verify-brief', 'verify-docs'])
+  it('runs the base gate set for an archive branch', () => {
+    expect(gatePlanForBranch('archive/aeg-governance-hardening')).toEqual(BASE)
   })
 
   it('adds closes-n and verify-task for a task branch', () => {
-    expect(gatePlanForBranch('task/aeg-governance-hardening/25')).toEqual([
-      'verify-brief',
-      'verify-docs',
-      'closes-n',
-      'verify-task'
-    ])
+    expect(gatePlanForBranch('task/aeg-governance-hardening/25')).toEqual([...BASE, 'closes-n', 'verify-task'])
+  })
+
+  /**
+   * The reason this gate exists. `body-bare-digits` is `requiresOpenPr`, so the
+   * ring-0 hooks skip it and nothing ran it before the write — `open-pr` printed
+   * "all contract gates PASS" and the same check then failed on the forge. It is
+   * a pure function of the body, so it belongs on every branch, task or not; the
+   * Changesets release exemption lives inside the check, not in this plan.
+   */
+  it('runs body-bare-digits on every branch, not just task branches', () => {
+    for (const branch of ['fix/x', 'plan/y', 'archive/z', 'chore/w', 'task/t/1', 'changeset-release/main']) {
+      expect(gatePlanForBranch(branch)).toContain('body-bare-digits')
+    }
+  })
+
+  it('runs it before the task-only gates, so a bad body is refused early', () => {
+    const plan = gatePlanForBranch('task/aeg-governance-hardening/25')
+    expect(plan.indexOf('body-bare-digits')).toBeLessThan(plan.indexOf('closes-n'))
   })
 })
 
