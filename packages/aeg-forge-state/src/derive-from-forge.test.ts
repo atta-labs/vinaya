@@ -41,6 +41,7 @@ describe('trancheFromIssues', () => {
   it('produces exactly what deriveTrancheFromForge produces for the same forge data', async () => {
     vi.mocked(ghApiGet).mockReturnValue(MILESTONES)
     vi.mocked(ghIssueListByAnyLabelAsync).mockResolvedValue(ISSUES)
+    vi.mocked(ghIssueListByLabel).mockReturnValue([])
 
     const fetched = await deriveTrancheFromForge(OWNER, REPO, SLUG)
     const composed = trancheFromIssues(SLUG, ISSUES, { goal: 'Harden the seams.', lifecycle: 'active' })
