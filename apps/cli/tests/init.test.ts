@@ -9,10 +9,12 @@ import {
   ARCHIVIST_WORKFLOW_PATH,
   BODY_CHECKS_WORKFLOW_PATH,
   buildInitOps,
+  CHECKS_FOLDER_PLACEHOLDER_PATH,
   CHECKS_WORKFLOW_PATH,
   CONFIG_PATH,
   DOCTRINE_POINTER_PATH,
   labelOps,
+  ROLES_FOLDER_PLACEHOLDER_PATH,
   REVIEW_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
   SETUP_BUN_SHA,
@@ -157,6 +159,8 @@ describe('vinaya init', () => {
       '.husky/pre-commit',
       '.husky/pre-push',
       DOC_OWNERS_PATH,
+      CHECKS_FOLDER_PLACEHOLDER_PATH,
+      ROLES_FOLDER_PLACEHOLDER_PATH,
       ...agentSkillPaths,
       CLAUDE_COMMAND_PATH,
       GEMINI_COMMAND_PATH
@@ -180,6 +184,8 @@ describe('vinaya init', () => {
       '.husky/pre-commit',
       '.husky/pre-push',
       DOC_OWNERS_PATH,
+      CHECKS_FOLDER_PLACEHOLDER_PATH,
+      ROLES_FOLDER_PLACEHOLDER_PATH,
       ...agentSkillPaths,
       CLAUDE_COMMAND_PATH,
       GEMINI_COMMAND_PATH
@@ -212,6 +218,8 @@ describe('vinaya init', () => {
     expect(cfg.managed.version).toBe(2)
     expect(cfg.managed.files).toContain(CHECKS_WORKFLOW_PATH)
     expect(cfg.managed.files).toContain(DOCTRINE_POINTER_PATH)
+    expect(cfg.managed.files).toContain(CHECKS_FOLDER_PLACEHOLDER_PATH)
+    expect(cfg.managed.files).toContain(ROLES_FOLDER_PLACEHOLDER_PATH)
     expect(cfg.managed.blocks.some((b: { path: string }) => b.path === '.husky/pre-commit')).toBe(true)
     // the --agents selection itself is persisted, default all three, sorted
     expect(cfg.managed.agents).toEqual([...AGENT_VENDORS].sort())
