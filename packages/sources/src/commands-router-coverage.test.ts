@@ -69,6 +69,7 @@ describe('router -> COMMANDS coverage', () => {
         'issue create',
         'issue edit',
         'milestone create',
+        'milestone adopt',
         'review post',
         'demo break',
         'waiver',

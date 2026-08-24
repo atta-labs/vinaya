@@ -254,5 +254,13 @@ export type {
   TaskIssueRef,
   TaskRef
 } from '@attalabs/aeg-types'
-export { checkMilestoneShape, releaseFieldFromBody } from './milestone-validation'
-export type { MilestoneIntent, MilestoneShapeResult, ReleaseField } from './milestone-validation'
+export { checkAdoptable, checkMilestoneShape, releaseFieldFromBody } from './milestone-validation'
+export type {
+  AdoptFacts,
+  AdoptResult,
+  AdoptSlugFacts,
+  AdoptTargetFacts,
+  MilestoneIntent,
+  MilestoneShapeResult,
+  ReleaseField
+} from './milestone-validation'

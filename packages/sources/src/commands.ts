@@ -189,6 +189,20 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'milestone adopt',
+    description: 'Move one or more existing tranches into a target Milestone',
+    flags: [
+      { flag: '--target', description: 'The Milestone every named slug is adopted into' },
+      { flag: '--slug', description: 'A tranche slug to adopt — repeatable for a multi-slug move' },
+      { flag: '--validate-only', description: 'Run every gate and report PASS without writing anything' },
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
+    ],
+    details: [
+      "Reattaches every Issue carrying each named `vinaya/tranche:<slug>` label to `--target`, then closes (never deletes) each slug's old tranche-Milestone. Every fact for every named slug is gathered and checked in ONE call before any write, so a single unsafe slug — an unknown slug, a slug whose label carries no Issues, a target that does not exist or is closed, or a slug already adopted into a different Milestone — refuses the whole invocation, not just its own slug."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'review post',
     description: 'Render, post, and self-verify a code-reviewer or security-review verdict comment on a PR',
     flags: [
