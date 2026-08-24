@@ -64,6 +64,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { trancheLabel } from '@attalabs/aeg-core'
 import { COMMANDS } from '@attalabs/vinaya-sources'
 // Current source's registry, read to derive the expectation the published
 // artifact is measured against — the same "derive, never hand-maintain"
@@ -83,6 +84,18 @@ const PUBLISHED_VERSION = (
   JSON.parse(readFileSync(join(CLI_PKG_DIR, 'package.json'), 'utf-8')) as { name: string; version: string }
 ).version
 const PACKAGE_SPEC = `@attalabs/vinaya@${PUBLISHED_VERSION}`
+
+// The real repo the `archive tranche` exercise below reaches (see EXERCISES'
+// `'archive tranche'` entry) — read from THIS checkout's own `origin` remote,
+// the same regex `detectGitRepo` (lib/detect.ts) uses, rather than
+// hand-maintaining an owner/repo string that would point a fork's run at the
+// upstream repo instead of itself.
+const HOST_REPO_FLAG = (() => {
+  const url = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: CLI_PKG_DIR, encoding: 'utf8' }).trim()
+  const m = url.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/)
+  if (!m) throw new Error(`could not parse a GitHub owner/repo from this checkout's origin remote: "${url}"`)
+  return `${m[1]}/${m[2]}`
+})()
 
 // What the run is actually testing — the registry spec by default, or the
 // locally packed tarball under `--local-pack`. `specLabel` is set once in
@@ -370,10 +383,6 @@ const EXEMPTIONS: Record<string, string> = {
     'the forge. Exercising it genuinely would require a real repo with real merged task PRs and real `gh` ' +
     "credentials reaching the network beyond the npm install, which this script's boundary forbids (same " +
     "reasoning as `issue edit`'s exemption).",
-  'archive tranche':
-    '`archive tranche` resolves an open Milestone by title and lists its Issues via live `gh api` reads ' +
-    'UNCONDITIONALLY — there is no dry-run path that skips the forge. Same real-repo/real-credentials boundary ' +
-    'as `archive` above; exempt for the same reason.',
   quickstart:
     '`quickstart` is a pure orchestrator over `init`/`init product`/`demo break`/`doctor` — it calls their ' +
     'existing, unmodified entry points in sequence with Y/n prompts between steps, never reimplements their ' +
@@ -752,11 +761,160 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
   }
 }
 
+/**
+ * `archive tranche` reaches the live Milestone/Issue API UNCONDITIONALLY —
+ * there is no dry-run path that skips the forge (the reason `archive` above
+ * stays an EXEMPTIONS-only entry). A real exercise therefore means real
+ * GitHub objects, not the network/credential-free `fixtureDir` every
+ * EXERCISES entry above stays inside (§11) — so, like `init`/`eject` below,
+ * this runs inline in `main()` rather than through the generic map: it needs
+ * its own scratch git directory carrying a real `origin` remote (a plain
+ * git-config trick — `detectGitRepo` only ever reads that string, never
+ * dials it, so no clone is needed) and its own create → run → verify →
+ * cleanup sequence, against THIS checkout's own repo (`HOST_REPO_FLAG`,
+ * derived above) rather than a hand-maintained one, so a fork exercises
+ * itself instead of reaching upstream.
+ *
+ * Every object created here — label, Issue, Milestone — is removed in the
+ * `finally` below on every path, including a throw, matching the brief's own
+ * stop condition: a stray OPEN Milestone left behind on a failure path would
+ * be worse than the coverage gap this closes. The Milestone in particular is
+ * asserted closed twice: once from the command's own stdout, once from an
+ * independent `gh api` re-read — proof the write actually reached the forge,
+ * not merely that the command printed a success-shaped line.
+ */
+async function exerciseArchiveTranche(bin: string): Promise<Outcome> {
+  const slug = `vlt-${Date.now().toString(36)}${process.pid.toString(36)}`
+  const label = trancheLabel(slug)
+  const scratchDir = mkdtempSync(join(tmpdir(), 'vinaya-verify-archive-tranche-'))
+  git(scratchDir, ['init', '-q', '-b', 'main'])
+  git(scratchDir, ['remote', 'add', 'origin', `https://github.com/${HOST_REPO_FLAG}.git`])
+
+  let issueNumber: number | null = null
+  let milestoneNumber: number | null = null
+  try {
+    const labelRun = run(
+      'gh',
+      [
+        'label',
+        'create',
+        label,
+        '-R',
+        HOST_REPO_FLAG,
+        '--color',
+        'ededed',
+        '--description',
+        'Scratch — verify-published-lifecycle archive-tranche exercise; deleted by the same run.'
+      ],
+      scratchDir
+    )
+    if (labelRun.status !== 0)
+      throw new Error(`\`gh label create\` failed: ${labelRun.stderr.trim() || labelRun.stdout.trim()}`)
+
+    const milestoneRun = run('gh', ['api', `repos/${HOST_REPO_FLAG}/milestones`, '-f', `title=${slug}`], scratchDir)
+    if (milestoneRun.status !== 0)
+      throw new Error(
+        `\`gh api .../milestones\` (create) failed: ${milestoneRun.stderr.trim() || milestoneRun.stdout.trim()}`
+      )
+    milestoneNumber = (JSON.parse(milestoneRun.stdout) as { number: number }).number
+
+    const issueRun = run(
+      'gh',
+      [
+        'issue',
+        'create',
+        '-R',
+        HOST_REPO_FLAG,
+        '--title',
+        `Scratch — ${slug}`,
+        '--body',
+        "Scratch Issue created and closed by verify-published-lifecycle.ts's archive-tranche exercise — deleted by the same run. Safe to ignore if seen outside one.",
+        '--label',
+        label
+      ],
+      scratchDir
+    )
+    const issueMatch = issueRun.stdout.match(/\/issues\/(\d+)/)
+    if (issueRun.status !== 0 || !issueMatch)
+      throw new Error(`\`gh issue create\` failed: ${issueRun.stderr.trim() || issueRun.stdout.trim()}`)
+    issueNumber = Number(issueMatch[1])
+
+    const closeRun = run('gh', ['issue', 'close', String(issueNumber), '-R', HOST_REPO_FLAG], scratchDir)
+    if (closeRun.status !== 0)
+      throw new Error(`\`gh issue close\` failed: ${closeRun.stderr.trim() || closeRun.stdout.trim()}`)
+
+    // `gh issue list --label` reads GitHub's search index, not the issue
+    // record directly — it can lag a few seconds behind a create that just
+    // happened, and `runArchiveTranche` calls exactly this query. Observed
+    // directly while building this exercise: an immediate run reported
+    // "no tranche found" against an Issue that demonstrably carried the
+    // label (confirmed via `gh issue view`) a moment later. Poll the same
+    // query this command itself runs until it catches up, rather than let
+    // that lag read as a regression in `archive tranche`.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const indexed = run(
+        'gh',
+        [
+          'issue',
+          'list',
+          '-R',
+          HOST_REPO_FLAG,
+          '--state',
+          'all',
+          '--label',
+          label,
+          '--json',
+          'number',
+          '--limit',
+          '200'
+        ],
+        scratchDir
+      )
+      if (indexed.stdout.trim() !== '[]') break
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+    }
+
+    const r = run(bin, ['archive', 'tranche', slug, '--yes'], scratchDir)
+    const claimsClosed = new RegExp(`closed \\(Milestone #${milestoneNumber}\\)`).test(r.stdout)
+
+    const reread = run('gh', ['api', `repos/${HOST_REPO_FLAG}/milestones/${milestoneNumber}`], scratchDir)
+    let closedForReal = false
+    try {
+      closedForReal = reread.status === 0 && (JSON.parse(reread.stdout) as { state: string }).state === 'closed'
+    } catch {
+      closedForReal = false
+    }
+
+    const ok = r.status === 0 && claimsClosed && closedForReal
+    return {
+      status: ok ? 'pass' : 'fail',
+      detail: ok
+        ? `exit ${r.status}, real Milestone #${milestoneNumber} created then closed via \`archive tranche ${slug} --yes\` against ${HOST_REPO_FLAG}, confirmed closed via an independent \`gh api\` re-read`
+        : `exit ${r.status}, stdout claims closed: ${claimsClosed}, gh api confirms closed: ${closedForReal} — ${(r.stdout.trim() || r.stderr.trim()).slice(0, 200)}`
+    }
+  } catch (err) {
+    return {
+      status: 'fail',
+      detail: `archive-tranche exercise did not complete: ${err instanceof Error ? err.message : String(err)}`
+    }
+  } finally {
+    if (milestoneNumber !== null)
+      run('gh', ['api', '-X', 'DELETE', `repos/${HOST_REPO_FLAG}/milestones/${milestoneNumber}`], scratchDir)
+    if (issueNumber !== null)
+      run('gh', ['issue', 'delete', String(issueNumber), '-R', HOST_REPO_FLAG, '--yes'], scratchDir)
+    run('gh', ['label', 'delete', label, '-R', HOST_REPO_FLAG, '--yes'], scratchDir)
+    rmSync(scratchDir, { recursive: true, force: true })
+  }
+}
+
 // `init` and `eject` are exercised inline in `main()` (init gates every other
 // exercise; eject drives the Part 4 byte-identity proof) rather than through
 // the generic `EXERCISES` map — still real, still asserted, just not routed
-// through the loop. Named here purely so `coverageCheck` sees them as covered.
-const HANDLED_INLINE = new Set(['init', 'eject'])
+// through the loop. `archive tranche` joins them for a different reason (see
+// `exerciseArchiveTranche` above): it is the only exercise that reaches a
+// real forge repo instead of the isolated `fixtureDir`. Named here purely so
+// `coverageCheck` sees all three as covered.
+const HANDLED_INLINE = new Set(['init', 'eject', 'archive tranche'])
 
 function coverageCheck(): void {
   const missing = COMMANDS.filter(
@@ -878,6 +1036,12 @@ async function main(): Promise<void> {
       if (!exercise) continue
       results.set(name, await exercise(ctx))
     }
+
+    // Reaches the real forge (`HOST_REPO_FLAG`), not `fixtureDir` — see
+    // `exerciseArchiveTranche` for why it runs here instead of through the
+    // generic loop above.
+    results.set('archive tranche', await exerciseArchiveTranche(bin))
+
     for (const [name, reason] of Object.entries(EXEMPTIONS)) {
       results.set(name, { status: 'pass', detail: `EXEMPT — ${reason}` })
     }
