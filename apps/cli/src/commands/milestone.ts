@@ -160,8 +160,8 @@ export async function milestoneCreateCommand(args: string[]): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// `vinaya milestone adopt` (vinaya-milestone-migration-v1 task 1) — moves an
-// existing tranche into a Milestone. `checkAdoptable` (`@attalabs/aeg-core`)
+// `vinaya milestone adopt` — moves an existing tranche into a Milestone.
+// `checkAdoptable` (`@attalabs/aeg-core`)
 // refuses before any forge write: an unknown slug, a slug whose label
 // carries no Issues, a target that does not exist or is closed, or a slug
 // already adopted into a different Milestone. Facts for EVERY requested slug
