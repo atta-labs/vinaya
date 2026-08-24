@@ -47,6 +47,7 @@ import {
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { resolveEdge } from '../edge-resolve'
 
 const CHECK_NAME = 'dispatch-readiness'
 
@@ -113,105 +114,6 @@ function fail(message: string, prompt: string): never {
     agent_recovery_prompt: prompt
   })
   process.exit(1)
-}
-
-type DispatchFactsSubset = {
-  prState: string
-  issueState: 'open' | 'closed'
-  stateReason: 'completed' | 'not_planned' | null
-  closedByActor: string | null
-}
-
-function resolveEdge(
-  id: string,
-  taskById: Map<string, { id: string; issue: number | null }>,
-  factsByTaskId: Map<string, DispatchFactsSubset>,
-  repo: { owner: string; repo: string }
-): {
-  issue: number | null
-  merged: boolean
-  open: boolean
-  issueState: 'open' | 'closed' | null
-  stateReason: 'completed' | 'not_planned' | null
-  closedByActor: string | null
-} {
-  const target = taskById.get(id)
-  if (target) {
-    const facts = target.issue !== null ? factsByTaskId.get(target.id) : undefined
-    return {
-      issue: target.issue,
-      merged: facts?.prState === 'merged',
-      open: facts?.prState === 'open',
-      issueState: facts?.issueState ?? null,
-      stateReason: facts?.stateReason ?? null,
-      closedByActor: facts?.closedByActor ?? null
-    }
-  }
-  // A `#NNN` reference — resolvable, and resolved. `directIssueState` looks the
-  // Issue up directly, the same way `bin/verify-dispatch.ts`'s own
-  // `directIssueNumFromEdge` path does, so the two agree on a cross-tranche
-  // dependency rather than one saying READY while the other blocks.
-  //
-  // Before this, the number was parsed out and then thrown away: `merged` was
-  // hardcoded `false`, and the comment here claimed parity with
-  // `verify-dispatch.ts` while doing the opposite of it. The consequence was
-  // not conservative, it was terminal — a task with a cross-tranche dependency
-  // could never go green, however long ago that dependency merged. Found on
-  // atta-labs/vinaya#197, whose `Depends-on: #192` had merged as PR #195.
-  //
-  // A closed Issue means the work landed: this check has no PR-state primitive
-  // for an Issue outside its own tranche, and a task Issue closes only when its
-  // PR merges (the Archivist) or a Principal closes it deliberately. That is the
-  // same equivalence `verify-dispatch.ts` draws on this path.
-  const direct = id.match(/^#(\d+)$/)
-  if (direct) {
-    const num = Number(direct[1])
-    const state = directIssueState(num, repo)
-    return {
-      issue: num,
-      merged: state === 'closed',
-      open: state === 'open',
-      issueState: state,
-      stateReason: null,
-      closedByActor: null
-    }
-  }
-  // Neither a same-tranche task id nor a `#NNN` ref — genuinely unresolvable
-  // with this check's toolset. Conservative default, and the one case where
-  // that is the honest answer.
-  return {
-    issue: null,
-    merged: false,
-    open: false,
-    issueState: null,
-    stateReason: null,
-    closedByActor: null
-  }
-}
-
-// Direct Issue-state lookup for a `#NNN` edge. Cached per run: a tranche can
-// carry the same cross-tranche dependency on several tasks, and this is a
-// network call. Returns `null` when the lookup fails, so a forge outage stays
-// conservative rather than reporting a dependency as satisfied.
-const directIssueStateCache = new Map<number, 'open' | 'closed' | null>()
-
-function directIssueState(num: number, repo: { owner: string; repo: string }): 'open' | 'closed' | null {
-  if (directIssueStateCache.has(num)) return directIssueStateCache.get(num) ?? null
-  let out: 'open' | 'closed' | null = null
-  try {
-    const raw = execFileSync(
-      'gh',
-      ['issue', 'view', String(num), '-R', `${repo.owner}/${repo.repo}`, '--json', 'state'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
-    )
-    const parsed = JSON.parse(raw) as { state?: string }
-    if (parsed.state === 'CLOSED') out = 'closed'
-    else if (parsed.state === 'OPEN') out = 'open'
-  } catch {
-    out = null
-  }
-  directIssueStateCache.set(num, out)
-  return out
 }
 
 async function main(): Promise<void> {

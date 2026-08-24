@@ -2,17 +2,23 @@
 "@attalabs/vinaya": patch
 ---
 
-`vinaya check dispatch-readiness` now resolves a cross-tranche `#NNN` dependency instead of
-hardcoding it unmerged.
+Dependency and conflict edges now resolve through one shared implementation, and a cross-tranche
+`#NNN` dependency is resolved rather than assumed unmerged.
 
-The check parsed the Issue number out of the edge and then discarded it, returning `merged: false`
-unconditionally — while a comment claimed parity with `bin/verify-dispatch.ts`, which resolves the
-same edge by looking the Issue up. The two disagreed: `verify-dispatch` reported READY, the CI gate
-blocked. The effect was not conservative but terminal, since no retry and no amount of elapsed time
-could clear it: a task carrying a cross-tranche dependency could never go green, however long ago
-that dependency merged.
+`vinaya check dispatch-readiness` and `vinaya check first-push-dispatch` each carried their own copy
+of the resolver, and both hardcoded `merged: false` for any cross-tranche reference — while a comment
+in each claimed parity with `verify-dispatch`, which resolves the same edge by looking the Issue up.
+The effect was terminal rather than conservative: a task carrying a cross-tranche dependency could
+never pass the blocking gate, however long ago that dependency merged, while `verify-dispatch`
+reported it ready. The two CLI checks now share `checks/edge-resolve.ts`, and a parity test pins the
+answers both sides must give.
 
-A failed lookup still returns unresolved, so a forge outage stays conservative. An edge that is
-neither a same-tranche task id nor a `#NNN` reference is unchanged — that remains genuinely
-unresolvable with this check's toolset, and is the one case where the conservative default is the
-honest answer.
+Merged means the Issue was closed **by a merged pull request**, not merely closed. An Issue closed
+`NOT_PLANNED` was abandoned and shipped nothing; it no longer satisfies a dependency gate.
+
+A conflict edge still reports `openOrInFlight: false` for a cross-tranche reference. A conflict
+matters only while a pull request is genuinely open, and Issue state is not evidence of one.
+
+A failed lookup — missing auth, network, rate limit, malformed response, `gh` absent — still resolves
+to unmerged, so a forge outage blocks. The lookup cache is keyed by repository and Issue number
+rather than by number alone.

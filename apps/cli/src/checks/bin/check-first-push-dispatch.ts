@@ -41,6 +41,7 @@ import {
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { resolveEdge } from '../edge-resolve'
 
 const CHECK_NAME = 'first-push-dispatch'
 
@@ -83,48 +84,6 @@ function prExistsFor(branch: string): boolean {
   }
 }
 
-type DispatchFactsSubset = {
-  prState: string
-  issueState: 'open' | 'closed'
-  stateReason: 'completed' | 'not_planned' | null
-  closedByActor: string | null
-}
-
-function resolveEdge(
-  id: string,
-  taskById: Map<string, { id: string; issue: number | null }>,
-  factsByTaskId: Map<string, DispatchFactsSubset>
-): {
-  issue: number | null
-  merged: boolean
-  open: boolean
-  issueState: 'open' | 'closed' | null
-  stateReason: 'completed' | 'not_planned' | null
-  closedByActor: string | null
-} {
-  const target = taskById.get(id)
-  if (target) {
-    const facts = target.issue !== null ? factsByTaskId.get(target.id) : undefined
-    return {
-      issue: target.issue,
-      merged: facts?.prState === 'merged',
-      open: facts?.prState === 'open',
-      issueState: facts?.issueState ?? null,
-      stateReason: facts?.stateReason ?? null,
-      closedByActor: facts?.closedByActor ?? null
-    }
-  }
-  const direct = id.match(/^#(\d+)$/)
-  return {
-    issue: direct ? Number(direct[1]) : null,
-    merged: false,
-    open: false,
-    issueState: null,
-    stateReason: null,
-    closedByActor: null
-  }
-}
-
 /** Best-effort readiness classification — any forge failure degrades to `UNKNOWN` (fail-open), never a thrown error. */
 async function classifyReadiness(trancheSlug: string, taskId: string): Promise<DispatchReadinessFact> {
   const repo = resolveRepo()
@@ -161,7 +120,7 @@ async function classifyReadiness(trancheSlug: string, taskId: string): Promise<D
     const factsByTaskId = snapshot.facts
 
     const dependsOn: DispatchDependsOnFact[] = task.dependsOn.map((dep) => {
-      const r = resolveEdge(dep, taskById, factsByTaskId)
+      const r = resolveEdge(dep, taskById, factsByTaskId, repo)
       return {
         id: dep,
         issue: r.issue,
@@ -172,7 +131,7 @@ async function classifyReadiness(trancheSlug: string, taskId: string): Promise<D
       }
     })
     const conflictsWith: DispatchConflictsWithFact[] = task.conflictsWith.map((c) => {
-      const r = resolveEdge(c, taskById, factsByTaskId)
+      const r = resolveEdge(c, taskById, factsByTaskId, repo)
       return { id: c, issue: r.issue, openOrInFlight: r.open }
     })
 
