@@ -46,15 +46,19 @@ export type ProseFinding = {
   message: string
 }
 
-/** `aeg-root/**` — what the package carries and `/docs` publishes. */
+/**
+ * `aeg-root/**` by default — what this repo's own package carries and
+ * `/docs` publishes. Every caller below takes `shipsPrefix` as its LAST,
+ * defaulted parameter so an adopter whose installed doctrine tree lives
+ * somewhere else (task 7, Issue #56 — de-hardcoding `doctrineRoot`) can
+ * override it without breaking any existing positional call.
+ */
 const SHIPS_PREFIX = 'aeg-root/'
 
-/**
- * History, never rewritten — same exemption `retired-vocabulary.test.ts`
- * already carries for the identical reason: an archived tranche legitimately
- * cites the forge numbers and slugs it closed.
- */
-const SHIPS_ARCHIVE_PREFIX = 'aeg-root/tranches/completed/'
+/** `<shipsPrefix>tranches/completed/` — history, never rewritten. Same exemption `retired-vocabulary.test.ts` already carries for the identical reason: an archived tranche legitimately cites the forge numbers and slugs it closed. */
+function shipsArchivePrefix(shipsPrefix: string): string {
+  return `${shipsPrefix}tranches/completed/`
+}
 
 /** A per-product specs file (`apps/<product>/specs/**`) — this reader has this forge; references are legitimate here. */
 function isSpecFile(path: string): boolean {
@@ -84,10 +88,11 @@ function isClaudeMdFile(path: string): boolean {
 export function classifyProseFile(
   path: string,
   readerFacingPrefix: string,
-  readerFacingSuffix: string
+  readerFacingSuffix: string,
+  shipsPrefix: string = SHIPS_PREFIX
 ): ProseFileClass | null {
-  if (path.startsWith(SHIPS_PREFIX)) {
-    return path.startsWith(SHIPS_ARCHIVE_PREFIX) ? 'internal' : 'ships'
+  if (path.startsWith(shipsPrefix)) {
+    return path.startsWith(shipsArchivePrefix(shipsPrefix)) ? 'internal' : 'ships'
   }
   if (path.startsWith(readerFacingPrefix) && path.endsWith(readerFacingSuffix)) {
     return 'reader-facing'
@@ -174,7 +179,8 @@ export function checkUnresolvableReferences(
   files: readonly ProseSourceFile[],
   readerFacingPrefix: string,
   readerFacingSuffix: string,
-  legacySlugs: readonly string[] = []
+  legacySlugs: readonly string[] = [],
+  shipsPrefix: string = SHIPS_PREFIX
 ): ProseFinding[] {
   const findings: ProseFinding[] = []
   const legacyPattern = legacySlugPattern(legacySlugs)
@@ -189,7 +195,7 @@ export function checkUnresolvableReferences(
   ]
 
   for (const file of files) {
-    const cls = classifyProseFile(file.path, readerFacingPrefix, readerFacingSuffix)
+    const cls = classifyProseFile(file.path, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
     if (!cls || !SWEPT_CLASSES.has(cls)) continue
     const scrubbed = stripNonProse(file.path, file.content)
     for (const { pattern, what, group } of patterns) {
@@ -262,12 +268,13 @@ export function checkUndefinedVocabulary(
   files: readonly ProseSourceFile[],
   glossaryTerms: readonly string[],
   readerFacingPrefix: string,
-  readerFacingSuffix: string
+  readerFacingSuffix: string,
+  shipsPrefix: string = SHIPS_PREFIX
 ): ProseFinding[] {
   const findings: ProseFinding[] = []
 
   for (const file of files) {
-    const cls = classifyProseFile(file.path, readerFacingPrefix, readerFacingSuffix)
+    const cls = classifyProseFile(file.path, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
     if (!cls || !SWEPT_CLASSES.has(cls)) continue
     const scrubbed = stripNonProse(file.path, file.content)
 
@@ -291,11 +298,12 @@ export function checkReaderResolvableProse(
   glossaryTerms: readonly string[],
   readerFacingPrefix: string,
   readerFacingSuffix: string,
-  legacySlugs: readonly string[] = []
+  legacySlugs: readonly string[] = [],
+  shipsPrefix: string = SHIPS_PREFIX
 ): ProseFinding[] {
   return [
-    ...checkUnresolvableReferences(files, readerFacingPrefix, readerFacingSuffix, legacySlugs),
-    ...checkUndefinedVocabulary(files, glossaryTerms, readerFacingPrefix, readerFacingSuffix)
+    ...checkUnresolvableReferences(files, readerFacingPrefix, readerFacingSuffix, legacySlugs, shipsPrefix),
+    ...checkUndefinedVocabulary(files, glossaryTerms, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
   ]
 }
 

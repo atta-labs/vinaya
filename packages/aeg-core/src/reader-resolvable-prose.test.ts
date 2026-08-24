@@ -392,6 +392,53 @@ describe('regression: class 2 still fires on prose that follows a URL on the sam
   })
 })
 
+describe('shipsPrefix — an adopter\'s doctrine root need not be "aeg-root/" (task 7, Issue #56)', () => {
+  const CUSTOM_ROOT = 'governance-docs/'
+
+  it('classifyProseFile treats the custom root as the ships class, and its own completed-tranches archive as internal', () => {
+    expect(
+      classifyProseFile('governance-docs/enforcement.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, CUSTOM_ROOT)
+    ).toBe('ships')
+    expect(
+      classifyProseFile(
+        'governance-docs/tranches/completed/old.md',
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX,
+        CUSTOM_ROOT
+      )
+    ).toBe('internal')
+    // The default "aeg-root/" is no longer special once a custom root is given.
+    expect(
+      classifyProseFile('aeg-root/enforcement.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, CUSTOM_ROOT)
+    ).toBeNull()
+  })
+
+  it('checkReaderResolvableProse sweeps the custom root, not the default one', () => {
+    const findings = checkReaderResolvableProse(
+      [{ path: 'governance-docs/roles/reviewer.md', content: 'Closed the gap (#365) in this tranche.' }],
+      ['Tranche'],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      CUSTOM_ROOT
+    )
+    expect(findings.length).toBeGreaterThanOrEqual(2)
+
+    // The identical content under the DEFAULT root is out of scope once a
+    // custom root is in effect — proof this is a real switch, not an
+    // additive scan.
+    const outOfScope = checkReaderResolvableProse(
+      [{ path: 'aeg-root/roles/reviewer.md', content: 'Closed the gap (#365) in this tranche.' }],
+      ['Tranche'],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      CUSTOM_ROOT
+    )
+    expect(outOfScope).toEqual([])
+  })
+})
+
 describe('checkReaderResolvableProse — runs both classes together', () => {
   it('reports both a reference finding and a vocabulary finding for one file', () => {
     const findings = checkReaderResolvableProse(
