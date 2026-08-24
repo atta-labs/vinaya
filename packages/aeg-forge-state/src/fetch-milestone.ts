@@ -183,16 +183,27 @@ function factsFromLegacyMilestone(milestone: GhMilestone): MilestoneFacts {
  * `complete` with zero active tranches left in the whole repo.
  *
  * `labelIssues` — this slug's own `vinaya/tranche:<slug>`-labeled Issues,
- * fetched regardless of legacy status now — is the tiebreak: when it is
- * non-empty, the label is this tranche's real, current identity and wins
- * over the Milestone's own (possibly stale) `state`. An empty label set
- * means genuinely nothing lives under the label — either a pre-label-model
+ * fetched regardless of legacy status now — is the tiebreak, but ONLY when
+ * the Milestone is `closed`. `adopt` is the only real-world path that
+ * produces a non-empty label population under a legacy title match, and
+ * `adopt` always closes the Milestone it retires — an open legacy Milestone
+ * with label Issues attached is not a state this system's own write path
+ * produces today. Gating on `closed` matters for real: an open legacy
+ * Milestone already reads `active` correctly via its own `state`
+ * (`factsFromLegacyMilestone`), and if its label Issues happened to be
+ * empty or all-closed (stray manual labeling, a partial migration), an
+ * ungated override would wrongly flip a genuinely active tranche to
+ * `complete` — the exact class of bug this function exists to fix, in the
+ * opposite direction. An empty label set on a CLOSED Milestone means
+ * genuinely nothing lives under the label — either a pre-label-model
  * historical tranche (the original ~57 Milestones this function was written
  * for) or a legacy Milestone nobody has adopted away from — and the
  * Milestone's own `state` is still the right, and only available, answer.
  */
 function resolveLegacyFacts(milestone: GhMilestone, labelIssues: GhIssue[]): MilestoneFacts {
-  if (labelIssues.length > 0) return { goal: milestone.description ?? '', lifecycle: lifecycleFromIssues(labelIssues) }
+  if (milestone.state === 'closed' && labelIssues.length > 0) {
+    return { goal: milestone.description ?? '', lifecycle: lifecycleFromIssues(labelIssues) }
+  }
   return factsFromLegacyMilestone(milestone)
 }
 

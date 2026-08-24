@@ -84,6 +84,29 @@ describe('findMilestoneForSlug', () => {
     })
   })
 
+  it('a closed legacy Milestone whose label Issues are ALL closed still reads complete — the label branch, not just the Milestone-state branch, must reach the same answer', () => {
+    vi.mocked(ghApiGet).mockReturnValue([{ title: 'finished-v1', description: 'Shipped.', state: 'closed' }])
+    vi.mocked(ghIssueListByLabel).mockReturnValue([issue('CLOSED'), issue('CLOSED')])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'finished-v1')).toEqual({ goal: 'Shipped.', lifecycle: 'complete' })
+  })
+
+  it('an OPEN legacy Milestone is never overridden by its label, even when the label Issues would otherwise resolve complete — the override is gated on closed, adopt never produces an open+labeled legacy Milestone', () => {
+    vi.mocked(ghApiGet).mockReturnValue([
+      { title: 'aeg-forge-state-v1', description: 'Migrate this repo governance state.', state: 'open' }
+    ])
+    // Stray manual labeling, or any state the real `adopt` write path never
+    // produces — all-closed label Issues under a Milestone that is itself
+    // still open. Without the `state === 'closed'` gate, this would wrongly
+    // flip a genuinely active tranche to `complete`.
+    vi.mocked(ghIssueListByLabel).mockReturnValue([issue('CLOSED'), issue('CLOSED')])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'aeg-forge-state-v1')).toEqual({
+      goal: 'Migrate this repo governance state.',
+      lifecycle: 'active'
+    })
+  })
+
   it('derives active from the label’s Issues when no legacy Milestone matches (the real, current fixture — no Milestone exists yet for any active tranche)', () => {
     vi.mocked(ghApiGet).mockReturnValue(emptyMilestones)
     vi.mocked(ghIssueListByLabel).mockReturnValue([issue('CLOSED'), issue('OPEN')])
