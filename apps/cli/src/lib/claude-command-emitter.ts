@@ -25,12 +25,15 @@
 //     raw pre-shell splice at all: whichever quote this template opens, an
 //     attacker's token can contain that same quote character, close it
 //     early, inject an arbitrary command, then reopen a matching quote so
-//     the rest of the line still parses — proven live: a `case`/allowlist
-//     guard placed AFTER a single-quoted capture (`ROLE='$ARGUMENTS'; case
-//     "$ROLE" in …) still let an injected `touch` run, because the shell
-//     executes left-to-right and the injected command lands before the
-//     guard ever gets control. There is no in-template ordering that puts
-//     validation before an attacker-chosen quote-breakout.
+//     the rest of the line still parses. Proven against the template's own
+//     double-quote style by this file's own test suite
+//     (`claude-command-emitter.test.ts`'s "a quote-breakout payload still
+//     executes" case). The same reasoning applies to any other quote
+//     character a future template might pick instead (e.g. a single-quoted
+//     capture followed by a validation guard): the shell executes
+//     left-to-right, so an injected command inside the breakout always lands
+//     before a later guard gets control — there is no in-template ordering
+//     that puts validation before an attacker-chosen quote-breakout.
 //
 // `vinaya doctrine --role`'s own handling (`doctrine.ts`) validates the
 // argument it actually receives against the exact set of role names

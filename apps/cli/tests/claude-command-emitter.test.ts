@@ -67,11 +67,10 @@ allowed-tools: Bash(vinaya doctrine *)
   // substitution performs: raw text replacement into the rendered command
   // BEFORE a shell parses it, then that resulting line is handed to a real
   // shell — never `Bun.spawn`'s array form, which sidesteps the shell
-  // entirely and would prove nothing about this threat model (that gap in
-  // the original version of this test file was the reviewed MEDIUM finding
-  // this rewrite fixes). `vinaya doctrine` is invoked via the real CLI entry
-  // (`bun <CLI_ENTRY> doctrine`) rather than a globally-installed `vinaya`
-  // binary, matching the emitter's own module doc.
+  // entirely and proves nothing about this threat model. `vinaya doctrine`
+  // is invoked via the real CLI entry (`bun <CLI_ENTRY> doctrine`) rather
+  // than a globally-installed `vinaya` binary, matching the emitter's own
+  // module doc.
   describe('the shell splice — what quoting closes, and what it does not', () => {
     function shellArgSegment(): string {
       const m = renderClaudeCommand().match(/!`vinaya doctrine --role\s+(.+)`/)
