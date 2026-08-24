@@ -47,8 +47,12 @@ describe('doctrine pointer machine-independence (atta-labs/attalabs#928)', () =>
       expect(content).not.toContain('/home/')
       expect(content).not.toContain('_npx')
       // No token anywhere starts an absolute path — bare, backticked, quoted,
-      // or sitting in an indented code block.
-      expect(content).not.toMatch(/(^|[\s`("'])\/[A-Za-z]/m)
+      // or sitting in an indented code block. `/vinaya <role>` (task 5, #152's
+      // generic slash-command discoverability line) is the one sanctioned
+      // exception: a command-syntax token, never a filesystem path, and it
+      // names no vendor-specific file — stripped before the scan so it can
+      // never be mistaken for the machine-local path this test guards against.
+      expect(content.replace('/vinaya <role>', '')).not.toMatch(/(^|[\s`("'])\/[A-Za-z]/m)
     }
   })
 
@@ -61,6 +65,20 @@ describe('doctrine pointer machine-independence (atta-labs/attalabs#928)', () =>
     const vendored = doctrinePointer(VENDORED)
     expect(vendored).toContain('aeg-root/skills/aeg/SKILL.md')
     expect(vendored).toContain('node apps/cli/dist/index.js doctrine')
+  })
+
+  it('names no specific vendor file path in the slash-command discoverability line (task 5, #152)', () => {
+    // Generic on purpose — the note names no `.claude/commands/vinaya.md` or
+    // `.gemini/commands/vinaya.toml` path, so it never drifts as the vendor
+    // set the `--agents` flag installs changes.
+    for (const selfHost of [null, VENDORED]) {
+      const content = doctrinePointer(selfHost)
+      expect(content).toContain('slash-style commands')
+      expect(content).toContain('/vinaya <role>')
+      expect(content).not.toContain('.claude/commands')
+      expect(content).not.toContain('.gemini/commands')
+      expect(content).not.toContain('.agents/skills')
+    }
   })
 })
 

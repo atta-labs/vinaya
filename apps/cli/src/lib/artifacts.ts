@@ -960,6 +960,9 @@ machine with:
 
 ${resolveNote}
 
+If your agent tool supports slash-style commands, it may also expose these
+as \`/vinaya <role>\` — check your tool's command list.
+
 Live task status is derived from the forge (Issues, labels, comments) via
 \`vinaya check\` — it is never written into a file here.
 `
