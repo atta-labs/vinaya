@@ -65,6 +65,18 @@ describe('locateTestPlanSection — heading form (the PR #377 live-fire gap)', (
   })
 })
 
+describe('locateTestPlanSection — section runs to the end of the body', () => {
+  it('slices to end-of-body when no section follows the Test Plan heading', () => {
+    const body = '## Summary\n\nx\n\n## Test Plan\n\n- [x] **[agent]** did a thing'
+    const result = locateTestPlanSection(body)
+    expect(result.found).toBe(true)
+    if (result.found) {
+      expect(result.section).toContain('[x] **[agent]** did a thing')
+      expect(result.section.endsWith('did a thing')).toBe(true)
+    }
+  })
+})
+
 describe('locateTestPlanSection — no section', () => {
   it('reports not found when neither form is present', () => {
     const body = '## Summary\n\nsomething\n\n## Scope\n\nmore, no test plan anywhere'
