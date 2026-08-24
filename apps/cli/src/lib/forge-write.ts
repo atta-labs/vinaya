@@ -53,7 +53,8 @@ import {
   parsePnpmWorkspaceYaml,
   parseRegistry,
   type ProjectPath,
-  readTierFromPrBody
+  readTierFromPrBody,
+  trancheLabel
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks/contract'
 import { type BriefBuiltin, type BriefSection, VinayaConfigSchema, loadConfigChecked } from './config'
@@ -174,6 +175,56 @@ export function makeCheckError(check: string, message: string, agentRecoveryProm
 export function refuse(errors: CheckError[]): never {
   for (const e of errors) emitCheckError(e)
   process.exit(1)
+}
+
+// ---------------------------------------------------------------------------
+// Tranche label — the real creation path the `vinaya/tranche:<slug>` prefix
+// family lacked (Issue #54's Origin): its suffix is open-ended by design, so
+// no fixed install-time list can seed it, and until now nothing created it
+// either — cutting a tranche's first task Issue failed outright at `gh` with
+// `not found`, worked around by hand-running `gh label create`. This is the
+// point that mints it: `issueCreateCommand`/`issueEditCommand` are the
+// shipped `vinaya issue create`/`edit` — the only commands that attach a
+// `vinaya/tranche:*` label to a forge object. No `-R` flag: `gh` resolves
+// the current repo from cwd, the adopter's own repo the CLI runs in.
+// Existing labels are never modified, matching every create-if-absent label
+// path in this repo.
+// ---------------------------------------------------------------------------
+const TRANCHE_LABEL_COLOR = '1D76DB'
+
+export function ensureTrancheLabelExists(slug: string): void {
+  const name = trancheLabel(slug)
+  let existing: Array<{ name: string }>
+  try {
+    const out = execFileSync('gh', ['label', 'list', '--json', 'name', '--limit', '200'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    existing = JSON.parse(out) as Array<{ name: string }>
+  } catch (err) {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `Could not list labels (\`gh label list\`) to check for '${name}': ${(err as Error).message}`,
+        'Check `gh auth status` and network, then retry.'
+      )
+    ])
+  }
+  if (existing.some((l) => l.name === name)) return
+  try {
+    execFileSync('gh', ['label', 'create', name, '--color', TRANCHE_LABEL_COLOR, '--description', `Tranche: ${slug}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch (err) {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `Could not create tranche label '${name}' (\`gh label create\`): ${(err as Error).message}`,
+        'Check `gh auth status`/repo write access, then retry.'
+      )
+    ])
+  }
 }
 
 /**
