@@ -63,25 +63,47 @@ export async function ghAuthStatus(): Promise<GhAuthStatus> {
   }
 }
 
+export type BranchProtectionState = boolean | null | 'plan-required'
+
+/**
+ * Classifies `gh api .../branches/main/protection`'s failure stderr — pulled
+ * out of `branchProtectionConfigured` so the three known shapes (404, the
+ * GitHub-Pro-required 403, everything else) are unit-testable without
+ * shelling to a real `gh`. `gh` exits non-zero for all three; only the first
+ * two are known, real answers — anything else (auth/network failure) is
+ * genuinely unknown. Found live: a PRIVATE repo without a paid plan gets a
+ * 403 ("Upgrade to GitHub Pro or make this repository public to enable this
+ * feature") which used to fall into the generic unknown bucket and print
+ * as "could not be determined" in the same doctor run that had just
+ * reported gh as authenticated and the remote as present. Only the specific
+ * plan-required 403 gets its own state — a bare `\b403\b` match would also
+ * swallow a real permissions failure and misreport it as "unprotected"'s
+ * sibling rather than "unknown".
+ */
+export function classifyBranchProtectionError(stderr: string): BranchProtectionState {
+  if (/\b404\b/.test(stderr)) return false
+  if (/\b403\b/.test(stderr) && /upgrade to github pro|make this repository public/i.test(stderr)) {
+    return 'plan-required'
+  }
+  return null
+}
+
 /**
  * Report-only read of the main branch's protection state — never applied,
- * never mutated. `null` means the state could not be determined (no auth, no
- * remote, a private-repo permission gap) — doctor reports that honestly
- * rather than guessing.
+ * never mutated. `null` means the state could not be determined for an
+ * unknown reason (no auth, no remote, an unrecognized permission gap);
+ * `'plan-required'` means it's a KNOWN reason — a private repo without a
+ * paid GitHub plan cannot query this API at all — doctor reports that
+ * honestly rather than folding it into the generic unknown case.
  */
-export async function branchProtectionConfigured(owner: string, repo: string): Promise<boolean | null> {
+export async function branchProtectionConfigured(owner: string, repo: string): Promise<BranchProtectionState> {
   if (!owner || !repo) return null
   try {
     await execFileAsync('gh', ['api', `repos/${owner}/${repo}/branches/main/protection`])
     return true
   } catch (err) {
-    // gh exits non-zero both for "not found" (unprotected — a real, known
-    // answer) and for auth/network failures (an unknown answer). `gh api`
-    // reports a 404 in its stderr message ("HTTP 404"); only that specific
-    // case is the known "unprotected" answer — anything else is unknown.
     const stderr = (err as { stderr?: string }).stderr ?? ''
-    if (/\b404\b/.test(stderr)) return false
-    return null
+    return classifyBranchProtectionError(stderr)
   }
 }
 

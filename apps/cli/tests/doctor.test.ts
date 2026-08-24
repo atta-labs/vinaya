@@ -338,6 +338,18 @@ describe('vinaya doctor — never mutates', () => {
     expect(report.findings.some((f) => f.check === 'test-ci')).toBe(false)
   })
 
+  it('reports the private-repo-needs-a-paid-plan case distinctly from the generic "could not be determined" (found live)', async () => {
+    await runInit(['--yes'], initDeps())
+    const report = await runDoctorJson({
+      ghAuthStatus: async () => ({ authenticated: true, detail: 'Logged in to github.com as tester' }),
+      branchProtectionConfigured: async () => 'plan-required'
+    })
+    const bp = report.findings.find((f) => f.check === 'branch-protection')
+    expect(bp?.severity).toBe('info')
+    expect(bp?.message).toContain('paid plan')
+    expect(bp?.message).not.toContain('no gh auth, no remote, or a permission gap')
+  })
+
   it('does not let environment/branch-protection info findings affect health', async () => {
     await runInit(['--yes'], initDeps())
     const report = await runDoctorJson({
