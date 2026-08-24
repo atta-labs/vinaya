@@ -155,4 +155,52 @@ describe('vinaya pr create --validate-only', () => {
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('body')
   })
+
+  it('refuses a body carrying a bare digit — the check CI runs, run here first', () => {
+    writeConfig(FULL_PR_CONFIG)
+    const r = runCli(
+      [
+        'pr',
+        'create',
+        '--validate-only',
+        '--body-file',
+        join(FORGE_FIXTURES, 'pr-bare-digit.md'),
+        '--title',
+        '[vinaya-cli-v1] 5 — x'
+      ],
+      { cwd }
+    )
+    expect(r.status).toBe(1)
+    const lines = r.stderr.trim().split('\n').filter(Boolean)
+    expect(lines.length).toBe(1)
+    const finding = JSON.parse(lines[0] as string)
+    expect(finding.check).toBe('body-bare-digits')
+  })
+
+  it('has no branch-name exemption — a bare-digit body refuses even on a branch literally named changeset-release/main', () => {
+    // `branch` is read from the local checkout, fully caller-controlled — no
+    // author is fetched or fetchable before the PR exists, so unlike the
+    // CI-side check (which live-fetches the real PR author before exempting)
+    // this command must never grant the Changesets-release exemption from
+    // branch name alone. Regression test for exactly that shape of bug.
+    writeConfig(FULL_PR_CONFIG)
+    execFileSync('git', ['init', '-q'], { cwd })
+    execFileSync('git', ['checkout', '-q', '-b', 'changeset-release/main'], { cwd })
+    execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'x'], { cwd })
+    const r = runCli(
+      [
+        'pr',
+        'create',
+        '--validate-only',
+        '--body-file',
+        join(FORGE_FIXTURES, 'pr-bare-digit.md'),
+        '--title',
+        '[vinaya-cli-v1] 5 — x'
+      ],
+      { cwd }
+    )
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('body-bare-digits')
+  })
 })

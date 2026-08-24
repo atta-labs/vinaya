@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { gatePlanForBranch, locateBody, resolveShippableArgs } from './open-pr'
+import { bareDigitsGateEnv, gatePlanForBranch, locateBody, resolveShippableArgs } from './open-pr'
 
 describe('gatePlanForBranch (aeg-governance-hardening task 25, #365)', () => {
   const BASE = ['verify-brief', 'verify-docs', 'body-bare-digits']
@@ -39,6 +39,34 @@ describe('gatePlanForBranch (aeg-governance-hardening task 25, #365)', () => {
   it('runs it before the task-only gates, so a bad body is refused early', () => {
     const plan = gatePlanForBranch('task/aeg-governance-hardening/25')
     expect(plan.indexOf('body-bare-digits')).toBeLessThan(plan.indexOf('closes-n'))
+  })
+})
+
+/**
+ * Code review, PR #199: `check-body-bare-digits.ts`'s Changesets-release
+ * exemption is keyed solely on `PR_NUMBER` and never checks that the PR it
+ * fetches is the PR whose body it was just handed. `runGate` merges this
+ * object over `...process.env`, so `PR_NUMBER` must be a key here on every
+ * call — an absent key would let a stale ambient `PR_NUMBER` (this codebase's
+ * own docs teach exporting it for other manual check invocations) exempt an
+ * unrelated body on a stranger's identity.
+ */
+describe('bareDigitsGateEnv (code review, PR #199 — ambient PR_NUMBER must never leak through)', () => {
+  it('always has a PR_NUMBER key, so runGate can never fall through to an inherited value', () => {
+    expect(Object.hasOwn(bareDigitsGateEnv('body text', null), 'PR_NUMBER')).toBe(true)
+    expect(Object.hasOwn(bareDigitsGateEnv('body text', 199), 'PR_NUMBER')).toBe(true)
+  })
+
+  it('create mode (no PR yet) sets PR_NUMBER to the empty string, not absent', () => {
+    expect(bareDigitsGateEnv('body text', null).PR_NUMBER).toBe('')
+  })
+
+  it('edit mode sets PR_NUMBER to the real target PR, from argv, not the environment', () => {
+    expect(bareDigitsGateEnv('body text', 199).PR_NUMBER).toBe('199')
+  })
+
+  it('always carries the body under PR_BODY', () => {
+    expect(bareDigitsGateEnv('some body', 199).PR_BODY).toBe('some body')
   })
 })
 

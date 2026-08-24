@@ -11,7 +11,6 @@ import {
   resolveShippableArgs,
   validateForgeWrite
 } from '../lib/forge-write'
-import { CHANGESET_RELEASE_BRANCH } from '@attalabs/aeg-core'
 import { checkBareDigits } from '../checks/body-bare-digits-logic'
 
 const RETRY_CREATE = 'vinaya pr create --validate-only …'
@@ -141,12 +140,16 @@ function fetchPrForgeContext(prRef: string): { changedFiles: string[]; branch: s
  * before the PR exists, `evidence-fresh` compares against a head SHA the PR does
  * not have yet, and `closes-n` already runs as a configured section.
  *
- * The Changesets release branch is exempt for the same reason the CI check
- * exempts it: that body is machine-generated from changeset files, and its
- * counts are real rather than narrative claims.
+ * No Changesets-release exemption here, unlike the CI-side check. That check
+ * proves the exemption safe by fetching the real PR's author from the forge —
+ * `isChangesetsReleasePr(branch, author, expectedAuthor)` — because `branch`
+ * alone is not a trust boundary (`review-gate.ts`'s own docstring: an attacker
+ * can push a branch literally called `changeset-release/main`). This command
+ * runs before any PR exists, so there is no author to fetch and no safe way to
+ * grant the exemption here. It costs nothing: the real release PR is opened by
+ * `changesets/action` directly and never passes through this command.
  */
-function refuseOnBareDigits(body: string, branch: string, retryCommand: string): void {
-  if (branch === CHANGESET_RELEASE_BRANCH) return
+function refuseOnBareDigits(body: string, retryCommand: string): void {
   const { violations } = checkBareDigits(body)
   if (violations.length === 0) return
   refuse(
@@ -214,7 +217,7 @@ export function prCreateCommand(args: string[]): void {
     branch
   })
   if (errors.length > 0) refuse(errors)
-  refuseOnBareDigits(body, branch, RETRY_CREATE)
+  refuseOnBareDigits(body, RETRY_CREATE)
 
   if (validateOnly) {
     reportPass(json, 'pr create')
@@ -272,7 +275,7 @@ export function prEditCommand(args: string[]): void {
     branch
   })
   if (errors.length > 0) refuse(errors)
-  if (body !== null) refuseOnBareDigits(body, branch, RETRY_EDIT)
+  if (body !== null) refuseOnBareDigits(body, RETRY_EDIT)
 
   if (validateOnly) {
     reportPass(json, 'pr edit')

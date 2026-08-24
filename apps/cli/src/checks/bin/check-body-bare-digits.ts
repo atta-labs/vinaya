@@ -26,6 +26,17 @@
  * `isChangesetsReleasePr`'s own doc comment (`@attalabs/aeg-core`) for the
  * full reasoning, and `vinaya-body-checks.yml`'s header for the workflow
  * side of the same boundary `vinaya-review.yml` already established.
+ *
+ * `packages/aeg-core/bin/open-pr.ts` is a second, non-CI caller of this same
+ * bin — a local/agent CLI invocation before the write, not a GitHub Actions
+ * trigger, so the `pull_request` vs `pull_request_target` boundary above
+ * does not apply to it. It carries its own narrower obligation instead:
+ * `PR_NUMBER` must be set explicitly on every call, never left to inherit
+ * from the calling shell's environment, because this check's exemption never
+ * verifies that the PR it fetches by that number is the PR whose body it was
+ * handed via `PR_BODY` — an unscrubbed ambient `PR_NUMBER` would exempt
+ * today's body on a stranger's identity. See the call site's own comment for
+ * how it satisfies that.
  */
 
 import { execFileSync } from 'node:child_process'

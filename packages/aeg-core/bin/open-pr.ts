@@ -211,6 +211,19 @@ export type GateStep = 'verify-brief' | 'verify-docs' | 'body-bare-digits' | 'cl
  * `bun` subprocess calls. `main()` below is the only thing that turns this
  * plan into actual `runGate` invocations.
  */
+/**
+ * The env for the `body-bare-digits` subprocess — pulled out to a pure
+ * function for the same reason `gatePlanForBranch` is: it is independently
+ * fixture-tested without spawning `bun` or mocking `gh`. `PR_NUMBER` is
+ * always a key in the returned object, never left absent for
+ * `{...process.env, ...env}` to fill in from whatever the calling shell
+ * happens to hold — see the call site's comment for why an inherited value
+ * would be a real cross-PR exemption bug, not a cosmetic one.
+ */
+export function bareDigitsGateEnv(body: string, editPrNumber: number | null): Record<string, string> {
+  return { PR_BODY: body, PR_NUMBER: editPrNumber !== null ? String(editPrNumber) : '' }
+}
+
 export function gatePlanForBranch(branch: string): GateStep[] {
   // `body-bare-digits` runs on EVERY branch, task or not. It is `requiresOpenPr`,
   // so the ring-0 hooks skip it — there is no PR body at commit time — and until
@@ -287,7 +300,15 @@ export function main(): void {
         // The scanner lives in `apps/cli`, which `aeg-core`'s bin cannot import,
         // so run its bin as a subprocess — the same shape every other gate here
         // uses, and the same source the shipped check is built from.
-        runGate('body-bare-digits', 'apps/cli/src/checks/bin/check-body-bare-digits.ts', [], { PR_BODY: body })
+        //
+        // See `bareDigitsGateEnv`'s own comment for why `PR_NUMBER` must
+        // never be left to `runGate`'s `...process.env` passthrough.
+        runGate(
+          'body-bare-digits',
+          'apps/cli/src/checks/bin/check-body-bare-digits.ts',
+          [],
+          bareDigitsGateEnv(body, editPrNumber)
+        )
       } else if (step === 'closes-n') {
         runGate('Closes #N', 'packages/aeg-core/bin/verify-coherence.ts', ['--closes-n'], {
           BRANCH: branch,
