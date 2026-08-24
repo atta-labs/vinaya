@@ -168,6 +168,35 @@ function factsFromLegacyMilestone(milestone: GhMilestone): MilestoneFacts {
 }
 
 /**
+ * `matchesLegacyMilestone`'s "kept forever, no exception" title match was
+ * written for a Milestone that never changes underneath a slug — true for
+ * every pre-migration Milestone, false the moment `vinaya milestone adopt`
+ * exists. `adopt` closes the old 1:1 Milestone (never deletes it — the
+ * retired-Milestone provenance is deliberate) and reattaches that slug's
+ * real Issues to a different, still-open Milestone. The old Milestone still
+ * legacy-matches by title, is still closed, and `factsFromLegacyMilestone`
+ * still reads that as `complete` forever — even though the tranche's real
+ * work is active somewhere else. Measured live on `vinaya-agentic-interface-v1`:
+ * Milestone #7 (legacy title match) closed, 0 native issues; the label's
+ * real Issues (#150–152, two open) live under Milestone #13 "Flows become
+ * files" — every reader using the legacy path alone reported the tranche
+ * `complete` with zero active tranches left in the whole repo.
+ *
+ * `labelIssues` — this slug's own `vinaya/tranche:<slug>`-labeled Issues,
+ * fetched regardless of legacy status now — is the tiebreak: when it is
+ * non-empty, the label is this tranche's real, current identity and wins
+ * over the Milestone's own (possibly stale) `state`. An empty label set
+ * means genuinely nothing lives under the label — either a pre-label-model
+ * historical tranche (the original ~57 Milestones this function was written
+ * for) or a legacy Milestone nobody has adopted away from — and the
+ * Milestone's own `state` is still the right, and only available, answer.
+ */
+function resolveLegacyFacts(milestone: GhMilestone, labelIssues: GhIssue[]): MilestoneFacts {
+  if (labelIssues.length > 0) return { goal: milestone.description ?? '', lifecycle: lifecycleFromIssues(labelIssues) }
+  return factsFromLegacyMilestone(milestone)
+}
+
+/**
  * The new-path lifecycle rule (§2 of Issue #191): `planned` when the label
  * carries no Issues yet, `active` when any is open, `complete` when at least
  * one exists and every one is closed. The at-least-one guard is not
@@ -207,9 +236,9 @@ function goalFromMilestones(milestones: GhMilestone[], slug: string): string {
 export function findMilestoneForSlug(owner: string, repo: string, slug: string): MilestoneFacts | null {
   const milestones = ghApiGet<GhMilestone[]>(`repos/${owner}/${repo}/milestones?state=all&per_page=100`)
   const legacy = matchesLegacyMilestone(milestones, slug)
-  if (legacy) return factsFromLegacyMilestone(legacy)
-
   const issues = ghIssueListByLabel(owner, repo, trancheLabel(slug))
+  if (legacy) return resolveLegacyFacts(legacy, issues)
+
   return { goal: goalFromMilestones(milestones, slug), lifecycle: lifecycleFromIssues(issues) }
 }
 
@@ -263,12 +292,12 @@ export function listActiveTrancheSlugs(owner: string, repo: string): ActiveTranc
   const active: ActiveTrancheRef[] = []
   for (const slug of slugs) {
     const legacy = matchesLegacyMilestone(milestones, slug)
+    const issues = ghIssueListByLabel(owner, repo, trancheLabel(slug))
     if (legacy) {
-      const facts = factsFromLegacyMilestone(legacy)
+      const facts = resolveLegacyFacts(legacy, issues)
       if (facts.lifecycle === 'active') active.push({ slug, goal: facts.goal })
       continue
     }
-    const issues = ghIssueListByLabel(owner, repo, trancheLabel(slug))
     if (lifecycleFromIssues(issues) === 'active') active.push({ slug, goal: goalFromMilestones(milestones, slug) })
   }
   return active
@@ -289,12 +318,12 @@ export function listArchivedTrancheSlugs(owner: string, repo: string): ActiveTra
   const archived: ActiveTrancheRef[] = []
   for (const slug of slugs) {
     const legacy = matchesLegacyMilestone(milestones, slug)
+    const issues = ghIssueListByLabel(owner, repo, trancheLabel(slug))
     if (legacy) {
-      const facts = factsFromLegacyMilestone(legacy)
+      const facts = resolveLegacyFacts(legacy, issues)
       if (facts.lifecycle === 'complete') archived.push({ slug, goal: facts.goal })
       continue
     }
-    const issues = ghIssueListByLabel(owner, repo, trancheLabel(slug))
     if (lifecycleFromIssues(issues) === 'complete') archived.push({ slug, goal: goalFromMilestones(milestones, slug) })
   }
   return archived
@@ -310,14 +339,14 @@ export function listArchivedTrancheSlugs(owner: string, repo: string): ActiveTra
  * Two calls are paid once regardless of tranche count — the Milestone list
  * and the label list, both paginated (`ghApiGetAllPagesAsync`, unlike the
  * three single-purpose sync readers above, which stay on the un-paginated
- * `ghApiGet` they always used). What is NOT free: a label-derived (non-legacy)
- * slug's Issues still need their own fetch, since Issue state is the only
- * source of that slug's lifecycle. Those run concurrently
- * (`Promise.all`), not one after another — the same discipline
- * `verify-coherence.ts`'s sweep already applies to its own per-slug fetches.
- *
- * Legacy slugs pay nothing beyond the two up-front fetches — their facts
- * come from the Milestone list alone, exactly as before this task.
+ * `ghApiGet` they always used). Both legacy AND label-derived slugs need
+ * their own Issues fetch now — see `resolveLegacyFacts`'s doc comment for
+ * why a legacy slug is no longer free: `vinaya milestone adopt` closes the
+ * old 1:1 Milestone without deleting it, so its title still legacy-matches
+ * while the tranche's real Issues move to a different, still-open Milestone.
+ * All fetches run concurrently (`Promise.all`), not one after another — the
+ * same discipline `verify-coherence.ts`'s sweep already applies to its own
+ * per-slug fetches.
  */
 export async function indexTrancheMilestonesAsync(owner: string, repo: string): Promise<TrancheMilestoneIndex> {
   // Paginated: Milestones and labels are both append-only in practice
@@ -333,27 +362,30 @@ export async function indexTrancheMilestonesAsync(owner: string, repo: string): 
   const archived: ActiveTrancheRef[] = []
   const facts = new Map<string, MilestoneFacts>()
   const legacySlugs = new Set<string>(slugShapedTitles(milestones))
-
-  for (const m of milestones) {
-    // Skip a free-text-titled (Architect) Milestone entirely — it is not a
-    // tranche and must not be indexed as one. See `slugShapedTitles`'s doc
-    // comment.
-    if (!legacySlugs.has(m.title)) continue
-    const ref = { slug: m.title, goal: m.description ?? '' }
-    const f = factsFromLegacyMilestone(m)
-    if (f.lifecycle === 'complete') archived.push(ref)
-    else active.push(ref)
-    facts.set(m.title, f)
-  }
+  const legacyMilestoneBySlug = new Map<string, GhMilestone>(
+    milestones.filter((m) => legacySlugs.has(m.title)).map((m) => [m.title, m])
+  )
 
   const newPathSlugs = trancheSlugsFromLabels(labels).filter((slug) => !legacySlugs.has(slug))
   const uniqueNewPathSlugs = [...new Set(newPathSlugs)]
-  const fetchedIssues = await Promise.all(
-    uniqueNewPathSlugs.map((slug) => ghIssueListByLabelAsync(owner, repo, trancheLabel(slug)))
-  )
 
+  const uniqueLegacySlugs = [...legacySlugs]
+  const [legacyIssuesBySlug, newPathIssuesBySlug] = await Promise.all([
+    Promise.all(uniqueLegacySlugs.map((slug) => ghIssueListByLabelAsync(owner, repo, trancheLabel(slug)))),
+    Promise.all(uniqueNewPathSlugs.map((slug) => ghIssueListByLabelAsync(owner, repo, trancheLabel(slug))))
+  ])
+
+  uniqueLegacySlugs.forEach((slug, i) => {
+    const m = legacyMilestoneBySlug.get(slug)
+    if (!m) return
+    const ref = { slug, goal: m.description ?? '' }
+    const f = resolveLegacyFacts(m, legacyIssuesBySlug[i] ?? [])
+    if (f.lifecycle === 'complete') archived.push(ref)
+    else if (f.lifecycle === 'active') active.push(ref)
+    facts.set(slug, f)
+  })
   uniqueNewPathSlugs.forEach((slug, i) => {
-    const issues = fetchedIssues[i] ?? []
+    const issues = newPathIssuesBySlug[i] ?? []
     const lifecycle = lifecycleFromIssues(issues)
     const goal = goalFromMilestones(milestones, slug)
     const f: MilestoneFacts = { goal, lifecycle }
