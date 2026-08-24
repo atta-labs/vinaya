@@ -153,3 +153,88 @@ export function checkMilestoneShape(body: string): MilestoneShapeResult {
   if (errors.length > 0) return { status: 'fail', errors }
   return { status: 'pass', goal, release: release.value, intents }
 }
+
+// ---------------------------------------------------------------------------
+// `vinaya milestone adopt` (vinaya-milestone-migration-v1 task 1) — checkAdoptable
+// ---------------------------------------------------------------------------
+
+/**
+ * One requested slug's forge facts, gathered by the CLI before any write.
+ * `checkAdoptable` never fetches — the caller does one bounded round of
+ * reads (the repo's label list, the repo's Milestone list, and one
+ * `vinaya/tranche:<slug>`-labeled Issue list per requested slug) and hands
+ * the results in as plain data.
+ */
+export type AdoptSlugFacts = {
+  slug: string
+  /** Whether `vinaya/tranche:<slug>` exists as a real label in this repo. */
+  labelExists: boolean
+  /** Issue numbers currently carrying the label, any state. */
+  issueNumbers: number[]
+  /**
+   * Native-milestone titles this slug's Issues are CURRENTLY attached to,
+   * excluding `null` (unattached — the ordinary state for a label-only
+   * tranche that has never been adopted), the slug itself (its own legacy
+   * 1:1 tranche-Milestone — the ordinary pre-adopt state for a
+   * legacy-titled tranche), and the requested target (already adopted here,
+   * a harmless no-op re-run). What remains is exactly "attached to some
+   * OTHER Milestone" — evidence of a prior `adopt` into a different target.
+   * Empty when none.
+   */
+  adoptedElsewhere: string[]
+}
+
+/** The target Milestone's forge facts. */
+export type AdoptTargetFacts = {
+  title: string
+  exists: boolean
+  state: 'open' | 'closed' | null
+}
+
+export type AdoptFacts = {
+  target: AdoptTargetFacts
+  slugs: AdoptSlugFacts[]
+}
+
+export type AdoptResult = { status: 'pass' } | { status: 'fail'; errors: string[] }
+
+/**
+ * Refuses an `adopt` invocation before any forge write. Four independent
+ * checks — an unknown slug, a slug whose label carries no Issues, a target
+ * that does not exist or is closed, and a slug already adopted into a
+ * different Milestone — evaluated over the WHOLE batch of requested slugs at
+ * once, so one bad slug in a multi-slug invocation blocks every slug in that
+ * invocation, not just its own: a half-applied adopt leaves Issues split
+ * across two Milestones with no undo. Pure: takes already-gathered facts,
+ * fetches nothing, writes nothing.
+ */
+export function checkAdoptable(facts: AdoptFacts): AdoptResult {
+  const errors: string[] = []
+
+  if (!facts.target.exists) {
+    errors.push(
+      `milestone-adopt target: Milestone "${facts.target.title}" does not exist — create it first with \`vinaya milestone create\`.`
+    )
+  } else if (facts.target.state === 'closed') {
+    errors.push(`milestone-adopt target: Milestone "${facts.target.title}" is closed — adopt requires an open target.`)
+  }
+
+  for (const s of facts.slugs) {
+    if (!s.labelExists) {
+      errors.push(`milestone-adopt unknown-slug: no \`vinaya/tranche:${s.slug}\` label exists in this repo.`)
+      continue
+    }
+    if (s.issueNumbers.length === 0) {
+      errors.push(`milestone-adopt no-issues: \`vinaya/tranche:${s.slug}\` carries no Issues — nothing to adopt.`)
+      continue
+    }
+    if (s.adoptedElsewhere.length > 0) {
+      errors.push(
+        `milestone-adopt already-adopted: "${s.slug}" is already adopted into "${s.adoptedElsewhere.join('", "')}" — adopt it from there, not from here.`
+      )
+    }
+  }
+
+  if (errors.length > 0) return { status: 'fail', errors }
+  return { status: 'pass' }
+}
