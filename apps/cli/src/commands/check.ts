@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { dirname } from 'node:path'
 import { emitCheckError, type CheckError, type CheckOutcome, type CheckSpec } from '../checks/contract'
 import { coreCheckRegistry, runsUnderAll } from '../checks/registry'
 import {
@@ -10,8 +11,10 @@ import {
   type ResolveResult
 } from '../checks/resolver'
 import { defaultParallelism, runChecks } from '../checks/runner'
-import { type ConfigLoadResult, loadConfigChecked } from '../lib/config'
+import { type ConfigLoadResult, configPath, loadConfigChecked } from '../lib/config'
 import { printJson } from '../lib/envelope'
+import { buildRolePlan, type RolePlan } from '../roles/plan'
+import type { RoleResolutionState } from '../roles/resolver'
 
 // Array-form execFileSync — no shell, so `base` (env-controlled) is passed
 // to git as an inert literal argv element, never shell-interpreted.
@@ -55,7 +58,22 @@ type PlanJsonOutput = {
       scope: CheckSpec['scope']
     }
   >
-  roles: { available: false; reason: string }
+  roles:
+    | {
+        available: true
+        resolved: Record<
+          string,
+          {
+            state: RoleResolutionState
+            source: 'core' | 'config'
+            rendersAs: string
+            title: string
+            gating: 'core' | 'inert'
+          }
+        >
+        errors: Array<{ key: string; reason: string }>
+      }
+    | { available: false; reason: string }
   errors: ResolveResult['failures']
 }
 
@@ -69,10 +87,12 @@ function classifyEnvValue(value: true | { optional: true } | { anyOf: string[] }
 /**
  * `--plan --json`'s resolver-failure surface — a top-level `errors` array so
  * a FAIL_CLOSED entry is never dropped from the JSON the way it isn't
- * dropped from the human table. `roles` stays an explicit degraded
- * placeholder: role resolution/registration is task 6's job, not this one.
+ * dropped from the human table. `roles` is the resolved role registry
+ * (`available: true`) once a doctrine source resolves, or an explicit
+ * degraded placeholder naming why it couldn't (`available: false`) — see
+ * `../roles/plan.ts`.
  */
-function renderPlanJson(result: ResolveResult): PlanJsonOutput {
+function renderPlanJson(result: ResolveResult, rolePlan: RolePlan): PlanJsonOutput {
   const checks: PlanJsonOutput['checks'] = {}
   for (const entry of result.resolved) {
     const env: Record<string, EnvLabel> = {}
@@ -86,10 +106,30 @@ function renderPlanJson(result: ResolveResult): PlanJsonOutput {
     }
     checks[entry.name] = { state: entry.state, source: entry.source, env, envAnyOf, scope: entry.spec.scope }
   }
+
+  const roles: PlanJsonOutput['roles'] = rolePlan.available
+    ? {
+        available: true,
+        resolved: Object.fromEntries(
+          rolePlan.resolved.map((r) => [
+            r.name,
+            {
+              state: r.state,
+              source: r.source,
+              rendersAs: r.renderId,
+              title: r.contract.title,
+              gating: r.inertToGating ? ('inert' as const) : ('core' as const)
+            }
+          ])
+        ),
+        errors: rolePlan.failures
+      }
+    : { available: false, reason: rolePlan.reason }
+
   return {
     schema: 1,
     checks,
-    roles: { available: false, reason: 'role resolution not implemented yet — see task 6' },
+    roles,
     errors: result.failures
   }
 }
@@ -116,6 +156,26 @@ function renderPlanTable(result: ResolveResult): string {
   const header = ['NAME', 'STATE', 'SOURCE', 'ENV']
   const rows = result.resolved.map((entry) => [entry.name, entry.state, entry.source, envCellFor(entry.spec)])
   const failureRows = result.failures.map((f) => [f.key, 'FAILED', '—', f.reason])
+  const table = [header, ...rows, ...failureRows]
+  const widths = header.map((_, col) => Math.max(...table.map((row) => row[col]?.length ?? 0)))
+  return table.map((row) => row.map((cell, col) => (cell ?? '').padEnd(widths[col] ?? 0)).join('  ')).join('\n')
+}
+
+/**
+ * The roles half of `--plan`'s human table — a `RENDERS AS` column, because
+ * the registry key (`NAME`) an entry is addressed by and the role id it
+ * actually renders as are different identifiers once an additive role is
+ * involved (`acme/qa-lead` registers as that whole key, renders as
+ * `qa-lead`). `GATING` names whether the resolved role participates in core
+ * enforcement (`core`, every `default`/`overridden` entry) or is
+ * documentation-only (`inert`, every `additive` entry — no core `ACTIONS`
+ * wiring exists for a render id core doctrine never declared).
+ */
+function renderRolesTable(rolePlan: RolePlan): string {
+  if (!rolePlan.available) return `roles: unavailable — ${rolePlan.reason}`
+  const header = ['NAME', 'STATE', 'SOURCE', 'RENDERS AS', 'GATING']
+  const rows = rolePlan.resolved.map((r) => [r.name, r.state, r.source, r.renderId, r.inertToGating ? 'inert' : 'core'])
+  const failureRows = rolePlan.failures.map((f) => [f.key, 'FAILED', '—', '—', f.reason])
   const table = [header, ...rows, ...failureRows]
   const widths = header.map((_, col) => Math.max(...table.map((row) => row[col]?.length ?? 0)))
   return table.map((row) => row.map((cell, col) => (cell ?? '').padEnd(widths[col] ?? 0)).join('  ')).join('\n')
@@ -234,15 +294,22 @@ export async function checkCommand(args: string[]): Promise<void> {
   const positional = args.filter((a) => !a.startsWith('--'))
   const requestedName = positional[0]
 
-  const { result, refusals } = resolveForRun(loadConfigChecked())
+  const configResult = loadConfigChecked()
+  const { result, refusals } = resolveForRun(configResult)
 
   if (planRequested) {
+    const configFilePath = configResult.ok ? configPath() : configResult.path
+    const rolePlan = await buildRolePlan(
+      configFilePath ? dirname(configFilePath) : null,
+      configResult.ok ? configResult.config?.roles : undefined
+    )
     if (jsonOutput) {
-      process.stdout.write(`${JSON.stringify(renderPlanJson(result), null, 2)}\n`)
+      process.stdout.write(`${JSON.stringify(renderPlanJson(result, rolePlan), null, 2)}\n`)
     } else {
-      process.stdout.write(`${renderPlanTable(result)}\n`)
+      process.stdout.write(`${renderPlanTable(result)}\n\n${renderRolesTable(rolePlan)}\n`)
     }
-    process.exitCode = result.failures.length > 0 ? 1 : 0
+    const roleFailureCount = rolePlan.available ? rolePlan.failures.length : 0
+    process.exitCode = result.failures.length > 0 || roleFailureCount > 0 ? 1 : 0
     return
   }
 

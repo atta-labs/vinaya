@@ -102,6 +102,23 @@ The one exception is a key that exactly matches a **core** check id: that is an 
 
 Glob scoping (`include`) is permitted; conditional logic (`if`/`unless`/`except`) is **never** part of this grammar — see the check-contract quick reference below for the full grammar and the error contract every registered `run` executable must honor.
 
+## Roles config
+
+Per-role override and additive-role registration works the same way `checks` does, under `vinaya.config.json`'s own `roles` key — one entry per role, each naming a `contract`: a markdown file, structurally validated against the same shape a bundled role doc carries (`role_id`, `description`, `actor`, `performs`, `refuses_when`, `summary` in frontmatter, plus `title` and `order`, plus a non-empty `## The short version` body section):
+
+```json
+{
+  "roles": {
+    "security": { "contract": "./roles/custom-security.md" },
+    "acme/qa-lead": { "contract": "./roles/qa-lead.md" }
+  }
+}
+```
+
+A key that exactly matches a **core** role id (`developer`, `security`, and the rest of the bundled doctrine roles) is an override — a **complete replacement**, never a frontmatter patch — whose contract's own `role_id` must equal that key exactly. Any other key must be namespaced `<yourname>/<id>`, same grammar as `checks`, and is additive — its contract's own `role_id` must equal the key's post-`/` segment exactly, and that render id must not collide with a core role id or another additive role's render id. Unlike `checks`, there is no grace period here: a malformed entry (a shape violation, a `role_id` mismatch, a collision, a bare unnamespaced key) fails closed immediately, since `roles` config has no legacy population a warn window would need to keep working. `contract` is a path, resolved relative to `vinaya.config.json`'s own directory — a bare filename with no `/` is rejected at load, the same discipline `checks.run`'s executable path does not need but a file **read** benefits from. Only registrable from a repo-local `vinaya.config.json`; a global `~/.vinaya/config.json`'s `roles` key is stripped at load time, since a role contract becomes agent-facing doctrine (`vinaya doctrine --role` hands it to a third-party agent tool as operating instructions).
+
+Run `vinaya check --plan` to see the resolved role registry before anything renders from it — a `RENDERS AS` column (the registry key and the role's own `role_id` differ once an additive entry is namespaced) and a `GATING` column (`core` for a `default`/`overridden` role, `inert` for an `additive` one — no core `ACTIONS` wiring exists for a render id core doctrine never declared).
+
 ## Check contract — quick reference
 
 Full field-by-field reference: [vinaya.attalabs.dev/docs/cli](https://vinaya.attalabs.dev/docs/cli). The short version — what an executable must do to be a valid check:

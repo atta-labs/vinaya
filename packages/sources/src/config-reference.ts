@@ -177,6 +177,31 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       'Never put a secret in a literal. `env` values live in a COMMITTED file, reviewed like any other code change — a literal is for fixed, non-sensitive values only (e.g. `"NODE_ENV": "test"`), never a token or credential. `vinaya doctor` warns on a high-entropy literal (looks like a leaked secret) and on a literal `"true"`/`"false"` string (almost certainly meant as the boolean passthrough form instead) as a backstop, but review is the real defense — do not rely on the linter to catch every case.'
   },
   {
+    key: 'roles',
+    type: 'Record<string, RoleEntry> (optional)',
+    semantics: [
+      'Per-role override and additive-role registration, keyed by config key. Each entry names a `contract`: a markdown file, structurally validated the same way a core role doc is — six frontmatter keys (`role_id`, `description`, `actor`, `performs`, `refuses_when`, `summary`), plus `title` and `order`, plus a non-empty "## The short version" body section.',
+      "A key that exactly matches a core role id is an **override attempt** (a COMPLETE replacement of that role — never a patch, no frontmatter inheritance — whose contract's own `role_id` must equal the config key exactly); any other key must be namespaced `<yourname>/<id>` (exactly one `/`, both segments `[a-z0-9][a-z0-9-]*`, the `vinaya` prefix reserved) and is **additive**, whose contract's own `role_id` must equal the key's post-\"/\" segment exactly. A bare key matching no core role id is a config error.",
+      'Unlike `checks`, there is deliberately NO grace period for a malformed entry — roles config is wholly new, with no legacy population a warn window would need to keep alive, so every malformed variant fails closed from day one.',
+      "An additive role's own `role_id` (its \"render id\" — what every renderer, `vinaya check --plan`'s RENDERS AS column included, actually shows) must not collide with a core role id or with another additive role's render id; either collision is a config error naming both colliding keys.",
+      "Registered from a repo-local `vinaya.config.json` only — a global `~/.vinaya/config.json`'s `roles` key is stripped at load time with a loud stderr warning, never resolved, because a role contract is agent-facing doctrine (`vinaya doctrine --role` hands it to a third-party agent tool as operating instructions), and which contract a role name resolves to must come from the reviewed, committed repo file."
+    ],
+    example: `{
+  "roles": {
+    "developer": { "contract": "./roles/custom-developer.md" },
+    "acme/qa-lead": { "contract": "./roles/qa-lead.md" }
+  }
+}`
+  },
+  {
+    key: 'roles.contract',
+    type: 'string',
+    semantics: [
+      'A PATH to the role\'s markdown contract, resolved relative to this `vinaya.config.json`\'s own directory. PATH-ONLY: a slash-free value (a bare filename like `"developer.md"`) is rejected at load — it must read as a path, never a bare role id.'
+    ],
+    example: `{ "contract": "./roles/custom-developer.md" }`
+  },
+  {
     key: 'briefSchema',
     type: 'object (optional)',
     semantics: [
@@ -356,10 +381,55 @@ export const PLAN_JSON_SCHEMA: readonly PlanJsonField[] = [
   },
   {
     key: 'roles',
-    type: '{ available: false, reason: string }',
+    type: '{ available: true, resolved: Record<name, {...}>, errors: RoleResolverFailure[] } | { available: false, reason: string }',
     semantics: [
-      'An explicit degraded placeholder — role resolution/registration is not implemented yet. Not the shape roles will render once that lands; do not build against this as a stable contract.'
+      '`available: false` only when no bundled doctrine can be found next to this CLI install (nothing to resolve core roles against) — `reason` names why. Otherwise `available: true`, with the fully resolved role registry.'
     ]
+  },
+  {
+    key: 'roles.resolved.<name>.state',
+    type: `'default' | 'overridden' | 'additive'`,
+    semantics: [
+      '`default`: a core doctrine role, unmodified. `overridden`: a config entry currently claims this (core) role id and satisfies its contract. `additive`: a wholly new, namespaced role.'
+    ]
+  },
+  {
+    key: 'roles.resolved.<name>.source',
+    type: `'core' | 'config'`,
+    semantics: [
+      "Where the resolved contract came from — bundled doctrine (`core`) or `vinaya.config.json`'s `roles` (`config`)."
+    ]
+  },
+  {
+    key: 'roles.resolved.<name>.rendersAs',
+    type: 'string',
+    semantics: [
+      'The role\'s own `role_id` — the identifier every downstream consumer actually sees. Equal to `<name>` for `default`/`overridden`; the post-"/" segment of `<name>` for `additive` (the registry-id/render-id decoupling that lets `acme/qa-lead` register under that whole key but render as `qa-lead`).'
+    ]
+  },
+  {
+    key: 'roles.resolved.<name>.title',
+    type: 'string',
+    semantics: ["The resolved contract's own `title` frontmatter."]
+  },
+  {
+    key: 'roles.resolved.<name>.gating',
+    type: `'core' | 'inert'`,
+    semantics: [
+      "`core` for every `default`/`overridden` entry — it participates in core enforcement (doctrine's own `ACTIONS.performedBy` wiring). `inert` for every `additive` entry — documentation-only, since no core `ACTIONS` entry can name a render id core doctrine never declared."
+    ]
+  },
+  {
+    key: 'roles.errors',
+    type: 'RoleResolverFailure[]',
+    semantics: [
+      "Every role-resolution failure (a malformed `roles` entry, a `role_id` mismatch, a render-id collision, a bare key matching no core role id) — rendered inline, never dropped. Non-empty `roles.errors` makes `--plan`'s own exit code non-zero, same as a non-empty top-level `errors` does for `checks`."
+    ]
+  },
+  {
+    key: 'roles.reason',
+    type: 'string',
+    semantics: ['Present only when `roles.available` is `false` — why no doctrine could be resolved.']
   },
   {
     key: 'errors',
