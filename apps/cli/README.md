@@ -82,6 +82,10 @@ On that legacy `.git/hooks` layout, note where the hook actually lives: hooks ar
 
 The emitter that will generate skill pointers under `.agents/skills/vinaya-<role>/SKILL.md`, for tools natively scanning `.agents/skills/` (Codex, Antigravity, Grok Build), is built — `vinaya init` does not call it yet. Each file, once wired, is a 3-line pointer delegating to `vinaya doctrine --role <role>` at read time. User-facing flag, `init`/`upgrade`/`eject`/`doctor` wiring, and the `--agents` selection flag land in #152.
 
+## Gemini CLI command
+
+The emitter that will generate `.gemini/commands/vinaya.toml`, Gemini CLI's own custom-command surface, is built — `vinaya init` does not call it yet. It emits ONE parameterized command, invoked `/vinaya <role>`, whose `prompt` field embeds `!{vinaya doctrine --role {{args}}}`: Gemini CLI substitutes the typed role into `{{args}}`, shell-escaping it automatically, before running the shell block — and it always prompts the user to confirm the exact resolved command first, with no documented bypass. Role-argument validation stays in `vinaya doctrine --role` alone (`commands/doctrine.ts`), not duplicated here. `init`/`upgrade`/`eject`/`doctor` wiring lands in #152.
+
 Custom checks register under `checks`, one entry per check. **Every key must be namespaced `<yourname>/<id>`** — exactly one `/`, both segments matching `[a-z0-9][a-z0-9-]*`, with `vinaya` reserved as a prefix:
 
 ```json
