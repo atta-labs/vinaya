@@ -26,10 +26,12 @@ import {
 } from '@attalabs/aeg-core'
 import {
   buildInitOps,
+  CHECKS_FOLDER_PLACEHOLDER_PATH,
   CONFIG_PATH,
   DOCTRINE_POINTER_PATH,
   type HookDir,
   type InitContext,
+  ROLES_FOLDER_PLACEHOLDER_PATH,
   starterConfig,
   TRACKED_HOOK_DIR
 } from '../lib/artifacts.js'
@@ -136,6 +138,7 @@ function labelForPath(path: string): string {
   if (path.startsWith('.agents/skills/')) return 'agent-skills'
   if (path === CLAUDE_COMMAND_PATH) return 'claude-command'
   if (path === GEMINI_COMMAND_PATH) return 'gemini-command'
+  if (path === CHECKS_FOLDER_PLACEHOLDER_PATH || path === ROLES_FOLDER_PLACEHOLDER_PATH) return 'scaffold-folders'
   return 'workflows'
 }
 

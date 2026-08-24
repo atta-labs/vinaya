@@ -14,6 +14,8 @@ import { initCommand, initProductCommand } from './commands/init.js'
 import { issueCreateCommand, issueEditCommand } from './commands/issue.js'
 import { milestoneAdoptCommand, milestoneCreateCommand } from './commands/milestone.js'
 import { newCheckCommand } from './commands/new-check.js'
+import { newNoopCheckCommand } from './commands/new-noop-check.js'
+import { newRoleCommand } from './commands/new-role.js'
 import { prCreateCommand, prEditCommand } from './commands/pr.js'
 import { prReportCommand } from './commands/pr-report.js'
 import { quickstartCommand } from './commands/quickstart.js'
@@ -100,8 +102,12 @@ try {
       const [subcommand, ...rest] = args
       if (subcommand === 'check') {
         newCheckCommand(rest)
+      } else if (subcommand === 'noop-check') {
+        newNoopCheckCommand(rest)
+      } else if (subcommand === 'role') {
+        newRoleCommand(rest)
       } else {
-        console.error(`Unknown 'new' subcommand: ${subcommand ?? '(none)'}`)
+        console.error(`Unknown 'new' subcommand: ${subcommand ?? '(none)'} (expected 'check', 'noop-check', or 'role')`)
         process.exit(2)
       }
       break

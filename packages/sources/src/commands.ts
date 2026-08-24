@@ -41,6 +41,7 @@ export const COMMANDS: readonly Command[] = [
       'It detects your repo, prints the complete diff of every intended change, and waits for your confirmation before installing anything. `--dry-run` prints that same diff and installs nothing. Nothing ever runs automatically on package install.',
       'It installs one CI workflow that runs `vinaya check --all --diff-only`, alongside your existing workflows — refusing to overwrite rather than touching foreign content already at that path. Git hook stubs invoke the `vinaya` binary directly; if a hook already exists, it appends a delimited managed block, shown verbatim in the diff first, rather than overwriting it.',
       "`vinaya.config.json` is seeded with a starter ruleset extracted from Vinaya's own battle-tested gates, not invented defaults. Issue and PR templates carrying the brief schema are added alongside your own; tier and `needs:*-input` labels are created only if they don't already exist — your existing labels are never modified.",
+      'Two empty folders — `vinaya/checks/` and `vinaya/roles/` — are scaffolded alongside the config, each held open by a placeholder file (git does not track empty directories). `vinaya new noop-check` and `vinaya new role` write their real output into these folders later; both placeholders are recorded in the ownership manifest, so `eject` removes them exactly like everything else `init` created.',
       'The generated workflows reach the `vinaya` binary through `npx @attalabs/vinaya`, with no build step — unless your repo vendors the CLI itself (a workspace member declaring the name `@attalabs/vinaya`), in which case `npx` would resolve to that unbuilt local member instead of the registry. `init` detects that at generation time and writes workflows that build and run your own copy by path instead, so your CI exercises the code in the pull request. `upgrade` and `doctor` make the same determination, so regenerating is stable.',
       'The recommended branch-protection command is printed for you to run yourself — it is never applied, and your PATH is never touched. `eject` removes exactly the managed block it owns, or a whole file only if `init` created it.'
     ],
@@ -94,6 +95,22 @@ export const COMMANDS: readonly Command[] = [
     description: 'Scaffold a custom check into ./scripts/vinaya-checks/',
     details: [
       'Takes the REGISTRATION KEY, not a bare name: `vinaya new check <yourname>/<id>` writes `./scripts/vinaya-checks/<id>.ts` and prints the namespaced `checks` entry to paste. It refuses a bare, un-namespaced name — `vinaya check` refuses its entire run over a key it cannot resolve, so scaffolding one would brick every check invocation in the repo — and refuses a core check id, since registering one REPLACES that core gate and a scaffolded stub is never what an adopter means by that.'
+    ],
+    status: 'shipped'
+  },
+  {
+    name: 'new noop-check',
+    description: 'Scaffold an explicit no-op into vinaya/checks/ that silences a core check',
+    details: [
+      'Takes a CORE check id — the opposite of what `new check` accepts, which refuses one. `vinaya new noop-check <core-check-id>` writes `vinaya/checks/<id>.ts`, an explicit, contract-satisfying no-op (always exits `0`, emits no findings, carries a comment marking the silencing as intentional) and prints the `checks` entry that REPLACES the named core check with it. This is the only sanctioned way to silence a core check.'
+    ],
+    status: 'shipped'
+  },
+  {
+    name: 'new role',
+    description: 'Scaffold an additive role contract into vinaya/roles/',
+    details: [
+      'Takes the REGISTRATION KEY: `vinaya new role <yourname>/<id>` writes `vinaya/roles/<id>.md` — a structurally-valid role contract stub (the six frontmatter keys plus `title`/`order`, and a non-empty "## The short version" section) whose own `role_id` is set to `<id>` — and prints the `roles` entry to paste. It refuses a bare, un-namespaced key: that shape resolves as an OVERRIDE of a core role, a complete replacement of that role\'s contract and a real governance decision this scaffolder does not make for you.'
     ],
     status: 'shipped'
   },

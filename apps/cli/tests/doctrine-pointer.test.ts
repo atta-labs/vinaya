@@ -110,9 +110,10 @@ describe('doctrine pointer content (atta-labs/vinaya#41 — honest adopter entry
     expect(content).toContain('vinaya check --plan')
     expect(content).toContain('vinaya doctor')
     expect(content).toContain('vinaya new check')
-    // `vinaya new role` is not shipped yet (task 8) — must not be named as
-    // though usable (the #684 trap this task supersedes).
-    expect(content).not.toContain('new role')
+    // `vinaya new role` and `vinaya new noop-check` shipped in task 8 (#42) —
+    // named here now that they're real, dispatchable commands.
+    expect(content).toContain('vinaya new role')
+    expect(content).toContain('vinaya new noop-check')
   })
 
   it('carries the security paragraph: env allowlist, literal-never-secret, audit-trail caveat', () => {

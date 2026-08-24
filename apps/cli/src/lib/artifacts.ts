@@ -89,9 +89,26 @@ export const REVIEW_WORKFLOW_PATH = '.github/workflows/vinaya-review.yml'
 export const REVIEW_VERDICT_WORKFLOW_PATH = '.github/workflows/vinaya-review-verdict.yml'
 export const ARCHIVIST_WORKFLOW_PATH = '.github/workflows/vinaya-archivist.yml'
 export const BODY_CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-body-checks.yml'
+// Empty scaffold folders (task 8, #42) — `vinaya new noop-check` writes into
+// `vinaya/checks/`, `vinaya new role` writes into `vinaya/roles/`. Git does
+// not track empty directories, so each folder is represented by one
+// placeholder file — the existing whole-file manifest grammar already
+// covers this exactly (no new `Op` kind needed), and `eject` reverses it
+// the same way it reverses every other file `init` owns.
+export const CHECKS_FOLDER_PLACEHOLDER_PATH = 'vinaya/checks/.gitkeep'
+export const ROLES_FOLDER_PLACEHOLDER_PATH = 'vinaya/roles/.gitkeep'
 
 const MANAGED_NOTE =
   'Managed by Vinaya — created by `vinaya init`. `vinaya upgrade` regenerates it; `vinaya eject` removes it.'
+
+function scaffoldFolderPlaceholder(folder: string, command: string): string {
+  return `# ${MANAGED_NOTE}
+#
+# Empty on purpose — \`${command}\` scaffolds into this folder. Git does not
+# track empty directories; this placeholder keeps ${folder} present (and
+# \`eject\`-reversible) until you've scaffolded something into it.
+`
+}
 
 // ---------------------------------------------------------------------------
 // Starter ruleset — the seed for vinaya.config.json (no `managed`; the
@@ -927,7 +944,13 @@ enforcement rings.
 - \`vinaya new check <yourname>/<id>\` — scaffolds a custom check into
   \`./scripts/vinaya-checks/\` and prints the \`checks\` entry to paste into
   \`${CONFIG_PATH}\`.
-- A role's contract can be overridden, or a new one added, from
+- \`vinaya new noop-check <core-check-id>\` — the only sanctioned way to
+  silence a core check: scaffolds an explicit, contract-satisfying no-op
+  into \`vinaya/checks/\` and prints the \`checks\` entry that REPLACES the
+  core check with it.
+- \`vinaya new role <yourname>/<id>\` — scaffolds an additive role contract
+  into \`vinaya/roles/\` and prints the \`roles\` entry to paste into
+  \`${CONFIG_PATH}\`. A role's contract can also be overridden by hand from
   \`${CONFIG_PATH}\`'s \`roles\` block. What a contract must satisfy is
   documented inside the resolved doctrine below.
 
@@ -1208,6 +1231,21 @@ export function buildInitOps(ctx: InitContext): Op[] {
     path: DOC_OWNERS_PATH,
     content: starterDocOwners(),
     group: 'Doc-ownership manifest'
+  })
+
+  // Empty scaffold folders (task 8) — `new noop-check`/`new role` write
+  // real content beside these placeholders later.
+  ops.push({
+    kind: 'create-file',
+    path: CHECKS_FOLDER_PLACEHOLDER_PATH,
+    content: scaffoldFolderPlaceholder('vinaya/checks/', 'vinaya new noop-check'),
+    group: 'Scaffold folders'
+  })
+  ops.push({
+    kind: 'create-file',
+    path: ROLES_FOLDER_PLACEHOLDER_PATH,
+    content: scaffoldFolderPlaceholder('vinaya/roles/', 'vinaya new role'),
+    group: 'Scaffold folders'
   })
 
   // Agent-native entry points (task 5, #152) — each opt-in via `ctx.agents`,
