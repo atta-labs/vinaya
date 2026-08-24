@@ -184,9 +184,18 @@ describe('vinaya pr create --validate-only', () => {
     // this command must never grant the Changesets-release exemption from
     // branch name alone. Regression test for exactly that shape of bug.
     writeConfig(FULL_PR_CONFIG)
+    // A CI runner has no global git identity — never rely on it, set one
+    // local to this commit instead.
+    const identityEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'x',
+      GIT_AUTHOR_EMAIL: 'x@x.com',
+      GIT_COMMITTER_NAME: 'x',
+      GIT_COMMITTER_EMAIL: 'x@x.com'
+    }
     execFileSync('git', ['init', '-q'], { cwd })
     execFileSync('git', ['checkout', '-q', '-b', 'changeset-release/main'], { cwd })
-    execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'x'], { cwd })
+    execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'x'], { cwd, env: identityEnv })
     const r = runCli(
       [
         'pr',

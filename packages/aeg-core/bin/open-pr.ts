@@ -205,17 +205,10 @@ function runGate(label: string, script: string, scriptArgs: string[], env: Recor
 export type GateStep = 'verify-brief' | 'verify-docs' | 'body-bare-digits' | 'closes-n' | 'verify-task'
 
 /**
- * Pure gate-selection plan (aeg-governance-hardening task 25, #365) — decides
- * WHICH gates run for a given branch, so the non-task-branch gate set stays
- * byte-identical and is independently fixture-tested without mocking `gh`/
- * `bun` subprocess calls. `main()` below is the only thing that turns this
- * plan into actual `runGate` invocations.
- */
-/**
  * The env for the `body-bare-digits` subprocess — pulled out to a pure
- * function for the same reason `gatePlanForBranch` is: it is independently
- * fixture-tested without spawning `bun` or mocking `gh`. `PR_NUMBER` is
- * always a key in the returned object, never left absent for
+ * function for the same reason `gatePlanForBranch` below is: it is
+ * independently fixture-tested without spawning `bun` or mocking `gh`.
+ * `PR_NUMBER` is always a key in the returned object, never left absent for
  * `{...process.env, ...env}` to fill in from whatever the calling shell
  * happens to hold — see the call site's comment for why an inherited value
  * would be a real cross-PR exemption bug, not a cosmetic one.
@@ -224,6 +217,13 @@ export function bareDigitsGateEnv(body: string, editPrNumber: number | null): Re
   return { PR_BODY: body, PR_NUMBER: editPrNumber !== null ? String(editPrNumber) : '' }
 }
 
+/**
+ * Pure gate-selection plan (aeg-governance-hardening task 25, #365) — decides
+ * WHICH gates run for a given branch, so the non-task-branch gate set stays
+ * byte-identical and is independently fixture-tested without mocking `gh`/
+ * `bun` subprocess calls. `main()` below is the only thing that turns this
+ * plan into actual `runGate` invocations.
+ */
 export function gatePlanForBranch(branch: string): GateStep[] {
   // `body-bare-digits` runs on EVERY branch, task or not. It is `requiresOpenPr`,
   // so the ring-0 hooks skip it — there is no PR body at commit time — and until
