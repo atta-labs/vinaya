@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, sym
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { DOC_OWNERS_PATH, LABELS } from '@attalabs/aeg-core'
+import { AGENT_VENDORS, type AgentVendor } from '../src/lib/agent-vendors.js'
 import {
   ARCHIVIST_WORKFLOW_PATH,
   BODY_CHECKS_WORKFLOW_PATH,
@@ -17,10 +18,14 @@ import {
   SETUP_BUN_SHA,
   starterConfig
 } from '../src/lib/artifacts.js'
+import { agentSkillPath, discoverRoleNames } from '../src/lib/agents-skills-emitter.js'
+import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
+import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
+import { resolveDoctrineRoot } from '../src/commands/doctrine.js'
 import type { VendoredVinaya } from '../src/lib/self-host.js'
 import { detectVendoredVinaya } from '../src/lib/self-host.js'
 import type { InitDeps } from '../src/commands/init.js'
-import { runInit, runInitProduct } from '../src/commands/init.js'
+import { parseAgentsFlag, runInit, runInitProduct } from '../src/commands/init.js'
 import { runEject } from '../src/commands/eject.js'
 import type { EjectDeps } from '../src/commands/eject.js'
 import type { LabelGateway } from '../src/lib/ops.js'
@@ -117,7 +122,7 @@ afterEach(() => {
 })
 
 describe('vinaya init', () => {
-  it('installs exactly the 7-item minimal manifest on a clean repo', async () => {
+  it('installs exactly the minimal manifest plus all three agent-vendor emitters (default --agents=all) on a clean repo', async () => {
     let rc = -1
     await captureStdout(async () => {
       rc = await runInit(['--yes'], makeDeps())
@@ -132,8 +137,15 @@ describe('vinaya init', () => {
     // pull_request_target trust boundary carrying body-bare-digits'
     // Changesets-release exemption, which a plain pull_request job cannot
     // safely resolve): config + root VINAYA.md + five workflows (tracked) +
-    // two hook stubs + the .vinaya/doc-owners starter. Nothing else is
-    // written.
+    // two hook stubs + the .vinaya/doc-owners starter, PLUS — as of task 5
+    // (#152) — the three agent-vendor emitters (tasks 2/3/4), installed by
+    // default since `init`'s own `--agents` flag defaults to `all`. Nothing
+    // else is written.
+    const doctrineRoot = resolveDoctrineRoot()
+    if (!doctrineRoot) throw new Error('no bundled doctrine found — this test requires the real aeg-root/')
+    const agentSkillPaths = discoverRoleNames(doctrineRoot).map(agentSkillPath)
+    expect(agentSkillPaths.length).toBeGreaterThan(0) // sanity: role discovery actually found something
+
     for (const p of [
       CONFIG_PATH,
       DOCTRINE_POINTER_PATH,
@@ -144,7 +156,10 @@ describe('vinaya init', () => {
       BODY_CHECKS_WORKFLOW_PATH,
       '.husky/pre-commit',
       '.husky/pre-push',
-      DOC_OWNERS_PATH
+      DOC_OWNERS_PATH,
+      ...agentSkillPaths,
+      CLAUDE_COMMAND_PATH,
+      GEMINI_COMMAND_PATH
     ]) {
       expect(existsSync(join(root, p))).toBe(true)
     }
@@ -164,7 +179,10 @@ describe('vinaya init', () => {
       BODY_CHECKS_WORKFLOW_PATH,
       '.husky/pre-commit',
       '.husky/pre-push',
-      DOC_OWNERS_PATH
+      DOC_OWNERS_PATH,
+      ...agentSkillPaths,
+      CLAUDE_COMMAND_PATH,
+      GEMINI_COMMAND_PATH
     ])
     expect(tree).toEqual(expected)
     for (const gone of [
@@ -195,6 +213,8 @@ describe('vinaya init', () => {
     expect(cfg.managed.files).toContain(CHECKS_WORKFLOW_PATH)
     expect(cfg.managed.files).toContain(DOCTRINE_POINTER_PATH)
     expect(cfg.managed.blocks.some((b: { path: string }) => b.path === '.husky/pre-commit')).toBe(true)
+    // the --agents selection itself is persisted, default all three, sorted
+    expect(cfg.managed.agents).toEqual([...AGENT_VENDORS].sort())
     // hooks are executable
     expect(statSync(join(root, '.husky/pre-commit')).mode & 0o111).not.toBe(0)
   })
@@ -240,7 +260,8 @@ describe('vinaya init', () => {
       repo: 'widget',
       hookDir: '.husky',
       selfHost: null,
-      ciSetup: null
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
     }).filter((op) => op.kind === 'managed-block' && /pre-(commit|push)/.test(op.path))
     expect(hookOps.length).toBe(2)
     for (const op of hookOps) {
@@ -263,7 +284,8 @@ describe('vinaya init', () => {
       repo: 'widget',
       hookDir: '.husky',
       selfHost: null,
-      ciSetup: null
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
     }).filter((op) => op.kind === 'managed-block' && /pre-(commit|push)/.test(op.path))
     expect(hookOps.length).toBe(2)
     for (const op of hookOps) {
@@ -284,7 +306,8 @@ describe('vinaya init', () => {
       repo: 'widget',
       hookDir: '.husky',
       selfHost: null,
-      ciSetup: null
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
     })) {
       if (op.kind === 'create-file') expect(out).toContain(op.content.trimEnd().split('\n')[0] ?? '')
     }
@@ -298,7 +321,8 @@ describe('vinaya init', () => {
       repo: 'widget',
       hookDir: '.husky',
       selfHost: null,
-      ciSetup: null
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
     })) {
       // vinaya.config.json is the one file whose bytes legitimately differ: the
       // ownership `managed` manifest is injected at apply time. Every other
@@ -1028,7 +1052,14 @@ describe('generated git hooks: published vs vendored invocation (atta-labs/attal
   const VENDORED: VendoredVinaya = { dir: 'apps/cli', bin: 'apps/cli/dist/index.js' }
 
   function hookBodies(selfHost: VendoredVinaya | null): string[] {
-    return buildInitOps({ owner: 'acme', repo: 'widget', hookDir: '.husky', selfHost, ciSetup: null })
+    return buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost,
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
+    })
       .filter((op) => op.kind === 'managed-block' && /pre-(commit|push)/.test(op.path))
       .map((op) => (op.kind === 'managed-block' ? op.body : ''))
   }
@@ -1291,7 +1322,13 @@ describe('partial-failure ownership recording (review finding 3)', () => {
 })
 
 describe('adopter-declared CI setup (ci.setup)', () => {
-  const base = { owner: 'acme', repo: 'widget', hookDir: '.husky' as const, selfHost: null }
+  const base = {
+    owner: 'acme',
+    repo: 'widget',
+    hookDir: '.husky' as const,
+    selfHost: null,
+    agents: new Set<AgentVendor>()
+  }
   const CUSTOM_CHECK_EXECUTING = [CHECKS_WORKFLOW_PATH]
 
   function workflowContent(ciSetup: string | null, path: string): string {
@@ -1451,5 +1488,95 @@ describe('vinaya eject — raw git hooks inside a linked worktree', () => {
     expect(rc).toBe(1)
     // Refusal is whole-run: nothing was removed, not even the legitimate rows.
     expect(existsSync(join(root, CONFIG_PATH))).toBe(true)
+  })
+})
+
+// task 5 (#152) — wiring the three agent-vendor emitters (tasks 2/3/4) into
+// init/upgrade/eject/doctor via `--agents` + the persisted `managed.agents`
+// selection.
+describe('--agents flag parsing', () => {
+  it('defaults to all three vendors when the flag is absent', () => {
+    const result = parseAgentsFlag([])
+    expect(result).toEqual({ ok: true, agents: new Set(AGENT_VENDORS) })
+  })
+
+  it('--agents=all is the same as the default', () => {
+    expect(parseAgentsFlag(['--agents=all'])).toEqual({ ok: true, agents: new Set(AGENT_VENDORS) })
+  })
+
+  it('--agents=none selects nothing', () => {
+    expect(parseAgentsFlag(['--agents=none'])).toEqual({ ok: true, agents: new Set() })
+  })
+
+  it('--agents=claude,gemini selects exactly the named vendors, trimming whitespace', () => {
+    expect(parseAgentsFlag(['--agents= claude , gemini '])).toEqual({
+      ok: true,
+      agents: new Set(['claude', 'gemini'])
+    })
+  })
+
+  it('--agents=claude selects exactly that one vendor', () => {
+    expect(parseAgentsFlag(['--agents=claude'])).toEqual({ ok: true, agents: new Set(['claude']) })
+  })
+
+  it('rejects an unknown vendor name, naming it and the valid values', () => {
+    const result = parseAgentsFlag(['--agents=claude,bogus'])
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected refusal')
+    expect(result.error).toContain('bogus')
+    expect(result.error).toContain('skills, claude, gemini')
+  })
+})
+
+describe('vinaya init --agents narrowing', () => {
+  it('--agents=claude installs only the Claude Code command, and persists the selection', async () => {
+    const rc = await runInit(['--yes', '--agents=claude'], makeDeps())
+    expect(rc).toBe(0)
+    expect(existsSync(join(root, CLAUDE_COMMAND_PATH))).toBe(true)
+    expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
+    expect(existsSync(join(root, '.agents/skills'))).toBe(false)
+
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(cfg.managed.agents).toEqual(['claude'])
+    expect(cfg.managed.files).toContain(CLAUDE_COMMAND_PATH)
+    expect(cfg.managed.files).not.toContain(GEMINI_COMMAND_PATH)
+  })
+
+  it('--agents=none installs none of the three vendor emitters, and persists an empty selection', async () => {
+    const rc = await runInit(['--yes', '--agents=none'], makeDeps())
+    expect(rc).toBe(0)
+    expect(existsSync(join(root, CLAUDE_COMMAND_PATH))).toBe(false)
+    expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
+    expect(existsSync(join(root, '.agents/skills'))).toBe(false)
+
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(cfg.managed.agents).toEqual([])
+  })
+
+  it('refuses an unknown --agents vendor, writing nothing', async () => {
+    const before = snapshot(root)
+    const rc = await runInit(['--yes', '--agents=bogus'], makeDeps())
+    expect(rc).toBe(2)
+    expect(snapshot(root)).toEqual(before)
+  })
+})
+
+describe('vinaya eject removes all three agent-vendor emitters from a full install', () => {
+  it('round-trips clean: default --agents=all install then eject leaves the fixture exactly as it started', async () => {
+    const before = snapshot(root)
+    await runInit(['--yes'], makeDeps())
+    expect(existsSync(join(root, CLAUDE_COMMAND_PATH))).toBe(true)
+    expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(true)
+    const doctrineRoot = resolveDoctrineRoot()
+    if (!doctrineRoot) throw new Error('no bundled doctrine found — this test requires the real aeg-root/')
+    const skillPaths = discoverRoleNames(doctrineRoot).map(agentSkillPath)
+    for (const p of skillPaths) expect(existsSync(join(root, p))).toBe(true)
+
+    await runEject(['--yes'], ejectDeps())
+
+    expect(existsSync(join(root, CLAUDE_COMMAND_PATH))).toBe(false)
+    expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
+    for (const p of skillPaths) expect(existsSync(join(root, p))).toBe(false)
+    expect(snapshot(root)).toEqual(before)
   })
 })

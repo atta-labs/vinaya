@@ -11,6 +11,8 @@ import { runInit } from '../src/commands/init.js'
 import type { UpgradeDeps } from '../src/commands/upgrade.js'
 import { runUpgrade } from '../src/commands/upgrade.js'
 import { CHECKS_WORKFLOW_PATH, CONFIG_PATH, REVIEW_WORKFLOW_PATH } from '../src/lib/artifacts.js'
+import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
+import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
 import type { LabelGateway } from '../src/lib/ops.js'
 
 let root: string
@@ -273,6 +275,68 @@ describe('vinaya upgrade', () => {
     const rc = await runUpgrade([], upgradeDeps({ confirm: async () => false }))
     expect(rc).toBe(0)
     expect(readFileSync(join(root, CHECKS_WORKFLOW_PATH), 'utf-8')).toBe('name: hand-edited\n')
+  })
+})
+
+// task 5 (#152) — `upgrade` takes no `--agents` flag; it must read the
+// selection back from `managed.agents` rather than re-deriving the default,
+// so a narrowed `init` selection is neither silently widened nor dropped.
+describe('vinaya upgrade — the persisted --agents selection, never re-flagged', () => {
+  it('a repo initialized with --agents=claude regenerates only the Claude Code file on a flagless upgrade — never adds the other vendors', async () => {
+    await runInit(['--yes', '--agents=claude'], initDeps())
+    expect(existsSync(join(root, CLAUDE_COMMAND_PATH))).toBe(true)
+    expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
+
+    // Drift the owned file so upgrade has real work to do.
+    writeFileSync(join(root, CLAUDE_COMMAND_PATH), '# hand-edited\n')
+
+    const out = await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))
+    expect(out).toContain(`regenerate ${CLAUDE_COMMAND_PATH}`)
+    expect(readFileSync(join(root, CLAUDE_COMMAND_PATH), 'utf-8')).not.toBe('# hand-edited\n')
+
+    // The vendors never selected at init time stay absent — a flagless
+    // upgrade must not silently widen the selection.
+    expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
+    expect(existsSync(join(root, '.agents/skills'))).toBe(false)
+
+    // The recorded selection itself survives the upgrade unchanged.
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(cfg.managed.agents).toEqual(['claude'])
+  })
+
+  it('a repo initialized with --agents=none stays that way across an upgrade — the selection is never silently dropped', async () => {
+    await runInit(['--yes', '--agents=none'], initDeps())
+    writeFileSync(join(root, CHECKS_WORKFLOW_PATH), 'name: hand-edited\n') // real work for upgrade to do
+
+    await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))
+
+    expect(existsSync(join(root, CLAUDE_COMMAND_PATH))).toBe(false)
+    expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
+    expect(existsSync(join(root, '.agents/skills'))).toBe(false)
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(cfg.managed.agents).toEqual([])
+  })
+
+  it('a manifest written before managed.agents existed (pre-task-5) is treated as no vendor selected — upgrade adds none of the three', async () => {
+    await runInit(['--yes'], initDeps())
+    // Simulate a pre-task-5 install: files exist, but the manifest has never
+    // heard of the agents key or any of the three vendor files.
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    delete cfg.managed.agents
+    cfg.managed.files = cfg.managed.files.filter(
+      (f: string) => f !== CLAUDE_COMMAND_PATH && f !== GEMINI_COMMAND_PATH && !f.startsWith('.agents/skills/')
+    )
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+    rmSync(join(root, CLAUDE_COMMAND_PATH))
+    rmSync(join(root, GEMINI_COMMAND_PATH))
+    rmSync(join(root, '.agents'), { recursive: true, force: true })
+    writeFileSync(join(root, CHECKS_WORKFLOW_PATH), 'name: hand-edited\n') // real work for upgrade to do
+
+    const out = await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))
+    expect(out).toContain(`regenerate ${CHECKS_WORKFLOW_PATH}`)
+    expect(existsSync(join(root, CLAUDE_COMMAND_PATH))).toBe(false)
+    expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
+    expect(existsSync(join(root, '.agents'))).toBe(false)
   })
 })
 
