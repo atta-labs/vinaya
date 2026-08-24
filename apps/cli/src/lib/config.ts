@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { DEFAULT_RELEASE_ACTOR, PRINCIPAL_ALLOWLIST } from '@attalabs/aeg-core'
+import { AGENT_VENDORS, type AgentVendor } from './agent-vendors.js'
 
 // Rings is the only schema surface this task ships — declarative
 // booleans, no conditional logic. Ring 0 (git hooks) and the
@@ -254,9 +255,24 @@ const ManagedManifestSchema = z.object({
   version: z.number().int().positive(),
   files: z.array(SafeRepoRelPath),
   blocks: z.array(ManagedBlockRecordSchema),
-  labels: z.array(z.string())
+  labels: z.array(z.string()),
+  // The `vinaya init --agents` vendor selection (task 5, #152) — which of the
+  // three agent-native emitters (tasks 2/3/4) this repo opted into. Persisted
+  // so `upgrade`/`doctor` read the selection back rather than re-deriving a
+  // default: a repo initialized with `--agents=claude` must not have a
+  // flagless `vinaya upgrade` silently add the other vendors' files, nor
+  // silently drop the recorded selection. Absent on any manifest written
+  // before this key existed (or by `--agents=none`) — `resolveAgentVendors`
+  // below treats that as "no vendor selected", matching the fact that none of
+  // these files were ever owned by such an install.
+  agents: z.array(z.enum(AGENT_VENDORS)).optional()
 })
 export type ManagedManifest = z.infer<typeof ManagedManifestSchema>
+
+/** The persisted `--agents` selection as a Set, or empty when unrecorded. */
+export function resolveAgentVendors(manifest: Pick<ManagedManifest, 'agents'> | null | undefined): Set<AgentVendor> {
+  return new Set(manifest?.agents ?? [])
+}
 
 export const VinayaConfigSchema = z.object({
   rings: z

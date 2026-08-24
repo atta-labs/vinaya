@@ -9,6 +9,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { AGENT_VENDORS, type AgentVendor, isAgentVendor } from '../lib/agent-vendors.js'
 import { buildInitOps, CONFIG_PATH, type HookDir, type InitContext, TRACKED_HOOK_DIR } from '../lib/artifacts.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import { type ManagedManifest, readRepoCiSetup, VinayaConfigSchema } from '../lib/config.js'
@@ -56,6 +57,36 @@ function flags(args: string[]): Flags {
   return { dryRun: args.includes('--dry-run'), yes: args.includes('--yes') }
 }
 
+/**
+ * `--agents=<comma-list|all|none>` (default `all`) — which agent-native
+ * emitters (task 5, #152) `vinaya init` writes. No interactive prompt: `init`
+ * is scriptable/CI-safe today (spec D3's remoteless graceful-skip depends on
+ * that), and prompting would break it. `upgrade`/`doctor` never take this
+ * flag — they read the selection back from `managed.agents` instead (see
+ * `lib/config.ts`'s `resolveAgentVendors`), so only `init` ever sets it.
+ */
+export function parseAgentsFlag(args: string[]): { ok: true; agents: Set<AgentVendor> } | { ok: false; error: string } {
+  const arg = args.find((a) => a.startsWith('--agents='))
+  if (!arg) return { ok: true, agents: new Set(AGENT_VENDORS) }
+  const value = arg.slice('--agents='.length)
+  if (value === 'all') return { ok: true, agents: new Set(AGENT_VENDORS) }
+  if (value === 'none') return { ok: true, agents: new Set() }
+  const parts = value
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  const invalid = parts.filter((p) => !isAgentVendor(p))
+  if (invalid.length > 0) {
+    return {
+      ok: false,
+      error:
+        `Error: --agents: unknown vendor(s) '${invalid.join("', '")}'. ` +
+        `Valid values: ${AGENT_VENDORS.join(', ')}, all, none.`
+    }
+  }
+  return { ok: true, agents: new Set(parts as AgentVendor[]) }
+}
+
 /** A product name must be a safe slug — see `runInitProduct` for what that still guards. */
 const PRODUCT_NAME_RE = /^[a-z0-9][a-z0-9-]*$/
 
@@ -86,6 +117,12 @@ function writeManifest(repoRoot: string, manifest: ManagedManifest): void {
 // ---------------------------------------------------------------------------
 export async function runInit(args: string[], deps: InitDeps): Promise<number> {
   const { dryRun, yes } = flags(args)
+
+  const agentsFlag = parseAgentsFlag(args)
+  if (!agentsFlag.ok) {
+    console.error(agentsFlag.error)
+    return 2
+  }
 
   const repo = await deps.detectRepo()
   if (!repo) {
@@ -133,7 +170,8 @@ export async function runInit(args: string[], deps: InitDeps): Promise<number> {
     repo: repo.repo,
     hookDir: deps.hookDirFor(repo.repoRoot),
     selfHost: detectVendoredVinaya(repo.repoRoot),
-    ciSetup: readRepoCiSetup(repo.repoRoot)
+    ciSetup: readRepoCiSetup(repo.repoRoot),
+    agents: agentsFlag.agents
   }
   const allOps = buildInitOps(ctx)
   const ops = noRemote ? allOps.filter((op) => op.kind !== 'create-label') : allOps
@@ -158,11 +196,14 @@ export async function runInit(args: string[], deps: InitDeps): Promise<number> {
 
   // Persist the files+blocks manifest as soon as they are on disk (before the
   // network-bound label creation), so a label-create failure can never orphan
-  // the written files with no ownership record.
+  // the written files with no ownership record. `agents` — the --agents
+  // selection itself, not a derived file list — rides along on both writes
+  // so a label-create failure can't leave it half-recorded either.
+  const selectedAgents = [...ctx.agents].sort()
   const manifest = await applyInstall(plan, repo.repoRoot, deps.labelGateway(repo.repoRoot), (m) =>
-    writeManifest(repo.repoRoot, m)
+    writeManifest(repo.repoRoot, { ...m, agents: selectedAgents })
   )
-  writeManifest(repo.repoRoot, manifest)
+  writeManifest(repo.repoRoot, { ...manifest, agents: selectedAgents })
 
   // Tracked-hook installs are armed here, AFTER the hooks are on disk: the
   // config routes git at the tracked directory, so setting it first would

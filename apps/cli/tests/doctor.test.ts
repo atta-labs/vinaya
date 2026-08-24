@@ -9,6 +9,8 @@ import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
 import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
 import { CHECKS_WORKFLOW_PATH, CONFIG_PATH, DOCTRINE_POINTER_PATH } from '../src/lib/artifacts.js'
+import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
+import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
 import type { LabelGateway } from '../src/lib/ops.js'
 
 let root: string
@@ -424,6 +426,97 @@ describe('vinaya doctor — never mutates', () => {
     const report = await runDoctorJson()
     const codeowners = report.findings.find((f) => f.check === 'codeowners')
     expect(codeowners?.severity).toBe('info')
+  })
+})
+
+// task 5 (#152) — the three agent-vendor emitters diagnosed like any other
+// vinaya-owned artifact, PLUS the one property specific to them: a vendor the
+// adopter deliberately excluded via `--agents` gets no finding at all, never
+// a false "not installed" error.
+describe('vinaya doctor — agent-vendor emitters (--agents)', () => {
+  it('reports drift on a hand-edited Claude Code command file, without fixing it', async () => {
+    await runInit(['--yes'], initDeps())
+    writeFileSync(join(root, CLAUDE_COMMAND_PATH), '# hand-edited\n')
+    const before = snapshot(root)
+
+    const report = await runDoctorJson()
+    expect(report.healthy).toBe(false)
+    const hit = report.findings.find((f) => f.message.includes(CLAUDE_COMMAND_PATH))
+    expect(hit?.check).toBe('claude-command')
+    expect(hit?.severity).toBe('warn')
+    expect(hit?.message).toContain('drifted')
+
+    expect(snapshot(root)).toEqual(before) // doctor fixed nothing
+  })
+
+  it('reports drift on a hand-edited Gemini CLI command file, without fixing it', async () => {
+    await runInit(['--yes'], initDeps())
+    writeFileSync(join(root, GEMINI_COMMAND_PATH), '# hand-edited\n')
+
+    const report = await runDoctorJson()
+    expect(report.healthy).toBe(false)
+    const hit = report.findings.find((f) => f.message.includes(GEMINI_COMMAND_PATH))
+    expect(hit?.check).toBe('gemini-command')
+    expect(hit?.severity).toBe('warn')
+    expect(hit?.message).toContain('drifted')
+  })
+
+  it('reports drift on a hand-edited agent-skill file, without fixing it', async () => {
+    await runInit(['--yes'], initDeps())
+    const skillPath = '.agents/skills/vinaya-developer/SKILL.md'
+    writeFileSync(join(root, skillPath), '# hand-edited\n')
+
+    const report = await runDoctorJson()
+    expect(report.healthy).toBe(false)
+    const hit = report.findings.find((f) => f.message.includes(skillPath))
+    expect(hit?.check).toBe('agent-skills')
+    expect(hit?.severity).toBe('warn')
+    expect(hit?.message).toContain('drifted')
+  })
+
+  it('flags a removed agent-vendor file as missing, without recreating it', async () => {
+    await runInit(['--yes'], initDeps())
+    rmSync(join(root, CLAUDE_COMMAND_PATH))
+    const before = snapshot(root)
+
+    const report = await runDoctorJson()
+    expect(report.healthy).toBe(false)
+    const hit = report.findings.find((f) => f.message.includes(CLAUDE_COMMAND_PATH))
+    expect(hit?.severity).toBe('error')
+    expect(hit?.message).toContain('missing')
+
+    expect(snapshot(root)).toEqual(before)
+  })
+
+  it('a vendor deliberately excluded via --agents gets NO finding at all — never a false "not installed"', async () => {
+    const rc = await runInit(['--yes', '--agents=claude'], initDeps())
+    expect(rc).toBe(0)
+
+    const report = await runDoctorJson()
+    expect(report.healthy).toBe(true)
+    expect(report.findings.some((f) => f.check === 'gemini-command')).toBe(false)
+    expect(report.findings.some((f) => f.check === 'agent-skills')).toBe(false)
+    // the selected vendor is still diagnosed normally
+    const claude = report.findings.find((f) => f.check === 'claude-command')
+    expect(claude?.severity).toBe('ok')
+  })
+
+  it('a manifest with no recorded agents selection (pre-task-5) reports no findings for any of the three vendors', async () => {
+    await runInit(['--yes'], initDeps())
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    delete cfg.managed.agents
+    cfg.managed.files = cfg.managed.files.filter(
+      (f: string) => f !== CLAUDE_COMMAND_PATH && f !== GEMINI_COMMAND_PATH && !f.startsWith('.agents/skills/')
+    )
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+    rmSync(join(root, CLAUDE_COMMAND_PATH))
+    rmSync(join(root, GEMINI_COMMAND_PATH))
+    rmSync(join(root, '.agents'), { recursive: true, force: true })
+
+    const report = await runDoctorJson()
+    expect(report.findings.some((f) => f.check === 'claude-command')).toBe(false)
+    expect(report.findings.some((f) => f.check === 'gemini-command')).toBe(false)
+    expect(report.findings.some((f) => f.check === 'agent-skills')).toBe(false)
   })
 })
 

@@ -33,6 +33,8 @@ import {
   starterConfig,
   TRACKED_HOOK_DIR
 } from '../lib/artifacts.js'
+import { CLAUDE_COMMAND_PATH } from '../lib/claude-command-emitter.js'
+import { GEMINI_COMMAND_PATH } from '../lib/gemini-command-emitter.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import {
   type BriefSection,
@@ -40,6 +42,7 @@ import {
   globalChecksIgnoredWarning,
   type ManagedManifest,
   readRepoCiSetup,
+  resolveAgentVendors,
   type VinayaConfig,
   VinayaConfigSchema,
   lintEnvDeclarations
@@ -130,6 +133,9 @@ function readConfig(repoRoot: string): ConfigRead {
 function labelForPath(path: string): string {
   if (path === CONFIG_PATH) return 'config'
   if (path === DOCTRINE_POINTER_PATH) return 'doctrine-pointer'
+  if (path.startsWith('.agents/skills/')) return 'agent-skills'
+  if (path === CLAUDE_COMMAND_PATH) return 'claude-command'
+  if (path === GEMINI_COMMAND_PATH) return 'gemini-command'
   return 'workflows'
 }
 
@@ -868,7 +874,10 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
       repo: repo.repo,
       hookDir,
       selfHost: detectVendoredVinaya(repo.repoRoot),
-      ciSetup: readRepoCiSetup(repo.repoRoot)
+      ciSetup: readRepoCiSetup(repo.repoRoot),
+      // Read back, never re-derived: a vendor the adopter deliberately
+      // excluded via `--agents` must not be reported as "not installed".
+      agents: resolveAgentVendors(manifest)
     }
     const install = diagnoseInstall(repo.repoRoot, ctx, manifest)
     findings.push(...install.findings)
