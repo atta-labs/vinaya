@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { isTaskIssueLabelSet } from '@attalabs/aeg-core'
+import { findTrancheSlug, isTaskIssueLabelSet } from '@attalabs/aeg-core'
 import { printJson } from '../lib/envelope'
 import {
   type BodyResult,
   ForgeArgError,
+  ensureTrancheLabelExists,
   extractLabels,
   extractTitle,
   locateBody,
@@ -148,6 +149,10 @@ export function issueCreateCommand(args: string[]): void {
     reportPass(json, 'issue create')
     return
   }
+
+  const slugToEnsure = findTrancheSlug(labels)
+  if (slugToEnsure) ensureTrancheLabelExists(slugToEnsure)
+
   runGhWrite(['issue', 'create'], ghArgs, bodyResult, json)
 }
 
@@ -184,5 +189,9 @@ export function issueEditCommand(args: string[]): void {
     reportPass(json, 'issue edit')
     return
   }
+
+  const slugToEnsure = findTrancheSlug(labels)
+  if (slugToEnsure) ensureTrancheLabelExists(slugToEnsure)
+
   runGhWrite(['issue', 'edit', issueRef], ghArgs, bodyResult, json)
 }

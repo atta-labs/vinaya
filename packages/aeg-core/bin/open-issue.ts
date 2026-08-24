@@ -572,6 +572,46 @@ function ghEditBody(issueRef: string, newBody: string): void {
   }
 }
 
+/**
+ * Create-if-absent for the `vinaya/tranche:<slug>` label — the real
+ * creation path Issue #54's Origin names as missing: the prefix family is
+ * open-ended by design (a slug the Planner cuts at tranche-cut time), so no
+ * fixed install-time list can enumerate it, and until now nothing created it
+ * either — cutting a tranche's first Issue failed outright at `gh` with
+ * `not found`, worked around by hand-running `gh label create`. This is the
+ * one place a new tranche's label is ever minted, matching this file's own
+ * status as the ONLY sanctioned Issue-creation path (module header). No
+ * `-R` flag — `gh` resolves the current repo from cwd (`REPO_ROOT`, chdir'd
+ * above), the same no-`-R` convention `ghLabelGateway` uses
+ * (apps/cli/src/lib/detect.ts). Existing labels are never modified, matching
+ * every other create-if-absent label path in this repo.
+ */
+const TRANCHE_LABEL_COLOR = '1D76DB'
+
+function ensureTrancheLabelExists(slug: string): void {
+  const name = trancheLabel(slug)
+  let existing: Array<{ name: string }>
+  try {
+    const out = execFileSync('gh', ['label', 'list', '--json', 'name', '--limit', '200'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    existing = JSON.parse(out) as Array<{ name: string }>
+  } catch (err) {
+    fail(`could not list labels (\`gh label list\`) to check for '${name}': ${(err as Error).message}`)
+  }
+  if (existing.some((l) => l.name === name)) return
+  try {
+    execFileSync('gh', ['label', 'create', name, '--color', TRANCHE_LABEL_COLOR, '--description', `Tranche: ${slug}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    console.log(`[open-issue] created missing tranche label '${name}'.`)
+  } catch (err) {
+    fail(`could not create tranche label '${name}' (\`gh label create\`): ${(err as Error).message}`)
+  }
+}
+
 export function main(): void {
   const argv = process.argv.slice(2)
   const validateOnly = argv.includes('--validate-only')
@@ -690,6 +730,14 @@ export function main(): void {
   if (validateOnly) {
     console.log('[open-issue] --validate-only: stopping before gh.')
     process.exit(0)
+  }
+
+  // Give the target tranche label a real chance to exist BEFORE `gh issue
+  // create`/`edit` ships — otherwise a brand-new tranche's first Issue fails
+  // outright at `gh` with `not found`, far from its actual cause.
+  const labelSlugToEnsure = trancheSlugFromLabels(labels)
+  if (labelSlugToEnsure) {
+    ensureTrancheLabelExists(labelSlugToEnsure)
   }
 
   const milestoneSlug = resolveMilestoneToAttach(labels, bodyArgs, isEdit, (slug) => {
