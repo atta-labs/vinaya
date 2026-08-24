@@ -12,6 +12,7 @@ import { doctrineCommand } from './commands/doctrine.js'
 import { ejectCommand } from './commands/eject.js'
 import { initCommand, initProductCommand } from './commands/init.js'
 import { issueCreateCommand, issueEditCommand } from './commands/issue.js'
+import { milestoneCreateCommand } from './commands/milestone.js'
 import { newCheckCommand } from './commands/new-check.js'
 import { prCreateCommand, prEditCommand } from './commands/pr.js'
 import { prReportCommand } from './commands/pr-report.js'
@@ -127,6 +128,16 @@ try {
         issueEditCommand(rest)
       } else {
         console.error(`Unknown 'issue' subcommand: ${subcommand ?? '(none)'} (expected 'create' or 'edit')`)
+        process.exit(2)
+      }
+      break
+    }
+    case 'milestone': {
+      const [subcommand, ...rest] = args
+      if (subcommand === 'create') {
+        await milestoneCreateCommand(rest)
+      } else {
+        console.error(`Unknown 'milestone' subcommand: ${subcommand ?? '(none)'} (expected 'create')`)
         process.exit(2)
       }
       break

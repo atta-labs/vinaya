@@ -149,9 +149,9 @@ describe('nodeDocRoute: against the real model', () => {
     expect(model.nodes.some((n) => n.kind === 'gate' && nodeDocRoute(n)?.slug === 'git-commit')).toBe(true)
   })
 
-  it('every one of the 10 actions resolves onto /docs/actions with its ACTIONS id as slug', () => {
+  it('every one of the 11 actions resolves onto /docs/actions with its ACTIONS id as slug', () => {
     const actions = model.nodes.filter((n) => n.kind === 'action')
-    expect(actions.length).toBe(10)
+    expect(actions.length).toBe(11)
     for (const a of actions) {
       const r = nodeDocRoute(a)
       expect(r?.route).toBe('/docs/actions')
@@ -160,11 +160,11 @@ describe('nodeDocRoute: against the real model', () => {
     expect(model.nodes.some((n) => n.kind === 'action' && nodeDocRoute(n)?.slug === 'commit-the-work')).toBe(true)
   })
 
-  it('all 8 roles and 7 contracts get their own anchorless page', () => {
+  it('all 9 roles and 8 contracts get their own anchorless page', () => {
     const roles = model.nodes.filter((n) => n.kind === 'role')
     const contracts = model.nodes.filter((n) => n.kind === 'contract')
-    expect(roles.length).toBe(8)
-    expect(contracts.length).toBe(7)
+    expect(roles.length).toBe(9)
+    expect(contracts.length).toBe(8)
     for (const n of [...roles, ...contracts]) {
       const r = nodeDocRoute(n)
       expect(r?.slug).toBeNull()

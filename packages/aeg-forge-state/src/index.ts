@@ -4,10 +4,13 @@ export { deriveTrancheFromForge, trancheFromIssues } from './derive-from-forge'
 export {
   findMilestoneForSlug,
   indexTrancheMilestonesAsync,
+  intentGoalForSlug,
   listActiveTrancheSlugs,
   listActiveTrancheSlugsAsync,
   listArchivedTrancheSlugs,
-  listArchivedTrancheSlugsAsync
+  listArchivedTrancheSlugsAsync,
+  milestoneLifecycleFromTrancheLifecycles,
+  releaseFromDescription
 } from './fetch-milestone'
 export type { ActiveTrancheRef, MilestoneFacts, TrancheMilestoneIndex } from './fetch-milestone'
 export type { GhIssue } from './gh'

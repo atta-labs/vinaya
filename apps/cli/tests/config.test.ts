@@ -635,3 +635,42 @@ describe('briefSchema.ack', () => {
     expect(parsed.success).toBe(false)
   })
 })
+
+describe('briefSchema.milestone', () => {
+  it('accepts a third key beside pr and issue, same shape, and keeps its content (not silently stripped)', () => {
+    const parsed = VinayaConfigSchema.safeParse({
+      briefSchema: { milestone: { sections: [{ builtin: 'milestoneShape' }] } }
+    })
+    expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      expect(parsed.data.briefSchema?.milestone).toEqual({ sections: [{ builtin: 'milestoneShape' }] })
+    }
+  })
+
+  it('is optional — a briefSchema with only pr/issue still parses, unchanged', () => {
+    const parsed = VinayaConfigSchema.safeParse({
+      briefSchema: {
+        pr: { sections: [{ builtin: 'tier' }] },
+        issue: { sections: [{ builtin: 'issueRationale' }] }
+      }
+    })
+    expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      expect(parsed.data.briefSchema).toEqual({
+        pr: { sections: [{ builtin: 'tier' }] },
+        issue: { sections: [{ builtin: 'issueRationale' }] }
+      })
+    }
+  })
+
+  it('all three kinds can coexist', () => {
+    const parsed = VinayaConfigSchema.safeParse({
+      briefSchema: {
+        pr: { sections: [{ builtin: 'tier' }] },
+        issue: { sections: [{ builtin: 'issueRationale' }] },
+        milestone: { sections: [{ builtin: 'milestoneShape' }] }
+      }
+    })
+    expect(parsed.success).toBe(true)
+  })
+})

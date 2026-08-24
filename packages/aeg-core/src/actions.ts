@@ -12,8 +12,9 @@
  * hand-off). One list, so an `ACTIONS.length`-driven diagram edge count and
  * G3's crossing list can never drift apart.
  *
- * The set is 10 distinct actions, not 12: the 6 crossings named in Issue #505
- * plus 4 seam-only actions. Two of the six contract seams are already
+ * The set is 11 distinct actions: the 6 crossings named in Issue #505 plus 5
+ * seam-only actions (4 original, plus `create-the-milestone`,
+ * vinaya-milestone-model-v1 task 2). Two of the six contract seams are already
  * accomplished by a GitHub crossing (the Planner→Brief seam's carrier is the
  * Issue body, created by `create-a-task-issue`; the Developer→Reviewer seam's
  * carrier is the PR, created by `open-a-pull-request`), so they get no
@@ -132,6 +133,23 @@ export const ACTIONS: Action[] = [
     performedBy: ['tranche-archivist'],
     summary: 'Ever finished a big chunk of work with nobody writing down what was learned?',
     description: 'Closing out a finished phase of work by recording what actually happened and what it taught.'
+  },
+  {
+    id: 'create-the-milestone',
+    label: 'create the milestone',
+    // Not into-github: `crosses` marks the specific Ring-0 local-git-hook
+    // crossing class G3 polices (raw `gh issue create`/`gh pr create`/`git
+    // push` bypass), not "touches the GitHub API" generally — the same
+    // reason `post-provenance-comment`/`produce-the-verdict` are 'none'
+    // despite writing PR comments via the API. `vinaya milestone create`
+    // is a manually-invoked CLI command with no Ring-0 hook intercepting a
+    // raw bypass, so it stays seam-only here (vinaya-milestone-model-v1
+    // task 2).
+    crosses: 'none',
+    performedBy: ['architect'],
+    summary: 'Ever had a Milestone whose title quietly became the only place a version lived?',
+    description:
+      "Declaring a product goal as a Milestone — free-text title, prose goal, an optional Release: field as the version's sole authority, and an optional list of which tranches serve it."
   }
 ]
 

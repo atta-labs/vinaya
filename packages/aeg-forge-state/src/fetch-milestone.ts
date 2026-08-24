@@ -1,10 +1,92 @@
 import { type GhIssue, ghApiGet, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } from './gh'
 import { trancheLabel, trancheSlugOf } from './labels'
+import { unwrapValue } from './list-tasks'
+import { stripCode } from './strip-code'
 import type { Lifecycle } from '@attalabs/aeg-types'
 
 export type MilestoneFacts = {
   goal: string
   lifecycle: Lifecycle
+}
+
+/**
+ * Reads the `Release:` field from a Milestone description — this package's
+ * own copy of the grammar `@attalabs/aeg-core`'s `milestone-validation.ts`
+ * defines (`vinaya-milestone-model-v1` task 2): line-anchored, `**`-optional
+ * on both sides, code fences stripped first, first match wins. Duplicated
+ * rather than imported because this package sits BELOW `aeg-core` in the
+ * dependency graph (`aeg-core → aeg-forge-state`) and cannot import back up
+ * — the same layering that already gives `Project:` two independent readers
+ * (`list-tasks.ts`'s `PROJECT_FIELD` and `issue-validation.ts`'s
+ * `declaredProjects`). This reader is tolerant, not a gate: a malformed or
+ * absent field both read as `null` here — refusing a malformed value at
+ * write time is `checkMilestoneShape`'s job, not this one's.
+ *
+ * No production caller reads this yet: `MilestoneFacts.goal` stays the raw
+ * description, deliberately, so the legacy 1:1 path's output is unchanged by
+ * this task. This is the read-side counterpart the future adopt-a-Milestone
+ * work (out of this task's surface) will consume — shipped now, proven by
+ * its own tests, so that work does not also have to invent the parser.
+ */
+const RELEASE_FIELD = /^\s*(?:\*\*)?Release(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.+)$/im
+const RELEASE_VALUE = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/
+
+export function releaseFromDescription(description: string): string | null {
+  const m = stripCode(description, { inlineSpans: 'keep' }).match(RELEASE_FIELD)
+  if (!m) return null
+  const raw = unwrapValue(m[1] ?? '')
+  return RELEASE_VALUE.test(raw) ? raw : null
+}
+
+const INTENTS_HEADING = /^#{1,6}\s*Tranche intents\s*$/im
+const NEXT_HEADING = /^#{1,6}\s+\S/m
+const INTENT_BULLET = /^-\s+([a-z0-9][a-z0-9-]*)\s*:\s*(.+)$/i
+
+/**
+ * The tranche goal is never stored — it is the `### Tranche intents` line
+ * matching `slug` in a Milestone's description (vinaya-milestone-model-v1
+ * task 2, settled decision). A label with no intent line resolves to `''`,
+ * exactly as an unmilestoned tranche did before this task. Same intents
+ * grammar as `@attalabs/aeg-core`'s `milestone-validation.ts`, duplicated for
+ * the same layering reason `releaseFromDescription` is.
+ */
+export function intentGoalForSlug(description: string, slug: string): string {
+  const text = stripCode(description, { inlineSpans: 'keep' })
+  const start = text.match(INTENTS_HEADING)
+  if (!start || start.index === undefined) return ''
+  const rest = text.slice(start.index + start[0].length)
+  const next = rest.match(NEXT_HEADING)
+  const section = rest.slice(0, next && next.index !== undefined ? next.index : rest.length)
+
+  for (const line of section.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) continue
+    const m = trimmed.match(INTENT_BULLET)
+    if (m && (m[1] ?? '').toLowerCase() === slug.toLowerCase()) return (m[2] ?? '').trim()
+  }
+  return ''
+}
+
+/**
+ * A Milestone's OWN lifecycle, aggregated one altitude above
+ * `lifecycleFromIssues`: a Milestone holding zero tranches — or holding only
+ * tranches that are themselves still `planned` — derives `planned`, never
+ * `complete`. Without the explicit zero-length/all-planned guard,
+ * `[].every(...)` is vacuously `true` in JS, which is exactly the bug this
+ * guard exists to close: a freshly created, empty milestone must not report
+ * itself finished.
+ *
+ * No production caller aggregates a live Milestone's tranches into this yet
+ * — that requires enumerating which tranches a Milestone declares and
+ * fetching each one's own lifecycle, the adopt-a-Milestone read pipeline
+ * this task does not build (out of surface). Proven directly against its
+ * own unit tests instead, which is what the zero-tranche case actually
+ * needs today: a Milestone declaring no intents derives `planned` by
+ * construction, with nothing to fetch.
+ */
+export function milestoneLifecycleFromTrancheLifecycles(lifecycles: Lifecycle[]): Lifecycle {
+  if (lifecycles.length === 0 || lifecycles.every((l) => l === 'planned')) return 'planned'
+  return lifecycles.every((l) => l === 'complete') ? 'complete' : 'active'
 }
 
 type GhMilestone = {
@@ -32,6 +114,52 @@ function matchesLegacyMilestone(milestones: GhMilestone[], slug: string): GhMile
   return milestones.find((m) => m.title === slug) ?? null
 }
 
+/**
+ * Lowercase, digits, and hyphens, ending in a `-v<N>` version suffix — every
+ * one of this repo's real legacy-titled Milestones is shaped exactly this
+ * way (`vinaya-milestone-model-v1`, `vinaya-selfgov-v1`, `aeg-seam-hardening-v1`,
+ * …; confirmed live against this repo's real Milestones, round 4 of code
+ * review), with no exception. This
+ * is deliberately tighter than "any kebab-case string": an earlier version
+ * of this guard accepted any lowercase, hyphenated title, which still
+ * phantom-matched a plausible Architect product-goal title like
+ * `improve-onboarding-flow` (round 3 finding) — the `-v<N>` suffix is a
+ * narrower, still-real-data-precedented signal a free-text title is
+ * unlikely to end with by accident. `open_issues`/`closed_issues` (also
+ * present on the Milestone API response) was considered and rejected as a
+ * stronger signal: checked live, this repo's OWN active legacy Milestone
+ * (`vinaya-milestone-model-v1`) has zero natively-attached Issues — its
+ * tasks are label-tracked, not milestone-attached — so gating on that count
+ * would have misclassified a real, currently-active tranche.
+ *
+ * Residual, knowingly accepted gap: an Architect who deliberately titles a
+ * product-goal Milestone to end in `-v<N>` still slips through. No
+ * shape-only heuristic can fully close this without cross-referencing real
+ * forge state per candidate (an extra fetch per Milestone, out of this
+ * task's surface) — the same class of trade-off `tranche-model.md` §5
+ * already documents openly for conflict detection: shape catches the
+ * overwhelmingly common case; a deliberately adversarial title is not
+ * defended against.
+ */
+const TRANCHE_SLUG_SHAPE = /^[a-z0-9]+(?:-[a-z0-9]+)*-v\d+$/
+
+/**
+ * Every Milestone whose title is even SLUG-SHAPED — the candidate universe
+ * for "is this title a legacy tranche" enumeration (vinaya-milestone-model-v1
+ * task 2, fixing a live bug a code review caught). Before this guard, the
+ * three enumeration functions below (`listActiveTrancheSlugs`,
+ * `listArchivedTrancheSlugs`, `indexTrancheMilestonesAsync`) fed EVERY
+ * Milestone's title into their candidate-slug set unconditionally — safe
+ * only while every Milestone was created 1:1 by the Planner with
+ * title-equals-slug. Once the Architect can create a Milestone with an
+ * arbitrary free-text title (a product goal, not a tranche), that title
+ * could trivially legacy-match itself and the Milestone would be listed as a
+ * phantom tranche, its raw description read as the "goal".
+ */
+function slugShapedTitles(milestones: GhMilestone[]): string[] {
+  return milestones.map((m) => m.title).filter((t) => TRANCHE_SLUG_SHAPE.test(t))
+}
+
 function factsFromLegacyMilestone(milestone: GhMilestone): MilestoneFacts {
   return {
     goal: milestone.description ?? '',
@@ -53,6 +181,20 @@ function lifecycleFromIssues(issues: GhIssue[]): Lifecycle {
 }
 
 /**
+ * The goal for a label-derived (non-legacy) tranche: the first matching
+ * `### Tranche intents` line found across every fetched Milestone, in list
+ * order — `''` when none declares one, exactly as an unmilestoned tranche
+ * read before this task (vinaya-milestone-model-v1 task 2).
+ */
+function goalFromMilestones(milestones: GhMilestone[], slug: string): string {
+  for (const m of milestones) {
+    const goal = intentGoalForSlug(m.description ?? '', slug)
+    if (goal) return goal
+  }
+  return ''
+}
+
+/**
  * Matching rule: exact title match against the tranche slug wins first
  * (the legacy path, forever). Otherwise the tranche is derived from its
  * `vinaya/tranche:<slug>`-labeled Issues — never `null` any more: a slug
@@ -68,7 +210,7 @@ export function findMilestoneForSlug(owner: string, repo: string, slug: string):
   if (legacy) return factsFromLegacyMilestone(legacy)
 
   const issues = ghIssueListByLabel(owner, repo, trancheLabel(slug))
-  return { goal: '', lifecycle: lifecycleFromIssues(issues) }
+  return { goal: goalFromMilestones(milestones, slug), lifecycle: lifecycleFromIssues(issues) }
 }
 
 export type ActiveTrancheRef = { slug: string; goal: string }
@@ -116,7 +258,7 @@ function trancheSlugsFromLabels(labels: GhLabel[]): string[] {
 export function listActiveTrancheSlugs(owner: string, repo: string): ActiveTrancheRef[] {
   const milestones = ghApiGet<GhMilestone[]>(`repos/${owner}/${repo}/milestones?state=all&per_page=100`)
   const labels = ghApiGet<GhLabel[]>(`repos/${owner}/${repo}/labels?per_page=100`)
-  const slugs = new Set<string>([...milestones.map((m) => m.title), ...trancheSlugsFromLabels(labels)])
+  const slugs = new Set<string>([...slugShapedTitles(milestones), ...trancheSlugsFromLabels(labels)])
 
   const active: ActiveTrancheRef[] = []
   for (const slug of slugs) {
@@ -127,7 +269,7 @@ export function listActiveTrancheSlugs(owner: string, repo: string): ActiveTranc
       continue
     }
     const issues = ghIssueListByLabel(owner, repo, trancheLabel(slug))
-    if (lifecycleFromIssues(issues) === 'active') active.push({ slug, goal: '' })
+    if (lifecycleFromIssues(issues) === 'active') active.push({ slug, goal: goalFromMilestones(milestones, slug) })
   }
   return active
 }
@@ -142,7 +284,7 @@ export function listActiveTrancheSlugs(owner: string, repo: string): ActiveTranc
 export function listArchivedTrancheSlugs(owner: string, repo: string): ActiveTrancheRef[] {
   const milestones = ghApiGet<GhMilestone[]>(`repos/${owner}/${repo}/milestones?state=all&per_page=100`)
   const labels = ghApiGet<GhLabel[]>(`repos/${owner}/${repo}/labels?per_page=100`)
-  const slugs = new Set<string>([...milestones.map((m) => m.title), ...trancheSlugsFromLabels(labels)])
+  const slugs = new Set<string>([...slugShapedTitles(milestones), ...trancheSlugsFromLabels(labels)])
 
   const archived: ActiveTrancheRef[] = []
   for (const slug of slugs) {
@@ -153,7 +295,7 @@ export function listArchivedTrancheSlugs(owner: string, repo: string): ActiveTra
       continue
     }
     const issues = ghIssueListByLabel(owner, repo, trancheLabel(slug))
-    if (lifecycleFromIssues(issues) === 'complete') archived.push({ slug, goal: '' })
+    if (lifecycleFromIssues(issues) === 'complete') archived.push({ slug, goal: goalFromMilestones(milestones, slug) })
   }
   return archived
 }
@@ -190,9 +332,13 @@ export async function indexTrancheMilestonesAsync(owner: string, repo: string): 
   const active: ActiveTrancheRef[] = []
   const archived: ActiveTrancheRef[] = []
   const facts = new Map<string, MilestoneFacts>()
-  const legacySlugs = new Set<string>(milestones.map((m) => m.title))
+  const legacySlugs = new Set<string>(slugShapedTitles(milestones))
 
   for (const m of milestones) {
+    // Skip a free-text-titled (Architect) Milestone entirely — it is not a
+    // tranche and must not be indexed as one. See `slugShapedTitles`'s doc
+    // comment.
+    if (!legacySlugs.has(m.title)) continue
     const ref = { slug: m.title, goal: m.description ?? '' }
     const f = factsFromLegacyMilestone(m)
     if (f.lifecycle === 'complete') archived.push(ref)
@@ -209,10 +355,11 @@ export async function indexTrancheMilestonesAsync(owner: string, repo: string): 
   uniqueNewPathSlugs.forEach((slug, i) => {
     const issues = fetchedIssues[i] ?? []
     const lifecycle = lifecycleFromIssues(issues)
-    const f: MilestoneFacts = { goal: '', lifecycle }
+    const goal = goalFromMilestones(milestones, slug)
+    const f: MilestoneFacts = { goal, lifecycle }
     facts.set(slug, f)
-    if (lifecycle === 'active') active.push({ slug, goal: '' })
-    else if (lifecycle === 'complete') archived.push({ slug, goal: '' })
+    if (lifecycle === 'active') active.push({ slug, goal })
+    else if (lifecycle === 'complete') archived.push({ slug, goal })
     // 'planned' (zero Issues) appears in neither list — same degrade as
     // before this task, when a slug with no Milestone appeared in neither.
   })

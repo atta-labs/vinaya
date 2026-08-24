@@ -11,8 +11,8 @@ const ENFORCEMENT_PATH = join(REPO_ROOT, 'aeg-root/enforcement.md')
 const ROLES_DIR = join(REPO_ROOT, 'aeg-root/roles')
 
 describe('ACTIONS — shape', () => {
-  it('has exactly 10 entries (6 crossings + 4 seam-only, not 12 — no duplicate id for a seam already covered by a crossing)', () => {
-    expect(ACTIONS).toHaveLength(10)
+  it('has exactly 11 entries (6 crossings + 5 seam-only — no duplicate id for a seam already covered by a crossing)', () => {
+    expect(ACTIONS).toHaveLength(11)
   })
 
   it('every id is unique', () => {
@@ -84,7 +84,7 @@ describe('ACTIONS — real-file cross-check', () => {
       const { data } = matter(readFileSync(join(ROLES_DIR, file), 'utf8'))
       if (typeof data.role_id === 'string') roleIds.add(data.role_id)
     }
-    expect(roleIds.size).toBe(8)
+    expect(roleIds.size).toBe(9)
 
     const referenced = new Set<string>(ACTIONS.flatMap((a: Action) => a.performedBy))
     for (const roleId of referenced) {

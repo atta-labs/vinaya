@@ -8,8 +8,15 @@ vi.mock('./gh', () => createGhMock())
 const { ghApiGet, ghApiGetAsync, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } = await import(
   './gh'
 )
-const { findMilestoneForSlug, indexTrancheMilestonesAsync, listActiveTrancheSlugs, listArchivedTrancheSlugs } =
-  await import('./fetch-milestone')
+const {
+  findMilestoneForSlug,
+  indexTrancheMilestonesAsync,
+  listActiveTrancheSlugs,
+  listArchivedTrancheSlugs,
+  intentGoalForSlug,
+  milestoneLifecycleFromTrancheLifecycles,
+  releaseFromDescription
+} = await import('./fetch-milestone')
 
 const OWNER = 'daniboomerang'
 const REPO = 'attalabs'
@@ -95,6 +102,93 @@ describe('findMilestoneForSlug', () => {
     expect(findMilestoneForSlug(OWNER, REPO, 'tranche-a')).toEqual({ goal: '', lifecycle: 'active' })
     expect(findMilestoneForSlug(OWNER, REPO, 'tranche-b')).toEqual({ goal: '', lifecycle: 'complete' })
   })
+
+  it('a label-derived tranche picks up its goal from the matching intent line in a non-legacy Milestone', () => {
+    const description = [
+      'Ship the milestone model.',
+      '',
+      '### Tranche intents',
+      '- vinaya-milestone-model-v1: A milestone can be created and refused when malformed.'
+    ].join('\n')
+    vi.mocked(ghApiGet).mockReturnValue([{ title: 'sprint-42', description, state: 'open' }])
+    vi.mocked(ghIssueListByLabel).mockReturnValue([issue('OPEN')])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'vinaya-milestone-model-v1')).toEqual({
+      goal: 'A milestone can be created and refused when malformed.',
+      lifecycle: 'active'
+    })
+  })
+
+  it('a label with no matching intent line keeps the empty goal, exactly as before', () => {
+    const description = ['Ship something else.', '', '### Tranche intents', '- other-slug: unrelated.'].join('\n')
+    vi.mocked(ghApiGet).mockReturnValue([{ title: 'sprint-42', description, state: 'open' }])
+    vi.mocked(ghIssueListByLabel).mockReturnValue([issue('OPEN')])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'vinaya-milestone-model-v1')).toEqual({ goal: '', lifecycle: 'active' })
+  })
+})
+
+describe('releaseFromDescription', () => {
+  it('returns null when no Release: field exists', () => {
+    expect(releaseFromDescription('A milestone with no version.')).toBeNull()
+  })
+
+  it('reads a bold-inline Release: field', () => {
+    expect(releaseFromDescription('The goal.\n\n**Release:** 1.2.0')).toBe('1.2.0')
+  })
+
+  it('reads a plain Release: field', () => {
+    expect(releaseFromDescription('The goal.\n\nRelease: 1.2.0')).toBe('1.2.0')
+  })
+
+  it('returns null for a malformed version', () => {
+    expect(releaseFromDescription('Release: whenever it ships')).toBeNull()
+  })
+
+  it('never matches inside a fenced code example', () => {
+    const body = ['The goal.', '', '```', 'Release: 1.0.0', '```', ''].join('\n')
+    expect(releaseFromDescription(body)).toBeNull()
+  })
+})
+
+describe('intentGoalForSlug', () => {
+  it('returns empty string when there is no Tranche intents section', () => {
+    expect(intentGoalForSlug('Just a goal, no intents.', 'some-slug')).toBe('')
+  })
+
+  it('returns the matching intent line', () => {
+    const description = ['Ship the milestone model.', '', '### Tranche intents', '- a-slug: Its intent text.'].join(
+      '\n'
+    )
+    expect(intentGoalForSlug(description, 'a-slug')).toBe('Its intent text.')
+  })
+
+  it('returns empty string when the section exists but no line matches this slug', () => {
+    const description = ['Goal.', '', '### Tranche intents', '- other-slug: unrelated.'].join('\n')
+    expect(intentGoalForSlug(description, 'a-slug')).toBe('')
+  })
+})
+
+describe('milestoneLifecycleFromTrancheLifecycles', () => {
+  it('derives planned when the milestone holds zero tranches — the at-least-one guard, one altitude up', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles([])).toBe('planned')
+  })
+
+  it('derives planned when every declared tranche is itself still planned', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles(['planned', 'planned'])).toBe('planned')
+  })
+
+  it('derives active when any tranche is active', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles(['planned', 'active'])).toBe('active')
+  })
+
+  it('derives complete only when every tranche is complete', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles(['complete', 'complete'])).toBe('complete')
+  })
+
+  it('derives active for a mix of complete and planned — not yet fully done', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles(['complete', 'planned'])).toBe('active')
+  })
 })
 
 describe('listActiveTrancheSlugs', () => {
@@ -163,6 +257,39 @@ describe('listActiveTrancheSlugs', () => {
 
     expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
   })
+
+  it('a free-text-titled Architect Milestone is never listed as a phantom tranche', () => {
+    // vinaya-milestone-model-v1 task 2: an Architect Milestone's title is
+    // free text, not a tranche slug. Before the shape guard, EVERY
+    // Milestone's title fed the candidate-slug set, so this title
+    // trivially legacy-matched itself and was listed as a fake tranche.
+    mockGh([{ title: 'Vinaya milestone model — Test Plan proof', description: 'The goal.', state: 'open' }], [])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+
+  it('a single-word, mixed-case free-text title is also never listed as a phantom tranche', () => {
+    // Code review round 2: the shape guard first shipped by reusing
+    // PROJECT_SLUG, whose `i` flag matches capital letters — so a one-word
+    // title with no space and no dash ("MilestoneModel", "Vinaya") slipped
+    // through and still phantom-matched. Every real tranche slug in this
+    // repo is lowercase, so the guard must be case-sensitive.
+    mockGh([{ title: 'MilestoneModel', description: 'The goal.', state: 'open' }], [])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+
+  it('a lowercase, hyphenated free-text title with no version suffix is also never listed as a phantom tranche', () => {
+    // Code review round 3: a plausible kebab-case product-goal title
+    // ("improve-onboarding-flow") still phantom-matched, since every real
+    // tranche slug is ALSO lowercase and hyphenated — the shape guard needed
+    // one more property that distinguishes them: every real slug in this
+    // repo ends in a `-v<N>` version suffix, which an ordinary free-text
+    // title is unlikely to carry by accident.
+    mockGh([{ title: 'improve-onboarding-flow', description: 'A product goal, not a tranche.', state: 'open' }], [])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
 })
 
 describe('listArchivedTrancheSlugs', () => {
@@ -189,6 +316,12 @@ describe('listArchivedTrancheSlugs', () => {
   it('excludes a label-only tranche with zero Issues — planned is neither active nor archived', () => {
     mockGh([], ['vinaya/tranche:planned-v1'])
     vi.mocked(ghIssueListByLabel).mockReturnValue([])
+
+    expect(listArchivedTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+
+  it('a free-text-titled Architect Milestone is never listed as a phantom archived tranche', () => {
+    mockGh([{ title: 'Vinaya milestone model — Test Plan proof', description: 'The goal.', state: 'closed' }], [])
 
     expect(listArchivedTrancheSlugs(OWNER, REPO)).toEqual([])
   })
@@ -293,6 +426,27 @@ describe('indexTrancheMilestonesAsync', () => {
     expect(index.facts.size).toBe(0)
     expect(index.legacySlugs.size).toBe(0)
   })
+
+  it('a free-text-titled Architect Milestone is never indexed as a phantom tranche', async () => {
+    // vinaya-milestone-model-v1 task 2: before the shape guard, every real
+    // Milestone in the paginated fetch was unconditionally treated as a
+    // legacy tranche (`legacySlugs = new Set(milestones.map(m => m.title))`,
+    // no `matchesLegacyMilestone` gate at all in this async path) — so an
+    // Architect's free-text-titled goal Milestone landed in `active`/`archived`
+    // with its raw description as the "goal".
+    mockPages(
+      [...MILESTONES, { title: 'Vinaya milestone model — Test Plan proof', description: 'The goal.', state: 'open' }],
+      []
+    )
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    const phantomSlug = 'Vinaya milestone model — Test Plan proof'
+    expect(index.legacySlugs.has(phantomSlug)).toBe(false)
+    expect(index.active.some((r) => r.slug === phantomSlug)).toBe(false)
+    expect(index.archived.some((r) => r.slug === phantomSlug)).toBe(false)
+    expect(index.facts.has(phantomSlug)).toBe(false)
+  })
 })
 
 /**
@@ -319,8 +473,13 @@ describe('indexTrancheMilestonesAsync reads every page', () => {
 
   it('indexes a legacy Milestone population larger than one page', async () => {
     // What the paginated reader returns once it has walked past page 1.
+    // Titled `tranche-N-v1` (not bare `tranche-N`) so this fixture still
+    // matches TRANCHE_SLUG_SHAPE now that it requires the `-v<N>` suffix
+    // every real legacy Milestone title in this repo actually carries
+    // (round 3 code review) — the pagination behaviour under test is
+    // unaffected by the title shape.
     const many = Array.from({ length: 137 }, (_, i) => ({
-      title: `tranche-${i}`,
+      title: `tranche-${i}-v1`,
       description: null,
       state: i % 2 === 0 ? 'open' : 'closed'
     }))
@@ -333,7 +492,7 @@ describe('indexTrancheMilestonesAsync reads every page', () => {
     expect(index.archived).toHaveLength(68)
     // The entries that only exist beyond the first page must be present, in
     // both lifecycles (even index ⇒ open ⇒ active, odd ⇒ closed ⇒ complete).
-    expect(index.facts.get('tranche-136')).toEqual({ goal: '', lifecycle: 'active' })
-    expect(index.facts.get('tranche-135')).toEqual({ goal: '', lifecycle: 'complete' })
+    expect(index.facts.get('tranche-136-v1')).toEqual({ goal: '', lifecycle: 'active' })
+    expect(index.facts.get('tranche-135-v1')).toEqual({ goal: '', lifecycle: 'complete' })
   })
 })
