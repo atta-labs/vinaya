@@ -21,7 +21,12 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DOC_OWNERS_PATH, LABELS, type LabelKey } from '@attalabs/aeg-core'
+import { resolveDoctrineRoot } from '../commands/doctrine.js'
+import type { AgentVendor } from './agent-vendors.js'
+import { buildAgentsSkillsOps } from './agents-skills-emitter.js'
+import { buildClaudeCommandOps } from './claude-command-emitter.js'
 import type { VinayaConfig } from './config.js'
+import { buildGeminiCommandOp } from './gemini-command-emitter.js'
 import type { CreateLabelOp, Op } from './ops.js'
 import { packageRoot } from './package-root.js'
 import type { VendoredVinaya } from './self-host.js'
@@ -60,6 +65,17 @@ export type InitContext = {
    * byte-identical output to before the key existed.
    */
   ciSetup: string | null
+  /**
+   * The `--agents` vendor selection (task 5, #152) — which of the three
+   * agent-native emitters (`.agents/skills/`, `.claude/commands/`,
+   * `.gemini/commands/`; tasks 2/3/4) `buildInitOps` includes. `vinaya init`
+   * computes this from its own `--agents` flag (default: all three);
+   * `upgrade`/`doctor` read it back from the persisted `managed.agents`
+   * manifest key (`resolveAgentVendors`, lib/config.ts) rather than
+   * re-deriving a default, so a narrowed selection is never silently widened
+   * or dropped on a later flagless run.
+   */
+  agents: Set<AgentVendor>
 }
 
 // --- neutral scaffold paths (never aeg-root / aeg-project) ------------------
@@ -1190,6 +1206,27 @@ export function buildInitOps(ctx: InitContext): Op[] {
     content: starterDocOwners(),
     group: 'Doc-ownership manifest'
   })
+
+  // Agent-native entry points (task 5, #152) — each opt-in via `ctx.agents`,
+  // absent entirely (no op, not a skipped one) for a vendor not selected, so
+  // `doctor` never reports a deliberately-excluded vendor as "missing".
+  if (ctx.agents.has('skills')) {
+    const doctrineRoot = resolveDoctrineRoot()
+    if (!doctrineRoot) {
+      throw new Error(
+        'vinaya init: --agents includes "skills" but no bundled doctrine was found next to this CLI install — ' +
+          'cannot discover agent-skill roles. Reinstall @attalabs/vinaya, or run bundle-doctrine first in a repo ' +
+          'that vendors the CLI.'
+      )
+    }
+    ops.push(...buildAgentsSkillsOps(doctrineRoot))
+  }
+  if (ctx.agents.has('claude')) {
+    ops.push(...buildClaudeCommandOps())
+  }
+  if (ctx.agents.has('gemini')) {
+    ops.push(buildGeminiCommandOp())
+  }
 
   // Labels.
   ops.push(...labelOps())
