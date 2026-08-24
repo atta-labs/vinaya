@@ -557,6 +557,21 @@ describe('checkRationaleNamesDocs (D)', () => {
   it('still fails a heading-style rationale whose Docs field names no path', () => {
     expect(checkRationaleNamesDocs(HEADING_STYLE).status).toBe('fail')
   })
+
+  it('fails when neither Docs nor Traps field exists in the body at all (not merely empty)', () => {
+    const body = `
+## Planner's rationale
+
+**Boundary** — Fix the tab layout in \`apps/vinaya/web\`.
+
+**Project(s) + blast radius** — \`Project: vinaya\`.
+
+**Project:** vinaya
+`
+    const r = checkRationaleNamesDocs(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/no-doc-surface/)
+  })
 })
 
 describe('checkConflictCompleteness (C, warn-only)', () => {

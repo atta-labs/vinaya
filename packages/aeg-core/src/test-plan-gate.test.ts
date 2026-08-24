@@ -82,6 +82,15 @@ describe('evaluateTestPlanGate — no section at all', () => {
   })
 })
 
+describe('evaluateTestPlanGate — section found but no checkbox items', () => {
+  it('PASSes (advisory) when the Test Plan section is prose with no checkboxes', () => {
+    const body = '## Test Plan\n\nManual verification only, no checklist here.\n\n## Scope\n\nx'
+    const result = evaluateTestPlanGate(body, TASK_BRANCH)
+    expect(result.verdict).toBe('pass')
+    expect(result.messages.join('\n')).toContain('no checkbox items')
+  })
+})
+
 describe('evaluateTestPlanGate — unticked boxes', () => {
   it('FAILs and names every unticked line', () => {
     const body = [
