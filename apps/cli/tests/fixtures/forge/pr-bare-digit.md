@@ -14,7 +14,7 @@ Closes #385
 
 ## Summary
 
-Ships the validated forge-write path for the Vinaya CLI.
+Ships the validated forge-write path for the Vinaya CLI, fixing 3 bugs along the way.
 
 ## Test Plan
 

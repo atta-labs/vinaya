@@ -202,7 +202,20 @@ function runGate(label: string, script: string, scriptArgs: string[], env: Recor
   }
 }
 
-export type GateStep = 'verify-brief' | 'verify-docs' | 'closes-n' | 'verify-task'
+export type GateStep = 'verify-brief' | 'verify-docs' | 'body-bare-digits' | 'closes-n' | 'verify-task'
+
+/**
+ * The env for the `body-bare-digits` subprocess — pulled out to a pure
+ * function for the same reason `gatePlanForBranch` below is: it is
+ * independently fixture-tested without spawning `bun` or mocking `gh`.
+ * `PR_NUMBER` is always a key in the returned object, never left absent for
+ * `{...process.env, ...env}` to fill in from whatever the calling shell
+ * happens to hold — see the call site's comment for why an inherited value
+ * would be a real cross-PR exemption bug, not a cosmetic one.
+ */
+export function bareDigitsGateEnv(body: string, editPrNumber: number | null): Record<string, string> {
+  return { PR_BODY: body, PR_NUMBER: editPrNumber !== null ? String(editPrNumber) : '' }
+}
 
 /**
  * Pure gate-selection plan (aeg-governance-hardening task 25, #365) — decides
@@ -212,7 +225,14 @@ export type GateStep = 'verify-brief' | 'verify-docs' | 'closes-n' | 'verify-tas
  * plan into actual `runGate` invocations.
  */
 export function gatePlanForBranch(branch: string): GateStep[] {
-  const plan: GateStep[] = ['verify-brief', 'verify-docs']
+  // `body-bare-digits` runs on EVERY branch, task or not. It is `requiresOpenPr`,
+  // so the ring-0 hooks skip it — there is no PR body at commit time — and until
+  // now nothing ran it before the write either. The result was this command
+  // printing "all contract gates PASS" and the same check then failing on the
+  // forge, which is the wrapper asserting something it had not checked. The
+  // Changesets release branch is exempt inside the check itself, so no branch
+  // condition belongs here.
+  const plan: GateStep[] = ['verify-brief', 'verify-docs', 'body-bare-digits']
   if (/^task\//.test(branch)) plan.push('closes-n', 'verify-task')
   return plan
 }
@@ -276,6 +296,19 @@ export function main(): void {
         runGate('brief-validation', 'packages/aeg-core/bin/verify-brief.ts', [], { BRANCH: branch, PR_BODY: body })
       } else if (step === 'verify-docs') {
         runGate('verify-docs', 'packages/aeg-core/bin/verify-docs.ts', ['--pr'], { PR_BODY: body })
+      } else if (step === 'body-bare-digits') {
+        // The scanner lives in `apps/cli`, which `aeg-core`'s bin cannot import,
+        // so run its bin as a subprocess — the same shape every other gate here
+        // uses, and the same source the shipped check is built from.
+        //
+        // See `bareDigitsGateEnv`'s own comment for why `PR_NUMBER` must
+        // never be left to `runGate`'s `...process.env` passthrough.
+        runGate(
+          'body-bare-digits',
+          'apps/cli/src/checks/bin/check-body-bare-digits.ts',
+          [],
+          bareDigitsGateEnv(body, editPrNumber)
+        )
       } else if (step === 'closes-n') {
         runGate('Closes #N', 'packages/aeg-core/bin/verify-coherence.ts', ['--closes-n'], {
           BRANCH: branch,
