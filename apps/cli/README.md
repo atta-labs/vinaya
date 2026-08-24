@@ -87,6 +87,12 @@ The emitter that will generate skill pointers under `.agents/skills/vinaya-<role
 
 The emitter that will generate `.gemini/commands/vinaya.toml`, Gemini CLI's own custom-command surface, is built — `vinaya init` does not call it yet. It emits ONE parameterized command, invoked `/vinaya <role>`, whose `prompt` field embeds `!{vinaya doctrine --role {{args}}}`: Gemini CLI substitutes the typed role into `{{args}}`, shell-escaping it automatically, before running the shell block — and it always prompts the user to confirm the exact resolved command first, with no documented bypass. Role-argument validation stays in `vinaya doctrine --role` alone (`commands/doctrine.ts`), not duplicated here. `init`/`upgrade`/`eject`/`doctor` wiring lands in #152.
 
+## Claude Code command
+
+The emitter that will generate a single parameterized `.claude/commands/vinaya.md`, invoked `/vinaya <role>`, is built — `vinaya init` does not call it yet (wiring lands in #152, alongside the other two vendor emitters). The file uses Claude Code's `$ARGUMENTS` substitution to shell out to `vinaya doctrine --role $ARGUMENTS` at read time, scoped by `allowed-tools: Bash(vinaya doctrine *)` so it runs without a permission prompt.
+
+**Security note:** Claude Code substitutes `$ARGUMENTS` into the command as a raw, unescaped string — it does not sanitize the role token before it reaches the shell. Safety instead lives entirely downstream, in `vinaya doctrine --role`'s own handling: it validates the role against the exact set of role names live-discovered from `aeg-root/roles/*.md` and refuses anything else before it resolves to a path. That gate is load-bearing — do not loosen it, and do not add a second, divergent validator here or in the emitter.
+
 Custom checks register under `checks`, one entry per check. **Every key must be namespaced `<yourname>/<id>`** — exactly one `/`, both segments matching `[a-z0-9][a-z0-9-]*`, with `vinaya` reserved as a prefix:
 
 ```json
