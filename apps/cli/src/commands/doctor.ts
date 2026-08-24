@@ -46,6 +46,7 @@ import {
 } from '../lib/config.js'
 import {
   branchProtectionConfigured,
+  type BranchProtectionState,
   detectGitRepo,
   ghAuthStatus,
   type GhAuthStatus,
@@ -63,7 +64,7 @@ import { packageRoot } from '../lib/package-root.js'
 export type DoctorDeps = {
   detectRepo: () => Promise<RepoInfo | null>
   ghAuthStatus: () => Promise<GhAuthStatus>
-  branchProtectionConfigured: (owner: string, repo: string) => Promise<boolean | null>
+  branchProtectionConfigured: (owner: string, repo: string) => Promise<BranchProtectionState>
   hookDirFor: (repoRoot: string) => HookDir
   readHooksPath: (repoRoot: string) => Promise<string | null>
   nodeVersion: () => string
@@ -697,6 +698,13 @@ async function diagnoseBranchProtection(deps: DoctorDeps, owner: string, repo: s
     return info(
       'branch-protection',
       "main branch protection is not configured — vinaya never applies it; see `vinaya init`'s printed recommendation."
+    )
+  }
+  if (configured === 'plan-required') {
+    return info(
+      'branch-protection',
+      'main branch protection could not be checked — GitHub reports this repository needs a paid plan ' +
+        '(GitHub Pro, or make the repo public) to query branch protection on a private repo.'
     )
   }
   return info(
