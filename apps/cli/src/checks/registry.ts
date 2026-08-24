@@ -60,22 +60,21 @@ export function runsUnderAll(spec: CheckSpec): boolean {
 }
 
 /**
- * The four core AEG gates an adopter's repo actually runs, expressed as
- * ordinary `CheckSpec`s — the exact shape a `vinaya.config.json` entry
- * produces. No extra field, no privileged flag: this IS the
- * no-privileged-API proof, not a stylistic choice. See
- * `tests/checks/no-privileged-api.test.ts`.
+ * The core AEG gates an adopter's repo actually runs, expressed as ordinary
+ * `CheckSpec`s — the exact shape a `vinaya.config.json` entry produces. No
+ * extra field, no privileged flag: this IS the no-privileged-API proof, not
+ * a stylistic choice. See `tests/checks/no-privileged-api.test.ts`.
  *
- * `reader-resolvable-prose` is NOT registered here: it hardcodes this
- * monorepo's own doctrine layout
- * (`aeg-root/glossary.md`, `aeg-root/tranches/completed/`) and this
- * monorepo's own marketing-site source path
- * (`apps/vinaya/web/src/app/(site)/**\/page.tsx`) — a scope-registration bug,
- * not a pathing one. No `packageRoot()`-style fix makes those paths exist in
- * an arbitrary adopter's repo. The check's bin and its underlying
- * `@attalabs/aeg-core` logic are left in place — they may still be useful as this
- * repo's own internal doc-quality tool — but they are reachable only by
- * direct invocation, never through this adopter-facing registry.
+ * `reader-resolvable-prose`/`retired-vocabulary` (task 7, Issue #56): both
+ * used to be excluded here because they hardcoded this monorepo's own
+ * doctrine layout — a scope-registration decision, not a pathing bug. Both
+ * bins now read their doctrine root, reader-facing globs, and legacy-slug
+ * corpus from `vinaya.config.json`'s `proseGates` key (`lib/config.ts`),
+ * defaulting to this repo's own prior hardcoded shape when unset, so an
+ * install that sets nothing behaves exactly as before this task. Both are
+ * report-only (`aeg-root/enforcement.md`'s G1/G2 precedent) — a `warning`
+ * finding, never a failing exit code — so registering them cannot newly
+ * fail any existing install's CI.
  */
 export function coreCheckRegistry(): CheckSpec[] {
   return [
@@ -431,6 +430,25 @@ export function coreCheckRegistry(): CheckSpec[] {
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true }
       }
+    },
+    {
+      name: 'reader-resolvable-prose',
+      run: bin('check-reader-resolvable-prose'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Deliberately empty, not omitted: audited (task 7) and confirmed to
+      // need none — reads only local files (`vinaya.config.json`'s
+      // `proseGates` key via `loadConfig()`, plus the doctrine/reader-facing
+      // trees it names), no forge call, no PR content.
+      env: {}
+    },
+    {
+      name: 'retired-vocabulary',
+      run: bin('check-retired-vocabulary'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Same reasoning as `reader-resolvable-prose` above — local files only.
+      env: {}
     }
   ]
 }

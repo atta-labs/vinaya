@@ -83,13 +83,16 @@ export const GATE_AUDIENCE: Record<string, GateAudience> = {
  * not, why not? `coreCheckRegistry()` lives in `apps/cli`, which `aeg-core`
  * cannot import without closing a dependency cycle, so the declaration lives
  * here and `apps/cli`'s own suite does the asserting.
+ *
+ * `check-reader-resolvable-prose`/`check-retired-vocabulary` (task 7, Issue
+ * #56): both used to live here as `internal` — hardcoded monorepo-specific
+ * doctrine paths made them unreachable through an adopter's own registry.
+ * Both are now config-driven (`vinaya.config.json`'s `proseGates`) and
+ * registered in `coreCheckRegistry()` as `reader-resolvable-prose` /
+ * `retired-vocabulary`, so neither belongs in this map any more — this repo's
+ * own `shipped-bin-audience.test.ts` refuses a bin declared in BOTH places.
  */
-export const SHIPPED_BIN_AUDIENCE: Record<string, GateAudience> = {
-  'check-reader-resolvable-prose': {
-    internal:
-      "Built, executable, and deliberately NOT in `coreCheckRegistry()`: it hardcodes this monorepo's own doctrine layout — it reads `aeg-root/glossary.md` directly and sweeps `aeg-root/**`. No `packageRoot()`-style fix makes those paths exist in an arbitrary adopter's repo — a scope-registration fact, not a pathing bug. (Its reader-facing half is a declared no-op here: `READER_FACING_ROOT` is `null`, because this repo has no `apps/<name>/web`.) Reachable here by direct invocation as an internal doc-quality tool."
-  }
-}
+export const SHIPPED_BIN_AUDIENCE: Record<string, GateAudience> = {}
 
 /**
  * Files in `bin/` that are not gates and therefore have no audience: forge

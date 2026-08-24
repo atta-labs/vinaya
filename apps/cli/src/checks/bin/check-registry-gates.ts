@@ -24,11 +24,14 @@
  * already uses): G1–G5 validate `aeg-root/enforcement.md` against THIS
  * monorepo's own `aeg-root/roles/`/`aeg-root/contracts/` doctrine tree — a
  * file layout that exists only in the AttaLabs monorepo itself, never in an
- * arbitrary adopter repo `vinaya init` installs into. This is the identical
- * "hardcodes this monorepo's own doctrine layout" problem `registry.ts`'s
- * own doc comment gives as the reason `reader-resolvable-prose` is NOT
- * registered. Rather than repeating that exclusion (which would silently
- * drop 5 of the 13 evaluators this task's brief explicitly names), this
+ * arbitrary adopter repo `vinaya init` installs into. This is the same
+ * "hardcodes this monorepo's own doctrine layout" problem
+ * `reader-resolvable-prose`/`retired-vocabulary` used to carry before task 7
+ * (Issue #56) moved their doctrine root behind `vinaya.config.json`'s
+ * `proseGates` key — `enforcement.md`'s own role/contract frontmatter shape
+ * has no adopter-facing config surface to move behind the same way. Rather
+ * than repeating that exclusion (which would silently drop 5 of the 13
+ * evaluators this task's brief explicitly names), this
  * adapter no-ops (exit 0, no findings) when `aeg-root/enforcement.md` does
  * not exist relative to the caller's cwd — meaningful and blocking inside
  * THIS repo (where the file exists), inert everywhere else. See the PR
