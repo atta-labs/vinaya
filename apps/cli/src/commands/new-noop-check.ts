@@ -52,7 +52,19 @@ export function newNoopCheckCommand(args: string[]): void {
   chmodSync(targetPath, 0o755)
 
   const relPath = join(CHECKS_DIR, `${name}.ts`)
-  const registration = JSON.stringify({ checks: { [name]: { run: `./${relPath}`, scope: coreSpec.scope } } }, null, 2)
+  // Carries the replaced core check's own `requiresOpenPr`/`ownWorkflow`
+  // flags into the printed entry — dropping them would silently widen when
+  // the noop actually runs versus the core check it replaces (e.g. an
+  // `ownWorkflow` check like `review-gate` is withheld from `--all`
+  // specifically to avoid a second, stale conclusion; a pasted entry
+  // missing that flag loses that exclusion for its replacement).
+  const entry: { run: string; scope: string; requiresOpenPr?: true; ownWorkflow?: true } = {
+    run: `./${relPath}`,
+    scope: coreSpec.scope
+  }
+  if (coreSpec.requiresOpenPr) entry.requiresOpenPr = true
+  if (coreSpec.ownWorkflow) entry.ownWorkflow = true
+  const registration = JSON.stringify({ checks: { [name]: entry } }, null, 2)
   process.stdout.write(
     `Created ${relPath}\n\nThis REPLACES the core check "${name}" — it will no longer run. Register the no-op in vinaya.config.json:\n${registration}\n`
   )

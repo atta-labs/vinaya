@@ -1119,6 +1119,16 @@ describe('round-trip: init then eject returns the repo to pre-init state', () =>
     expect(out).toContain('gh label delete vinaya/tier:0')
   })
 
+  it('scaffold-folder placeholders (task 8): init creates both, eject removes both exactly', async () => {
+    await runInit(['--yes'], makeDeps())
+    expect(existsSync(join(root, CHECKS_FOLDER_PLACEHOLDER_PATH))).toBe(true)
+    expect(existsSync(join(root, ROLES_FOLDER_PLACEHOLDER_PATH))).toBe(true)
+
+    await runEject(['--yes'], ejectDeps())
+    expect(existsSync(join(root, CHECKS_FOLDER_PLACEHOLDER_PATH))).toBe(false)
+    expect(existsSync(join(root, ROLES_FOLDER_PLACEHOLDER_PATH))).toBe(false)
+  })
+
   it('fixture with adopter lines in a hook: eject strips only the vinaya block', async () => {
     mkdirSync(join(root, '.husky'), { recursive: true })
     writeFileSync(join(root, '.husky/pre-commit'), '#!/usr/bin/env sh\nnpm run lint\n')
