@@ -73,6 +73,21 @@ const CheckEntrySchema = z
 
 export type CheckEntry = z.infer<typeof CheckEntrySchema>
 
+// `roles`: per-role override and additive-role registration, keyed by
+// config key. `contract` is PATH-ONLY, resolved relative to this config
+// file's own directory — a slash-free value (e.g. `"developer.md"`) is
+// rejected at load, so the field can never be confused for a bare role id
+// or a shell command the way `checks.run` legitimately can be. The
+// resolver (`src/roles/resolver.ts`) does the override-vs-additive
+// classification and structural contract validation; this schema only
+// proves the shape is a path.
+const RoleEntrySchema = z.object({
+  contract: z.string().refine((p) => p.includes('/'), {
+    message: 'must be a path (contain at least one "/"), not a bare filename'
+  })
+})
+export type RoleEntry = z.infer<typeof RoleEntrySchema>
+
 const HIGH_ENTROPY_MIN_LENGTH = 20
 
 /** Loose heuristic, not a secret scanner: a long literal mixing char classes with no whitespace reads more like a pasted token than a hand-typed config value. */
@@ -251,6 +266,7 @@ export const VinayaConfigSchema = z.object({
     })
     .optional(),
   checks: z.record(z.string(), CheckEntrySchema).optional(),
+  roles: z.record(z.string(), RoleEntrySchema).optional(),
   briefSchema: BriefSchemaSchema.optional(),
   managed: ManagedManifestSchema.optional(),
   // GitHub logins trusted as this repo's own principals for review-gate
@@ -359,6 +375,11 @@ export function globalPrincipalsIgnoredWarning(path: string): string {
   return `${path}: "principals" in the global config is ignored — principals may only be declared from a repo-local vinaya.config.json.`
 }
 
+/** Same reasoning as `globalChecksIgnoredWarning` — a role contract is agent-facing doctrine, and which one a role name resolves to must come from the reviewed, committed repo file, never a machine-wide personal config. */
+export function globalRolesIgnoredWarning(path: string): string {
+  return `${path}: "roles" registration in the global config is ignored — roles may only be registered from a repo-local vinaya.config.json.`
+}
+
 /** Same reasoning as `globalPrincipalsIgnoredWarning` — `releaseActor` gates a merge-authority exemption, same trust class as `principals`. */
 export function globalReleaseActorIgnoredWarning(path: string): string {
   return `${path}: "releaseActor" in the global config is ignored — releaseActor may only be declared from a repo-local vinaya.config.json.`
@@ -374,11 +395,12 @@ export function globalReleaseActorIgnoredWarning(path: string): string {
  * parameter with no notion of "this came from global vs. local," because
  * every caller already sees an already-stripped config.
  *
- * There is no `roles` key to strip yet — `VinayaConfigSchema` has no `roles`
- * field, so a global config's hypothetical `roles` key is already silently
- * dropped by Zod's default parse behavior (unknown keys are stripped, no
- * `.passthrough()` on `VinayaConfigSchema`). A `roles` field belongs to a
- * later task, not this one.
+ * `roles` is stripped the same way, for the same trust reason: a role
+ * contract's frontmatter (`description`, `refuses_when`, `performs`, …) is
+ * consumed as agent-facing doctrine — `vinaya doctrine --role` hands it to
+ * a third-party agent tool as operating instructions — so which contract a
+ * role name resolves to must come from the reviewed, committed repo file,
+ * never a machine-wide personal config.
  */
 function stripGlobalOnlyKeys(config: VinayaConfig, path: string): VinayaConfig {
   if (path !== GLOBAL_CONFIG_PATH) return config
@@ -386,6 +408,10 @@ function stripGlobalOnlyKeys(config: VinayaConfig, path: string): VinayaConfig {
   if (result.checks && Object.keys(result.checks).length > 0) {
     console.error(`⚠ ${globalChecksIgnoredWarning(path)}`)
     result = { ...result, checks: undefined }
+  }
+  if (result.roles && Object.keys(result.roles).length > 0) {
+    console.error(`⚠ ${globalRolesIgnoredWarning(path)}`)
+    result = { ...result, roles: undefined }
   }
   if (result.principals && result.principals.length > 0) {
     console.error(`⚠ ${globalPrincipalsIgnoredWarning(path)}`)
