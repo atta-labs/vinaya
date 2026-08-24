@@ -325,7 +325,36 @@ export const VinayaConfigSchema = z.object({
   // (lockfile, monorepo config, CI, git hooks); an adopter who needs a
   // domain beyond those (a `migrations/` folder, a codegen output dir)
   // declares it here.
-  blastRadius: z.object({ extraDomains: z.array(z.string()).optional() }).optional()
+  blastRadius: z.object({ extraDomains: z.array(z.string()).optional() }).optional(),
+  // De-hardcodes `reader-resolvable-prose`/`retired-vocabulary`'s repo-specific
+  // inputs (task 7, Issue #56) — the two prose/vocabulary core checks read
+  // this key at check-run time (`check-reader-resolvable-prose.ts`,
+  // `check-retired-vocabulary.ts`), never at generation time, so editing it
+  // takes effect on the very next `vinaya check` with no `upgrade` needed.
+  // Every field is optional and additive: an adopter who sets nothing gets
+  // this repo's own prior hardcoded defaults (`doctrineRoot: 'aeg-root'`, a
+  // dormant reader-facing sweep, `legacySlugDir` derived from `doctrineRoot`).
+  proseGates: z
+    .object({
+      // The doctrine directory these checks sweep in full (`ships` class) —
+      // `aeg-root/**` by default, this repo's own doctrine root. An adopter
+      // who names their installed doctrine tree differently sets this once;
+      // both checks read it the same way.
+      doctrineRoot: z.string().min(1).optional(),
+      // The reader-facing surface's path prefix and filename suffix — e.g.
+      // `apps/web/src/app` and `/page.tsx`. BOTH must be set together for the
+      // reader-facing sweep to run at all; either absent (the default) is a
+      // declared no-op, matching this repo's own `READER_FACING_ROOT: null`
+      // (no public site here to sweep), not a silent gap.
+      readerFacingPrefix: z.string().min(1).optional(),
+      readerFacingSuffix: z.string().min(1).optional(),
+      // The archived-tranche directory `checkUnresolvableReferences`'s
+      // legacy-slug list is derived from (filenames, not content). Defaults
+      // to `<doctrineRoot>/tranches/completed`; absent-on-disk degrades to
+      // an explicitly dormant legacy-slug class, never an error.
+      legacySlugDir: z.string().min(1).optional()
+    })
+    .optional()
 })
 
 export type VinayaConfig = z.infer<typeof VinayaConfigSchema>

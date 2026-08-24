@@ -320,6 +320,55 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       'Repo-relative path prefixes treated as additional shared collision domains — a `migrations/` folder, a codegen output directory, anything that couples tasks across package boundaries with no universal naming convention `checkBlastRadiusScope`’s built-in defaults can presence-check.'
     ],
     example: `{ "extraDomains": ["migrations"] }`
+  },
+  {
+    key: 'proseGates',
+    type: 'object (optional)',
+    semantics: [
+      "De-hardcodes the two prose/vocabulary core checks — `reader-resolvable-prose` and `retired-vocabulary` — behind adopter configuration, so both can run for real in an adopter repo instead of only inside this monorepo's own dev loop. Read fresh on every `vinaya check` run (not at generation time), so an edit takes effect on the very next run with no `vinaya upgrade` needed.",
+      "Every field is optional; unset entirely, both checks behave exactly as they did when this key did not exist — this repo's own prior hardcoded doctrine layout.",
+      "Both checks are report-only: a finding prints as a `warning`, and the check's own exit code always stays `0` — registering them (or configuring them) can never newly fail an existing install's CI."
+    ],
+    example: `{
+  "proseGates": {
+    "doctrineRoot": "governance-docs",
+    "readerFacingPrefix": "apps/web/src/app/(site)",
+    "readerFacingSuffix": "/page.tsx",
+    "legacySlugDir": "governance-docs/tranches/completed"
+  }
+}`
+  },
+  {
+    key: 'proseGates.doctrineRoot',
+    type: 'string (optional, min 1)',
+    semantics: [
+      'The doctrine directory both checks sweep in full — every `.md` under it counts as "ships" prose. Defaults to `"aeg-root"`, this repo\'s own doctrine root. An adopter who names their installed doctrine tree differently sets this once; both checks read the same value.'
+    ],
+    example: `{ "doctrineRoot": "governance-docs" }`
+  },
+  {
+    key: 'proseGates.readerFacingPrefix',
+    type: 'string (optional, min 1)',
+    semantics: [
+      "The path prefix of the adopter's reader-facing surface (a public site, docs app, …) that `reader-resolvable-prose` also sweeps. Must be set TOGETHER with `readerFacingSuffix` — either alone is a declared no-op, not a partial sweep, matching this repo's own dormant default (no public site here)."
+    ],
+    example: `{ "readerFacingPrefix": "apps/web/src/app/(site)" }`
+  },
+  {
+    key: 'proseGates.readerFacingSuffix',
+    type: 'string (optional, min 1)',
+    semantics: [
+      'The filename suffix (e.g. `"/page.tsx"`) that, combined with `readerFacingPrefix`, selects which files under the reader-facing tree actually carry reader-visible prose — sibling files (components, fixtures) are not swept.'
+    ],
+    example: `{ "readerFacingSuffix": "/page.tsx" }`
+  },
+  {
+    key: 'proseGates.legacySlugDir',
+    type: 'string (optional, min 1)',
+    semantics: [
+      'The archived-tranche directory `reader-resolvable-prose`\'s legacy-slug citation class derives its slug list from (filenames only, never content). Defaults to `"<doctrineRoot>/tranches/completed"`. Absent on disk degrades this class to explicitly dormant, never an error.'
+    ],
+    example: `{ "legacySlugDir": "governance-docs/tranches/completed" }`
   }
 ] as const
 
