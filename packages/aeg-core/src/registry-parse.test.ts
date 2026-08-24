@@ -64,16 +64,16 @@ describe('parseEnforcementRegistry', () => {
     expect(ring2Rows[1]?.implementation).toBe('')
   })
 
-  it('parses the real enforcement.md — 40 rows (34 plus the six standalone-shim rows G2 demanded), only non-deterministic rows carry an empty implementation', () => {
+  it('parses the real enforcement.md — 41 rows (34 plus the six standalone-shim rows G2 demanded, plus the retired-vocabulary row task 7 added), only non-deterministic rows carry an empty implementation', () => {
     const content = readFileSync(ENFORCEMENT_PATH, 'utf8')
     const rows = parseEnforcementRegistry(content)
 
-    expect(rows).toHaveLength(40)
+    expect(rows).toHaveLength(41)
 
     const ring0Count = rows.filter((r) => r.ring === 'ring0').length
     const ring1Count = rows.filter((r) => r.ring === 'ring1').length
     const ring2Count = rows.filter((r) => r.ring === 'ring2').length
-    expect(ring0Count + ring1Count + ring2Count).toBe(40)
+    expect(ring0Count + ring1Count + ring2Count).toBe(41)
 
     const emptyImplementation = rows.filter((r) => r.implementation === '')
     // "Staleness audits" is the one genuinely non-deterministic row with no file.

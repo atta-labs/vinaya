@@ -44,7 +44,9 @@ describe('registry env declarations', () => {
         'first-push-dispatch',
         'issue-assignment',
         'no-disk-state',
+        'reader-resolvable-prose',
         'registry-gates',
+        'retired-vocabulary',
         'review-gate',
         'single-plan-pr',
         'test-plan'

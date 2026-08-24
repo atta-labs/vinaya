@@ -61,8 +61,8 @@ describe('RC1 — packageRoot() resolves regardless of the calling module’s de
   })
 })
 
-describe('RC3 — reader-resolvable-prose is not part of the adopter-facing registry', () => {
-  it("coreCheckRegistry() never contains a reader-resolvable-prose entry, task 4's 11 new registrations included", () => {
+describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the adopter-facing registry (task 7, Issue #56)', () => {
+  it('coreCheckRegistry() contains both prose-gate entries, alongside every other core registration', () => {
     const specs = coreCheckRegistry()
     expect(specs.map((s) => s.name).sort()).toEqual(
       [
@@ -79,16 +79,17 @@ describe('RC3 — reader-resolvable-prose is not part of the adopter-facing regi
         'first-push-dispatch',
         'issue-assignment',
         'no-disk-state',
+        'reader-resolvable-prose',
         'registry-gates',
+        'retired-vocabulary',
         'review-gate',
         'single-plan-pr',
         'test-plan'
       ].sort()
     )
-    expect(specs.find((s) => s.name === 'reader-resolvable-prose')).toBeUndefined()
   })
 
-  it('`vinaya check --all` in a plain fixture repo (no aeg-root/, no apps/vinaya/web/) passes clean with no reader-resolvable-prose output', () => {
+  it('`vinaya check --all` in a plain fixture repo (no aeg-root/, no configured reader-facing surface) passes clean — both checks run, dormant, zero findings', () => {
     const root = initFixture('rc3')
     try {
       const indexTs = join(import.meta.dir, '..', '..', 'src', 'index.ts')
@@ -98,8 +99,13 @@ describe('RC3 — reader-resolvable-prose is not part of the adopter-facing regi
         env: { ...process.env, PR_BODY: undefined }
       })
       expect(result.status, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0)
-      expect(result.stdout).not.toContain('reader-resolvable-prose')
-      expect(result.stderr).not.toContain('reader-resolvable-prose')
+      // Both now run (report-only, dormant on this doctrine-free fixture) —
+      // proof they are registered and pass clean, not proof they're absent.
+      expect(result.stdout).toContain('reader-resolvable-prose: pass')
+      expect(result.stdout).toContain('retired-vocabulary: pass')
+      // Never a plain-text line on stderr — that channel is CheckError JSON
+      // only; a stray human-readable line there would force `status: error`
+      // regardless of exit code (the exact bug this rewrite fixed).
       expect(result.stderr).not.toContain('aeg-root/glossary.md')
     } finally {
       rmSync(root, { recursive: true, force: true })

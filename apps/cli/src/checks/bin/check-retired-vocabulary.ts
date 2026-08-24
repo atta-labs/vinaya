@@ -1,0 +1,118 @@
+#!/usr/bin/env bun
+
+/**
+ * Core check: retired-vocabulary. Thin adapter over `@attalabs/aeg-core`'s
+ * `scanRetiredVocabulary` (task 7, Issue #56) — the genuinely-retired half
+ * of `retired-vocabulary.test.ts`'s original scan, "today only a vitest
+ * test inside `packages/aeg-core`, executed by no adopter ever."
+ *
+ * Deliberately NOT the forge-number / tranche-slug / legacy-slug class that
+ * test file also carries: those ban a LIVE, unexplained citation, and are
+ * already `reader-resolvable-prose` (`checkUnresolvableReferences`) —
+ * shipping both under two check names would double-report the identical
+ * match. See `scanRetiredVocabulary`'s own module header for the full
+ * reasoning.
+ *
+ * **Scope: `<doctrineRoot>/**` only, not the whole adopter repo.** What
+ * `RETIRED_PATTERNS` bans is AEG's own methodology history (the decision
+ * log, the lock, the `team-leader` role, …) — vocabulary that only means
+ * anything inside AEG's own doctrine, which is exactly what `vinaya init`
+ * installs at `<doctrineRoot>` and nowhere else in an adopter's repo.
+ * Sweeping the adopter's own unrelated source (their business logic, their
+ * own "decision log" feature, whatever "CONTRADICTION" means to their
+ * domain) would misfire on words that carry no AEG meaning there at all.
+ * This is a narrower scope than the vitest suite's own `PRODUCT = ['.']` —
+ * a deliberate scope decision for the adopter-facing adapter, not a change
+ * to `RETIRED_PATTERNS`/`RETIRED_EXEMPT_SUBSTRINGS`/`PATTERN_EXEMPT`
+ * themselves, which are unmodified from the vitest suite.
+ *
+ * Shares `vinaya.config.json`'s `proseGates.doctrineRoot` with
+ * `reader-resolvable-prose` — one config key, two checks reading the same
+ * doctrine-root fact, never two separate knobs for the same thing.
+ *
+ * Report-only, same rollout precedent as `reader-resolvable-prose`
+ * (`aeg-root/enforcement.md`'s G1/G2 period): findings print as `warning`
+ * severity, exit code always 0.
+ *
+ * scope: full — sweeps the whole doctrine tree, not the local diff.
+ */
+
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { scanRetiredVocabulary, type VocabSourceFile } from '@attalabs/aeg-core'
+import { loadConfig } from '../../lib/config'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+
+const CHECK_NAME = 'retired-vocabulary'
+
+/** Same default and same config key as `reader-resolvable-prose` — see this file's module header. */
+const DOCTRINE_ROOT = loadConfig()?.proseGates?.doctrineRoot ?? 'aeg-root'
+
+/** Text extensions worth sweeping — mirrors `retired-vocabulary.test.ts`'s own `grep --include` list. */
+function isSweptFile(name: string): boolean {
+  return /\.(md|ts|tsx|yml)$/.test(name) || name === 'doc-owners' || name === 'packages'
+}
+
+/** Recursively collects repo-relative paths under `dir` whose name passes `isSweptFile`. Missing/unreadable `dir` degrades to `[]`, never throws — this check's contract is report-only. */
+function collect(dir: string, out: string[] = []): string[] {
+  let entries: string[]
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return out
+  }
+  for (const name of entries) {
+    const full = join(dir, name)
+    let isDir: boolean
+    try {
+      isDir = statSync(full).isDirectory()
+    } catch {
+      continue
+    }
+    if (isDir) {
+      if (name === 'node_modules' || name === '.git' || name === '.next' || name === '.turbo') continue
+      collect(full, out)
+    } else if (isSweptFile(name)) {
+      out.push(full)
+    }
+  }
+  return out
+}
+
+function readAll(paths: string[]): VocabSourceFile[] {
+  return paths.map((p) => ({ path: p, content: readFileSync(p, 'utf8') }))
+}
+
+function main(): void {
+  const paths = collect(DOCTRINE_ROOT)
+  const files = readAll(paths)
+  const findings = scanRetiredVocabulary(files)
+
+  // stdout only — this check's stderr is the CheckError JSON channel
+  // (`contract.ts`'s `emitCheckError`); a plain-text line there would make
+  // the runner treat this human-readable summary as malformed output and
+  // report `status: 'error'` regardless of exit code.
+  console.log(
+    `${CHECK_NAME}: doctrine root "${DOCTRINE_ROOT}"; ${paths.length} file(s) swept; ${findings.length} finding(s)`
+  )
+
+  for (const finding of findings) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'warning',
+      message: `${finding.file}:${finding.line}: ${finding.message}`,
+      file: finding.file,
+      line: finding.line,
+      agent_recovery_prompt:
+        'This doctrine page claims a mechanism AEG itself retired is still live (a decision-log entry, the lock, ' +
+        'the `team-leader` role, …). Rewrite it to describe the CURRENT mechanism, or remove the claim — never ' +
+        'describe a retired concept as something a reader can still do today.'
+    })
+  }
+
+  // Report-only, same precedent as reader-resolvable-prose.
+  process.exit(0)
+}
+
+main()

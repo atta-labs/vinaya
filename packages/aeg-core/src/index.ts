@@ -183,6 +183,13 @@ export {
   stripNonProse
 } from './reader-resolvable-prose'
 export type { ProseFileClass, ProseFinding, ProseSourceFile } from './reader-resolvable-prose'
+export {
+  PATTERN_EXEMPT,
+  RETIRED_EXEMPT_SUBSTRINGS,
+  RETIRED_PATTERNS,
+  scanRetiredVocabulary
+} from './retired-vocabulary'
+export type { VocabFinding, VocabSourceFile } from './retired-vocabulary'
 export { checkLocalAnchorCoverage } from './local-anchor-coverage'
 export type {
   AnchorCoverageFinding,

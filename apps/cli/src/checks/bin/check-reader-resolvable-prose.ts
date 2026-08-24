@@ -7,12 +7,30 @@
  * Issue #694's three-class analysis. Class 3 (register/slop) stays with the
  * review role; it is not deterministic and is not attempted here.
  *
- * Gathers the swept surfaces itself (every `.md` under `aeg-root/`, every
- * `page.tsx` under the public site's `(site)` route tree), reads
- * `aeg-root/glossary.md` for the term list and `aeg-root/tranches/completed/`
- * for the legacy-slug list — the only I/O in this check, per aeg-core's
- * zero-I/O pure-rule charter (the rule itself takes file paths + contents +
- * term/slug lists and returns findings).
+ * De-hardcoded (task 7, Issue #56): the doctrine root, reader-facing page
+ * globs, and legacy-slug corpus location all come from
+ * `vinaya.config.json`'s `proseGates` key, read via `loadConfig()` — the
+ * cwd-walking resolver every other repo-local, non-trust config value uses.
+ * Absent config falls back to this repo's own historical shape
+ * (`doctrineRoot: 'aeg-root'`, dormant reader-facing sweep — no public web
+ * app in this repo — `legacySlugDir` derived from `doctrineRoot`), so an install
+ * with no `proseGates` set behaves exactly as it did before this key
+ * existed.
+ *
+ * **No `REPO_ROOT`/`process.chdir()` — a real behavior fix, not cosmetic.**
+ * The predecessor of this bin computed its own package's file-system
+ * location and `chdir`'d there, which only ever happened to be this
+ * monorepo's own root because the check had never run anywhere else. Once
+ * bundled and installed into an adopter's `node_modules`, that walk lands
+ * inside the installed package, not the adopter's repo — every other
+ * registered check (`check-doc-coverage.ts` et al.) instead reads paths
+ * relative to `process.cwd()`, which the runner leaves as the caller's own
+ * repo root. This bin now does the same.
+ *
+ * Reads `<doctrineRoot>/glossary.md` for the term list and
+ * `<legacySlugDir>` for the legacy-slug list — the only I/O in this check,
+ * per aeg-core's zero-I/O pure-rule charter (the rule itself takes file
+ * paths + contents + term/slug lists and returns findings).
  *
  * **Report-only (rollout precedent: `aeg-root/enforcement.md`'s G1/G2
  * report-only period).** Findings print as `warning` severity; the exit code
@@ -21,36 +39,38 @@
  * that backlog surface and get cleaned up before the gate turns strict.
  *
  * scope: full — the swept surfaces are the whole doctrine tree and the whole
- * public site, not the PR's own diff.
+ * reader-facing surface (when configured), not the PR's own diff.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { checkReaderResolvableProse, parseGlossaryTerms, type ProseSourceFile } from '@attalabs/aeg-core'
+import { loadConfig } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../../..')
-process.chdir(REPO_ROOT)
 
 const CHECK_NAME = 'reader-resolvable-prose'
 
-/**
- * This adopter's own reader-facing surface. `aeg-core`'s
- * `classifyProseFile`/`checkReaderResolvableProse` are generic; this
- * repo-specific shape is supplied here, not baked into the package.
- *
- * This repo (`atta-labs/vinaya`) has no public site — no `apps/<name>/web` — so
- * there is no reader-facing surface to sweep. `READER_FACING_ROOT` is `null`
- * to make that an explicit, named no-op rather than a prefix literal that
- * would silently match nothing; the `ships` class (`aeg-root/**`) still runs
- * either way.
- */
-const READER_FACING_ROOT: string | null = null
-const READER_FACING_SUFFIX = '/page.tsx'
+const proseGates = loadConfig()?.proseGates
 
-/** Recursively collects repo-relative paths under `dir` whose name passes `match`. */
-function collect(dir: string, match: (name: string) => boolean, out: string[] = []): string[] {
+/** `<doctrineRoot>/**` — this repo's own default, `'aeg-root'`, when unset. */
+const DOCTRINE_ROOT = proseGates?.doctrineRoot ?? 'aeg-root'
+
+/**
+ * BOTH must be configured for the reader-facing sweep to run at all — same
+ * "explicit no-op, not a silent gap" discipline the predecessor bin used for
+ * `READER_FACING_ROOT: null`. This repo itself sets neither (no public site
+ * here to sweep), so `check --all` in this repo stays dormant on this half
+ * exactly as before.
+ */
+const READER_FACING_PREFIX = proseGates?.readerFacingPrefix ?? null
+const READER_FACING_SUFFIX = proseGates?.readerFacingSuffix ?? null
+const READER_FACING_ACTIVE = READER_FACING_PREFIX !== null && READER_FACING_SUFFIX !== null
+
+/** `<doctrineRoot>/tranches/completed` when unset — mirrors the doctrine root's own default. */
+const LEGACY_SLUG_DIR = proseGates?.legacySlugDir ?? `${DOCTRINE_ROOT}/tranches/completed`
+
+/** Recursively collects repo-relative paths under `dir`. Missing/unreadable `dir` degrades to `[]`, never throws — the same dormancy discipline `legacySlugs()` below documents. */
+function collect(dir: string, out: string[] = []): string[] {
   let entries: string[]
   try {
     entries = readdirSync(dir)
@@ -67,8 +87,8 @@ function collect(dir: string, match: (name: string) => boolean, out: string[] = 
     }
     if (isDir) {
       if (name === 'node_modules' || name === '.next' || name === '.turbo') continue
-      collect(full, match, out)
-    } else if (match(name)) {
+      collect(full, out)
+    } else {
       out.push(full)
     }
   }
@@ -80,58 +100,67 @@ function readAll(paths: string[]): ProseSourceFile[] {
 }
 
 /**
- * Legacy-slug list, derived from `aeg-root/tranches/completed/*.md` filenames.
- * That archive is legitimately absent in this repo (task 4's ratified
- * boundary — attalabs' operational history, not doctrine). Distinguishes
- * "archive absent, class dormant" from "archive present, empty" so the
- * dormancy is visible in the check's own output rather than indistinguishable
- * from a real, exercised pass.
+ * Legacy-slug list, derived from `<legacySlugDir>`'s `*.md` filenames.
+ * Distinguishes "directory absent, class dormant" from "directory present,
+ * empty" so the dormancy is visible in the check's own output rather than
+ * indistinguishable from a real, exercised pass.
  *
  * `existsSync` is the common-case short-circuit; `readdirSync` is still
  * wrapped so an unexpected read failure (permissions, a TOCTOU race between
  * the two calls) degrades to dormant with a warning rather than throwing
- * uncaught out of `main()` — this check's own contract is report-only,
- * exit code always 0, and an uncaught exception would break that.
+ * uncaught out of `main()` — this check's own contract is report-only, exit
+ * code always 0, and an uncaught exception would break that.
  */
 function legacySlugs(): { slugs: string[]; dormant: boolean } {
-  const dir = join(REPO_ROOT, 'aeg-root/tranches/completed')
-  if (!existsSync(dir)) return { slugs: [], dormant: true }
+  if (!existsSync(LEGACY_SLUG_DIR)) return { slugs: [], dormant: true }
   try {
-    const slugs = readdirSync(dir)
+    const slugs = readdirSync(LEGACY_SLUG_DIR)
       .filter((f) => f.endsWith('.md') && !f.endsWith('.tokens.md'))
       .map((f) => f.slice(0, -3))
       .filter((slug) => !/-v[0-9]+$/.test(slug))
     return { slugs, dormant: false }
   } catch (err) {
-    console.error(
-      `${CHECK_NAME}: could not read ${dir} (${err instanceof Error ? err.message : String(err)}) — legacy-slug class treated as dormant.`
+    // stdout, not stderr — same reasoning as the summary line in `main()`.
+    console.log(
+      `${CHECK_NAME}: could not read ${LEGACY_SLUG_DIR} (${err instanceof Error ? err.message : String(err)}) — legacy-slug class treated as dormant.`
     )
     return { slugs: [], dormant: true }
   }
 }
 
 function main(): void {
-  const shipsPaths = collect('aeg-root', (name) => name.endsWith('.md'))
+  const shipsPrefix = `${DOCTRINE_ROOT}/`
+  const shipsPaths = collect(DOCTRINE_ROOT).filter((p) => p.endsWith('.md'))
   const readerFacingPaths =
-    READER_FACING_ROOT !== null ? collect(READER_FACING_ROOT, (name) => name === 'page.tsx') : []
+    READER_FACING_ACTIVE && READER_FACING_SUFFIX !== null
+      ? collect(READER_FACING_PREFIX as string).filter((p) => p.endsWith(READER_FACING_SUFFIX))
+      : []
 
   const files = readAll([...shipsPaths, ...readerFacingPaths])
-  const glossaryTerms = parseGlossaryTerms(readFileSync(join(REPO_ROOT, 'aeg-root/glossary.md'), 'utf8'))
+  const glossaryPath = join(DOCTRINE_ROOT, 'glossary.md')
+  const glossaryTerms = existsSync(glossaryPath) ? parseGlossaryTerms(readFileSync(glossaryPath, 'utf8')) : []
   const { slugs, dormant: legacySlugsDormant } = legacySlugs()
 
-  // When READER_FACING_ROOT is null, no path this file ever collects can
-  // start with '/' — `collect()` only ever `join()`s from a relative root
-  // ('aeg-root' above, or READER_FACING_ROOT itself), and `join()` never
-  // produces a leading slash from relative inputs. A leading-slash prefix
-  // is therefore structurally unmatchable here, not merely coincidentally
-  // safe because readerFacingPaths also happens to be [].
-  const readerFacingPrefix = READER_FACING_ROOT !== null ? `${READER_FACING_ROOT}/` : '/no-reader-facing-surface'
+  const readerFacingPrefix =
+    READER_FACING_ACTIVE && READER_FACING_PREFIX !== null ? `${READER_FACING_PREFIX}/` : '/no-reader-facing-surface'
+  const readerFacingSuffix = READER_FACING_ACTIVE && READER_FACING_SUFFIX !== null ? READER_FACING_SUFFIX : '/page.tsx'
 
-  const findings = checkReaderResolvableProse(files, glossaryTerms, readerFacingPrefix, READER_FACING_SUFFIX, slugs)
+  const findings = checkReaderResolvableProse(
+    files,
+    glossaryTerms,
+    readerFacingPrefix,
+    readerFacingSuffix,
+    slugs,
+    shipsPrefix
+  )
 
-  console.error(
-    `${CHECK_NAME}: reader-facing class ${READER_FACING_ROOT !== null ? 'ran' : 'dormant — no reader-facing surface (e.g. apps/*/web) in this repo'}; ` +
-      `legacy-slug class ${legacySlugsDormant ? 'dormant — aeg-root/tranches/completed is absent in this repo' : `ran (${slugs.length} slug(s))`}; ` +
+  // stdout only — this check's stderr is the CheckError JSON channel
+  // (`contract.ts`'s `emitCheckError`); a plain-text line there would make
+  // the runner treat this human-readable summary as malformed output and
+  // report `status: 'error'` regardless of exit code.
+  console.log(
+    `${CHECK_NAME}: doctrine root "${DOCTRINE_ROOT}"; reader-facing class ${READER_FACING_ACTIVE ? 'ran' : 'dormant — proseGates.readerFacingPrefix/readerFacingSuffix not both set'}; ` +
+      `legacy-slug class ${legacySlugsDormant ? `dormant — ${LEGACY_SLUG_DIR} is absent` : `ran (${slugs.length} slug(s))`}; ` +
       `${findings.length} finding(s)`
   )
 
@@ -145,8 +174,8 @@ function main(): void {
       line: finding.line,
       agent_recovery_prompt: finding.message.includes('coined term')
         ? 'This page uses AEG/Vinaya-internal vocabulary a first-time reader cannot resolve. Either define the term ' +
-          'inline (the same "Term — one-sentence definition" shape `aeg-root/glossary.md` uses) at its first use on ' +
-          'this page, or link to `/docs/glossary`. Do not simply delete the word if the sentence needs it.'
+          'inline (the same "Term — one-sentence definition" shape the glossary uses) at its first use on this page, ' +
+          'or link to the glossary. Do not simply delete the word if the sentence needs it.'
         : 'This doctrine or page cites a forge number or an internal tranche slug the reader has no tracker to ' +
           'resolve. Rewrite the sentence to state the fact plainly instead of pointing at the citation — say what ' +
           'was learned/decided, not where it was logged.'
