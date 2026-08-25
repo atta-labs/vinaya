@@ -118,7 +118,7 @@ describe('nodeDocRoute: against the real model', () => {
     }
   })
 
-  it('exactly the known 6 gate/check anchors differ from their id-stamped slug — the G1-G5 codes and the one over-length gate', () => {
+  it('exactly the known 7 gate/check anchors differ from their id-stamped slug — the G1-G6 codes and the one over-length gate', () => {
     const changed = model.nodes
       .filter((n) => n.kind === 'gate' || n.kind === 'check')
       .filter((n) => nodeDocRoute(n)?.slug !== n.id.slice(n.kind.length + 1))
@@ -131,6 +131,7 @@ describe('nodeDocRoute: against the real model', () => {
         'check:g3-no-seventh-way-into-github',
         'check:g4-cited-forge-numbers-resolve',
         'check:g5-role-contract-integrity',
+        'check:g6-doctrine-registry-parity',
         'gate:starting-the-dig-before-authoring-a-brief-starting-step-0-before-executing-one-every-push-on-a-task-branch-before-its-pr-exists'
       ].sort()
     )
