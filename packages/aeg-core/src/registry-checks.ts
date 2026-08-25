@@ -1,19 +1,24 @@
 /**
- * registry-checks.ts — G1–G5, the deterministic coherence checks that make
+ * registry-checks.ts — G1–G6, the deterministic coherence checks that make
  * `aeg-root/enforcement.md`'s three ring tables (parsed by
  * `registry-parse.ts`) load-bearing instead of decorative.
  *
  * Pure — no `fs`, no `git`/`gh` I/O, no `fetch`. All forge/filesystem facts
- * are injected by the caller (`bin/verify-registry.ts`, the I/O shim),
+ * are injected by the caller (`bin/verify-registry.ts` /
+ * `apps/cli/src/checks/bin/check-registry-gates.ts`, the I/O shims),
  * mirroring `coherence-checks.ts`'s shape exactly (plain executables,
  * deterministic pass/fail, no config conditionals).
  *
- * Rollout policy: G1/G2 ship report-only this tranche — they can
- * only ever report `'info'`, never `'fail'`, so they never affect CI's exit
- * code. G3–G5 are blocking (`'fail'` on any violation). G1 flips to blocking
- * in a later, separately-dispatched task; this task does not do that.
+ * Rollout policy: G2 ships report-only — it can only ever report `'info'`,
+ * never `'fail'`, so it never affects CI's exit code (the accepted shape for
+ * G2's inverse sweep, unchanged by task 8). G1 was report-only through its
+ * own rollout window; task 8 flips it to blocking now that the orphan
+ * backlog it existed to surface is clean (0 findings against the real
+ * `enforcement.md` at the time of the flip). G3–G6 are blocking (`'fail'` on
+ * any violation).
  */
 
+import { GATE_AUDIENCE, isShipped } from './gate-audience'
 import type { GateRow } from './registry-parse'
 
 export type RegistryCheckStatus = 'pass' | 'fail' | 'info'
@@ -25,15 +30,17 @@ export type RegistryFinding = {
 }
 
 export type RegistryCheckResult = {
-  check: 'G1' | 'G2' | 'G3' | 'G4' | 'G5'
+  check: 'G1' | 'G2' | 'G3' | 'G4' | 'G5' | 'G6'
   status: RegistryCheckStatus
   findings: RegistryFinding[]
 }
 
 /**
- * G1 — every row's non-empty `implementation` resolves on disk.
- * Report-only this tranche: a missing path is always `'info'`,
- * Never `'fail'`.
+ * G1 — every row's non-empty `implementation` resolves on disk. Blocking as
+ * of task 8 (re-graded from report-only: eleven permanent `info` findings on
+ * every run had become indistinguishable from silence, which is how the gap
+ * this tranche closes stayed invisible; the report-only window had already
+ * cleared the backlog it existed to surface).
  */
 export function checkG1(rows: GateRow[], existsFn: (path: string) => boolean): RegistryCheckResult {
   const findings: RegistryFinding[] = []
@@ -47,7 +54,7 @@ export function checkG1(rows: GateRow[], existsFn: (path: string) => boolean): R
       })
     }
   }
-  return { check: 'G1', status: findings.length > 0 ? 'info' : 'pass', findings }
+  return { check: 'G1', status: findings.length > 0 ? 'fail' : 'pass', findings }
 }
 
 /**
@@ -157,4 +164,64 @@ export function checkG5(
   }
 
   return { check: 'G5', status: findings.length > 0 ? 'fail' : 'pass', findings }
+}
+
+const SHIPPED_BIN_PATH_PREFIX = 'apps/cli/src/checks/bin/check-'
+const AEG_CORE_BIN_PATH_PREFIX = 'packages/aeg-core/bin/'
+
+function basenameNoExt(path: string): string {
+  const base = path.slice(path.lastIndexOf('/') + 1)
+  return base.replace(/\.ts$/, '')
+}
+
+/**
+ * Every `coreCheckRegistry()` name a `product`-audience row's implementation
+ * could resolve to. Two shapes: a path directly under the shipped bin
+ * directory names its own check 1:1 (`apps/cli/src/checks/bin/check-doc-
+ * coverage-push.ts` -> `doc-coverage-push`); a path under
+ * `packages/aeg-core/bin/` resolves through `GATE_AUDIENCE`, the same map
+ * `shipped-bin-audience.test.ts` (`apps/cli`) already asserts agrees with
+ * the registry — reused here rather than re-derived, so doctrine and code
+ * cannot silently disagree about what a bin ships as. Neither shape matches
+ * (e.g. a `.github/workflows/*.yml` path, `checks/runner.ts`, a forge-write
+ * command) resolves to no candidate at all — correct, since those are not
+ * `coreCheckRegistry()` checks by construction.
+ */
+function claimedCheckNames(implementation: string): string[] {
+  if (implementation.startsWith(SHIPPED_BIN_PATH_PREFIX) && implementation.endsWith('.ts')) {
+    return [implementation.slice(SHIPPED_BIN_PATH_PREFIX.length, -'.ts'.length)]
+  }
+  if (implementation.startsWith(AEG_CORE_BIN_PATH_PREFIX)) {
+    const audience = GATE_AUDIENCE[basenameNoExt(implementation)]
+    if (audience && isShipped(audience)) {
+      return Array.isArray(audience.shippedAs) ? audience.shippedAs : [audience.shippedAs]
+    }
+  }
+  return []
+}
+
+/**
+ * G6 — every row doctrine marks `product` must actually resolve to a
+ * `coreCheckRegistry()` entry ("claimed checks must ship" — the parity gate
+ * this task exists for). `registeredCheckNames` is caller-injected
+ * (`coreCheckRegistry().map(s => s.name)`, from `apps/cli`, which
+ * `aeg-core` cannot import without closing a dependency cycle — same
+ * reasoning `gate-audience.ts` documents for `GATE_AUDIENCE` itself).
+ * Blocking. A row left at the default `repo-own` audience makes no shipped
+ * claim and is never checked here.
+ */
+export function checkG6(rows: GateRow[], registeredCheckNames: Set<string>): RegistryCheckResult {
+  const findings: RegistryFinding[] = []
+  for (const row of rows) {
+    if (row.audience !== 'product') continue
+    const candidates = claimedCheckNames(row.implementation)
+    if (!candidates.some((name) => registeredCheckNames.has(name))) {
+      findings.push({
+        row: row.action,
+        path: row.implementation,
+        reason: `${row.ring} row "${row.action}" is marked \`product\` but its implementation "${row.implementation}" does not resolve to a coreCheckRegistry() entry`
+      })
+    }
+  }
+  return { check: 'G6', status: findings.length > 0 ? 'fail' : 'pass', findings }
 }

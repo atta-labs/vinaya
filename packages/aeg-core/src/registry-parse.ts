@@ -57,6 +57,19 @@ export type GateRow = {
    * no such column. */
   spec?: string
   implementation: string
+  /**
+   * `product` — this row's implementation is a check registered in
+   * `coreCheckRegistry()` (`apps/cli/src/checks/registry.ts`), so it ships to
+   * every adopter through `vinaya check`. `repo-own` — everything else: a
+   * mechanism specific to how this repository enforces itself on top of the
+   * product (a hand-written CI job, the check runner/resolver, a forge-write
+   * command, or a check this repo runs on its own doctrine but has not
+   * registered). Read from an `Audience` column, by header name like
+   * `description`. A table carrying no such column, or a cell holding
+   * anything other than the literal `product`, resolves to `repo-own` — the
+   * safe default, since it makes no shipped claim for G6 to verify.
+   */
+  audience: 'product' | 'repo-own'
   line: number
 }
 
@@ -102,20 +115,21 @@ export function parseEnforcementRegistry(content: string): GateRow[] {
     if (headingLine === null) continue
     const table = findTable(lines, headingLine + 1)
     if (!table) continue
-    // `description` is found BY HEADER NAME, never by position — the one
-    // column here that can be. Every other column is positional out of
-    // necessity: the three ring tables name their first column differently
-    // ("Action"/"CI check"/"Mechanism") and their middle columns differently
-    // again ("Gate" + "What must be true" / "Re-verifies" / "Runs" +
-    // "Catches"), so only the ends are reliable. "Description" is spelled the
-    // same in all three, which makes a name lookup possible — and a name
-    // lookup is what keeps a table WITHOUT the column from having some other
-    // column silently read as its description. By index that is undetectable:
-    // a 7-column table means "has Description" in one ring and "has Gate" in
-    // another, and the parser cannot tell which. -1 here simply means the
-    // table doesn't have one.
+    // `description`/`Audience` are found BY HEADER NAME, never by position —
+    // the two columns here that can be. Every other column is positional out
+    // of necessity: the three ring tables name their first column
+    // differently ("Action"/"CI check"/"Mechanism") and their middle columns
+    // differently again ("Gate" + "What must be true" / "Re-verifies" /
+    // "Runs" + "Catches"), so only the ends are reliable. "Description" and
+    // "Audience" are spelled the same in all three, which makes a name
+    // lookup possible — and a name lookup is what keeps a table WITHOUT the
+    // column from having some other column silently read as its value. By
+    // index that is undetectable: a 7-column table means "has Description"
+    // in one ring and "has Gate" in another, and the parser cannot tell
+    // which. -1 here simply means the table doesn't have that column.
     const descriptionIndex = table.headers.findIndex((h) => h.trim().toLowerCase() === 'description')
     const implementationIndex = table.headers.findIndex((h) => h.trim().toLowerCase() === 'implementation')
+    const audienceIndex = table.headers.findIndex((h) => h.trim().toLowerCase() === 'audience')
     for (const row of table.rows) {
       const cells = row.cells
       if (cells.length < 3) continue
@@ -127,8 +141,22 @@ export function parseEnforcementRegistry(content: string): GateRow[] {
       )
       const description =
         descriptionIndex === -1 ? undefined : stripBackticks(cells[descriptionIndex] ?? '') || undefined
-      const spec = cells.length > 4 ? stripBackticks(cells[cells.length - 2] ?? '') : undefined
-      result.push({ ring, action, summary, category, description, spec, implementation, line: row.line })
+      // `spec` is the ring-specific column immediately before `implementation`
+      // — normally the last cell, but `Audience`, when present, now sits
+      // between them. `specIndex` follows whichever of the two comes first:
+      // one before `Audience` if the table carries one, one before the last
+      // cell (`implementation`'s positional fallback) if it doesn't — so a
+      // table predating this column (a fixture, an un-upgraded adopter copy)
+      // still resolves `spec` exactly as it did before `Audience` existed.
+      const specIndex = (audienceIndex === -1 ? cells.length - 1 : audienceIndex) - 1
+      const spec = specIndex >= 3 ? stripBackticks(cells[specIndex] ?? '') || undefined : undefined
+      const audience: GateRow['audience'] =
+        audienceIndex === -1
+          ? 'repo-own'
+          : stripBackticks(cells[audienceIndex] ?? '') === 'product'
+            ? 'product'
+            : 'repo-own'
+      result.push({ ring, action, summary, category, description, spec, implementation, audience, line: row.line })
     }
   }
 

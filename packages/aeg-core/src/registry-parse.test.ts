@@ -45,6 +45,9 @@ describe('parseEnforcementRegistry', () => {
       description: undefined,
       spec: 'Something',
       implementation: '.claude/hooks/check-skill.sh',
+      // This fixture table has no `Audience` header either — absent, it
+      // defaults to `repo-own`, the safe direction (no shipped claim to verify).
+      audience: 'repo-own',
       line: ring0!.line
     })
 
@@ -64,16 +67,16 @@ describe('parseEnforcementRegistry', () => {
     expect(ring2Rows[1]?.implementation).toBe('')
   })
 
-  it('parses the real enforcement.md — 41 rows (34 plus the six standalone-shim rows G2 demanded, plus the retired-vocabulary row task 7 added), only non-deterministic rows carry an empty implementation', () => {
+  it('parses the real enforcement.md — 42 rows (34 plus the six standalone-shim rows G2 demanded, plus the retired-vocabulary row task 7 added, plus the G6 row task 8 added), only non-deterministic rows carry an empty implementation', () => {
     const content = readFileSync(ENFORCEMENT_PATH, 'utf8')
     const rows = parseEnforcementRegistry(content)
 
-    expect(rows).toHaveLength(41)
+    expect(rows).toHaveLength(42)
 
     const ring0Count = rows.filter((r) => r.ring === 'ring0').length
     const ring1Count = rows.filter((r) => r.ring === 'ring1').length
     const ring2Count = rows.filter((r) => r.ring === 'ring2').length
-    expect(ring0Count + ring1Count + ring2Count).toBe(41)
+    expect(ring0Count + ring1Count + ring2Count).toBe(42)
 
     const emptyImplementation = rows.filter((r) => r.implementation === '')
     // "Staleness audits" is the one genuinely non-deterministic row with no file.
@@ -107,6 +110,43 @@ describe('parseEnforcementRegistry', () => {
     const rows = parseEnforcementRegistry(readFileSync(ENFORCEMENT_PATH, 'utf8'))
     for (const row of rows) {
       expect(row.description?.trim(), `${row.ring} row '${row.action}' has no Description`).toBeTruthy()
+    }
+  })
+
+  it('reads the Audience column by header name, defaulting anything but the literal product to repo-own', () => {
+    const fixture = `
+## Ring 0 — Prevention (nothing invalid leaves the machine)
+
+| Action | Summary | Category | Gate | What must be true | Audience | implementation |
+|---|---|---|---|---|---|---|
+| Shipped check | Ever? | hook | Gate | Something | product | \`packages/aeg-core/bin/verify-dispatch.ts\` |
+| Repo-only hook | Ever? | hook | Gate | Something | repo-own | \`apps/cli/src/checks/runner.ts\` |
+| Malformed cell | Ever? | hook | Gate | Something | Product | \`apps/cli/src/checks/runner.ts\` |
+| Blank cell | Ever? | hook | Gate | Something |  | \`apps/cli/src/checks/runner.ts\` |
+`
+    const rows = parseEnforcementRegistry(fixture)
+    expect(rows.find((r) => r.action === 'Shipped check')?.audience).toBe('product')
+    expect(rows.find((r) => r.action === 'Repo-only hook')?.audience).toBe('repo-own')
+    // Case-sensitive: only the exact literal `product` counts as a claim.
+    expect(rows.find((r) => r.action === 'Malformed cell')?.audience).toBe('repo-own')
+    expect(rows.find((r) => r.action === 'Blank cell')?.audience).toBe('repo-own')
+  })
+
+  it('defaults every row to repo-own when the table carries no Audience column at all', () => {
+    const rows = parseEnforcementRegistry(`
+## Ring 0 — Prevention (nothing invalid leaves the machine)
+
+| Action | Summary | Category | Gate | What must be true | implementation |
+|---|---|---|---|---|---|
+| No audience column | Ever? | hook | Gate | Something | \`apps/cli/src/checks/runner.ts\` |
+`)
+    expect(rows[0]?.audience).toBe('repo-own')
+  })
+
+  it('gives every real row a well-formed audience value', () => {
+    const rows = parseEnforcementRegistry(readFileSync(ENFORCEMENT_PATH, 'utf8'))
+    for (const row of rows) {
+      expect(['product', 'repo-own']).toContain(row.audience)
     }
   })
 

@@ -1,14 +1,20 @@
 #!/usr/bin/env bun
 
 /**
- * verify-registry — G1–G5, the deterministic checks that make
+ * verify-registry — G1–G6, the deterministic checks that make
  * `aeg-root/enforcement.md`'s three ring tables load-bearing (aeg-core-purity
  * discipline: this is the thin I/O shim; the pure evaluators live in
  * `../src/registry-parse.ts` / `../src/registry-checks.ts`).
  *
- * Rollout policy: G1/G2 are report-only this tranche — they can
- * only print `info`, never affect the exit code. G3/G4/G5 are blocking:
+ * Rollout policy: G2 is report-only — it can only print `info`, never
+ * affect the exit code. G1 (task 8, re-graded) and G3/G4/G5 are blocking:
  * the process exits non-zero if any of them returns `'fail'`.
+ *
+ * G6 does NOT run from this standalone bin: it needs `coreCheckRegistry()`,
+ * which lives in `apps/cli` and `aeg-core` cannot import without closing a
+ * dependency cycle (same reasoning `gate-audience.ts` documents). Run
+ * `apps/cli/src/checks/bin/check-registry-gates.ts` (or `vinaya check
+ * registry-gates`) for the full G1–G6 gate set.
  *
  * Usage: bun packages/aeg-core/bin/verify-registry.ts
  */
@@ -260,8 +266,12 @@ if (import.meta.main) {
 
   for (const result of results) printResult(result)
 
+  console.log(
+    'ℹ G6: skipped here — needs coreCheckRegistry(), only importable from apps/cli. Run `vinaya check registry-gates` (or apps/cli/src/checks/bin/check-registry-gates.ts) for the full gate set including G6.'
+  )
+
   const blocking = results.filter(
-    (r) => (r.check === 'G3' || r.check === 'G4' || r.check === 'G5') && r.status === 'fail'
+    (r) => (r.check === 'G1' || r.check === 'G3' || r.check === 'G4' || r.check === 'G5') && r.status === 'fail'
   )
   process.exit(blocking.length > 0 ? 1 : 0)
 }

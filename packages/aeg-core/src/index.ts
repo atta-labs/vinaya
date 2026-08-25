@@ -148,7 +148,7 @@ export type {
 } from './diagram-model'
 export { parseEnforcementRegistry } from './registry-parse'
 export type { GateRing, GateRow } from './registry-parse'
-export { checkG1, checkG2, checkG3, checkG4, checkG5 } from './registry-checks'
+export { checkG1, checkG2, checkG3, checkG4, checkG5, checkG6 } from './registry-checks'
 export type { RegistryCheckResult, RegistryCheckStatus, RegistryFinding } from './registry-checks'
 export { ACTIONS, CROSSING_KEYWORDS } from './actions'
 export type { Action, ActionCrossing } from './actions'
