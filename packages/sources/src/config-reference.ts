@@ -47,14 +47,16 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
   {
     key: 'rings.ring1_forgeWriteInterception',
     type: 'boolean',
-    semantics: ['Whether `pr`/`issue create|edit` validate a body against `briefSchema` before any `gh` write.'],
+    semantics: [
+      'Additive, never disabling. `false` (the default — every `vinaya init` starter config reads `false` here) is a no-op: `pr`/`issue create|edit` validate a body against `briefSchema` before any `gh` write, exactly as they always have. `true` is the opt-in accelerator — the only value that changes behavior — and skips that validation entirely.'
+    ],
     example: `{ "rings": { "ring1_forgeWriteInterception": true } }`
   },
   {
     key: 'rings.ring2_asyncAudits',
     type: 'boolean',
     semantics: [
-      'Whether the async, forge-scheduled mechanisms (`vinaya archive`, `vinaya audit`’s dead-branch-push and direct-main-push detection) run.'
+      'Additive, never disabling. `false` (the default — every `vinaya init` starter config reads `false` here) is a no-op: `vinaya archive` and `vinaya audit`’s dead-branch-push and direct-main-push detection run their real work exactly as they always have. `true` is the opt-in accelerator — the only value that changes behavior — and skips that work, exiting `0` without doing anything.'
     ],
     example: `{ "rings": { "ring2_asyncAudits": true } }`
   },

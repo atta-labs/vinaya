@@ -1,7 +1,6 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { BriefSection } from '../src/lib/config'
@@ -454,5 +453,53 @@ describe('validateForgeWrite — branch grammar', () => {
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('forge-title')
+  })
+})
+
+// rings.ring1_forgeWriteInterception is additive, never disabling (Issue #45's
+// 2026-08-25 Amendment): `false`/absent is a no-op — every pre-existing
+// `vinaya init` starter config reads `false` here, so this must resolve
+// sections exactly as before the flag existed. `true` is the new opt-in
+// accelerator that skips brief-schema validation entirely.
+describe('resolveSections — rings.ring1_forgeWriteInterception', () => {
+  let tmpDir: string
+  let originalCwd: string
+  let resolveSections: typeof import('../src/lib/forge-write.js').resolveSections
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'vinaya-forge-ring1-test-'))
+    originalCwd = process.cwd()
+    process.chdir(tmpDir)
+    resolveSections = (await import('../src/lib/forge-write.js')).resolveSections
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  function writeConfig(config: unknown): void {
+    writeFileSync(join(tmpDir, 'vinaya.config.json'), JSON.stringify(config), 'utf8')
+  }
+
+  it('no rings key at all resolves the configured briefSchema sections, unaffected', () => {
+    writeConfig({ briefSchema: { pr: { sections: [{ builtin: 'tier' }] } } })
+    expect(resolveSections('pr', 'vinaya pr create')).toEqual([{ builtin: 'tier' }])
+  })
+
+  it('`false` is a no-op — resolves the same sections as absent', () => {
+    writeConfig({
+      rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: false },
+      briefSchema: { pr: { sections: [{ builtin: 'tier' }] } }
+    })
+    expect(resolveSections('pr', 'vinaya pr create')).toEqual([{ builtin: 'tier' }])
+  })
+
+  it('`true` is the opt-in accelerator — resolves an empty section set regardless of briefSchema', () => {
+    writeConfig({
+      rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false },
+      briefSchema: { pr: { sections: [{ builtin: 'tier' }] } }
+    })
+    expect(resolveSections('pr', 'vinaya pr create')).toEqual([])
   })
 })

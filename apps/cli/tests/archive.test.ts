@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { ArchiveDeps } from '../src/commands/archive.js'
 import { runArchive, runArchiveTranche, trancheArchivalStatus } from '../src/commands/archive.js'
 
@@ -20,6 +23,52 @@ describe('vinaya archive — pre-flight', () => {
       [],
       archiveDeps({ detectRepo: async () => ({ repoRoot: '/tmp/does-not-matter', owner: '', repo: '' }) })
     )
+    expect(exit).toBe(1)
+  })
+})
+
+// rings.ring2_asyncAudits is additive, never disabling (Issue #45's
+// 2026-08-25 Amendment): `false`/absent is a no-op — every pre-existing
+// `vinaya init` starter config reads `false` here, so the Archivist's real
+// work must keep running unconditionally. `true` is the new opt-in
+// accelerator that skips it.
+describe('vinaya archive — rings.ring2_asyncAudits', () => {
+  let cwd: string
+  let originalCwd: string
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-archive-ring2-test-'))
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+  afterEach(() => {
+    process.chdir(originalCwd)
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  function writeConfig(config: unknown): void {
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify(config), 'utf8')
+  }
+
+  it('`true` skips real work entirely — never even calls detectRepo', async () => {
+    writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } })
+    let detectRepoCalled = false
+    const exit = await runArchive(
+      [],
+      archiveDeps({
+        detectRepo: async () => {
+          detectRepoCalled = true
+          return { repoRoot: cwd, owner: 'acme', repo: 'widget' }
+        }
+      })
+    )
+    expect(exit).toBe(0)
+    expect(detectRepoCalled).toBe(false)
+  })
+
+  it('`false` is a no-op — real work still runs (fails pre-flight the same as before the flag existed)', async () => {
+    writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: false } })
+    const exit = await runArchive([], archiveDeps({ detectRepo: async () => null }))
     expect(exit).toBe(1)
   })
 })
