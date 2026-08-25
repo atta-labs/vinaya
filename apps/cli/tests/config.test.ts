@@ -19,6 +19,7 @@ import {
   lintEnvDeclarations,
   loadTrustAnchorConfig,
   readRepoCiSetup,
+  resolveAgentVendors,
   resolvePrincipalAllowlist as resolvePrincipalAllowlistStatic,
   trustAnchorRepo,
   VinayaConfigSchema
@@ -672,5 +673,21 @@ describe('briefSchema.milestone', () => {
       }
     })
     expect(parsed.success).toBe(true)
+  })
+})
+
+describe('resolveAgentVendors — undefined vs. explicit-empty', () => {
+  it('defaults to every vendor when the manifest carries no `agents` key at all — a pre-existing install must get the same default a fresh `vinaya init` gives, not silently nothing', () => {
+    expect([...resolveAgentVendors(undefined)].sort()).toEqual(['claude', 'gemini', 'skills'])
+    expect([...resolveAgentVendors(null)].sort()).toEqual(['claude', 'gemini', 'skills'])
+    expect([...resolveAgentVendors({})].sort()).toEqual(['claude', 'gemini', 'skills'])
+  })
+
+  it('respects an explicit `agents: []` (from `--agents=none`) as a real recorded choice — never widened back to the default', () => {
+    expect([...resolveAgentVendors({ agents: [] })]).toEqual([])
+  })
+
+  it('respects a narrowed explicit selection exactly, no widening and no dropping', () => {
+    expect([...resolveAgentVendors({ agents: ['claude'] })]).toEqual(['claude'])
   })
 })

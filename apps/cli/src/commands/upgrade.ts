@@ -10,6 +10,25 @@
 // A file/block vinaya does not own (foreign content, or never installed) is
 // left exactly alone — upgrade regenerates what init already owns, it does
 // not perform a fresh install.
+//
+// ONE deliberate exception to "never a fresh install": the three
+// agent-native emitter files (`.claude/commands/vinaya.md`,
+// `.gemini/commands/vinaya.toml`, `.agents/skills/vinaya-<role>/SKILL.md`).
+// `resolveAgentVendors` already defaults an install that predates the
+// `--agents` flag entirely to every vendor — the same default a fresh
+// `vinaya init` gives everyone else — precisely so new capability reaches an
+// existing adopter through `upgrade` alone, without anyone ever being told
+// to re-run `init` by hand. `isDefaultedAgentVendorPath` below is the other
+// half: it lets `planUpgrade` actually WRITE those files the first time,
+// instead of resolving the right vendor set and then discarding it at the
+// blanket `ownedFiles` gate. It fires ONLY when `manifest.agents` is
+// `undefined` (this repo has literally never recorded a choice) — an
+// adopter who ran `--agents=claude` (or `--agents=none`) gets a real,
+// persisted `agents` array, `isDefaultedAgentVendorPath` never fires for
+// them, and the vendors they didn't select stay `not-installed` exactly as
+// before (found live: attalabs' own pre-existing install never got
+// `.claude/commands/vinaya.md` this way, silently, forever, since nothing
+// ever told it to re-run `init`).
 
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -17,6 +36,7 @@ import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
 import { buildInitOps, CONFIG_PATH, type HookDir, type InitContext, TRACKED_HOOK_DIR } from '../lib/artifacts.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import {
+  isDefaultedAgentVendorPath,
   MANAGED_MANIFEST_VERSION,
   type ManagedManifest,
   readRepoCiSetup,
@@ -294,7 +314,7 @@ export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManife
     if (op.kind === 'create-file') {
       const abs = join(repoRoot, op.path)
       const exists = existsSync(abs)
-      const owned = ownedFiles.has(op.path)
+      const owned = ownedFiles.has(op.path) || isDefaultedAgentVendorPath(op.path, manifest)
       let action: FileAction
       let triggerChange: { from: string; to: string } | undefined
       if (op.path === CONFIG_PATH || op.path === DOC_OWNERS_PATH) {

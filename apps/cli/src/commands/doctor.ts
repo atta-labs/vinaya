@@ -42,6 +42,7 @@ import {
   type BriefSection,
   GLOBAL_CONFIG_PATH,
   globalChecksIgnoredWarning,
+  isDefaultedAgentVendorPath,
   type ManagedManifest,
   readRepoCiSetup,
   resolveAgentVendors,
@@ -163,7 +164,7 @@ function diagnoseInstall(
       const check = labelForPath(op.path)
       const abs = join(repoRoot, op.path)
       const exists = existsSync(abs)
-      const owned = ownedFiles.has(op.path)
+      const owned = ownedFiles.has(op.path) || isDefaultedAgentVendorPath(op.path, manifest)
 
       if (!exists) {
         findings.push(
