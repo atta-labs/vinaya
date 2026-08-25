@@ -1,5 +1,57 @@
 # @atta/aeg-core
 
+## 0.19.1
+
+### Patch Changes
+
+- 4347c56: A tranche adopted into a real Milestone (`vinaya milestone adopt`) could permanently read as `complete`
+  system-wide, even with real open Issues, because the retired one-tranche Milestone `adopt` closes
+  (never deletes, by design — its provenance survives) still title-matches the legacy 1:1 exception every
+  tranche reader checks first. `matchesLegacyMilestone`'s "kept forever, no exception" rule was written
+  for a Milestone that never changes underneath a slug — true for every pre-migration Milestone, false
+  the moment `adopt` exists.
+  
+  Found live: `vinaya-agentic-interface-v1`'s legacy Milestone (`#7`) sat closed with zero native issues
+  after adoption; its real Issues (two open) live under the new consolidated "Flows become files"
+  Milestone via the `vinaya/tranche:vinaya-agentic-interface-v1` label. `findMilestoneForSlug`,
+  `listActiveTrancheSlugs`, `listArchivedTrancheSlugs`, and `indexTrancheMilestonesAsync` all reported it
+  `complete` — which made `verify-coherence.topology-move.test.ts`'s live-forge assertion (some tranche
+  resolves active) fail repo-wide, since every adopted tranche in the repo hit the same shadow. That test
+  gates `verify-task`, which `open-pr.ts` runs unconditionally — so no task-branch PR could open in this
+  repo until this fixed.
+  
+  `resolveLegacyFacts` now checks the slug's `vinaya/tranche:<slug>`-labeled Issues before trusting a
+  closed legacy Milestone's `state`: a non-empty label population is this tranche's real, current
+  identity and wins over the (possibly stale) Milestone read. An empty label population — a genuinely
+  historical, pre-label-model tranche, or a legacy Milestone nobody has adopted away from — still resolves
+  from the Milestone's own `state`, exactly as before. All four readers now fetch that slug's Issues
+  regardless of legacy status, which the async index runs concurrently with everything else it already
+  fetches.
+- 5ebf782: Registers `reader-resolvable-prose` and `retired-vocabulary` as real, adopter-runnable core checks
+  (`coreCheckRegistry()`), so an installed `vinaya check --all` actually runs them instead of only this
+  monorepo's own internal dev loop.
+  
+  `reader-resolvable-prose`'s three repo-specific inputs — doctrine root, reader-facing page globs, and
+  the legacy-slug archive location — now come from `vinaya.config.json`'s new `proseGates` key, read fresh
+  on every check run. Unset entirely, both checks keep this repo's own prior hardcoded shape
+  (`doctrineRoot: "aeg-root"`, a dormant reader-facing sweep), so an existing install sees no change until
+  it opts in. `retired-vocabulary` gives `retired-vocabulary.test.ts`'s genuinely-retired vocabulary scan
+  (never its forge-number/tranche-slug citation half, which stays `reader-resolvable-prose`'s job) a
+  CheckSpec adapter for the first time, scoped to `<doctrineRoot>/**`.
+  
+  Both ship report-only (a `warning` finding, exit code always `0`), same rollout precedent as the G1/G2
+  gates — registering them cannot newly fail any existing install's CI.
+  
+  Also fixes a latent bug the registration surfaced: `check-reader-resolvable-prose.ts`'s
+  `REPO_ROOT`/`process.chdir()` computed its OWN installed-package location rather than the caller's repo
+  root, and both new checks' human-readable summary line printed to stderr — the CheckError JSON channel —
+  which the runner reads any non-JSON line on as `status: 'error'` regardless of exit code. Neither bug was
+  reachable before this task, since neither check had ever run outside this monorepo's own dev loop or
+  through the check runner at all.
+- Updated dependencies [4347c56]
+  - @attalabs/aeg-forge-state@0.19.1
+  - @attalabs/aeg-types@0.19.1
+
 ## 0.19.0
 
 ### Minor Changes
