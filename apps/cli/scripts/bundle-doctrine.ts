@@ -22,7 +22,16 @@ const monorepoRoot = join(pkgRoot, '..', '..')
 const sourceRoot = join(monorepoRoot, 'aeg-root')
 const targetRoot = join(pkgRoot, 'aeg-root')
 
-const FILES = ['state-machine.md', 'enforcement.md', 'coordination.md', 'tranche-model.md', 'process.md', 'glossary.md']
+const FILES = [
+  'state-machine.md',
+  'enforcement.md',
+  'coordination.md',
+  'tranche-model.md',
+  'milestone-model.md',
+  'task-model.md',
+  'process.md',
+  'glossary.md'
+]
 const DIRS = ['roles', 'contracts', 'skills', 'templates']
 
 if (!existsSync(sourceRoot)) {
