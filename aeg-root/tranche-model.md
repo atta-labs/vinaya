@@ -220,7 +220,7 @@ The earlier sections describe a single tranche's *internals*. This section cover
 The lifecycle above is the derived-status vocabulary — what Studio reads off the forge to display a tranche's progress. This is the operational sequence: what actually happens, and who does it. Today each stage is a human or a thin dispatch script deciding to start the next one; nothing about the sequence changes once the Atta Engine can run it as a compiled flow — same stages, same order, same role per stage; only the transition mechanism moves from a human dispatching the next turn to the engine calling the next node.
 
 1. **Plan** — the Planner turns an intent plus a slice of tickets into the tranche's tasks (Issues) and their `depends-on`/`conflicts-with` edges (§6). No Milestone required.
-2. **Dispatch** — each task runs its own Task flow (`task-model.md` §3: Brief → Code → Review → Verify → Merge → Archive), independently, in parallel wherever `depends-on` allows and the conflict rule (§5) doesn't force a serialization.
+2. **Dispatch** — each task runs its own Task flow (`task-model.md` §3: Brief → Code → Review → Verify → Merge → Archive), independently, in parallel wherever `depends-on` allows and the conflict rule (§5) doesn't force a serialization. Deciding *when* each task actually starts is a real act, not an implicit one: today the Principal or a thin dispatch script — this file's own opening note names that actor for every altitude — tomorrow the Atta Engine's scheduler.
 3. **Archive** — once every task has merged, the Tranche Archivist closes out: sets the lifecycle marker, moves the file to `completed/`, flags (does not perform) orphaned branches and worktree removal.
 
 ### Tranches are never deleted — they are durable history
