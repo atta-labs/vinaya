@@ -9,16 +9,23 @@
  * check rather than five, emitting the check contract instead of human
  * text.
  *
- * Collapsed, not five separate `CheckSpec`s (Developer's call, per Issue
- * #760 §4): G1–G5 share nearly all their I/O (the same `enforcement.md`
+ * Collapsed, not six separate `CheckSpec`s (Developer's call, per Issue
+ * #760 §4): G1–G6 share nearly all their I/O (the same `enforcement.md`
  * parse, the same candidate-file glob, the same `gh`-reachability probe) —
- * five near-identical thin scripts would each redo that work. Each finding
+ * six near-identical thin scripts would each redo that work. Each finding
  * still names its own G-number in BOTH `CheckError.check` (`registry-gates.G3`,
  * not just `registry-gates`) and `CheckError.message` — the hard constraint
- * from Issue #760's own Traps-to-avoid (a Developer merging five distinct
+ * from Issue #760's own Traps-to-avoid (a Developer merging distinct
  * failure classes into one undifferentiated report is a regression, not a
  * simplification) is met by that per-finding tagging, not by the CheckSpec
  * count.
+ *
+ * G6 (task 8, Issue #57) is the one G-check that genuinely needs to live
+ * here rather than in `aeg-core`'s standalone `verify-registry.ts`: it
+ * validates a doctrine row's `product`-audience claim against
+ * `coreCheckRegistry()`, which only this package can import without closing
+ * a dependency cycle — same reasoning `gate-audience.ts` documents for
+ * `GATE_AUDIENCE` itself.
  *
  * DORMANT WHEN ABSENT (same discipline `evaluateC5`/`.vinaya/doc-owners`
  * already uses): G1–G5 validate `aeg-root/enforcement.md` against THIS
@@ -49,10 +56,12 @@ import {
   checkG3,
   checkG4,
   checkG5,
+  checkG6,
   parseEnforcementRegistry,
   type RegistryCheckResult
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { coreCheckRegistry } from '../registry.js'
 
 const CHECK_NAME = 'registry-gates'
 const ENFORCEMENT_PATH = 'aeg-root/enforcement.md'
@@ -250,18 +259,20 @@ async function main(): Promise<void> {
   const g2 = checkG2(rows, candidateFiles)
   const g3 = checkG3(ring0Rows, crossingFiles)
   const g5 = checkG5(roles, contracts)
+  const g6 = checkG6(rows, new Set(coreCheckRegistry().map((s) => s.name)))
 
-  // G1/G2: report-only (rollout policy mirrored from verify-registry.ts) —
-  // surfaced as warnings, never affect the exit code.
-  emitResult(g1, false)
+  // G2: report-only (rollout policy mirrored from verify-registry.ts) —
+  // surfaced as a warning, never affects the exit code.
   emitResult(g2, false)
 
-  // G3/G4/G5: blocking.
+  // G1 (task 8, re-graded) and G3/G4/G5/G6: blocking.
+  emitResult(g1, true)
   emitResult(g3, true)
   emitResult(g4Result, true)
   emitResult(g5, true)
+  emitResult(g6, true)
 
-  const blockingFailed = [g3, g4Result, g5].some((r) => r.status === 'fail')
+  const blockingFailed = [g1, g3, g4Result, g5, g6].some((r) => r.status === 'fail')
   process.exit(blockingFailed ? 1 : 0)
 }
 
