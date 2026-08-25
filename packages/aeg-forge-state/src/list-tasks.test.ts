@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createGhMock } from './test-support/mock-gh'
 
-vi.mock('./gh', () => ({
-  ghIssueListByAnyLabel: vi.fn()
-}))
+vi.mock('./gh', () => createGhMock())
 
-const { ghIssueListByAnyLabel } = await import('./gh')
-const { listTasksForSlug, projectFieldFromBody, projectsFromBody } = await import('./list-tasks')
+const { ghIssueListByAnyLabel, ghIssueListByAnyLabelAsync } = await import('./gh')
+const {
+  listTasksForSlug,
+  listTasksForSlugAsync,
+  fetchTrancheIssuesAsync,
+  resolveTaskIssueRef,
+  projectFieldFromBody,
+  projectsFromBody
+} = await import('./list-tasks')
 
 describe('listTasksForSlug', () => {
   it('parses id/title from the `[<slug>] <id> — <title>` convention and projects from the body field', () => {
@@ -511,4 +517,74 @@ describe('the leading whitespace run is part of the grammar', () => {
       expect(projectFieldFromBody(`${ws}**Project:** vinaya`).declared).toBe(true)
     })
   }
+})
+
+describe('fetchTrancheIssuesAsync / listTasksForSlugAsync — the async gh path', () => {
+  it('fetchTrancheIssuesAsync returns the raw labeled Issues, unfiltered', async () => {
+    const raw = [
+      {
+        number: 34,
+        title: '[vinaya-verification-v1] 6 — Mocked-gh test harness for aeg-forge-state fetchers',
+        body: '**Project:** vinaya',
+        state: 'OPEN' as const,
+        milestone: null,
+        labels: [{ name: 'vinaya/tranche:vinaya-verification-v1' }]
+      }
+    ]
+    vi.mocked(ghIssueListByAnyLabelAsync).mockResolvedValueOnce(raw)
+
+    expect(await fetchTrancheIssuesAsync('daniboomerang', 'attalabs', 'vinaya-verification-v1')).toBe(raw)
+  })
+
+  it('listTasksForSlugAsync derives the same Task[] shape as the sync path, non-blocking', async () => {
+    vi.mocked(ghIssueListByAnyLabelAsync).mockResolvedValueOnce([
+      {
+        number: 34,
+        title: '[vinaya-verification-v1] 6 — Mocked-gh test harness for aeg-forge-state fetchers',
+        body: '**Project:** vinaya',
+        state: 'OPEN' as const,
+        milestone: null,
+        labels: [{ name: 'vinaya/tranche:vinaya-verification-v1' }]
+      }
+    ])
+
+    const tasks = await listTasksForSlugAsync('daniboomerang', 'attalabs', 'vinaya-verification-v1')
+
+    expect(tasks).toEqual([
+      {
+        id: '6',
+        title: 'Mocked-gh test harness for aeg-forge-state fetchers',
+        issue: 34,
+        projects: ['vinaya'],
+        dependsOn: [],
+        conflictsWith: [],
+        rationaleMarkdown: '**Project:** vinaya'
+      }
+    ])
+  })
+
+  it('listTasksForSlugAsync returns an empty list when the label matches nothing', async () => {
+    vi.mocked(ghIssueListByAnyLabelAsync).mockResolvedValueOnce([])
+
+    expect(await listTasksForSlugAsync('daniboomerang', 'attalabs', 'vinaya-verification-v1')).toEqual([])
+  })
+})
+
+describe('resolveTaskIssueRef — the reverse Issue → task-identity lookup', () => {
+  it('resolves a title matching the `[slug] id — title` convention plus its tranche label', () => {
+    expect(
+      resolveTaskIssueRef('[vinaya-verification-v1] 6 — Mocked-gh test harness for aeg-forge-state fetchers', [
+        'vinaya/tranche:vinaya-verification-v1',
+        'vinaya/tier:0'
+      ])
+    ).toEqual({ trancheSlug: 'vinaya-verification-v1', taskId: '6' })
+  })
+
+  it('is null for a title that does not match the task-Issue convention', () => {
+    expect(resolveTaskIssueRef('A plain bug report', ['vinaya/tranche:vinaya-verification-v1'])).toBeNull()
+  })
+
+  it('is null when the title matches but no tranche label is present', () => {
+    expect(resolveTaskIssueRef('[vinaya-verification-v1] 6 — Mocked-gh test harness', [])).toBeNull()
+  })
 })
