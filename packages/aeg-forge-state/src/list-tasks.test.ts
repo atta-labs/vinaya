@@ -573,10 +573,10 @@ describe('fetchTrancheIssuesAsync / listTasksForSlugAsync — the async gh path'
 describe('resolveTaskIssueRef — the reverse Issue → task-identity lookup', () => {
   it('resolves a title matching the `[slug] id — title` convention plus its tranche label', () => {
     expect(
-      resolveTaskIssueRef(
-        '[vinaya-verification-v1] 6 — Mocked-gh test harness for aeg-forge-state fetchers',
-        ['vinaya/tranche:vinaya-verification-v1', 'vinaya/tier:0']
-      )
+      resolveTaskIssueRef('[vinaya-verification-v1] 6 — Mocked-gh test harness for aeg-forge-state fetchers', [
+        'vinaya/tranche:vinaya-verification-v1',
+        'vinaya/tier:0'
+      ])
     ).toEqual({ trancheSlug: 'vinaya-verification-v1', taskId: '6' })
   })
 

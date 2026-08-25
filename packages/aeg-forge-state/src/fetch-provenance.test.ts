@@ -52,7 +52,9 @@ describe('fetchProvenance', () => {
       repository: {
         i_42: {
           timelineItems: {
-            nodes: [{ closer: { number: 100, body: 'unrelated body', comments: { nodes: [{ body: PROVENANCE_BODY }] } } }]
+            nodes: [
+              { closer: { number: 100, body: 'unrelated body', comments: { nodes: [{ body: PROVENANCE_BODY }] } } }
+            ]
           }
         }
       }
