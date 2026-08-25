@@ -1,5 +1,7 @@
 # @atta/aeg-types
 
+## 0.19.2
+
 ## 0.19.1
 
 ### Patch Changes
