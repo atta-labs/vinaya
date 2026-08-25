@@ -19,8 +19,19 @@ import {
   type DeadBranchFact,
   type DeadBranchPush
 } from '@attalabs/aeg-core'
+import { loadConfig } from '../lib/config.js'
 import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
 import { printJson } from '../lib/envelope.js'
+
+// `rings.ring2_asyncAudits` is additive, never disabling: `false` (or absent
+// — every pre-existing `vinaya init` starter config reads `false` here) is a
+// no-op, leaving both audits' real work running exactly as it does today,
+// unconditionally, for every existing adopter. `true` is the new opt-in
+// accelerator — the only value that changes behavior — and skips them. An
+// unreadable/invalid config resolves the same as absent: real work runs.
+function ring2Accelerated(): boolean {
+  return loadConfig()?.rings?.ring2_asyncAudits === true
+}
 
 export type AuditDeps = {
   detectRepo: () => Promise<RepoInfo | null>
@@ -347,6 +358,16 @@ function parseOnly(args: string[]): OnlyMode {
 export async function runAudit(args: string[], deps: AuditDeps): Promise<number> {
   const jsonOutput = args.includes('--json')
   const only = parseOnly(args)
+
+  if (ring2Accelerated()) {
+    if (jsonOutput) {
+      printJson({ skipped: true, reason: 'rings.ring2_asyncAudits is true (opt-in accelerator)' })
+    } else {
+      process.stdout.write('vinaya audit\n\n')
+      process.stdout.write('· rings.ring2_asyncAudits is `true` (opt-in accelerator) — skipping, nothing changed.\n')
+    }
+    return 0
+  }
 
   const repo = await deps.detectRepo()
   if (!repo) {

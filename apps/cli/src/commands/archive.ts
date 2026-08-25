@@ -23,6 +23,17 @@ import {
 } from '@attalabs/aeg-core'
 import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
+import { loadConfig } from '../lib/config.js'
+
+// `rings.ring2_asyncAudits` is additive, never disabling: `false` (or absent
+// — every pre-existing `vinaya init` starter config reads `false` here) is a
+// no-op, leaving the Archivist's real work running exactly as it does today,
+// unconditionally, for every existing adopter. `true` is the new opt-in
+// accelerator — the only value that changes behavior — and skips it. An
+// unreadable/invalid config resolves the same as absent: real work runs.
+function ring2Accelerated(): boolean {
+  return loadConfig()?.rings?.ring2_asyncAudits === true
+}
 
 export type ArchiveDeps = {
   detectRepo: () => Promise<RepoInfo | null>
@@ -58,6 +69,13 @@ function parseMergeSha(args: string[]): string | null {
 }
 
 export async function runArchive(args: string[], deps: ArchiveDeps): Promise<number> {
+  if (ring2Accelerated()) {
+    process.stdout.write(
+      '[vinaya archive] rings.ring2_asyncAudits is `true` (opt-in accelerator) — skipping, nothing changed.\n'
+    )
+    return 0
+  }
+
   const repo = await deps.detectRepo()
   if (!repo) {
     console.error('Error: not a git repository. Run `vinaya archive` from inside your repo.')
