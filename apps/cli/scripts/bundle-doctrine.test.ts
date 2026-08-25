@@ -47,8 +47,9 @@ describe('bundle-doctrine — the milestone/task-model regression', () => {
       .filter((name) => !deliberatelyExcluded.has(name))
 
     const missing = sourceTopLevelMdFiles.filter((name) => !existsSync(join(bundledRoot, name)))
-    expect(missing, `new aeg-root/*.md file(s) not yet added to bundle-doctrine.ts's FILES array: ${missing.join(', ')}`).toEqual(
-      []
-    )
+    expect(
+      missing,
+      `new aeg-root/*.md file(s) not yet added to bundle-doctrine.ts's FILES array: ${missing.join(', ')}`
+    ).toEqual([])
   })
 })
