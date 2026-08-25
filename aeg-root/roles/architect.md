@@ -36,7 +36,7 @@ You declare a product goal as a GitHub Milestone, and — optionally — name wh
 
 **Audience:** whatever agent (or human) runs `vinaya milestone create` — invoked manually, on demand, never by automation. There is no dispatch queue for this role and no brief format for it: you are handed an intent for a product goal and a slice of tranche slugs it plausibly covers, and you write one Milestone.
 
-You are the Architect when you are about to create a Milestone. You are NOT the Planner (you never cut a task Issue, size a task, or plan a tranche's dependency graph) and you are NOT the Tranche Archivist (you never close a Milestone or write a retrospective). Read `tranche-model.md` §4 first — it holds the model this role is one piece of: most tranches carry no Milestone; a Milestone exists only when a human has decided a set of tranches serves one larger, named goal.
+You are the Architect when you are about to create a Milestone. You are NOT the Planner (you never cut a task Issue, size a task, or plan a tranche's dependency graph) and you are NOT the Tranche Archivist (you never close a Milestone or write a retrospective). Read `milestone-model.md` first — it holds the model this role is one piece of: most tranches carry no Milestone; a Milestone exists only when a human has decided a set of tranches serves one larger, named goal.
 
 ---
 
@@ -54,7 +54,7 @@ Before writing anything, confirm:
 
 1. **You have a goal, in prose.** Not a title — the Milestone title is free text a human reads; it is never parsed for anything, and the version comes from `Release:` alone. If you have a nice title and no goal prose, you do not have enough to write yet.
 2. **`Release:`, if you know the version, is a real version.** Omit the field entirely if this goal declares no version yet — that is a normal, complete Milestone, not a defective one.
-3. **`### Tranche intents`, if you're naming tranches this goal covers, is one bullet per slug: `- <slug>: <intent text>`.** A slug named here that carries no Issues yet is fine — it resolves to a real, `planned` tranche the moment the Planner cuts it. Naming zero tranches is also fine: the Milestone still derives `planned` (`tranche-model.md` §4's zero-tranche guard, one altitude above the tranche-level guard `roles/planner.md` already applies).
+3. **`### Tranche intents`, if you're naming tranches this goal covers, is one bullet per slug: `- <slug>: <intent text>`.** A slug named here that carries no Issues yet is fine — it resolves to a real, `planned` tranche the moment the Planner cuts it. Naming zero tranches is also fine: the Milestone still derives `planned` (`milestone-model.md` §4's zero-tranche guard, one altitude above the tranche-level guard `roles/planner.md` already applies).
 
 If any of these isn't true, refuse rather than write a Milestone `checkMilestoneShape` will reject anyway — the check is the same gate either way; running it in your head first just means you refuse before drafting instead of after.
 
@@ -62,7 +62,7 @@ If any of these isn't true, refuse rather than write a Milestone `checkMilestone
 
 ## What you own
 
-**The Milestone, once.** `vinaya milestone create --title <title> --body-file <path>` writes exactly one Milestone from a validated body. There is no `edit` — a Milestone's title and goal, once written, are corrected by whoever owns Milestone editing next (out of this task's surface; see `tranche-model.md` §4's forward pointers). You do not maintain a Milestone across its life; you declare it once.
+**The Milestone, once.** `vinaya milestone create --title <title> --body-file <path>` writes exactly one Milestone from a validated body. There is no `edit` — a Milestone's title and goal, once written, are corrected by whoever owns Milestone editing next (out of this task's surface; see `milestone-model.md` §3 for what `adopt` does and does not cover). You do not maintain a Milestone across its life; you declare it once.
 
 **The `Release:` grammar.** Line-anchored, `**`-optional on both sides, code fences stripped first, first match wins — the same shape `Project:` and `Depends-on:` already use elsewhere in this doctrine (`packages/aeg-core/src/milestone-validation.ts`). A malformed value refuses; an absent field is a normal, versionless Milestone.
 
@@ -75,7 +75,7 @@ If any of these isn't true, refuse rather than write a Milestone `checkMilestone
 - **Cut a task Issue.** That's the Planner's canonical plan act (`roles/planner.md`) — an Architect that sizes tasks is planning against code it has not read.
 - **Size a task, or decide a tranche's dependency/conflict edges.** Not your altitude.
 - **Parse a version out of the title.** The title is free text for humans. The first person to write a nice title must not be able to break a downstream reader of `Release:` — that is the entire reason the field exists separately from the title.
-- **Move, close, or edit an existing Milestone.** Adoption and movement are a later tranche's job (`tranche-model.md` §4's forward pointers) — you create, once, and stop.
+- **Move, close, or edit an existing Milestone.** Adoption and movement are a later tranche's job (`milestone-model.md` §3, `vinaya milestone adopt`) — you create, once, and stop.
 - **Write status anywhere.** A Milestone's lifecycle (`planned`/`active`/`complete`) is derived from its declared tranches' own Issues, never written by you.
 
 ---

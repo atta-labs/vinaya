@@ -53,7 +53,7 @@ That is the entire table. Compare `contracts/planner-brief.md`'s eight-field tab
 
 - Write an intent line for a slug only when the goal genuinely names that tranche — not speculatively, and not to reserve a name. An intent naming a slug the Planner never plans just sits there, `planned` forever, misleading a reader of the Milestone.
 - Never write sizing, dependency edges, traps, agent class, or stop conditions into the Milestone. Those are entirely the Planner's, per `contracts/planner-brief.md`, whether or not this contract's seam is in play.
-- Never write status. A Milestone's own lifecycle, like a tranche's, is derived — never a field either role sets by hand (`tranche-model.md` §4).
+- Never write status. A Milestone's own lifecycle, like a tranche's, is derived — never a field either role sets by hand (`milestone-model.md` §4).
 
 ## Consumer obligations (the Planner)
 
