@@ -2,16 +2,17 @@
 sidebar_title: The Tranche Model
 section: Overview
 ---
-# Tranches — the top of AEG
+# Tranches — the middle altitude of AEG
 
 **Status:** ratified
 **Ratified on:** 2026-06-04
 **Ratified by:** Principal
 **Ratifies via:** the `needs:principal-input` label
+**Amended:** the Milestone layer (`0.19.0`) added a real altitude above the tranche — this file no longer claims to be the top of AEG. See `milestone-model.md`. The task altitude below the tranche now has its own file too — see `task-model.md`.
 
 This design was reviewed in three rounds by an external panel (Gemini, DeepSeek, ChatGPT) and unanimously endorsed after the corrections below.
 
-The **tranche** is the highest-level artifact in Agentic Execution Governance. AEG starts here and goes down. There is nothing above it inside AEG.
+The **tranche** is the middle altitude in Agentic Execution Governance — a **Milestone** may sit above it (`milestone-model.md`, most tranches have none and need none), and a **task** always sits below it (`task-model.md`). AEG's execution model is these three altitudes; nothing sits above the Milestone and nothing sits below the task.
 
 AEG is the **execution** layer — it governs how a human's intent becomes reviewed, merged, coherent code, run by humans wielding agents. It is **not** a roadmap-planning tool.
 
@@ -61,6 +62,8 @@ Per task: branch → PR → Reviewer + Security → merge → close-out
 
 ## 3. A task is a forge Issue; status is derived, never stored
 
+**Full model, including the operational flow stages a task moves through: `task-model.md`.** What follows here is the status-derivation rule set as it bears on tranche-level state (§11 derives a tranche's own lifecycle from these task statuses) — kept here because the rest of this file depends on it, not duplicated there.
+
 A task **is** a forge Issue. Its status is not a field anyone writes — it is **computed by asking the forge** what is true right now. This is the change that removed the original fatal flaw (a hand-edited status column that raced, drifted, and lied under parallelism).
 
 **Which fact produces which status is not written here.** The full machine — every forge fact and the GitHub object it is read from, every label and the one orthogonal fact it carries, every derivable status, and the ordered rule chain that gets from the first to the last — lives at **[`/docs/state-machine`](https://vinaya.attalabs.dev/docs/state-machine)**, rendered from the model the deriver itself executes (`packages/aeg-core/src/state-machine-model.ts`, `packages/aeg-forge-state/src/labels.ts`). A table here would be a second copy of that model, maintained by hand, free to drift from the code that actually decides — which is the failure this whole section describes. So this section keeps the *rules* the machine obeys, and the page carries the machine.
@@ -81,13 +84,7 @@ So: there is **no status column anywhere.** The Developer does not "flip to in-r
 
 **A plan is a Milestone plus labeled Issues. There is no topology file, and `aeg-root/tranches/` holds nothing but the archive.** This section is kept because the *rules* the file encoded still bind — they simply bind the forge objects now. Read it as the reasoning behind the shape, not as a file to create.
 
-> **A tranche's identity is its `vinaya/tranche:<slug>` label, not a Milestone.** The one-Milestone-one-tranche reading above is the LEGACY case, still true forever for a Milestone titled exactly a tranche slug, but no longer the only case. A Milestone is no longer required for a tranche to exist, and one Milestone may legitimately hold several tranches' labels at once.
->
-> **A Milestone now means a product goal, not a tranche.** Most tranches still have none — they are fully represented by their labeled Issues, derive `planned`/`active`/`complete` from those Issues alone (§3, one altitude down from what follows), and carry an empty goal, exactly as an unmilestoned tranche always has. A Milestone exists only when someone deliberately declares a higher-level goal that one or more tranches serve. The **Architect** (`roles/architect.md`) is the one role that creates a Milestone, via `vinaya milestone create` — the Planner no longer does (§6). The Milestone's **title is free text**, read by no parser; its description carries the goal in prose plus two optional, machine-parsed fields: an optional `Release:` field (the sole authority for the milestone's version — never the title, so the first person to write a nice title cannot break a downstream reader), and an optional `### Tranche intents` section, one `- <slug>: <intent text>` bullet per tranche this milestone's goal covers.
->
-> **A tranche's goal is derived, never stored:** it is the intent line matching that tranche's slug, found by searching every Milestone's description — not a field anyone writes onto the tranche itself. A slug with no matching intent line anywhere resolves to an empty goal, same as a tranche with no Milestone at all; an intent line naming a slug that carries no Issues yet is a real, `planned` tranche, not a missing one. A Milestone's own lifecycle is the same `planned`/`active`/`complete` derivation one altitude up: a Milestone declaring zero tranches (or only tranches that are themselves still `planned`) derives `planned`, never `complete` — the same at-least-one guard §3 applies to a tranche's Issues, applied here to a Milestone's tranches.
->
-> **An existing tranche moves into a Milestone with `vinaya milestone adopt --target <title> --slug <slug> [--slug <slug> ...]`, never by hand.** It reattaches every Issue carrying each named `vinaya/tranche:<slug>` label to the target Milestone, then closes (never deletes) each slug's old tranche-Milestone — closed, so its history and Issue associations survive, exactly as the Archivist's own tranche-close does (§11). This is GitHub-view hygiene, not a change to how the slug derives: no reader in this model consults an Issue's native milestone field, only its label, so `adopt` moving that field is cosmetic grouping for a human looking at GitHub, the same reason `open-issue.ts` auto-attaches a new task Issue to its tranche's Milestone at creation time. `checkAdoptable` (`@attalabs/aeg-core`) gathers every fact for every named slug and refuses the WHOLE invocation before any write — an unknown slug, a slug whose label carries no Issues, a target that does not exist or is closed, or a slug already adopted into a different Milestone — so one bad slug in a multi-slug call blocks every slug in that call, never a partial move. Creating the Milestones a roadmap declares is a separate, prior step: N calls to `vinaya milestone create`, one per goal — `adopt` only ever moves a tranche that already exists into a Milestone that already exists.
+> **A tranche's identity is its `vinaya/tranche:<slug>` label, not a Milestone.** Full model — the Milestone/Architect relationship, `adopt`, the `Release:` field, the `Tranche intents` grammar, the closed-legacy-Milestone trap — moved to `milestone-model.md`, one altitude up. What's kept here is only the one fact this file's own reasoning depends on: a tranche's goal is derived, never stored, the same discipline this section applies to everything else a tranche might otherwise hoard.
 
 The file held **only** what the forge models poorly: the task→Issue mapping and the dependency/conflict graph. It contains **no status, no PR numbers, no merge dates, no timestamps — nothing the forge already knows. It contains no task prose, no boundary descriptions, no rationale — nothing that belongs on the Issue.** Its task topology was edited only by the Planner, at plan time, so it could not race and could not drift on status (it stored none). The same rule now binds the Milestone and its Issues: the Planner cuts them, and nothing downstream writes status back. The one exception is the tranche's own **lifecycle marker** (active/complete — §12), a single header line the Archivist sets at close-out; this is the tranche's lifecycle, not per-task execution status, and it is set once when the whole tranche ends.
 
@@ -153,7 +150,7 @@ The Planner's job — the reason the tranche exists — is the relationships a b
 - **Independently verifiable → split** into single-project tasks with a `depends-on` edge.
 - **Verification-coupled → combine** into one task, one branch, one PR, multiple projects (e.g. generalize a shared `core` package *and* migrate the first consumer onto it — the only proof the refactor is correct is the consumer working). Cross-project PRs touching two, three, four projects are normal, not exceptions.
 
-The Planner writes no briefs (those are just-in-time, §7), writes no status (that's the forge), and creates no Milestone (that's the Architect's, §4) — a tranche it plans need carry no Milestone at all, and most don't. It owns the `backlog`/`todo` distinction (assigning an Issue is the `todo` promotion). Its upstream input — a ticket slice, a backlog, or just the Principal's stated intent — is optional and lives outside AEG (§2); the Planner is where the company's plan and AEG's execution meet. It also enforces the **plan-integrity gates** in `roles/planner.md` — the recognized failure modes turned into live refusals and calibrated warnings (see §10), and the **readiness gate** (verify all inputs are present and reachable before planning a single task). The full role spec, including refusal language, is in `roles/planner.md`.
+The Planner writes no briefs (those are just-in-time, §7), writes no status (that's the forge), and creates no Milestone (that's the Architect's, `milestone-model.md`) — a tranche it plans need carry no Milestone at all, and most don't. It owns the `backlog`/`todo` distinction (assigning an Issue is the `todo` promotion). Its upstream input — a ticket slice, a backlog, or just the Principal's stated intent — is optional and lives outside AEG (§2); the Planner is where the company's plan and AEG's execution meet. It also enforces the **plan-integrity gates** in `roles/planner.md` — the recognized failure modes turned into live refusals and calibrated warnings (see §10), and the **readiness gate** (verify all inputs are present and reachable before planning a single task). The full role spec, including refusal language, is in `roles/planner.md`.
 
 ---
 
@@ -217,6 +214,14 @@ The earlier sections describe a single tranche's *internals*. This section cover
 - **active** — at least one task has an open branch (`in-flight`) or is further along. The tranche is in flight. `Lifecycle: active` in the header.
 - **complete** — **every task's PR is merged** (every task derives to `merged` from the forge). The work is done. At this point — and only this point — the **Archivist** sets `Lifecycle: complete` in the header (one line; the single lifecycle mutation the file ever takes after plan time) and assembles the per-task provenance blocks on the merged PRs. "Complete" is itself **derived** from the forge (all linked PRs merged); the header marker is a convenience flag the Archivist writes once, not a status anyone maintains.
 - **archived** — a complete tranche's file **moves to `aeg-root/tranches/completed/<name>.md`**. It is **not deleted.**
+
+### Flow stages — what actually happens, in order
+
+The lifecycle above is the derived-status vocabulary — what Studio reads off the forge to display a tranche's progress. This is the operational sequence: what actually happens, and who does it. Today each stage is a human or a thin dispatch script deciding to start the next one; nothing about the sequence changes once the Atta Engine can run it as a compiled flow — same stages, same order, same role per stage; only the transition mechanism moves from a human dispatching the next turn to the engine calling the next node.
+
+1. **Plan** — the Planner turns an intent plus a slice of tickets into the tranche's tasks (Issues) and their `depends-on`/`conflicts-with` edges (§6). No Milestone required.
+2. **Dispatch** — each task runs its own Task flow (`task-model.md` §3: Brief → Code → Review → Verify → Merge → Archive), independently, in parallel wherever `depends-on` allows and the conflict rule (§5) doesn't force a serialization. Deciding *when* each task actually starts is a real act, not an implicit one: today the Principal or a thin dispatch script — this file's own opening note names that actor for every altitude — tomorrow the Atta Engine's scheduler.
+3. **Archive** — once every task has merged, the Tranche Archivist closes out: sets the lifecycle marker, moves the file to `completed/`, flags (does not perform) orphaned branches and worktree removal.
 
 ### Tranches are never deleted — they are durable history
 
@@ -333,4 +338,4 @@ The ledger is a Section-13 append-only artifact. The familiar forbidden moves ap
 
 > AEG does not plan your project. It governs how your project gets executed by agents — safely, coherently, and coordinated across a team.
 
-For the manual run mechanics and per-role entry gates, see `aeg-manual-flow.md`. For the Planner's plan-integrity gates and readiness gate, see `roles/planner.md`. For the authority model, tiers, and label vocabulary, see `state-machine.md`. For the project registry, see `projects.md`. For role-seam contracts, see `contracts/`.
+For the altitude above this one, see `milestone-model.md`. For the altitude below, see `task-model.md`. For the manual run mechanics and per-role entry gates, see `aeg-manual-flow.md`. For the Planner's plan-integrity gates and readiness gate, see `roles/planner.md`. For the authority model, tiers, and label vocabulary, see `state-machine.md`. For the project registry, see `projects.md`. For role-seam contracts, see `contracts/`.
