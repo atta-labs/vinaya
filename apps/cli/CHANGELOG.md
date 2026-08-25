@@ -1,5 +1,15 @@
 # @attalabs/vinaya
 
+## 0.19.2
+
+### Patch Changes
+
+- 8a75420: Adds `aeg-root/milestone-model.md` and `aeg-root/task-model.md` — the milestone concept (`0.19.0`) had shipped as code with zero conceptual documentation until now, and the task concept's coverage was fragmented across `tranche-model.md` and `process.md`. Fixes `tranche-model.md`'s stale "the top of AEG" claim (no longer true since the milestone layer shipped), and adds a **Flow stages** section to all three doctrine files — the operational sequence (who acts, what closes it), distinct from the derived-status vocabulary Studio displays.
+- 8a75420: `resolveAgentVendors` treated a manifest whose `agents` key was never written (any install predating the agent-vendor feature) the same as an explicit `--agents=none` — both resolved to an empty Set. That meant `vinaya upgrade`/`doctor` would never add `.claude/commands/vinaya.md`, `.gemini/commands/vinaya.toml`, or `.agents/skills/` to a pre-existing install, no matter how many `upgrade` runs it went through — the only way to get them was to re-run `vinaya init --agents=all` by hand. Found live: attalabs' own installed copy silently never got these files.
+  
+  `undefined` (the key never existed) now defaults to every vendor — the same default `vinaya init` gives a fresh install — while an explicit `agents: []` from `--agents=none` is still respected exactly, never widened. `isDefaultedAgentVendorPath` gates the same distinction in `upgrade`'s file-ownership check, so both halves agree.
+- 8a75420: `bundle-doctrine.ts`'s `FILES` allowlist never got `milestone-model.md`/`task-model.md` added when they shipped — publishing would have bundled `tranche-model.md` but not its two new siblings, while `skills/aeg/SKILL.md`'s reading order (which does ship) pointed adopters at both. Fixed, with a regression test that runs the real script against the real `aeg-root/` and asserts every non-excluded top-level doctrine file actually lands in the bundled output.
+
 ## 0.19.1
 
 ### Patch Changes
