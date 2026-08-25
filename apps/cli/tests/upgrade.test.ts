@@ -317,7 +317,7 @@ describe('vinaya upgrade — the persisted --agents selection, never re-flagged'
     expect(cfg.managed.agents).toEqual([])
   })
 
-  it('a manifest written before managed.agents existed (pre-task-5) is treated as no vendor selected — upgrade adds none of the three', async () => {
+  it('a manifest written before managed.agents existed (pre-task-5) is treated as every vendor — upgrade installs all three, the same default a fresh init gives, without anyone re-running init', async () => {
     await runInit(['--yes'], initDeps())
     // Simulate a pre-task-5 install: files exist, but the manifest has never
     // heard of the agents key or any of the three vendor files.
@@ -334,9 +334,22 @@ describe('vinaya upgrade — the persisted --agents selection, never re-flagged'
 
     const out = await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))
     expect(out).toContain(`regenerate ${CHECKS_WORKFLOW_PATH}`)
-    expect(existsSync(join(root, CLAUDE_COMMAND_PATH))).toBe(false)
+    expect(out).toContain(`+ recreate   ${CLAUDE_COMMAND_PATH}`)
+    expect(out).toContain(`+ recreate   ${GEMINI_COMMAND_PATH}`)
+    expect(existsSync(join(root, CLAUDE_COMMAND_PATH))).toBe(true)
+    expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(true)
+    expect(existsSync(join(root, '.agents/skills'))).toBe(true)
+  })
+
+  it('a manifest with an explicit, narrower --agents selection is NEVER widened by the defaulted-adopt path — only a truly unrecorded manifest gets every vendor', async () => {
+    await runInit(['--yes', '--agents=claude'], initDeps())
     expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
-    expect(existsSync(join(root, '.agents'))).toBe(false)
+    writeFileSync(join(root, CHECKS_WORKFLOW_PATH), 'name: hand-edited\n') // real work for upgrade to do
+
+    const out = await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))
+    expect(out).not.toContain(GEMINI_COMMAND_PATH)
+    expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
+    expect(existsSync(join(root, '.agents/skills'))).toBe(false)
   })
 })
 

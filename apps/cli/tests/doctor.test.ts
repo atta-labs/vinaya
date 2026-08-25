@@ -501,7 +501,7 @@ describe('vinaya doctor — agent-vendor emitters (--agents)', () => {
     expect(claude?.severity).toBe('ok')
   })
 
-  it('a manifest with no recorded agents selection (pre-task-5) reports no findings for any of the three vendors', async () => {
+  it('a manifest with no recorded agents selection (pre-task-5) is treated as every vendor — missing files are reported as missing, not silently ignored forever', async () => {
     await runInit(['--yes'], initDeps())
     const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
     delete cfg.managed.agents
@@ -514,9 +514,16 @@ describe('vinaya doctor — agent-vendor emitters (--agents)', () => {
     rmSync(join(root, '.agents'), { recursive: true, force: true })
 
     const report = await runDoctorJson()
-    expect(report.findings.some((f) => f.check === 'claude-command')).toBe(false)
-    expect(report.findings.some((f) => f.check === 'gemini-command')).toBe(false)
-    expect(report.findings.some((f) => f.check === 'agent-skills')).toBe(false)
+    expect(report.healthy).toBe(false)
+    const claude = report.findings.find((f) => f.check === 'claude-command')
+    expect(claude?.severity).toBe('error')
+    expect(claude?.message).toContain('missing on disk — run `vinaya upgrade`')
+    const gemini = report.findings.find((f) => f.check === 'gemini-command')
+    expect(gemini?.severity).toBe('error')
+    expect(gemini?.message).toContain('missing on disk — run `vinaya upgrade`')
+    const skills = report.findings.find((f) => f.check === 'agent-skills')
+    expect(skills?.severity).toBe('error')
+    expect(skills?.message).toContain('missing on disk — run `vinaya upgrade`')
   })
 })
 

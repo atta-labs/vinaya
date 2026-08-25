@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { DEFAULT_RELEASE_ACTOR, PRINCIPAL_ALLOWLIST } from '@attalabs/aeg-core'
 import { AGENT_VENDORS, type AgentVendor } from './agent-vendors.js'
+import { CLAUDE_COMMAND_PATH } from './claude-command-emitter.js'
+import { GEMINI_COMMAND_PATH } from './gemini-command-emitter.js'
 
 // Rings is the only schema surface this task ships — declarative
 // booleans, no conditional logic. Ring 0 (git hooks) and the
@@ -258,20 +260,54 @@ const ManagedManifestSchema = z.object({
   labels: z.array(z.string()),
   // The `vinaya init --agents` vendor selection (task 5, #152) — which of the
   // three agent-native emitters (tasks 2/3/4) this repo opted into. Persisted
-  // so `upgrade`/`doctor` read the selection back rather than re-deriving a
-  // default: a repo initialized with `--agents=claude` must not have a
-  // flagless `vinaya upgrade` silently add the other vendors' files, nor
-  // silently drop the recorded selection. Absent on any manifest written
-  // before this key existed (or by `--agents=none`) — `resolveAgentVendors`
-  // below treats that as "no vendor selected", matching the fact that none of
-  // these files were ever owned by such an install.
+  // so `upgrade`/`doctor` read an EXPLICIT selection back rather than
+  // re-deriving a default: a repo initialized with `--agents=claude` must not
+  // have a flagless `vinaya upgrade` silently add the other vendors' files,
+  // nor silently drop the recorded selection. `--agents=none` writes a real
+  // `agents: []` (an empty array is still a value — `writeManifest`'s plain
+  // `JSON.stringify` never drops it), genuinely distinct on disk from a
+  // manifest written before this key existed at all, where the field is
+  // simply absent (`undefined`). `resolveAgentVendors` below relies on that
+  // distinction: `undefined` is not a recorded choice, it is amnesia — an
+  // adopter who has never seen this flag must get the same default a fresh
+  // `vinaya init` gives everyone else, every `upgrade`, without ever being
+  // told to re-run `init` by hand (found live: attalabs' own pre-existing
+  // install silently never got `.claude/commands/vinaya.md` this way).
   agents: z.array(z.enum(AGENT_VENDORS)).optional()
 })
 export type ManagedManifest = z.infer<typeof ManagedManifestSchema>
 
-/** The persisted `--agents` selection as a Set, or empty when unrecorded. */
+/**
+ * The persisted `--agents` selection as a Set. `undefined` (the key was
+ * never written — a manifest predating this feature) defaults to every
+ * vendor, the same default `vinaya init` itself uses for a fresh install:
+ * new capability reaches an existing adopter through `upgrade` alone, the
+ * same as it would through `init`. An explicit `agents: []` (from
+ * `--agents=none`) is a real, recorded choice and is returned empty exactly
+ * as declared — never widened back to the default.
+ */
+const AGENTS_SKILLS_PREFIX = '.agents/skills/'
+
+/**
+ * `true` for the three agent-vendor file paths, but ONLY when the manifest
+ * has never recorded any `--agents` choice at all (`agents === undefined`,
+ * same condition `resolveAgentVendors` above widens to every vendor for).
+ * `upgrade`'s `planUpgrade` and `doctor`'s `diagnoseInstall` both gate a
+ * `create-file` op on a SEPARATE `manifest.files` ownership list, unrelated
+ * to `agents` — without this, `resolveAgentVendors` correctly resolving to
+ * every vendor still would not get these three files past that second gate,
+ * since `manifest.files` never listed them for an install predating the
+ * feature. This is the shared other half both callers need; kept beside
+ * `resolveAgentVendors` so the two conditions can never drift apart.
+ */
+export function isDefaultedAgentVendorPath(path: string, manifest: Pick<ManagedManifest, 'agents'>): boolean {
+  if (manifest.agents !== undefined) return false
+  return path === CLAUDE_COMMAND_PATH || path === GEMINI_COMMAND_PATH || path.startsWith(AGENTS_SKILLS_PREFIX)
+}
+
 export function resolveAgentVendors(manifest: Pick<ManagedManifest, 'agents'> | null | undefined): Set<AgentVendor> {
-  return new Set(manifest?.agents ?? [])
+  if (manifest?.agents === undefined) return new Set(AGENT_VENDORS)
+  return new Set(manifest.agents)
 }
 
 export const VinayaConfigSchema = z.object({
