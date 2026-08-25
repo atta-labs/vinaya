@@ -79,6 +79,26 @@ describe('vinaya audit — rings.ring2_asyncAudits', () => {
     expect(directPushChecked).toBe(true)
   })
 
+  it('`true` — a genuine direct-push violation still fails and still opens the incident (the strongest proof: not just that the check runs, but that its real verdict survives)', async () => {
+    writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } })
+    let incidentOpened = 0
+    const exit = await runAudit(
+      ['--sha=abc123'],
+      auditDeps({
+        detectRepo: async () => ({ repoRoot: cwd, owner: 'acme', repo: 'widget' }),
+        fetchAssociatedMergedPrs: () => [],
+        pollAttempts: 2,
+        pollDelayMs: 1,
+        sleep: async () => {},
+        openDirectPushIncident: () => {
+          incidentOpened++
+        }
+      })
+    )
+    expect(exit).toBe(1)
+    expect(incidentOpened).toBe(1)
+  })
+
   it('`true` with `--only=dead-branches` — dead-branch-push is the only work requested, and it is skipped', async () => {
     writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } })
     const exit = await runAudit(
