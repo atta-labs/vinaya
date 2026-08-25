@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { checkG1, checkG2, checkG3, checkG4, checkG5 } from './registry-checks'
+import { checkG1, checkG2, checkG3, checkG4, checkG5, checkG6 } from './registry-checks'
 import type { GateRow } from './registry-parse'
 
 function makeRow(overrides: Partial<GateRow> = {}): GateRow {
@@ -11,20 +11,21 @@ function makeRow(overrides: Partial<GateRow> = {}): GateRow {
     summary: 'Some summary?',
     category: 'hook',
     implementation: '',
+    audience: 'repo-own',
     line: 1,
     ...overrides
   }
 }
 
 describe('checkG1', () => {
-  it('reports a missing implementation path as info, never fail', () => {
+  it('reports a missing implementation path as fail (task 8: re-graded from report-only)', () => {
     const rows: GateRow[] = [
       makeRow({ action: 'Real file', implementation: 'real/file.ts' }),
       makeRow({ action: 'Fake file', implementation: 'does/not/exist.ts' })
     ]
     const existsFn = (path: string) => path === 'real/file.ts'
     const result = checkG1(rows, existsFn)
-    expect(result.status).toBe('info')
+    expect(result.status).toBe('fail')
     expect(result.findings).toHaveLength(1)
     expect(result.findings[0]?.path).toBe('does/not/exist.ts')
   })
@@ -36,11 +37,10 @@ describe('checkG1', () => {
     expect(result.findings).toHaveLength(0)
   })
 
-  it('never returns fail even with every path missing', () => {
+  it('fails with every path missing', () => {
     const rows: GateRow[] = [makeRow({ implementation: 'a.ts' }), makeRow({ implementation: 'b.ts' })]
     const result = checkG1(rows, () => false)
-    expect(result.status).toBe('info')
-    expect(result.status).not.toBe('fail')
+    expect(result.status).toBe('fail')
   })
 })
 
@@ -142,6 +142,94 @@ describe('checkG5', () => {
     ]
     const contracts = [{ file: 'contracts/planner-brief.md', producer: 'planner', consumer: 'developer' }]
     const result = checkG5(roles, contracts)
+    expect(result.status).toBe('pass')
+    expect(result.findings).toHaveLength(0)
+  })
+})
+
+describe('checkG6', () => {
+  it('skips rows left at the default repo-own audience', () => {
+    const rows: GateRow[] = [makeRow({ audience: 'repo-own', implementation: 'apps/cli/src/checks/runner.ts' })]
+    const result = checkG6(rows, new Set())
+    expect(result.status).toBe('pass')
+    expect(result.findings).toHaveLength(0)
+  })
+
+  it('fails a product row whose implementation is not a registered check at all', () => {
+    const rows: GateRow[] = [
+      makeRow({ action: 'Merging', audience: 'product', implementation: 'apps/cli/src/checks/runner.ts' })
+    ]
+    const result = checkG6(rows, new Set(['review-gate']))
+    expect(result.status).toBe('fail')
+    expect(result.findings[0]?.reason).toContain('Merging')
+  })
+
+  it('passes a product row naming a shipped bin path directly (name derived 1:1)', () => {
+    const rows: GateRow[] = [
+      makeRow({
+        action: 'Editing a governed file',
+        audience: 'product',
+        implementation: 'apps/cli/src/checks/bin/check-doc-coverage-push.ts'
+      })
+    ]
+    const result = checkG6(rows, new Set(['doc-coverage-push']))
+    expect(result.status).toBe('pass')
+  })
+
+  it('fails a product row naming a shipped bin path whose name is not actually registered', () => {
+    const rows: GateRow[] = [
+      makeRow({
+        action: 'Editing a governed file',
+        audience: 'product',
+        implementation: 'apps/cli/src/checks/bin/check-doc-coverage-push.ts'
+      })
+    ]
+    const result = checkG6(rows, new Set(['some-other-check']))
+    expect(result.status).toBe('fail')
+  })
+
+  it('resolves a packages/aeg-core/bin path through GATE_AUDIENCE (multi-name shippedAs)', () => {
+    // `verify-docs` -> shippedAs ['doc-coverage', 'doc-coverage-push'] — either name registered is enough.
+    const rows: GateRow[] = [
+      makeRow({
+        action: 'Documentation gate',
+        audience: 'product',
+        implementation: 'packages/aeg-core/bin/verify-docs.ts'
+      })
+    ]
+    expect(checkG6(rows, new Set(['doc-coverage'])).status).toBe('pass')
+    expect(checkG6(rows, new Set(['doc-coverage-push'])).status).toBe('pass')
+    expect(checkG6(rows, new Set(['unrelated'])).status).toBe('fail')
+  })
+
+  it('fails a product row whose packages/aeg-core/bin path is doctrine-declared internal (verify-task)', () => {
+    // GATE_AUDIENCE marks `verify-task` internal — no shippedAs to resolve, regardless of the injected set.
+    const rows: GateRow[] = [
+      makeRow({
+        action: 'Opening a task PR (final self-check before creation)',
+        audience: 'product',
+        implementation: 'packages/aeg-core/bin/verify-task.ts'
+      })
+    ]
+    const result = checkG6(rows, new Set(['registry-gates', 'coherence', 'dispatch-readiness']))
+    expect(result.status).toBe('fail')
+  })
+
+  it('passes when every product row resolves', () => {
+    const rows: GateRow[] = [
+      makeRow({
+        action: 'G1 — implementation exists',
+        ring: 'ring1',
+        audience: 'product',
+        implementation: 'packages/aeg-core/bin/verify-registry.ts'
+      }),
+      makeRow({
+        action: 'Some repo-own row',
+        audience: 'repo-own',
+        implementation: '.github/workflows/ci.yml'
+      })
+    ]
+    const result = checkG6(rows, new Set(['registry-gates']))
     expect(result.status).toBe('pass')
     expect(result.findings).toHaveLength(0)
   })
