@@ -47,14 +47,17 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
   {
     key: 'rings.ring1_forgeWriteInterception',
     type: 'boolean',
-    semantics: ['Whether `pr`/`issue create|edit` validate a body against `briefSchema` before any `gh` write.'],
+    semantics: [
+      'Additive, never disabling. `false` (the default — every `vinaya init` starter config reads `false` here) is a no-op: `pr`/`issue create|edit` validate a body against `briefSchema` before any `gh` write, exactly as they always have. `true` is the opt-in accelerator — the only value that changes behavior — and skips that validation entirely.'
+    ],
     example: `{ "rings": { "ring1_forgeWriteInterception": true } }`
   },
   {
     key: 'rings.ring2_asyncAudits',
     type: 'boolean',
     semantics: [
-      'Whether the async, forge-scheduled mechanisms (`vinaya archive`, `vinaya audit`’s dead-branch-push and direct-main-push detection) run.'
+      'Additive, never disabling. `false` (the default — every `vinaya init` starter config reads `false` here) is a no-op: `vinaya archive`’s provenance work and `vinaya audit`’s dead-branch-push notification run exactly as they always have. `true` is the opt-in accelerator — the only value that changes behavior — and skips that work, exiting `0` without doing anything.',
+      'Deliberately does NOT gate `vinaya audit`’s direct-main-push detection, which stays unconditional regardless of this flag — it is a real pass/fail that catches a branch-protection bypass, and its own on/off switch must never be readable from ordinary, PR-reachable config content (the security-review reasoning: the actor a detector exists to catch must never also be able to disable it in the same push).'
     ],
     example: `{ "rings": { "ring2_asyncAudits": true } }`
   },

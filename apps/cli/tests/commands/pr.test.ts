@@ -213,3 +213,41 @@ describe('vinaya pr create --validate-only', () => {
     expect(finding.check).toBe('body-bare-digits')
   })
 })
+
+describe('vinaya pr create --validate-only — rings.ring1_forgeWriteInterception', () => {
+  let cwd: string
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-pr-ring1-test-'))
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  function writeConfig(config: unknown): void {
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify(config), 'utf8')
+  }
+
+  it('`false` is a no-op — validation still refuses a malformed body, same as no rings key at all', () => {
+    writeConfig({ ...FULL_PR_CONFIG, rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: false } })
+    const r = runCli(
+      ['pr', 'create', '--validate-only', '--body-file', join(FORGE_FIXTURES, 'pr-no-tier.md'), '--title', 'Feat: x'],
+      { cwd }
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('brief-schema')
+  })
+
+  it('`true` is the opt-in accelerator — skips brief-schema validation entirely, even on a malformed body', () => {
+    writeConfig({ ...FULL_PR_CONFIG, rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } })
+    // No bare digits anywhere — `body-bare-digits` is its own unconditional
+    // gate (never governed by `rings.ring1_forgeWriteInterception`, which
+    // scopes only the config-driven `briefSchema` sections), so a digit here
+    // would refuse regardless of the accelerator and prove nothing about it.
+    const noTierNoDigits = join(cwd, 'no-tier-no-digits.md')
+    writeFileSync(noTierNoDigits, '## Summary\n\nno tier field here, and no digits anywhere in this body.\n', 'utf8')
+    const r = runCli(['pr', 'create', '--validate-only', '--body-file', noTierNoDigits, '--title', 'Feat: x'], { cwd })
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('PASS')
+  })
+})

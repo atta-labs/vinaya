@@ -48,6 +48,8 @@ Today the schema carries one surface:
 
 Both `rings` fields are plain booleans — no conditional logic. Ring 0 (git hooks) and the CI/branch-protection guarantee are never represented in this schema, by design — they are not configurable.
 
+Both fields are additive, never disabling: `false` (the default — every `vinaya init` starter config reads `false` for both) is a no-op, leaving the underlying mechanism running exactly as it does with no config at all. `true` is the opt-in accelerator — the only value that changes behavior — and skips it. `ring1_forgeWriteInterception: true` skips `pr`/`issue create|edit`'s `briefSchema` validation entirely; `ring2_asyncAudits: true` skips `vinaya archive`'s provenance work and `vinaya audit`'s dead-branch-push notification, exiting `0` without doing anything for those two — it does **not** skip `vinaya audit`'s direct-main-push detection, which stays unconditional on purpose: that check is a real pass/fail catching a branch-protection bypass, and gating a security-relevant detection behind a flag readable from ordinary PR content would let the bypass silently disable the check that catches it.
+
 ### Blast-radius collision domains
 
 `checkBlastRadiusScope` (the AEG task-Issue gate that refuses an under-declared blast radius) needs a list of shared collision domains — paths that couple work across project boundaries. It works out of the box, with **zero adopter file**:

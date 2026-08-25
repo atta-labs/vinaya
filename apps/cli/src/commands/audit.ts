@@ -19,8 +19,33 @@ import {
   type DeadBranchFact,
   type DeadBranchPush
 } from '@attalabs/aeg-core'
+import { loadConfig } from '../lib/config.js'
 import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
 import { printJson } from '../lib/envelope.js'
+
+// `rings.ring2_asyncAudits` is additive, never disabling: `false` (or absent
+// — every pre-existing `vinaya init` starter config reads `false` here) is a
+// no-op, leaving dead-branch-push's real work running exactly as it does
+// today, unconditionally, for every existing adopter. `true` is the new
+// opt-in accelerator — the only value that changes behavior — and skips it.
+// An unreadable/invalid config resolves the same as absent: real work runs.
+//
+// Deliberately scoped to dead-branch-push ONLY, never direct-main-push
+// detection (security review finding, HIGH): dead-branch-push is a
+// never-red notification channel — pure bookkeeping, safe to make opt-in.
+// direct-main-push-detection is a real pass/fail that fails CI and opens an
+// incident when a commit reaches `main` outside a PR merge — the mechanism
+// that catches a branch-protection bypass. Reading its own on/off switch
+// from ordinary, PR-reachable `vinaya.config.json` content (the same commit
+// being audited) would let the exact actor this check exists to catch
+// silently blind it in the same push, and would let an adopter reaching
+// for the accelerator for the noisy dead-branch notifications unknowingly
+// disable their own direct-push alarm too. So direct-main-push-detection
+// stays unconditional here, same treatment `checkMilestoneShape` already
+// gets — a config flag never gates a security-relevant detection check.
+function ring2Accelerated(): boolean {
+  return loadConfig()?.rings?.ring2_asyncAudits === true
+}
 
 export type AuditDeps = {
   detectRepo: () => Promise<RepoInfo | null>
@@ -347,6 +372,9 @@ function parseOnly(args: string[]): OnlyMode {
 export async function runAudit(args: string[], deps: AuditDeps): Promise<number> {
   const jsonOutput = args.includes('--json')
   const only = parseOnly(args)
+  // Scoped to dead-branch-push only — see `ring2Accelerated`'s doc comment.
+  // direct-main-push-detection is never skipped by this flag.
+  const skipDeadBranch = ring2Accelerated()
 
   const repo = await deps.detectRepo()
   if (!repo) {
@@ -360,26 +388,36 @@ export async function runAudit(args: string[], deps: AuditDeps): Promise<number>
   const repoFlag = `${repo.owner}/${repo.repo}`
   const sha = parseSha(args) ?? sh(['git', 'rev-parse', 'HEAD'])
 
-  const deadBranch = only === 'direct-push' ? { scanned: 0, findings: [] } : runDeadBranchAudit(repoFlag)
+  const skipDeadBranchRun = only === 'direct-push' || skipDeadBranch
+  const deadBranch = skipDeadBranchRun ? { scanned: 0, findings: [] } : runDeadBranchAudit(repoFlag)
   const directPush = only === 'dead-branches' ? null : await runDirectMainPushCheck(sha, repoFlag, deps)
 
   const failed = directPush?.verdict === 'direct-push'
 
   if (jsonOutput) {
     printJson({
-      deadBranchAudit: only === 'direct-push' ? null : { scanned: deadBranch.scanned, findings: deadBranch.findings },
+      deadBranchAudit:
+        only === 'direct-push'
+          ? null
+          : skipDeadBranch
+            ? { skipped: true, reason: 'rings.ring2_asyncAudits is true (opt-in accelerator)' }
+            : { scanned: deadBranch.scanned, findings: deadBranch.findings },
       directMainPush: directPush ? { sha, ...directPush } : null
     })
   } else {
     process.stdout.write('vinaya audit\n\n')
     if (only !== 'direct-push') {
-      process.stdout.write(
-        `· [dead-branch-push] task branches scanned: ${deadBranch.scanned}, flagged: ${deadBranch.findings.length}\n`
-      )
-      for (const f of deadBranch.findings) {
+      if (skipDeadBranch) {
+        process.stdout.write('· [dead-branch-push] skipped — rings.ring2_asyncAudits is `true` (opt-in accelerator).\n')
+      } else {
         process.stdout.write(
-          `  ⚠ ${f.branch} — PR #${f.prNumber} (${f.prState}) resolved ${f.resolvedAt}, tip commit ${f.latestCommitAt}\n`
+          `· [dead-branch-push] task branches scanned: ${deadBranch.scanned}, flagged: ${deadBranch.findings.length}\n`
         )
+        for (const f of deadBranch.findings) {
+          process.stdout.write(
+            `  ⚠ ${f.branch} — PR #${f.prNumber} (${f.prState}) resolved ${f.resolvedAt}, tip commit ${f.latestCommitAt}\n`
+          )
+        }
       }
     }
     if (directPush) {

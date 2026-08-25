@@ -233,6 +233,13 @@ export function ensureTrancheLabelExists(slug: string): void {
  * refusal, never a silent `null` that would skip validation and let a broken
  * config print green over an unvalidated forge write. No config / no
  * `briefSchema` for this kind → an empty set (adopter-generic pass-through).
+ *
+ * `rings.ring1_forgeWriteInterception` is additive, never disabling: `false`
+ * (or absent — every pre-existing `vinaya init` starter config reads `false`
+ * here) is a no-op, leaving brief-schema validation running exactly as it
+ * does today, unconditionally, for every existing adopter. `true` is the new
+ * opt-in accelerator — the only value that changes behavior — and skips
+ * brief-schema validation entirely by resolving to an empty section set.
  */
 export function resolveSections(kind: 'pr' | 'issue' | 'milestone', retryCommand: string): BriefSection[] {
   const result = loadConfigChecked()
@@ -245,6 +252,7 @@ export function resolveSections(kind: 'pr' | 'issue' | 'milestone', retryCommand
       )
     ])
   }
+  if (result.config?.rings?.ring1_forgeWriteInterception === true) return []
   return result.config?.briefSchema?.[kind]?.sections ?? []
 }
 
