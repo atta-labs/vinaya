@@ -277,21 +277,12 @@ const ManagedManifestSchema = z.object({
 })
 export type ManagedManifest = z.infer<typeof ManagedManifestSchema>
 
-/**
- * The persisted `--agents` selection as a Set. `undefined` (the key was
- * never written — a manifest predating this feature) defaults to every
- * vendor, the same default `vinaya init` itself uses for a fresh install:
- * new capability reaches an existing adopter through `upgrade` alone, the
- * same as it would through `init`. An explicit `agents: []` (from
- * `--agents=none`) is a real, recorded choice and is returned empty exactly
- * as declared — never widened back to the default.
- */
 const AGENTS_SKILLS_PREFIX = '.agents/skills/'
 
 /**
  * `true` for the three agent-vendor file paths, but ONLY when the manifest
  * has never recorded any `--agents` choice at all (`agents === undefined`,
- * same condition `resolveAgentVendors` above widens to every vendor for).
+ * same condition `resolveAgentVendors` below widens to every vendor for).
  * `upgrade`'s `planUpgrade` and `doctor`'s `diagnoseInstall` both gate a
  * `create-file` op on a SEPARATE `manifest.files` ownership list, unrelated
  * to `agents` — without this, `resolveAgentVendors` correctly resolving to
@@ -305,6 +296,15 @@ export function isDefaultedAgentVendorPath(path: string, manifest: Pick<ManagedM
   return path === CLAUDE_COMMAND_PATH || path === GEMINI_COMMAND_PATH || path.startsWith(AGENTS_SKILLS_PREFIX)
 }
 
+/**
+ * The persisted `--agents` selection as a Set. `undefined` (the key was
+ * never written — a manifest predating this feature) defaults to every
+ * vendor, the same default `vinaya init` itself uses for a fresh install:
+ * new capability reaches an existing adopter through `upgrade` alone, the
+ * same as it would through `init`. An explicit `agents: []` (from
+ * `--agents=none`) is a real, recorded choice and is returned empty exactly
+ * as declared — never widened back to the default.
+ */
 export function resolveAgentVendors(manifest: Pick<ManagedManifest, 'agents'> | null | undefined): Set<AgentVendor> {
   if (manifest?.agents === undefined) return new Set(AGENT_VENDORS)
   return new Set(manifest.agents)
