@@ -30,9 +30,15 @@ describe('vinaya audit — pre-flight', () => {
 
 // rings.ring2_asyncAudits is additive, never disabling (Issue #45's
 // 2026-08-25 Amendment): `false`/absent is a no-op — every pre-existing
-// `vinaya init` starter config reads `false` here, so both audits' real work
-// must keep running unconditionally. `true` is the new opt-in accelerator
-// that skips them.
+// `vinaya init` starter config reads `false` here, so dead-branch-push's
+// real work must keep running unconditionally. `true` is the new opt-in
+// accelerator that skips it.
+//
+// Deliberately scoped to dead-branch-push only (security review finding,
+// HIGH, fixed here): direct-main-push-detection is a real pass/fail that
+// catches a branch-protection bypass, so it is NEVER gated by this flag —
+// reading its on/off switch from ordinary, PR-reachable config would let the
+// exact actor it exists to catch silently blind it in the same push.
 describe('vinaya audit — rings.ring2_asyncAudits', () => {
   let cwd: string
   let originalCwd: string
@@ -51,23 +57,55 @@ describe('vinaya audit — rings.ring2_asyncAudits', () => {
     writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify(config), 'utf8')
   }
 
-  it('`true` skips real work entirely — never even calls detectRepo', async () => {
+  it('`true` skips dead-branch-push, but direct-main-push-detection still runs for real', async () => {
     writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } })
     let detectRepoCalled = false
+    let directPushChecked = false
     const exit = await runAudit(
-      [],
+      ['--sha=abc123'],
       auditDeps({
         detectRepo: async () => {
           detectRepoCalled = true
           return { repoRoot: cwd, owner: 'acme', repo: 'widget' }
+        },
+        fetchAssociatedMergedPrs: () => {
+          directPushChecked = true
+          return [42]
         }
       })
     )
     expect(exit).toBe(0)
-    expect(detectRepoCalled).toBe(false)
+    expect(detectRepoCalled).toBe(true)
+    expect(directPushChecked).toBe(true)
   })
 
-  it('`false` is a no-op — real work still runs (fails pre-flight the same as before the flag existed)', async () => {
+  it('`true` with `--only=dead-branches` — dead-branch-push is the only work requested, and it is skipped', async () => {
+    writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } })
+    const exit = await runAudit(
+      ['--only=dead-branches', '--sha=abc123'],
+      auditDeps({ detectRepo: async () => ({ repoRoot: cwd, owner: 'acme', repo: 'widget' }) })
+    )
+    expect(exit).toBe(0)
+  })
+
+  it('`true` with `--only=direct-push` — unaffected by the flag, runs for real', async () => {
+    writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } })
+    let calls = 0
+    const exit = await runAudit(
+      ['--only=direct-push', '--sha=abc123'],
+      auditDeps({
+        detectRepo: async () => ({ repoRoot: cwd, owner: 'acme', repo: 'widget' }),
+        fetchAssociatedMergedPrs: () => {
+          calls++
+          return [42]
+        }
+      })
+    )
+    expect(exit).toBe(0)
+    expect(calls).toBe(1)
+  })
+
+  it('`false` is a no-op — dead-branch-push still runs (fails pre-flight the same as before the flag existed)', async () => {
     writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: false } })
     const exit = await runAudit([], auditDeps({ detectRepo: async () => null }))
     expect(exit).toBe(1)
