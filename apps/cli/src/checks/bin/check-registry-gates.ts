@@ -3,11 +3,19 @@
 /**
  * Core check: registry-gates. Thin adapter over `@attalabs/aeg-core`'s
  * `checkG1`–`checkG5` — mirrors `packages/aeg-core/bin/verify-registry.ts`'s
- * input assembly (`aeg-root/enforcement.md` parse, `.husky`/`.claude/hooks`/
- * `packages/aeg-core/bin` candidate-file glob, role/contract frontmatter,
- * G4's `gh`-reachability probe) exactly, collapsed into ONE registered
- * check rather than five, emitting the check contract instead of human
- * text.
+ * input assembly (`aeg-root/enforcement.md` parse, `.husky`/`.claude/hooks`
+ * candidate-file glob, role/contract frontmatter, G4's `gh`-reachability
+ * probe), collapsed into ONE registered check rather than five, emitting
+ * the check contract instead of human text.
+ *
+ * DIVERGES from `verify-registry.ts`'s own glob on one point (task
+ * `vinaya-adopter-portability-v1` 2, Issue #232): that standalone tool also
+ * globs `packages/aeg-core/bin` as a G2 candidate-file location.
+ * `packages/aeg-core` is this monorepo's own package layout, not a fact any
+ * shipped, adopter-facing check may assume — `verify-registry.ts` never
+ * ships to an adopter (it is an internal-only tool this monorepo runs on
+ * itself), so it keeps that probe; this shipped adapter drops it instead of
+ * carrying a repo-specific path into every `vinaya init` install.
  *
  * Collapsed, not six separate `CheckSpec`s (Developer's call, per Issue
  * #760 §4): G1–G6 share nearly all their I/O (the same `enforcement.md`
@@ -27,22 +35,32 @@
  * a dependency cycle — same reasoning `gate-audience.ts` documents for
  * `GATE_AUDIENCE` itself.
  *
- * DORMANT WHEN ABSENT (same discipline `evaluateC5`/`.vinaya/doc-owners`
- * already uses): G1–G5 validate `aeg-root/enforcement.md` against THIS
- * monorepo's own `aeg-root/roles/`/`aeg-root/contracts/` doctrine tree — a
- * file layout that exists only in the AttaLabs monorepo itself, never in an
- * arbitrary adopter repo `vinaya init` installs into. This is the same
- * "hardcodes this monorepo's own doctrine layout" problem
- * `reader-resolvable-prose`/`retired-vocabulary` used to carry before task 7
- * (Issue #56) moved their doctrine root behind `vinaya.config.json`'s
- * `proseGates` key — `enforcement.md`'s own role/contract frontmatter shape
- * has no adopter-facing config surface to move behind the same way. Rather
- * than repeating that exclusion (which would silently drop 5 of the 13
- * evaluators this task's brief explicitly names), this
- * adapter no-ops (exit 0, no findings) when `aeg-root/enforcement.md` does
- * not exist relative to the caller's cwd — meaningful and blocking inside
- * THIS repo (where the file exists), inert everywhere else. See the PR
- * body's Part 2 design-choice note.
+ * DORMANT WHEN ABSENT, EXPLICITLY (task `vinaya-adopter-portability-v1` 2,
+ * Issue #232 — same discipline `evaluateC5`/`.vinaya/doc-owners` already
+ * uses): G1–G6 validate `aeg-root/enforcement.md` against THIS monorepo's
+ * own `aeg-root/roles/`/`aeg-root/contracts/` doctrine-authoring tree — a
+ * fact about how AEG's own doctrine is developed, not something any
+ * `vinaya init` install ever produces (settled by experiment: a fresh
+ * `npm i @attalabs/vinaya` + `vinaya init --yes` repo carries no
+ * `aeg-root/` at all — the doctrine ships read-only inside
+ * `node_modules/@attalabs/vinaya/aeg-root`). Redirecting to that installed
+ * copy would not fix this: G4 resolves the enforcement rows' own cited
+ * issue/PR numbers against the CALLING repo's git remote
+ * (`resolveRepo()`), so pointing G1–G6 at the package's copy while still
+ * resolving against the adopter's own remote would assert facts about the
+ * wrong repository entirely. This check means the author repo's own tree,
+ * full stop — there is no adopter-facing form of it. Before this task, an
+ * absent `aeg-root/enforcement.md` made this adapter `exit(0)` with zero
+ * findings — indistinguishable, in `vinaya check --all`'s own output, from
+ * a real pass that inspected a real doctrine tree (confirmed: a fresh
+ * adopter fixture reported `registry-gates: pass` while `aeg-root/` did
+ * not exist to inspect). It now instead emits one `warning`-severity
+ * finding announcing the dormancy and its reason before exiting 0 — the
+ * `check-reader-resolvable-prose` shape (an announced no-op), applied here
+ * for the first time. `--all`'s own renderer already prints every finding
+ * under its check's summary line regardless of exit code
+ * (`commands/check.ts`), so the dormancy notice is visible in the same
+ * transcript a silent `pass` used to hide it from.
  *
  * scope: full — reads the whole doctrine tree, not the local diff.
  */
@@ -103,11 +121,6 @@ function globCandidateFiles(): string[] {
   if (existsSync('.claude/hooks')) {
     for (const name of readdirSync('.claude/hooks')) {
       if (name.endsWith('.sh')) out.push(`.claude/hooks/${name}`)
-    }
-  }
-  if (existsSync('packages/aeg-core/bin')) {
-    for (const name of readdirSync('packages/aeg-core/bin')) {
-      if (name.endsWith('.ts') && !name.endsWith('.test.ts')) out.push(`packages/aeg-core/bin/${name}`)
     }
   }
   return out
@@ -220,8 +233,19 @@ function emitResult(result: RegistryCheckResult, blocking: boolean): void {
 
 async function main(): Promise<void> {
   if (!existsSync(ENFORCEMENT_PATH)) {
-    // Dormant — this monorepo's own doctrine tree isn't present (adopter
-    // repo, or a check run from outside this repo's root). See module doc.
+    // Dormant, EXPLICITLY — see module doc's "DORMANT WHEN ABSENT,
+    // EXPLICITLY". A warning finding, not a silent exit: `--all` prints
+    // findings under their check's summary line regardless of exit code,
+    // so this is visible in the same transcript a bare `exit(0)` hid it
+    // from.
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: `${CHECK_NAME}.dormant`,
+      severity: 'warning',
+      message: `${CHECK_NAME}: dormant — no ${ENFORCEMENT_PATH} in this repository. This check validates the AEG doctrine-authoring tree's own internal coherence (enforcement rows against role/contract frontmatter); it has no adopter-facing form and does not run outside the repo that authors that doctrine.`,
+      agent_recovery_prompt:
+        'No action needed — this check only applies inside the repository that authors the AEG doctrine tree (aeg-root/roles, aeg-root/contracts, aeg-root/enforcement.md). An adopter repo installing @attalabs/vinaya never carries that tree and is not expected to.'
+    })
     process.exit(0)
   }
 
