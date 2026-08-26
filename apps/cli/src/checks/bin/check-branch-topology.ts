@@ -22,6 +22,24 @@ import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'branch-topology'
 
+/**
+ * The `topoPath` string `checkBranchTopology` (`@attalabs/aeg-core`) splices
+ * into its own human-readable messages ("branch X names tranche Y, but
+ * <topoPath> does not exist") — never read from disk by anything: topology
+ * itself comes from `createForgeSource(...).getTranche()`, a live forge
+ * read. `aeg-root/tranches/<tranche>.md` was the pre-forge-migration literal
+ * this repo used before that source moved to the forge (task
+ * `vinaya-configurability-v1` 16 and earlier) — a path that does not exist
+ * even in this repo's own tree any more (verified: no `aeg-root/tranches/`
+ * directory here), let alone an adopter's. Kept as a label, not a claim
+ * that a file must exist there — described as what it is (a forge-derived
+ * topology row for the tranche), so a failure message never sends an
+ * adopter hunting for a markdown file that cannot exist in any repository.
+ */
+function topologyLabel(tranche: string): string {
+  return `the forge-registered topology for tranche "${tranche}"`
+}
+
 function git(args: string[]): string {
   try {
     return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -51,7 +69,7 @@ async function main(): Promise<void> {
     process.exit(0)
   }
 
-  const topoPath = `aeg-root/tranches/${fields.tranche}.md`
+  const topoPath = topologyLabel(fields.tranche)
   const repo = resolveRepo()
   if (!repo) {
     emitCheckError({
