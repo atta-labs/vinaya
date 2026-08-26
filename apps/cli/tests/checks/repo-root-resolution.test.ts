@@ -85,7 +85,8 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         'retired-vocabulary',
         'review-gate',
         'single-plan-pr',
-        'test-plan'
+        'test-plan',
+        'workspace-escape'
       ].sort()
     )
   })

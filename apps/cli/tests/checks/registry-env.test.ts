@@ -50,7 +50,8 @@ describe('registry env declarations', () => {
         'retired-vocabulary',
         'review-gate',
         'single-plan-pr',
-        'test-plan'
+        'test-plan',
+        'workspace-escape'
       ].sort()
     )
   })

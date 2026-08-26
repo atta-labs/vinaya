@@ -78,6 +78,7 @@ describe('workspace-escape detection', () => {
     const files = [
       {
         path: 'apps/cli/src/foo.ts',
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting the detector skips a fixture template literal, not writing a template string
         content: 'readFileSync(`../../../packages/other/${name}.ts`, "utf8")'
       }
     ]
@@ -102,6 +103,19 @@ describe('workspace-escape detection', () => {
       }
     ]
     expect(findWorkspaceEscapes(files, new Set(['apps/cli/src/index.ts']), WORKSPACE_DIRS)).toEqual([])
+  })
+
+  it('does not flag a call shape merely described in a comment', () => {
+    const files = [
+      {
+        path: 'apps/cli/src/foo.ts',
+        content:
+          "// example: readFileSync('../../../packages/other/src/bar.ts')\n" +
+          "/* new URL('../../../packages/other/src/bar.ts', import.meta.url) */\n" +
+          'export const x = 1'
+      }
+    ]
+    expect(findWorkspaceEscapes(files, new Set(['apps/cli/src/foo.ts']), WORKSPACE_DIRS)).toEqual([])
   })
 
   it('detects readFile (not just readFileSync) with a literal relative argument', () => {

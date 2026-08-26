@@ -55,7 +55,7 @@ const READ_CALL = /\b(?:readFileSync|readFile)\s*\(\s*(['"`])((?:\.\.?\/)[^'"`]*
 /** `new URL('…', import.meta.url)` — the second argument must be the literal expression, not a variable holding it. */
 const NEW_URL_IMPORT_META_URL = /\bnew\s+URL\s*\(\s*(['"`])([^'"`]*)\1\s*,\s*import\.meta\.url\s*\)/g
 
-function lineAt(content: string, index: number): number {
+function lineAtOffset(content: string, index: number): number {
   let line = 1
   for (let i = 0; i < index; i++) {
     if (content.charCodeAt(i) === 10) line++
@@ -92,28 +92,44 @@ function workspacePackageOf(path: string, workspaceDirs: readonly string[]): str
   return `${first}/${second}`
 }
 
+/**
+ * Blanks out `/* *\/` and `//` comments, preserving every newline so
+ * reported line numbers stay accurate against the original file — same
+ * technique as `reader-resolvable-prose.ts`'s `stripNonProse` for `.ts`/
+ * `.tsx`. Without this, a module comment merely describing a call shape in
+ * prose (this very file's own header does) reads as a real call site.
+ */
+function stripComments(content: string): string {
+  return content
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ''))
+    .replace(/(^|[^:])\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, ''))
+}
+
 type ExtractedReference = { line: number; reference: string; resolved: string }
 
 /**
  * Both idioms scanned by raw pattern, not a parser — same syntactic
  * discipline as `symbol-collisions.ts`'s declaration scan. KNOWN BLIND SPOT,
- * stated rather than papered over: a match inside a string or a comment
- * reads as code, same limitation that file documents for its own regex.
- * Not measured as a real risk here — a repo-wide scan of this codebase
- * found zero such decoys (every real hit was a genuine call site).
+ * stated rather than papered over: a match inside a STRING (as opposed to a
+ * comment, stripped above) reads as code — e.g. this module's own test
+ * fixtures, which embed example call shapes as string literals for the
+ * regex to parse, are themselves indistinguishable from real call sites by
+ * a text scan. Resolving that needs a real parser, the same larger job
+ * `symbol-collisions.ts` declines for the identical reason.
  */
 function extractReferences(path: string, content: string): ExtractedReference[] {
   const dir = dirOf(path)
+  const scrubbed = stripComments(content)
   const out: ExtractedReference[] = []
   for (const pattern of [READ_CALL, NEW_URL_IMPORT_META_URL]) {
     pattern.lastIndex = 0
-    let m: RegExpExecArray | null = pattern.exec(content)
+    let m: RegExpExecArray | null = pattern.exec(scrubbed)
     while (m !== null) {
       const literal = m[2] as string
       if (!literal.includes('${')) {
-        out.push({ line: lineAt(content, m.index), reference: literal, resolved: resolveRelative(dir, literal) })
+        out.push({ line: lineAtOffset(scrubbed, m.index), reference: literal, resolved: resolveRelative(dir, literal) })
       }
-      m = pattern.exec(content)
+      m = pattern.exec(scrubbed)
     }
   }
   return out
