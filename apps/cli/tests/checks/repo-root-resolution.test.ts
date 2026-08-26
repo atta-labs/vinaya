@@ -89,7 +89,7 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
     )
   })
 
-  it('`vinaya check --all` in a plain fixture repo (no aeg-root/, no configured reader-facing surface) passes clean — both checks run, dormant, zero findings', () => {
+  it('`vinaya check --all` in a plain fixture repo (no aeg-root/, no configured reader-facing surface) passes clean — both checks run, exit 0, plain-text never leaks onto stderr', () => {
     const root = initFixture('rc3')
     try {
       const indexTs = join(import.meta.dir, '..', '..', 'src', 'index.ts')
@@ -99,14 +99,43 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         env: { ...process.env, PR_BODY: undefined }
       })
       expect(result.status, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0)
-      // Both now run (report-only, dormant on this doctrine-free fixture) —
-      // proof they are registered and pass clean, not proof they're absent.
+      // Report-only, always exit 0 regardless of what they find — proof
+      // they're registered and never block, not proof of what they swept.
       expect(result.stdout).toContain('reader-resolvable-prose: pass')
       expect(result.stdout).toContain('retired-vocabulary: pass')
       // Never a plain-text line on stderr — that channel is CheckError JSON
       // only; a stray human-readable line there would force `status: error`
       // regardless of exit code (the exact bug this rewrite fixed).
       expect(result.stderr).not.toContain('aeg-root/glossary.md')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("unconfigured doctrineRoot resolves via resolveDoctrineRoot() (the package's own copy), not a cwd-relative literal — task vinaya-adopter-portability-v1 2, Issue #232", () => {
+    // The pre-232 default was the bare literal `'aeg-root'`, cwd-relative —
+    // permanently empty for every `vinaya init` adopter, none of whom ever
+    // gets a repo-relative `aeg-root/` (settled by experiment, see this
+    // task's PR body). Spawning THIS repo's own dev source against an
+    // unrelated fixture cwd proves the new default is package-identity
+    // resolved, not cwd-resolved: it's expected, not a leak, that it lands
+    // on this monorepo's own real `aeg-root/` here — an installed adopter
+    // copy runs from inside its OWN `node_modules/@attalabs/vinaya`, where
+    // the identical resolution lands on that adopter's own bundled copy
+    // instead (proven separately by this task's real npm-install fixture,
+    // not reproducible from dev source without a real package boundary).
+    const root = initFixture('rc3-doctrine-root')
+    try {
+      const indexTs = join(import.meta.dir, '..', '..', 'src', 'index.ts')
+      const result = spawnSync('bun', [indexTs, 'check', 'reader-resolvable-prose'], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, PR_BODY: undefined }
+      })
+      expect(result.status, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0)
+      // Real doctrine content, swept from THIS repo's own aeg-root — proof
+      // the sweep is no longer permanently vacuous by construction.
+      expect(result.stderr).toContain('aeg-root/')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

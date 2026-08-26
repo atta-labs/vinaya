@@ -45,6 +45,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { checkReaderResolvableProse, parseGlossaryTerms, type ProseSourceFile } from '@attalabs/aeg-core'
+import { resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
@@ -52,8 +53,23 @@ const CHECK_NAME = 'reader-resolvable-prose'
 
 const proseGates = loadConfig()?.proseGates
 
-/** `<doctrineRoot>/**` — this repo's own default, `'aeg-root'`, when unset. */
-const DOCTRINE_ROOT = proseGates?.doctrineRoot ?? 'aeg-root'
+/**
+ * `<doctrineRoot>/**` when `proseGates.doctrineRoot` is unset. Was a bare
+ * `'aeg-root'` literal, cwd-relative — correct inside this monorepo (where
+ * cwd IS the tree that owns it), but a permanently-empty sweep for every
+ * `vinaya init` adopter, none of whom ever have a repo-relative `aeg-root/`
+ * (Issue #232 — settled by experiment). Unlike `registry-gates`, this
+ * check's corpus IS portable:
+ * the doctrine prose it sweeps for unresolvable references/coined terms is
+ * the same shipped text for every install, so `resolveDoctrineRoot()`
+ * (`../../commands/doctrine.js` — the same "package's own copy" resolution
+ * `vinaya doctrine` already uses) is the right default target, not a wrong
+ * one the way it would be for a check that resolves adopter-specific forge
+ * facts. Falls back to the old literal only if even that resolution comes
+ * up empty (no bundled doctrine found at all) — the same degrade
+ * `doctrineCommand` documents.
+ */
+const DOCTRINE_ROOT = proseGates?.doctrineRoot ?? resolveDoctrineRoot() ?? 'aeg-root'
 
 /**
  * BOTH must be configured for the reader-facing sweep to run at all — same

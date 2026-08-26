@@ -214,6 +214,8 @@ The flag applies to a published install, where this CLI launches the bundled ser
 
 The five core AEG checks (`coherence`, `dispatch-readiness`, and siblings) are bound to the Vinaya development repository — they read governance documents relative to it. Outside a Vinaya workspace, `vinaya check --all` reports those checks as `status: 'error'` rather than crashing.
 
+`registry-gates` is bound the same way, but reports differently: it validates this package's own `aeg-root/enforcement.md` against its own `aeg-root/roles`/`aeg-root/contracts` — a tree only the Vinaya development repository itself carries, never an adopter install. Outside that repository it reports `status: 'pass'` with a `warning` finding announcing the dormancy and why, rather than `'error'` or a silent zero-finding pass. `reader-resolvable-prose`/`retired-vocabulary` are not bound this way: their unconfigured `doctrineRoot` resolves to this package's own installed copy of `aeg-root` (`vinaya doctrine`'s own resolution), so they sweep real content in every install, not only inside the Vinaya development repository. Set `proseGates.doctrineRoot` in `vinaya.config.json` to sweep your own doctrine tree instead, if you have one.
+
 Custom checks are any executable you register in `vinaya.config.json`, in any language. Note that the TypeScript file `vinaya new check` scaffolds carries a `#!/usr/bin/env bun` shebang, so **that scaffold requires [bun](https://bun.sh) on your `PATH`** — without it the check reports `status: 'error'`. The CLI itself needs only Node; this applies to the scaffolded template alone. Write the check in a language your machine already runs and it has no such requirement.
 
 ## Documentation
