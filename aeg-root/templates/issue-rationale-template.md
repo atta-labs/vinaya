@@ -33,3 +33,4 @@ sidebar_title: "Template: Issue rationale"
 
 **Tier:** [0 | 1 | 3]
 **Project:** [project(s), comma-separated, matching the blast radius above]
+**Type:** [build | chore | docs | feat | fix | perf | refactor | revert | style | test — one, matching a `vinaya/type:*` label]

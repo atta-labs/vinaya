@@ -386,7 +386,7 @@ The same principle retired two label families outright: the six `status:*` label
 
 ### "Mandatory" has two shapes
 
-- **Always-mandatory** — present on every task, exactly once. (Only `vinaya/tier:*`.)
+- **Always-mandatory** — present on every task, exactly once. (`vinaya/tier:*` and `vinaya/type:*`.)
 - **Conditional-mandatory** — present **if and only if** the condition it signals is true. The obligation runs both ways: it MUST be added when the condition becomes true, and it MUST be removed when the condition becomes false. A stale `vinaya/needs:principal-input` on a resolved Issue is as much a violation as a missing one — a conditional label is a **live signal, not a sticker**.
 
 The only genuinely **optional** labels are `vinaya/override:docs` and `vinaya/waiver:docs`, because both are escape hatches — forcing either would be a contradiction.
@@ -398,6 +398,7 @@ No label outside this table may be applied to a task Issue or its PR. (The Archi
 | Label | On | Marks (what the forge can't say) | Who applies / when | Mandatory? |
 |---|---|---|---|---|
 | `vinaya/tier:0` / `vinaya/tier:1` / `vinaya/tier:3` | Issue (+ mirrors the PR-body `Tier:`) | Impact tier — drives required docs (§9) and whether it merges at a ratification window. The forge has no concept of "impact." | **Planner** sets it at Issue cut (plan-time estimate). The **PR-body `Tier:`** is the binding value at merge; the Developer corrects the field if execution reveals a different tier, and re-syncs the label. | **Always-mandatory** — exactly one per task |
+| `vinaya/type:build` / `vinaya/type:chore` / `vinaya/type:docs` / `vinaya/type:feat` / `vinaya/type:fix` / `vinaya/type:perf` / `vinaya/type:refactor` / `vinaya/type:revert` / `vinaya/type:style` / `vinaya/type:test` | Issue | What kind of change the task is — the same ten commit-type names `roles/developer.md`'s commit conventions use, applied to the Issue instead of the commit. The forge has no concept of a task's shape. | **Planner** sets it at Issue cut. | **Always-mandatory** — exactly one per task, enforced going forward from this axis's own merge; not backfilled onto Issues that predate it |
 | `vinaya/blocked` | Issue | A block that has **no forge fact** behind it ("waiting on an answer" isn't visible from branch/PR state). | Developer/Brief Author when a task is blocked on an escalation; **removed** the moment it unblocks. | Conditional-mandatory |
 | `vinaya/incoherent` | Issue | A `COMPLETED` close with **no merged-PR link** — the forge shows "closed" but cannot show *whether the one law was honored* (done iff a merged `Closes #N`). Marks the anomaly for a human to resolve; AEG never auto-reopens. | Detected by `verify-coherence` (A1) / surfaced in Studio; applied when the incoherence is found, **removed** when a human clears it (link the merge, or re-close `NOT_PLANNED`). | Conditional-mandatory |
 | `vinaya/needs:execution-input` | Issue | Routes an open escalation to the **Brief Author** (§7). | Developer at escalation; removed when answered. | Conditional-mandatory |
