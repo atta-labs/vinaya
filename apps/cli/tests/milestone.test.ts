@@ -191,6 +191,102 @@ describe('vinaya milestone create --validate-only', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// `vinaya milestone edit` — same fake-`gh`-on-PATH technique, but the fake
+// captures stdin too: `edit`'s write is a `gh api -X PATCH --input -`, and
+// the round-trip test needs the exact bytes sent, not just that a PATCH fired.
+// ---------------------------------------------------------------------------
+
+let stdinPath: string
+
+function fakeEditGh(logPathArg: string, stdinPathArg: string, milestoneNumber: number): string {
+  return `#!/usr/bin/env sh
+echo "$@" >> "${logPathArg}"
+case "$*" in
+  *"-X PATCH"*) cat > "${stdinPathArg}"; echo '{"number":${milestoneNumber},"html_url":"https://github.com/test-owner/test-repo/milestone/${milestoneNumber}"}' ;;
+  *) echo '[]' ;;
+esac
+exit 0
+`
+}
+
+function installFakeEditGh(milestoneNumber: number): void {
+  binDir = join(tmpdir(), `vinaya-edit-gh-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  mkdirSync(binDir, { recursive: true })
+  logPath = join(binDir, 'gh.log')
+  stdinPath = join(binDir, 'gh.stdin')
+  writeFileSync(logPath, '')
+  writeFileSync(join(binDir, 'gh'), fakeEditGh(logPath, stdinPath, milestoneNumber), { mode: 0o755 })
+  originalPath = process.env.PATH
+  process.env.PATH = `${binDir}:${originalPath ?? ''}`
+}
+
+describe('vinaya milestone edit', () => {
+  let cwd: string
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-milestone-edit-test-'))
+    initGitRepo(cwd)
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+    process.env.PATH = originalPath
+    rmSync(binDir, { recursive: true, force: true })
+  })
+
+  it('refuses a malformed body before the write — nothing reaches the forge', () => {
+    installFakeEditGh(12)
+    const bodyFile = writeBody(cwd, 'body.md', 'Release: 1.0.0')
+    const r = runCli(['milestone', 'edit', '12', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('milestone-shape')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+
+  it('a well-formed body round-trips: the PATCH sent carries the exact same description', () => {
+    installFakeEditGh(12)
+    const body = [
+      'Determinism hardening.',
+      '',
+      'Release: 0.20.0',
+      '',
+      '### Tranche intents',
+      '- vinaya-engine-v1: engine work covered by this goal.'
+    ].join('\n')
+    const bodyFile = writeBody(cwd, 'body.md', body)
+    const r = runCli(['milestone', 'edit', '12', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('milestone/12')
+    expect(ghLog()).toContain('-X PATCH repos/test-owner/test-repo/milestones/12')
+    const sent = JSON.parse(readFileSync(stdinPath, 'utf8')) as { description: string }
+    expect(sent.description).toBe(body)
+  })
+
+  it('--validate-only writes nothing', () => {
+    installFakeEditGh(12)
+    const bodyFile = writeBody(cwd, 'body.md', 'A well-formed goal, no version, no intents yet.')
+    const r = runCli(['milestone', 'edit', '12', '--validate-only', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('PASS')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+
+  it('refuses when the Milestone number is missing', () => {
+    installFakeEditGh(12)
+    const bodyFile = writeBody(cwd, 'body.md', 'A goal.')
+    const r = runCli(['milestone', 'edit', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.message).toContain('Milestone number')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+})
+
 describe('vinaya milestone adopt', () => {
   let cwd: string
 

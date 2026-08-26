@@ -34,6 +34,7 @@ import {
 
 const RETRY_CREATE = 'vinaya milestone create --title <title> --body-file <path>'
 const RETRY_ADOPT = 'vinaya milestone adopt --target <title> --slug <slug> [--slug <slug> ...]'
+const RETRY_EDIT = 'vinaya milestone edit <n> --body-file <path>'
 
 function sh(args: string[], input?: string): string {
   // `env: process.env` is explicit, not redundant — same reason `waiver.ts`'s
@@ -60,13 +61,18 @@ function ghErrorDetail(e: unknown): string {
   return (text && text.trim().length > 0 ? text : ((e as Error)?.message ?? 'unknown error')).trim()
 }
 
-function locateBodyOrRefuse(args: string[]): BodyResult {
+/**
+ * Shared by `create` and `edit` — both require a `--body-file`/`--body`
+ * carrying the milestone description, refused with each command's own retry
+ * string so the recovery prompt names the invocation that actually failed.
+ */
+function locateBodyOrRefuse(args: string[], commandName: 'create' | 'edit', retryCommand: string): BodyResult {
   let result: BodyResult | null
   try {
     result = locateBody(args)
   } catch (e) {
     if (e instanceof ForgeArgError) {
-      refuse([makeCheckError('forge-args', e.message, `Fix the invocation, then re-run \`${RETRY_CREATE}\`.`)])
+      refuse([makeCheckError('forge-args', e.message, `Fix the invocation, then re-run \`${retryCommand}\`.`)])
     }
     throw e
   }
@@ -74,8 +80,8 @@ function locateBodyOrRefuse(args: string[]): BodyResult {
     refuse([
       makeCheckError(
         'forge-args',
-        '`vinaya milestone create` requires a `--body-file <path>` (or `--body <text>`) carrying the milestone description.',
-        `Add \`--body-file <path>\`, then re-run \`${RETRY_CREATE}\`.`
+        `\`vinaya milestone ${commandName}\` requires a \`--body-file <path>\` (or \`--body <text>\`) carrying the milestone description.`,
+        `Add \`--body-file <path>\`, then re-run \`${retryCommand}\`.`
       )
     ])
   }
@@ -98,7 +104,7 @@ export async function milestoneCreateCommand(args: string[]): Promise<void> {
     ])
   }
 
-  const bodyResult = locateBodyOrRefuse(rest)
+  const bodyResult = locateBodyOrRefuse(rest, 'create', RETRY_CREATE)
   const body = bodyResult.body
 
   // Unconditional — runs whether or not `briefSchema.milestone` is
@@ -157,6 +163,95 @@ export async function milestoneCreateCommand(args: string[]): Promise<void> {
   const created = JSON.parse(out) as { number: number; html_url: string }
   if (json) printJson({ validated: true, written: true, number: created.number, url: created.html_url })
   else process.stdout.write(`${created.html_url}\n`)
+}
+
+// ---------------------------------------------------------------------------
+// `vinaya milestone edit` — the gated replacement for the raw `gh api PATCH`
+// that has patched a Milestone's description twice in two days. Same shape
+// as `create`: `checkMilestoneShape` refuses a malformed body before any
+// write reaches the forge, and the config-defined `briefSchema.milestone`
+// sections (dormant today — `vinaya.config.json` declares none) run the same
+// way `create`'s do. Only the description changes; the title is untouched.
+// ---------------------------------------------------------------------------
+
+function extractMilestoneNumber(rest: string[]): { number: string; ghArgs: string[] } | null {
+  const numberArg = rest[0]
+  if (!numberArg || numberArg.startsWith('-')) return null
+  return { number: numberArg, ghArgs: rest.slice(1) }
+}
+
+export async function milestoneEditCommand(args: string[]): Promise<void> {
+  const json = args.includes('--json')
+  const validateOnly = args.includes('--validate-only')
+  const rest = args.filter((a) => a !== '--json' && a !== '--validate-only')
+
+  const target = extractMilestoneNumber(rest)
+  if (!target) {
+    refuse([
+      makeCheckError(
+        'forge-args',
+        '`vinaya milestone edit` requires the target Milestone number as the first argument.',
+        `Pass the Milestone number, e.g. \`${RETRY_EDIT}\`.`
+      )
+    ])
+  }
+  const { number, ghArgs } = target
+
+  const bodyResult = locateBodyOrRefuse(ghArgs, 'edit', RETRY_EDIT)
+  const body = bodyResult.body
+
+  // Unconditional, same discipline as `create` — the gate `edit` must not
+  // be a hole in.
+  const shape = checkMilestoneShape(body)
+  if (shape.status === 'fail') {
+    refuse(
+      shape.errors.map((message) =>
+        makeCheckError('milestone-shape', message, `Fix the Milestone description, then re-run \`${RETRY_EDIT}\`.`)
+      )
+    )
+  }
+
+  const sections = resolveSections('milestone', RETRY_EDIT)
+  const schemaErrors = validateForgeWrite({ body, title: null, sections, changedFiles: [], retryCommand: RETRY_EDIT })
+  if (schemaErrors.length > 0) refuse(schemaErrors)
+
+  if (validateOnly) {
+    if (json) printJson({ validated: true, written: false, command: 'milestone edit' })
+    else process.stdout.write('✓ all brief-schema gates PASS — nothing written (--validate-only).\n')
+    return
+  }
+
+  const repo = await detectGitRepo()
+  if (!repo?.owner || !repo.repo) {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        'Could not resolve a GitHub owner/repo from the `origin` remote.',
+        'Run this command from inside a git repository whose `origin` remote points at GitHub.'
+      )
+    ])
+  }
+  const repoFlag = `${repo.owner}/${repo.repo}`
+
+  let out: string
+  try {
+    out = sh(
+      ['gh', 'api', '-X', 'PATCH', `repos/${repoFlag}/milestones/${number}`, '--input', '-'],
+      JSON.stringify({ description: body })
+    )
+  } catch (e) {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `\`gh api repos/${repoFlag}/milestones/${number}\` failed: ${ghErrorDetail(e)}`,
+        `Check \`gh auth status\` and network, then re-run \`${RETRY_EDIT}\`.`
+      )
+    ])
+  }
+
+  const edited = JSON.parse(out) as { number: number; html_url: string }
+  if (json) printJson({ validated: true, written: true, number: edited.number, url: edited.html_url })
+  else process.stdout.write(`${edited.html_url}\n`)
 }
 
 // ---------------------------------------------------------------------------
