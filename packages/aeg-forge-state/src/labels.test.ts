@@ -18,7 +18,7 @@ import {
 } from './labels'
 import { mapForgeFacts } from './map-forge-facts'
 
-const CATEGORIES: LabelCategory[] = ['state', 'tier', 'tranche', 'needs', 'waiver', 'flag', 'kind']
+const CATEGORIES: LabelCategory[] = ['state', 'tier', 'tranche', 'needs', 'waiver', 'flag', 'kind', 'type']
 
 const KEYS: LabelKey[] = [
   'blocked',
@@ -36,7 +36,17 @@ const KEYS: LabelKey[] = [
   'incoherent',
   'direct-main-push',
   'dead-branch-push',
-  'state-object'
+  'state-object',
+  'type-build',
+  'type-chore',
+  'type-docs',
+  'type-feat',
+  'type-fix',
+  'type-perf',
+  'type-refactor',
+  'type-revert',
+  'type-style',
+  'type-test'
 ]
 
 describe('LABELS — shape', () => {
@@ -137,6 +147,15 @@ describe('LABELS — shape', () => {
   it('covers the one non-work kind — a storage object is not a task', () => {
     const kinds = LABELS.filter((l) => l.category === 'kind').map((l) => l.id)
     expect(kinds).toEqual(['vinaya/state-object'])
+  })
+
+  it('covers all ten commit-shaped task types, verbatim from developer.md’s commit-type list', () => {
+    const types = LABELS.filter((l) => l.category === 'type').map((l) => l.id)
+    expect(types.sort()).toEqual(
+      ['build', 'chore', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test']
+        .map((t) => `vinaya/type:${t}`)
+        .sort()
+    )
   })
 
   it('carries no foreign-grammar id — the namespace separator is / , never : (#614 addendum)', () => {

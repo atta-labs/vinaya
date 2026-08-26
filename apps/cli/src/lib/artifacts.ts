@@ -1095,7 +1095,17 @@ const FIXED_LABEL_METADATA: Record<Exclude<LabelKey, 'tranche'>, LabelMeta> = {
     color: 'fbca04',
     description: 'Commits landed on a branch after its PR already resolved'
   },
-  'state-object': { color: 'ededed', description: 'A permanent forge-native storage object — never actionable work' }
+  'state-object': { color: 'ededed', description: 'A permanent forge-native storage object — never actionable work' },
+  'type-build': { color: 'bfd4f2', description: 'Build system, packaging, or external dependency change' },
+  'type-chore': { color: 'fef2c0', description: 'Maintenance / repo housekeeping — no functional change' },
+  'type-docs': { color: '0075ca', description: 'Documentation-only change' },
+  'type-feat': { color: '0e8a16', description: 'Adds a capability that did not exist before' },
+  'type-fix': { color: 'd93f0b', description: 'Corrects incorrect behavior' },
+  'type-perf': { color: 'fbca04', description: 'Performance or resource-use improvement, same behavior' },
+  'type-refactor': { color: 'c5def5', description: 'Restructures code with no external behavior change' },
+  'type-revert': { color: 'e11d21', description: 'Undoes a previous change' },
+  'type-style': { color: 'f9d0c4', description: 'Formatting / naming change with no logic change' },
+  'type-test': { color: 'bfdadc', description: 'Adds or corrects test coverage, no production-code change' }
 }
 
 export function labelOps(): CreateLabelOp[] {

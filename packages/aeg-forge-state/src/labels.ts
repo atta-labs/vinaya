@@ -87,6 +87,13 @@ export type LabelCategory =
    * view must exclude it.
    */
   | 'kind'
+  /**
+   * The commit-type shape of a task Issue's work — same vocabulary as the
+   * commit-message `Type(scope):` prefix, applied to the Issue instead of
+   * the commit. A Planner-declared classification fact, not derived
+   * execution status.
+   */
+  | 'type'
 
 /**
  * Whether `id` is the complete label string or the stable prefix of a family
@@ -118,6 +125,16 @@ export type LabelKey =
   | 'direct-main-push'
   | 'dead-branch-push'
   | 'state-object'
+  | 'type-build'
+  | 'type-chore'
+  | 'type-docs'
+  | 'type-feat'
+  | 'type-fix'
+  | 'type-perf'
+  | 'type-refactor'
+  | 'type-revert'
+  | 'type-style'
+  | 'type-test'
 
 export type Label = {
   /** Stable code-side handle — what call sites pass to `label()`. */
@@ -248,6 +265,76 @@ export const LABELS: Label[] = [
     category: 'kind',
     form: 'literal',
     carries: 'A permanent forge-native storage object, never actionable work — excluded from every backlog.'
+  },
+  {
+    key: 'type-build',
+    id: 'vinaya/type:build',
+    category: 'type',
+    form: 'literal',
+    carries: 'The task changes the build system, packaging, or an external dependency rather than product behavior.'
+  },
+  {
+    key: 'type-chore',
+    id: 'vinaya/type:chore',
+    category: 'type',
+    form: 'literal',
+    carries: 'The task is maintenance or repo housekeeping with no functional, user-facing change.'
+  },
+  {
+    key: 'type-docs',
+    id: 'vinaya/type:docs',
+    category: 'type',
+    form: 'literal',
+    carries: 'The task changes documentation only, with no code behavior affected.'
+  },
+  {
+    key: 'type-feat',
+    id: 'vinaya/type:feat',
+    category: 'type',
+    form: 'literal',
+    carries: 'The task adds a capability that did not exist before.'
+  },
+  {
+    key: 'type-fix',
+    id: 'vinaya/type:fix',
+    category: 'type',
+    form: 'literal',
+    carries: 'The task corrects incorrect behavior — a bug, not a missing capability.'
+  },
+  {
+    key: 'type-perf',
+    id: 'vinaya/type:perf',
+    category: 'type',
+    form: 'literal',
+    carries: 'The task improves performance or resource use without changing observable behavior.'
+  },
+  {
+    key: 'type-refactor',
+    id: 'vinaya/type:refactor',
+    category: 'type',
+    form: 'literal',
+    carries: 'The task restructures existing code without changing its external behavior.'
+  },
+  {
+    key: 'type-revert',
+    id: 'vinaya/type:revert',
+    category: 'type',
+    form: 'literal',
+    carries: 'The task undoes a previous change that shipped in error or is no longer wanted.'
+  },
+  {
+    key: 'type-style',
+    id: 'vinaya/type:style',
+    category: 'type',
+    form: 'literal',
+    carries: 'The task changes formatting, naming, or non-semantic code shape with no logic change.'
+  },
+  {
+    key: 'type-test',
+    id: 'vinaya/type:test',
+    category: 'type',
+    form: 'literal',
+    carries: 'The task adds or corrects test coverage with no production-code behavior change.'
   }
 ]
 
