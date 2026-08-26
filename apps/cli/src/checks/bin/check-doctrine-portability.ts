@@ -120,7 +120,10 @@ function main(): void {
   const baselineKeys = new Set(baselineFindings.map(findingKey))
   const newFindings = currentFindings.filter((f) => !baselineKeys.has(findingKey(f)))
 
-  const baseline = captureBaseline([{ tool: CHECK_NAME, findingCount: baselineFindings.length }], new Date().toISOString())
+  const baseline = captureBaseline(
+    [{ tool: CHECK_NAME, findingCount: baselineFindings.length }],
+    new Date().toISOString()
+  )
   const comparison = compareToBaseline([{ tool: CHECK_NAME, findingCount: currentFindings.length }], baseline)
 
   // stdout only — this check's stderr is the CheckError JSON channel

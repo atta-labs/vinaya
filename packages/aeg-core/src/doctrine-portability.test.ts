@@ -35,7 +35,10 @@ describe('checkDoctrinePortability', () => {
 
   it('is silent on an adopter-owned citation (.github/.vinaya/.claude)', () => {
     const findings = checkDoctrinePortability([
-      file('aeg-root/enforcement.md', 'Reads `.github/workflows/ci.yml`, `.vinaya/doc-owners`, and `.claude/settings.json`.')
+      file(
+        'aeg-root/enforcement.md',
+        'Reads `.github/workflows/ci.yml`, `.vinaya/doc-owners`, and `.claude/settings.json`.'
+      )
     ])
     expect(findings).toEqual([])
   })
@@ -61,7 +64,9 @@ describe('checkDoctrinePortability', () => {
   })
 
   it('flags a bare bin/ or src/ citation as author-repo internal', () => {
-    const findings = checkDoctrinePortability([file('aeg-root/enforcement.md', 'See `bin/open-pr.ts` and `src/baseline-capture.ts`.')])
+    const findings = checkDoctrinePortability([
+      file('aeg-root/enforcement.md', 'See `bin/open-pr.ts` and `src/baseline-capture.ts`.')
+    ])
     expect(findings).toHaveLength(2)
   })
 
@@ -79,7 +84,9 @@ describe('checkDoctrinePortability', () => {
   })
 
   it('reports the correct line number for a citation past the first line', () => {
-    const findings = checkDoctrinePortability([file('aeg-root/enforcement.md', 'line one\nline two\nsee `packages/x/y.ts` here')])
+    const findings = checkDoctrinePortability([
+      file('aeg-root/enforcement.md', 'line one\nline two\nsee `packages/x/y.ts` here')
+    ])
     expect(findings[0]?.line).toBe(3)
   })
 })
