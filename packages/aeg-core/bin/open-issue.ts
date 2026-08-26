@@ -19,16 +19,24 @@
  * `blastRadius.extraDomains`, see `readSharedPackages` below — that no
  * declared project owns, without a second project or a `blast-radius-ack:`
  * line),
+ * `checkProjectsRegistered` (every declared `**Project:**` name resolves
+ * against `.vinaya/projects.md`),
  * `checkNoBriefContent` (brief-shaped sections belong in the brief, not here),
  * `checkRationaleNamesDocs` (name a doc/skill path, or the `no-doc-surface`
  * sentinel — the only read-obligation signal a forge write leaves, since the
  * skill-check hook fires on file edits and this edits none),
  * `checkIssueType` (exactly one `vinaya/type:*` label — `labels.ts`'s `type`
  * category, the commit-type vocabulary applied to the Issue instead of the
- * commit).
+ * commit). **CREATE-only**, unlike its four siblings above: the label is
+ * required going forward from this axis's own merge, never retroactively —
+ * running it on `edit` too would refuse an unrelated edit to any
+ * pre-existing Issue for lacking a label nothing ever asked it to carry, a
+ * forced backfill through the only sanctioned edit path. See the `isEdit`
+ * branch below.
  * `checkConflictCompleteness` warns on an undeclared collision-domain overlap
- * and never blocks. All five apply to task Issues only, same as the rationale
- * gate.
+ * and never blocks. The five block-on-fail checks apply to task Issues only,
+ * same as the rationale gate; `checkIssueType` additionally applies to
+ * `create` only.
  *
  * Label detection is per-path: on `create`, labels come from this command's
  * own argv (`--label` flags are naturally present there). On `edit`, argv is
@@ -695,6 +703,18 @@ export function main(): void {
     if (projectPaths.length === 0) {
       console.warn('[open-issue] no `.vinaya/projects.md` registry — the project-registry check is dormant.')
     }
+    // checkIssueType is CREATE-ONLY, deliberately. "Forward-only, no
+    // backfill" (task 10's §10 answer) means the label is required on a
+    // task Issue from the moment it is CUT, not re-required every time it
+    // is later edited — `open-issue.ts` is the only sanctioned edit path
+    // for ANY Issue body, so running this check on `edit` too would refuse
+    // an unrelated edit (a typo fix, a dependency update) to any Issue that
+    // predates this axis, which is a de facto forced backfill through the
+    // back door. A task Issue created after this merges gets the label at
+    // creation and keeps it — nothing removes it — so skipping re-checks on
+    // edit costs nothing for the forward case and exempts every pre-merge
+    // Issue exactly as promised.
+    const typeErrors = isEdit ? [] : checkIssueType(body, labels).errors
     const contentErrors = [
       ...checkBlastRadiusScope(body, labels, sharedPackages, projectPaths).errors,
       ...checkProjectsRegistered(
@@ -704,14 +724,19 @@ export function main(): void {
       ).errors,
       ...checkNoBriefContent(body).errors,
       ...checkRationaleNamesDocs(body).errors,
-      ...checkIssueType(body, labels).errors
+      ...typeErrors
     ]
     if (contentErrors.length > 0) {
       console.error(`\n[open-issue] FAILED — ${contentErrors.length} content check(s):\n`)
       for (const e of contentErrors) console.error(`  ✗ ${e}`)
       fail('the Issue body fails the blast-radius / project-registry / brief-content / docs-read / task-type checks.')
     }
-    console.log('[open-issue] content gate PASS (blast radius, project registry, brief content, docs read, task type).')
+    console.log(
+      `[open-issue] content gate PASS (blast radius, project registry, brief content, docs read${isEdit ? '' : ', task type'}).`
+    )
+    if (isEdit) {
+      console.log('[open-issue] edit — task-type check skipped (create-only; forward-only enforcement, no backfill).')
+    }
 
     // C — warn-only. Never blocks: an Issue declares no precise file surface,
     // so an overlapping collision domain is a hint, not a fact.

@@ -107,6 +107,16 @@ const TYPE_LABEL_IDS = LABELS.filter((l) => l.category === 'type').map((l) => l.
  * Non-task Issues (no tranche label) pass trivially, the same way every
  * sibling content check treats them — the rationale contract, and everything
  * built on it, applies to task Issues only.
+ *
+ * **Caller must invoke this at Issue CREATION only, never on `edit`.** The
+ * label is mandatory forward from this axis's own merge, not retroactively —
+ * a task Issue cut before the merge legitimately carries none, and
+ * `open-issue.ts` is the only sanctioned edit path for ANY Issue body, so
+ * calling this on every edit would refuse an unrelated edit (a typo fix, a
+ * dependency bump) to any pre-existing Issue for lacking a label nothing
+ * ever asked it to carry — a forced backfill through the back door. This
+ * function itself is pure and stateless (it cannot see create vs. edit); the
+ * gating lives in the caller (`open-issue.ts`'s `isEdit` branch).
  */
 export function checkIssueType(_body: string, labels: string[]): IssueSectionResult {
   if (!isTaskIssueLabelSet(labels)) return { status: 'pass', errors: [] }
