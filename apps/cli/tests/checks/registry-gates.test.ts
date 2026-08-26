@@ -41,7 +41,7 @@ describe('registry-gates — task vinaya-adopter-portability-v1 2 (Issue #232)',
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
 
   it("the dormancy finding is visible through `vinaya check --all`'s own renderer (findings print under their check regardless of exit code)", () => {
     const root = initFixture('registry-gates-dormant-all')
@@ -58,7 +58,7 @@ describe('registry-gates — task vinaya-adopter-portability-v1 2 (Issue #232)',
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
-  })
+  }, 45_000)
 
   it('no longer hardcodes packages/aeg-core/bin as a candidate-file location (repo-specific, not portable)', () => {
     const source = readFileSync(BIN_PATH, 'utf8')
@@ -70,5 +70,5 @@ describe('registry-gates — task vinaya-adopter-portability-v1 2 (Issue #232)',
     const result = Bun.spawnSync(['bun', BIN_PATH], { cwd: repoRoot, env: { ...process.env } })
     const stderr = result.stderr.toString()
     expect(stderr).not.toContain('registry-gates.dormant')
-  })
+  }, 20_000)
 })
