@@ -21,7 +21,7 @@ A task's status is **not a field anyone writes.** It is computed by asking the f
 
 ## 2. The status vocabulary — what Studio displays, derived from the forge
 
-Eight states, computed, never stored: `todo`, `in-flight`, `in-review`, `changes-requested`, `merged`, `blocked`, `dropped`, `incoherent`. This is the read-side projection — what a dashboard shows to answer "where is this task right now," not the operational sequence (§3 is that). The full rule chain that decides which forge fact produces which status lives at [`/docs/state-machine`](https://vinaya.attalabs.dev/docs/state-machine), rendered from `packages/aeg-core/src/state-machine-model.ts` — the deriver itself, not a hand-maintained second copy.
+Eight states, computed, never stored: `todo`, `in-flight`, `in-review`, `changes-requested`, `merged`, `blocked`, `dropped`, `incoherent`. This is the read-side projection — what a dashboard shows to answer "where is this task right now," not the operational sequence (§3 is that). The full rule chain that decides which forge fact produces which status lives at [`/docs/state-machine`](https://vinaya.attalabs.dev/docs/state-machine), rendered from `@attalabs/aeg-core`'s state-machine model — the deriver itself, not a hand-maintained second copy.
 
 A closed-without-merge Issue never resolves to `todo` — `todo` implies not-started, and a closed Issue is terminal. The one law under all eight states: a task reaches `merged` only via a PR that names it (`Closes #N`); a `COMPLETED` close without that merge is `incoherent`, not done.
 

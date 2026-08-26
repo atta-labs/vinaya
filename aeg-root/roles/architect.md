@@ -64,7 +64,7 @@ If any of these isn't true, refuse rather than write a Milestone `checkMilestone
 
 **The Milestone, once.** `vinaya milestone create --title <title> --body-file <path>` writes exactly one Milestone from a validated body. There is no `edit` — a Milestone's title and goal, once written, are corrected by whoever owns Milestone editing next (out of this task's surface; see `milestone-model.md` §3 for what `adopt` does and does not cover). You do not maintain a Milestone across its life; you declare it once.
 
-**The `Release:` grammar.** Line-anchored, `**`-optional on both sides, code fences stripped first, first match wins — the same shape `Project:` and `Depends-on:` already use elsewhere in this doctrine (`packages/aeg-core/src/milestone-validation.ts`). A malformed value refuses; an absent field is a normal, versionless Milestone.
+**The `Release:` grammar.** Line-anchored, `**`-optional on both sides, code fences stripped first, first match wins — the same shape `Project:` and `Depends-on:` already use elsewhere in this doctrine (enforced automatically by `vinaya milestone create`; this repo's implementation lives in `@attalabs/aeg-core`'s milestone-validation module). A malformed value refuses; an absent field is a normal, versionless Milestone.
 
 **The `### Tranche intents` grammar.** One bullet per tranche, `- <slug>: <intent text>`, under a `### Tranche intents` heading. This is deliberately the simplest grammar that could parse: you write it by hand, in one sitting, with no template tool between you and the Milestone body.
 
