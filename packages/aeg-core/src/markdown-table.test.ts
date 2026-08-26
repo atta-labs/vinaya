@@ -63,8 +63,9 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
     // task 7 (Issue 56) added the `retired-vocabulary` row alongside the
     // existing `reader-resolvable-prose` one. task 8 (Issue 57) added the
     // G6 doctrine-registry-parity row. task 234 added the
-    // `doctrine-portability` row alongside them.
-    expect(ring1.rows).toHaveLength(20)
+    // `doctrine-portability` row alongside them. task 17 (Issue #78) added
+    // the `workspace-escape` row.
+    expect(ring1.rows).toHaveLength(21)
     // (2026-07-13) removed the "Daily drift check — stuck row-adjacent
     // blockers" ring-2 row (its subject matter, stale-blocker.ts, was retired).
     expect(ring2.rows).toHaveLength(7)
