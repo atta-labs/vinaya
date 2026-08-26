@@ -23,7 +23,7 @@ A Milestone is a real GitHub Milestone object. Its **title is free text**, read 
 
 A Milestone is **not** a tranche, and is not required for a tranche to exist. A tranche's identity is its `vinaya/tranche:<slug>` label — never a Milestone. The exception is the legacy case: a Milestone titled exactly a tranche's slug still means that one tranche, forever, for every Milestone created before this layer existed. Every Milestone created since is a real many-tranches container, not a slug-matching accident.
 
-**A tranche's goal is derived, never stored:** it is the intent line matching that tranche's slug, found by searching every Milestone's description — not a field anyone writes onto the tranche itself. A slug with no matching intent line anywhere resolves to an empty goal, same as a tranche with no Milestone at all; an intent line naming a slug that carries no Issues yet is a real, `planned` tranche, not a missing one (`intentGoalForSlug`/`goalFromMilestones`, `packages/aeg-forge-state/src/fetch-milestone.ts`).
+**A tranche's goal is derived, never stored:** it is the intent line matching that tranche's slug, found by searching every Milestone's description — not a field anyone writes onto the tranche itself. A slug with no matching intent line anywhere resolves to an empty goal, same as a tranche with no Milestone at all; an intent line naming a slug that carries no Issues yet is a real, `planned` tranche, not a missing one (`intentGoalForSlug`/`goalFromMilestones`, `@attalabs/aeg-forge-state`).
 
 ---
 

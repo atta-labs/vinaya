@@ -45,7 +45,7 @@ The failure mode this prevents: a `Security:` field written from memory or infer
 
 ## The hand-off carrier
 
-The **Security Reviewer's verdict comment** on the open (then merged) PR, plus the **merged PR itself**. The verdict comment is the producer's output; the merge is the trigger that authorizes the Archivist to begin close-out. Two mechanical readers consume the comment through one shared parser *(in this repo: `packages/aeg-core/src/verdict-extraction.ts`)*: the pre-merge review gate, which blocks a task PR from merging without a clean `PASS` from a principal-allowlisted author or a principal's actor-verified `vinaya/waiver:review` label (`roles/security.md` § merge gate), and the post-merge provenance assembly, which copies the most recent clear verdict into the record. The parser is line-anchored: a blockquoted, bulleted, or backticked `VERDICT:` line reads as *missing*, not as a verdict.
+The **Security Reviewer's verdict comment** on the open (then merged) PR, plus the **merged PR itself**. The verdict comment is the producer's output; the merge is the trigger that authorizes the Archivist to begin close-out. Two mechanical readers consume the comment through one shared parser (this repo's implementation lives in `@attalabs/aeg-core`'s verdict-extraction module): the pre-merge review gate (`vinaya check review-gate`), which blocks a task PR from merging without a clean `PASS` from a principal-allowlisted author or a principal's actor-verified `vinaya/waiver:review` label (`roles/security.md` § merge gate), and the post-merge provenance assembly, which copies the most recent clear verdict into the record. The parser is line-anchored: a blockquoted, bulleted, or backticked `VERDICT:` line reads as *missing*, not as a verdict.
 
 ---
 
