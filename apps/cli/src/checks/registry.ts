@@ -449,6 +449,17 @@ export function coreCheckRegistry(): CheckSpec[] {
       timeoutMs: 30_000,
       // Same reasoning as `reader-resolvable-prose` above — local files only.
       env: {}
+    },
+    {
+      name: 'doctrine-portability',
+      run: bin('check-doctrine-portability'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Local-only: `git ls-tree`/`git show` read the already-fetched local
+      // repository, never the network — no forge call, no PR content.
+      // BASE_SHA overrides the `origin/main` baseline ref, same declaration
+      // as `doc-coverage`/`no-disk-state`/`evidence-fresh` above.
+      env: { BASE_SHA: { optional: true } }
     }
   ]
 }
