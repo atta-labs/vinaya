@@ -105,9 +105,10 @@ type GhLabel = {
  * exist, and one Milestone may legitimately hold several tranches. The
  * legacy exception, kept forever with no backfill: a Milestone titled
  * EXACTLY a tranche slug (no prefix/suffix convention) is still read the old
- * way — twelve open and roughly forty-five closed Milestones in this repo
- * predate the label model and depend on this never changing underneath
- * them. `matchesLegacyMilestone` is the one predicate every reader below
+ * way — a real population of open and closed Milestones (across this repo
+ * and attalabs) predates the label model and depends on this never changing
+ * underneath them. The rule does not depend on how many; it holds for any
+ * count. `matchesLegacyMilestone` is the one predicate every reader below
  * shares, so "is this slug legacy" can never drift between them.
  */
 function matchesLegacyMilestone(milestones: GhMilestone[], slug: string): GhMilestone | null {
@@ -127,10 +128,13 @@ function matchesLegacyMilestone(milestones: GhMilestone[], slug: string): GhMile
  * narrower, still-real-data-precedented signal a free-text title is
  * unlikely to end with by accident. `open_issues`/`closed_issues` (also
  * present on the Milestone API response) was considered and rejected as a
- * stronger signal: checked live, this repo's OWN active legacy Milestone
- * (`vinaya-milestone-model-v1`) has zero natively-attached Issues — its
- * tasks are label-tracked, not milestone-attached — so gating on that count
- * would have misclassified a real, currently-active tranche.
+ * stronger signal: a legacy-titled Milestone's tasks are label-tracked, not
+ * milestone-attached, so its native Issue counts can legitimately read zero
+ * while the tranche itself is still active (confirmed live against
+ * `vinaya-milestone-model-v1` while it was that tranche's active Milestone —
+ * since closed, but the underlying fact does not depend on any one
+ * Milestone's current state) — gating on that count would misclassify a
+ * real, currently-active tranche as inactive.
  *
  * Residual, knowingly accepted gap: an Architect who deliberately titles a
  * product-goal Milestone to end in `-v<N>` still slips through. No
@@ -160,6 +164,13 @@ function slugShapedTitles(milestones: GhMilestone[]): string[] {
   return milestones.map((m) => m.title).filter((t) => TRANCHE_SLUG_SHAPE.test(t))
 }
 
+/**
+ * Module contract: a new reader of a legacy-titled Milestone goes through
+ * `resolveLegacyFacts`, never this function directly — correct derivation
+ * for the live closed-legacy tranches whose real Issues moved under `adopt`
+ * depends on that routing (see `resolveLegacyFacts`'s doc comment), and the
+ * async index path bypassed the predicate entirely once before.
+ */
 function factsFromLegacyMilestone(milestone: GhMilestone): MilestoneFacts {
   return {
     goal: milestone.description ?? '',
