@@ -77,18 +77,37 @@ let binDir: string
 let logPath: string
 let originalPath: string | undefined
 
+/**
+ * Shared by every fake-`gh`-on-PATH fixture in this file: a fresh scratch
+ * dir plus an empty log file, ready for a fixture-specific script to be
+ * written into it. Split from `activateFakeGh` because a script's own
+ * content sometimes needs the log/stdin paths this returns (e.g. `edit`'s
+ * fixture embeds `gh.stdin`'s path in the script it writes).
+ */
+function newFakeGhBinDir(prefix: string): { dir: string; log: string } {
+  const dir = join(tmpdir(), `vinaya-${prefix}-gh-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  mkdirSync(dir, { recursive: true })
+  const log = join(dir, 'gh.log')
+  writeFileSync(log, '')
+  return { dir, log }
+}
+
+/** Writes the fake `gh` script and puts `dir` at the front of PATH — the second half every fixture shares. */
+function activateFakeGh(dir: string, script: string): void {
+  writeFileSync(join(dir, 'gh'), script, { mode: 0o755 })
+  originalPath = process.env.PATH
+  process.env.PATH = `${dir}:${originalPath ?? ''}`
+}
+
 function installFakeAdoptGh(opts: {
   labels: string[]
   milestones: MilestoneFixture[]
   issuesBySlug: Record<string, IssueFixture[]>
 }): void {
-  binDir = join(tmpdir(), `vinaya-adopt-gh-${Date.now()}-${Math.random().toString(36).slice(2)}`)
-  mkdirSync(binDir, { recursive: true })
-  logPath = join(binDir, 'gh.log')
-  writeFileSync(logPath, '')
-  writeFileSync(join(binDir, 'gh'), fakeAdoptGh(logPath, opts), { mode: 0o755 })
-  originalPath = process.env.PATH
-  process.env.PATH = `${binDir}:${originalPath ?? ''}`
+  const { dir, log } = newFakeGhBinDir('adopt')
+  binDir = dir
+  logPath = log
+  activateFakeGh(dir, fakeAdoptGh(log, opts))
 }
 
 function ghLog(): string {
@@ -199,26 +218,27 @@ describe('vinaya milestone create --validate-only', () => {
 
 let stdinPath: string
 
-function fakeEditGh(logPathArg: string, stdinPathArg: string, milestoneNumber: number): string {
+/** `patchFails: true` simulates the PATCH request itself failing (e.g. a 404) — the fake still captures stdin first, so a failure test can assert what was ABOUT to be sent. */
+function fakeEditGh(logPathArg: string, stdinPathArg: string, milestoneNumber: number, patchFails: boolean): string {
+  const patchCase = patchFails
+    ? `cat > "${stdinPathArg}"; echo 'gh: milestone not found (HTTP 404)' 1>&2; exit 1`
+    : `cat > "${stdinPathArg}"; echo '{"number":${milestoneNumber},"html_url":"https://github.com/test-owner/test-repo/milestone/${milestoneNumber}"}'`
   return `#!/usr/bin/env sh
 echo "$@" >> "${logPathArg}"
 case "$*" in
-  *"-X PATCH"*) cat > "${stdinPathArg}"; echo '{"number":${milestoneNumber},"html_url":"https://github.com/test-owner/test-repo/milestone/${milestoneNumber}"}' ;;
+  *"-X PATCH"*) ${patchCase} ;;
   *) echo '[]' ;;
 esac
 exit 0
 `
 }
 
-function installFakeEditGh(milestoneNumber: number): void {
-  binDir = join(tmpdir(), `vinaya-edit-gh-${Date.now()}-${Math.random().toString(36).slice(2)}`)
-  mkdirSync(binDir, { recursive: true })
-  logPath = join(binDir, 'gh.log')
-  stdinPath = join(binDir, 'gh.stdin')
-  writeFileSync(logPath, '')
-  writeFileSync(join(binDir, 'gh'), fakeEditGh(logPath, stdinPath, milestoneNumber), { mode: 0o755 })
-  originalPath = process.env.PATH
-  process.env.PATH = `${binDir}:${originalPath ?? ''}`
+function installFakeEditGh(milestoneNumber: number, opts?: { patchFails?: boolean }): void {
+  const { dir, log } = newFakeGhBinDir('edit')
+  binDir = dir
+  logPath = log
+  stdinPath = join(dir, 'gh.stdin')
+  activateFakeGh(dir, fakeEditGh(log, stdinPath, milestoneNumber, opts?.patchFails ?? false))
 }
 
 describe('vinaya milestone edit', () => {
@@ -265,6 +285,31 @@ describe('vinaya milestone edit', () => {
     expect(sent.description).toBe(body)
   })
 
+  it('the PATCH payload never carries a title field — only the description changes', () => {
+    installFakeEditGh(12)
+    const bodyFile = writeBody(cwd, 'body.md', 'A well-formed goal, no version, no intents yet.')
+    const r = runCli(['milestone', 'edit', '12', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(0)
+    const sent = JSON.parse(readFileSync(stdinPath, 'utf8')) as Record<string, unknown>
+    expect(Object.keys(sent)).toEqual(['description'])
+  })
+
+  it('surfaces a PATCH failure as a refusal instead of crashing', () => {
+    installFakeEditGh(12, { patchFails: true })
+    const bodyFile = writeBody(cwd, 'body.md', 'A well-formed goal, no version, no intents yet.')
+    const r = runCli(['milestone', 'edit', '12', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('forge-fetch')
+    expect(finding.message).toContain('milestone not found')
+    // The fake still captures what was about to be sent — proves the CLI
+    // reached the real gh call with the right body before gh itself failed.
+    const sent = JSON.parse(readFileSync(stdinPath, 'utf8')) as { description: string }
+    expect(sent.description).toContain('A well-formed goal')
+  })
+
   it('--validate-only writes nothing', () => {
     installFakeEditGh(12)
     const bodyFile = writeBody(cwd, 'body.md', 'A well-formed goal, no version, no intents yet.')
@@ -283,6 +328,17 @@ describe('vinaya milestone edit', () => {
     expect(r.status).toBe(1)
     const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
     expect(finding.message).toContain('Milestone number')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+
+  it('refuses a non-numeric Milestone number before any write — it is interpolated straight into a gh api REST path', () => {
+    installFakeEditGh(12)
+    const bodyFile = writeBody(cwd, 'body.md', 'A goal.')
+    const r = runCli(['milestone', 'edit', 'twelve', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.message).toContain('digits only')
     expect(ghLog()).not.toContain('PATCH')
   })
 })
