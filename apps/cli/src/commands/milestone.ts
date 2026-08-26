@@ -34,13 +34,29 @@ import {
 
 const RETRY_CREATE = 'vinaya milestone create --title <title> --body-file <path>'
 const RETRY_ADOPT = 'vinaya milestone adopt --target <title> --slug <slug> [--slug <slug> ...]'
+const RETRY_EDIT = 'vinaya milestone edit <n> --body-file <path>'
 
 function sh(args: string[], input?: string): string {
   // `env: process.env` is explicit, not redundant — same reason `waiver.ts`'s
   // own `gh` shell-out passes it: Bun's `execFileSync` snapshots the
   // environment at process start rather than re-reading `process.env` at
   // call time.
-  return execFileSync(args[0] as string, args.slice(1), { encoding: 'utf8', input, env: process.env }).trim()
+  //
+  // `stdio: ['pipe', 'pipe', 'pipe']` — explicit, not cosmetic: without it,
+  // Bun's `execFileSync` inherits the child's stderr to this process's real
+  // stderr at spawn time, BEFORE the thrown error is ever caught — so a
+  // failing `gh` call leaked its raw error text as an extra, non-JSON line
+  // ahead of the `CheckError` `refuse()` emits, breaking the "one JSON line
+  // per finding on stderr" contract every reader of this CLI's stderr
+  // depends on (found live via the `milestone edit` PATCH-failure test).
+  // stdin stays `'pipe'` (not `'ignore'`, unlike `waiver.ts`'s own `gh()`,
+  // which never sends `input`) — `create`/`edit` pipe a JSON body through it.
+  return execFileSync(args[0] as string, args.slice(1), {
+    encoding: 'utf8',
+    input,
+    env: process.env,
+    stdio: ['pipe', 'pipe', 'pipe']
+  }).trim()
 }
 
 function shJson<T>(args: string[], input?: string): T {
@@ -60,13 +76,18 @@ function ghErrorDetail(e: unknown): string {
   return (text && text.trim().length > 0 ? text : ((e as Error)?.message ?? 'unknown error')).trim()
 }
 
-function locateBodyOrRefuse(args: string[]): BodyResult {
+/**
+ * Shared by `create` and `edit` — both require a `--body-file`/`--body`
+ * carrying the milestone description, refused with each command's own retry
+ * string so the recovery prompt names the invocation that actually failed.
+ */
+function locateBodyOrRefuse(args: string[], commandName: 'create' | 'edit', retryCommand: string): BodyResult {
   let result: BodyResult | null
   try {
     result = locateBody(args)
   } catch (e) {
     if (e instanceof ForgeArgError) {
-      refuse([makeCheckError('forge-args', e.message, `Fix the invocation, then re-run \`${RETRY_CREATE}\`.`)])
+      refuse([makeCheckError('forge-args', e.message, `Fix the invocation, then re-run \`${retryCommand}\`.`)])
     }
     throw e
   }
@@ -74,12 +95,68 @@ function locateBodyOrRefuse(args: string[]): BodyResult {
     refuse([
       makeCheckError(
         'forge-args',
-        '`vinaya milestone create` requires a `--body-file <path>` (or `--body <text>`) carrying the milestone description.',
-        `Add \`--body-file <path>\`, then re-run \`${RETRY_CREATE}\`.`
+        `\`vinaya milestone ${commandName}\` requires a \`--body-file <path>\` (or \`--body <text>\`) carrying the milestone description.`,
+        `Add \`--body-file <path>\`, then re-run \`${retryCommand}\`.`
       )
     ])
   }
   return result
+}
+
+/**
+ * `checkMilestoneShape` refusal — unconditional, same discipline `create`
+ * and `edit` both run before any write: config decides which EXTRA sections
+ * are required (`refuseOnSchemaErrors`, below), never whether THIS refusal
+ * runs.
+ */
+function refuseOnBadShape(body: string, retryCommand: string): void {
+  const shape = checkMilestoneShape(body)
+  if (shape.status === 'fail') {
+    refuse(
+      shape.errors.map((message) =>
+        makeCheckError('milestone-shape', message, `Fix the Milestone description, then re-run \`${retryCommand}\`.`)
+      )
+    )
+  }
+}
+
+/**
+ * The config-defined `briefSchema.milestone` sections gate — `title: null`
+ * because a Milestone's title is free text (settled decision: the version
+ * comes from `Release:` alone, never the title), so `checkForgeTitle`'s
+ * commit-style/task-style grammar (built for PR/Issue titles) does not apply.
+ */
+function refuseOnSchemaErrors(body: string, retryCommand: string): void {
+  const sections = resolveSections('milestone', retryCommand)
+  const schemaErrors = validateForgeWrite({ body, title: null, sections, changedFiles: [], retryCommand })
+  if (schemaErrors.length > 0) refuse(schemaErrors)
+}
+
+/**
+ * Prints the `--validate-only` "nothing written" result and reports whether
+ * the caller should return immediately — shared by every `milestone`
+ * subcommand's identical dry-run shape.
+ */
+function reportIfValidateOnly(validateOnly: boolean, json: boolean, command: string): boolean {
+  if (!validateOnly) return false
+  if (json) printJson({ validated: true, written: false, command })
+  else process.stdout.write('✓ all brief-schema gates PASS — nothing written (--validate-only).\n')
+  return true
+}
+
+/** Resolves `owner/repo` from `origin`, refusing with the same message every `milestone` write command uses. */
+async function resolveRepoFlagOrRefuse(retryCommand: string): Promise<string> {
+  const repo = await detectGitRepo()
+  if (!repo?.owner || !repo.repo) {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        'Could not resolve a GitHub owner/repo from the `origin` remote.',
+        `Run this command from inside a git repository whose \`origin\` remote points at GitHub, then re-run \`${retryCommand}\`.`
+      )
+    ])
+  }
+  return `${repo.owner}/${repo.repo}`
 }
 
 export async function milestoneCreateCommand(args: string[]): Promise<void> {
@@ -98,45 +175,15 @@ export async function milestoneCreateCommand(args: string[]): Promise<void> {
     ])
   }
 
-  const bodyResult = locateBodyOrRefuse(rest)
+  const bodyResult = locateBodyOrRefuse(rest, 'create', RETRY_CREATE)
   const body = bodyResult.body
 
-  // Unconditional — runs whether or not `briefSchema.milestone` is
-  // configured, mirroring the Issue-only content gate: config decides which
-  // EXTRA sections are required, never whether this refusal runs.
-  const shape = checkMilestoneShape(body)
-  if (shape.status === 'fail') {
-    refuse(
-      shape.errors.map((message) =>
-        makeCheckError('milestone-shape', message, `Fix the Milestone description, then re-run \`${RETRY_CREATE}\`.`)
-      )
-    )
-  }
+  refuseOnBadShape(body, RETRY_CREATE)
+  refuseOnSchemaErrors(body, RETRY_CREATE)
 
-  // `title: null` — the Milestone title is free text (settled decision: the
-  // version comes from `Release:` alone, never the title), so `checkForgeTitle`'s
-  // commit-style/task-style grammar (built for PR/Issue titles) does not apply.
-  const sections = resolveSections('milestone', RETRY_CREATE)
-  const schemaErrors = validateForgeWrite({ body, title: null, sections, changedFiles: [], retryCommand: RETRY_CREATE })
-  if (schemaErrors.length > 0) refuse(schemaErrors)
+  if (reportIfValidateOnly(validateOnly, json, 'milestone create')) return
 
-  if (validateOnly) {
-    if (json) printJson({ validated: true, written: false, command: 'milestone create' })
-    else process.stdout.write('✓ all brief-schema gates PASS — nothing written (--validate-only).\n')
-    return
-  }
-
-  const repo = await detectGitRepo()
-  if (!repo?.owner || !repo.repo) {
-    refuse([
-      makeCheckError(
-        'forge-fetch',
-        'Could not resolve a GitHub owner/repo from the `origin` remote.',
-        'Run this command from inside a git repository whose `origin` remote points at GitHub.'
-      )
-    ])
-  }
-  const repoFlag = `${repo.owner}/${repo.repo}`
+  const repoFlag = await resolveRepoFlagOrRefuse(RETRY_CREATE)
 
   let out: string
   try {
@@ -157,6 +204,79 @@ export async function milestoneCreateCommand(args: string[]): Promise<void> {
   const created = JSON.parse(out) as { number: number; html_url: string }
   if (json) printJson({ validated: true, written: true, number: created.number, url: created.html_url })
   else process.stdout.write(`${created.html_url}\n`)
+}
+
+// ---------------------------------------------------------------------------
+// `vinaya milestone edit` — the gated replacement for the raw `gh api PATCH`
+// that has patched a Milestone's description twice in two days. Same shape
+// as `create`: `checkMilestoneShape` refuses a malformed body before any
+// write reaches the forge, and the config-defined `briefSchema.milestone`
+// sections (dormant today — `vinaya.config.json` declares none) run the same
+// way `create`'s do. Only the description changes; the title is untouched.
+// ---------------------------------------------------------------------------
+
+/**
+ * `<n>` is the first positional argument — same shape `issue edit <n>` and
+ * `pr edit <n>` already use (not a named `--target`-style flag: those two
+ * sibling `edit` commands, which `milestone edit` mirrors, both take the
+ * target's number/URL positionally; `create`/`adopt` take named flags
+ * because they have no existing forge object to address yet). Refuses on
+ * anything but a bare digit string — `number` is interpolated straight into
+ * a `gh api` REST path below, so a malformed value must never reach that
+ * call at all.
+ */
+function extractMilestoneNumber(rest: string[]): { number: string; ghArgs: string[] } | null {
+  const numberArg = rest[0]
+  if (!numberArg || numberArg.startsWith('-') || !/^\d+$/.test(numberArg)) return null
+  return { number: numberArg, ghArgs: rest.slice(1) }
+}
+
+export async function milestoneEditCommand(args: string[]): Promise<void> {
+  const json = args.includes('--json')
+  const validateOnly = args.includes('--validate-only')
+  const rest = args.filter((a) => a !== '--json' && a !== '--validate-only')
+
+  const target = extractMilestoneNumber(rest)
+  if (!target) {
+    refuse([
+      makeCheckError(
+        'forge-args',
+        '`vinaya milestone edit` requires the target Milestone number (digits only) as the first argument.',
+        `Pass the Milestone number, e.g. \`${RETRY_EDIT}\`.`
+      )
+    ])
+  }
+  const { number, ghArgs } = target
+
+  const bodyResult = locateBodyOrRefuse(ghArgs, 'edit', RETRY_EDIT)
+  const body = bodyResult.body
+
+  refuseOnBadShape(body, RETRY_EDIT)
+  refuseOnSchemaErrors(body, RETRY_EDIT)
+
+  if (reportIfValidateOnly(validateOnly, json, 'milestone edit')) return
+
+  const repoFlag = await resolveRepoFlagOrRefuse(RETRY_EDIT)
+
+  let out: string
+  try {
+    out = sh(
+      ['gh', 'api', '-X', 'PATCH', `repos/${repoFlag}/milestones/${number}`, '--input', '-'],
+      JSON.stringify({ description: body })
+    )
+  } catch (e) {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `\`gh api repos/${repoFlag}/milestones/${number}\` failed: ${ghErrorDetail(e)}`,
+        `Check \`gh auth status\` and network, then re-run \`${RETRY_EDIT}\`.`
+      )
+    ])
+  }
+
+  const edited = JSON.parse(out) as { number: number; html_url: string }
+  if (json) printJson({ validated: true, written: true, number: edited.number, url: edited.html_url })
+  else process.stdout.write(`${edited.html_url}\n`)
 }
 
 // ---------------------------------------------------------------------------
@@ -337,17 +457,7 @@ export async function milestoneAdoptCommand(args: string[]): Promise<void> {
     ])
   }
 
-  const repo = await detectGitRepo()
-  if (!repo?.owner || !repo.repo) {
-    refuse([
-      makeCheckError(
-        'forge-fetch',
-        'Could not resolve a GitHub owner/repo from the `origin` remote.',
-        'Run this command from inside a git repository whose `origin` remote points at GitHub.'
-      )
-    ])
-  }
-  const repoFlag = `${repo.owner}/${repo.repo}`
+  const repoFlag = await resolveRepoFlagOrRefuse(RETRY_ADOPT)
 
   // ---- gather everything -----------------------------------------------
   const { facts, milestones } = fetchAdoptFacts(repoFlag, target, slugs)

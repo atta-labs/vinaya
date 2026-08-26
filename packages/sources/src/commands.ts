@@ -222,6 +222,22 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'milestone edit',
+    description: 'Edit an existing Milestone (<n>) after full brief-schema validation',
+    flags: [
+      {
+        flag: '--body-file',
+        description: 'Path to the new Milestone description (stream-safe; same bytes validated and sent)'
+      },
+      { flag: '--validate-only', description: 'Run every gate and report PASS without editing the Milestone' },
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
+    ],
+    details: [
+      'Same `checkMilestoneShape` refusal `create` runs, before any `gh` call — the gated replacement for a raw `gh api PATCH` against a Milestone. Only the description changes; the title is untouched.'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'review post',
     description: 'Render, post, and self-verify a code-reviewer or security-review verdict comment on a PR',
     flags: [

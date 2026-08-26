@@ -12,7 +12,7 @@ import { doctrineCommand } from './commands/doctrine.js'
 import { ejectCommand } from './commands/eject.js'
 import { initCommand, initProductCommand } from './commands/init.js'
 import { issueCreateCommand, issueEditCommand } from './commands/issue.js'
-import { milestoneAdoptCommand, milestoneCreateCommand } from './commands/milestone.js'
+import { milestoneAdoptCommand, milestoneCreateCommand, milestoneEditCommand } from './commands/milestone.js'
 import { newCheckCommand } from './commands/new-check.js'
 import { newNoopCheckCommand } from './commands/new-noop-check.js'
 import { newRoleCommand } from './commands/new-role.js'
@@ -144,8 +144,10 @@ try {
         await milestoneCreateCommand(rest)
       } else if (subcommand === 'adopt') {
         await milestoneAdoptCommand(rest)
+      } else if (subcommand === 'edit') {
+        await milestoneEditCommand(rest)
       } else {
-        console.error(`Unknown 'milestone' subcommand: ${subcommand ?? '(none)'} (expected 'create' or 'adopt')`)
+        console.error(`Unknown 'milestone' subcommand: ${subcommand ?? '(none)'} (expected create/adopt/edit)`)
         process.exit(2)
       }
       break

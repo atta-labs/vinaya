@@ -77,18 +77,37 @@ let binDir: string
 let logPath: string
 let originalPath: string | undefined
 
+/**
+ * Shared by every fake-`gh`-on-PATH fixture in this file: a fresh scratch
+ * dir plus an empty log file, ready for a fixture-specific script to be
+ * written into it. Split from `activateFakeGh` because a script's own
+ * content sometimes needs the log/stdin paths this returns (e.g. `edit`'s
+ * fixture embeds `gh.stdin`'s path in the script it writes).
+ */
+function newFakeGhBinDir(prefix: string): { dir: string; log: string } {
+  const dir = join(tmpdir(), `vinaya-${prefix}-gh-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  mkdirSync(dir, { recursive: true })
+  const log = join(dir, 'gh.log')
+  writeFileSync(log, '')
+  return { dir, log }
+}
+
+/** Writes the fake `gh` script and puts `dir` at the front of PATH — the second half every fixture shares. */
+function activateFakeGh(dir: string, script: string): void {
+  writeFileSync(join(dir, 'gh'), script, { mode: 0o755 })
+  originalPath = process.env.PATH
+  process.env.PATH = `${dir}:${originalPath ?? ''}`
+}
+
 function installFakeAdoptGh(opts: {
   labels: string[]
   milestones: MilestoneFixture[]
   issuesBySlug: Record<string, IssueFixture[]>
 }): void {
-  binDir = join(tmpdir(), `vinaya-adopt-gh-${Date.now()}-${Math.random().toString(36).slice(2)}`)
-  mkdirSync(binDir, { recursive: true })
-  logPath = join(binDir, 'gh.log')
-  writeFileSync(logPath, '')
-  writeFileSync(join(binDir, 'gh'), fakeAdoptGh(logPath, opts), { mode: 0o755 })
-  originalPath = process.env.PATH
-  process.env.PATH = `${binDir}:${originalPath ?? ''}`
+  const { dir, log } = newFakeGhBinDir('adopt')
+  binDir = dir
+  logPath = log
+  activateFakeGh(dir, fakeAdoptGh(log, opts))
 }
 
 function ghLog(): string {
@@ -191,6 +210,139 @@ describe('vinaya milestone create --validate-only', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// `vinaya milestone edit` — same fake-`gh`-on-PATH technique, but the fake
+// captures stdin too: `edit`'s write is a `gh api -X PATCH --input -`, and
+// the round-trip test needs the exact bytes sent, not just that a PATCH fired.
+// ---------------------------------------------------------------------------
+
+let stdinPath: string
+
+/** `patchFails: true` simulates the PATCH request itself failing (e.g. a 404) — the fake still captures stdin first, so a failure test can assert what was ABOUT to be sent. */
+function fakeEditGh(logPathArg: string, stdinPathArg: string, milestoneNumber: number, patchFails: boolean): string {
+  const patchCase = patchFails
+    ? `cat > "${stdinPathArg}"; echo 'gh: milestone not found (HTTP 404)' 1>&2; exit 1`
+    : `cat > "${stdinPathArg}"; echo '{"number":${milestoneNumber},"html_url":"https://github.com/test-owner/test-repo/milestone/${milestoneNumber}"}'`
+  return `#!/usr/bin/env sh
+echo "$@" >> "${logPathArg}"
+case "$*" in
+  *"-X PATCH"*) ${patchCase} ;;
+  *) echo '[]' ;;
+esac
+exit 0
+`
+}
+
+function installFakeEditGh(milestoneNumber: number, opts?: { patchFails?: boolean }): void {
+  const { dir, log } = newFakeGhBinDir('edit')
+  binDir = dir
+  logPath = log
+  stdinPath = join(dir, 'gh.stdin')
+  activateFakeGh(dir, fakeEditGh(log, stdinPath, milestoneNumber, opts?.patchFails ?? false))
+}
+
+describe('vinaya milestone edit', () => {
+  let cwd: string
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-milestone-edit-test-'))
+    initGitRepo(cwd)
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+    process.env.PATH = originalPath
+    rmSync(binDir, { recursive: true, force: true })
+  })
+
+  it('refuses a malformed body before the write — nothing reaches the forge', () => {
+    installFakeEditGh(12)
+    const bodyFile = writeBody(cwd, 'body.md', 'Release: 1.0.0')
+    const r = runCli(['milestone', 'edit', '12', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('milestone-shape')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+
+  it('a well-formed body round-trips: the PATCH sent carries the exact same description', () => {
+    installFakeEditGh(12)
+    const body = [
+      'Determinism hardening.',
+      '',
+      'Release: 0.20.0',
+      '',
+      '### Tranche intents',
+      '- vinaya-engine-v1: engine work covered by this goal.'
+    ].join('\n')
+    const bodyFile = writeBody(cwd, 'body.md', body)
+    const r = runCli(['milestone', 'edit', '12', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('milestone/12')
+    expect(ghLog()).toContain('-X PATCH repos/test-owner/test-repo/milestones/12')
+    const sent = JSON.parse(readFileSync(stdinPath, 'utf8')) as { description: string }
+    expect(sent.description).toBe(body)
+  })
+
+  it('the PATCH payload never carries a title field — only the description changes', () => {
+    installFakeEditGh(12)
+    const bodyFile = writeBody(cwd, 'body.md', 'A well-formed goal, no version, no intents yet.')
+    const r = runCli(['milestone', 'edit', '12', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(0)
+    const sent = JSON.parse(readFileSync(stdinPath, 'utf8')) as Record<string, unknown>
+    expect(Object.keys(sent)).toEqual(['description'])
+  })
+
+  it('surfaces a PATCH failure as a refusal instead of crashing', () => {
+    installFakeEditGh(12, { patchFails: true })
+    const bodyFile = writeBody(cwd, 'body.md', 'A well-formed goal, no version, no intents yet.')
+    const r = runCli(['milestone', 'edit', '12', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('forge-fetch')
+    expect(finding.message).toContain('milestone not found')
+    // The fake still captures what was about to be sent — proves the CLI
+    // reached the real gh call with the right body before gh itself failed.
+    const sent = JSON.parse(readFileSync(stdinPath, 'utf8')) as { description: string }
+    expect(sent.description).toContain('A well-formed goal')
+  })
+
+  it('--validate-only writes nothing', () => {
+    installFakeEditGh(12)
+    const bodyFile = writeBody(cwd, 'body.md', 'A well-formed goal, no version, no intents yet.')
+    const r = runCli(['milestone', 'edit', '12', '--validate-only', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('PASS')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+
+  it('refuses when the Milestone number is missing', () => {
+    installFakeEditGh(12)
+    const bodyFile = writeBody(cwd, 'body.md', 'A goal.')
+    const r = runCli(['milestone', 'edit', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.message).toContain('Milestone number')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+
+  it('refuses a non-numeric Milestone number before any write — it is interpolated straight into a gh api REST path', () => {
+    installFakeEditGh(12)
+    const bodyFile = writeBody(cwd, 'body.md', 'A goal.')
+    const r = runCli(['milestone', 'edit', 'twelve', '--body-file', bodyFile], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.message).toContain('digits only')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+})
+
 describe('vinaya milestone adopt', () => {
   let cwd: string
 
@@ -226,6 +378,40 @@ describe('vinaya milestone adopt', () => {
     expect(log).toContain('issue edit 102 -R test-owner/test-repo --milestone test-goal-v1')
     expect(log).toContain('api -X PATCH repos/test-owner/test-repo/milestones/5 -f state=closed')
     expect(r.stdout).toContain('old Milestone #5 closed')
+  })
+
+  // Reproduces the exact shape `vinaya-milestone-model-v1` was found stranded
+  // in on the live forge: its Issues carry no native milestone at all
+  // (`milestone: null`, never `demilestoned` — confirmed via the live Issue
+  // timelines, which show neither a `milestoned` nor `demilestoned` event
+  // ever), and its own legacy 1:1 Milestone is ALREADY closed — because that
+  // Milestone was closed by `archive tranche` (which only ever closes-by-title,
+  // never reattaches) before `adopt` existed at all, not by a prior, buggy
+  // `adopt` run. Root-cause finding: this is a SKIPPED reattach — `adopt` was
+  // simply never invoked for this slug — not a partial-write or ordering bug
+  // in the code below, which (as this test proves) reattaches every Issue and
+  // correctly no-ops on an already-closed legacy Milestone.
+  it('reattaches a tranche whose Issues carry no Milestone and whose legacy Milestone is already closed', () => {
+    installFakeAdoptGh({
+      labels: ['vinaya/tranche:stranded-tranche'],
+      milestones: [target, { number: 8, title: 'stranded-tranche', state: 'closed' }],
+      issuesBySlug: {
+        'stranded-tranche': [
+          { number: 191, state: 'CLOSED', milestone: null },
+          { number: 192, state: 'CLOSED', milestone: null }
+        ]
+      }
+    })
+
+    const r = runCli(['milestone', 'adopt', '--target', 'test-goal-v1', '--slug', 'stranded-tranche'], cwd)
+
+    expect(r.status).toBe(0)
+    const log = ghLog()
+    expect(log).toContain('issue edit 191 -R test-owner/test-repo --milestone test-goal-v1')
+    expect(log).toContain('issue edit 192 -R test-owner/test-repo --milestone test-goal-v1')
+    // Legacy Milestone #8 was already closed — no PATCH should re-close it.
+    expect(log).not.toContain('milestones/8')
+    expect(r.stdout).toContain('stranded-tranche: 2 Issue(s)')
   })
 
   it('refuses an unknown slug before any write', () => {
