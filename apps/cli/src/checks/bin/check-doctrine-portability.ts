@@ -23,8 +23,10 @@
  * absent at the base ref. `@attalabs/aeg-core`'s `captureBaseline`/
  * `compareToBaseline` (`baseline-capture.ts`) carry the aggregate
  * baseline-vs-current counts into the summary line; the per-finding new-set
- * is a plain set difference over the two predicate runs, computed here in
- * the I/O layer rather than added to the zero-I/O module's contract.
+ * is a multiplicity-aware diff over the two predicate runs, keyed on
+ * `file:cited` content identity (never line number, which shifts on any
+ * earlier edit) — computed here in the I/O layer rather than added to the
+ * zero-I/O module's contract.
  *
  * Report-only (same `aeg-root/enforcement.md` G1/G2 rollout precedent as
  * `reader-resolvable-prose`/`retired-vocabulary`): findings print as
@@ -104,8 +106,46 @@ function collectAtRef(ref: string, dir: string): PortabilitySourceFile[] {
   return paths.map((p) => ({ path: p, content: git(['show', `${ref}:${p}`]) }))
 }
 
+/**
+ * Content identity, not position: `file:cited`, never `line`. A doctrine
+ * edit that inserts or removes a line earlier in the same file shifts every
+ * later citation's line number without changing what it cites — keying on
+ * line would make every one of those unmoved citations register as "new"
+ * on the very next unrelated edit, spamming false positives on any
+ * non-append change (found live reviewing this same PR's own diff).
+ */
 function findingKey(f: PortabilityFinding): string {
-  return `${f.file}:${f.line}:${f.cited}`
+  return `${f.file}:${f.cited}`
+}
+
+/**
+ * Multiplicity-aware set difference over `findingKey`: each baseline
+ * finding can absorb at most one current finding sharing its key, so a
+ * genuinely NEW duplicate of an already-cited path (baseline has one
+ * occurrence, current has two) still reports the second one — a plain
+ * `Set`-membership diff would silently swallow it, since membership alone
+ * doesn't count how many baseline slots a repeated key already used.
+ */
+function newSince(
+  baseline: readonly PortabilityFinding[],
+  current: readonly PortabilityFinding[]
+): PortabilityFinding[] {
+  const remaining = new Map<string, number>()
+  for (const f of baseline) {
+    const key = findingKey(f)
+    remaining.set(key, (remaining.get(key) ?? 0) + 1)
+  }
+  const added: PortabilityFinding[] = []
+  for (const f of current) {
+    const key = findingKey(f)
+    const count = remaining.get(key) ?? 0
+    if (count > 0) {
+      remaining.set(key, count - 1)
+    } else {
+      added.push(f)
+    }
+  }
+  return added
 }
 
 function main(): void {
@@ -117,8 +157,7 @@ function main(): void {
   const baselineFiles = collectAtRef(base, DOCTRINE_ROOT)
   const baselineFindings = checkDoctrinePortability(baselineFiles, SHIPS_PREFIX)
 
-  const baselineKeys = new Set(baselineFindings.map(findingKey))
-  const newFindings = currentFindings.filter((f) => !baselineKeys.has(findingKey(f)))
+  const newFindings = newSince(baselineFindings, currentFindings)
 
   const baseline = captureBaseline(
     [{ tool: CHECK_NAME, findingCount: baselineFindings.length }],
