@@ -40,6 +40,7 @@ describe('registry env declarations', () => {
         'dispatch-readiness',
         'doc-coverage',
         'doc-coverage-push',
+        'doctrine-portability',
         'evidence-fresh',
         'first-push-dispatch',
         'issue-assignment',

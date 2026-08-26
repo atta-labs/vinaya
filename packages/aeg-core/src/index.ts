@@ -173,6 +173,8 @@ export type {
 } from './dead-branch-push-guard'
 export { captureBaseline, compareToBaseline } from './baseline-capture'
 export type { BaselineComparison, BaselineEntry, BaselineToolComparison } from './baseline-capture'
+export { checkDoctrinePortability } from './doctrine-portability'
+export type { PortabilityFinding, PortabilitySourceFile } from './doctrine-portability'
 export {
   checkReaderResolvableProse,
   checkUndefinedVocabulary,
