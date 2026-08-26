@@ -273,3 +273,5 @@ export type {
   MilestoneShapeResult,
   ReleaseField
 } from './milestone-validation'
+export { findWorkspaceEscapes } from './workspace-escape'
+export type { WorkspaceEscapeFinding, WorkspaceEscapeReason, WorkspaceEscapeSourceFile } from './workspace-escape'
