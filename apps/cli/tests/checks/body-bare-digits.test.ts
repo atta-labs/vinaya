@@ -374,6 +374,84 @@ describe('body-bare-digits — round 6: a decoy AEG:* anchor pair outside its do
   })
 })
 
+describe('body-bare-digits — task vinaya-adopter-portability-v1 2 (Issue #232): Premise pins may carry a bare digit', () => {
+  it('reproduces the contradiction: a Premise pin whose value carries a digit used to fail as a bare digit (real: atta-labs/attalabs#988, `Capability 7`)', () => {
+    // Pre-fix, this body's bare `7` would have surfaced as a violation on
+    // the bullet's own line, forcing a digit-free rewrite of the pin.
+    const body = ['**Premise:**', '- some/file.ts contains: Capability 7'].join('\n')
+    expect(checkBareDigits(body).violations).toEqual([])
+  })
+
+  it("exempts an unanchored Premise pin bullet's digit-bearing value, bare — no backtick-wrapping needed or expected", () => {
+    const body = [
+      '## Premise',
+      '',
+      '**Premise:**',
+      "- apps/cli/src/checks/bin/check-registry-gates.ts contains: ROLES_DIR = 'aeg-root/roles'"
+    ].join('\n')
+    expect(checkBareDigits(body).violations).toEqual([])
+  })
+
+  it("exempts an anchored `AEG:PREMISE` pin bullet's digit-bearing value the same way", () => {
+    const body = [
+      '<!-- AEG:PREMISE:START -->',
+      '**Premise:**',
+      '- some/file.ts absent: retired Capability 7 flag',
+      '<!-- AEG:PREMISE:END -->'
+    ].join('\n')
+    expect(checkBareDigits(body).violations).toEqual([])
+  })
+
+  it('exempts multiple digit-bearing pins under one Premise block', () => {
+    const body = [
+      '**Premise:**',
+      '- a.ts contains: Capability 7',
+      '- b.ts contains: retries = 3',
+      '- c.ts sha256: 4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+    ].join('\n')
+    expect(checkBareDigits(body).violations).toEqual([])
+  })
+
+  it('does NOT exempt a digit outside the pin value on the same line — only the value is blanked', () => {
+    // path/kind are unaffected by the carve-out; a digit placed there (an
+    // unrealistic pin, but the boundary the carve-out draws) still flags.
+    const body = ['**Premise:**', '- v2/some-file.ts contains: no digit here'].join('\n')
+    expect(violationLines(body)).toEqual([2])
+  })
+
+  it('does NOT exempt a premise-bullet-shaped line sitting outside any real Premise block — location-gated, not shape-gated alone', () => {
+    const body = ['## Summary', '', '- some/file.ts contains: 500 known regressions untriaged'].join('\n')
+    expect(violationLines(body)).toEqual([3])
+  })
+
+  it('does NOT loosen the digit rule generally: an unrelated bare digit elsewhere in the same body is still refused (non-regression)', () => {
+    const body = [
+      '**Premise:**',
+      '- some/file.ts contains: Capability 7',
+      '',
+      '## Summary',
+      'We actually fixed 4500 bugs in this pass.'
+    ].join('\n')
+    expect(violationLines(body)).toEqual([5])
+  })
+
+  it('does NOT extend the carve-out to Test-Plan: a digit in Test Plan content is still refused, same as before this task', () => {
+    const body = ['## Test plan', '', '- [ ] **[agent]** ran the fixture 3 times, all green'].join('\n')
+    expect(violationLines(body)).toEqual([3])
+  })
+
+  it('a Premise pin kept bare still round-trips through the real premise re-assertion grammar (contains match survives, no corrupting backticks)', () => {
+    // The whole point of the carve-out: unlike a backtick-wrapped value,
+    // the bare value `checkBareDigits` exempts is byte-identical to what a
+    // real file on disk would contain, so `content.includes(a.value)` in
+    // `@attalabs/aeg-core`'s `checkPremises` still matches.
+    const value = "ROLES_DIR = 'aeg-root/roles'"
+    const body = ['**Premise:**', `- apps/cli/src/checks/bin/check-registry-gates.ts contains: ${value}`].join('\n')
+    expect(checkBareDigits(body).violations).toEqual([])
+    expect(value.includes('`')).toBe(false)
+  })
+})
+
 describe('body-bare-digits — round 8: an anchor placed in its own canonical section still needs its own real content signature', () => {
   it.each([
     [

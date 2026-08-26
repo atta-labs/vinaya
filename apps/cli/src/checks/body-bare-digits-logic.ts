@@ -248,6 +248,90 @@ const FIELD_CONTENT_SIGNATURE: Record<ExemptAnchorField, RegExp> = {
 }
 
 /**
+ * The Premise-pin carve-out (task `vinaya-adopter-portability-v1` 2, Issue
+ * #232). A Premise pin (`aeg-root/roles/developer.md` §"Entry gate",
+ * `@attalabs/aeg-core`'s `premise-check.ts`) asserts a literal, verbatim
+ * fact about a file's current byte content — `checkPremises` re-checks it
+ * with a plain `content.includes(a.value)`. Backtick-wrapping a pin's value
+ * to satisfy the general digit rule corrupts that exact match: the
+ * backticks become characters the real file never contained, so a
+ * perfectly true pin starts failing re-assertion as if the surface had
+ * moved (reproduced live on `atta-labs/attalabs#988`: a pin whose value was
+ * `Capability 7` had to be rewritten digit-free to pass this check, and a
+ * digit-free rewrite is a materially less precise pin than the one the
+ * Developer actually verified). A Premise pin's value can therefore only
+ * ever be exempted BARE, never via the wrap-in-backticks escape hatch every
+ * other digit-bearing identifier in a body uses.
+ *
+ * Deliberately narrow, mirroring `EXEMPT_ANCHOR_FIELDS`' own discipline
+ * (reuse a hardened primitive, don't invent a shape classifier) rather than
+ * the earlier, reverted attempt at bounding Premise/Test-Plan generally
+ * (module doc above): this exempts ONLY the `kind: value` tail (from the
+ * `contains`/`absent`/`sha256` keyword onward — `sha256` itself carries a
+ * digit, so the keyword is in scope too, not just the value after it) of a
+ * line that already matches the real parser's own bullet grammar
+ * (`premise-check.ts`'s `PREMISE_LINE` — that grammar isn't exported, so
+ * it's mirrored here exactly rather than duplicated loosely), sitting
+ * inside a real `Premise:` block located the identical way
+ * `parsePremiseBlock` locates it (inside an `AEG:PREMISE` anchor pair when
+ * one is present, the whole body otherwise). It does not touch the pin's
+ * own path, and it stops at the first blank or non-bullet line exactly as
+ * the real parser does — nothing outside a genuine premise bullet's own
+ * `kind: value` is exempted.
+ *
+ * Residual: a line shaped exactly like a real premise bullet, placed
+ * anywhere `parsePremiseBlock` would also accept it, is exempted whether or
+ * not its `path`/`value` pair is genuine — this check has no way to also
+ * verify truth (that's `checkPremises`'s own, separate, already-live job,
+ * run by `verify-dispatch --premise` before Step 0). This is not a new gap
+ * `EXEMPT_ANCHOR_FIELDS`' decoy-signature checks close for the other four
+ * fields: unlike `Closes #N`/`Tier: 1`, a fabricated premise doesn't merely
+ * evade this scanner, it also has to survive being RE-ASSERTED against real
+ * file content by a completely different mechanism to ever matter — the
+ * asymmetry those four fields don't have.
+ */
+const PREMISE_HEADER = /^premise\s*:?$/i
+// `d` flag for `.indices` — the `sha256` kind keyword itself carries a
+// digit, so the blanked span must start at the KIND match, not the value
+// (group 3) alone, or "sha256:" survives masking as its own digit-bearing
+// token.
+const PREMISE_BULLET = /^\s*[-*]\s*(\S+)\s+(contains|absent|sha256)\s*:\s*(.+)$/di
+
+/** Mirrors `anchored-region.ts`'s `AnchorField` literal — not imported to keep this file's premise grammar self-contained per the doc above. */
+function premiseBlockBounds(body: string): { start: number; end: number } {
+  const bounds = anchoredRegionBounds(body, 'PREMISE')
+  return bounds ? { start: bounds.innerStart, end: bounds.innerEnd } : { start: 0, end: body.length }
+}
+
+function blankPremiseValues(body: string): string {
+  const { start: regionStart, end: regionEnd } = premiseBlockBounds(body)
+  const region = body.slice(regionStart, regionEnd)
+  const lines = region.split('\n')
+  let masked = body
+  let inBlock = false
+  let offset = regionStart
+
+  for (const raw of lines) {
+    const trimmed = raw.replace(/[*#]/g, '').trim()
+    if (!inBlock) {
+      if (PREMISE_HEADER.test(trimmed)) inBlock = true
+      offset += raw.length + 1
+      continue
+    }
+    if (raw.trim() === '') break
+    const m = PREMISE_BULLET.exec(raw) as (RegExpExecArray & { indices: Array<[number, number]> }) | null
+    if (!m) break
+    // Blanks from the KIND match onward (not just the value) — see the
+    // `sha256` note above.
+    const kindStart = m.indices[2]?.[0] as number
+    masked = blankRange(masked, offset + kindStart, offset + raw.length)
+    offset += raw.length + 1
+  }
+
+  return masked
+}
+
+/**
  * Blanks each `EXEMPT_ANCHOR_FIELDS` anchor's outer region — see module
  * doc above for why only these four, and the `BOUNDED_ANCHOR_BLANK` doc
  * below for why every one of them blanks only its own bounded value
@@ -465,6 +549,7 @@ const BOUNDED_ANCHOR_BLANK: Record<ExemptAnchorField, (line: string) => string> 
 function buildScanMask(body: string): string {
   let masked = maskDetailsBlocks(maskCode(body))
   masked = blankAnchoredRegions(masked)
+  masked = blankPremiseValues(masked)
   masked = blankTokenReportSection(masked)
   masked = blankUnanchoredStructuralFields(masked)
   return masked
