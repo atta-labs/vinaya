@@ -11,8 +11,9 @@
  * reaches the forge. Non-task Issues (no tranche label) pass through
  * unvalidated: the rationale contract does not apply to them.
  *
- * Content gate: past presence, three checks grade what those fields
- * SAY against the surface the task touches, and refuse — `checkBlastRadiusScope`
+ * Content gate: past presence, several checks grade what those fields
+ * SAY (and what the Issue carries) against the surface the task touches, and
+ * refuse — `checkBlastRadiusScope`
  * (a shared collision domain — live-derived `packages/*` workspace members,
  * built-in cross-cutting defaults, plus `vinaya.config.json`
  * `blastRadius.extraDomains`, see `readSharedPackages` below — that no
@@ -21,9 +22,12 @@
  * `checkNoBriefContent` (brief-shaped sections belong in the brief, not here),
  * `checkRationaleNamesDocs` (name a doc/skill path, or the `no-doc-surface`
  * sentinel — the only read-obligation signal a forge write leaves, since the
- * skill-check hook fires on file edits and this edits none).
+ * skill-check hook fires on file edits and this edits none),
+ * `checkIssueType` (exactly one `vinaya/type:*` label — `labels.ts`'s `type`
+ * category, the commit-type vocabulary applied to the Issue instead of the
+ * commit).
  * `checkConflictCompleteness` warns on an undeclared collision-domain overlap
- * and never blocks. All four apply to task Issues only, same as the rationale
+ * and never blocks. All five apply to task Issues only, same as the rationale
  * gate.
  *
  * Label detection is per-path: on `create`, labels come from this command's
@@ -63,6 +67,7 @@ import {
   checkBlastRadiusScope,
   checkConflictCompleteness,
   checkIssueRationale,
+  checkIssueType,
   checkNoBriefContent,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
@@ -698,14 +703,15 @@ export function main(): void {
         projectPaths.map((p) => p.name)
       ).errors,
       ...checkNoBriefContent(body).errors,
-      ...checkRationaleNamesDocs(body).errors
+      ...checkRationaleNamesDocs(body).errors,
+      ...checkIssueType(body, labels).errors
     ]
     if (contentErrors.length > 0) {
       console.error(`\n[open-issue] FAILED — ${contentErrors.length} content check(s):\n`)
       for (const e of contentErrors) console.error(`  ✗ ${e}`)
-      fail('the Issue body fails the blast-radius / project-registry / brief-content / docs-read checks.')
+      fail('the Issue body fails the blast-radius / project-registry / brief-content / docs-read / task-type checks.')
     }
-    console.log('[open-issue] content gate PASS (blast radius, project registry, brief content, docs read).')
+    console.log('[open-issue] content gate PASS (blast radius, project registry, brief content, docs read, task type).')
 
     // C — warn-only. Never blocks: an Issue declares no precise file surface,
     // so an overlapping collision domain is a hint, not a fact.
