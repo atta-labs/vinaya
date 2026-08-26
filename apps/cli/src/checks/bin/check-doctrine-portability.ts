@@ -12,9 +12,9 @@
  * `process.cwd()` — the caller's own repo root, wherever this bin actually
  * runs from once bundled into an installed package.
  *
- * **Baseline mode (§10 constraint), not blocking.** Cold, this check fires
- * on every author-repo-only path the shipped doctrine already cites — 200+
- * in this repo alone — which would red-line every adopter's CI on install.
+ * **Baseline mode, not blocking.** Cold, this check fires on every
+ * author-repo-only path the shipped doctrine already cites — 200+ in this
+ * repo alone — which would red-line every adopter's CI on install.
  * `checkDoctrinePortability` itself stays zero-I/O and reports the FULL set
  * every time it runs; this bin is what narrows that to "what a diff adds":
  * it runs the same predicate twice — once over the working tree, once over

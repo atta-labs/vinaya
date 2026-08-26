@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkDoctrinePortability } from './doctrine-portability'
+import { checkDoctrinePortability, NON_PATH_TOP_SEGMENTS } from './doctrine-portability'
 
 function file(path: string, content: string) {
   return { path, content }
@@ -123,4 +123,52 @@ describe('the gate can see what it flags — non-vacuity self-test', () => {
       expect(findings, `portable citation wrongly flagged: ${cited}`).toEqual([])
     })
   }
+})
+
+describe('a non-default shipsPrefix is portable too, not just the hardcoded default', () => {
+  it('treats a self-citation under a custom shipsPrefix as portable', () => {
+    const findings = checkDoctrinePortability(
+      [file('my-docs/foo.md', 'See `my-docs/roles/bar.md` for the shape.')],
+      'my-docs/'
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('does NOT special-case the literal string "aeg-root/" once a different shipsPrefix is in play', () => {
+    const findings = checkDoctrinePortability(
+      [file('my-docs/foo.md', 'See `aeg-root/roles/bar.md` for the shape.')],
+      'my-docs/'
+    )
+    expect(findings).toHaveLength(1)
+    expect(findings[0]?.cited).toBe('aeg-root/roles/bar.md')
+  })
+
+  it('still recognizes the static portable prefixes (roles/, .github/, …) under a custom shipsPrefix', () => {
+    const findings = checkDoctrinePortability(
+      [file('my-docs/foo.md', 'See `roles/bar.md` and `.github/workflows/ci.yml`.')],
+      'my-docs/'
+    )
+    expect(findings).toEqual([])
+  })
+})
+
+describe('NON_PATH_TOP_SEGMENTS is a closed, tested set — never silently grown', () => {
+  it('carries exactly these five top segments, no more, no fewer', () => {
+    expect([...NON_PATH_TOP_SEGMENTS].sort()).toEqual(['HEAD', 'fix', 'origin', 'refs', 'vinaya'])
+  })
+
+  const EXCLUDED_SAMPLES = ['origin/main', 'refs/pull/1/merge', 'HEAD/detached', 'vinaya/blocked', 'fix/some-branch']
+
+  for (const cited of EXCLUDED_SAMPLES) {
+    it(`excludes "${cited}" from citation consideration entirely (git-ref/label shape, not a path)`, () => {
+      const findings = checkDoctrinePortability([file('aeg-root/sample.md', `See \`${cited}\`.`)])
+      expect(findings).toEqual([])
+    })
+  }
+
+  it('a top segment NOT on the excluded list is still a real, flaggable citation — the set never fails open beyond its own five entries', () => {
+    const findings = checkDoctrinePortability([file('aeg-root/sample.md', 'See `notexcluded/whatever.ts`.')])
+    expect(findings).toHaveLength(1)
+    expect(findings[0]?.cited).toBe('notexcluded/whatever.ts')
+  })
 })

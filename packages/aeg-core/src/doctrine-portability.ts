@@ -12,11 +12,10 @@
  * path is judged purely by its own shape — its top path segment — against a
  * fixed allow-list of prefixes known to be doctrine-relative or
  * adopter-owned. Everything else is a finding, including a prefix nobody
- * has classified yet: an allow-list fails closed on an unknown prefix,
- * where a deny-list of "known author-repo prefixes" would fail open on the
- * next one (this happened once already while scoping this task —
- * `apps/cli/dist/index.js`, a build artifact, slipped past the first
- * prefix assumption because "apps/" had been read as source-only).
+ * has classified yet: an allow-list fails closed on an unknown prefix (a
+ * build artifact is exactly as non-portable as the source it was built
+ * from), where a deny-list of "known author-repo prefixes" would fail open
+ * on the next unlisted one instead.
  *
  * Zero I/O: every input (file paths + contents) is read by the adapter and
  * passed in.
@@ -35,15 +34,20 @@ export type PortabilityFinding = {
 const DEFAULT_SHIPS_PREFIX = 'aeg-root/'
 
 /**
- * Doctrine-relative (`roles/`, `contracts/`, `skills/`, `aeg-root/` itself)
- * and adopter-owned (`.github/`, `.vinaya/`, `.claude/`) top segments — the
- * two portable classes measured in the task-234 corpus scan. A citation
- * whose top segment falls outside this list is never assumed portable,
- * however plausible it looks; it is a finding, and someone extends this
- * list deliberately once its side of the classification is decided.
+ * Doctrine-relative (`roles/`, `contracts/`, `skills/`) and adopter-owned
+ * (`.github/`, `.vinaya/`, `.claude/`) top segments — the two portable
+ * classes measured in the task-234 corpus scan. `aeg-root/` itself is
+ * deliberately NOT a static entry here: it is always the CALLER-supplied
+ * `shipsPrefix`, checked dynamically in `isPortable` below, so an adopter
+ * who configures a non-default `doctrineRoot` gets that root treated as
+ * portable too — a static `'aeg-root/'` entry would falsely flag every one
+ * of that adopter's own self-citations as non-portable. A citation whose
+ * top segment falls outside this list (and isn't the ships prefix) is
+ * never assumed portable, however plausible it looks; it is a finding, and
+ * someone extends this list deliberately once its side of the
+ * classification is decided.
  */
-const PORTABLE_PREFIXES: readonly string[] = [
-  DEFAULT_SHIPS_PREFIX,
+const STATIC_PORTABLE_PREFIXES: readonly string[] = [
   'roles/',
   'contracts/',
   'skills/',
@@ -90,8 +94,16 @@ const CITED_PATH_PATTERN = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]*)+$/
  * conventions (`vinaya/blocked`, `fix/brief-gate-nontask`) — a citation kind
  * this check does not judge at all, portable or not, the same way it never
  * tries to also judge a forge number or a tranche slug.
+ *
+ * **A closed, tested set, not a growable escape hatch.** Excluding a top
+ * segment here means every citation under it is invisible to this check —
+ * never flagged, however non-portable it would otherwise be — so this set
+ * carries exactly the corpus-verified exceptions above and nothing else.
+ * `doctrine-portability.test.ts` locks its exact membership; an addition
+ * that doesn't also update that lock is a bug, not a silent expansion.
+ * Exported for that lock, not for callers to extend at runtime.
  */
-const NON_PATH_TOP_SEGMENTS: ReadonlySet<string> = new Set(['origin', 'refs', 'HEAD', 'vinaya', 'fix'])
+export const NON_PATH_TOP_SEGMENTS: ReadonlySet<string> = new Set(['origin', 'refs', 'HEAD', 'vinaya', 'fix'])
 
 /** Every inline-backtick span in `content`, tested against `CITED_PATH_PATTERN`. */
 function extractCitedPaths(content: string): { cited: string; index: number }[] {
@@ -117,9 +129,14 @@ function lineAtIndex(content: string, index: number): number {
   return line
 }
 
-/** True iff `cited`'s top segment is one of the allow-listed portable prefixes. */
-function isPortable(cited: string): boolean {
-  return PORTABLE_PREFIXES.some((prefix) => cited.startsWith(prefix))
+/**
+ * True iff `cited`'s top segment is portable: the caller-supplied
+ * `shipsPrefix` itself (doctrine citing its own tree, wherever that tree
+ * actually lives for this caller), or one of the static portable prefixes.
+ */
+function isPortable(cited: string, shipsPrefix: string): boolean {
+  if (cited.startsWith(shipsPrefix)) return true
+  return STATIC_PORTABLE_PREFIXES.some((prefix) => cited.startsWith(prefix))
 }
 
 /**
@@ -139,7 +156,7 @@ export function checkDoctrinePortability(
 
     for (const { cited, index } of extractCitedPaths(file.content)) {
       if (EXEMPT_LITERALS.has(cited)) continue
-      if (isPortable(cited)) continue
+      if (isPortable(cited, shipsPrefix)) continue
       findings.push({
         file: file.path,
         line: lineAtIndex(file.content, index),
