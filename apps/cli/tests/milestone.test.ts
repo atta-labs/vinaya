@@ -324,6 +324,40 @@ describe('vinaya milestone adopt', () => {
     expect(r.stdout).toContain('old Milestone #5 closed')
   })
 
+  // Reproduces the exact shape `vinaya-milestone-model-v1` was found stranded
+  // in on the live forge: its Issues carry no native milestone at all
+  // (`milestone: null`, never `demilestoned` — confirmed via the live Issue
+  // timelines, which show neither a `milestoned` nor `demilestoned` event
+  // ever), and its own legacy 1:1 Milestone is ALREADY closed — because that
+  // Milestone was closed by `archive tranche` (which only ever closes-by-title,
+  // never reattaches) before `adopt` existed at all, not by a prior, buggy
+  // `adopt` run. Root-cause finding: this is a SKIPPED reattach — `adopt` was
+  // simply never invoked for this slug — not a partial-write or ordering bug
+  // in the code below, which (as this test proves) reattaches every Issue and
+  // correctly no-ops on an already-closed legacy Milestone.
+  it('reattaches a tranche whose Issues carry no Milestone and whose legacy Milestone is already closed', () => {
+    installFakeAdoptGh({
+      labels: ['vinaya/tranche:stranded-tranche'],
+      milestones: [target, { number: 8, title: 'stranded-tranche', state: 'closed' }],
+      issuesBySlug: {
+        'stranded-tranche': [
+          { number: 191, state: 'CLOSED', milestone: null },
+          { number: 192, state: 'CLOSED', milestone: null }
+        ]
+      }
+    })
+
+    const r = runCli(['milestone', 'adopt', '--target', 'test-goal-v1', '--slug', 'stranded-tranche'], cwd)
+
+    expect(r.status).toBe(0)
+    const log = ghLog()
+    expect(log).toContain('issue edit 191 -R test-owner/test-repo --milestone test-goal-v1')
+    expect(log).toContain('issue edit 192 -R test-owner/test-repo --milestone test-goal-v1')
+    // Legacy Milestone #8 was already closed — no PATCH should re-close it.
+    expect(log).not.toContain('milestones/8')
+    expect(r.stdout).toContain('stranded-tranche: 2 Issue(s)')
+  })
+
   it('refuses an unknown slug before any write', () => {
     installFakeAdoptGh({ labels: [], milestones: [target], issuesBySlug: {} })
 
