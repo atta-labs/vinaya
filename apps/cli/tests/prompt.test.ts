@@ -35,7 +35,7 @@ describe('promptYesNo', () => {
     expect(await pending).toBe(false)
   })
 
-  it('is case-insensitive and matches a full-word "Yes", not just the "y" prefix', async () => {
+  it('is case-insensitive when the answer starts with an uppercase "Y" ("Yes")', async () => {
     const pending = promptYesNo('Continue?')
     feedLine('Yes')
     expect(await pending).toBe(true)

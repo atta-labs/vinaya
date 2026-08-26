@@ -178,11 +178,12 @@ describe('vinaya audit — direct-main-push bounded poll (#870)', () => {
 // The default full run (no `--only`, ring2 off) exercises `runDeadBranchAudit`
 // for real — its own internals (`listTaskBranches`, `mostRecentPr`,
 // `commentDate`, …) shell out to `git`/`gh` directly and are NOT reachable
-// through `AuditDeps`. `runDeadBranchAudit` is deliberately never-red (it
-// catches its own errors), so running it from a directory with no `origin`
-// remote is a real, deterministic exercise of that catch path — no network,
-// no `gh` auth, and no hang: `git ls-remote` fails immediately, locally, the
-// moment it finds no `origin` to resolve.
+// through `AuditDeps`. Running it from a directory with no `origin` remote is
+// a real, deterministic exercise of `shSoft`'s own catch (it never throws;
+// `git ls-remote` fails immediately, locally, the moment it finds no
+// `origin` to resolve, and `listTaskBranches` sees an empty string back) —
+// which in turn drives `runDeadBranchAudit` down its normal, no-findings
+// success return, not its own outer catch. No network, no `gh` auth, no hang.
 describe('vinaya audit — default full run (dead-branch + direct-push together)', () => {
   let cwd: string
   let originalCwd: string
