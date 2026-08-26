@@ -248,8 +248,8 @@ const FIELD_CONTENT_SIGNATURE: Record<ExemptAnchorField, RegExp> = {
 }
 
 /**
- * The Premise-pin carve-out (task `vinaya-adopter-portability-v1` 2, Issue
- * #232). A Premise pin (`aeg-root/roles/developer.md` §"Entry gate",
+ * The Premise-pin carve-out (Issue #232). A Premise pin
+ * (`aeg-root/roles/developer.md` §"Entry gate",
  * `@attalabs/aeg-core`'s `premise-check.ts`) asserts a literal, verbatim
  * fact about a file's current byte content — `checkPremises` re-checks it
  * with a plain `content.includes(a.value)`. Backtick-wrapping a pin's value

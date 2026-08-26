@@ -8,9 +8,9 @@
  * probe), collapsed into ONE registered check rather than five, emitting
  * the check contract instead of human text.
  *
- * DIVERGES from `verify-registry.ts`'s own glob on one point (task
- * `vinaya-adopter-portability-v1` 2, Issue #232): that standalone tool also
- * globs `packages/aeg-core/bin` as a G2 candidate-file location.
+ * DIVERGES from `verify-registry.ts`'s own glob on one point (Issue #232):
+ * that standalone tool also globs `packages/aeg-core/bin` as a `G2`
+ * candidate-file location.
  * `packages/aeg-core` is this monorepo's own package layout, not a fact any
  * shipped, adopter-facing check may assume — `verify-registry.ts` never
  * ships to an adopter (it is an internal-only tool this monorepo runs on
@@ -35,9 +35,9 @@
  * a dependency cycle — same reasoning `gate-audience.ts` documents for
  * `GATE_AUDIENCE` itself.
  *
- * DORMANT WHEN ABSENT, EXPLICITLY (task `vinaya-adopter-portability-v1` 2,
- * Issue #232 — same discipline `evaluateC5`/`.vinaya/doc-owners` already
- * uses): G1–G6 validate `aeg-root/enforcement.md` against THIS monorepo's
+ * DORMANT WHEN ABSENT, EXPLICITLY (Issue #232 — same discipline
+ * `evaluateC5`/`.vinaya/doc-owners` already uses): G1–G6 validate
+ * `aeg-root/enforcement.md` against THIS monorepo's
  * own `aeg-root/roles/`/`aeg-root/contracts/` doctrine-authoring tree — a
  * fact about how AEG's own doctrine is developed, not something any
  * `vinaya init` install ever produces (settled by experiment: a fresh

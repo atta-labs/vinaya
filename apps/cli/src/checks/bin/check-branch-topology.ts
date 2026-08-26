@@ -28,9 +28,8 @@ const CHECK_NAME = 'branch-topology'
  * <topoPath> does not exist") — never read from disk by anything: topology
  * itself comes from `createForgeSource(...).getTranche()`, a live forge
  * read. `aeg-root/tranches/<tranche>.md` was the pre-forge-migration literal
- * this repo used before that source moved to the forge (task
- * `vinaya-configurability-v1` 16 and earlier) — a path that does not exist
- * even in this repo's own tree any more (verified: no `aeg-root/tranches/`
+ * this repo used before that source moved to the forge — a path that does
+ * not exist even in this repo's own tree any more (verified: no `aeg-root/tranches/`
  * directory here), let alone an adopter's. Kept as a label, not a claim
  * that a file must exist there — described as what it is (a forge-derived
  * topology row for the tranche), so a failure message never sends an

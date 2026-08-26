@@ -58,8 +58,8 @@ const proseGates = loadConfig()?.proseGates
  * `'aeg-root'` literal, cwd-relative — correct inside this monorepo (where
  * cwd IS the tree that owns it), but a permanently-empty sweep for every
  * `vinaya init` adopter, none of whom ever have a repo-relative `aeg-root/`
- * (task `vinaya-adopter-portability-v1` 2, Issue #232 — settled by
- * experiment). Unlike `registry-gates`, this check's corpus IS portable:
+ * (Issue #232 — settled by experiment). Unlike `registry-gates`, this
+ * check's corpus IS portable:
  * the doctrine prose it sweeps for unresolvable references/coined terms is
  * the same shipped text for every install, so `resolveDoctrineRoot()`
  * (`../../commands/doctrine.js` — the same "package's own copy" resolution
