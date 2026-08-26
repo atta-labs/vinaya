@@ -32,7 +32,7 @@ export type PortabilityFinding = {
 }
 
 /** `aeg-root/**` by default — what this repo's own package ships and every adopter installs read-only. */
-const SHIPS_PREFIX = 'aeg-root/'
+const DEFAULT_SHIPS_PREFIX = 'aeg-root/'
 
 /**
  * Doctrine-relative (`roles/`, `contracts/`, `skills/`, `aeg-root/` itself)
@@ -43,7 +43,7 @@ const SHIPS_PREFIX = 'aeg-root/'
  * list deliberately once its side of the classification is decided.
  */
 const PORTABLE_PREFIXES: readonly string[] = [
-  SHIPS_PREFIX,
+  DEFAULT_SHIPS_PREFIX,
   'roles/',
   'contracts/',
   'skills/',
@@ -109,7 +109,7 @@ function extractCitedPaths(content: string): { cited: string; index: number }[] 
   return found
 }
 
-function lineAt(content: string, index: number): number {
+function lineAtIndex(content: string, index: number): number {
   let line = 1
   for (let i = 0; i < index; i++) {
     if (content.charCodeAt(i) === 10) line++
@@ -130,7 +130,7 @@ function isPortable(cited: string): boolean {
  */
 export function checkDoctrinePortability(
   files: readonly PortabilitySourceFile[],
-  shipsPrefix: string = SHIPS_PREFIX
+  shipsPrefix: string = DEFAULT_SHIPS_PREFIX
 ): PortabilityFinding[] {
   const findings: PortabilityFinding[] = []
 
@@ -142,7 +142,7 @@ export function checkDoctrinePortability(
       if (isPortable(cited)) continue
       findings.push({
         file: file.path,
-        line: lineAt(file.content, index),
+        line: lineAtIndex(file.content, index),
         cited,
         message: `cites "${cited}", a path that only exists in the authoring repository — not portable doctrine`
       })
