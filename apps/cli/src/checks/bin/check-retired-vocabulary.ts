@@ -40,13 +40,20 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { scanRetiredVocabulary, type VocabSourceFile } from '@attalabs/aeg-core'
+import { resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'retired-vocabulary'
 
-/** Same default and same config key as `reader-resolvable-prose` — see this file's module header. */
-const DOCTRINE_ROOT = loadConfig()?.proseGates?.doctrineRoot ?? 'aeg-root'
+/**
+ * Same default, same config key, and same fix as `reader-resolvable-prose`
+ * (task `vinaya-adopter-portability-v1` 2, Issue #232) — see that file's
+ * module header for why `resolveDoctrineRoot()` (the package's own shipped
+ * copy) is the right unconfigured default here, unlike a check that reads
+ * adopter-specific forge facts.
+ */
+const DOCTRINE_ROOT = loadConfig()?.proseGates?.doctrineRoot ?? resolveDoctrineRoot() ?? 'aeg-root'
 
 /** Text extensions worth sweeping — mirrors `retired-vocabulary.test.ts`'s own `grep --include` list. */
 function isSweptFile(name: string): boolean {
