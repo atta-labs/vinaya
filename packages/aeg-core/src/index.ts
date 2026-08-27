@@ -127,6 +127,7 @@ export {
   checkBlastRadiusScope,
   checkConflictCompleteness,
   checkIssueRationale,
+  checkIssueType,
   checkNoBriefContent,
   checkProjectsRegistered,
   checkRationaleNamesDocs,

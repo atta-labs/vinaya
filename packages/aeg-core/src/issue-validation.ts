@@ -16,7 +16,7 @@
  * applicability from the labels; this module only checks the body.
  */
 
-import { hasLabel, projectFieldFromBody, projectsFromBody, SECTION_HEADER } from '@attalabs/aeg-forge-state'
+import { hasLabel, LABELS, projectFieldFromBody, projectsFromBody, SECTION_HEADER } from '@attalabs/aeg-forge-state'
 import { stripCode } from './anchored-region'
 
 export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }
@@ -92,6 +92,43 @@ export function checkIssueRationale(body: string): IssueSectionResult {
 /** true when any label marks this as a task Issue (the rationale contract applies). */
 export function isTaskIssueLabelSet(labels: string[]): boolean {
   return hasLabel('tranche', labels)
+}
+
+/** Every `vinaya/type:*` label id, in `labels.ts` order — the source of truth this check reads, never a second list. */
+const TYPE_LABEL_IDS = LABELS.filter((l) => l.category === 'type').map((l) => l.id)
+
+/**
+ * **The task-type axis.** A task Issue must carry exactly one `vinaya/type:*`
+ * label — the same commit-type vocabulary `developer.md`'s commit conventions
+ * declare, applied to the Issue instead of the commit. Zero means the task
+ * was never classified; two or more means two classifications compete and
+ * nothing downstream can pick between them.
+ *
+ * Non-task Issues (no tranche label) pass trivially, the same way every
+ * sibling content check treats them — the rationale contract, and everything
+ * built on it, applies to task Issues only.
+ *
+ * **Caller must invoke this at Issue CREATION only, never on `edit`.** The
+ * label is mandatory forward from this axis's own merge, not retroactively —
+ * a task Issue cut before the merge legitimately carries none, and
+ * `open-issue.ts` is the only sanctioned edit path for ANY Issue body, so
+ * calling this on every edit would refuse an unrelated edit (a typo fix, a
+ * dependency bump) to any pre-existing Issue for lacking a label nothing
+ * ever asked it to carry — a forced backfill through the back door. This
+ * function itself is pure and stateless (it cannot see create vs. edit); the
+ * gating lives in the caller (`open-issue.ts`'s `isEdit` branch).
+ */
+export function checkIssueType(_body: string, labels: string[]): IssueSectionResult {
+  if (!isTaskIssueLabelSet(labels)) return { status: 'pass', errors: [] }
+  const present = TYPE_LABEL_IDS.filter((id) => labels.includes(id))
+  if (present.length === 1) return { status: 'pass', errors: [] }
+  const found = present.length === 0 ? 'none of them' : `${present.length} of them (${present.join(', ')})`
+  return {
+    status: 'fail',
+    errors: [
+      `issue-validation task type: a task Issue must carry exactly one \`vinaya/type:*\` label, and this one carries ${found}. Valid ids: ${TYPE_LABEL_IDS.join(', ')}.`
+    ]
+  }
 }
 
 // ---------------------------------------------------------------------------

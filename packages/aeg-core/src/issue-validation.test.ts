@@ -7,6 +7,7 @@ import {
   checkBlastRadiusScope,
   checkConflictCompleteness,
   checkIssueRationale,
+  checkIssueType,
   checkNoBriefContent,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
@@ -109,6 +110,37 @@ describe('isTaskIssueLabelSet', () => {
   })
   it('is false for no labels', () => {
     expect(isTaskIssueLabelSet([])).toBe(false)
+  })
+})
+
+describe('checkIssueType', () => {
+  const TASK_LABELS_NO_TYPE = ['vinaya/tranche:vinaya-verification-v1', 'vinaya/tier:1']
+  const TASK_LABELS_ONE_TYPE = [...TASK_LABELS_NO_TYPE, 'vinaya/type:feat']
+  const TASK_LABELS_TWO_TYPES = [...TASK_LABELS_ONE_TYPE, 'vinaya/type:fix']
+
+  it('fails a task Issue carrying zero vinaya/type:* labels, naming the ten valid ids', () => {
+    const r = checkIssueType('body', TASK_LABELS_NO_TYPE)
+    expect(r.status).toBe('fail')
+    expect(r.errors).toHaveLength(1)
+    for (const t of ['build', 'chore', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test']) {
+      expect(r.errors[0]).toContain(`vinaya/type:${t}`)
+    }
+  })
+
+  it('fails a task Issue carrying two vinaya/type:* labels', () => {
+    const r = checkIssueType('body', TASK_LABELS_TWO_TYPES)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/vinaya\/type:feat/)
+    expect(r.errors[0]).toMatch(/vinaya\/type:fix/)
+  })
+
+  it('passes a task Issue carrying exactly one vinaya/type:* label', () => {
+    expect(checkIssueType('body', TASK_LABELS_ONE_TYPE)).toEqual({ status: 'pass', errors: [] })
+  })
+
+  it('passes a non-task Issue (no tranche label) regardless of type labels', () => {
+    expect(checkIssueType('body', [])).toEqual({ status: 'pass', errors: [] })
+    expect(checkIssueType('body', ['bug', 'help wanted'])).toEqual({ status: 'pass', errors: [] })
   })
 })
 
