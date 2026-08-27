@@ -239,7 +239,8 @@ describe('ring 0 survives a clone', () => {
     // Manifest records the tracked paths — the portable half of the install.
     expect(readManifest(root).blocks.map((b) => b.path)).toEqual([
       `${TRACKED_HOOK_DIR}/pre-commit`,
-      `${TRACKED_HOOK_DIR}/pre-push`
+      `${TRACKED_HOOK_DIR}/pre-push`,
+      `${TRACKED_HOOK_DIR}/commit-msg`
     ])
 
     git(root, ['add', '-A'])
@@ -344,12 +345,15 @@ describe('upgrade migrates a legacy .git/hooks install', () => {
     // Tracked copies exist; legacy vinaya-created hosts are gone.
     expect(readFileSync(join(root, TRACKED_HOOK_DIR, 'pre-commit'), 'utf-8')).toContain('vinaya:managed:pre-commit')
     expect(readFileSync(join(root, TRACKED_HOOK_DIR, 'pre-push'), 'utf-8')).toContain('vinaya:managed:pre-push')
+    expect(readFileSync(join(root, TRACKED_HOOK_DIR, 'commit-msg'), 'utf-8')).toContain('vinaya:managed:commit-msg')
     expect(existsSync(join(root, '.git/hooks/pre-commit'))).toBe(false)
     expect(existsSync(join(root, '.git/hooks/pre-push'))).toBe(false)
+    expect(existsSync(join(root, '.git/hooks/commit-msg'))).toBe(false)
     expect(git(root, ['config', '--get', 'core.hooksPath'])).toBe(TRACKED_HOOK_DIR)
     expect(readManifest(root).blocks.map((b) => b.path)).toEqual([
       `${TRACKED_HOOK_DIR}/pre-commit`,
-      `${TRACKED_HOOK_DIR}/pre-push`
+      `${TRACKED_HOOK_DIR}/pre-push`,
+      `${TRACKED_HOOK_DIR}/commit-msg`
     ])
   }, 20_000)
 
@@ -372,7 +376,11 @@ describe('upgrade migrates a legacy .git/hooks install', () => {
     expect(existsSync(join(root, TRACKED_HOOK_DIR, 'pre-commit'))).toBe(false)
     expect(readFileSync(host, 'utf-8')).toContain('echo my-own-step')
     expect(await readCoreHooksPath(root)).toBeNull()
-    expect(readManifest(root).blocks.map((b) => b.path)).toEqual(['.git/hooks/pre-commit', '.git/hooks/pre-push'])
+    expect(readManifest(root).blocks.map((b) => b.path)).toEqual([
+      '.git/hooks/pre-commit',
+      '.git/hooks/pre-push',
+      '.git/hooks/commit-msg'
+    ])
 
     // Same refusal for an unmanaged raw hook elsewhere in .git/hooks.
     writeFileSync(host, readFileSync(host, 'utf-8').replace('\necho my-own-step\n', ''), { mode: 0o755 })
@@ -514,6 +522,8 @@ describe('eject of a tracked-hooks install', () => {
     expect(rc).toBe(0)
     expect(out).toContain('unset core.hooksPath')
     expect(existsSync(join(root, TRACKED_HOOK_DIR, 'pre-commit'))).toBe(false)
+    expect(existsSync(join(root, TRACKED_HOOK_DIR, 'pre-push'))).toBe(false)
+    expect(existsSync(join(root, TRACKED_HOOK_DIR, 'commit-msg'))).toBe(false)
     expect(await readCoreHooksPath(root)).toBeNull()
   }, 20_000)
 })

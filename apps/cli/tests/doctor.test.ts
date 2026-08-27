@@ -170,6 +170,38 @@ describe('vinaya doctor — never mutates', () => {
     expect(snapshot(root)).toEqual(before)
   })
 
+  it('flags a deleted commit-msg hook without recreating it (Issue #63)', async () => {
+    await runInit(['--yes'], initDeps())
+    rmSync(join(root, '.husky/commit-msg'))
+    const before = snapshot(root)
+
+    const report = await runDoctorJson()
+    expect(report.healthy).toBe(false)
+    const hit = report.findings.find((f) => f.check === 'hooks' && f.message.includes('commit-msg'))
+    expect(hit?.severity).toBe('error')
+    expect(hit?.message).toContain('missing')
+
+    expect(snapshot(root)).toEqual(before) // doctor fixed nothing
+  })
+
+  it('flags a drifted commit-msg hook (markers present, body hand-edited) without fixing it', async () => {
+    await runInit(['--yes'], initDeps())
+    const original = readFileSync(join(root, '.husky/commit-msg'), 'utf-8')
+    // Edit the invocation line specifically, leaving the `>>> vinaya:managed:
+    // commit-msg >>>` marker line untouched — corrupting the marker would
+    // misclassify this as "missing or corrupted" (error) rather than drift.
+    writeFileSync(join(root, '.husky/commit-msg'), original.replace('"$1" "$2"', '"$1" "$2" # hand-edited'))
+    const before = snapshot(root)
+
+    const report = await runDoctorJson()
+    expect(report.healthy).toBe(false)
+    const hit = report.findings.find((f) => f.check === 'hooks' && f.message.includes('commit-msg'))
+    expect(hit?.severity).toBe('warn')
+    expect(hit?.message).toContain('drifted')
+
+    expect(snapshot(root)).toEqual(before)
+  })
+
   it('flags a broken vinaya.config.json (invalid JSON) without fixing it', async () => {
     await runInit(['--yes'], initDeps())
     writeFileSync(join(root, CONFIG_PATH), '{ this is not json')
