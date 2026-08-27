@@ -449,12 +449,12 @@ const EXEMPTIONS: Record<string, string> = {
     '`pr edit` avoids this: passing only `--title` (no `--body-file`) skips its forge fetch entirely, so it is ' +
     'exercised for real below.',
   'milestone adopt':
-    '`milestoneAdoptCommand` resolves the repo and then fetches this repo\'s real labels and Milestones from the ' +
+    "`milestoneAdoptCommand` resolves the repo and then fetches this repo's real labels and Milestones from the " +
     'forge (`gh api repos/<repo>/labels`, `gh api repos/<repo>/milestones`, and per-slug `gh issue list`) ' +
     'UNCONDITIONALLY, before its own `--validate-only` check is ever reached — unlike `milestone create`/' +
     '`milestone edit` below, whose `--validate-only` returns before any repo/forge call and are exercised for ' +
     'real. Exercising `milestone adopt` genuinely would require a real target Milestone plus real tranche labels ' +
-    "and Issues on the live forge, and real `gh` credentials reaching the network beyond the npm install, which " +
+    'and Issues on the live forge, and real `gh` credentials reaching the network beyond the npm install, which ' +
     "this script's boundary forbids (same reasoning as `issue edit`'s exemption)."
 }
 
@@ -855,7 +855,15 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
     writeFileSync(bodyPath, MILESTONE_BODY_FIXTURE, 'utf-8')
     const r = run(
       bin,
-      ['milestone', 'create', '--title', 'Chore: verify published lifecycle', '--body-file', bodyPath, '--validate-only'],
+      [
+        'milestone',
+        'create',
+        '--title',
+        'Chore: verify published lifecycle',
+        '--body-file',
+        bodyPath,
+        '--validate-only'
+      ],
       fixtureDir
     )
     const ok = r.status === 0 && /PASS/i.test(r.stdout)
