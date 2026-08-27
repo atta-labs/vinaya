@@ -1,5 +1,35 @@
 # @attalabs/vinaya
 
+## 0.19.3
+
+### Patch Changes
+
+- 705dbfe: Adds a `commit-msg` hook to the managed-artifact set, enforcing this repo's `Type(scope):
+  Description` commit convention. `vinaya init`/`vinaya upgrade` now install a third managed hook
+  beside `pre-commit`/`pre-push`; `vinaya eject` removes it the same way. The commit-type vocabulary
+  is exported from `@attalabs/aeg-core` as `COMMIT_TYPE_STYLE`/`COMMIT_TYPES` — the same list
+  `checkForgeTitle` already enforced on PR/Issue titles.
+- a5f6097: Adds an `Audience` column (`product` | `repo-own`) to every row of `aeg-root/enforcement.md`'s three
+  ring tables, marking whether a row's implementation ships as a real, adopter-runnable check
+  (`coreCheckRegistry()`) or is specific to how this repository enforces itself on top of the product.
+  `registry-parse.ts` reads the column by header name, defaulting an absent column to `repo-own` — an
+  un-upgraded adopter copy of the doctrine is unaffected.
+  
+  Adds G6, a new blocking registry check: every row marked `product` must actually resolve to a
+  `coreCheckRegistry()` entry. It closes the gap the tranche's own gap audit named — a doctrine row can
+  claim shipped enforcement that no adopter's `vinaya check` ever runs, and nothing previously compared
+  the two. G6 runs only from `apps/cli`'s `check-registry-gates.ts`, since `coreCheckRegistry()` lives
+  there and `aeg-core` cannot import it without closing a dependency cycle; the standalone
+  `packages/aeg-core/bin/verify-registry.ts` prints an explanatory note and skips it.
+  
+  Also re-grades G1 (implementation-exists) from report-only to blocking: its report-only window had
+  already cleared the orphan backlog it existed to surface, and a permanent `info` finding on every run
+  had become indistinguishable from silence — precisely how the gap G6 closes stayed invisible for as
+  long as it did. G2 (no-orphan-hook/CLI) is unchanged, still report-only.
+- 2adcf5a: Wires `vinaya.config.json`'s `rings.ring1_forgeWriteInterception` and `rings.ring2_asyncAudits` into real enforcement — until now `rings` had exactly one live consumer (Studio's diagram renderer) and zero CLI-behavior consumers, despite every `vinaya init` starter config already shipping both keys.
+  
+  Additive, never disabling: `false`/absent is a no-op — every existing adopter's enforcement runs exactly as it does today, unchanged by upgrading. `true` is the new opt-in accelerator, the only value that changes behavior. `ring1_forgeWriteInterception: true` skips `pr`/`issue`/`milestone create|edit`'s `briefSchema` validation entirely. `ring2_asyncAudits: true` skips `vinaya archive`'s provenance work and `vinaya audit`'s dead-branch-push notification — deliberately not `vinaya audit`'s direct-main-push detection, which stays unconditional regardless of the flag: it is a real pass/fail that catches a branch-protection bypass, and a config-readable on/off switch for it would let the bypass silently disable the check that catches it.
+
 ## 0.19.2
 
 ### Patch Changes

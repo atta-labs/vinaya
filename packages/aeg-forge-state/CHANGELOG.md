@@ -1,5 +1,11 @@
 # @atta/aeg-forge-state
 
+## 0.19.3
+
+### Patch Changes
+
+- @attalabs/aeg-types@0.19.3
+
 ## 0.19.2
 
 ### Patch Changes
