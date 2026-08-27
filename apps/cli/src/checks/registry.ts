@@ -460,6 +460,15 @@ export function coreCheckRegistry(): CheckSpec[] {
       // BASE_SHA overrides the `origin/main` baseline ref, same declaration
       // as `doc-coverage`/`no-disk-state`/`evidence-fresh` above.
       env: { BASE_SHA: { optional: true } }
+    },
+    {
+      name: 'workspace-escape',
+      run: bin('check-workspace-escape'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Local-only: walks the working tree with `node:fs`, never the
+      // network, `gh`, or a PR-scoped fact — no forge call, no PR content.
+      env: {}
     }
   ]
 }
