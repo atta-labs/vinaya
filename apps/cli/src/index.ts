@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { archiveCommand, archiveTrancheCommand } from './commands/archive.js'
 import { auditCommand } from './commands/audit.js'
 import { checkCommand } from './commands/check.js'
+import { commitMsgCommand } from './commands/commit-msg.js'
 import { demoBreakCommand } from './commands/demo.js'
 import { doctorCommand } from './commands/doctor.js'
 import { doctrineCommand } from './commands/doctrine.js'
@@ -83,6 +84,10 @@ try {
     }
     case 'check': {
       await checkCommand(args)
+      break
+    }
+    case 'commit-msg': {
+      commitMsgCommand(args)
       break
     }
     case 'archive': {

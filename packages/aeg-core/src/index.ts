@@ -77,6 +77,8 @@ export {
   checkTestPlanExclusivity,
   checkTierField,
   checkWorktreeStep0,
+  COMMIT_TYPE_STYLE,
+  COMMIT_TYPES,
   headerRegion,
   inferBranchFromBody,
   isBriefShaped,

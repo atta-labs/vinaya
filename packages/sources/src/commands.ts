@@ -91,6 +91,15 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'commit-msg',
+    description: "The generated `commit-msg` hook's invocation target — validates a commit message's first line",
+    details: [
+      "Not meant to be run by hand day-to-day: the managed `commit-msg` hook calls `vinaya commit-msg <message-file> [source]` with the two arguments git itself passes a commit-msg hook (githooks(5)) — the message file path and, when known, the commit's source keyword.",
+      "Validates the message file's first line against the same `Type(scope): Description` vocabulary `check`'s `forge-title`-shaped gates enforce on PR/Issue titles (`@attalabs/aeg-core`'s `COMMIT_TYPES` — the commitlint type set plus `Plan`). Exits 0 with no output on a conforming message; a `source` of `merge` is skipped outright, since a merge commit's message is written by git, not the person committing."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'new check',
     description: 'Scaffold a custom check into ./scripts/vinaya-checks/',
     details: [

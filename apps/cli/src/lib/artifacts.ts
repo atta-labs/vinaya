@@ -880,6 +880,18 @@ function prePushBody(selfHost: VendoredVinaya | null): string {
 ${hookRun(selfHost, 'check --all --local')}`
 }
 
+// `commit-msg` validates the MESSAGE — the file git hands the hook as `$1`,
+// plus the source keyword as `$2` (githooks(5)) — never a staged diff, so it
+// does not go through `check --local` like its two siblings; there is no
+// diff to scope it to and no `requiresOpenPr` check it needs to skip.
+// `"$1" "$2"` here are the hook script's own positional params, not this
+// TypeScript template's — passed through to `vinaya commit-msg` verbatim.
+function commitMsgBody(selfHost: VendoredVinaya | null): string {
+  return `# Vinaya commit-message gate. Validates the message's first line against
+# this repo's Type(scope): Description convention.
+${hookRun(selfHost, 'commit-msg "$1" "$2"')}`
+}
+
 // ---------------------------------------------------------------------------
 // Doctrine pointer (root VINAYA.md, the only orientation artifact)
 //
@@ -1201,6 +1213,16 @@ export function buildInitOps(ctx: InitContext): Op[] {
     path: `${ctx.hookDir}/pre-push`,
     marker: 'pre-push',
     body: prePushBody(ctx.selfHost),
+    comment: 'hash',
+    hostPreamble: HOOK_PREAMBLE,
+    mode: hookMode,
+    group: 'Git hooks'
+  })
+  ops.push({
+    kind: 'managed-block',
+    path: `${ctx.hookDir}/commit-msg`,
+    marker: 'commit-msg',
+    body: commitMsgBody(ctx.selfHost),
     comment: 'hash',
     hostPreamble: HOOK_PREAMBLE,
     mode: hookMode,

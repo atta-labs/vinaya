@@ -326,6 +326,31 @@ export function checkClosesN(prBody: string): BriefSectionResult {
 }
 
 /**
+ * The commit-type vocabulary this repo enforces — the commitlint type set
+ * plus `Plan` (plan PRs; deliberately excluded from the separate
+ * `vinaya/type:*` label axis, since a commit type and a task type are
+ * different things — see `packages/aeg-forge-state/src/labels.ts`). The one
+ * list: `COMMIT_TYPE_STYLE` below is derived from it, and the `commit-msg`
+ * hook (`apps/cli/src/commands/commit-msg.ts`) reads `COMMIT_TYPES` for its
+ * own error text — neither carries a second, independently-typed copy.
+ */
+export const COMMIT_TYPES = [
+  'Build',
+  'Chore',
+  'Docs',
+  'Feat',
+  'Fix',
+  'Perf',
+  'Plan',
+  'Refactor',
+  'Revert',
+  'Style',
+  'Test'
+] as const
+
+export const COMMIT_TYPE_STYLE = new RegExp(`^(${COMMIT_TYPES.join('|')})(\\([a-z0-9-]+\\))?: \\S`)
+
+/**
  * Forge-title grammar — the two title forms this repo actually uses:
  *   1. Commit-style: `Type: description` or `Type(scope): description`, with
  *      the commitlint type set plus `Plan` (plan PRs).
@@ -335,9 +360,8 @@ export function checkClosesN(prBody: string): BriefSectionResult {
  * (husky/commitlint parity, applied at the wrapper).
  */
 export function checkForgeTitle(title: string): BriefSectionResult {
-  const commitStyle = /^(Build|Chore|Docs|Feat|Fix|Perf|Plan|Refactor|Revert|Style|Test)(\([a-z0-9-]+\))?: \S/
   const taskStyle = /^\[[a-z0-9._-]+\] \S+ — \S/
-  if (commitStyle.test(title) || taskStyle.test(title)) return { status: 'pass', errors: [] }
+  if (COMMIT_TYPE_STYLE.test(title) || taskStyle.test(title)) return { status: 'pass', errors: [] }
   return {
     status: 'fail',
     errors: [
