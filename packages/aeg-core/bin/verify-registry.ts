@@ -16,15 +16,32 @@
  * `apps/cli/src/checks/bin/check-registry-gates.ts` (or `vinaya check
  * registry-gates`) for the full G1–G6 gate set.
  *
- * Usage: bun packages/aeg-core/bin/verify-registry.ts
+ * `--scaffold`: auto-inserts a stub row for every G2 orphan candidate whose
+ * ring is derivable (registry-scaffold.ts), writes `aeg-root/enforcement.md`,
+ * and prints what it inserted. Deliberately only here, never in the shipped
+ * `check-registry-gates.ts` (apps/cli) — adopter checks stay read-only over
+ * doctrine; this repo's own maintainers run the writer directly, from
+ * aeg-core, exactly like every other `bin/verify-*.ts` gate. Without the
+ * flag, behavior is unchanged.
+ *
+ * Usage: bun packages/aeg-core/bin/verify-registry.ts [--scaffold]
  */
 
 import { execSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import matter from 'gray-matter'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
-import { checkG1, checkG2, checkG3, checkG4, checkG5, parseEnforcementRegistry } from '../src/index'
+import {
+  applyScaffoldPlan,
+  checkG1,
+  checkG2,
+  checkG3,
+  checkG4,
+  checkG5,
+  computeScaffoldPlan,
+  parseEnforcementRegistry
+} from '../src/index'
 import type { GateRow, RegistryCheckResult } from '../src/index'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
@@ -59,10 +76,22 @@ function existsFn(path: string): boolean {
 function globCandidateFiles(): string[] {
   const out: string[] = []
 
-  for (const name of readdirSync(join(REPO_ROOT, '.husky'))) {
-    if (name === '_') continue
-    const rel = `.husky/${name}`
-    if (statSync(join(REPO_ROOT, rel)).isFile()) out.push(rel)
+  // Neither `.husky/` nor `.claude/hooks/` exists in this repo today
+  // (enforcement.md's own G2 row notes this) — guarded the same way as the
+  // `.claude/hooks` glob just below, so a repo carrying neither directory
+  // (the live case here) doesn't crash before G1–G5 ever run. Pre-existing
+  // gap, not introduced by this task: unguarded, this call threw ENOENT on
+  // a totally clean `origin/main` checkout, which made
+  // `bun packages/aeg-core/bin/verify-registry.ts` unable to establish even
+  // a baseline pass — fixed here since it blocks this task's own pre-flight
+  // and the live `--scaffold` run below.
+  const huskyDir = join(REPO_ROOT, '.husky')
+  if (existsSync(huskyDir)) {
+    for (const name of readdirSync(huskyDir)) {
+      if (name === '_') continue
+      const rel = `.husky/${name}`
+      if (statSync(join(REPO_ROOT, rel)).isFile()) out.push(rel)
+    }
   }
 
   const hooksDir = join(REPO_ROOT, '.claude/hooks')
@@ -225,9 +254,70 @@ function printResult(result: RegistryCheckResult): void {
   }
 }
 
+/**
+ * `--scaffold`: computes the stub-insertion plan, verifies it round-trips
+ * (re-parses cleanly, loses no existing row, gains every inserted one)
+ * BEFORE writing anything, and only then writes `enforcement.md`. Nothing on
+ * disk is ever touched by a plan that fails verification — there is no
+ * "restore" step because there is nothing to restore from; the bad rewrite
+ * only ever exists in memory. Returns the rows/content to use for the rest
+ * of the run (the post-scaffold state when a write happened, the original
+ * otherwise), so G1/G2 below report against what's actually on disk now.
+ */
+function runScaffold(
+  enforcementContent: string,
+  rows: GateRow[],
+  candidateFiles: string[]
+): { content: string; rows: GateRow[] } {
+  const plan = computeScaffoldPlan(rows, candidateFiles)
+  if (plan.stubs.length === 0) {
+    console.log('ℹ --scaffold: nothing to insert — every candidate is already documented or has no derivable ring.')
+    for (const skip of plan.skipped) console.log(`    - skipped "${skip.path}": ${skip.reason}`)
+    return { content: enforcementContent, rows }
+  }
+
+  let rewritten: string
+  try {
+    rewritten = applyScaffoldPlan(enforcementContent, plan)
+  } catch (err) {
+    console.error(`✗ --scaffold: ${err instanceof Error ? err.message : String(err)} — aborting without writing.`)
+    process.exit(1)
+  }
+
+  const reparsedRows = parseEnforcementRegistry(rewritten)
+  const reparsedImplementations = new Set(reparsedRows.map((r) => r.implementation))
+  const originalImplementations = new Set(rows.map((r) => r.implementation).filter((p) => p !== ''))
+  const lostExisting = [...originalImplementations].filter((p) => !reparsedImplementations.has(p))
+  const missingInserted = plan.stubs.map((s) => s.path).filter((p) => !reparsedImplementations.has(p))
+
+  if (lostExisting.length > 0 || missingInserted.length > 0) {
+    console.error('✗ --scaffold: round-trip guard failed — aborting without writing.')
+    if (lostExisting.length > 0) console.error(`    existing row(s) lost after rewrite: ${lostExisting.join(', ')}`)
+    if (missingInserted.length > 0) {
+      console.error(`    inserted stub(s) not found after re-parse: ${missingInserted.join(', ')}`)
+    }
+    process.exit(1)
+  }
+
+  writeFileSync(join(REPO_ROOT, ENFORCEMENT_PATH), rewritten)
+  console.log(`✓ --scaffold: inserted ${plan.stubs.length} stub row(s):`)
+  for (const stub of plan.stubs) {
+    console.log(`    - ${stub.ring} "${stub.checkName ?? stub.path}" (${stub.path})`)
+  }
+  for (const skip of plan.skipped) console.log(`    - skipped "${skip.path}": ${skip.reason}`)
+  return { content: rewritten, rows: reparsedRows }
+}
+
 if (import.meta.main) {
-  const enforcementContent = readFileSync(join(REPO_ROOT, ENFORCEMENT_PATH), 'utf8')
-  const rows: GateRow[] = parseEnforcementRegistry(enforcementContent)
+  let enforcementContent = readFileSync(join(REPO_ROOT, ENFORCEMENT_PATH), 'utf8')
+  let rows: GateRow[] = parseEnforcementRegistry(enforcementContent)
+
+  if (process.argv.includes('--scaffold')) {
+    const scaffolded = runScaffold(enforcementContent, rows, globCandidateFiles())
+    enforcementContent = scaffolded.content
+    rows = scaffolded.rows
+  }
+
   const ring0Rows = rows.filter((r) => r.ring === 'ring0')
 
   const candidateFiles = globCandidateFiles()
