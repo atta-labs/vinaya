@@ -12,12 +12,7 @@ describe('ensureLabelExists', () => {
     })
 
     expect(listLabelNames).toHaveBeenCalledWith('owner/repo')
-    expect(createLabel).toHaveBeenCalledWith(
-      'owner/repo',
-      'vinaya/direct-main-push',
-      'some description',
-      LABEL_COLOR
-    )
+    expect(createLabel).toHaveBeenCalledWith('owner/repo', 'vinaya/direct-main-push', 'some description', LABEL_COLOR)
   })
 
   it('is a no-op when the label already exists', () => {
