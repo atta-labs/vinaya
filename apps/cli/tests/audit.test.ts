@@ -175,6 +175,106 @@ describe('vinaya audit — direct-main-push bounded poll (#870)', () => {
   })
 })
 
+// The default full run (no `--only`, ring2 off) exercises `runDeadBranchAudit`
+// for real — its own internals (`listTaskBranches`, `mostRecentPr`,
+// `commentDate`, …) shell out to `git`/`gh` directly and are NOT reachable
+// through `AuditDeps`. Running it from a directory with no `origin` remote is
+// a real, deterministic exercise of `shSoft`'s own catch (it never throws;
+// `git ls-remote` fails immediately, locally, the moment it finds no
+// `origin` to resolve, and `listTaskBranches` sees an empty string back) —
+// which in turn drives `runDeadBranchAudit` down its normal, no-findings
+// success return, not its own outer catch. No network, no `gh` auth, no hang.
+describe('vinaya audit — default full run (dead-branch + direct-push together)', () => {
+  let cwd: string
+  let originalCwd: string
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-audit-full-run-test-'))
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+  afterEach(() => {
+    process.chdir(originalCwd)
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it('runs both audits by default; dead-branch soft-fails outside a git remote, direct-push legitimate → exit 0', async () => {
+    const exit = await runAudit(
+      ['--sha=cafefeed'],
+      auditDeps({
+        detectRepo: async () => ({ repoRoot: cwd, owner: 'acme', repo: 'widget' }),
+        fetchAssociatedMergedPrs: () => [42]
+      })
+    )
+    expect(exit).toBe(0)
+  })
+
+  it('runs both audits by default; direct-push fails → exit 1, incident opened once', async () => {
+    let incidentOpened = 0
+    const exit = await runAudit(
+      ['--sha=deadbeef'],
+      auditDeps({
+        detectRepo: async () => ({ repoRoot: cwd, owner: 'acme', repo: 'widget' }),
+        fetchAssociatedMergedPrs: () => [],
+        pollAttempts: 1,
+        pollDelayMs: 1,
+        sleep: async () => {},
+        openDirectPushIncident: () => {
+          incidentOpened++
+        }
+      })
+    )
+    expect(exit).toBe(1)
+    expect(incidentOpened).toBe(1)
+  })
+})
+
+describe('vinaya audit — `--json` output mode', () => {
+  // §10 stop condition: "a test that cannot assert anything meaningful ...
+  // leave it uncovered with a comment." The `skipped`/`reason` payload text
+  // for this branch is only observable via the JSON stdout body — `AuditDeps`
+  // has no injectable writer — so this only asserts the exit code, not that
+  // payload, per §6 Part 2's "never on console output."
+  it('with `--only=dead-branches` and ring2 accelerated (no subprocess reachable at all) → exit 0', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'vinaya-audit-json-test-'))
+    const originalCwd = process.cwd()
+    process.chdir(cwd)
+    try {
+      writeFileSync(
+        join(cwd, 'vinaya.config.json'),
+        JSON.stringify({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } }),
+        'utf8'
+      )
+      const exit = await runAudit(
+        ['--json', '--only=dead-branches', '--sha=cafefeed'],
+        auditDeps({ detectRepo: async () => ({ repoRoot: cwd, owner: 'acme', repo: 'widget' }) })
+      )
+      expect(exit).toBe(0)
+    } finally {
+      process.chdir(originalCwd)
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('with `--only=direct-push` and a violation → exit 1, incident opened once (dead-branch untouched)', async () => {
+    let incidentOpened = 0
+    const exit = await runAudit(
+      ['--json', '--only=direct-push', '--sha=cafebabe'],
+      auditDeps({
+        fetchAssociatedMergedPrs: () => [],
+        pollAttempts: 1,
+        pollDelayMs: 1,
+        sleep: async () => {},
+        openDirectPushIncident: () => {
+          incidentOpened++
+        }
+      })
+    )
+    expect(exit).toBe(1)
+    expect(incidentOpened).toBe(1)
+  })
+})
+
 describe('vinaya audit — dead-branch-push detection parity', () => {
   it('flags a branch whose tip commit lands after its own PR already resolved, via the same pure findDeadBranchPushes @attalabs/aeg-core exports to packages/aeg-core/bin/dead-branch-audit.ts', () => {
     const findings = findDeadBranchPushes([
