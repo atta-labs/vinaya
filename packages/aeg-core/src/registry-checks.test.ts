@@ -59,6 +59,61 @@ describe('checkG2', () => {
     const result = checkG2(rows, ['.husky/pre-commit'])
     expect(result.status).toBe('pass')
   })
+
+  // The trap Issue #104 exists to close: a stub row that fills
+  // `implementation` alone would satisfy the orphan half above and read as
+  // "documented" — the placeholder scan is what keeps it flagged.
+  it('reports info for a row still carrying the scaffold placeholder marker in its summary', () => {
+    const rows: GateRow[] = [
+      makeRow({
+        implementation: 'packages/aeg-core/bin/check-new-thing.ts',
+        summary: '[undocumented — fill in why]'
+      })
+    ]
+    const result = checkG2(rows, ['packages/aeg-core/bin/check-new-thing.ts'])
+    expect(result.status).toBe('info')
+    expect(result.findings).toHaveLength(1)
+    expect(result.findings[0]?.reason).toContain('placeholder')
+  })
+
+  it('reports info for a row carrying the marker in its description or spec cell too', () => {
+    const rows: GateRow[] = [
+      makeRow({ implementation: 'a.ts', description: '[undocumented — fill in why]' }),
+      makeRow({ implementation: 'b.ts', spec: '[undocumented — fill in why]' })
+    ]
+    const result = checkG2(rows, ['a.ts', 'b.ts'])
+    expect(result.status).toBe('info')
+    expect(result.findings).toHaveLength(2)
+  })
+
+  it('a stub-bearing table still yields findings even though every candidate is now named (§6 Part 3 test)', () => {
+    const rows: GateRow[] = [
+      makeRow({
+        implementation: 'packages/aeg-core/bin/check-new-thing.ts',
+        summary: '[undocumented — fill in why]',
+        description: '[undocumented — fill in why]'
+      })
+    ]
+    // The candidate IS named now (the orphan half would pass clean) — the
+    // placeholder half is what still surfaces it.
+    const result = checkG2(rows, ['packages/aeg-core/bin/check-new-thing.ts'])
+    expect(result.status).toBe('info')
+    expect(result.findings.length).toBeGreaterThan(0)
+  })
+
+  it('does not flag a normal, fully-documented row with no placeholder anywhere', () => {
+    const rows: GateRow[] = [
+      makeRow({
+        implementation: 'packages/aeg-core/bin/verify-registry.ts',
+        summary: 'Ever found a script nobody remembers?',
+        description: 'Re-checks orphan hooks.',
+        spec: 'Every file under bin/ is named by some row.'
+      })
+    ]
+    const result = checkG2(rows, ['packages/aeg-core/bin/verify-registry.ts'])
+    expect(result.status).toBe('pass')
+    expect(result.findings).toHaveLength(0)
+  })
 })
 
 describe('checkG3', () => {
