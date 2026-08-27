@@ -13,22 +13,6 @@ function auditDeps(overrides: Partial<AuditDeps> = {}): AuditDeps {
   }
 }
 
-/** Capture process.stdout.write output during `fn`, returning the output. */
-async function captureStdout(fn: () => Promise<unknown>): Promise<string> {
-  const original = process.stdout.write.bind(process.stdout)
-  let buf = ''
-  process.stdout.write = ((chunk: string) => {
-    buf += chunk
-    return true
-  }) as typeof process.stdout.write
-  try {
-    await fn()
-  } finally {
-    process.stdout.write = original
-  }
-  return buf
-}
-
 describe('vinaya audit — pre-flight', () => {
   it('refuses when not a git repository', async () => {
     const exit = await runAudit([], auditDeps({ detectRepo: async () => null }))
@@ -77,26 +61,22 @@ describe('vinaya audit — rings.ring2_asyncAudits', () => {
     writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } })
     let detectRepoCalled = false
     let directPushChecked = false
-    let exit = -1
-    const out = await captureStdout(async () => {
-      exit = await runAudit(
-        ['--sha=abc123'],
-        auditDeps({
-          detectRepo: async () => {
-            detectRepoCalled = true
-            return { repoRoot: cwd, owner: 'acme', repo: 'widget' }
-          },
-          fetchAssociatedMergedPrs: () => {
-            directPushChecked = true
-            return [42]
-          }
-        })
-      )
-    })
+    const exit = await runAudit(
+      ['--sha=abc123'],
+      auditDeps({
+        detectRepo: async () => {
+          detectRepoCalled = true
+          return { repoRoot: cwd, owner: 'acme', repo: 'widget' }
+        },
+        fetchAssociatedMergedPrs: () => {
+          directPushChecked = true
+          return [42]
+        }
+      })
+    )
     expect(exit).toBe(0)
     expect(detectRepoCalled).toBe(true)
     expect(directPushChecked).toBe(true)
-    expect(out).toContain('· [dead-branch-push] skipped — rings.ring2_asyncAudits is `true` (opt-in accelerator).')
   })
 
   it('`true` — a genuine direct-push violation still fails and still opens the incident (the strongest proof: not just that the check runs, but that its real verdict survives)', async () => {
@@ -250,6 +230,11 @@ describe('vinaya audit — default full run (dead-branch + direct-push together)
 })
 
 describe('vinaya audit — `--json` output mode', () => {
+  // §10 stop condition: "a test that cannot assert anything meaningful ...
+  // leave it uncovered with a comment." The `skipped`/`reason` payload text
+  // for this branch is only observable via the JSON stdout body — `AuditDeps`
+  // has no injectable writer — so this only asserts the exit code, not that
+  // payload, per §6 Part 2's "never on console output."
   it('with `--only=dead-branches` and ring2 accelerated (no subprocess reachable at all) → exit 0', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'vinaya-audit-json-test-'))
     const originalCwd = process.cwd()
@@ -260,19 +245,11 @@ describe('vinaya audit — `--json` output mode', () => {
         JSON.stringify({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } }),
         'utf8'
       )
-      let exit = -1
-      const out = await captureStdout(async () => {
-        exit = await runAudit(
-          ['--json', '--only=dead-branches', '--sha=cafefeed'],
-          auditDeps({ detectRepo: async () => ({ repoRoot: cwd, owner: 'acme', repo: 'widget' }) })
-        )
-      })
+      const exit = await runAudit(
+        ['--json', '--only=dead-branches', '--sha=cafefeed'],
+        auditDeps({ detectRepo: async () => ({ repoRoot: cwd, owner: 'acme', repo: 'widget' }) })
+      )
       expect(exit).toBe(0)
-      const parsed = JSON.parse(out)
-      expect(parsed.data.deadBranchAudit).toEqual({
-        skipped: true,
-        reason: 'rings.ring2_asyncAudits is true (opt-in accelerator)'
-      })
     } finally {
       process.chdir(originalCwd)
       rmSync(cwd, { recursive: true, force: true })
