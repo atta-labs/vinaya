@@ -103,6 +103,7 @@ export const NON_GATE_BINS = [
   'archive-task',
   'assign-task-issue',
   'dead-branch-audit',
+  'eval-agent-compliance',
   'open-issue',
   'open-pr',
   'report-tokens'
