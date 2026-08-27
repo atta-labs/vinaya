@@ -17,7 +17,7 @@
 
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
-import { findDeadBranchPushes } from '../src/index'
+import { ensureLabelExists as ensureLabelExistsShared, findDeadBranchPushes } from '../src/index'
 import type { DeadBranchFact, DeadBranchPush } from '../src/index'
 import { label, resolveRepo } from '@attalabs/aeg-forge-state'
 
@@ -115,12 +115,18 @@ function gatherFacts(repo: { owner: string; repo: string }): DeadBranchFact[] {
   return facts
 }
 
+function listLabelNames(repoFlag: string): string[] {
+  const existing = shJson<Array<{ name: string }>>(`gh label list -R ${repoFlag} --json name --limit 200`) ?? []
+  return existing.map((l) => l.name)
+}
+
+function createLabel(repoFlag: string, name: string, description: string, color: string): void {
+  sh(`gh label create "${name}" -R ${repoFlag} --color ${color} --description "${description}"`)
+}
+
 /** GitHub label descriptions cap at 100 chars. */
 function ensureLabelExists(repo: { owner: string; repo: string }): void {
-  const existing =
-    shJson<Array<{ name: string }>>(`gh label list -R ${repo.owner}/${repo.repo} --json name --limit 200`) ?? []
-  if (existing.some((l) => l.name === LABEL)) return
-  sh(`gh label create "${LABEL}" -R ${repo.owner}/${repo.repo} --color B60205 --description "${LABEL_DESCRIPTION}"`)
+  ensureLabelExistsShared(`${repo.owner}/${repo.repo}`, LABEL, LABEL_DESCRIPTION, { listLabelNames, createLabel })
 }
 
 function commentIdFromUrl(url: string): string | null {
