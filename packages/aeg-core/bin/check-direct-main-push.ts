@@ -22,7 +22,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
-import { checkDirectMainPush } from '../src/index'
+import { checkDirectMainPush, ensureLabelExists as ensureLabelExistsShared } from '../src/index'
 import { label, resolveRepo } from '@attalabs/aeg-forge-state'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
@@ -53,23 +53,19 @@ function fetchAssociatedMergedPrs(sha: string, owner: string, repo: string): num
   return prs.filter((pr) => pr.merged_at !== null).map((pr) => pr.number)
 }
 
-function ensureLabelExists(owner: string, repo: string): void {
+function listLabelNames(repoFlag: string): string[] {
   const existing: Array<{ name: string }> = JSON.parse(
-    sh(['gh', 'label', 'list', '-R', `${owner}/${repo}`, '--json', 'name', '--limit', '200'])
+    sh(['gh', 'label', 'list', '-R', repoFlag, '--json', 'name', '--limit', '200'])
   )
-  if (existing.some((l) => l.name === LABEL)) return
-  sh([
-    'gh',
-    'label',
-    'create',
-    LABEL,
-    '-R',
-    `${owner}/${repo}`,
-    '--color',
-    'B60205',
-    '--description',
-    LABEL_DESCRIPTION
-  ])
+  return existing.map((l) => l.name)
+}
+
+function createLabel(repoFlag: string, name: string, description: string, color: string): void {
+  sh(['gh', 'label', 'create', name, '-R', repoFlag, '--color', color, '--description', description])
+}
+
+function ensureLabelExists(owner: string, repo: string): void {
+  ensureLabelExistsShared(`${owner}/${repo}`, LABEL, LABEL_DESCRIPTION, { listLabelNames, createLabel })
 }
 
 function incidentAlreadyOpen(sha: string, owner: string, repo: string): boolean {

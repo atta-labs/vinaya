@@ -14,6 +14,7 @@
 import { execFileSync } from 'node:child_process'
 import {
   checkDirectMainPush,
+  ensureLabelExists as ensureLabelExistsShared,
   findDeadBranchPushes,
   label,
   type DeadBranchFact,
@@ -176,12 +177,19 @@ function gatherDeadBranchFacts(repoFlag: string): DeadBranchFact[] {
   return facts
 }
 
-function ensureLabelExists(repoFlag: string, name: string, description: string): void {
+function listLabelNames(repoFlag: string): string[] {
   const existing =
     shSoftJson<Array<{ name: string }>>(['gh', 'label', 'list', '-R', repoFlag, '--json', 'name', '--limit', '200']) ??
     []
-  if (existing.some((l) => l.name === name)) return
-  shSoft(['gh', 'label', 'create', name, '-R', repoFlag, '--color', 'B60205', '--description', description])
+  return existing.map((l) => l.name)
+}
+
+function createLabel(repoFlag: string, name: string, description: string, color: string): void {
+  shSoft(['gh', 'label', 'create', name, '-R', repoFlag, '--color', color, '--description', description])
+}
+
+function ensureLabelExists(repoFlag: string, name: string, description: string): void {
+  ensureLabelExistsShared(repoFlag, name, description, { listLabelNames, createLabel })
 }
 
 function commentIdFromUrl(url: string): string | null {
