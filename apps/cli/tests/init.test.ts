@@ -139,7 +139,8 @@ describe('vinaya init', () => {
     // pull_request_target trust boundary carrying body-bare-digits'
     // Changesets-release exemption, which a plain pull_request job cannot
     // safely resolve): config + root VINAYA.md + five workflows (tracked) +
-    // two hook stubs + the .vinaya/doc-owners starter, PLUS — as of task 5
+    // three hook stubs (pre-commit/pre-push/commit-msg, the last added by
+    // Issue #63) + the .vinaya/doc-owners starter, PLUS — as of task 5
     // (#152) — the three agent-vendor emitters (tasks 2/3/4), installed by
     // default since `init`'s own `--agents` flag defaults to `all`. Nothing
     // else is written.
@@ -158,6 +159,7 @@ describe('vinaya init', () => {
       BODY_CHECKS_WORKFLOW_PATH,
       '.husky/pre-commit',
       '.husky/pre-push',
+      '.husky/commit-msg',
       DOC_OWNERS_PATH,
       CHECKS_FOLDER_PLACEHOLDER_PATH,
       ROLES_FOLDER_PLACEHOLDER_PATH,
@@ -183,6 +185,7 @@ describe('vinaya init', () => {
       BODY_CHECKS_WORKFLOW_PATH,
       '.husky/pre-commit',
       '.husky/pre-push',
+      '.husky/commit-msg',
       DOC_OWNERS_PATH,
       CHECKS_FOLDER_PLACEHOLDER_PATH,
       ROLES_FOLDER_PLACEHOLDER_PATH,
@@ -1104,6 +1107,63 @@ describe('generated git hooks: published vs vendored invocation (atta-labs/attal
       expect(body).toContain('npx --yes @attalabs/vinaya@')
       expect(body).not.toContain('node ')
       expect(body).not.toContain('if [ ! -f')
+    }
+  })
+})
+
+describe('generated commit-msg hook (Issue #63)', () => {
+  const VENDORED: VendoredVinaya = { dir: 'apps/cli', bin: 'apps/cli/dist/index.js' }
+
+  function commitMsgBody(selfHost: VendoredVinaya | null): string {
+    const op = buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost,
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
+    }).find((o) => o.kind === 'managed-block' && o.marker === 'commit-msg')
+    if (op?.kind !== 'managed-block') throw new Error('commit-msg op not found')
+    return op.body
+  }
+
+  it('is registered as its own managed block, distinct from pre-commit/pre-push', () => {
+    const ops = buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost: null,
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
+    })
+    const hookOps = ops.filter((o) => o.kind === 'managed-block' && o.path.includes('.husky/'))
+    expect(hookOps.map((o) => (o.kind === 'managed-block' ? o.marker : ''))).toEqual([
+      'pre-commit',
+      'pre-push',
+      'commit-msg'
+    ])
+  })
+
+  it('vendored repo: runs the built bin, never npx, passing $1 and $2 through', () => {
+    const body = commitMsgBody(VENDORED)
+    expect(body).toContain(`node ${VENDORED.bin} commit-msg "$1" "$2"`)
+    expect(body).not.toContain('npx --yes')
+    expect(body).toContain(`if [ ! -f ${VENDORED.bin} ]`)
+    expect(body).toContain(`bun run --cwd ${VENDORED.dir} build`)
+  })
+
+  it('ordinary adopter: byte-for-byte the published shape, with no build guard', () => {
+    const body = commitMsgBody(null)
+    expect(body).toContain('npx --yes @attalabs/vinaya@')
+    expect(body).toContain('commit-msg "$1" "$2"')
+    expect(body).not.toContain('node ')
+    expect(body).not.toContain('if [ ! -f')
+  })
+
+  it('does not pass --local — a commit-msg hook has no diff and no requiresOpenPr check to skip', () => {
+    for (const body of [commitMsgBody(null), commitMsgBody(VENDORED)]) {
+      expect(body).not.toContain('--local')
+      expect(body).not.toContain('check ')
     }
   })
 })

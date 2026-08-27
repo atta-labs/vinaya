@@ -25,21 +25,24 @@ function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
 }
 
-// Swaps BOTH generated hooks, not just `pre-commit`: `runInit`'s real
-// `pre-push` body embeds the same real `npx --yes @attalabs/vinaya@<version>`
-// invocation (`ownVersion()`, read from this repo's OWN `apps/cli/package.json`
-// at generation time). On `changeset-release/main`, changesets bumps that
-// version ahead of what's published to npm — so any test whose `git push`
-// hits the real hook fails deterministically with `npm error code ETARGET`
-// until the bump is actually published (live: PR #207, `push status honesty`
-// and the `--yes` passthrough test, the only two tests here that push for
-// real). Leaving `pre-push` real was never safe, it just never got exercised
-// on a version-bumped-but-unpublished checkout until that PR's CI run.
+// Swaps ALL THREE generated hooks, not just `pre-commit`: `runInit`'s real
+// `pre-push`/`commit-msg` bodies embed the same real `npx --yes @attalabs/
+// vinaya@<version>` invocation (`ownVersion()`, read from this repo's OWN
+// `apps/cli/package.json` at generation time). On `changeset-release/main`,
+// changesets bumps that version ahead of what's published to npm — so any
+// test whose `git push` (or, since Issue #63, `git commit`) hits a real hook
+// fails deterministically with `npm error code ETARGET` until the bump is
+// actually published (live: PR #207, `push status honesty` and the `--yes`
+// passthrough test, the only two tests here that push for real). Leaving any
+// of the three real was never safe, it just never got exercised on a
+// version-bumped-but-unpublished checkout until that PR's CI run.
 function makeHookLocal(root: string): void {
   const preCommit = `#!/usr/bin/env sh\nbun ${INDEX_TS} check --all --diff-only || exit 1\n`
   writeFileSync(join(root, '.git/hooks/pre-commit'), preCommit, { mode: 0o755 })
   const prePush = `#!/usr/bin/env sh\nbun ${INDEX_TS} check --all --local || exit 1\n`
   writeFileSync(join(root, '.git/hooks/pre-push'), prePush, { mode: 0o755 })
+  const commitMsg = `#!/usr/bin/env sh\nbun ${INDEX_TS} commit-msg "$1" "$2" || exit 1\n`
+  writeFileSync(join(root, '.git/hooks/commit-msg'), commitMsg, { mode: 0o755 })
 }
 
 function initFixture(): string {
