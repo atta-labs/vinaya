@@ -22,6 +22,7 @@ const CATEGORIES: LabelCategory[] = ['state', 'tier', 'tranche', 'needs', 'waive
 
 const KEYS: LabelKey[] = [
   'blocked',
+  'backlog',
   'tier-0',
   'tier-1',
   'tier-3',
@@ -183,6 +184,10 @@ describe('label() — the only sanctioned constructor', () => {
     expect(label('state-object')).toBe('vinaya/state-object')
   })
 
+  it('names the backlog state — a deliberately-unplanned Issue', () => {
+    expect(label('backlog')).toBe('vinaya/backlog')
+  })
+
   it('names the docs-gate override — the one §14 label the family-enumerated grep missed', () => {
     expect(label('override-docs')).toBe('vinaya/override:docs')
   })
@@ -227,6 +232,8 @@ describe('matchesLabel() / hasLabel()', () => {
     expect(matchesLabel('direct-main-push', 'aeg:direct-main-push')).toBe(false)
     expect(matchesLabel('dead-branch-push', 'aeg:dead-branch-push')).toBe(false)
     expect(matchesLabel('incoherent', 'aeg:incoherent')).toBe(false)
+    expect(matchesLabel('backlog', 'vinaya:backlog')).toBe(false)
+    expect(matchesLabel('backlog', 'vinaya/backlog')).toBe(true)
   })
 
   it('hasLabel() scans a label set', () => {
