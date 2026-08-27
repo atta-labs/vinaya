@@ -29,8 +29,18 @@
  * belongs in stays a human judgement, which is the point.
  */
 
-/** A gate that adopters run, and the `coreCheckRegistry()` name it ships under. */
-export type ShippedGate = { shippedAs: string | string[] }
+/** A gate that adopters run, and the `coreCheckRegistry()` name it ships
+ * under. `ring` mirrors `apps/cli/src/checks/registry.ts`'s `CORE_CHECK_RING`
+ * value for that same name — duplicated here, not imported, because
+ * `aeg-core` cannot import `apps/cli` (see this file's own module comment on
+ * the dependency-cycle constraint `coreCheckRegistry()` runs into). Kept
+ * from drifting by `registry-ring-parity.test.ts` (`apps/cli`), which is the
+ * only place both sides are in scope at once — same shape as
+ * `shipped-bin-audience.test.ts`'s existing `shippedAs` cross-check. This is
+ * the "registry-derived fact" `registry-scaffold.ts` reads to place a stub
+ * row for an aeg-core-bin G2 candidate that IS registry-backed; a candidate
+ * with no entry here gets no stub (see `registry-scaffold.ts`). */
+export type ShippedGate = { shippedAs: string | string[]; ring: 0 | 1 | 2 }
 /** A gate this repo runs on itself, and why it cannot or should not ship. */
 export type InternalGate = { internal: string }
 export type GateAudience = ShippedGate | InternalGate
@@ -42,17 +52,17 @@ export type GateAudience = ShippedGate | InternalGate
  * in `NON_GATE_BINS` below rather than given a fake audience.
  */
 export const GATE_AUDIENCE: Record<string, GateAudience> = {
-  'check-branch-topology': { shippedAs: 'branch-topology' },
-  'check-first-push-dispatch': { shippedAs: 'first-push-dispatch' },
-  'check-no-disk-state': { shippedAs: 'no-disk-state' },
-  'verify-brief': { shippedAs: 'brief-shape' },
-  'verify-coherence': { shippedAs: 'coherence' },
-  'verify-dispatch': { shippedAs: 'dispatch-readiness' },
-  'verify-docs': { shippedAs: ['doc-coverage', 'doc-coverage-push'] },
-  'verify-registry': { shippedAs: 'registry-gates' },
-  'verify-review-gate': { shippedAs: 'review-gate' },
-  'verify-single-plan-pr': { shippedAs: 'single-plan-pr' },
-  'verify-test-plan': { shippedAs: 'test-plan' },
+  'check-branch-topology': { shippedAs: 'branch-topology', ring: 0 },
+  'check-first-push-dispatch': { shippedAs: 'first-push-dispatch', ring: 0 },
+  'check-no-disk-state': { shippedAs: 'no-disk-state', ring: 0 },
+  'verify-brief': { shippedAs: 'brief-shape', ring: 0 },
+  'verify-coherence': { shippedAs: 'coherence', ring: 0 },
+  'verify-dispatch': { shippedAs: 'dispatch-readiness', ring: 0 },
+  'verify-docs': { shippedAs: ['doc-coverage', 'doc-coverage-push'], ring: 0 },
+  'verify-registry': { shippedAs: 'registry-gates', ring: 0 },
+  'verify-review-gate': { shippedAs: 'review-gate', ring: 1 },
+  'verify-single-plan-pr': { shippedAs: 'single-plan-pr', ring: 0 },
+  'verify-test-plan': { shippedAs: 'test-plan', ring: 1 },
 
   'check-direct-main-push': {
     internal:

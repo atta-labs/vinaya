@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { GATE_AUDIENCE, SHIPPED_BIN_AUDIENCE } from '@attalabs/aeg-core'
-import { coreCheckRegistry } from '../../src/checks/registry.js'
+import { GATE_AUDIENCE, isShipped, SHIPPED_BIN_AUDIENCE } from '@attalabs/aeg-core'
+import { CORE_CHECK_RING, coreCheckRegistry } from '../../src/checks/registry.js'
 
 /**
  * The half of atta-labs/vinaya#186 that has to live here.
@@ -140,6 +140,35 @@ describe('every `shippedAs` names a check that exists', () => {
     expect(
       unresolved.map(([bin, name]) => `${bin} -> ${name}`),
       'A `shippedAs` names a check that is not in `coreCheckRegistry()`. Either the check was renamed or deregistered and the declaration was not updated, or the name is a typo. Either way the declaration asserts an enforcement that does not exist.'
+    ).toEqual([])
+  })
+})
+
+describe('GATE_AUDIENCE.ring mirrors CORE_CHECK_RING — the only place both are in scope at once', () => {
+  // `registry-scaffold.ts` (aeg-core) reads GATE_AUDIENCE's `ring` to place a
+  // stub row for an aeg-core-bin G2 candidate; `registry.ts`'s `REGISTRY`
+  // pairing is the actual source of truth `CORE_CHECK_RING` derives from.
+  // aeg-core cannot import `apps/cli` to check this itself (same
+  // dependency-cycle constraint `shippedAs` runs into above), so the
+  // duplicated `ring` value is asserted in sync here, same shape as the
+  // `crossMapContradictions` check above.
+  it('every GATE_AUDIENCE shippedAs name agrees with CORE_CHECK_RING on its ring', () => {
+    const mismatches: string[] = []
+    for (const [bin, audience] of Object.entries(GATE_AUDIENCE)) {
+      if (!isShipped(audience)) continue
+      const names = Array.isArray(audience.shippedAs) ? audience.shippedAs : [audience.shippedAs]
+      for (const name of names) {
+        const real = CORE_CHECK_RING[name]
+        if (real !== audience.ring) {
+          mismatches.push(
+            `${bin} (shippedAs ${name}): GATE_AUDIENCE says ring ${audience.ring}, registry.ts says ${real}`
+          )
+        }
+      }
+    }
+    expect(
+      mismatches,
+      'GATE_AUDIENCE.ring has drifted from registry.ts REGISTRY — update gate-audience.ts to match.'
     ).toEqual([])
   })
 })
