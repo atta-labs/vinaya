@@ -336,6 +336,27 @@ const CORE_INIT_ARTIFACTS = [
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
 const PROJECTS_REGISTRY_PATH_LOCAL = '.vinaya/projects.md'
 
+// `new noop-check`'s target is DERIVED — the first entry `coreCheckRegistry()`
+// (current source, same import EXPECTED_ALL_CHECK_NAMES above already uses)
+// returns — never a hand-picked id, so a renamed/removed core check cannot
+// leave this pointing at a dead one. One constant, reused by the exercise
+// below AND by `SCRATCH_FIXTURE_PATHS`, so the scaffold path neither drifts
+// nor needs restating.
+const NOOP_CHECK_TARGET = coreCheckRegistry()[0]?.name
+if (!NOOP_CHECK_TARGET) {
+  throw new Error('coreCheckRegistry() returned no entries — cannot pick a target for the `new noop-check` exercise')
+}
+
+// The registration key for the `new role` exercise below — namespaced
+// (`isValidNamespacedKey` refuses a bare id), same `lifecycle/` prefix
+// `new check`'s own fixture key already uses above.
+const NEW_ROLE_KEY = 'lifecycle/proof-role'
+const NEW_ROLE_ID = 'proof-role'
+
+const MILESTONE_BODY_FIXTURE =
+  "Fixture body used only by verify-published-lifecycle.ts's `milestone create`/`milestone edit` " +
+  '`--validate-only` exercises — never actually written to the forge (--validate-only, no network write).\n'
+
 // This script's OWN scratch files, written by the exercises that run between
 // the pre-init and post-eject snapshots (`pr create`/`issue create` fixture
 // bodies, `new check`'s scaffold, `init product`'s registry row). Never
@@ -347,7 +368,12 @@ const PROJECTS_REGISTRY_PATH_LOCAL = '.vinaya/projects.md'
 const SCRATCH_FIXTURE_PATHS = new Set([
   '.pr-body-fixture.md',
   '.issue-body-fixture.md',
+  '.commit-msg-good.txt',
+  '.commit-msg-bad.txt',
+  '.milestone-body-fixture.md',
   'scripts/vinaya-checks/proof-check.ts',
+  `vinaya/checks/${NOOP_CHECK_TARGET}.ts`,
+  `vinaya/roles/${NEW_ROLE_ID}.md`,
   PROJECTS_REGISTRY_PATH_LOCAL
 ])
 
@@ -421,7 +447,15 @@ const EXEMPTIONS: Record<string, string> = {
     'real target Issue and real `gh` credentials reaching the network beyond the npm install, which the boundary ' +
     "this script runs under forbids (same reasoning as the brief's own network/credential stop condition). " +
     '`pr edit` avoids this: passing only `--title` (no `--body-file`) skips its forge fetch entirely, so it is ' +
-    'exercised for real below.'
+    'exercised for real below.',
+  'milestone adopt':
+    "`milestoneAdoptCommand` resolves the repo and then fetches this repo's real labels and Milestones from the " +
+    'forge (`gh api repos/<repo>/labels`, `gh api repos/<repo>/milestones`, and per-slug `gh issue list`) ' +
+    'UNCONDITIONALLY, before its own `--validate-only` check is ever reached — unlike `milestone create`/' +
+    '`milestone edit` below, whose `--validate-only` returns before any repo/forge call and are exercised for ' +
+    'real. Exercising `milestone adopt` genuinely would require a real target Milestone plus real tranche labels ' +
+    'and Issues on the live forge, and real `gh` credentials reaching the network beyond the npm install, which ' +
+    "this script's boundary forbids (same reasoning as `issue edit`'s exemption)."
 }
 
 const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
@@ -758,6 +792,94 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
       status: ok ? 'pass' : 'fail',
       detail: `exit ${r.status}: ${(r.stdout || r.stderr).trim().split('\n')[0]}`
     }
+  },
+
+  'commit-msg': ({ bin, fixtureDir }) => {
+    // Pure local file validation — reads the message file's first line,
+    // never touches the forge. Two invocations, not one: exit 0 alone would
+    // also be produced by a command that never actually checked anything, so
+    // the real observable is the REJECTION's own text on a bad message,
+    // proven alongside acceptance of a good one.
+    const goodPath = join(fixtureDir, '.commit-msg-good.txt')
+    const badPath = join(fixtureDir, '.commit-msg-bad.txt')
+    writeFileSync(goodPath, 'Chore: verify-published-lifecycle commit-msg fixture\n', 'utf-8')
+    writeFileSync(badPath, 'not a valid commit message\n', 'utf-8')
+    const good = run(bin, ['commit-msg', goodPath], fixtureDir)
+    const bad = run(bin, ['commit-msg', badPath], fixtureDir)
+    const rejected = bad.status === 1 && /doesn't match this repo's commit convention/.test(bad.stderr)
+    const ok = good.status === 0 && rejected
+    return {
+      status: ok ? 'pass' : 'fail',
+      detail: `good message exit ${good.status}, bad message exit ${bad.status}: ${bad.stderr.trim().split('\n')[0] || bad.stdout.trim()}`
+    }
+  },
+
+  'new noop-check': ({ bin, fixtureDir }) => {
+    // Local scratch write only — `NOOP_CHECK_TARGET` is a real core check id
+    // (derived, see its own comment above), so this exercises the real
+    // "does this id resolve against the current registry" path, not a
+    // fabricated name.
+    const r = run(bin, ['new', 'noop-check', NOOP_CHECK_TARGET], fixtureDir)
+    const scaffoldPath = join(fixtureDir, 'vinaya', 'checks', `${NOOP_CHECK_TARGET}.ts`)
+    const created = existsSync(scaffoldPath)
+    const printedReplacement = r.stdout.includes(`"${NOOP_CHECK_TARGET}"`) && /REPLACES the core check/.test(r.stdout)
+    const ok = r.status === 0 && created && printedReplacement
+    return {
+      status: ok ? 'pass' : 'fail',
+      detail: `exit ${r.status}, scaffold created: ${created}, replacement entry printed: ${printedReplacement}${ok ? '' : ` — ${(r.stderr.trim() || r.stdout.trim()).slice(0, 200)}`}`
+    }
+  },
+
+  'new role': ({ bin, fixtureDir }) => {
+    // Local scratch write only — `NEW_ROLE_KEY` is namespaced, so this
+    // exercises the additive-scaffold path, not the bare-key OVERRIDE
+    // refusal (a different, already-argument-validation-only path).
+    const r = run(bin, ['new', 'role', NEW_ROLE_KEY], fixtureDir)
+    const scaffoldPath = join(fixtureDir, 'vinaya', 'roles', `${NEW_ROLE_ID}.md`)
+    const created = existsSync(scaffoldPath)
+    const roleIdSet = created && readFileSync(scaffoldPath, 'utf-8').includes(`role_id: ${NEW_ROLE_ID}`)
+    const ok = r.status === 0 && created && roleIdSet
+    return {
+      status: ok ? 'pass' : 'fail',
+      detail: `exit ${r.status}, scaffold created: ${created}, role_id set to ${NEW_ROLE_ID}: ${roleIdSet}${ok ? '' : ` — ${(r.stderr.trim() || r.stdout.trim()).slice(0, 200)}`}`
+    }
+  },
+
+  'milestone create': ({ bin, fixtureDir }) => {
+    // `milestoneCreateCommand`'s `--validate-only` returns BEFORE the repo is
+    // resolved or `gh` is ever called (unlike `milestone adopt` — see
+    // EXEMPTIONS) — the same network-free escape `pr create`/`issue create`
+    // above already use, so this is a real exercise of the shape/schema
+    // gates, not a mock.
+    const bodyPath = join(fixtureDir, '.milestone-body-fixture.md')
+    writeFileSync(bodyPath, MILESTONE_BODY_FIXTURE, 'utf-8')
+    const r = run(
+      bin,
+      [
+        'milestone',
+        'create',
+        '--title',
+        'Chore: verify published lifecycle',
+        '--body-file',
+        bodyPath,
+        '--validate-only'
+      ],
+      fixtureDir
+    )
+    const ok = r.status === 0 && /PASS/i.test(r.stdout)
+    return { status: ok ? 'pass' : 'fail', detail: `exit ${r.status}: ${r.stdout.trim() || r.stderr.trim()}` }
+  },
+
+  'milestone edit': ({ bin, fixtureDir }) => {
+    // Same escape as `milestone create` above: `milestoneEditCommand`'s
+    // `--validate-only` returns before the target Milestone is ever resolved
+    // against the forge, so a fake target number is safe — nothing looks it
+    // up.
+    const bodyPath = join(fixtureDir, '.milestone-body-fixture.md')
+    writeFileSync(bodyPath, MILESTONE_BODY_FIXTURE, 'utf-8')
+    const r = run(bin, ['milestone', 'edit', '999999', '--body-file', bodyPath, '--validate-only'], fixtureDir)
+    const ok = r.status === 0 && /PASS/i.test(r.stdout)
+    return { status: ok ? 'pass' : 'fail', detail: `exit ${r.status}: ${r.stdout.trim() || r.stderr.trim()}` }
   }
 }
 
@@ -1021,13 +1143,18 @@ async function main(): Promise<void> {
       'init product',
       'check',
       'new check',
+      'new noop-check',
+      'new role',
       'pr create',
       'pr edit',
       'pr report',
       'issue create',
+      'milestone create',
+      'milestone edit',
       'doctor',
       'upgrade',
       'doctrine',
+      'commit-msg',
       'demo break',
       'studio',
       'waiver'
