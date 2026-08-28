@@ -190,6 +190,48 @@ describe('vinaya upgrade', () => {
     expect(out).not.toContain(`regenerate   ${DOC_OWNERS_PATH}`)
   })
 
+  it("recreates a missing .vinaya/doc-owners (recorded as owned) instead of leaving `doctor`'s remedy dead-ended (#182)", async () => {
+    await runInit(['--yes'], initDeps())
+    const pristine = readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')
+    rmSync(join(root, DOC_OWNERS_PATH))
+
+    let rc = -1
+    const out = await captureStdout(async () => {
+      rc = await runUpgrade(['--yes'], upgradeDeps())
+    })
+    expect(rc).toBe(0)
+    expect(out).toContain(`+ recreate   ${DOC_OWNERS_PATH}`)
+    expect(existsSync(join(root, DOC_OWNERS_PATH))).toBe(true)
+    // recreated exactly as the pristine starter `init` would have written —
+    // never partially, never with a placeholder.
+    expect(readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')).toBe(pristine)
+
+    // the measured deadlock from `#182`: three consecutive `upgrade --yes`
+    // runs left the file absent and `doctor` still erroring. One run now
+    // closes it.
+    const doctorRc = await runDoctor([], doctorDeps())
+    expect(doctorRc).toBe(0)
+  })
+
+  // vinaya.config.json shares the SAME classification exemption in
+  // `planUpgrade` (`op.path === CONFIG_PATH || op.path === DOC_OWNERS_PATH`),
+  // but does NOT share the runtime deadlock: `runUpgrade` reads
+  // `vinaya.config.json` for the manifest before `planUpgrade` is ever
+  // called, and bails out with "not initialized" the instant that read finds
+  // the file missing (never reaching this fix's `!exists` fallthrough at
+  // all). The case is decided explicitly here, not left implicit: recreating
+  // a missing `vinaya.config.json` from a starter is a materially different
+  // decision (it carries the ownership manifest itself) and is deliberately
+  // out of this fix's scope — see `upgrade.ts`'s classification comment.
+  it("a missing vinaya.config.json is refused outright, not silently regenerated — CONFIG_PATH does not share DOC_OWNERS_PATH's deadlock", async () => {
+    await runInit(['--yes'], initDeps())
+    rmSync(join(root, CONFIG_PATH))
+
+    const rc = await runUpgrade(['--yes'], upgradeDeps())
+    expect(rc).toBe(1)
+    expect(existsSync(join(root, CONFIG_PATH))).toBe(false)
+  })
+
   it('leaves foreign (non-vinaya-owned) content at a vinaya path untouched', async () => {
     await runInit(['--yes'], initDeps())
     // Drop DOCTRINE_POINTER_PATH from the manifest so upgrade sees it as
