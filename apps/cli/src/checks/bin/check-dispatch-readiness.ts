@@ -37,13 +37,18 @@
  * process's cwd — the repo under check, since this bin never `chdir`s). A
  * failed pin is folded into this check's own findings, additively: it never
  * suppresses or replaces the existing forge-derived readiness predicates
- * above. Unset, behavior is byte-identical to before this task.
+ * above. Unset, behavior is byte-identical to before this task. **Inert off
+ * a task branch:** `main()`'s existing `task/<tranche>/<n>` bypass below
+ * exits before `checkPremiseReassertion` is ever called, so a `PREMISE_FILE`
+ * set on any other branch is silently a no-op, not an error — the same
+ * bypass every forge-derived predicate above already takes.
  *
  * scope: full — reads the live forge, not the local diff.
  */
 
 import { execFile, execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { sep } from 'node:path'
 import { promisify } from 'node:util'
 import {
   checkDispatchReadiness,
@@ -147,19 +152,23 @@ function fail(message: string, prompt: string): never {
  * and reported.
  *
  * The per-pin `fileReader` passed to `checkPremises` is bounded by
- * `containedAbs` (same containment primitive `lib/ops.ts` already uses for
- * the eject-safety guarantee) rather than reading `a.path` verbatim: a
- * `Premise:` pin's `path` field comes from the frozen, unmodified
- * `parsePremiseBlock` grammar, which imposes no containment of its own — an
- * absolute path or a `..`-escaping path in a pin is an arbitrary-file-read
- * (`contains`/`absent`) or arbitrary-file-fingerprint (`sha256`) oracle
- * otherwise. This check is reachable from `PREMISE_FILE`, an adopter-wired
- * env var that can point at PR-author-controlled content (mirroring how
- * `PR_BODY_FILE` is wired elsewhere), so an untrusted pin path is a real
- * input here, not a hypothetical one. No chdir (see module doc comment), so
- * `process.cwd()` is the correct containment root. `checkPremises` itself
- * and the pin grammar it parses are unchanged — this only bounds what the
- * wiring will read on a pin's behalf.
+ * `containedRealPath`, not `containedAbs` alone: a `Premise:` pin's `path`
+ * field comes from the frozen, unmodified `parsePremiseBlock` grammar, which
+ * imposes no containment of its own — an absolute path or a `..`-escaping
+ * path in a pin is an arbitrary-file-read (`contains`/`absent`) or
+ * arbitrary-file-fingerprint (`sha256`) oracle otherwise, and a path that is
+ * lexically inside the root but textually names a SYMLINK whose target
+ * resolves outside it is the same oracle again — `containedAbs` alone is a
+ * pure `node:path` computation with no filesystem access, so it cannot see
+ * that escape; `readFileSync` follows symlinks transparently. This check is
+ * reachable from `PREMISE_FILE`, an adopter-wired env var that can point at
+ * PR-author-controlled content on that same PR's own branch checkout
+ * (mirroring how `PR_BODY_FILE` is wired elsewhere) — an author who controls
+ * both the pin and the tree can commit a symlink alongside a malicious pin
+ * in the same PR, so this is a real input, not a hypothetical one. No chdir
+ * (see module doc comment), so `process.cwd()` is the correct containment
+ * root. `checkPremises` itself and the pin grammar it parses are unchanged —
+ * this only bounds what the wiring will read on a pin's behalf.
  */
 function checkPremiseReassertion(): boolean {
   const premiseFile = process.env.PREMISE_FILE
@@ -167,11 +176,41 @@ function checkPremiseReassertion(): boolean {
 
   const body = existsSync(premiseFile) ? readFileSync(premiseFile, 'utf8') : null
   const result = reassertPremiseFile(CHECK_NAME, premiseFile, body, (p) => {
-    const abs = containedAbs(process.cwd(), p)
-    return abs !== null && existsSync(abs) ? readFileSync(abs, 'utf8') : null
+    const real = containedRealPath(process.cwd(), p)
+    if (real === null) return null
+    try {
+      return readFileSync(real, 'utf8')
+    } catch {
+      return null
+    }
   })
   for (const error of result.errors) emitCheckError(error)
   return result.pass
+}
+
+/**
+ * `containedAbs(root, p)`, then re-verified through the REAL (symlink-
+ * resolved) path — matches `apps/cli/src/lib/self-host.ts`'s
+ * `resolvesInsideRepo`, the same fix for the same escape class (a lexically-
+ * safe path that resolves, through a symlink, to somewhere outside the
+ * bound). Every failure shape — the lexical escape `containedAbs` already
+ * refuses, a broken symlink, a missing file, or a real symlink escape —
+ * collapses to the same `null`, which `checkPremiseReassertion` folds into
+ * `checkPremises`'s existing "does not exist on disk" outcome. That
+ * collapse is load-bearing, not incidental: it is what stops a `sha256` pin
+ * on an escaping symlink from ever reaching the branch that would compute
+ * and disclose the real target's digest in the failure message.
+ */
+function containedRealPath(root: string, p: string): string | null {
+  const abs = containedAbs(root, p)
+  if (abs === null) return null
+  try {
+    const real = realpathSync(abs)
+    const realRoot = realpathSync(root)
+    return real === realRoot || real.startsWith(realRoot + sep) ? real : null
+  } catch {
+    return null
+  }
 }
 
 async function main(): Promise<void> {

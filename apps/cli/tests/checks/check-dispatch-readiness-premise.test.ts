@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { reassertPremiseFile } from '../../src/checks/premise-reassert-logic'
 import { containedAbs } from '../../src/lib/ops'
 
@@ -49,24 +50,43 @@ describe('check-dispatch-readiness: PREMISE_FILE on a non-task branch (bypass un
 
 /**
  * `checkPremiseReassertion`'s `fileReader` wraps every pin's `path` field in
- * `containedAbs(process.cwd(), p)` before reading — this reproduces that
- * exact wrapping against real files on disk, proving the containment holds
- * for both escapes a `Premise:` pin's `path` (parsed by the frozen,
- * unmodified `parsePremiseBlock` grammar, which imposes none itself) could
- * otherwise carry: an absolute path, and a `..`-traversal path. `PREMISE_FILE`
- * is an adopter-wired env var that can point at PR-author-controlled content
- * (mirroring `PR_BODY_FILE`), so an untrusted `Premise:` pin path is a real
- * input this wiring must not treat as trusted.
+ * `containedRealPath(process.cwd(), p)` before reading — this reproduces
+ * that exact wrapping (mirrored locally since the bin's `main()` runs on
+ * import) against real files on disk, proving the containment holds for
+ * every escape a `Premise:` pin's `path` (parsed by the frozen, unmodified
+ * `parsePremiseBlock` grammar, which imposes none itself) could otherwise
+ * carry: an absolute path, a `..`-traversal path, and — round `3`, the
+ * escape `containedAbs` alone cannot see — a symlink whose textual path is
+ * inside the root but whose target resolves outside it. `PREMISE_FILE` is an
+ * adopter-wired env var that can point at PR-author-controlled content on
+ * that same PR's own branch checkout (mirroring `PR_BODY_FILE`), so an
+ * author who controls both the pin and the tree is a real threat model, not
+ * a hypothetical one.
  */
 describe('checkPremiseReassertion — containment on the per-pin fileReader', () => {
   const CHECK_NAME = 'dispatch-readiness'
 
+  // Mirrors `check-dispatch-readiness.ts`'s `containedRealPath` exactly:
+  // `containedAbs` first, then re-verified through the REAL (symlink-
+  // resolved) path, matching `lib/self-host.ts`'s `resolvesInsideRepo`.
+  function containedRealPath(root: string, p: string): string | null {
+    const abs = containedAbs(root, p)
+    if (abs === null) return null
+    try {
+      const real = realpathSync(abs)
+      const realRoot = realpathSync(root)
+      return real === realRoot || real.startsWith(realRoot + sep) ? real : null
+    } catch {
+      return null
+    }
+  }
+
   function containedFileReader(repoRoot: string): (p: string) => string | null {
     return (p) => {
-      const abs = containedAbs(repoRoot, p)
-      if (abs === null) return null
+      const real = containedRealPath(repoRoot, p)
+      if (real === null) return null
       try {
-        return readFileSync(abs, 'utf8')
+        return readFileSync(real, 'utf8')
       } catch {
         return null
       }
@@ -118,5 +138,75 @@ describe('checkPremiseReassertion — containment on the per-pin fileReader', ()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+
+  it('still accepts a symlink whose target resolves INSIDE the root — no blanket symlink refusal, only escapes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'premise-containment-inlink-'))
+    writeFileSync(join(root, 'real.ts'), 'export function real() {}\n')
+    symlinkSync(join(root, 'real.ts'), join(root, 'link.ts'))
+    try {
+      const body = ['**Premise:**', '- link.ts contains: export function real', ''].join('\n')
+      const result = reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', body, containedFileReader(root))
+      expect(result).toEqual({ pass: true, errors: [] })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // Security re-review, round `3`: a symlink whose PATH is lexically inside
+  // the containment root but whose TARGET resolves outside it — `containedAbs`
+  // alone is a pure `node:path` computation with no filesystem access, so it
+  // cannot see this; `readFileSync` follows the symlink transparently. Live
+  // repro: a `sha256` pin on the symlink disclosed the real target's digest
+  // verbatim in the failure message, and a `contains` pin with a correct
+  // guess passed silently — the same boolean/digest oracle `containedAbs`
+  // alone was supposed to have closed, reopened through the one class of
+  // escape it structurally cannot detect.
+  describe('a symlink escape (path inside root, target outside it)', () => {
+    function makeSymlinkEscape(secretContent: string): { root: string; outsideDir: string; cleanup: () => void } {
+      const root = mkdtempSync(join(tmpdir(), 'premise-containment-root-'))
+      const outsideDir = mkdtempSync(join(tmpdir(), 'premise-containment-secret-'))
+      writeFileSync(join(outsideDir, 'secret.txt'), secretContent)
+      symlinkSync(join(outsideDir, 'secret.txt'), join(root, 'escape-link.txt'))
+      return {
+        root,
+        outsideDir,
+        cleanup: () => {
+          rmSync(root, { recursive: true, force: true })
+          rmSync(outsideDir, { recursive: true, force: true })
+        }
+      }
+    }
+
+    it("a `sha256` pin never discloses the real target's digest — refused the same as a missing file, not a hash mismatch", () => {
+      const secretContent = 'top-secret-content'
+      const realDigest = createHash('sha256').update(secretContent).digest('hex')
+      const { root, cleanup } = makeSymlinkEscape(secretContent)
+      try {
+        const body = ['**Premise:**', `- escape-link.txt sha256: ${'0'.repeat(64)}`, ''].join('\n')
+        const result = reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', body, containedFileReader(root))
+        expect(result.pass).toBe(false)
+        expect(result.errors).toHaveLength(1)
+        expect(result.errors[0]?.message).toContain('does not exist on disk')
+        expect(result.errors[0]?.message).not.toContain('sha256 mismatch')
+        expect(result.errors[0]?.message).not.toContain(realDigest)
+      } finally {
+        cleanup()
+      }
+    })
+
+    it('a `contains` pin with a correct guess is refused, not a silent pass — no boolean oracle on the real target', () => {
+      const secretContent = 'top-secret-content'
+      const { root, cleanup } = makeSymlinkEscape(secretContent)
+      try {
+        const body = ['**Premise:**', '- escape-link.txt contains: top-secret-content', ''].join('\n')
+        const result = reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', body, containedFileReader(root))
+        expect(result.pass).toBe(false)
+        expect(result.errors).toHaveLength(1)
+        expect(result.errors[0]?.message).toContain('does not exist on disk')
+      } finally {
+        cleanup()
+      }
+    })
   })
 })
