@@ -234,8 +234,19 @@ function pathFlag(args: string[]): string {
  * corrupt the table or splice in an extra fake row. Not a trust-boundary
  * issue (local CLI, operator-supplied input, same trust level as
  * hand-editing the file), but cheap to reject outright.
+ *
+ * A backtick is a different failure from the pipe/newline pair above: it
+ * doesn't corrupt the table, it corrupts the *value*. The registry writes
+ * paths inside a backtick-wrapped code span, and `parseRegistry`
+ * (`packages/aeg-core/src/parse-registry.ts`) strips backticks from every
+ * cell on read — that's the registry's own convention, not a bug in the
+ * parser. A declared path containing a literal backtick is therefore
+ * written verbatim and read back as a different path, silently, with
+ * nothing reporting the difference (Issue `#181`). Refusing it here keeps
+ * every accepted path round-trip-safe without touching the parser or its
+ * stripping convention.
  */
-const PATH_INJECTION_RE = /[|\r\n]/
+const PATH_INJECTION_RE = /[|`\r\n]/
 function validPathFlag(path: string): boolean {
   return !PATH_INJECTION_RE.test(path)
 }
@@ -249,7 +260,9 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
   }
   const productPath = pathFlag(args)
   if (!validPathFlag(productPath)) {
-    console.error("Error: --path must not contain '|' or a newline (it is written into a markdown table row).")
+    console.error(
+      "Error: --path must not contain '|', a backtick, or a newline (it is written into a markdown table row and must round-trip verbatim)."
+    )
     return 2
   }
   const specsPath = productPath === '.' ? 'specs/' : `${productPath}/specs/`

@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
-import { DOC_OWNERS_PATH, LABELS } from '@attalabs/aeg-core'
+import { DOC_OWNERS_PATH, LABELS, parseRegistry } from '@attalabs/aeg-core'
 import { AGENT_VENDORS, type AgentVendor } from '../src/lib/agent-vendors.js'
 import {
   ARCHIVIST_WORKFLOW_PATH,
@@ -1313,6 +1313,36 @@ describe('vinaya init product', () => {
     }
     expect(snapshot(root)).toEqual(before)
     expect(createdLabels).toEqual([])
+  })
+
+  it('rejects a --path containing a backtick, naming it in the refusal, writing nothing (Issue #181)', async () => {
+    await runInit(['--yes'], makeDeps())
+    const before = snapshot(root)
+    createdLabels = []
+    const errors: string[] = []
+    const origError = console.error
+    console.error = (msg: string) => errors.push(msg)
+    try {
+      const rc = await runInitProduct(['mobile', '--path', 'apps/we`b', '--yes'], makeDeps())
+      expect(rc).toBe(2)
+    } finally {
+      console.error = origError
+    }
+    expect(errors.join('\n')).toContain('backtick')
+    expect(snapshot(root)).toEqual(before)
+    expect(createdLabels).toEqual([])
+  })
+
+  it('round-trips an accepted --path verbatim through the registry parser (Issue #181)', async () => {
+    await runInit(['--yes'], makeDeps())
+    createdLabels = []
+    const rc = await runInitProduct(['mobile', '--path', 'apps/mobile', '--yes'], makeDeps())
+    expect(rc).toBe(0)
+    const registry = readFileSync(join(root, '.vinaya/projects.md'), 'utf-8')
+    const [project] = parseRegistry(registry)
+    expect(project?.name).toBe('mobile')
+    expect(project?.path).toBe('apps/mobile')
+    expect(project?.specsPath).toBe('apps/mobile/specs/')
   })
 })
 
