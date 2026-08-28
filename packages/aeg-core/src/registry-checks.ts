@@ -57,11 +57,29 @@ export function checkG1(rows: GateRow[], existsFn: (path: string) => boolean): R
   return { check: 'G1', status: findings.length > 0 ? 'fail' : 'pass', findings }
 }
 
+/** The literal placeholder marker a registry-scaffold stub row's
+ * non-mechanical cells carry (`registry-scaffold.ts`'s `PLACEHOLDER`,
+ * duplicated here rather than imported to keep this module's zero-import
+ * shape — the two are asserted equal by `registry-checks.test.ts`). A stub
+ * that filled `implementation` alone would silence G2 outright (the whole
+ * defect Issue #104 exists to close): this marker is what keeps a row G2
+ * still flags loud until a human replaces it with the real "why". */
+const SCAFFOLD_PLACEHOLDER = '[undocumented — fill in why]'
+
 /**
- * G2 — every candidate hook/CLI file is named by SOME row's `implementation`.
+ * G2 — every candidate hook/CLI file is named by SOME row's `implementation`,
+ * AND no row still carries the scaffold's placeholder marker un-replaced.
  * `candidateFiles` is already-globbed by the caller (`.husky/*`,
  * `.claude/hooks/*.sh`, `packages/aeg-core/bin/*.ts`, excluding `.husky/_`).
  * Report-only this tranche — same as G1, never `'fail'`.
+ *
+ * The second half (placeholder scan) is what keeps a registry-scaffold stub
+ * row visible: `implementation` presence alone would make a stub read as
+ * "documented" to the ORPHAN half above, which is precisely the trap the
+ * scaffold must not fall into. Scanned over `summary`/`description`/`spec`
+ * — every cell a stub can carry the marker in — never `implementation`,
+ * `action`, `category`, or `audience`, which the scaffold fills mechanically
+ * and are never expected to carry it.
  */
 export function checkG2(rows: GateRow[], candidateFiles: string[]): RegistryCheckResult {
   const implementations = new Set(rows.map((r) => r.implementation).filter((p) => p !== ''))
@@ -71,6 +89,16 @@ export function checkG2(rows: GateRow[], candidateFiles: string[]): RegistryChec
       findings.push({
         path,
         reason: `"${path}" is not named as the implementation of any row in enforcement.md's ring tables`
+      })
+    }
+  }
+  for (const row of rows) {
+    const carriesPlaceholder = [row.summary, row.description, row.spec].some((cell) => cell === SCAFFOLD_PLACEHOLDER)
+    if (carriesPlaceholder) {
+      findings.push({
+        row: row.action,
+        path: row.implementation,
+        reason: `${row.ring} row "${row.action}" still carries the scaffold placeholder marker — the why is owed`
       })
     }
   }

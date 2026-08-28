@@ -60,6 +60,45 @@ export function runsUnderAll(spec: CheckSpec): boolean {
 }
 
 /**
+ * `ring` — which of `aeg-root/enforcement.md`'s three ring tables this core
+ * check's own row belongs in, when the registry-scaffold writer
+ * (`packages/aeg-core/src/registry-scaffold.ts`) needs to auto-insert a stub
+ * row for it. Derived mechanically, not by re-reading each check's prose:
+ * `0` for every check that runs under the managed local hooks (pre-commit/
+ * pre-push's `vinaya check --all --local`) — i.e. everything that is
+ * neither `requiresOpenPr` nor `ownWorkflow`, since `--local` skips exactly
+ * those two classes (`apps/cli/src/lib/artifacts.ts`'s `preCommitBody`/
+ * `prePushBody` comments) and nothing else; `1` for a check that can only
+ * ever run once a pull request exists (`requiresOpenPr`) or is reported by
+ * its own dedicated workflow instead of `--all` (`ownWorkflow`) — CI/PR-only
+ * by construction. No core check is ring-2-only today: every ring-2
+ * mechanism in this repo (`archive-task.ts`, `check-direct-main-push.ts`,
+ * `dead-branch-audit.ts`, `report-tokens.ts`) is a standalone script, never
+ * a `coreCheckRegistry()` entry.
+ *
+ * Several of these checks are *also* re-run in CI (`vinaya-checks.yml`'s
+ * `check --all --diff-only`) even when ring-0 — `enforcement.md` line 114
+ * documents this as the normal, accepted shape ("Same checks, same
+ * strictness, at ring 0 and ring 1 — the runner is one codebase invoked from
+ * both"), not a contradiction: `ring` here names the EARLIEST enforcement
+ * point (ring 0 wins when a check is hook-eligible at all), not an
+ * exhaustive list of every ring a check happens to also run under.
+ *
+ * Deliberately NOT a field on `CheckSpec` (or on the objects
+ * `coreCheckRegistry()` returns): the shared contract and the adopter config
+ * schema stay untouched (Issue #104's core-registry-local decision), and
+ * `tests/checks/no-privileged-api.test.ts` already guards that a core
+ * `CheckSpec` object carries no field a config-derived one cannot — adding
+ * `ring` as a real property on the spec would trip that guard, which is
+ * exactly the invariant this task must not break. Paired here as a 2-tuple
+ * instead: `REGISTRY`'s element type is `readonly [CheckSpec, 0 | 1 | 2]`, so
+ * omitting the ring for a new entry is a tuple-arity type error, not a
+ * silent gap — the typechecker forces completeness without the annotation
+ * ever reaching the runtime object.
+ */
+export type CoreCheckRing = 0 | 1 | 2
+
+/**
  * The core AEG gates an adopter's repo actually runs, expressed as ordinary
  * `CheckSpec`s — the exact shape a `vinaya.config.json` entry produces. No
  * extra field, no privileged flag: this IS the no-privileged-API proof, not
@@ -75,9 +114,13 @@ export function runsUnderAll(spec: CheckSpec): boolean {
  * report-only (`aeg-root/enforcement.md`'s G1/G2 precedent) — a `warning`
  * finding, never a failing exit code — so registering them cannot newly
  * fail any existing install's CI.
+ *
+ * Each entry is paired with its ring in `REGISTRY` below — see
+ * `CoreCheckRing`'s doc comment for how the ring is derived and why it is
+ * not a field on the spec itself.
  */
-export function coreCheckRegistry(): CheckSpec[] {
-  return [
+const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
+  [
     {
       name: 'brief-shape',
       run: bin('check-brief-shape'),
@@ -92,6 +135,9 @@ export function coreCheckRegistry(): CheckSpec[] {
         BRANCH: { optional: true }
       }
     },
+    0
+  ],
+  [
     {
       name: 'doc-coverage',
       run: bin('check-doc-coverage'),
@@ -122,6 +168,9 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    0
+  ],
+  [
     {
       name: 'coherence',
       run: bin('check-coherence'),
@@ -139,6 +188,9 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    0
+  ],
+  [
     {
       name: 'dispatch-readiness',
       run: bin('check-dispatch-readiness'),
@@ -153,6 +205,9 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    0
+  ],
+  [
     {
       name: 'closes-n',
       run: bin('check-closes-n'),
@@ -180,6 +235,11 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    // requiresOpenPr: cannot run under the local hook (`--local` skips it) —
+    // CI/PR-only, see `CoreCheckRing`'s doc comment.
+    1
+  ],
+  [
     {
       name: 'single-plan-pr',
       run: bin('check-single-plan-pr'),
@@ -196,6 +256,9 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    0
+  ],
+  [
     {
       name: 'test-plan',
       run: bin('check-test-plan'),
@@ -213,6 +276,10 @@ export function coreCheckRegistry(): CheckSpec[] {
         BRANCH: { optional: true }
       }
     },
+    // requiresOpenPr — see `closes-n` above.
+    1
+  ],
+  [
     {
       name: 'body-bare-digits',
       run: bin('check-body-bare-digits'),
@@ -250,6 +317,10 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    // requiresOpenPr AND ownWorkflow — CI/PR-only twice over.
+    1
+  ],
+  [
     {
       name: 'no-disk-state',
       run: bin('check-no-disk-state'),
@@ -259,6 +330,9 @@ export function coreCheckRegistry(): CheckSpec[] {
       // fallback in the bin itself when that yields no files.
       env: { BASE_SHA: { optional: true } }
     },
+    0
+  ],
+  [
     {
       name: 'registry-gates',
       run: bin('check-registry-gates'),
@@ -277,6 +351,9 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    0
+  ],
+  [
     {
       name: 'review-gate',
       run: bin('check-review-gate'),
@@ -314,6 +391,10 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    // ownWorkflow — see `body-bare-digits` above.
+    1
+  ],
+  [
     {
       name: 'branch-topology',
       run: bin('check-branch-topology'),
@@ -333,6 +414,9 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    0
+  ],
+  [
     {
       name: 'dead-branch-push',
       run: bin('check-dead-branch-push'),
@@ -349,6 +433,9 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    0
+  ],
+  [
     {
       name: 'first-push-dispatch',
       run: bin('check-first-push-dispatch'),
@@ -366,6 +453,9 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    0
+  ],
+  [
     {
       name: 'doc-coverage-push',
       run: bin('check-doc-coverage-push'),
@@ -389,6 +479,9 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    0
+  ],
+  [
     {
       name: 'issue-assignment',
       run: bin('check-issue-assignment'),
@@ -406,6 +499,9 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    0
+  ],
+  [
     {
       name: 'evidence-fresh',
       run: bin('check-evidence-fresh'),
@@ -431,6 +527,10 @@ export function coreCheckRegistry(): CheckSpec[] {
         GH_TOKEN: { optional: true }
       }
     },
+    // requiresOpenPr — see `closes-n` above.
+    1
+  ],
+  [
     {
       name: 'reader-resolvable-prose',
       run: bin('check-reader-resolvable-prose'),
@@ -442,6 +542,9 @@ export function coreCheckRegistry(): CheckSpec[] {
       // trees it names), no forge call, no PR content.
       env: {}
     },
+    0
+  ],
+  [
     {
       name: 'retired-vocabulary',
       run: bin('check-retired-vocabulary'),
@@ -450,6 +553,9 @@ export function coreCheckRegistry(): CheckSpec[] {
       // Same reasoning as `reader-resolvable-prose` above — local files only.
       env: {}
     },
+    0
+  ],
+  [
     {
       name: 'doctrine-portability',
       run: bin('check-doctrine-portability'),
@@ -461,6 +567,9 @@ export function coreCheckRegistry(): CheckSpec[] {
       // as `doc-coverage`/`no-disk-state`/`evidence-fresh` above.
       env: { BASE_SHA: { optional: true } }
     },
+    0
+  ],
+  [
     {
       name: 'workspace-escape',
       run: bin('check-workspace-escape'),
@@ -469,6 +578,23 @@ export function coreCheckRegistry(): CheckSpec[] {
       // Local-only: walks the working tree with `node:fs`, never the
       // network, `gh`, or a PR-scoped fact — no forge call, no PR content.
       env: {}
-    }
+    },
+    0
   ]
+]
+
+/** The exact `CheckSpec[]` shape `vinaya.config.json` also produces — no
+ * extra field, no privileged flag. See `no-privileged-api.test.ts`. */
+export function coreCheckRegistry(): CheckSpec[] {
+  return REGISTRY.map(([spec]) => spec)
 }
+
+/** `name` -> `ring`, derived from the same `REGISTRY` pairing `coreCheckRegistry()`
+ * reads — never out of sync with it by construction. Consulted by
+ * `packages/aeg-core/src/registry-scaffold.ts` indirectly, through the
+ * aeg-core-local mirror in `gate-audience.ts` (aeg-core cannot import this
+ * module — see that file's own doc comment for why); `gate-audience.test.ts`-
+ * style coupling assertions in this package keep the two in sync. */
+export const CORE_CHECK_RING: Readonly<Record<string, CoreCheckRing>> = Object.fromEntries(
+  REGISTRY.map(([spec, ring]) => [spec.name, ring])
+)
