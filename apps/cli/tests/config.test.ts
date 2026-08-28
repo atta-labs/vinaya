@@ -16,6 +16,7 @@ import type { CheckSpec } from '../src/checks/contract'
 import { runChecks } from '../src/checks/runner'
 import { PRINCIPAL_ALLOWLIST } from '@attalabs/aeg-core'
 import {
+  isCanonicalHookBlockPath,
   lintEnvDeclarations,
   loadTrustAnchorConfig,
   readRepoCiSetup,
@@ -689,5 +690,41 @@ describe('resolveAgentVendors — undefined vs. explicit-empty', () => {
 
   it('respects a narrowed explicit selection exactly, no widening and no dropping', () => {
     expect([...resolveAgentVendors({ agents: ['claude'] })]).toEqual(['claude'])
+  })
+})
+
+// Issue #177: the .git/ path discriminator escaped via a case variant
+// (.GIT/config) and via a bare `.git` with no trailing slash. Both must be
+// refused at the parse layer, before lib/ops.ts's resolvers ever see them.
+describe('ManagedBlockRecordSchema.path — canonical hook-block spellings only (#177)', () => {
+  function parseBlockPath(path: string) {
+    return VinayaConfigSchema.safeParse({
+      managed: { version: 2, files: [], blocks: [{ path, marker: 'x', comment: 'hash' }], labels: [] }
+    })
+  }
+
+  it('refuses a case variant (.GIT/config) — case-insensitive filesystems must not resolve this as a git path', () => {
+    expect(parseBlockPath('.GIT/config').success).toBe(false)
+    expect(parseBlockPath('.Git/hooks/../config').success).toBe(false)
+  })
+
+  it('refuses bare `.git` with no trailing slash — this escapes on every filesystem, not just case-insensitive ones, and must never reach a readFileSync that would throw EISDIR', () => {
+    expect(parseBlockPath('.git').success).toBe(false)
+  })
+
+  it('accepts the three canonical spellings buildInitOps actually emits', () => {
+    expect(parseBlockPath('.git/hooks/pre-commit').success).toBe(true)
+    expect(parseBlockPath('.husky/pre-commit').success).toBe(true)
+    expect(parseBlockPath('.vinaya/hooks/pre-push').success).toBe(true)
+  })
+
+  it('refuses a genuinely different directory that merely shares the .git prefix as a substring', () => {
+    expect(parseBlockPath('.gitkeep-hooks/x').success).toBe(false)
+  })
+
+  it('isCanonicalHookBlockPath rejects a bare prefix with no trailing content', () => {
+    expect(isCanonicalHookBlockPath('.git/')).toBe(false)
+    expect(isCanonicalHookBlockPath('.husky/')).toBe(false)
+    expect(isCanonicalHookBlockPath('.vinaya/hooks/')).toBe(false)
   })
 })
