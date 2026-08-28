@@ -58,6 +58,7 @@ import {
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { containedAbs } from '../../lib/ops'
 import { resolveEdge } from '../edge-resolve'
 import { reassertPremiseFile } from '../premise-reassert-logic'
 
@@ -144,15 +145,31 @@ function fail(message: string, prompt: string): never {
  * never calls `process.exit` itself: the caller decides the overall exit
  * code once every predicate (forge-derived and premise) has been evaluated
  * and reported.
+ *
+ * The per-pin `fileReader` passed to `checkPremises` is bounded by
+ * `containedAbs` (same containment primitive `lib/ops.ts` already uses for
+ * the eject-safety guarantee) rather than reading `a.path` verbatim: a
+ * `Premise:` pin's `path` field comes from the frozen, unmodified
+ * `parsePremiseBlock` grammar, which imposes no containment of its own — an
+ * absolute path or a `..`-escaping path in a pin is an arbitrary-file-read
+ * (`contains`/`absent`) or arbitrary-file-fingerprint (`sha256`) oracle
+ * otherwise. This check is reachable from `PREMISE_FILE`, an adopter-wired
+ * env var that can point at PR-author-controlled content (mirroring how
+ * `PR_BODY_FILE` is wired elsewhere), so an untrusted pin path is a real
+ * input here, not a hypothetical one. No chdir (see module doc comment), so
+ * `process.cwd()` is the correct containment root. `checkPremises` itself
+ * and the pin grammar it parses are unchanged — this only bounds what the
+ * wiring will read on a pin's behalf.
  */
 function checkPremiseReassertion(): boolean {
   const premiseFile = process.env.PREMISE_FILE
   if (!premiseFile) return true
 
   const body = existsSync(premiseFile) ? readFileSync(premiseFile, 'utf8') : null
-  const result = reassertPremiseFile(CHECK_NAME, premiseFile, body, (p) =>
-    existsSync(p) ? readFileSync(p, 'utf8') : null
-  )
+  const result = reassertPremiseFile(CHECK_NAME, premiseFile, body, (p) => {
+    const abs = containedAbs(process.cwd(), p)
+    return abs !== null && existsSync(abs) ? readFileSync(abs, 'utf8') : null
+  })
   for (const error of result.errors) emitCheckError(error)
   return result.pass
 }
