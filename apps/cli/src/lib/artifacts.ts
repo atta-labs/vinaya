@@ -1157,6 +1157,26 @@ Then add this flag to the branch-protection command above:
 
   -F required_pull_request_reviews.require_code_owner_reviews=true`
 
+// review-gate and the actor-verified doc/review waivers trust
+// `vinaya.config.json`'s `principals` array (`resolvePrincipalAllowlist`,
+// lib/config.ts) — when it is unset, EVERY repo falls back to the same
+// hardcoded placeholder (`PRINCIPAL_ALLOWLIST`, this monorepo's own
+// maintainer). A fresh `vinaya init` never sets `principals` itself — same
+// "vinaya never guesses an identity into committed config" reasoning as
+// BRANCH_PROTECTION_NOTE/CODEOWNERS_NOTE above — which means every adopter's
+// very first PR fails review-gate silently: two clean human verdicts land,
+// neither counts, and the only signal is a cryptic DANGLING reason on the
+// gate itself (found live: a first-time adopter's PR #6, two real APPROVE/
+// PASS verdicts both ignored, zero warning anywhere in `init`'s output).
+const PRINCIPALS_NOTE = `Recommended: without this, review-gate trusts nobody's verdicts on this repo.
+
+  Add to vinaya.config.json:
+    "principals": ["<your-github-login>"]
+
+Anyone reviewing a PR here (code-reviewer/security verdicts, the
+vinaya/waiver:review label) must be listed, or their comments are ignored
+and every PR reads as unreviewed. \`vinaya doctor\` reports when this is unset.`
+
 // ---------------------------------------------------------------------------
 // Op builders
 // ---------------------------------------------------------------------------
@@ -1302,12 +1322,34 @@ export function buildInitOps(ctx: InitContext): Op[] {
     ops.push(buildGeminiCommandOp())
   }
 
+  // The agent-native entry points above all invoke a bare `vinaya doctrine`
+  // — `.claude/commands/vinaya.md`'s `allowed-tools: Bash(vinaya doctrine *)`
+  // needs that literal short prefix to permission-match without a prompt
+  // (see claude-command-emitter.ts's module doc), so this note explains the
+  // prerequisite instead of changing the invocation shape. `vinaya init`
+  // never installs itself anywhere — a bare `vinaya` resolves only if it's
+  // separately on PATH. Found live: a fresh install's `/vinaya <role>` and
+  // every `.agents/skills/vinaya-*/SKILL.md` failed "command not found" on
+  // their very first use, with nothing in `init`'s own output warning it.
+  if (ctx.agents.size > 0) {
+    ops.push({
+      kind: 'print',
+      message:
+        'The agent-native commands above (`vinaya doctrine`) need `vinaya` resolvable on PATH:\n\n' +
+        '  npm install -g @attalabs/vinaya\n\n' +
+        "Without a global install, `/vinaya <role>` and the .agents/skills/ files above fail " +
+        '"command not found" the first time an agent tries to use them.',
+      group: 'Branch protection (printed, never applied)'
+    })
+  }
+
   // Labels.
   ops.push(...labelOps())
 
   // Branch protection — printed only, never applied.
   ops.push({ kind: 'print', message: BRANCH_PROTECTION_NOTE, group: 'Branch protection (printed, never applied)' })
   ops.push({ kind: 'print', message: CODEOWNERS_NOTE, group: 'Branch protection (printed, never applied)' })
+  ops.push({ kind: 'print', message: PRINCIPALS_NOTE, group: 'Branch protection (printed, never applied)' })
 
   return ops
 }
