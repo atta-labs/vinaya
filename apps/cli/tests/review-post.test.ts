@@ -13,13 +13,21 @@ import {
   renderCodeReviewComment,
   renderFindingsSection,
   renderSecurityComment,
+  resolveSessionId,
   sortBySeverity,
   verifyPostedCodeReview,
   verifyPostedSecurity
 } from '../src/commands/review-post'
 
 const HEAD = 'a'.repeat(40)
-const TOKENS = { taskId: 'fix/vinaya-review-post', model: 'claude-sonnet-5', tokensIn: '-', tokensOut: '-', cost: '-' }
+const TOKENS = {
+  taskId: 'fix/vinaya-review-post',
+  model: 'claude-sonnet-5',
+  tokensIn: '-',
+  tokensOut: '-',
+  cost: '-',
+  sessionId: 'sess-abc123'
+}
 const PRINCIPALS = ['daniboomerang']
 const asComment = (body: string, author: string | null = 'daniboomerang') => [{ body, author }]
 
@@ -157,6 +165,23 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
     expect(extraction.value).toBe('REQUEST CHANGES')
   })
 
+  it('records which role and session cast the verdict (#176) — a shared local `gh` credential otherwise attributes the comment to the Principal with no trace of the agent that actually wrote it', () => {
+    const body = renderCodeReviewComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'APPROVE',
+      briefConformance: 'x',
+      specConformance: 'x',
+      findings: [],
+      scope: 'x',
+      tests: 'x',
+      docs: 'x'
+    })
+    expect(body).toContain('Cast by: Reviewer (session sess-abc123)')
+    // The extra line must not disturb the extractor the merge gate itself calls.
+    expect(extractCodeReviewVerdict([body]).value).toBe('APPROVE')
+  })
+
   it('VERDICT and Judged head are bare lines — no bold, heading, or blockquote wrapper', () => {
     const body = renderCodeReviewComment({
       ...TOKENS,
@@ -221,6 +246,30 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
     expect(body).toContain('VERDICT: FAIL')
     expect(body).toContain('1. [CRITICAL] src/auth.ts:9 — hardcoded key')
     expect(extractSecurityReviewVerdict([body]).value).toBe('FAIL')
+  })
+
+  it('records which role and session cast the verdict (#176), same as the code-review sibling', () => {
+    const body = renderSecurityComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'PASS',
+      findings: [],
+      configScan: 'clean',
+      secrets: 'none found',
+      secretsEvidence: '(scanner ran, 0 findings)'
+    })
+    expect(body).toContain('Cast by: Security (session sess-abc123)')
+    expect(extractSecurityReviewVerdict([body]).value).toBe('PASS')
+  })
+})
+
+describe("resolveSessionId — reuses report-tokens.ts's CLAUDE_CODE_SESSION_ID convention rather than inventing a second one", () => {
+  it('reads CLAUDE_CODE_SESSION_ID when set', () => {
+    expect(resolveSessionId({ CLAUDE_CODE_SESSION_ID: 'abc-123' })).toBe('abc-123')
+  })
+
+  it('falls back to a literal unknown marker, never a fabricated id, when unset', () => {
+    expect(resolveSessionId({})).toBe('(unknown)')
   })
 })
 
