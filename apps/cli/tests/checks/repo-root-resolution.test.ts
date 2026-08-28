@@ -79,6 +79,7 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         'evidence-fresh',
         'first-push-dispatch',
         'issue-assignment',
+        'main-branch-refusal',
         'no-disk-state',
         'reader-resolvable-prose',
         'registry-gates',

@@ -580,6 +580,20 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       env: {}
     },
     0
+  ],
+  [
+    {
+      name: 'main-branch-refusal',
+      run: bin('check-main-branch-refusal'),
+      scope: 'full',
+      timeoutMs: 15_000,
+      // Local-only: both facts (`symbolic-ref --short HEAD`,
+      // `symbolic-ref --short refs/remotes/origin/HEAD`) read already-local
+      // git state — no forge call, no PR content, same `env: {}` shape as
+      // `workspace-escape` above.
+      env: {}
+    },
+    0
   ]
 ]
 
