@@ -197,12 +197,16 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       scope: 'full',
       timeoutMs: 30_000,
       // Identical `resolveToken()` three-tier fallback to `coherence` above
-      // — same reasoning, same declaration.
+      // — same reasoning, same declaration. PREMISE_FILE (task 10, #59) is a
+      // local-file path, not a forge credential — optional, absent by
+      // default, and the bin's own re-assertion path never reaches the
+      // network on its account.
       env: {
         AEG_REPO: { optional: true },
         BRANCH: { optional: true },
         GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
+        GH_TOKEN: { optional: true },
+        PREMISE_FILE: { optional: true }
       }
     },
     0

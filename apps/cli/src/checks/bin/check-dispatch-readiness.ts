@@ -29,10 +29,21 @@
  * re-typing the fact via a second implementation; it is a real (if narrow)
  * parity gap versus `bin/verify-dispatch.ts`, not silently equivalent to it.
  *
+ * Optional `PREMISE_FILE` (task 10, #59): when set, names a local brief/PR
+ * body file whose `Premise:` block is re-asserted against current on-disk
+ * state, mirroring `packages/aeg-core/bin/verify-dispatch.ts --premise`'s
+ * file-read + assertion semantics (same `parsePremiseBlock`/`checkPremises`
+ * pair, same three assertion kinds, paths resolved relative to this
+ * process's cwd — the repo under check, since this bin never `chdir`s). A
+ * failed pin is folded into this check's own findings, additively: it never
+ * suppresses or replaces the existing forge-derived readiness predicates
+ * above. Unset, behavior is byte-identical to before this task.
+ *
  * scope: full — reads the live forge, not the local diff.
  */
 
 import { execFile, execFileSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
 import { promisify } from 'node:util'
 import {
   checkDispatchReadiness,
@@ -48,6 +59,7 @@ import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 import { resolveEdge } from '../edge-resolve'
+import { reassertPremiseFile } from '../premise-reassert-logic'
 
 const CHECK_NAME = 'dispatch-readiness'
 
@@ -114,6 +126,35 @@ function fail(message: string, prompt: string): never {
     agent_recovery_prompt: prompt
   })
   process.exit(1)
+}
+
+/**
+ * Re-asserts `PREMISE_FILE`'s `Premise:` pins against current on-disk state.
+ * Additive to the forge-derived gate above — never a mode switch, never a
+ * short-circuit: this runs regardless of `checkDispatchReadiness`'s own
+ * verdict, and its own verdict never suppresses that one's findings either.
+ * Returns `true` when the premise re-assertion holds (including the
+ * `PREMISE_FILE` env var being unset — nothing to re-assert), `false` when it
+ * failed and this check must exit non-zero.
+ *
+ * Thin `fs`/`process.env` wiring only — the decision logic (which errors to
+ * emit for a missing file, zero pins, or a failed pin) lives in
+ * `../premise-reassert-logic.ts`, unit-tested directly with fixtures. Mirrors
+ * `packages/aeg-core/bin/verify-dispatch.ts`'s `runPremiseMode` semantics but
+ * never calls `process.exit` itself: the caller decides the overall exit
+ * code once every predicate (forge-derived and premise) has been evaluated
+ * and reported.
+ */
+function checkPremiseReassertion(): boolean {
+  const premiseFile = process.env.PREMISE_FILE
+  if (!premiseFile) return true
+
+  const body = existsSync(premiseFile) ? readFileSync(premiseFile, 'utf8') : null
+  const result = reassertPremiseFile(CHECK_NAME, premiseFile, body, (p) =>
+    existsSync(p) ? readFileSync(p, 'utf8') : null
+  )
+  for (const error of result.errors) emitCheckError(error)
+  return result.pass
 }
 
 async function main(): Promise<void> {
@@ -213,6 +254,7 @@ async function main(): Promise<void> {
 
   const result = checkDispatchReadiness(input)
 
+  let ready = true
   if (!result.ready) {
     for (const blocker of result.blockers) {
       emitCheckError({
@@ -223,10 +265,15 @@ async function main(): Promise<void> {
         agent_recovery_prompt: recoveryPromptFor(blocker)
       })
     }
-    process.exit(1)
+    ready = false
   }
 
-  process.exit(0)
+  // Additive, not a short-circuit: runs (and reports) regardless of the
+  // forge-derived verdict above, and never suppresses it either — see
+  // `checkPremiseReassertion`'s own doc comment.
+  if (!checkPremiseReassertion()) ready = false
+
+  process.exit(ready ? 0 : 1)
 }
 
 /** Tailors the instruction to `checkDispatchReadiness`'s own `dispatch-gate <category>:` blocker prefixes, rather than one canned prompt for every failure type. */
