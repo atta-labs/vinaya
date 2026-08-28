@@ -1337,7 +1337,7 @@ export function buildInitOps(ctx: InitContext): Op[] {
       message:
         'The agent-native commands above (`vinaya doctrine`) need `vinaya` resolvable on PATH:\n\n' +
         '  npm install -g @attalabs/vinaya\n\n' +
-        "Without a global install, `/vinaya <role>` and the .agents/skills/ files above fail " +
+        'Without a global install, `/vinaya <role>` and the .agents/skills/ files above fail ' +
         '"command not found" the first time an agent tries to use them.',
       group: 'Branch protection (printed, never applied)'
     })
