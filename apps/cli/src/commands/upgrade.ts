@@ -317,7 +317,7 @@ export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManife
       const owned = ownedFiles.has(op.path) || isDefaultedAgentVendorPath(op.path, manifest)
       let action: FileAction
       let triggerChange: { from: string; to: string } | undefined
-      if (op.path === CONFIG_PATH || op.path === DOC_OWNERS_PATH) {
+      if ((op.path === CONFIG_PATH || op.path === DOC_OWNERS_PATH) && exists) {
         // CONFIG_PATH: semantic content (rings/checks/briefSchema) is
         // adopter-owned; only the `managed` sub-object is regenerated,
         // separately below. DOC_OWNERS_PATH: real bindings are adopter-owned
@@ -325,6 +325,32 @@ export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManife
         // added binding as drift from the pristine empty starter and
         // silently regenerate the file back to empty, destroying it (found
         // live, doctor.ts carries the matching fix).
+        //
+        // Gated on `exists`: that reasoning is about a file that EXISTS and
+        // has diverged — there is nothing to preserve, and nothing to
+        // destroy, in a file that is missing. Unconditionally short-circuiting
+        // on the path check made the `!exists` branch below unreachable for
+        // these two paths, so `doctor`'s "run `vinaya upgrade`" remedy for a
+        // missing-but-manifest-owned `.vinaya/doc-owners` provably could not
+        // work (`#182`) — three consecutive `upgrade --yes` runs left the
+        // file absent and `doctor` still erroring. A missing file falls
+        // through to the ordinary `!exists` → `recreate` handling instead,
+        // which restores the pristine starter doctor promised.
+        //
+        // CONFIG_PATH itself cannot actually take this fallthrough via the
+        // real CLI: `runUpgrade` reads `vinaya.config.json` (for the
+        // manifest this very function needs) before `planUpgrade` is ever
+        // called, and bails out with "not initialized" the moment that read
+        // finds the file missing — so `exists` is always `true` for
+        // CONFIG_PATH by the time this line runs in practice. Gating it here
+        // anyway keeps this classification symmetric with DOC_OWNERS_PATH
+        // (and with doctor.ts's parallel `diagnoseInstall`, which checks
+        // `!exists` before this same exemption) rather than leaving an
+        // unconditional carve-out whose two paths would otherwise diverge
+        // for no reason. Recreating a missing `vinaya.config.json` from a
+        // starter is a materially different decision — it carries the
+        // ownership manifest itself — and is deliberately out of this fix's
+        // scope; the guard above is what keeps it out of reach.
         action = 'keep'
       } else if (!owned) {
         action = exists ? 'refuse-foreign' : 'not-installed'
