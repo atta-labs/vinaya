@@ -1,0 +1,66 @@
+# This repo's own ring-2 published-artifact audit — hand-written, not
+# vinaya-generated, not vinaya-managed, invisible to `doctor` by design (same
+# shape as `ci.yml`).
+#
+# `verify-published-lifecycle.ts` installs `@attalabs/vinaya` from the
+# PUBLIC npm registry and exercises the full shipped-command lifecycle
+# against it. Publishing is manual (`changeset publish`, run by hand after
+# `release.yml`'s Version Packages PR merges), so there is no "after publish"
+# CI moment to hook onto — this runs on a weekly schedule instead, plus
+# `workflow_dispatch` for a free manual run.
+#
+# The known red window: between merging a Version Packages PR and running
+# `changeset publish`, `apps/cli/package.json` names a version the registry
+# does not have yet. A scheduled run landing in that window must not fail —
+# red here must always mean "the published artifact is broken", never "we
+# haven't published yet". The guard step below checks the registry first and
+# skips the rest of the job with a loud `::notice::` (exit 0) when the
+# current version isn't there.
+
+name: Published lifecycle
+
+on:
+  schedule:
+    - cron: "0 4 * * 0" # weekly, Sunday 04:00 UTC — off-peak, distinct from the daily archivist's 02:00 slot
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-published-lifecycle:
+    name: Verify published lifecycle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      # Step-level output + `if:` gates the rest of the job, rather than an
+      # early `exit 0` inside one composite script — this keeps the guard's
+      # own logic separate from the lifecycle run and lets each show up as
+      # its own step in the Actions log.
+      - name: Check published version
+        id: guard
+        run: |
+          set -euo pipefail
+          VERSION="$(jq -r '.version' apps/cli/package.json)"
+          if npm view "@attalabs/vinaya@${VERSION}" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Skipping — @attalabs/vinaya@${VERSION} is not yet on the npm registry. This is the known window between merging a Version Packages PR and running 'changeset publish' by hand, not a broken artifact. This run will re-check next week (or trigger workflow_dispatch after publishing)."
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        if: steps.guard.outputs.published == 'true'
+        run: bun install --frozen-lockfile
+
+      # Default registry mode — never --local-pack here, which tests the
+      # working tree, not the published artifact (the wrong subject for
+      # this audit).
+      - name: Verify published lifecycle
+        if: steps.guard.outputs.published == 'true'
+        run: bun apps/cli/scripts/verify-published-lifecycle.ts
