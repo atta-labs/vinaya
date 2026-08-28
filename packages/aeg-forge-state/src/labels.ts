@@ -110,6 +110,7 @@ export type LabelForm = 'literal' | 'prefix'
  */
 export type LabelKey =
   | 'blocked'
+  | 'backlog'
   | 'tier-0'
   | 'tier-1'
   | 'tier-3'
@@ -160,6 +161,14 @@ export const LABELS: Label[] = [
     category: 'state',
     form: 'literal',
     carries: 'Execution is halted pending an external unblock; wins over every other derived status.'
+  },
+  {
+    key: 'backlog',
+    id: 'vinaya/backlog',
+    category: 'state',
+    form: 'literal',
+    carries:
+      'The Issue is deliberately unplanned — belongs to no tranche and is excluded from dispatch, until a Planner promotes it.'
   },
   {
     key: 'tier-0',

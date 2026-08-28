@@ -1085,6 +1085,7 @@ type LabelMeta = { color: string; description: string }
 
 const FIXED_LABEL_METADATA: Record<Exclude<LabelKey, 'tranche'>, LabelMeta> = {
   blocked: { color: 'e11d21', description: 'Execution halted pending an external unblock' },
+  backlog: { color: 'ededed', description: 'Deliberately unplanned — belongs to no tranche until promoted' },
   'tier-0': { color: 'ededed', description: 'Trivial / mechanical change' },
   'tier-1': { color: 'c5def5', description: 'Standard task — code + tests + docs' },
   'tier-3': { color: 'd93f0b', description: 'Records a decision; ratification-gated' },
