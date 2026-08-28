@@ -44,6 +44,7 @@ describe('registry env declarations', () => {
         'evidence-fresh',
         'first-push-dispatch',
         'issue-assignment',
+        'main-branch-refusal',
         'no-disk-state',
         'reader-resolvable-prose',
         'registry-gates',

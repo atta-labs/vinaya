@@ -17,8 +17,8 @@
  *   - default branch: `symbolic-ref --quiet --short refs/remotes/origin/HEAD`
  *     stripped of its `origin/` prefix — the local ref a `git clone` sets
  *     automatically and `git remote set-head origin -a` (re)computes; no
- *     `gh`/forge call, so this stays evaluable with zero network and zero
- *     token, same constraint as `workspace-escape`'s `env: {}`.
+ *     forge CLI or network call, so this stays evaluable with zero network
+ *     and zero token, same constraint as `workspace-escape`'s `env: {}`.
  *
  * Real failure (`error`, exit 1) on a genuine refusal — this is an action
  * refusal, not a doctrine-parity report; warn-only would be the check
