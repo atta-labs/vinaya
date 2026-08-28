@@ -74,6 +74,12 @@ import { coreCheckRegistry, runsUnderAll } from '../src/checks/registry.js'
 // current source would actually bind rather than hand-maintaining a second
 // copy of `3008`/`3108` that could silently drift from `studio.ts`.
 import { FALLBACK_PORT as STUDIO_FALLBACK_PORT, PRIMARY_PORT as STUDIO_PRIMARY_PORT } from '../src/commands/studio.js'
+// Same discipline again for the `init` exercise below (Issue #183): the
+// core-artifact expectation is read back from the manifest `init` itself
+// writes, via the same schema and filename `init.ts` uses, rather than a
+// hand-maintained list that can silently fall behind what `init` grows to
+// write.
+import { LOCAL_CONFIG_FILENAME, VinayaConfigSchema } from '../src/lib/config.js'
 import { resolveHookDir } from '../src/lib/detect.js'
 
 // `..` from `apps/cli/scripts/` is the package root — the same derivation
@@ -323,18 +329,45 @@ async function waitForStudio(ports: number[], timeoutMs: number): Promise<{ port
 type Outcome = { status: 'pass' | 'fail'; detail: string }
 type Ctx = { bin: string; fixtureDir: string }
 
-// The 5 (of 6) manifest artifacts every downstream exercise needs `init` to
-// have written — `.vinaya/doc-owners` is deliberately excluded: it is the
-// known, tracked gap (published predates #665), never a blocker for the rest
-// of the lifecycle proof.
-const CORE_INIT_ARTIFACTS = [
-  'vinaya.config.json',
-  'VINAYA.md',
-  '.github/workflows/vinaya-checks.yml',
-  '.github/workflows/vinaya-review.yml'
-]
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
 const PROJECTS_REGISTRY_PATH_LOCAL = '.vinaya/projects.md'
+
+// Manifest entries the "core artifacts" gate below deliberately does not
+// require, each named with its reason — the excluded set stays as legible as
+// the included one.
+const CORE_INIT_EXCLUSIONS = new Set<string>([
+  // The known, tracked gap (published predates #665) — checked separately
+  // below (`docOwnersWritten`), never a blocker for the rest of the
+  // lifecycle proof.
+  DOC_OWNERS_PATH
+])
+
+/**
+ * The manifest artifacts every downstream exercise needs `init` to have
+ * written — read back from the manifest `init` itself wrote into this
+ * fixture's `vinaya.config.json` (`managed.files`, the same file and schema
+ * `init.ts`'s own `readManifest` uses), minus `CORE_INIT_EXCLUSIONS`. Never a
+ * hand-maintained list: this file's own header already states why (the
+ * version pin went stale at `0.4.6` while the registry moved on;
+ * `EXPECTED_ALL_CHECK_NAMES` above tells the same story for the check-name
+ * set) — a prose count is the one place that discipline had not yet been
+ * applied, and it went stale twice: one comment here said "five of six", the
+ * array held four entries, and the assertion text printed "all 6" — three
+ * disagreeing answers to one question, in one file (Issue #183). Must be
+ * called AFTER `init --yes` has run against `fixtureDir`; called once inside
+ * the `init` exercise and again by the outer gate that follows it, so
+ * neither can disagree with the other or with what is actually on disk.
+ */
+function deriveCoreInitArtifacts(fixtureDir: string): string[] {
+  const configPath = join(fixtureDir, LOCAL_CONFIG_FILENAME)
+  if (!existsSync(configPath)) return []
+  try {
+    const managed = VinayaConfigSchema.parse(JSON.parse(readFileSync(configPath, 'utf-8'))).managed
+    return (managed?.files ?? []).filter((p) => !CORE_INIT_EXCLUSIONS.has(p))
+  } catch {
+    return []
+  }
+}
 
 // `new noop-check`'s target is DERIVED — the first entry `coreCheckRegistry()`
 // (current source, same import EXPECTED_ALL_CHECK_NAMES above already uses)
@@ -484,7 +517,8 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
 
   init: ({ bin, fixtureDir }) => {
     const r = run(bin, ['init', '--yes'], fixtureDir)
-    const coreWritten = CORE_INIT_ARTIFACTS.every((p) => existsSync(join(fixtureDir, p)))
+    const coreArtifacts = deriveCoreInitArtifacts(fixtureDir)
+    const coreWritten = coreArtifacts.length > 0 && coreArtifacts.every((p) => existsSync(join(fixtureDir, p)))
     const hookInstalled = hookInstalledIn(fixtureDir, expectedHookDir)
     const docOwnersWritten = existsSync(join(fixtureDir, DOC_OWNERS_PATH))
     const coreOk = r.status === 0 && coreWritten && hookInstalled
@@ -492,7 +526,7 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
       status: coreOk && docOwnersWritten ? 'pass' : 'fail',
       detail: coreOk
         ? docOwnersWritten
-          ? `exit ${r.status}, all 6 manifest artifacts written, hook installed at ${expectedHookDir}`
+          ? `exit ${r.status}, all ${coreArtifacts.length} manifest artifacts written, hook installed at ${expectedHookDir}`
           : `exit ${r.status}, ${DOC_OWNERS_PATH} missing from published output`
         : `exit ${r.status}, core artifacts written: ${coreWritten}, hook at ${expectedHookDir} (where current source resolves for this fixture): ${hookInstalled}`
     }
@@ -1128,8 +1162,11 @@ async function main(): Promise<void> {
     expectedHookDir = resolveHookDir(fixtureDir)
 
     const initOutcome = EXERCISES.init?.(ctx)
+    const coreArtifacts = deriveCoreInitArtifacts(fixtureDir)
     const coreArtifactsOk =
-      CORE_INIT_ARTIFACTS.every((p) => existsSync(join(fixtureDir, p))) && hookInstalledIn(fixtureDir, expectedHookDir)
+      coreArtifacts.length > 0 &&
+      coreArtifacts.every((p) => existsSync(join(fixtureDir, p))) &&
+      hookInstalledIn(fixtureDir, expectedHookDir)
     if (!initOutcome || !coreArtifactsOk) {
       throw new Error(
         `\`vinaya init\` did not write its core artifacts against the published artifact — cannot proceed: ${initOutcome?.detail}`
