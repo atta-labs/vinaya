@@ -68,6 +68,8 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
     expect(ring1.rows).toHaveLength(21)
     // (2026-07-13) removed the "Daily drift check — stuck row-adjacent
     // blockers" ring-2 row (its subject matter, stale-blocker.ts, was retired).
-    expect(ring2.rows).toHaveLength(7)
+    // vinaya-verification-v1 task 8 (Issue 36) added the "Published
+    // lifecycle audit" row.
+    expect(ring2.rows).toHaveLength(8)
   })
 })
