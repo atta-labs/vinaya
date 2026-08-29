@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest'
 import { parseLedger } from './parse-ledger'
 import { sumLedger } from './sum-ledger'
 
-const FIXTURES = join(__dirname, 'fixtures')
-const aegUiTokensMd = readFileSync(join(FIXTURES, 'aeg-ui-v1.tokens.md'), 'utf8')
+const FIXTURES = join(__dirname, '..', 'tests', 'fixtures')
+const aegUiTokensMd = readFileSync(join(FIXTURES, 'aeg-ui-v1-tokens.md'), 'utf8')
 
 describe('sumLedger', () => {
   it('sums tokens and cost over rows, treating nulls as zero', () => {

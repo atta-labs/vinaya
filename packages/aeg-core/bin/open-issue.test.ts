@@ -252,7 +252,7 @@ describe('resolveMilestoneToAttach (aeg-review-gate-v1 task 1 follow-up)', () =>
 
 // ---------- amend-deps subcommand (Issue #481, drift class #1) ----------------
 
-const BODY_429 = readFileSync(join(__dirname, '../../aeg-forge-state/src/fixtures/issue-429-body.md'), 'utf8')
+const BODY_429 = readFileSync(join(__dirname, '../../aeg-forge-state/tests/fixtures/issue-429-body.md'), 'utf8')
 
 describe('parseEdgeFlag', () => {
   it('splits a comma-joined value into trimmed ids', () => {

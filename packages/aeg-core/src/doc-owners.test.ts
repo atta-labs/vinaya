@@ -414,7 +414,7 @@ describe('the real manifest resolves at its configured path', () => {
   it('parses a real manifest carrying bindings', async () => {
     const { readFileSync } = await import('node:fs')
     const { join } = await import('node:path')
-    const raw = readFileSync(join(__dirname, 'fixtures/doc-owners-with-bindings'), 'utf8')
+    const raw = readFileSync(join(__dirname, '..', 'tests', 'fixtures', 'doc-owners-with-bindings'), 'utf8')
     const { bindings, errors } = parseDocOwners(raw)
     expect(errors).toEqual([])
     expect(bindings.length).toBeGreaterThan(0)

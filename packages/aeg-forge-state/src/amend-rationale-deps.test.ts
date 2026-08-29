@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { amendRationaleDeps } from './amend-rationale-deps'
 import { parseRationaleDeps } from './parse-rationale-deps'
 
-const FIXTURES = join(__dirname, 'fixtures')
+const FIXTURES = join(__dirname, '..', 'tests', 'fixtures')
 
 /** Real Issue bodies captured verbatim via `gh issue view <n> --json body` on
  * 2026-07-13 — the actual drifted-class bodies (#429/#388/#382) this task

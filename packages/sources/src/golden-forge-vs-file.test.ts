@@ -29,7 +29,7 @@ import { describe, expect, it } from 'bun:test'
  * What's kept: `parseTranche`'s coverage against a real-shaped tranche file
  * — the topology table, per-task rationale blocks, and the backlog section
  * — pinned against a committed fixture this repo owns
- * (`fixtures/golden-tranche-snapshot.md`) instead of attalabs' history.
+ * (`tests/fixtures/golden-tranche-snapshot.md`) instead of attalabs' history.
  *
  * What's dropped: the forge-derivation half of the golden comparison. This
  * is a real coverage gap, not a silent skip — flagged here (loud `it.skip`,
@@ -38,7 +38,7 @@ import { describe, expect, it } from 'bun:test'
  * forge-tracked tranche to derive from.
  */
 
-const FIXTURE_PATH = fileURLToPath(new URL('fixtures/golden-tranche-snapshot.md', import.meta.url))
+const FIXTURE_PATH = fileURLToPath(new URL('../tests/fixtures/golden-tranche-snapshot.md', import.meta.url))
 
 describe('golden comparison — aeg-forge-state-v1 (forge half dropped, see file doc comment)', () => {
   it('parseTranche reads a real-shaped tranche file: topology, rationale blocks, backlog', () => {

@@ -20,7 +20,7 @@ import {
   inferBranchFromBody,
   isBriefShaped
 } from './brief-validation'
-import { EOLS, FENCE_DELIMS, fenceShapes } from './fixtures/fence-shapes'
+import { EOLS, FENCE_DELIMS, fenceShapes } from '../tests/fixtures/fence-shapes'
 import { readTierFromPrBody } from './pr-tier'
 
 const WELL_FORMED = `

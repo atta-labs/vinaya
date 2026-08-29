@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parseTranche } from './parse-tranche'
 
-const FIXTURES = join(__dirname, 'fixtures')
+const FIXTURES = join(__dirname, '..', 'tests', 'fixtures')
 const heraldMd = readFileSync(join(FIXTURES, 'herald-onto-engine.md'), 'utf8')
 const aegUiMd = readFileSync(join(FIXTURES, 'aeg-ui-v1.md'), 'utf8')
 

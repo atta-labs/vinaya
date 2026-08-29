@@ -6,13 +6,13 @@ import { anchoredRegion } from './anchored-region'
 import { buildProvenanceBlock, extractIssue, type MergedPrFacts } from './archive-task'
 import { checkClosesN as checkClosesNField, checkProjectField } from './brief-validation'
 import { checkClosesN, extractClosesReferences, type TrancheFile } from './coherence-checks'
-import { fenceShapes } from './fixtures/fence-shapes'
+import { fenceShapes } from '../tests/fixtures/fence-shapes'
 import { readTierFromPrBody } from './pr-tier'
 import { parsePremiseBlock } from './premise-check'
 import { locateTestPlanSection } from './test-plan-section'
 import type { Task } from './types'
 
-const FIXTURES = join(__dirname, 'fixtures')
+const FIXTURES = join(__dirname, '..', 'tests', 'fixtures')
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex')
 

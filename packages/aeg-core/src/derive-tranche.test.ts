@@ -259,7 +259,7 @@ describe('deriveTranche: unknown edge references', () => {
 // #104 (see the recent commit log), all other tasks still backlog (open,
 // unassigned). This exercises the whole pipeline end-to-end on the live
 // artifact that proved the string-id + missing-Lifecycle edge cases.
-const FIXTURES = join(__dirname, 'fixtures')
+const FIXTURES = join(__dirname, '..', 'tests', 'fixtures')
 const heraldMd = readFileSync(join(FIXTURES, 'herald-onto-engine.md'), 'utf8')
 
 describe('deriveTranche: live herald-onto-engine.md + today’s forge snapshot', () => {

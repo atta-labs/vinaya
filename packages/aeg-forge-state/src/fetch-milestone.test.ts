@@ -20,7 +20,7 @@ const {
 
 const OWNER = 'daniboomerang'
 const REPO = 'attalabs'
-const FIXTURES = join(__dirname, 'fixtures')
+const FIXTURES = join(__dirname, '..', 'tests', 'fixtures')
 /** Captured live 2026-07-06 via `gh api repos/daniboomerang/attalabs/milestones?state=all` —
  * the real, current state: no Milestone exists yet for any active tranche. */
 const emptyMilestones = JSON.parse(readFileSync(join(FIXTURES, 'milestones-empty.json'), 'utf8'))

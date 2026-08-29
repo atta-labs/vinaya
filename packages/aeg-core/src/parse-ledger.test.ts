@@ -3,10 +3,10 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parseLedger } from './parse-ledger'
 
-const FIXTURES = join(__dirname, 'fixtures')
-const aegUiTokensMd = readFileSync(join(FIXTURES, 'aeg-ui-v1.tokens.md'), 'utf8')
+const FIXTURES = join(__dirname, '..', 'tests', 'fixtures')
+const aegUiTokensMd = readFileSync(join(FIXTURES, 'aeg-ui-v1-tokens.md'), 'utf8')
 
-describe('parseLedger: aeg-ui-v1.tokens.md (sibling-file form)', () => {
+describe('parseLedger: aeg-ui-v1-tokens.md (sibling-file form)', () => {
   const rows = parseLedger(aegUiTokensMd)
 
   it('parses all 4 rows in source order — re-entry rows preserved', () => {
