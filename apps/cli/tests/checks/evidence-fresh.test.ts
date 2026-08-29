@@ -19,7 +19,7 @@ function evidenceBody(head: string, numstat: string): string {
     '',
     '<!-- AEG:EVIDENCE:START -->',
     `Head: ${head}`,
-    `${EVIDENCE_SUMMARY_PREFIX}${summariseNumstat(numstat)}`,
+    `${EVIDENCE_SUMMARY_PREFIX}\`${summariseNumstat(numstat)}\``,
     '',
     '### Group A — recomputable',
     '',

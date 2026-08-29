@@ -14,8 +14,11 @@ Also in this change:
 
 - `vinaya pr report` emits a `Summary:` line derived from the numstat the
   block already carries, so a PR body no longer needs a hand-written file
-  count that goes stale. It is exempt from the digit check and byte-compared
-  by the freshness check, both naming the line through one selector.
+  count that goes stale. Its value is emitted inside an inline code span, so
+  it needs no new `body-bare-digits` exemption — which also means it works
+  under a checker that predates it, as the `pull_request_target` workflow
+  running from the default branch requires. The freshness check byte-compares
+  the whole line.
 - `check-evidence-fresh` now refuses, rather than passing silently, when the
   only `AEG:EVIDENCE` pair sits inside a `<details>` block — where the digit
   check blanks every digit and nothing can verify what it claims.

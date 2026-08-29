@@ -97,7 +97,7 @@
 
 import { anchoredRegionBounds, TIER_FIELD } from '@attalabs/aeg-core'
 import { PROJECT_SLUG, unwrapValue } from '@attalabs/aeg-forge-state'
-import { ScanContext, summaryLineIndex } from './scan-context'
+import { ScanContext } from './scan-context'
 
 export type BareDigitViolation = { line: number; text: string }
 export type BareDigitScanResult = { violations: BareDigitViolation[] }
@@ -363,7 +363,7 @@ function blankAnchoredRegions(body: string): string {
     if (!FIELD_CONTENT_SIGNATURE[field].test(content)) continue
     masked = blankRange(masked, bounds.outerStart, bounds.innerStart)
     masked = blankRange(masked, bounds.innerEnd, bounds.outerEnd)
-    const blankedContent = content.split('\n').map(BOUNDED_ANCHOR_BLANK[field](content)).join('\n')
+    const blankedContent = content.split('\n').map(BOUNDED_ANCHOR_BLANK[field]).join('\n')
     masked = masked.slice(0, bounds.innerStart) + blankedContent + masked.slice(bounds.innerEnd)
   }
   return masked
@@ -542,43 +542,42 @@ function blankClosesField(line: string): string {
 }
 
 /**
- * `EVIDENCE` is the only field whose blank depends on the region as a whole
- * rather than on each line in isolation, because of the `Summary:` line
- * (Issue #189, the deliverable paired with the coupling fix).
+ * The `Summary:` line (Issue #189, the deliverable paired with the coupling
+ * fix) gets **no exemption here**, deliberately — it does not need one.
  *
- * That line carries a real, digit-bearing claim — `Summary: 4 files changed,
- * 120 insertions(+), 3 deletions(-)` — and it is exempt here for exactly one
- * reason: `check-evidence-fresh` byte-compares it against a fresh
- * `summariseNumstat` of the recomputed diff. Exemption and verification are
- * therefore obliged to name the SAME line, and neither side is trusted to find
- * it on its own — both call `summaryLineIndex`, which selects on the masked
- * view of the region. `maskedContent` here IS that masked view (the whole
- * pipeline below runs on `ctx.masked`), so a `Summary:` inside the Group B
- * fence or a `<details>` block is blank filler and can never be selected.
+ * `vinaya pr report --write` emits its value inside an inline code span
+ * (`Summary: ` + a backticked count), so `maskCode` — layer 1, shared by every
+ * consumer and present in every released version of this check — has already
+ * blanked those digits before this function runs. An exemption would have been
+ * redundant with the masking that already covers it, and every redundant
+ * exemption is one more surface that has to stay paired with a verification.
  *
- * Only the first such line is exempt. A second `Summary:` after the honest one
- * is scanned as ordinary prose — nothing verifies it.
+ * It also could not have worked. `vinaya-body-checks.yml` runs this check from
+ * a `pull_request_target` checkout of the DEFAULT BRANCH, never the pull
+ * request's own tree — a deliberate trust anchor. A new exemption is therefore
+ * not in force for the pull request that introduces it, so the first body to
+ * use it is judged by a checker that has never heard of it. Measured, not
+ * reasoned about: the first attempt at this line shipped a bare count with a
+ * matching exemption on the branch, and CI refused it on `main`'s build. A
+ * shape that needs no exemption has no such bootstrap.
+ *
+ * `check-evidence-fresh` still byte-compares the line against a fresh
+ * `summariseNumstat`, and still locates it through `summaryLineIndex` on the
+ * masked view, so a hand-written count is caught twice over: unbackticked it
+ * is a bare digit here, and either way it fails the comparison there.
  */
-function makeBlankEvidenceField(maskedContent: string): (line: string, index: number) => string {
-  const summaryIndex = summaryLineIndex(maskedContent)
-  return (line, index) => {
-    if (index === summaryIndex) return ' '.repeat(line.length)
-    const trimmed = line.trim()
-    if (trimmed === '' || EVIDENCE_HEAD_LINE.test(trimmed) || EVIDENCE_HEADING.test(trimmed))
-      return ' '.repeat(line.length)
-    return line
-  }
+function blankEvidenceField(line: string): string {
+  const trimmed = line.trim()
+  if (trimmed === '' || EVIDENCE_HEAD_LINE.test(trimmed) || EVIDENCE_HEADING.test(trimmed))
+    return ' '.repeat(line.length)
+  return line
 }
 
-/** Factories, not functions: `EVIDENCE` needs the region as a whole — see `makeBlankEvidenceField`. */
-const BOUNDED_ANCHOR_BLANK: Record<
-  ExemptAnchorField,
-  (maskedContent: string) => (line: string, index: number) => string
-> = {
-  CLOSES: () => blankClosesField,
-  TIER: () => blankTierField,
-  PROJECT: () => blankProjectField,
-  EVIDENCE: makeBlankEvidenceField
+const BOUNDED_ANCHOR_BLANK: Record<ExemptAnchorField, (line: string) => string> = {
+  CLOSES: blankClosesField,
+  TIER: blankTierField,
+  PROJECT: blankProjectField,
+  EVIDENCE: blankEvidenceField
 }
 
 /**

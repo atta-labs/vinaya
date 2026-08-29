@@ -299,14 +299,22 @@ function renderGroupB(outcomes: GateOutcome[]): string {
  * Derived from the very numstat two lines below it, so a PR body never needs a
  * hand-written "four files changed" sentence that a later commit silently
  * falsifies — measured to have gone stale three times on `atta-labs/vinaya#185`.
- * `check-evidence-fresh` recomputes this line and byte-compares it, and
- * `body-bare-digits` exempts it on exactly that basis; both name the line
- * through `summaryLineIndex`, never by scanning for the prefix themselves.
+ *
+ * The VALUE is emitted inside an inline code span, and that is load-bearing
+ * rather than cosmetic. `body-bare-digits` runs from a `pull_request_target`
+ * checkout of the default branch, so a digit exemption added on a branch is not
+ * in force for the pull request that adds it — the first body to use it is
+ * judged by a checker that has never heard of it. A backticked value is blanked
+ * by `maskCode`, which every released version of that check already runs, so
+ * this line needs no exemption at all and works on every checker, old and new.
+ *
+ * `check-evidence-fresh` byte-compares the whole line, backticks included,
+ * locating it through `summaryLineIndex` on the masked view.
  */
 function buildBlockInner(groupA: GroupA, gateOutcomes: GateOutcome[]): string {
   return [
     `Head: ${groupA.head}`,
-    `${EVIDENCE_SUMMARY_PREFIX}${summariseNumstat(groupA.numstat)}`,
+    `${EVIDENCE_SUMMARY_PREFIX}\`${summariseNumstat(groupA.numstat)}\``,
     '',
     renderGroupA(groupA),
     '',

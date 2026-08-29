@@ -52,16 +52,10 @@ function bodyWith(inner: string[], { anchorStart = '<!-- AEG:EVIDENCE:START -->'
   ].join('\n')
 }
 
-const HONEST_INNER = [
-  `Head: ${HEAD}`,
-  `${EVIDENCE_SUMMARY_PREFIX}${summariseNumstat(NUMSTAT)}`,
-  '',
-  '### Group A — recomputable',
-  '',
-  '```',
-  NUMSTAT,
-  '```'
-]
+/** Exactly what `buildBlockInner` emits: the value inside an inline code span. */
+const SUMMARY_LINE = `${EVIDENCE_SUMMARY_PREFIX}\`${summariseNumstat(NUMSTAT)}\``
+
+const HONEST_INNER = [`Head: ${HEAD}`, SUMMARY_LINE, '', '### Group A — recomputable', '', '```', NUMSTAT, '```']
 
 function regionText(body: string): string | 'hidden' | null {
   const resolved = resolveAnchoredRegion(ScanContext.from(body), 'EVIDENCE')
@@ -189,19 +183,31 @@ describe('scan-context — construction closure (compile-time)', () => {
   })
 })
 
-// ---------- the Summary line: exempted only because it is verified ----------
+// ---------- the Summary line: masked by backticks, verified by comparison ----------
 
-describe('scan-context — the Summary line is exempt and verified by the same selection', () => {
+describe('scan-context — the Summary line needs no exemption, and is verified', () => {
   const honest = bodyWith(HONEST_INNER)
 
-  it('a numstat-derived Summary line passes body-bare-digits unbackticked', () => {
+  it('the emitted Summary line passes body-bare-digits — its value is an inline code span', () => {
     expect(checkBareDigits(honest).violations).toEqual([])
   })
 
-  it('and is byte-compared by evidence-fresh, so a fabricated one fails', () => {
-    const fabricated = bodyWith([
+  it('and passes WITHOUT any EVIDENCE-anchor exemption — the same line in plain prose also passes', () => {
+    // The load-bearing property. `body-bare-digits` runs from a
+    // `pull_request_target` checkout of the DEFAULT BRANCH, so an exemption
+    // added here would not be in force for the pull request that adds it.
+    // Backticks are covered by `maskCode`, which every released version of the
+    // check already runs, so this line is legible to an old checker and a new
+    // one alike. Measured: the first attempt shipped a bare count with a
+    // matching exemption on the branch, and CI refused it on `main`'s build.
+    const outsideAnyAnchor = `Some prose. ${EVIDENCE_SUMMARY_PREFIX}\`${summariseNumstat(NUMSTAT)}\` and more.`
+    expect(checkBareDigits(outsideAnyAnchor).violations).toEqual([])
+  })
+
+  it('an UNBACKTICKED Summary line is a bare digit, anchor or no anchor', () => {
+    const bare = bodyWith([
       `Head: ${HEAD}`,
-      `${EVIDENCE_SUMMARY_PREFIX}900 files changed, 12000 insertions(+), 0 deletions(-)`,
+      `${EVIDENCE_SUMMARY_PREFIX}${summariseNumstat(NUMSTAT)}`,
       '',
       '### Group A — recomputable',
       '',
@@ -209,7 +215,22 @@ describe('scan-context — the Summary line is exempt and verified by the same s
       NUMSTAT,
       '```'
     ])
-    // Exempt from the digit scan — that is the point, and why it must be verified.
+    expect(checkBareDigits(bare).violations.length).toBeGreaterThan(0)
+  })
+
+  it('a fabricated Summary line fails evidence-fresh even when backticked', () => {
+    const fabricated = bodyWith([
+      `Head: ${HEAD}`,
+      `${EVIDENCE_SUMMARY_PREFIX}\`900 files changed, 12000 insertions(+), 0 deletions(-)\``,
+      '',
+      '### Group A — recomputable',
+      '',
+      '```',
+      NUMSTAT,
+      '```'
+    ])
+    // Backticks buy it past the digit scan, which is exactly why the
+    // comparison below is the thing that has to catch it.
     expect(checkBareDigits(fabricated).violations).toEqual([])
 
     const resolved = resolveAnchoredRegion(ScanContext.from(fabricated), 'EVIDENCE')
@@ -219,33 +240,21 @@ describe('scan-context — the Summary line is exempt and verified by the same s
     expect(result.status === 'fail' && result.errors.join('\n')).toContain('Summary line does not match')
   })
 
-  it('only the FIRST Summary line is exempt — a second one is scanned as prose', () => {
-    const twoSummaries = bodyWith([
-      `Head: ${HEAD}`,
-      `${EVIDENCE_SUMMARY_PREFIX}${summariseNumstat(NUMSTAT)}`,
-      `${EVIDENCE_SUMMARY_PREFIX}900 files changed, 12000 insertions(+), 0 deletions(-)`,
-      '',
-      '### Group A — recomputable',
-      '',
-      '```',
-      NUMSTAT,
-      '```'
-    ])
-    expect(checkBareDigits(twoSummaries).violations.length).toBeGreaterThan(0)
+  it('the honest Summary line passes the comparison', () => {
+    const resolved = resolveAnchoredRegion(ScanContext.from(honest), 'EVIDENCE')
+    if (resolved === null || resolved === 'hidden') throw new Error('fixture lost its block')
+    expect(compareEvidenceBlock(resolved, HEAD, NUMSTAT).status).toBe('pass')
   })
 
-  it('a Summary line inside a fence is never the selected one — both sides read the mask', () => {
-    // The earlier, independent spellings disagreed about which line came
-    // "first": a `Summary:` inside the Group B fence was verified while a
-    // fabricated one in prose was exempted.
+  it('a Summary line inside a fence is never the compared one — selection reads the mask', () => {
     const resolved = resolveAnchoredRegion(ScanContext.from(honest), 'EVIDENCE')
     if (resolved === null || resolved === 'hidden') throw new Error('fixture lost its block')
     const index = summaryLineIndex(resolved.maskedRegion)
     expect(index).not.toBeNull()
-    expect(resolved.region.split('\n')[index as number]).toBe(`${EVIDENCE_SUMMARY_PREFIX}${summariseNumstat(NUMSTAT)}`)
+    expect(resolved.region.split('\n')[index as number]).toBe(SUMMARY_LINE)
   })
 
-  it('a block with no Summary line has nothing exempted and nothing to verify', () => {
+  it('a block with no Summary line has nothing to verify', () => {
     const noSummary = bodyWith([`Head: ${HEAD}`, '', '### Group A — recomputable', '', '```', NUMSTAT, '```'])
     const resolved = resolveAnchoredRegion(ScanContext.from(noSummary), 'EVIDENCE')
     if (resolved === null || resolved === 'hidden') throw new Error('fixture lost its block')

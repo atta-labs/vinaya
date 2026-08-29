@@ -40,20 +40,16 @@ export function summariseNumstat(numstat: string): string {
 /**
  * The exact shape `buildBlockInner` emits: column 0, one space, case-sensitive.
  *
- * Shared because three surfaces must name the SAME line — `pr report --write`
- * emits it, `body-bare-digits` exempts its digits, `check-evidence-fresh`
- * byte-compares it. When the exemption was written independently it was
- * broader (case-insensitive, any leading whitespace, every occurrence) while
- * the verifier matched only the first, column-0, case-sensitive one, so a
- * lowercase `summary: 900 files changed…`, an indented one, or a second one
- * after the honest one was exempt from the digit check and never compared
- * against anything.
+ * Shared by the writer (`pr report --write`) and the reader
+ * (`check-evidence-fresh`), which must name the same line. The VALUE after this
+ * prefix is emitted inside an inline code span, so `maskCode` blanks its digits
+ * for `body-bare-digits` without any exemption — see `buildBlockInner`'s doc
+ * for why an exemption could not have bootstrapped past a check pinned to the
+ * default branch.
  *
- * A shared constant is necessary and NOT sufficient: the two readers also have
- * to select from the same TEXT, which is why neither of them scans for this
- * prefix itself — both call `summaryLineIndex` (`checks/scan-context.ts`),
- * which selects on the masked view of the region from a shared `ScanContext`.
- * That is the half Issue #189 exists to close; this constant is only the
- * spelling.
+ * A shared constant is necessary and NOT sufficient: the reader also has to
+ * select from the right TEXT, which is why it does not scan for this prefix
+ * itself — it calls `summaryLineIndex` (`checks/scan-context.ts`), which
+ * selects on the masked view of the region from a shared `ScanContext`.
  */
 export const EVIDENCE_SUMMARY_PREFIX = 'Summary: '

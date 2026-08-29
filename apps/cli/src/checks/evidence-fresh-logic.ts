@@ -32,10 +32,10 @@ const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
  * here is always real anchor content.
  *
  * Takes the `ResolvedRegion` rather than a bare string because the `Summary:`
- * line is selected from the region's MASKED view, by the same
- * `summaryLineIndex` `body-bare-digits` uses to exempt it (Issue #189). The
- * two sides must name the same line or the exemption is unbacked; passing the
- * pair whole is what makes that structural rather than conventional.
+ * line is selected from the region's MASKED view (`summaryLineIndex`), so a
+ * `Summary:` inside the Group B fence or a `<details>` block is never the one
+ * compared. Passing the pair whole is what keeps the located line and the
+ * sliced text at the same offsets (Issue #189).
  */
 export function compareEvidenceBlock(
   resolved: ResolvedRegion,
@@ -78,18 +78,19 @@ export function compareEvidenceBlock(
     )
   }
 
-  // The `Summary:` line. `body-bare-digits` exempts this line's digits for one
-  // reason only — that this comparison happens — so the two sides select it
-  // with the same function, from the same masked view (Issue #189).
+  // The `Summary:` line, compared whole — backticks included, because the
+  // emitter writes the value inside an inline code span so it needs no
+  // `body-bare-digits` exemption (see `buildBlockInner`'s doc for why an
+  // exemption could not have bootstrapped past a default-branch-pinned check).
   //
   // Absent is fine: the line is additive, and a block without one has nothing
-  // exempted and nothing to verify. Present means compared, always. A
-  // hand-written `Summary: 900 files changed, 12000 insertions(+)` is exempt
-  // from the digit scan and fails here, which is the whole pairing.
+  // to verify. Present means compared, always — a hand-written
+  // `Summary: 900 files changed, 12000 insertions(+)` fails here, and
+  // unbackticked it is also a bare digit to the other check.
   const summaryIndex = summaryLineIndex(resolved.maskedRegion)
   if (summaryIndex !== null) {
     const storedSummary = resolved.region.split('\n')[summaryIndex] as string
-    const expectedSummary = `${EVIDENCE_SUMMARY_PREFIX}${summariseNumstat(actual)}`
+    const expectedSummary = `${EVIDENCE_SUMMARY_PREFIX}\`${summariseNumstat(actual)}\``
     if (storedSummary !== expectedSummary) {
       errors.push(
         [

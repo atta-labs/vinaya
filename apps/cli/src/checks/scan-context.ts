@@ -76,6 +76,12 @@
  *     line, the Group A fence, and the `Summary:` line. A fabricated digit in
  *     a `### …` heading inside the block is exempt and unverified. That gap is
  *     older than this Issue and untouched by it.
+ *
+ *     This is also why the `Summary:` line adds no exemption of its own: its
+ *     value is emitted backticked, so `maskCode` covers it. A new exemption
+ *     could not have worked anyway — `body-bare-digits` runs from a
+ *     `pull_request_target` checkout of the default branch, so an exemption
+ *     added on a branch is not in force for the pull request that adds it.
  *  4. **Local runs verify nothing.** `check-evidence-fresh` exits 0 when
  *     `PR_NUMBER` is unset (pre-push, local dev), so the exemption stands
  *     unverified there. CI always sets it; this is a property of where the
@@ -226,23 +232,17 @@ export function resolveAnchoredRegion(ctx: ScanContext, field: AnchorField): Res
 }
 
 /**
- * The index of the one `Summary:` line both consumers act on, or `null`.
+ * The index of the `Summary:` line `check-evidence-fresh` compares, or `null`.
  *
- * `body-bare-digits` exempts this line's digits and `check-evidence-fresh`
- * byte-compares it against a fresh recompute; those two must therefore
- * describe the SAME line, and the only way to guarantee that is for both to
- * ask this function.
+ * Selected from the MASKED view on purpose, so a `Summary:` inside the Group B
+ * fence or a `<details>` block is blank filler and can never be the one
+ * compared — the same "locate on the mask, slice from the normalised body"
+ * discipline `resolveAnchoredRegion` uses, applied one level down.
  *
- * Selected from the MASKED view on purpose. When the exemption and the
- * verification each picked their own "first `Summary:` line" they disagreed
- * about which line came first — a `Summary:` inside the Group B fence was
- * verified while a fabricated one in prose was exempted. On the mask, a
- * `Summary:` inside a fence or a `<details>` block is blank filler and can
- * never be selected by either side.
- *
- * Column 0, case-sensitive, exactly the shape `buildBlockInner` emits — an
- * earlier, looser spelling (any indentation, case-insensitive, every
- * occurrence) exempted lines the verifier never compared.
+ * Column 0, case-sensitive, exactly the shape `buildBlockInner` emits. The
+ * line's VALUE is emitted inside an inline code span, so `body-bare-digits`
+ * needs no exemption for it at all and does not call this — a looser spelling
+ * here would widen nothing.
  */
 export function summaryLineIndex(maskedRegion: string): number | null {
   const index = maskedRegion.split('\n').findIndex((line) => line.startsWith(EVIDENCE_SUMMARY_PREFIX))
