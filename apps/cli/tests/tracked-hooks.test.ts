@@ -24,6 +24,7 @@ import { runInit } from '../src/commands/init.js'
 import type { UpgradeDeps } from '../src/commands/upgrade.js'
 import { runUpgrade, translateHookPaths } from '../src/commands/upgrade.js'
 import { CONFIG_PATH, TRACKED_HOOK_DIR } from '../src/lib/artifacts.js'
+import { CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/claude-stop-hook-emitter.js'
 import type { ManagedManifest } from '../src/lib/config.js'
 import {
   activeRawHooks,
@@ -240,7 +241,8 @@ describe('ring 0 survives a clone', () => {
     expect(readManifest(root).blocks.map((b) => b.path)).toEqual([
       `${TRACKED_HOOK_DIR}/pre-commit`,
       `${TRACKED_HOOK_DIR}/pre-push`,
-      `${TRACKED_HOOK_DIR}/commit-msg`
+      `${TRACKED_HOOK_DIR}/commit-msg`,
+      CLAUDE_STOP_HOOK_SCRIPT_PATH
     ])
 
     git(root, ['add', '-A'])
@@ -353,7 +355,8 @@ describe('upgrade migrates a legacy .git/hooks install', () => {
     expect(readManifest(root).blocks.map((b) => b.path)).toEqual([
       `${TRACKED_HOOK_DIR}/pre-commit`,
       `${TRACKED_HOOK_DIR}/pre-push`,
-      `${TRACKED_HOOK_DIR}/commit-msg`
+      `${TRACKED_HOOK_DIR}/commit-msg`,
+      CLAUDE_STOP_HOOK_SCRIPT_PATH
     ])
   }, 20_000)
 
@@ -379,7 +382,8 @@ describe('upgrade migrates a legacy .git/hooks install', () => {
     expect(readManifest(root).blocks.map((b) => b.path)).toEqual([
       '.git/hooks/pre-commit',
       '.git/hooks/pre-push',
-      '.git/hooks/commit-msg'
+      '.git/hooks/commit-msg',
+      CLAUDE_STOP_HOOK_SCRIPT_PATH
     ])
 
     // Same refusal for an unmanaged raw hook elsewhere in .git/hooks.

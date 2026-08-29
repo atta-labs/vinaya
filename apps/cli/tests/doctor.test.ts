@@ -10,6 +10,7 @@ import { runInit } from '../src/commands/init.js'
 import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
 import { CHECKS_WORKFLOW_PATH, CONFIG_PATH, DOCTRINE_POINTER_PATH } from '../src/lib/artifacts.js'
 import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
+import { CLAUDE_SETTINGS_PATH, CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
 import type { LabelGateway } from '../src/lib/ops.js'
 
@@ -531,6 +532,23 @@ describe('vinaya doctor — agent-vendor emitters (--agents)', () => {
     // the selected vendor is still diagnosed normally
     const claude = report.findings.find((f) => f.check === 'claude-command')
     expect(claude?.severity).toBe('ok')
+  })
+
+  it('reports the Claude Code Stop hook (script + settings.json) as ok on a clean install, and missing after removal', async () => {
+    await runInit(['--yes'], initDeps())
+    const clean = await runDoctorJson()
+    const cleanFindings = clean.findings.filter((f) => f.check === 'claude-stop-hook' || f.check === 'hooks')
+    expect(cleanFindings.some((f) => f.message.includes(CLAUDE_SETTINGS_PATH) && f.severity === 'ok')).toBe(true)
+    expect(cleanFindings.some((f) => f.message.includes(CLAUDE_STOP_HOOK_SCRIPT_PATH) && f.severity === 'ok')).toBe(
+      true
+    )
+
+    rmSync(join(root, CLAUDE_SETTINGS_PATH))
+    const afterRemoval = await runDoctorJson()
+    expect(afterRemoval.healthy).toBe(false)
+    const missing = afterRemoval.findings.find((f) => f.check === 'claude-stop-hook')
+    expect(missing?.severity).toBe('error')
+    expect(missing?.message).toContain('missing on disk')
   })
 
   it('a manifest with no recorded agents selection (pre-task-5) is treated as every vendor — missing files are reported as missing, not silently ignored forever', async () => {
