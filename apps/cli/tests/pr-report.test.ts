@@ -2,16 +2,19 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { parseTokenReportEntries } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 import {
   anyGateFailed,
   buildReport,
+  collectTokensAddition,
   computeGroupA,
   type GateOutcome,
   type GateRunResult,
   GitCommandError,
   replaceEvidenceBlock,
-  UnresolvableMergeBaseError
+  UnresolvableMergeBaseError,
+  writeTokensBlock
 } from '../src/commands/pr-report'
 
 // Fixed inputs throughout — no real `git`/`gh` calls, no real gate suite. See
@@ -309,5 +312,125 @@ describe('computeGroupA refuses rather than degrading', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('writeTokensBlock', () => {
+  const ROW_1 = '| 3: develop | Developer | claude-sonnet-5 | 100 | 50 | — | 2026-08-29 |'
+  const ROW_2 = '| 3: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-08-30 |'
+
+  it('sites a fresh anchored block inside an existing `## Token report` heading, replacing its placeholder content', () => {
+    const body = [
+      '## Summary',
+      '',
+      'why this shape.',
+      '',
+      '## Token report',
+      '',
+      '| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |',
+      '|---|---|---|---|---|---|---|',
+      '| [task-id]: develop | Developer | [model] | [exact in] | [exact out] | [cost] | [YYYY-MM-DD] |'
+    ].join('\n')
+    const updated = writeTokensBlock(body, ROW_1)
+    expect(updated).toContain('## Summary')
+    expect(updated).toContain('<!-- AEG:TOKENS:START -->')
+    expect(updated).toContain('<!-- AEG:TOKENS:END -->')
+    expect(updated).toContain(ROW_1)
+    expect(updated).not.toContain('[task-id]: develop')
+  })
+
+  it('creates a fresh `## Token report` heading and block when the body carries no heading at all', () => {
+    const updated = writeTokensBlock('## Summary\n\nwhy.', ROW_1)
+    expect(updated).toContain('## Summary')
+    expect(updated).toContain('## Token report')
+    expect(updated).toContain('<!-- AEG:TOKENS:START -->')
+    expect(updated).toContain(ROW_1)
+  })
+
+  it('appends a second row on re-entry, leaving the first row unmodified — never a sum, never an overwrite', () => {
+    const first = writeTokensBlock('## Summary\n\nwhy.', ROW_1)
+    const second = writeTokensBlock(first, ROW_2)
+    expect(second).toContain(ROW_1)
+    expect(second).toContain(ROW_2)
+    // Exactly one anchor pair — the append lands INSIDE the existing block, never a second block.
+    expect(second.match(/<!-- AEG:TOKENS:START -->/g)).toHaveLength(1)
+    expect(second.match(/<!-- AEG:TOKENS:END -->/g)).toHaveLength(1)
+    // Row 1 precedes row 2 — a real append, not a prepend or a reorder.
+    expect(second.indexOf(ROW_1)).toBeLessThan(second.indexOf(ROW_2))
+  })
+
+  it('ignores a fenced decoy AEG:TOKENS pair pasted as Test Plan evidence when locating the real block to append into', () => {
+    const body = [
+      '## Test plan',
+      '',
+      '- [x] example output:',
+      '',
+      '  ```',
+      '  <!-- AEG:TOKENS:START -->',
+      '  | decoy | pasted | as | evidence | — | — | — |',
+      '  <!-- AEG:TOKENS:END -->',
+      '  ```',
+      '',
+      '## Token report',
+      '',
+      '<!-- AEG:TOKENS:START -->',
+      '| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |',
+      '|---|---|---|---|---|---|---|',
+      ROW_1,
+      '<!-- AEG:TOKENS:END -->'
+    ].join('\n')
+    const updated = writeTokensBlock(body, ROW_2)
+    expect(updated).toContain('decoy | pasted | as | evidence')
+    // The decoy is untouched — exactly two real (unfenced) START anchors would mean the
+    // decoy got treated as real; there must be exactly the two literal occurrences total
+    // (one decoy, one real), and ROW_2 must land next to the real block, not the decoy.
+    const realBlockStart = updated.indexOf('## Token report')
+    expect(updated.indexOf(ROW_2)).toBeGreaterThan(realBlockStart)
+  })
+
+  it('round-trips two appended rows through parseTokenReportEntries into two matching LedgerRows', () => {
+    const first = writeTokensBlock('## Summary\n\nwhy.', ROW_1)
+    const second = writeTokensBlock(first, ROW_2)
+    const rows = parseTokenReportEntries(second)
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toMatchObject({ phase: '3: develop', role: 'Developer', tokensIn: 100, tokensOut: 50 })
+    expect(rows[1]).toMatchObject({ phase: '3: develop', role: 'Developer', tokensIn: 200, tokensOut: 75 })
+  })
+})
+
+describe('collectTokensAddition', () => {
+  it('renders real figures from a resolvable transcript', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-tokens-'))
+    const transcriptPath = join(dir, 'transcript.jsonl')
+    try {
+      const line = (id: string, out: number) =>
+        JSON.stringify({
+          type: 'assistant',
+          message: { id, model: 'claude-sonnet-5', usage: { input_tokens: 100, output_tokens: out } }
+        })
+      writeFileSync(transcriptPath, `${line('m1', 50)}\n${line('m2', 25)}\n`)
+      const addition = collectTokensAddition({
+        phase: '3: develop',
+        role: 'Developer',
+        date: '2026-08-29',
+        transcriptPath
+      })
+      expect(addition).toBe('| 3: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-08-29 |')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('never fabricates a `0/0/—` row for an unresolvable transcript — `—` cells plus the probe reason inline, one line only', () => {
+    const addition = collectTokensAddition({
+      phase: '3: develop',
+      role: 'Developer',
+      date: '2026-08-29',
+      transcriptPath: '/nonexistent/path/does/not/exist.jsonl'
+    })
+    expect(addition.split('\n')).toHaveLength(1)
+    expect(addition).toContain('transcript-unreadable')
+    expect(addition).toBe('| 3: develop | Developer | — (transcript-unreadable) | — | — | — | 2026-08-29 |')
+    expect(addition).not.toMatch(/\|\s*0\s*\|\s*0\s*\|/)
   })
 })

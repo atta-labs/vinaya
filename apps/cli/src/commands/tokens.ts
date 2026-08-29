@@ -101,7 +101,8 @@ function manualSummary(tokensIn: number, tokensOut: number): TranscriptSummary {
   }
 }
 
-function realDeps(): MeteringCapabilityDeps {
+/** Exported so other commands collecting real usage figures (`pr-report.ts`'s `AEG:TOKENS` writer) share this exact I/O shim rather than a second copy of it. */
+export function realDeps(): MeteringCapabilityDeps {
   return {
     env: process.env,
     cwd: process.cwd(),
