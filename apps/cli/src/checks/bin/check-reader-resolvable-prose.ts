@@ -51,7 +51,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join, resolve } from 'node:path'
 import { checkReaderResolvableProse, parseGlossaryTerms, type ProseSourceFile } from '@attalabs/aeg-core'
 import { resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
@@ -179,21 +179,28 @@ function main(): void {
     shipsPrefix
   )
 
-  // `finding.file` comes from `collect(DOCTRINE_ROOT)`, which walks from
-  // `resolveDoctrineRoot()`'s ABSOLUTE path — this repo's own `aeg-root/`
-  // when self-hosted (dev/CI here), `node_modules/@attalabs/vinaya/aeg-root`
-  // for an installed adopter — never the repo-relative form `git diff
-  // --name-only` reports. Normalize before comparing, or the filter matches
-  // nothing, ever, on any install shape.
+  // `resolveChangedFiles()` returns absolute paths, resolved against the
+  // real repo root (`git rev-parse --show-toplevel`), never an assumed
+  // `process.cwd()` (review finding, PR #290 MAJOR: a check bin invoked from
+  // any other cwd silently matched nothing under the old cwd-relative
+  // comparison). `finding.file` is usually already absolute — it comes from
+  // `collect(DOCTRINE_ROOT)`, walked from `resolveDoctrineRoot()`'s absolute
+  // path — but `DOCTRINE_ROOT` can also be a relative `proseGates
+  // .doctrineRoot` config value or the bare `'aeg-root'` fallback, both
+  // interpreted relative to `process.cwd()` by this file's own established
+  // convention (see the module doc above). `resolve()` (implicit cwd) is a
+  // no-op on an already-absolute path and correctly anchors a relative one,
+  // so it normalizes both shapes to the same comparable form.
   //
-  // `null` (no diff boundary could be established — a bare/single-commit
-  // repo, no `origin` remote) reports every finding unfiltered, same as
-  // before diff-scoping existed — never silence a real sweep just because
-  // there was nothing to diff against. Only an ACTUAL resolved-but-empty
-  // diff suppresses findings.
+  // `null` (no diff boundary could be established at all — a bare/single-
+  // commit repo with no `origin` remote, or a shallow clone/orphan history
+  // with no merge base, review finding PR #290 BLOCKER) reports every
+  // finding unfiltered, same as before diff-scoping existed — indeterminate
+  // must never collapse into "confirmed clean." Only an ACTUAL
+  // resolved-but-empty diff suppresses findings.
   const changedFilesList = resolveChangedFiles()
   const changed = changedFilesList === null ? null : new Set(changedFilesList)
-  const reportable = changed === null ? findings : findings.filter((f) => changed.has(relative(process.cwd(), f.file)))
+  const reportable = changed === null ? findings : findings.filter((f) => changed.has(resolve(f.file)))
 
   // stdout only — this check's stderr is the CheckError JSON channel
   // (`contract.ts`'s `emitCheckError`); a plain-text line there would make
