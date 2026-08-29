@@ -17,6 +17,9 @@
  * this function; only a STALE one is.
  */
 
+import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../lib/numstat'
+import { type ResolvedRegion, summaryLineIndex } from './scan-context'
+
 export type EvidenceCompareResult = { status: 'pass' } | { status: 'fail'; errors: string[] }
 
 const HEAD_LINE = /^Head:\s*([0-9a-f]{7,40})\s*$/m
@@ -25,14 +28,21 @@ const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
 /**
  * Compares an already-located `AEG:EVIDENCE` region against the facts a
  * checker can independently derive. Assumes the caller already handled the
- * "no block" / "no PR body" / "no PR yet" bypasses — `region` here is always
- * real anchor content.
+ * "no block" / "no PR body" / "no PR yet" / "hidden" bypasses — `resolved`
+ * here is always real anchor content.
+ *
+ * Takes the `ResolvedRegion` rather than a bare string because the `Summary:`
+ * line is selected from the region's MASKED view (`summaryLineIndex`), so a
+ * `Summary:` inside the Group B fence or a `<details>` block is never the one
+ * compared. Passing the pair whole is what keeps the located line and the
+ * sliced text at the same offsets (Issue #189).
  */
 export function compareEvidenceBlock(
-  region: string,
+  resolved: ResolvedRegion,
   resolvedHead: string,
   actualNumstat: string
 ): EvidenceCompareResult {
+  const region = resolved.region
   const headMatch = region.match(HEAD_LINE)
   const fences = [...region.matchAll(FENCE)].map((m) => (m[1] ?? '').trim())
 
@@ -66,6 +76,30 @@ export function compareEvidenceBlock(
         `  actual: ${JSON.stringify(actual)}`
       ].join('\n')
     )
+  }
+
+  // The `Summary:` line, compared whole — backticks included, because the
+  // emitter writes the value inside an inline code span so it needs no
+  // `body-bare-digits` exemption (see `buildBlockInner`'s doc for why an
+  // exemption could not have bootstrapped past a default-branch-pinned check).
+  //
+  // Absent is fine: the line is additive, and a block without one has nothing
+  // to verify. Present means compared, always — a hand-written
+  // `Summary: 900 files changed, 12000 insertions(+)` fails here, and
+  // unbackticked it is also a bare digit to the other check.
+  const summaryIndex = summaryLineIndex(resolved.maskedRegion)
+  if (summaryIndex !== null) {
+    const storedSummary = resolved.region.split('\n')[summaryIndex] as string
+    const expectedSummary = `${EVIDENCE_SUMMARY_PREFIX}\`${summariseNumstat(actual)}\``
+    if (storedSummary !== expectedSummary) {
+      errors.push(
+        [
+          'evidence-fresh: the Summary line does not match a fresh recompute of the diff it summarises.',
+          `  block:  ${JSON.stringify(storedSummary)}`,
+          `  actual: ${JSON.stringify(expectedSummary)}`
+        ].join('\n')
+      )
+    }
   }
 
   return errors.length > 0 ? { status: 'fail', errors } : { status: 'pass' }

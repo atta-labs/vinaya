@@ -42,7 +42,17 @@
  * identifier-*shape* classifier; each layer masks a whole, independently
  * authorized STRUCTURAL region (a code span, a collapsed reference block, an
  * anchored field, the mandatory Token report table, an anchor-optional
- * header line), never a guess about what a bare digit's shape might mean:
+ * header line), never a guess about what a bare digit's shape might mean.
+ *
+ * **Layers 0–2 are no longer this module's to perform.** They live on
+ * `ScanContext` (`scan-context.ts`), which is also what `check-evidence-fresh`
+ * reads, because the two checks resolving the `AEG:EVIDENCE` region from
+ * different text is exactly the defect of Issue #189: this side exempted the
+ * region's digits while the other side, reading un-normalised text, never
+ * verified it. `buildScanMask` takes the context, so no caller here can
+ * re-derive, skip, or wrap those layers.
+ *   0. Normalise — strip zero-width characters, decode named HTML entities.
+ *      Once, on the whole body, before anything else can be fooled by one.
  *   1. `maskCode` — blind fenced/indented code and inline spans (including
  *      single-backtick spans — this already existed before this redesign;
  *      no new masking primitive was needed). Must run before
@@ -87,7 +97,7 @@
 
 import { anchoredRegionBounds, TIER_FIELD } from '@attalabs/aeg-core'
 import { PROJECT_SLUG, unwrapValue } from '@attalabs/aeg-forge-state'
-import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
+import { ScanContext } from './scan-context'
 
 export type BareDigitViolation = { line: number; text: string }
 export type BareDigitScanResult = { violations: BareDigitViolation[] }
@@ -531,6 +541,31 @@ function blankClosesField(line: string): string {
   return line.slice(0, m.index) + ' '.repeat(m[0].length) + line.slice(m.index + m[0].length)
 }
 
+/**
+ * The `Summary:` line (Issue #189, the deliverable paired with the coupling
+ * fix) gets **no exemption here**, deliberately — it does not need one.
+ *
+ * `vinaya pr report --write` emits its value inside an inline code span
+ * (`Summary: ` + a backticked count), so `maskCode` — layer 1, shared by every
+ * consumer and present in every released version of this check — has already
+ * blanked those digits before this function runs. An exemption would have been
+ * redundant with the masking that already covers it, and every redundant
+ * exemption is one more surface that has to stay paired with a verification.
+ *
+ * It also could not have worked. `vinaya-body-checks.yml` runs this check from
+ * a `pull_request_target` checkout of the DEFAULT BRANCH, never the pull
+ * request's own tree — a deliberate trust anchor. A new exemption is therefore
+ * not in force for the pull request that introduces it, so the first body to
+ * use it is judged by a checker that has never heard of it. Measured, not
+ * reasoned about: the first attempt at this line shipped a bare count with a
+ * matching exemption on the branch, and CI refused it on `main`'s build. A
+ * shape that needs no exemption has no such bootstrap.
+ *
+ * `check-evidence-fresh` still byte-compares the line against a fresh
+ * `summariseNumstat`, and still locates it through `summaryLineIndex` on the
+ * masked view, so a hand-written count is caught twice over: unbackticked it
+ * is a bare digit here, and either way it fails the comparison there.
+ */
 function blankEvidenceField(line: string): string {
   const trimmed = line.trim()
   if (trimmed === '' || EVIDENCE_HEAD_LINE.test(trimmed) || EVIDENCE_HEADING.test(trimmed))
@@ -545,9 +580,19 @@ const BOUNDED_ANCHOR_BLANK: Record<ExemptAnchorField, (line: string) => string> 
   EVIDENCE: blankEvidenceField
 }
 
-/** Full masking pipeline — see module doc for the layer order and why it's load-bearing. */
-function buildScanMask(body: string): string {
-  let masked = maskDetailsBlocks(maskCode(body))
+/**
+ * Full masking pipeline — see module doc for the layer order and why it's
+ * load-bearing.
+ *
+ * Takes the `ScanContext`, never a string. Layers 1–2 (normalise, then mask
+ * code and `<details>`) are already done and live on the context, so this
+ * function cannot re-derive them, cannot skip one, and cannot be handed a
+ * wrapped body: `buildScanMask(stripSoftHyphens(body))` — the decoupling that
+ * defeated two of the twelve guards on `#188` — does not compile. That is the
+ * point. See `scan-context.ts` for what this closes and what it does not.
+ */
+function buildScanMask(ctx: ScanContext): string {
+  let masked = ctx.masked
   masked = blankAnchoredRegions(masked)
   masked = blankPremiseValues(masked)
   masked = blankTokenReportSection(masked)
@@ -565,38 +610,6 @@ const TOKEN_WITH_DIGIT = /\S*\p{Nd}\S*/gu
 
 /** A markdown ordered-list marker's own digits: `1.` / `2)` etc. */
 const LIST_MARKER_TOKEN = /^\p{Nd}{1,9}[.)]$/u
-
-// Zero-width and other Unicode default-ignorable characters — security
-// review round 4 found one embedded inside an otherwise-recognized token
-// ("te" + U+200B + "sts") defeats regex matching regardless of what the
-// regex is looking for — the same risk applies to the masking boundaries
-// themselves (a fence marker, an `AEG:*` tag) under this redesign, not just
-// a vocabulary word under the old one. Stripped from the WHOLE body once, in
-// `checkBareDigits`, before any masking or tokenizing — not per-token here —
-// because the same characters could otherwise hide inside a fence marker or
-// an anchor tag too. Written as escape sequences, deliberately, never as
-// literal characters in this source file — an actual zero-width character
-// sitting in this regex literal would be exactly as invisible and
-// unauditable here as the bypass it exists to close. U+200B ZWSP, U+200C
-// ZWNJ, U+200D ZWJ, U+2060 word joiner, U+FEFF BOM/zero-width-no-break-space.
-export const ZERO_WIDTH = /[\u200B-\u200D\u2060\uFEFF]/g
-
-// A short list of named HTML entities a PR body could plausibly carry
-// (GitHub renders raw HTML in markdown) that would otherwise wrap masking
-// boundary characters (a fence backtick, an anchor's `<`/`>`) invisibly to
-// every mask below (round 4 finding 4). Decoded the same place zero-width
-// characters are stripped — once, on the whole body — not reimplemented as
-// a per-token special case.
-const HTML_ENTITIES: Record<string, string> = {
-  '&quot;': '"',
-  '&apos;': "'",
-  '&lt;': '<',
-  '&gt;': '>',
-  '&amp;': '&'
-}
-export function decodeNamedEntities(body: string): string {
-  return body.replace(/&(?:quot|apos|lt|gt|amp);/g, (m) => HTML_ENTITIES[m] ?? m)
-}
 
 /**
  * A markdown ordered-list marker (`1.`/`2)`) must sit at the very start of
@@ -625,8 +638,13 @@ function isLineLeadingListMarker(line: string, matchStart: number, rawToken: str
  * bypass class rather than one instance of it).
  */
 export function checkBareDigits(rawBody: string): BareDigitScanResult {
-  const body = decodeNamedEntities(rawBody.replace(ZERO_WIDTH, ''))
-  const masked = buildScanMask(body)
+  // The context is obtained once and handed on whole. Nothing here names a
+  // normalisation or masking stage, and nothing here can: `ScanContext.from`
+  // is the only constructor and `buildScanMask` takes the context. This is
+  // closed by the type, not by a test asserting the absence of a wrapper.
+  const ctx = ScanContext.from(rawBody)
+  const body = ctx.normalised
+  const masked = buildScanMask(ctx)
   const maskedLines = masked.split('\n')
   const origLines = body.split('\n')
   const violations: BareDigitViolation[] = []

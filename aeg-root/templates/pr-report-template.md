@@ -46,6 +46,10 @@ Closes #[N]
 
 Run `vinaya pr report --write <this-body-file>` and commit its output — this block is generated, never hand-typed. `check-evidence-fresh` refuses a body whose block doesn't match the head it's attached to.
 
+The block opens with `Head:` and a `Summary:` line — a file and line count derived from the same `--numstat` printed two lines below it, so the body never needs a hand-written "four files changed" sentence that a later commit silently falsifies. Its value is emitted inside backticks, which is what makes it legal under the bare-digit rule below — no exemption, just the same inline code span any other digit needs. Do not type or edit the line: `check-evidence-fresh` byte-compares it, backticks included, against a fresh recompute, and a hand-written count fails there.
+
+**Keep the anchor pair out of the `<details>` block.** `body-bare-digits` blanks every digit inside a collapsed block, so an evidence block hidden in one is exempt from the digit scan and unverifiable — `check-evidence-fresh` refuses rather than passing silently. Both checks resolve this region from one shared, normalised context, so a zero-width character or an HTML entity in a marker no longer makes one of them see a block the other cannot.
+
 <!-- AEG:EVIDENCE:START -->
 [run `vinaya pr report --write` to populate — do not type this block by hand]
 <!-- AEG:EVIDENCE:END -->

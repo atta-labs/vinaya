@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { anchoredRegion } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 import { compareEvidenceBlock } from '../../src/checks/evidence-fresh-logic'
+import { type ResolvedRegion, ScanContext, resolveAnchoredRegion } from '../../src/checks/scan-context'
+import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../src/lib/numstat'
 
 const HEAD = 'a'.repeat(40)
 const NUMSTAT = '2\t1\tapps/cli/src/commands/pr-report.ts\n1\t0\tapps/cli/src/index.ts'
@@ -17,6 +19,7 @@ function evidenceBody(head: string, numstat: string): string {
     '',
     '<!-- AEG:EVIDENCE:START -->',
     `Head: ${head}`,
+    `${EVIDENCE_SUMMARY_PREFIX}\`${summariseNumstat(numstat)}\``,
     '',
     '### Group A — recomputable',
     '',
@@ -37,10 +40,12 @@ function evidenceBody(head: string, numstat: string): string {
   ].join('\n')
 }
 
-function regionOf(body: string): string {
-  const region = anchoredRegion(body, 'EVIDENCE')
-  if (region === null) throw new Error('fixture body carries no AEG:EVIDENCE block')
-  return region
+/** Resolves through the real, shared path — the same one `check-evidence-fresh` uses. */
+function regionOf(body: string): ResolvedRegion {
+  const resolved = resolveAnchoredRegion(ScanContext.from(body), 'EVIDENCE')
+  if (resolved === null) throw new Error('fixture body carries no AEG:EVIDENCE block')
+  if (resolved === 'hidden') throw new Error('fixture body hides its AEG:EVIDENCE block in a <details> block')
+  return resolved
 }
 
 describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)', () => {
