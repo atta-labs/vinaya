@@ -1,7 +1,10 @@
-import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '@attalabs/aeg-core'
-import { describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import {
   FLAG_TABLES,
   FindingsParseError,
@@ -17,6 +20,26 @@ import {
   verifyPostedCodeReview,
   verifyPostedSecurity
 } from '../src/commands/review-post'
+
+const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+const INDEX = join(CLI_ROOT, 'src', 'index.ts')
+
+type CliResult = { status: number; stdout: string; stderr: string }
+
+function runCli(args: string[], cwd: string): CliResult {
+  try {
+    const stdout = execFileSync('bun', [INDEX, ...args], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: process.env
+    })
+    return { status: 0, stdout, stderr: '' }
+  } catch (e) {
+    const err = e as { status?: number; stdout?: string; stderr?: string }
+    return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
+  }
+}
 
 const HEAD = 'a'.repeat(40)
 const TOKENS = { taskId: 'fix/vinaya-review-post', model: 'claude-sonnet-5', tokensIn: '-', tokensOut: '-', cost: '-' }
@@ -321,6 +344,36 @@ describe('(#184) review post refuses an unknown flag instead of posting anyway',
 
   it('does not mistake a value for a flag', () => {
     expect(unknownFlags(['--role', 'security'], known)).toEqual([])
+  })
+})
+
+// The gap `unknownFlags`/`rejectUnknownFlags`'s own unit tests above cannot
+// close: they prove the detector works in isolation, never that
+// `reviewPostCommand` actually calls it. Deleting `rejectUnknownFlags(args)`
+// from `reviewPostCommand` left every test above green (Issue #190, Finding
+// 2) — confirmed live by commenting out that one line and re-running this
+// file: all 53 pre-existing tests still passed. Only a real end-to-end
+// invocation of the command itself closes that gap.
+describe('(#190) the command actually calls rejectUnknownFlags — not just the function in isolation', () => {
+  let cwd: string
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-review-post-test-'))
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it('refuses end-to-end on a genuinely unknown flag, before touching the forge', () => {
+    // `--print-only` is real on `vinaya waiver` but not here — the live
+    // incident `unknownFlags`'s own tests reference above. No `--pr`/`--role`
+    // is supplied: `rejectUnknownFlags` is the command's first statement, so
+    // this must refuse on the unknown flag rather than a later missing-flag
+    // check, and never reach a `gh` call (none is stubbed on PATH here).
+    const r = runCli(['review', 'post', '--print-only'], cwd)
+    expect(r.status).not.toBe(0)
+    expect(r.stderr).toContain('unrecognised flag')
+    expect(r.stderr).toContain('--print-only')
   })
 })
 
