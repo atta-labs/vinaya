@@ -200,15 +200,19 @@ describe('pipe/newline injection — phase, role, and model are untrusted (CLI f
     // out and read by parseTokensLines as its own, forged report line.
     expect(line.split('\n')).toHaveLength(1)
     const rows = parseTokensLines(line)
-    // Parses as exactly one real row — the injected em-dashes are
-    // neutralized (de-spaced) rather than acting as segment boundaries, so
-    // the whole malicious payload lands as inert literal text inside the
-    // role field, never as a second row.
+    // Parses as exactly one real row — every whitespace-flanked dash-like
+    // character in the injected payload is substituted for a non-matching
+    // lookalike, so none of it can act as a segment boundary; the whole
+    // thing lands as inert literal text inside the role field, never as a
+    // second row. ("fake-model"'s own hyphen is never hazardous and stays
+    // literal — this only proves the SEGMENT_SEP-shaped parts are defanged.)
     expect(rows).toHaveLength(1)
     // The real, measured figures survive untouched — the forged 777/777
     // never reaches tokensIn/tokensOut.
     expect(rows[0]).toMatchObject({ phase: '3: develop', tokensIn: 1, tokensOut: 1 })
-    expect(rows[0]?.role).not.toContain(' — ')
+    // No whitespace-flanked dash (the actual hazardous shape) survives —
+    // every em-dash in the payload, all whitespace-flanked, is neutralized.
+    expect(rows[0]?.role).not.toMatch(/\s[-–—]\s/)
   })
 
   it('formatTokensLine: an entirely ordinary hyphenated phase — no attacker needed — no longer discards the real usage', () => {
@@ -227,11 +231,11 @@ describe('pipe/newline injection — phase, role, and model are untrusted (CLI f
     const rows = parseTokensLines(line)
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ role: 'Developer', tokensIn: 2417499, tokensOut: 25604 })
-    // The dash survives, just de-spaced — legible, not silently dropped.
-    expect(rows[0]?.phase).toBe('9-fix token report edge case')
+    // The dash survives as a lookalike character, spacing UNCHANGED — legible, not silently dropped.
+    expect(rows[0]?.phase).toBe('9 ‑ fix token report edge case')
   })
 
-  it('formatTokensLine: an em-dash or en-dash flanked by whitespace in role/model is neutralized the same way', () => {
+  it('formatTokensLine: only a whitespace-flanked dash is neutralized — an ordinary hyphenated word stays untouched', () => {
     const line = formatTokensLine({
       phase: '3: develop',
       role: 'on-call – Developer',
@@ -239,7 +243,67 @@ describe('pipe/newline injection — phase, role, and model are untrusted (CLI f
     })
     const rows = parseTokensLines(line)
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ role: 'on-call–Developer', agentModel: 'claude–opus', tokensIn: 1, tokensOut: 1 })
+    // The en-dash (whitespace on both sides) is substituted; "on-call"'s own
+    // hyphen (letters on both sides, never reachable by SEGMENT_SEP) is not.
+    expect(rows[0]).toMatchObject({
+      role: 'on-call ‒ Developer',
+      agentModel: 'claude ‒ opus',
+      tokensIn: 1,
+      tokensOut: 1
+    })
+  })
+
+  it('formatTokensLine: an ordinary hyphenated model id (never whitespace-flanked) is never mangled', () => {
+    // A whole-field substitution (an earlier draft of this fix) replaced
+    // every hyphen regardless of context, which would have broken every
+    // real model id shaped like this — none of them are hazardous, since
+    // none of their hyphens ever sit next to whitespace or a field edge.
+    const line = formatTokensLine({
+      phase: '3: develop',
+      role: 'Developer',
+      summary: summary({ input: 1, output: 1, model: 'claude-sonnet-5-20260101' })
+    })
+    expect(line).toContain('claude-sonnet-5-20260101')
+    const rows = parseTokensLines(line)
+    expect(rows[0]?.agentModel).toBe('claude-sonnet-5-20260101')
+  })
+
+  it("formatTokensLine: a dash at a field's own EDGE cannot recombine with the join's own separator whitespace — round three-B, the previous field-local fix missed this", () => {
+    // Reported live: `--phase "9 -" --role "Dev -"` — neither field has a
+    // dash with whitespace on BOTH sides internally (the earlier de-spacing
+    // fix only ever looked inside one field at a time), but the trailing
+    // `" -"` combines with the template's own leading `" — "` between
+    // fields to read back as `"...9 - — ..."`, a real SEGMENT_SEP match
+    // spanning the boundary — silently dropping the real usage. A
+    // character-substitution fix (rather than a whitespace-position fix)
+    // closes this by construction: there is no longer a matchable dash
+    // character anywhere in the field, so no position — start, middle, end,
+    // or a join boundary — can ever reconstruct the pattern.
+    const line = formatTokensLine({
+      phase: '9 -',
+      role: 'Dev -',
+      summary: summary({ input: 555, output: 666 })
+    })
+    const rows = parseTokensLines(line)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ tokensIn: 555, tokensOut: 666 })
+  })
+
+  it('formatTokensLine: two previously-colliding phases stay distinguishable — one never touched, one substituted', () => {
+    // The de-spacing approach this replaces was lossy: "9-fix" and
+    // "9 - fix" both sanitized to the byte-identical "9-fix", so two
+    // genuinely different phase labels became indistinguishable in the
+    // ledger. "9-fix"'s hyphen is never hazardous (letters/digits on both
+    // sides) and is left exactly as written; "9 - fix"'s is whitespace-
+    // flanked and gets substituted — the two stay distinct either way.
+    const a = formatTokensLine({ phase: '9-fix', role: 'Developer', summary: summary({ input: 1, output: 1 }) })
+    const b = formatTokensLine({ phase: '9 - fix', role: 'Developer', summary: summary({ input: 1, output: 1 }) })
+    expect(a).not.toBe(b)
+    const rowA = parseTokensLines(a)[0]
+    const rowB = parseTokensLines(b)[0]
+    expect(rowA?.phase).toBe('9-fix')
+    expect(rowB?.phase).toBe('9 ‑ fix')
+    expect(rowA?.phase).not.toBe(rowB?.phase)
   })
 })
 

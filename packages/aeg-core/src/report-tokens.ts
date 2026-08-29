@@ -118,28 +118,69 @@ function sanitizeForTableCell(value: string): string {
 }
 
 /**
- * `Tokens: …` line sanitizer: neutralizes a whitespace-flanked dash-like
- * character on top of `stripNewlines` — `parse-token-report.ts`'s
- * `SEGMENT_SEP` (`/\s+[—–-]\s+/`) is exactly that shape, and it needs no
- * attacker at all: an entirely ordinary hyphenated phase ("9 - fix token
- * report edge case") already produces it, and `parseTokensLines` silently
- * returns zero rows for the resulting line, discarding real measured usage
- * with no error (found live, same root cause as the table-row `|` gap,
- * different delimiter — the earlier fix covered `formatTokenReportRow`'s
- * grammar but missed this sibling function's own). Removing the flanking
- * whitespace, not the dash itself, drops the segment-boundary match without
- * dropping the character: "9 - fix" becomes "9-fix", still legible. Runs
- * after `stripNewlines` so a newline collapsed to a space next to a dash is
- * caught too. Used by `formatTokensLine` for every free-text field it
- * interpolates — `phase`, `role`, and the derived `model`.
+ * `Tokens: …` line sanitizer. `parse-token-report.ts`'s `SEGMENT_SEP`
+ * (`/\s+[—–-]\s+/`) is a whitespace-flanked dash — and a field-local fix
+ * (removing the flanking whitespace around a dash the field itself
+ * contains) is provably incomplete: the JOIN ITSELF contributes whitespace
+ * on both sides of every field (the literal `" — "` between segments), so a
+ * field merely ENDING or STARTING with a dash reconstructs the exact same
+ * pattern from the boundary alone — `"9 -"` joined with the next field's
+ * leading `" — "` reads back as `"...9 - — ..."`, a real `SEGMENT_SEP`
+ * match, with no dash-adjacent whitespace inside the field at all to strip
+ * (found live: `--phase "9 -" --role "Dev -"` silently dropped the real
+ * `tokensIn`). No amount of field-local whitespace-stripping closes this —
+ * the hazard is the CHARACTER, reachable from any position once anything
+ * joins around it, not a particular spacing.
+ *
+ * The fix that actually closes it: remove the character itself from the
+ * field's vocabulary, but ONLY where it's actually reachable by
+ * `SEGMENT_SEP` — a dash counts as reachable on a given side when that
+ * side is whitespace, OR is the very edge of the field (every field in
+ * this grammar sits directly against a `" — "` join or the `"Tokens: "`
+ * prefix, so an edge is guaranteed adjacent to boundary whitespace once
+ * concatenated). A dash is substituted only when BOTH sides are reachable
+ * — matching exactly what `SEGMENT_SEP` itself requires (whitespace on
+ * both sides) once the guaranteed boundary whitespace is accounted for.
+ * An ordinary hyphenated identifier like `"claude-sonnet-5"` has
+ * non-whitespace, non-edge neighbors on both sides of every hyphen and is
+ * left completely untouched — a whole-field substitution (an earlier draft
+ * of this fix) needlessly mangled every such identifier, which is why this
+ * checks each dash's actual neighbors instead of blanket-replacing the
+ * class. This is also less lossy than the whitespace-stripping this
+ * replaces: two phase labels that only differed in spacing around a
+ * hazardous hyphen (`"9-fix"` — never hazardous, untouched — vs.
+ * `"9 - fix"` — hazardous, substituted) used to sanitize to byte-identical
+ * output; substitution preserves spacing, changing only the one character
+ * that must never survive verbatim in a hazardous position.
  */
+const DASH_LOOKALIKES: Record<string, string> = {
+  '-': '‑', // U+2011 NON-BREAKING HYPHEN
+  '–': '‒', // U+2012 FIGURE DASH
+  '—': '―' // U+2015 HORIZONTAL BAR
+}
+const DASH_CHARS = new Set(Object.keys(DASH_LOOKALIKES))
+
 function sanitizeForTokensLine(value: string): string {
-  return stripNewlines(value).replace(/\s+([—–-])\s+/g, '$1')
+  const stripped = stripNewlines(value)
+  let result = ''
+  for (let i = 0; i < stripped.length; i++) {
+    const ch = stripped[i] as string
+    if (DASH_CHARS.has(ch)) {
+      const leftReachable = i === 0 || /\s/.test(stripped[i - 1] as string)
+      const rightReachable = i === stripped.length - 1 || /\s/.test(stripped[i + 1] as string)
+      if (leftReachable && rightReachable) {
+        result += DASH_LOOKALIKES[ch]
+        continue
+      }
+    }
+    result += ch
+  }
+  return result
 }
 
-/** Shared by `formatTokensLine` and `formatTokenReportRow` — one place that turns a summary into the model/tokensIn/tokensOut cells both grammars report, so the two shapes can never drift on the arithmetic. Deliberately unsanitized: `model` is free text here and each caller applies its OWN grammar's sanitizer to it, same as it does for `phase`/`role` — a single shared sanitizer here would have to pick one grammar's rules for both. */
-function renderCells(input: TokensLineInput): { model: string; tokensIn: string; tokensOut: string } {
-  const model = input.modelOverride ?? input.summary?.model ?? '—'
+/** Shared by `formatTokensLine` and `formatTokenReportRow` — one place that turns a summary into the model/tokensIn/tokensOut cells both grammars report, so the two shapes can never drift on the arithmetic. `model` is `null` rather than the `—` placeholder when neither `modelOverride` nor the summary supplies one — that placeholder is a sentinel THIS module emits, never untrusted content, and must never be run through either grammar's sanitizer (which would rewrite its `—` into something that no longer reads as "unknown"). Each caller substitutes the literal `—` for `null` itself, after sanitizing everything that came from `input`. */
+function renderCells(input: TokensLineInput): { model: string | null; tokensIn: string; tokensOut: string } {
+  const model = input.modelOverride ?? input.summary?.model ?? null
   if (!input.summary) return { model, tokensIn: '—', tokensOut: '—' }
   const { inputTokens, cacheCreationInputTokens, cacheReadInputTokens, outputTokens } = input.summary.components
   const tokensIn = inputTokens + cacheCreationInputTokens + cacheReadInputTokens
@@ -150,7 +191,7 @@ export function formatTokensLine(input: TokensLineInput): string {
   const { model, tokensIn, tokensOut } = renderCells(input)
   const phase = sanitizeForTokensLine(input.phase)
   const role = sanitizeForTokensLine(input.role)
-  const safeModel = sanitizeForTokensLine(model)
+  const safeModel = model === null ? '—' : sanitizeForTokensLine(model)
   if (!input.summary) {
     return `Tokens: ${phase} — ${role} — ${safeModel} — —`
   }
@@ -174,7 +215,7 @@ export function formatTokenReportRow(input: TokenReportRowInput): string {
   const { model, tokensIn, tokensOut } = renderCells(input)
   const phase = sanitizeForTableCell(input.phase)
   const role = sanitizeForTableCell(input.role)
-  const safeModel = sanitizeForTableCell(model)
+  const safeModel = model === null ? '—' : sanitizeForTableCell(model)
   const date = sanitizeForTableCell(input.date)
   return `| ${phase} | ${role} | ${safeModel} | ${tokensIn} | ${tokensOut} | — | ${date} |`
 }
