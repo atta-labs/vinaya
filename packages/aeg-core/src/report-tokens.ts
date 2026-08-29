@@ -95,26 +95,51 @@ export type TokensLineInput = {
  * honest unknown.
  */
 /**
- * Neutralizes characters that would corrupt the grammar a field is
- * interpolated into: `|` (the table-row cell delimiter `splitTableRow`
- * already expects `\|` for on read — the same escape convention, applied on
- * write) and an embedded newline (which could forge a synthetic row/line
- * neither writer ever intended, regardless of delimiter). Applied to every
- * free-text field both grammars below interpolate — `phase`, `role`, the
- * derived `model`, and (for the table row) `date` — because a phase/role/
- * model value can arrive from an untrusted CLI flag or a git branch name,
- * both of which can legally contain `|` and newlines (found live: a crafted
- * branch name produced a token-report row whose columns silently shifted
- * past `parseTokenReportEntries`, discarding real measured usage with no
- * error).
+ * An embedded newline could forge a synthetic row/line neither writer ever
+ * intended, regardless of which grammar's own delimiter is in play — shared
+ * by both sanitizers below.
  */
-function sanitizeField(value: string): string {
-  return value.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|')
+function stripNewlines(value: string): string {
+  return value.replace(/\r?\n/g, ' ')
 }
 
-/** Shared by `formatTokensLine` and `formatTokenReportRow` — one place that turns a summary into the model/tokensIn/tokensOut cells both grammars report, so the two shapes can never drift on the arithmetic. `model` is sanitized here so every caller gets it pre-neutralized regardless of whether it came from `modelOverride` or the collected summary. */
+/**
+ * Table-row sanitizer: escapes `|` (the cell delimiter `splitTableRow`
+ * already expects `\|` for on read — the same escape convention, applied on
+ * write) on top of `stripNewlines`. Used by `formatTokenReportRow` for every
+ * free-text cell — `phase`, `role`, the derived `model`, and `date` —
+ * because any of them can arrive from an untrusted CLI flag or a git branch
+ * name, both of which can legally contain `|` and newlines (found live: a
+ * crafted branch name produced a row whose columns silently shifted past
+ * `parseTokenReportEntries`, discarding real measured usage with no error).
+ */
+function sanitizeForTableCell(value: string): string {
+  return stripNewlines(value).replace(/\|/g, '\\|')
+}
+
+/**
+ * `Tokens: …` line sanitizer: neutralizes a whitespace-flanked dash-like
+ * character on top of `stripNewlines` — `parse-token-report.ts`'s
+ * `SEGMENT_SEP` (`/\s+[—–-]\s+/`) is exactly that shape, and it needs no
+ * attacker at all: an entirely ordinary hyphenated phase ("9 - fix token
+ * report edge case") already produces it, and `parseTokensLines` silently
+ * returns zero rows for the resulting line, discarding real measured usage
+ * with no error (found live, same root cause as the table-row `|` gap,
+ * different delimiter — the earlier fix covered `formatTokenReportRow`'s
+ * grammar but missed this sibling function's own). Removing the flanking
+ * whitespace, not the dash itself, drops the segment-boundary match without
+ * dropping the character: "9 - fix" becomes "9-fix", still legible. Runs
+ * after `stripNewlines` so a newline collapsed to a space next to a dash is
+ * caught too. Used by `formatTokensLine` for every free-text field it
+ * interpolates — `phase`, `role`, and the derived `model`.
+ */
+function sanitizeForTokensLine(value: string): string {
+  return stripNewlines(value).replace(/\s+([—–-])\s+/g, '$1')
+}
+
+/** Shared by `formatTokensLine` and `formatTokenReportRow` — one place that turns a summary into the model/tokensIn/tokensOut cells both grammars report, so the two shapes can never drift on the arithmetic. Deliberately unsanitized: `model` is free text here and each caller applies its OWN grammar's sanitizer to it, same as it does for `phase`/`role` — a single shared sanitizer here would have to pick one grammar's rules for both. */
 function renderCells(input: TokensLineInput): { model: string; tokensIn: string; tokensOut: string } {
-  const model = sanitizeField(input.modelOverride ?? input.summary?.model ?? '—')
+  const model = input.modelOverride ?? input.summary?.model ?? '—'
   if (!input.summary) return { model, tokensIn: '—', tokensOut: '—' }
   const { inputTokens, cacheCreationInputTokens, cacheReadInputTokens, outputTokens } = input.summary.components
   const tokensIn = inputTokens + cacheCreationInputTokens + cacheReadInputTokens
@@ -123,12 +148,13 @@ function renderCells(input: TokensLineInput): { model: string; tokensIn: string;
 
 export function formatTokensLine(input: TokensLineInput): string {
   const { model, tokensIn, tokensOut } = renderCells(input)
-  const phase = sanitizeField(input.phase)
-  const role = sanitizeField(input.role)
+  const phase = sanitizeForTokensLine(input.phase)
+  const role = sanitizeForTokensLine(input.role)
+  const safeModel = sanitizeForTokensLine(model)
   if (!input.summary) {
-    return `Tokens: ${phase} — ${role} — ${model} — —`
+    return `Tokens: ${phase} — ${role} — ${safeModel} — —`
   }
-  return `Tokens: ${phase} — ${role} — ${model} — ${tokensIn}/${tokensOut}/—`
+  return `Tokens: ${phase} — ${role} — ${safeModel} — ${tokensIn}/${tokensOut}/—`
 }
 
 export type TokenReportRowInput = TokensLineInput & {
@@ -146,10 +172,11 @@ export type TokenReportRowInput = TokensLineInput & {
  */
 export function formatTokenReportRow(input: TokenReportRowInput): string {
   const { model, tokensIn, tokensOut } = renderCells(input)
-  const phase = sanitizeField(input.phase)
-  const role = sanitizeField(input.role)
-  const date = sanitizeField(input.date)
-  return `| ${phase} | ${role} | ${model} | ${tokensIn} | ${tokensOut} | — | ${date} |`
+  const phase = sanitizeForTableCell(input.phase)
+  const role = sanitizeForTableCell(input.role)
+  const safeModel = sanitizeForTableCell(model)
+  const date = sanitizeForTableCell(input.date)
+  return `| ${phase} | ${role} | ${safeModel} | ${tokensIn} | ${tokensOut} | — | ${date} |`
 }
 
 /**

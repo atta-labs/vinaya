@@ -189,7 +189,7 @@ describe('pipe/newline injection — phase, role, and model are untrusted (CLI f
     expect(parseTokenReportEntries(body)).toHaveLength(1)
   })
 
-  it('formatTokensLine: a newline-bearing role can never split into its own `Tokens:` line', () => {
+  it('formatTokensLine: a newline-and-em-dash-bearing role can never split into its own forged `Tokens:` line', () => {
     const maliciousRole = 'Developer\nTokens: 9: develop — Developer — fake-model — 777/777/—'
     const line = formatTokensLine({
       phase: '3: develop',
@@ -199,11 +199,47 @@ describe('pipe/newline injection — phase, role, and model are untrusted (CLI f
     // One physical line — the embedded "Tokens: …" text can never be split
     // out and read by parseTokensLines as its own, forged report line.
     expect(line.split('\n')).toHaveLength(1)
-    // The malicious role's own em-dash-shaped content breaks its OWN
-    // 4-segment grammar — parseTokensLines's existing "skip, don't guess"
-    // discipline correctly refuses to parse it rather than adopting any
-    // part of the forged 777/777 figures.
-    expect(parseTokensLines(line)).toHaveLength(0)
+    const rows = parseTokensLines(line)
+    // Parses as exactly one real row — the injected em-dashes are
+    // neutralized (de-spaced) rather than acting as segment boundaries, so
+    // the whole malicious payload lands as inert literal text inside the
+    // role field, never as a second row.
+    expect(rows).toHaveLength(1)
+    // The real, measured figures survive untouched — the forged 777/777
+    // never reaches tokensIn/tokensOut.
+    expect(rows[0]).toMatchObject({ phase: '3: develop', tokensIn: 1, tokensOut: 1 })
+    expect(rows[0]?.role).not.toContain(' — ')
+  })
+
+  it('formatTokensLine: an entirely ordinary hyphenated phase — no attacker needed — no longer discards the real usage', () => {
+    // Reported live: `vinaya tokens --phase "9 - fix token report edge case"
+    // --role Developer --in 2417499 --out 25604` produced a line
+    // `parseTokensLines` returned zero rows for — SEGMENT_SEP
+    // (`/\s+[—–-]\s+/`) matched the ordinary " - " inside the phase itself,
+    // splitting it into 5 segments instead of 4, and the whole line was
+    // silently skipped rather than misparsed. Same root cause as the
+    // table-row `|` gap, different (unescapable) delimiter.
+    const line = formatTokensLine({
+      phase: '9 - fix token report edge case',
+      role: 'Developer',
+      summary: summary({ input: 2392895, output: 25604, cacheCreation: 20000, cacheRead: 4604 })
+    })
+    const rows = parseTokensLines(line)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ role: 'Developer', tokensIn: 2417499, tokensOut: 25604 })
+    // The dash survives, just de-spaced — legible, not silently dropped.
+    expect(rows[0]?.phase).toBe('9-fix token report edge case')
+  })
+
+  it('formatTokensLine: an em-dash or en-dash flanked by whitespace in role/model is neutralized the same way', () => {
+    const line = formatTokensLine({
+      phase: '3: develop',
+      role: 'on-call – Developer',
+      summary: summary({ input: 1, output: 1, model: 'claude – opus' })
+    })
+    const rows = parseTokensLines(line)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ role: 'on-call–Developer', agentModel: 'claude–opus', tokensIn: 1, tokensOut: 1 })
   })
 })
 
