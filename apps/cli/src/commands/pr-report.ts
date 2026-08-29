@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { anchoredRegionBounds } from '@attalabs/aeg-core'
+import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
 import { ScanContext } from '../checks/scan-context'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../lib/numstat'
 import { packageRoot } from '../lib/package-root.js'
@@ -361,6 +362,99 @@ export function replaceEvidenceBlock(body: string, blockInner: string): string {
   }
   const sep = body.length === 0 || body.endsWith('\n') ? '' : '\n'
   return `${body}${sep}\n${full}\n`
+}
+
+/**
+ * `AEG:TOKENS` — the second block `--write` fills, alongside `AEG:EVIDENCE`.
+ * Unlike Evidence, this one has APPEND semantics: a Developer re-entry after
+ * `CHANGES_REQUESTED` reports again, and `aeg-root/tranche-model.md` §12 is
+ * explicit that a second report is a second row — "never a sum, never an
+ * overwrite" — with the tranche total derived at read time
+ * (`sum-ledger.ts`). `replaceEvidenceBlock`'s replace-in-place model is
+ * therefore the wrong one to copy here; see this task's brief (#270) for why.
+ *
+ * The anchors are deliberately sited INSIDE the `## Token report` heading
+ * this repo's own PR template already carries — `body-bare-digits-logic.ts`'s
+ * `blankTokenReportSection` already blanks that whole heading's content,
+ * unconditionally, before the bare-digit scan ever runs. Anchoring inside a
+ * region a sibling check already exempts needs no new exemption of any kind,
+ * which is the point: `body-bare-digits-logic.ts` stays untouched, and #189
+ * (a still-open exemption/verification coupling failure) never has a new
+ * instance to reopen.
+ *
+ * `TOKEN_REPORT_HEADING`/`HEADING_LINE` intentionally duplicate
+ * `blankTokenReportSection`'s own heading/section-bound regexes rather than
+ * importing them (that module is out of this task's surface, and neither
+ * regex is exported) — the region this writer creates must be exactly the
+ * region that check later blanks, so the two definitions are kept
+ * byte-identical on purpose.
+ */
+const TOKENS_START = '<!-- AEG:TOKENS:START -->'
+const TOKENS_END = '<!-- AEG:TOKENS:END -->'
+const TOKEN_REPORT_HEADING = /^#{1,6}\s*token report\s*$/i
+const HEADING_LINE = /^#{1,6}\s/
+const TOKEN_TABLE_HEADER = '| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |'
+const TOKEN_TABLE_SEPARATOR = '|---|---|---|---|---|---|---|'
+
+/**
+ * Locate the real (non-fenced) `AEG:TOKENS` anchor pair, if one exists —
+ * masked-search, same discipline `anchoredRegionBounds` uses for the other
+ * anchored fields, so a decoy copy pasted into this PR's own Test Plan
+ * evidence (a fenced paste of "the resulting block", exactly what this
+ * task's own Test Plan asks the Developer to do) can never be mistaken for
+ * the real block. Per-line comparison against the masked view: `maskCode`
+ * blanks fenced/inline code to same-length spaces without touching line
+ * structure, so a decoy line never equals the literal anchor text after
+ * masking, while the real anchor (never fenced) always does.
+ */
+function tokensBlockLineBounds(maskedLines: string[]): { startIdx: number; endIdx: number } | null {
+  const startIdx = maskedLines.findIndex((l) => l.trim() === TOKENS_START)
+  if (startIdx === -1) return null
+  for (let i = startIdx + 1; i < maskedLines.length; i++) {
+    if ((maskedLines[i] as string).trim() === TOKENS_END) return { startIdx, endIdx: i }
+  }
+  return null
+}
+
+/**
+ * Splices `addition` (the new row, plus an optional legibility note) into
+ * `body`'s `AEG:TOKENS` block — appending immediately before the closing
+ * anchor when a real block already exists, or creating a fresh one
+ * (sited inside the `## Token report` heading section when present, appended
+ * at the end of the body otherwise) when it doesn't. Never edits an existing
+ * row: append semantics per §12, enforced by construction — there is no
+ * code path here that touches a byte before the closing anchor.
+ */
+export function writeTokensBlock(body: string, addition: string): string {
+  const rawLines = body.split('\n')
+  const maskedLines = maskCode(body).split('\n')
+  const additionLines = addition.split('\n')
+
+  const existing = tokensBlockLineBounds(maskedLines)
+  if (existing) {
+    const before = rawLines.slice(0, existing.endIdx)
+    const after = rawLines.slice(existing.endIdx)
+    return [...before, ...additionLines, ...after].join('\n')
+  }
+
+  const freshBlock = [TOKENS_START, TOKEN_TABLE_HEADER, TOKEN_TABLE_SEPARATOR, ...additionLines, TOKENS_END]
+
+  const headingIdx = rawLines.findIndex((l) => TOKEN_REPORT_HEADING.test(l))
+  if (headingIdx !== -1) {
+    let sectionEnd = rawLines.length
+    for (let i = headingIdx + 1; i < rawLines.length; i++) {
+      if (HEADING_LINE.test(rawLines[i] as string)) {
+        sectionEnd = i
+        break
+      }
+    }
+    const before = rawLines.slice(0, headingIdx + 1)
+    const after = rawLines.slice(sectionEnd)
+    return [...before, '', ...freshBlock, '', ...after].join('\n')
+  }
+
+  const sep = body.length === 0 || body.endsWith('\n') ? [] : ['']
+  return [...rawLines, ...sep, '', '## Token report', '', ...freshBlock, ''].join('\n')
 }
 
 export type ReportResult = { block: string; blockInner: string; gatesFailed: boolean; gateOutcomes: GateOutcome[] }
