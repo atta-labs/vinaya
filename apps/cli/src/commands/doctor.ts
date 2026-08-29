@@ -23,6 +23,7 @@ import {
   type MeteringCapability,
   parseDocOwners,
   parsePnpmWorkspaceYaml,
+  parseRegistry,
   pointerToPath,
   resolveMeteringCapability
 } from '@attalabs/aeg-core'
@@ -67,6 +68,7 @@ import {
 } from '../lib/detect.js'
 import { printJson } from '../lib/envelope.js'
 import { checksMissingEnvDeclaration, envDeclarationWarning } from '../lib/env-lint.js'
+import { PROJECTS_REGISTRY_PATH } from '../lib/registry-write.js'
 import { markerLines, renderBlock, resolveManagedBlockPath } from '../lib/ops.js'
 import { packageRoot } from '../lib/package-root.js'
 
@@ -874,6 +876,56 @@ function diagnosePrincipals(config: VinayaConfig): Finding {
 }
 
 // ---------------------------------------------------------------------------
+// Projects coherence — `.vinaya/projects.md` (the registry) and
+// `vinaya.config.json`'s `projects` array are two independent, coexisting
+// homes for the same declared fact (task 15/#44) — `init product` writes
+// both, but either can drift: hand-edited, one file reverted, or written by
+// an older package version that only knew one of the two. `info` severity,
+// always: an adopter who keeps only the registry (the common case — no
+// shipped surface in THIS repo reads `projects` yet) is not broken, and
+// neither is one who only ever populates the config side. This purely
+// reports the drift; it never picks a side or writes anything.
+//
+// The Issue's original text also named a third shape — a `project:<name>`
+// label with no config entry — inherited from before `init product` stopped
+// creating that label (#72: the label is retired outright, replaced by the
+// registry row as the non-config source of truth). No label exists to check
+// against any more, so that third shape has no live analogue here; the two
+// shapes below (registry-only, config-only) are what remain.
+// ---------------------------------------------------------------------------
+function diagnoseProjectsCoherence(repoRoot: string, config: VinayaConfig | null): Finding[] {
+  const registryAbs = join(repoRoot, PROJECTS_REGISTRY_PATH)
+  const registryNames = existsSync(registryAbs)
+    ? new Set(parseRegistry(readFileSync(registryAbs, 'utf-8')).map((p) => p.name))
+    : new Set<string>()
+  const configNames = new Set((config?.projects ?? []).map((p) => p.name))
+
+  if (registryNames.size === 0 && configNames.size === 0) return []
+
+  const registryOnly = [...registryNames].filter((n) => !configNames.has(n)).sort()
+  const configOnly = [...configNames].filter((n) => !registryNames.has(n)).sort()
+
+  const findings: Finding[] = []
+  if (registryOnly.length > 0) {
+    findings.push(
+      info(
+        'projects',
+        `${PROJECTS_REGISTRY_PATH} declares ${registryOnly.join(', ')} with no matching vinaya.config.json "projects" entry.`
+      )
+    )
+  }
+  if (configOnly.length > 0) {
+    findings.push(
+      info(
+        'projects',
+        `vinaya.config.json "projects" declares ${configOnly.join(', ')} with no matching ${PROJECTS_REGISTRY_PATH} row.`
+      )
+    )
+  }
+  return findings
+}
+
+// ---------------------------------------------------------------------------
 // Check 8 — test CI, report-only, a heuristic. Vinaya requires a Test Plan on
 // every PR and enforces it as a blocking gate but never checks whether
 // anything actually runs the adopter's tests — this names that asymmetry.
@@ -990,6 +1042,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
     findings.push(...diagnoseVinayaOnPath(ctx.agents))
   }
 
+  findings.push(...diagnoseProjectsCoherence(repo.repoRoot, configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseBlastRadiusDeprecation(repo.repoRoot, configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseBriefSchemaDrift(configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseEnvDeclarations(repo.repoRoot, configRead.kind === 'ok' ? configRead.config : null))
