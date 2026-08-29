@@ -728,3 +728,35 @@ describe('ManagedBlockRecordSchema.path — canonical hook-block spellings only 
     expect(isCanonicalHookBlockPath('.vinaya/hooks/')).toBe(false)
   })
 })
+
+// Task 15 (#44): a config-native `projects` array alongside `.vinaya/projects.md`.
+describe('VinayaConfigSchema.projects — additive-only', () => {
+  it('an existing config with no "projects" key still validates (this repo\'s own vinaya.config.json)', () => {
+    const raw = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', '..', 'vinaya.config.json'), 'utf-8'))
+    const parsed = VinayaConfigSchema.safeParse(raw)
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.data.projects).toBeUndefined()
+  })
+
+  it('accepts a minimal entry (name only)', () => {
+    const parsed = VinayaConfigSchema.safeParse({ projects: [{ name: 'mobile' }] })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('accepts a full entry (name, description, path)', () => {
+    const parsed = VinayaConfigSchema.safeParse({
+      projects: [{ name: 'mobile', description: 'The mobile client', path: 'apps/mobile' }]
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('rejects an entry with no name', () => {
+    const parsed = VinayaConfigSchema.safeParse({ projects: [{ path: 'apps/mobile' }] })
+    expect(parsed.success).toBe(false)
+  })
+
+  it('rejects an empty-string name', () => {
+    const parsed = VinayaConfigSchema.safeParse({ projects: [{ name: '' }] })
+    expect(parsed.success).toBe(false)
+  })
+})
