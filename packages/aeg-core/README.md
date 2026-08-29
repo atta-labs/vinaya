@@ -10,6 +10,8 @@ Two capabilities, plus one small shared I/O-injected helper:
 
 The `bin/` directory carries the check binaries (`verify-dispatch`, `verify-docs`, `verify-coherence`, `open-pr`, `open-issue`, …) that mechanize the AEG gates. They are consumed through the `@attalabs/vinaya` CLI, which bundles this package at build time.
 
+Two `src/*.test.ts` files double as self-audit gates over this package's own tree, both `src/` and `bin/`: `symbol-collisions.test.ts` refuses a name declared in more than one non-test source file (a baselined `KNOWN_COLLISIONS` set covers what's already there), and `no-binary-sources.test.ts` refuses a tracked file that git treats as binary — either a literal NUL byte or a `.gitattributes` `binary` marking.
+
 This package is published as TypeScript source (`main` points at `./src/index.ts`) — consume it with Bun or a TS-aware bundler, not plain Node.
 
 Part of the fixed release group `@attalabs/aeg-types` / `@attalabs/aeg-forge-state` / `@attalabs/aeg-core` / `@attalabs/vinaya-sources` / `@attalabs/vinaya`: all five always share one version, and internal dependencies are pinned exactly.

@@ -29,10 +29,22 @@ function sourceFiles(dir: string, prefix = ''): [string, string][] {
   return out
 }
 
+/**
+ * Every non-test source file this package ships, both directories: `src/`
+ * (this file's own directory) and the sibling `bin/` — every published CI
+ * enforcement binary, and until now entirely unscanned. `bin/` entries are
+ * prefixed so a name collision report can tell the two directories apart;
+ * `src/` keeps its bare relative path, matching every existing baseline entry.
+ */
+function packageSourceFiles(): [string, string][] {
+  const srcDir = fileURLToPath(new URL('.', import.meta.url))
+  const binDir = join(srcDir, '..', 'bin')
+  return [...sourceFiles(srcDir), ...sourceFiles(binDir, 'bin')]
+}
+
 /** Every collision in this package, from the recursive scan — shared by the live case above and the gate below. */
 function packageCollisions() {
-  const dir = fileURLToPath(new URL('.', import.meta.url))
-  return findCollisions(sourceFiles(dir).flatMap(([rel, abs]) => declarationsIn(rel, readFileSync(abs, 'utf8'))))
+  return findCollisions(packageSourceFiles().flatMap(([rel, abs]) => declarationsIn(rel, readFileSync(abs, 'utf8'))))
 }
 
 describe('symbol-collision detection', () => {
@@ -114,35 +126,163 @@ describe('symbol-collision detection', () => {
  * The gate, as opposed to the unit tests above: a NEW name declared in two
  * files of this package fails here.
  *
- * Baselined rather than emptied. Each entry below is a real hazard, and each
- * needs a behaviour-affecting consolidation that does not belong in the same
- * change as the detector:
+ * Baselined rather than emptied. Each entry below is either a confirmed
+ * byte-identical harmless duplicate, or a real hazard needing a behaviour-
+ * affecting consolidation that does not belong in the same change as the
+ * detector. `bin/` joined the scan (Issue #190) and surfaced everything from
+ * `AssociatedPr` through `shJson` below — every one individually diffed, not
+ * bulk-accepted:
  *
+ *   - `AssociatedPr`   — `check-direct-main-push.ts`'s `{ number, merged_at }`
+ *                        vs `archive-task.ts`'s `{ number }` only. Different
+ *                        shape, unfixed.
+ *   - `BodyResult`     — `{ body, source }`, byte-identical in `open-issue.ts`
+ *                        and `open-pr.ts`. Harmless.
+ *   - `BodySource`     — byte-identical union type, same two files. Harmless.
  *   - `checkClosesN`   — two EXPORTED functions, different signatures, in
  *                        `brief-validation.ts` and `coherence-checks.ts`. A
  *                        claim about "checkClosesN" resolves to neither.
+ *   - `createLabel`    — `check-direct-main-push.ts` shells out through an
+ *                        execFileSync-array-shaped local `sh`; `dead-branch-
+ *                        audit.ts` through a shell-string-shaped local `sh`.
+ *                        Different call shape, unfixed.
+ *   - `ensureLabelExists` — three-way. `check-direct-main-push.ts`'s wrapper
+ *                        takes `(owner, repo)`; `dead-branch-audit.ts`'s takes
+ *                        one `{ owner, repo }`; both wrap the real shared
+ *                        4-arg `ensureLabelExists` in `src/ensure-label.ts`,
+ *                        imported under an alias — so the alias's own name
+ *                        collides with two locally-named shadows of itself.
+ *   - `extractTitle`   — byte-identical in `open-issue.ts`/`open-pr.ts`. Harmless.
+ *   - `fail`           — same shape in `open-issue.ts`/`open-pr.ts`, differs
+ *                        only in the literal script-name prefix each message
+ *                        carries (`[open-issue]` vs `[open-pr]`). Unfixed as a
+ *                        byte difference, though the divergence is intentional.
+ *   - `fetchOtherOpenPrFiles` — same body; `open-pr.ts` accepts
+ *                        `number | null`, `verify-single-plan-pr.ts` requires
+ *                        `number`. Signature differs, unfixed.
+ *   - `ghReachable`    — byte-identical in `check-first-push-dispatch.ts`/
+ *                        `verify-registry.ts`. Harmless.
+ *   - `isEmDashOrDash` — two copies, byte-identical; harmless, listed for
+ *                        completeness so the set is exhaustive.
  *   - `isSpecFile`     — the export in `file-classify.ts` excludes frozen
  *                        archives (`!isFrozenArchive(p)`); the private shadow in
  *                        `reader-resolvable-prose.ts` does not. Same name, two
  *                        different definitions of "spec file".
- *   - `TASK_BRANCH_PATTERN` — three regexes; `archive-task.ts`'s has capture
- *                        groups, the other two do not.
+ *   - `LABEL`          — different label values per script
+ *                        (`direct-main-push` vs `dead-branch-push`). Unfixed.
+ *   - `LABEL_DESCRIPTION` — different description strings per script. Unfixed.
+ *   - `listLabelNames` — same intent, different `sh` backend and error
+ *                        handling (throws vs `?? []` on a parse failure).
+ *                        Unfixed.
+ *   - `locateBody`     — byte-identical in `open-issue.ts`/`open-pr.ts`. Harmless.
+ *   - `main`           — nine standalone bin entrypoints. Each `main()` is
+ *                        genuinely different code with a different signature
+ *                        (`void`, `Promise<void>`, some take `prNumber` or
+ *                        `argv`/`deps`) — a real collision by the letter of
+ *                        the rule, but each is called only from its own
+ *                        file's own `import.meta.main`-style guard, never
+ *                        referenced elsewhere. Unfixed, not renamed away.
+ *   - `MARKER`         — the derivation `` `<!-- ${LABEL} -->` `` is
+ *                        byte-identical text in both files; the VALUE it
+ *                        produces differs only because `LABEL` (above)
+ *                        differs. The declaration itself is harmless.
+ *   - `parseArgs`      — completely different flag sets: `--sample`/`--json`
+ *                        in `eval-agent-compliance.ts` vs `--phase`/`--role`/
+ *                        `--model`/`--transcript` in `report-tokens.ts`.
+ *                        Unfixed.
+ *   - `ParsedArgs`     — the companion type to `parseArgs` above; same divergence.
+ *   - `PrListEntry`    — three-way, three different field sets across
+ *                        `check-push-target.ts` (`{ number, state }`),
+ *                        `dead-branch-audit.ts` (adds `mergedAt`/`closedAt`),
+ *                        and `verify-dispatch.ts` (adds `headRefName`/`mergedAt`,
+ *                        no `closedAt`). Unfixed.
+ *   - `PrView`         — `archive-task.ts`'s `{ number, headRefName, body,
+ *                        mergedAt, comments }` vs `verify-review-gate.ts`'s
+ *                        `{ number, comments (different shape), labels,
+ *                        headRefOid }`. Unfixed.
+ *   - `REPO_ROOT`      — seventeen files; twelve use `import.meta.dirname`,
+ *                        five (`archive-task.ts`, `check-no-disk-state.ts`,
+ *                        `verify-brief.ts`, `verify-docs.ts`, `verify-task.ts`)
+ *                        use the deprecated Bun-only `import.meta.dir`. A real
+ *                        inconsistency, unfixed.
+ *   - `resolvePrBody`  — byte-identical in `verify-docs.ts`/`verify-task.ts`. Harmless.
+ *   - `resolveShippableArgs` — same logic in `open-issue.ts`/`open-pr.ts`,
+ *                        differs only in the temp-dir name prefix
+ *                        (`aeg-open-issue-body-` vs `aeg-open-pr-body-`).
+ *                        Unfixed as a byte difference.
+ *   - `sh`             — eight files, at least six distinct implementations
+ *                        (execFileSync-array vs execSync-string args,
+ *                        throwing vs catching, differing option shapes).
+ *                        `verify-docs.ts` and `check-no-disk-state.ts` are
+ *                        byte-identical to each other; every other pair
+ *                        differs. Unfixed.
+ *   - `shJson`         — three files, three distinct signatures:
+ *                        `archive-task.ts` throws and returns non-null `T`;
+ *                        `dead-branch-audit.ts` catches and returns
+ *                        `T | null` from one `cmd` arg; `verify-dispatch.ts`
+ *                        catches and returns `T | null` from `cmd, args`.
+ *                        Unfixed.
  *   - `stripBackticks` — three copies, see the test above.
- *   - `isEmDashOrDash` — two copies, byte-identical; harmless, listed for
- *                        completeness so the set is exhaustive.
+ *   - `TASK_BRANCH_PATTERN` — now four regexes (Issue #190): the three
+ *                        already known, plus `bin/verify-brief.ts:60`, which
+ *                        `bin/` joining the scan now also reaches.
+ *                        `archive-task.ts`'s has capture groups, the other
+ *                        three do not.
+ *
+ * `ContractFrontmatter`/`RoleFrontmatter` — an unexported local type pair in
+ * `verify-registry.ts` (`{ file, producer, consumer }` / `{ file, role_id,
+ * performs, refuses_when }`, read from a role/contract doc's frontmatter) vs
+ * two unrelated, differently-shaped unexported local types of the same names
+ * in `diagram-model.ts` (diagram-config parsing). Genuine, coincidental
+ * cross-`bin`/`src` collisions — per this widening task's own brief, NOT
+ * silently renamed inline; reported separately as Issue #287 instead.
+ * Baselined here rather than left red, same as every other unfixed entry
+ * above. Unfixed.
  */
-const KNOWN_COLLISIONS = ['checkClosesN', 'isEmDashOrDash', 'isSpecFile', 'stripBackticks', 'TASK_BRANCH_PATTERN']
+const KNOWN_COLLISIONS = [
+  'AssociatedPr',
+  'BodyResult',
+  'BodySource',
+  'checkClosesN',
+  'ContractFrontmatter',
+  'createLabel',
+  'ensureLabelExists',
+  'extractTitle',
+  'fail',
+  'fetchOtherOpenPrFiles',
+  'ghReachable',
+  'isEmDashOrDash',
+  'isSpecFile',
+  'LABEL',
+  'LABEL_DESCRIPTION',
+  'listLabelNames',
+  'locateBody',
+  'main',
+  'MARKER',
+  'parseArgs',
+  'ParsedArgs',
+  'PrListEntry',
+  'PrView',
+  'REPO_ROOT',
+  'resolvePrBody',
+  'resolveShippableArgs',
+  'RoleFrontmatter',
+  'sh',
+  'shJson',
+  'stripBackticks',
+  'TASK_BRANCH_PATTERN'
+]
 
 describe('symbol-collision gate over this package', () => {
   it('declares no name in two files beyond the known set', () => {
     const found = packageCollisions().map((c) => c.name)
     expect(
       found,
-      'A name is now declared in more than one non-test source file of @attalabs/aeg-core (test files are not scanned). Rename or consolidate it, or add it to KNOWN_COLLISIONS with a reason. A name that resolves to two files cannot be checked by reading one of them.'
+      "A name is now declared in more than one non-test source file of @attalabs/aeg-core's src/ or bin/ (test files are not scanned). Rename or consolidate it, or add it to KNOWN_COLLISIONS with a reason. A name that resolves to two files cannot be checked by reading one of them."
     ).toEqual([...KNOWN_COLLISIONS].sort((a, b) => a.localeCompare(b)))
   })
 
   it('scans enough files to be meaningful — a guard on the enumeration', () => {
-    expect(sourceFiles(fileURLToPath(new URL('.', import.meta.url))).length).toBeGreaterThan(20)
+    expect(packageSourceFiles().length).toBeGreaterThan(20)
   })
 })
