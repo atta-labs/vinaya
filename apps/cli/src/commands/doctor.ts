@@ -8,7 +8,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import type { CheckSpec } from '../checks/contract.js'
 import { coreCheckRegistry } from '../checks/registry.js'
 import { bareKeyRejectedDiagnostic, overriddenReplacesCoreDiagnostic, resolveChecks } from '../checks/resolver.js'
@@ -777,6 +777,70 @@ function diagnoseCodeowners(repoRoot: string): Finding {
 }
 
 // ---------------------------------------------------------------------------
+// vinaya-on-PATH — report-only, `info` not `warn` (same reasoning as
+// principals below — see that comment for why `healthy`/exit-code stay
+// unaffected). Every agent-native entry point `init` scaffolds
+// (`.claude/commands/vinaya.md`, `.gemini/commands/vinaya.toml`,
+// `.agents/skills/vinaya-*/SKILL.md`) invokes a bare `vinaya doctrine`, and
+// `vinaya init` never installs itself anywhere — see `PRINCIPALS_NOTE`'s
+// sibling note in lib/artifacts.ts (printed once, at install time) for why
+// the invocation shape stays bare rather than switching to a pinned `npx`
+// (claude-command-emitter.ts's `allowed-tools` permission-matcher needs the
+// short literal prefix). This is that note's permanent, doctor-side
+// counterpart — only meaningful when at least one such vendor was actually
+// selected at init.
+//
+// A pure PATH scan, never a subprocess spawn: `vinaya doctor` never mutates
+// AND never blocks — an `execFileSync('vinaya', …)` here would hang this
+// diagnostic on whatever a real `vinaya` binary does on its own (network,
+// stdin), for a question ("does a file named vinaya sit in a PATH dir")
+// answerable by `existsSync` alone.
+// ---------------------------------------------------------------------------
+function diagnoseVinayaOnPath(agents: ReadonlySet<string>): Finding[] {
+  if (agents.size === 0) return []
+  const names = process.platform === 'win32' ? ['vinaya.cmd', 'vinaya.exe', 'vinaya.bat'] : ['vinaya']
+  const dirs = (process.env.PATH ?? '').split(delimiter).filter(Boolean)
+  const onPath = dirs.some((dir) => names.some((name) => existsSync(join(dir, name))))
+  return [
+    onPath
+      ? ok('vinaya-on-path', '`vinaya` resolves on PATH — agent-native commands will work.')
+      : info(
+          'vinaya-on-path',
+          '`vinaya` is not resolvable on PATH — `/vinaya <role>` and the .agents/skills/vinaya-*/SKILL.md files ' +
+            'installed here will fail "command not found" on first use. Run `npm install -g @attalabs/vinaya`.'
+        )
+  ]
+}
+
+// ---------------------------------------------------------------------------
+// principals — report-only. `info`, matching CODEOWNERS/branch-protection
+// above, not `warn`: an unset `principals` is a real, high-consequence gap
+// (review-gate silently trusts nobody's verdicts on this repo —
+// `resolvePrincipalAllowlist` in lib/config.ts falls back to the hardcoded
+// `PRINCIPAL_ALLOWLIST`, this monorepo's own maintainer, whenever the field
+// is absent, and `vinaya init` never sets it itself — see `PRINCIPALS_NOTE`,
+// lib/artifacts.ts, for why not), but `warn`/`error` flip `healthy` to false
+// and doctor's exit code to 1 for EVERY existing adopter that hasn't set
+// this, whether or not review-gate applies to them — the same blast-radius
+// reasoning CODEOWNERS/branch-protection already made this way. Found live:
+// a first-time adopter's PR had two clean human verdicts land and both
+// silently ignored, with nothing in `init`'s output warning this was
+// coming — `doctor` is the only other surface that can catch it before it
+// happens again.
+// ---------------------------------------------------------------------------
+function diagnosePrincipals(config: VinayaConfig): Finding {
+  if (config.principals && config.principals.length > 0) {
+    return info('principals', `review-gate trusts ${config.principals.length} declared principal(s).`)
+  }
+  return info(
+    'principals',
+    'vinaya.config.json has no "principals" — review-gate and the waiver-label actor check both fall back to a ' +
+      "hardcoded placeholder allowlist that will not include anyone on this repo. Every reviewer's verdict is " +
+      'silently ignored (DANGLING) until you add `"principals": ["<your-github-login>", ...]` to vinaya.config.json.'
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Check 8 — test CI, report-only, a heuristic. Vinaya requires a Test Plan on
 // every PR and enforces it as a blocking gate but never checks whether
 // anything actually runs the adopter's tests — this names that asymmetry.
@@ -889,6 +953,8 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
     findings.push(...(await diagnoseHookRouting(repo.repoRoot, hookDir, deps.readHooksPath)))
     findings.push(...diagnoseCustomChecks(repo.repoRoot, configRead.config))
     findings.push(...diagnoseDocOwnersHealth(repo.repoRoot))
+    findings.push(diagnosePrincipals(configRead.config))
+    findings.push(...diagnoseVinayaOnPath(ctx.agents))
   }
 
   findings.push(...diagnoseBlastRadiusDeprecation(repo.repoRoot, configRead.kind === 'ok' ? configRead.config : null))

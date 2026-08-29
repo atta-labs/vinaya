@@ -559,6 +559,78 @@ describe('vinaya doctor — agent-vendor emitters (--agents)', () => {
   })
 })
 
+// Code review, PR #279: these two diagnostics (added alongside the matching
+// `init`-time print notes in lib/artifacts.ts) had zero test coverage at
+// all — no test file touched them. `info`, not `warn`/`error`: same
+// blast-radius reasoning as codeowners/branch-protection above, so neither
+// flips `healthy`/exit code for every existing adopter that hasn't set
+// `principals` or doesn't have `vinaya` globally installed.
+describe('vinaya doctor — principals and vinaya-on-PATH (PR #279 review)', () => {
+  it('principals: reports info naming the DANGLING risk when vinaya.config.json has no "principals"', async () => {
+    await runInit(['--yes'], initDeps())
+    const report = await runDoctorJson()
+    const principals = report.findings.find((f) => f.check === 'principals')
+    expect(principals?.severity).toBe('info')
+    expect(principals?.message).toContain('no "principals"')
+    expect(principals?.message).toContain('DANGLING')
+    expect(report.healthy).toBe(true) // info severity never flips the exit code
+  })
+
+  it('principals: reports info naming the count when principals is set', async () => {
+    await runInit(['--yes'], initDeps())
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.principals = ['someone-the-adopter-chose']
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+
+    const report = await runDoctorJson()
+    const principals = report.findings.find((f) => f.check === 'principals')
+    expect(principals?.severity).toBe('info')
+    expect(principals?.message).toContain('trusts 1 declared principal')
+  })
+
+  describe('vinaya-on-path', () => {
+    const originalPath = process.env.PATH
+
+    afterEach(() => {
+      process.env.PATH = originalPath
+    })
+
+    it('reports no finding at all when no agent vendor was selected', async () => {
+      await runInit(['--yes', '--agents=none'], initDeps())
+      process.env.PATH = '/nonexistent-dir-for-this-test'
+      const report = await runDoctorJson()
+      expect(report.findings.some((f) => f.check === 'vinaya-on-path')).toBe(false)
+    })
+
+    it('reports info-gap when a vendor is selected but no `vinaya` file sits on PATH', async () => {
+      await runInit(['--yes', '--agents=claude'], initDeps())
+      process.env.PATH = '/nonexistent-dir-for-this-test'
+      const report = await runDoctorJson()
+      const finding = report.findings.find((f) => f.check === 'vinaya-on-path')
+      expect(finding?.severity).toBe('info')
+      expect(finding?.message).toContain('not resolvable on PATH')
+      expect(finding?.message).toContain('npm install -g @attalabs/vinaya')
+      expect(report.healthy).toBe(true) // info severity never flips the exit code
+    })
+
+    it('reports ok when a `vinaya` file exists somewhere on PATH — a pure scan, no subprocess spawn', async () => {
+      await runInit(['--yes', '--agents=claude'], initDeps())
+      const fakeBinDir = join(root, 'fake-bin')
+      mkdirSync(fakeBinDir, { recursive: true })
+      // Not a real, runnable vinaya — proves the diagnostic never spawns it
+      // (a real spawn on this garbage file would throw or hang; a hang here
+      // is exactly the regression this pure-existsSync-scan design fixed).
+      writeFileSync(join(fakeBinDir, 'vinaya'), '#!/bin/sh\nexit 1\n')
+      process.env.PATH = fakeBinDir
+
+      const report = await runDoctorJson()
+      const finding = report.findings.find((f) => f.check === 'vinaya-on-path')
+      expect(finding?.severity).toBe('ok')
+      expect(finding?.message).toContain('resolves on PATH')
+    })
+  })
+})
+
 // Regression coverage for a real hooks false-negative found live: `roles/developer.md`
 // requires every Developer to work in a linked git worktree, and in one a bare
 // `join(repoRoot, '.git/hooks/pre-commit')` never resolves — `.git` there is a
