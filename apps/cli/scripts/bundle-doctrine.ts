@@ -25,7 +25,6 @@ const targetRoot = join(pkgRoot, 'aeg-root')
 const FILES = [
   'state-machine.md',
   'enforcement.md',
-  'coordination.md',
   'tranche-model.md',
   'milestone-model.md',
   'task-model.md',

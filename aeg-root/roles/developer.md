@@ -220,7 +220,7 @@ All Tier 0 items, plus:
 
 All Tier 1 items, plus:
 
-- [ ] State updated: the relevant per-project pinned state Issue if state changed (for every project the task lists — update operational facts, phase intent, resolved pending-manual-ops; do NOT write active-work status, which is derived from the forge) (`now.md` is retired)
+- [ ] Non-derivable facts surfaced by this task (a new pending manual op, a known production issue) recorded as ordinary open Issues — never in any state document; active-work status is always derived from the forge (`now.md` and the pinned state Issue are both retired)
 - [ ] Merge happens at a ratification window (do not open the PR and expect immediate merge for Tier 3 work)
 
 **Hard rule:** If any tier-required item fails, the PR is not ready. Do not open it. Do not say "I'll fix the doc issues after merge." Fix them before.

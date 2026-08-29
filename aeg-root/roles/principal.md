@@ -62,7 +62,7 @@ The Principal holds final authority over:
 - **Author briefs.** The Brief Author does this. The Principal approves briefs but does not draft them.
 - **Plan tranches.** The Planner does this. The Principal approves the tranche but does not decompose it.
 - **Execute tasks.** The Developer executes. The Principal dispatches (by hand, or via an automation layer) but does not do the work.
-- **Manage day-to-day PM docs.** The Brief Author maintains the tranche files, `thinking.md`, and each project's pinned operational-state Issue during working sessions. The Principal approves and merges. (`state.md` and `now.md` are both retired — per-project state moved onto a pinned GitHub Issue per project and `now.md` was dropped; active-work state is derived from the forge.)
+- **Manage day-to-day PM docs.** The Brief Author maintains the tranche files and `thinking.md` during working sessions. The Principal approves and merges. (`state.md`, `now.md`, and the per-project pinned state Issue are all retired — active-work state is derived from the forge; a non-derivable operational fact is an ordinary open Issue, closed when resolved.)
 - **Monitor every blocked task.** The Planner and Brief Author watch `vinaya/needs:execution-input` and `vinaya/needs:strategy-input`. The Principal monitors `vinaya/needs:principal-input` only.
 
 ---
