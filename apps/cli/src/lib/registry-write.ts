@@ -18,8 +18,16 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { parseRegistry } from '@attalabs/aeg-core'
+import type { ProjectEntry } from './config.js'
+import { VinayaConfigSchema } from './config.js'
 
 export const PROJECTS_REGISTRY_PATH = '.vinaya/projects.md'
+// Duplicated from `artifacts.ts`'s `CONFIG_PATH` rather than imported: that
+// module pulls in the doctrine resolver and every artifact emitter, weight
+// this file has never carried (same reasoning as this file's own
+// `PROJECTS_REGISTRY_PATH` literal, which mirrors `.vinaya/projects.md`
+// rather than importing it from anywhere).
+const CONFIG_FILE_PATH = 'vinaya.config.json'
 
 export type RegistryRowAction = 'create-host' | 'append-row' | 'skip-present'
 
@@ -138,4 +146,49 @@ export function renderRegistryRowDiffLine(plan: RegistryRowPlan): string {
   if (plan.action === 'skip-present') return `  = keep   ${plan.path} (project already registered)`
   if (plan.action === 'append-row') return `  ~ append row to ${plan.path}\n    ${plan.rowLine}`
   return `  + create ${plan.path} (with registry row)\n    ${plan.rowLine}`
+}
+
+// ---------------------------------------------------------------------------
+// The config-native sibling write path — same plan/apply/render discipline,
+// targeting `vinaya.config.json`'s `projects` array instead of the registry
+// markdown table. `init product` calls both; they are independent homes for
+// the same declared fact (see `config.ts`'s `ProjectEntrySchema` comment).
+// ---------------------------------------------------------------------------
+
+export type ConfigProjectEntryAction = 'add-entry' | 'skip-present'
+export type ConfigProjectEntryPlan = { action: ConfigProjectEntryAction; entry: ProjectEntry }
+
+/** Best-effort parse: an unreadable/invalid config here is `init product`'s own pre-flight failure elsewhere — this never throws, it just sees no existing entries. */
+function readProjectEntries(repoRoot: string): ProjectEntry[] {
+  const abs = join(repoRoot, CONFIG_FILE_PATH)
+  if (!existsSync(abs)) return []
+  try {
+    return VinayaConfigSchema.parse(JSON.parse(readFileSync(abs, 'utf-8'))).projects ?? []
+  } catch {
+    return []
+  }
+}
+
+/** Classify what `init product <name>` would do to `vinaya.config.json`'s `projects` array — no writes. Dedup key is `name`, mirroring `planRegistryRow`'s own `parseRegistry(...).some((p) => p.name === name)` check. */
+export function planConfigProjectEntry(repoRoot: string, entry: ProjectEntry): ConfigProjectEntryPlan {
+  const already = readProjectEntries(repoRoot).some((p) => p.name === entry.name)
+  return { action: already ? 'skip-present' : 'add-entry', entry }
+}
+
+/** Apply a previously-planned config-project-entry change. No-op for `skip-present`. */
+export function applyConfigProjectEntry(repoRoot: string, plan: ConfigProjectEntryPlan): void {
+  if (plan.action === 'skip-present') return
+  const abs = join(repoRoot, CONFIG_FILE_PATH)
+  const seed = JSON.parse(readFileSync(abs, 'utf-8'))
+  const projects = Array.isArray(seed.projects) ? seed.projects : []
+  writeFileSync(abs, `${JSON.stringify({ ...seed, projects: [...projects, plan.entry] }, null, 2)}\n`, 'utf-8')
+}
+
+export function renderConfigProjectEntryDiffLine(plan: ConfigProjectEntryPlan): string {
+  if (plan.action === 'skip-present')
+    return `  = keep   ${CONFIG_FILE_PATH} (project already declared under "projects")`
+  const bits = [`"name": ${JSON.stringify(plan.entry.name)}`]
+  if (plan.entry.path) bits.push(`"path": ${JSON.stringify(plan.entry.path)}`)
+  if (plan.entry.description) bits.push(`"description": ${JSON.stringify(plan.entry.description)}`)
+  return `  ~ append entry to ${CONFIG_FILE_PATH}'s "projects"\n    { ${bits.join(', ')} }`
 }
