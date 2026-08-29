@@ -38,16 +38,25 @@
  * already carries some of this backlog — the report-only period is what lets
  * that backlog surface and get cleaned up before the gate turns strict.
  *
- * scope: full — the swept surfaces are the whole doctrine tree and the whole
- * reader-facing surface (when configured), not the PR's own diff.
+ * scope: full — the SWEEP is the whole doctrine tree and the whole
+ * reader-facing surface (when configured), never the PR's own diff; the
+ * evaluator has to read every doctrine file to resolve a cross-file
+ * reference correctly. But which findings get REPORTED is now diff-scoped
+ * (`resolveChangedFiles`, lib/diff-evidence.ts) — full sweep, without that,
+ * meant every PR reprinted this package's entire shipped-doctrine backlog
+ * regardless of what it touched (found live, atta-labs/vinaya#289, on a PR
+ * that changed one `packages/aeg-core` test file and nothing under
+ * `aeg-root/`). A real new coined-term/unresolvable-reference finding in a
+ * file the PR actually changed still surfaces.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { checkReaderResolvableProse, parseGlossaryTerms, type ProseSourceFile } from '@attalabs/aeg-core'
 import { resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { resolveChangedFiles } from '../../lib/diff-evidence'
 
 const CHECK_NAME = 'reader-resolvable-prose'
 
@@ -170,6 +179,22 @@ function main(): void {
     shipsPrefix
   )
 
+  // `finding.file` comes from `collect(DOCTRINE_ROOT)`, which walks from
+  // `resolveDoctrineRoot()`'s ABSOLUTE path — this repo's own `aeg-root/`
+  // when self-hosted (dev/CI here), `node_modules/@attalabs/vinaya/aeg-root`
+  // for an installed adopter — never the repo-relative form `git diff
+  // --name-only` reports. Normalize before comparing, or the filter matches
+  // nothing, ever, on any install shape.
+  //
+  // `null` (no diff boundary could be established — a bare/single-commit
+  // repo, no `origin` remote) reports every finding unfiltered, same as
+  // before diff-scoping existed — never silence a real sweep just because
+  // there was nothing to diff against. Only an ACTUAL resolved-but-empty
+  // diff suppresses findings.
+  const changedFilesList = resolveChangedFiles()
+  const changed = changedFilesList === null ? null : new Set(changedFilesList)
+  const reportable = changed === null ? findings : findings.filter((f) => changed.has(relative(process.cwd(), f.file)))
+
   // stdout only — this check's stderr is the CheckError JSON channel
   // (`contract.ts`'s `emitCheckError`); a plain-text line there would make
   // the runner treat this human-readable summary as malformed output and
@@ -177,10 +202,10 @@ function main(): void {
   console.log(
     `${CHECK_NAME}: doctrine root "${DOCTRINE_ROOT}"; reader-facing class ${READER_FACING_ACTIVE ? 'ran' : 'dormant — proseGates.readerFacingPrefix/readerFacingSuffix not both set'}; ` +
       `legacy-slug class ${legacySlugsDormant ? `dormant — ${LEGACY_SLUG_DIR} is absent` : `ran (${slugs.length} slug(s))`}; ` +
-      `${findings.length} finding(s)`
+      `${findings.length} finding(s) swept, ${reportable.length} in this diff`
   )
 
-  for (const finding of findings) {
+  for (const finding of reportable) {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,

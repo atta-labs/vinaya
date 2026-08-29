@@ -34,15 +34,21 @@
  * (`aeg-root/enforcement.md`'s G1/G2 period): findings print as `warning`
  * severity, exit code always 0.
  *
- * scope: full — sweeps the whole doctrine tree, not the local diff.
+ * scope: full — the SWEEP stays the whole doctrine tree (a retired-vocabulary
+ * leak can sit in any doctrine file regardless of what a given PR touches).
+ * Which findings get REPORTED is diff-scoped (`resolveChangedFiles`,
+ * lib/diff-evidence.ts) — same fix, same reason, as `reader-resolvable-prose`
+ * (atta-labs/vinaya#289): without it, every PR reprinted this package's
+ * entire shipped-doctrine backlog regardless of what changed.
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { scanRetiredVocabulary, type VocabSourceFile } from '@attalabs/aeg-core'
 import { resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { resolveChangedFiles } from '../../lib/diff-evidence'
 
 const CHECK_NAME = 'retired-vocabulary'
 
@@ -94,16 +100,27 @@ function main(): void {
   const paths = collect(DOCTRINE_ROOT)
   const files = readAll(paths)
   const findings = scanRetiredVocabulary(files)
+  // Same normalization AND same `null`-means-unfiltered handling
+  // `check-reader-resolvable-prose.ts` needs, for the identical reasons:
+  // `finding.file` comes from `collect(DOCTRINE_ROOT)`, walked from
+  // `resolveDoctrineRoot()`'s absolute path, never the repo-relative form
+  // `git diff --name-only` reports; and `resolveChangedFiles()` returns
+  // `null` rather than `[]` when no diff boundary could be established at
+  // all (a bare/single-commit fixture), so that case reports every finding
+  // unfiltered instead of silencing a real sweep.
+  const changedFilesList = resolveChangedFiles()
+  const changed = changedFilesList === null ? null : new Set(changedFilesList)
+  const reportable = changed === null ? findings : findings.filter((f) => changed.has(relative(process.cwd(), f.file)))
 
   // stdout only — this check's stderr is the CheckError JSON channel
   // (`contract.ts`'s `emitCheckError`); a plain-text line there would make
   // the runner treat this human-readable summary as malformed output and
   // report `status: 'error'` regardless of exit code.
   console.log(
-    `${CHECK_NAME}: doctrine root "${DOCTRINE_ROOT}"; ${paths.length} file(s) swept; ${findings.length} finding(s)`
+    `${CHECK_NAME}: doctrine root "${DOCTRINE_ROOT}"; ${paths.length} file(s) swept; ${findings.length} finding(s), ${reportable.length} in this diff`
   )
 
-  for (const finding of findings) {
+  for (const finding of reportable) {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
