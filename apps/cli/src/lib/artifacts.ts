@@ -25,6 +25,7 @@ import { resolveDoctrineRoot } from '../commands/doctrine.js'
 import type { AgentVendor } from './agent-vendors.js'
 import { buildAgentsSkillsOps } from './agents-skills-emitter.js'
 import { buildClaudeCommandOps } from './claude-command-emitter.js'
+import { buildClaudeStopHookOps } from './claude-stop-hook-emitter.js'
 import type { VinayaConfig } from './config.js'
 import { buildGeminiCommandOp } from './gemini-command-emitter.js'
 import type { CreateLabelOp, Op } from './ops.js'
@@ -1297,6 +1298,7 @@ export function buildInitOps(ctx: InitContext): Op[] {
   }
   if (ctx.agents.has('claude')) {
     ops.push(...buildClaudeCommandOps())
+    ops.push(...buildClaudeStopHookOps())
   }
   if (ctx.agents.has('gemini')) {
     ops.push(buildGeminiCommandOp())
