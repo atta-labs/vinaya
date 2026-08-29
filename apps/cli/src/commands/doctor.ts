@@ -36,6 +36,7 @@ import {
   TRACKED_HOOK_DIR
 } from '../lib/artifacts.js'
 import { CLAUDE_COMMAND_PATH } from '../lib/claude-command-emitter.js'
+import { CLAUDE_SETTINGS_PATH } from '../lib/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../lib/gemini-command-emitter.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import {
@@ -138,6 +139,7 @@ function labelForPath(path: string): string {
   if (path === DOCTRINE_POINTER_PATH) return 'doctrine-pointer'
   if (path.startsWith('.agents/skills/')) return 'agent-skills'
   if (path === CLAUDE_COMMAND_PATH) return 'claude-command'
+  if (path === CLAUDE_SETTINGS_PATH) return 'claude-stop-hook'
   if (path === GEMINI_COMMAND_PATH) return 'gemini-command'
   if (path === CHECKS_FOLDER_PLACEHOLDER_PATH || path === ROLES_FOLDER_PLACEHOLDER_PATH) return 'scaffold-folders'
   return 'workflows'

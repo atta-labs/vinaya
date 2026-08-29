@@ -12,6 +12,7 @@ import type { UpgradeDeps } from '../src/commands/upgrade.js'
 import { runUpgrade } from '../src/commands/upgrade.js'
 import { CHECKS_WORKFLOW_PATH, CONFIG_PATH, REVIEW_WORKFLOW_PATH } from '../src/lib/artifacts.js'
 import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
+import { CLAUDE_SETTINGS_PATH, CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
 import type { LabelGateway } from '../src/lib/ops.js'
 
@@ -153,6 +154,38 @@ describe('vinaya upgrade', () => {
     const content = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
     expect(content).toContain('echo not-vinaya-anymore') // adopter line survives
     expect(content).toContain('vinaya:managed:pre-push')
+  })
+
+  it('regenerates a drifted Claude Code Stop-hook script and settings.json, then doctor reports clean', async () => {
+    await runInit(['--yes'], initDeps())
+    writeFileSync(join(root, CLAUDE_SETTINGS_PATH), '{ "hand-edited": true }\n')
+    const script = readFileSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH), 'utf-8')
+    writeFileSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH), script.replace('track-transcript', 'tampered'))
+
+    let rc = -1
+    const out = await captureStdout(async () => {
+      rc = await runUpgrade(['--yes'], upgradeDeps())
+    })
+    expect(rc).toBe(0)
+    expect(out).toContain(`regenerate ${CLAUDE_SETTINGS_PATH}`)
+    expect(readFileSync(join(root, CLAUDE_SETTINGS_PATH), 'utf-8')).not.toBe('{ "hand-edited": true }\n')
+    expect(readFileSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH), 'utf-8')).toContain('vinaya:managed:track-transcript')
+
+    const doctorRc = await runDoctor([], doctorDeps())
+    expect(doctorRc).toBe(0)
+  })
+
+  it('recreates a missing (fresh-clone-drifted) Claude Code Stop-hook script', async () => {
+    await runInit(['--yes'], initDeps())
+    rmSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH))
+
+    let rc = -1
+    await captureStdout(async () => {
+      rc = await runUpgrade(['--yes'], upgradeDeps())
+    })
+    expect(rc).toBe(0)
+    expect(existsSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH))).toBe(true)
+    expect(readFileSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH), 'utf-8')).toContain('vinaya:managed:track-transcript')
   })
 
   it("never touches vinaya.config.json's adopter-owned keys (rings/checks/briefSchema)", async () => {

@@ -241,17 +241,25 @@ const SafeRepoRelPath = z.string().refine(isSafeRepoRelPath, {
   message: 'must be a repo-root-relative path with no `..` segment or absolute root'
 })
 
-// The three managed-block path spellings `buildInitOps` ever generates.
+// The managed-block path spellings `buildInitOps` ever generates.
 // `startsWith('.git/')` (lib/ops.ts's runtime discriminator) is a
 // case-sensitive prefix test, and `.git` alone (no trailing slash) resolves
 // to a real directory rather than a file — issue #177's amendment found both
 // escape it, one via a case-insensitive filesystem, one on every filesystem.
-// Rejecting any spelling that isn't byte-exactly one of these three prefixes
-// here, before a `ManagedManifest` can even exist, means lib/ops.ts's
-// resolvers never see a bad `blocks[].path` again — this is the parse-layer
-// half of that fix; lib/ops.ts's own discriminators are deliberately
-// unchanged (belt-and-suspenders, not a second fix).
-const CANONICAL_HOOK_BLOCK_PREFIXES = ['.git/', '.husky/', '.vinaya/hooks/'] as const
+// Rejecting any spelling that isn't byte-exactly one of these prefixes here,
+// before a `ManagedManifest` can even exist, means lib/ops.ts's resolvers
+// never see a bad `blocks[].path` again — this is the parse-layer half of
+// that fix; lib/ops.ts's own discriminators are deliberately unchanged
+// (belt-and-suspenders, not a second fix).
+//
+// `.claude/hooks/` (task 10, #278) is the fourth: the Claude Code Stop-hook
+// script (`claude-stop-hook-emitter.ts`) is a marker-delimited managed block
+// exactly like the three git-hook directories, just never `.git/`-prefixed —
+// `containedManagedBlockAbs` (lib/ops.ts) only special-cases a `.git/`
+// prefix for the shared-across-worktrees reasoning that does not apply here
+// (a Claude Code settings/hooks tree is per-checkout), so it correctly falls
+// through to ordinary `containedAbs` scoping for this new prefix.
+const CANONICAL_HOOK_BLOCK_PREFIXES = ['.git/', '.husky/', '.vinaya/hooks/', '.claude/hooks/'] as const
 
 export function isCanonicalHookBlockPath(p: string): boolean {
   return CANONICAL_HOOK_BLOCK_PREFIXES.some((prefix) => p.startsWith(prefix) && p.length > prefix.length)

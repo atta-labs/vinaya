@@ -93,6 +93,14 @@ The ordinary adopter gains **no build step and no third-party action** — the o
 
 Generation-time detection is also what keeps `doctor` honest. `doctor` diffs regenerated content against what is on disk to report drift, and a pure function of the repo's on-disk workspace declaration regenerates the same bytes for the same repo. A runtime branch inside the YAML would not have that property, and logic living in YAML is logic the unit tests cannot execute.
 
+### A fourth managed-block directory: `.claude/hooks/` — not part of the two shapes above
+
+`lib/ops.ts`'s marker-delimited managed-block mechanism (the same one `pre-commit`/`pre-push`/`commit-msg` use) now also writes `.claude/hooks/track-transcript.sh` (task 10, #278) — a Claude Code `Stop` hook that records the session's transcript pointer so `packages/aeg-core/bin/report-tokens.ts`'s `resolveTranscriptPath()` can resolve it without scanning `~/.claude/projects/` (wrong-session risk under concurrent worktrees). `config.ts`'s `CANONICAL_HOOK_BLOCK_PREFIXES` gained `.claude/hooks/` as a fourth entry alongside `.git/`, `.husky/`, `.vinaya/hooks/` — same discipline, one more prefix, not a new mechanism.
+
+This artifact is deliberately **outside** the two-shapes system this document otherwise describes in full: it never invokes the `vinaya` binary at all (no `npx`, no vendored `node <bin>` branch, no `ownVersion()` pin), so the self-hosting detection predicate above does not apply to it — it emits identical bytes whether or not the repo vendors the CLI. Its companion artifact, `.claude/settings.json` (the JSON registration wiring Claude Code to run the script), is a plain refuse-if-foreign whole file (`CreateFileOp`), not a managed block at all — strict JSON has no comment syntax the marker convention could use, so an adopter's pre-existing `settings.json` is left untouched rather than merged into.
+
+The earlier "`.claude/**` is out of v1.0 scope" ruling does not apply here — it was already superseded in practice by `.claude/commands/vinaya.md` (task 5's agent-native emitters) before this task landed.
+
 ## Emitted paths are allowlisted, not escaped
 
 The member's directory and its `bin` path are interpolated into a workflow `run:` scalar as **bare, unquoted shell words**, and both originate in the *target repo's* `package.json` — content the CLI does not control. This generator writes CI configuration into other people's repositories, so the values it embeds are constrained rather than sanitized:

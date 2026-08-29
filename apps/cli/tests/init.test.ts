@@ -22,6 +22,7 @@ import {
 } from '../src/lib/artifacts.js'
 import { agentSkillPath, discoverRoleNames } from '../src/lib/agents-skills-emitter.js'
 import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
+import { CLAUDE_SETTINGS_PATH, CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
 import { resolveDoctrineRoot } from '../src/commands/doctrine.js'
 import type { VendoredVinaya } from '../src/lib/self-host.js'
@@ -166,6 +167,8 @@ describe('vinaya init', () => {
       ROLES_FOLDER_PLACEHOLDER_PATH,
       ...agentSkillPaths,
       CLAUDE_COMMAND_PATH,
+      CLAUDE_STOP_HOOK_SCRIPT_PATH,
+      CLAUDE_SETTINGS_PATH,
       GEMINI_COMMAND_PATH
     ]) {
       expect(existsSync(join(root, p))).toBe(true)
@@ -192,6 +195,8 @@ describe('vinaya init', () => {
       ROLES_FOLDER_PLACEHOLDER_PATH,
       ...agentSkillPaths,
       CLAUDE_COMMAND_PATH,
+      CLAUDE_STOP_HOOK_SCRIPT_PATH,
+      CLAUDE_SETTINGS_PATH,
       GEMINI_COMMAND_PATH
     ])
     expect(tree).toEqual(expected)
@@ -225,10 +230,13 @@ describe('vinaya init', () => {
     expect(cfg.managed.files).toContain(CHECKS_FOLDER_PLACEHOLDER_PATH)
     expect(cfg.managed.files).toContain(ROLES_FOLDER_PLACEHOLDER_PATH)
     expect(cfg.managed.blocks.some((b: { path: string }) => b.path === '.husky/pre-commit')).toBe(true)
+    expect(cfg.managed.blocks.some((b: { path: string }) => b.path === CLAUDE_STOP_HOOK_SCRIPT_PATH)).toBe(true)
+    expect(cfg.managed.files).toContain(CLAUDE_SETTINGS_PATH)
     // the --agents selection itself is persisted, default all three, sorted
     expect(cfg.managed.agents).toEqual([...AGENT_VENDORS].sort())
     // hooks are executable
     expect(statSync(join(root, '.husky/pre-commit')).mode & 0o111).not.toBe(0)
+    expect(statSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH)).mode & 0o111).not.toBe(0)
   })
 
   it('labelOps() seeds every literal (non-prefix) label in the declared vocabulary — the 6-of-16 gap cannot silently reopen', () => {
@@ -443,6 +451,36 @@ describe('never-clobber', () => {
     expect(out).toContain(DOCTRINE_POINTER_PATH)
     // the non-foreign review workflow still installs
     expect(existsSync(join(root, REVIEW_WORKFLOW_PATH))).toBe(true)
+  })
+
+  it('appends the managed block to a pre-existing Claude Code Stop-hook script, keeping the adopter lines (Test Plan item 3)', async () => {
+    mkdirSync(join(root, '.claude/hooks'), { recursive: true })
+    writeFileSync(
+      join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH),
+      '#!/usr/bin/env sh\necho "an adopter-authored Stop hook, unrelated to vinaya"\n',
+      { mode: 0o755 }
+    )
+
+    const out = await captureStdout(() => runInit(['--yes'], makeDeps()))
+
+    const script = readFileSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH), 'utf-8')
+    expect(script).toContain('an adopter-authored Stop hook, unrelated to vinaya')
+    expect(script).toContain('vinaya:managed:track-transcript')
+    expect(out).toContain(`append managed block to ${CLAUDE_STOP_HOOK_SCRIPT_PATH}`)
+  })
+
+  it('REFUSES a foreign .claude/settings.json rather than merging into it — strict JSON has no comment/marker syntax to append safely', async () => {
+    mkdirSync(join(root, '.claude'), { recursive: true })
+    const foreign = '{\n  "permissions": {\n    "allow": ["Bash(ls:*)"]\n  }\n}\n'
+    writeFileSync(join(root, CLAUDE_SETTINGS_PATH), foreign)
+
+    const out = await captureStdout(() => runInit(['--yes'], makeDeps()))
+
+    expect(readFileSync(join(root, CLAUDE_SETTINGS_PATH), 'utf-8')).toBe(foreign)
+    expect(out).toContain('REFUSE')
+    expect(out).toContain(CLAUDE_SETTINGS_PATH)
+    // the script still installs — the two artifacts refuse/append independently
+    expect(existsSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH))).toBe(true)
   })
 
   it('REFUSES a foreign .vinaya/doc-owners rather than overwriting it', async () => {
@@ -1638,23 +1676,29 @@ describe('--agents flag parsing', () => {
 })
 
 describe('vinaya init --agents narrowing', () => {
-  it('--agents=claude installs only the Claude Code command, and persists the selection', async () => {
+  it('--agents=claude installs the Claude Code command AND the Stop hook, and persists the selection', async () => {
     const rc = await runInit(['--yes', '--agents=claude'], makeDeps())
     expect(rc).toBe(0)
     expect(existsSync(join(root, CLAUDE_COMMAND_PATH))).toBe(true)
+    expect(existsSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH))).toBe(true)
+    expect(existsSync(join(root, CLAUDE_SETTINGS_PATH))).toBe(true)
     expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
     expect(existsSync(join(root, '.agents/skills'))).toBe(false)
 
     const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
     expect(cfg.managed.agents).toEqual(['claude'])
     expect(cfg.managed.files).toContain(CLAUDE_COMMAND_PATH)
+    expect(cfg.managed.files).toContain(CLAUDE_SETTINGS_PATH)
+    expect(cfg.managed.blocks.some((b: { path: string }) => b.path === CLAUDE_STOP_HOOK_SCRIPT_PATH)).toBe(true)
     expect(cfg.managed.files).not.toContain(GEMINI_COMMAND_PATH)
   })
 
-  it('--agents=none installs none of the three vendor emitters, and persists an empty selection', async () => {
+  it('--agents=none installs none of the three vendor emitters (nor the Stop hook), and persists an empty selection', async () => {
     const rc = await runInit(['--yes', '--agents=none'], makeDeps())
     expect(rc).toBe(0)
     expect(existsSync(join(root, CLAUDE_COMMAND_PATH))).toBe(false)
+    expect(existsSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH))).toBe(false)
+    expect(existsSync(join(root, CLAUDE_SETTINGS_PATH))).toBe(false)
     expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
     expect(existsSync(join(root, '.agents/skills'))).toBe(false)
 
