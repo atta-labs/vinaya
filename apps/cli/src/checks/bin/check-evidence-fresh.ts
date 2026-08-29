@@ -39,9 +39,9 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { anchoredRegion } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { compareEvidenceBlock } from '../evidence-fresh-logic'
+import { ScanContext, resolveAnchoredRegion } from '../scan-context'
 
 const CHECK_NAME = 'evidence-fresh'
 
@@ -123,11 +123,35 @@ function main(): void {
     process.exit(0)
   }
 
-  const region = anchoredRegion(body, 'EVIDENCE')
-  if (region === null) {
+  // The SAME context `body-bare-digits` scans from, and the same resolver.
+  // Reading `PR_BODY` directly here — which is what this check did until
+  // Issue #189 — meant one zero-width character inside the START marker made
+  // this side see no anchor at all while the other side saw a real evidence
+  // block and exempted every digit in it. Both green, nothing verified. The
+  // resolver takes a `ScanContext`, so this cannot drift back.
+  const resolved = resolveAnchoredRegion(ScanContext.from(body), 'EVIDENCE')
+
+  if (resolved === null) {
     // The anchor is opt-in, like every other AEG anchor — a body that
     // hasn't adopted it yet is not broken by not adopting it.
     process.exit(0)
+  }
+
+  if (resolved === 'hidden') {
+    // The body DOES carry the pair, but only inside a collapsed `<details>`
+    // block, where `body-bare-digits` blanks every digit unconditionally.
+    // Exiting 0 here would grant that block the silent exemption Issue #189
+    // is about, so this refuses instead: "unverifiable" is not "not adopted".
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message:
+        'evidence-fresh: the AEG:EVIDENCE block sits inside a `<details>` block, where its digits are exempt from `body-bare-digits` and nothing can verify what it claims. Move the block out of the collapsed section.',
+      agent_recovery_prompt:
+        'Move the AEG:EVIDENCE anchor pair out of the `<details>` block (the canonical home is its own `## Evidence` section), then re-run `vinaya pr report --write <body-file>`.'
+    })
+    process.exit(1)
   }
 
   const prNumberStr = process.env.PR_NUMBER
@@ -173,7 +197,7 @@ function main(): void {
     process.exit(1)
   }
 
-  const result = compareEvidenceBlock(region, resolvedHead, actualNumstat)
+  const result = compareEvidenceBlock(resolved, resolvedHead, actualNumstat)
   if (result.status === 'fail') {
     for (const message of result.errors) {
       emitCheckError({
