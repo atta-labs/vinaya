@@ -74,6 +74,20 @@ To declare a domain beyond those two — a `migrations/` folder, a codegen outpu
 
 `checkBlastRadiusScope` is one of three content checks `vinaya issue create`/`vinaya issue edit` run automatically on a task Issue (any `vinaya/tranche:*` label) — unconditional, not something `vinaya.config.json`'s `briefSchema` opts into or out of. The other two: `checkNoBriefContent` refuses an Issue body carrying a brief-shaped section (`## References`, `Technical surface map`, `Premise`, `Step 0`, `Test Plan` — those belong in the brief, not the Issue); `checkRationaleNamesDocs` refuses a rationale whose "Docs to keep coherent"/"Traps" fields name no concrete doc/skill path, unless it carries the explicit `no-doc-surface` sentinel. All three grade what the eight-field Planner rationale (`checkIssueRationale`) *says*, once that gate has confirmed the fields exist.
 
+### Config-native project metadata (`projects`)
+
+`vinaya init product <name>` has always appended a row to `.vinaya/projects.md` (the project registry). It now *also* appends an entry to `vinaya.config.json`'s `projects` array — a second, config-native home for the same declared fact, alongside the registry file rather than instead of it:
+
+```json
+{
+  "projects": [
+    { "name": "mobile", "path": "apps/mobile", "description": "The mobile client" }
+  ]
+}
+```
+
+`name` is required (the dedup key, matching the registry row's own `Project` column); `description` and `path` are optional. This key is display metadata only — no gate or resolver reads it, and single-project repos rightly have none. `vinaya doctor` reports, at `info` severity, when a registry row and a `projects` entry name the same project but only one of the two exists — never an error, since keeping only the registry file is a fully supported shape.
+
 ## Where the git hooks live
 
 `vinaya init` installs the ring-0 hooks (`pre-commit`, `pre-push`, `commit-msg`) into a **tracked** `.vinaya/hooks/` directory and points git at it with `git config core.hooksPath .vinaya/hooks` — commit that directory. Raw `.git/hooks` is never versioned by git, so hooks installed there exist only on the installing machine; tracked hooks travel with the repo into every clone and every linked worktree checkout.
