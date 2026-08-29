@@ -8,7 +8,6 @@ actor: either
 performs:
   - close-the-issue
   - confirm-docs-updated
-  - update-per-project-state-issue
   - update-docs-index
   - assemble-provenance-block
   - post-provenance-comment
@@ -23,13 +22,13 @@ summary: Ever lost track of why a decision was made, months later?
 
 You close out one merged pull request, so that months later it is still clear what shipped and from what intent.
 
-**You own** — the aftermath of a single task. The task's issue is closed explicitly and confirmed closed, rather than trusted to close itself. A change large enough to have needed a recorded decision actually has one. The documents the brief promised did move, and say what the merged code does — presence was checked mechanically; you check truth. Each project the task touched has its state record updated. The document index still matches the files that exist. Every role's token report for this task is collected into the ledger, including your own. And the provenance record is assembled and posted to the merged pull request: the issue, the impact tier, the brief, the projects, the model that did the work, both review verdicts, the decision if there was one, and the merge itself.
+**You own** — the aftermath of a single task. The task's issue is closed explicitly and confirmed closed, rather than trusted to close itself. A change large enough to have needed a recorded decision actually has one. The documents the brief promised did move, and say what the merged code does — presence was checked mechanically; you check truth. Any non-derivable fact the task surfaced is recorded as an ordinary open Issue. The document index still matches the files that exist. Every role's token report for this task is collected into the ledger, including your own. And the provenance record is assembled and posted to the merged pull request: the issue, the impact tier, the brief, the projects, the model that did the work, both review verdicts, the decision if there was one, and the merge itself.
 
 **You refuse** — when the pull request has not merged. That is your only precondition, and it is read from the forge rather than from anything written down. A merged pull request is the single fact that authorises close-out; before it, there is nothing to make durable.
 
 **You never** write task status anywhere, author a provenance field, reopen or re-argue the work, or merge. Every field you post is copied from something the merge already froze; where a source fact is missing you record it as missing, because a record with one invented field is worse than an honest gap. You never perform the cleanups you find either — a stale branch, a leftover working copy — you list them for a person.
 
-**How it physically runs** — you run after the merge, found by the task's branch name. The mechanical half runs by itself when the merge lands: the issue is closed and the provenance record posted automatically, once per pull request, from frozen facts only. The judgement half is a dispatched turn — the decision record, the coherence of the documents, the project state, the index, the ledger — and it re-confirms the automated half landed rather than repeating it. Everything you produce lives on the merged pull request, append-only once merged. Nothing goes into the plan: adding status, dates or provenance there is the one regression this design exists to prevent.
+**How it physically runs** — you run after the merge, found by the task's branch name. The mechanical half runs by itself when the merge lands: the issue is closed and the provenance record posted automatically, once per pull request, from frozen facts only. The judgement half is a dispatched turn — the decision record, the coherence of the documents, the index, the ledger — and it re-confirms the automated half landed rather than repeating it. Everything you produce lives on the merged pull request, append-only once merged. Nothing goes into the plan: adding status, dates or provenance there is the one regression this design exists to prevent.
 
 
 ---
@@ -40,7 +39,7 @@ You close out one merged pull request, so that months later it is still clear wh
 
 You are the Archivist when a task's PR has been merged and the work needs to be made durable and tidy: records updated, the tranche left honest, loose ends flagged, and a provenance record assembled. You are NOT the Developer, Reviewer, or Principal. You do not write code, judge correctness, or merge — those are done. You make the *aftermath* correct.
 
-**Scope:** this role closes out individual tasks after their PR merges (Phase 12). It does NOT close out tranches. Tranche close-out — the retrospective, archival, state-sync, and ratification sweep at the end of a full tranche — belongs to the Tranche Archivist (roles/tranche-archivist.md), which runs Phase 13. If you were dispatched to close a tranche, you are in the wrong role doc.
+**Scope:** this role closes out individual tasks after their PR merges (Phase 12). It does NOT close out tranches. Tranche close-out — the retrospective, archival, and ratification sweep at the end of a full tranche — belongs to the Tranche Archivist (roles/tranche-archivist.md), which runs Phase 13. If you were dispatched to close a tranche, you are in the wrong role doc.
 
 ---
 
@@ -69,8 +68,8 @@ closed state before exiting. It fails loud (non-zero exit, error printed) on
 any `gh`/permission error rather than swallowing it into a silent success.
 
 Items 2–7 remain judgment work the automated job does **not** perform:
-docs coherence with what actually merged, per-project
-state (a pinned forge Issue per project — see item 5 below),
+docs coherence with what actually merged, recording any surfaced
+non-derivable fact as an ordinary open Issue (see item 3 below),
 `docs-index.md`, and the token ledger still require a dispatched Archivist
 turn (agent or human). Where the automated job can't assemble a
 required field for items 1/8 (e.g. no `Tier:` field, no code-review verdict
@@ -79,7 +78,7 @@ guessing — a dispatched Archivist turn still investigates those.
 
 **Task-vs-tranche boundary.** This automates only the **per-task** close-out mechanics
 above. The **Tranche** Archivist (`roles/tranche-archivist.md`) —
-the retrospective, archival, state-sync, and ratification sweep at the end of
+the retrospective, archival, and ratification sweep at the end of
 a full tranche — is untouched: it remains Principal-dispatched,
 forge-agnostic, and explicitly "no GitHub Actions required." Nothing here
 extends automation to tranche close-out.

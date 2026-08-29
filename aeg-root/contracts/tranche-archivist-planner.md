@@ -7,7 +7,7 @@ description: Carries a finished tranche’s real outcome to the planning of the 
 status: active
 producer: tranche-archivist
 consumer: planner
-carrier: archived-tranche-file, pinned-state-issue, retrospective-comment
+carrier: closed-milestone, retrospective-comment
 summary: Ever started planning the next phase on outdated info about the last one?
 ---
 # Contract: Tranche Archivist → Planner
@@ -16,13 +16,13 @@ summary: Ever started planning the next phase on outdated info about the last on
 
 This seam sits between the end of one tranche and the planning of the next. It exists because planning starts by reading the current state of a product, and a tranche that was never closed out leaves those records describing a product that no longer exists.
 
-**What crosses** — three artefacts, all produced when a tranche closes. The archived tranche itself, which is the physical signal that close-out happened at all. The product's state record, brought up to date: what it is now working toward, which manual steps are still outstanding, and what the tranche just shipped. And the retrospective, posted to the standing lessons thread — the durable record of what stalled and what carries forward.
+**What crosses** — two artefacts, both produced when a tranche closes. The closed Milestone with its attached closed Issues, which is both the physical signal that close-out happened and the forge-derived record of what the tranche shipped. And the retrospective, posted to the standing lessons thread — the durable record of what stalled and what carries forward. (The hand-maintained product state record that once also crossed here is retired — anything still outstanding is an ordinary open Issue, closed when resolved.)
 
-**The hand-off is malformed when** — any of the three is absent. Each has a matching check on the planning side, and the planning side stops rather than working around it: the archive is a fact to be confirmed, not an assumption to be made. "It was probably closed out" is not a passed check. The failure this was written against is real: tranches completed without close-out, and the next plans were then built on records describing the product as it had been before.
+**The hand-off is malformed when** — either is absent. Each has a matching check on the planning side, and the planning side stops rather than working around it: the archive is a fact to be confirmed, not an assumption to be made. "It was probably closed out" is not a passed check. The failure this was written against is real: tranches completed without close-out, and the next plans were then built on records describing the product as it had been before.
 
 **What it does not carry** — a statement of what happens next. That is not archived, it is derived: the open work on the forge is the answer, read directly rather than maintained by hand in a file that would drift. Nor does it carry the power to move a task between tranches; that is a scoping decision, and it belongs to planning.
 
-**How it physically runs** — the carriers are the archived tranche, the product's state record, and the retrospective comment. The ordering is normally close first, then plan. One exception: when a new plan absorbs an existing tranche's unstarted work, the move happens first and the close-out follows, because the close cannot proceed while that work is open and the plan is what empties it. Only unstarted work may move — anything with a branch or an open pull request is finished or dropped where it is, never relocated mid-flight — and every move leaves a note on the task, so a task that changed address can be told from one that vanished.
+**How it physically runs** — the carriers are the closed Milestone and the retrospective comment. The ordering is normally close first, then plan. One exception: when a new plan absorbs an existing tranche's unstarted work, the move happens first and the close-out follows, because the close cannot proceed while that work is open and the plan is what empties it. Only unstarted work may move — anything with a branch or an open pull request is finished or dropped where it is, never relocated mid-flight — and every move leaves a note on the task, so a task that changed address can be told from one that vanished.
 
 
 ---
