@@ -238,6 +238,17 @@ describe('symbol-collision detection', () => {
  * silently renamed inline; reported separately as Issue #287 instead.
  * Baselined here rather than left red, same as every other unfixed entry
  * above. Unfixed.
+ *
+ * `sanitizeKey`/`transcriptPointerPath` — private helpers in
+ * `src/claude-code-transcript.ts`, each with an identically-named counterpart
+ * in `bin/report-tokens.ts`. Deliberately duplicated, not a collision to fix:
+ * `bin/` is I/O-shim code that imports `src/`, never the reverse, and is not
+ * part of this package's published `exports` map, so `claude-code-transcript.ts`
+ * cannot import `bin/report-tokens.ts`'s copies without inverting that
+ * direction — see the doc comment on `transcriptPointerPath` in
+ * `claude-code-transcript.ts` for the full reasoning. Introduced by #284;
+ * omitted from this list by that PR, which is why this gate went red the
+ * first time the full (non-diff-scoped) suite ran against it.
  */
 const KNOWN_COLLISIONS = [
   'AssociatedPr',
@@ -267,10 +278,12 @@ const KNOWN_COLLISIONS = [
   'resolvePrBody',
   'resolveShippableArgs',
   'RoleFrontmatter',
+  'sanitizeKey',
   'sh',
   'shJson',
   'stripBackticks',
-  'TASK_BRANCH_PATTERN'
+  'TASK_BRANCH_PATTERN',
+  'transcriptPointerPath'
 ]
 
 describe('symbol-collision gate over this package', () => {

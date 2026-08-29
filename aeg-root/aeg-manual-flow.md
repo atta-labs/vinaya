@@ -15,7 +15,7 @@ Companion to `process.md` (the eleven-phase walkthrough), `state-machine.md` (th
 
 AEG "init" is not software — it is a **state the repo is in**. A repo is running AEG when **everything the flow references is present**:
 
-1. **The model layer** — `aeg-root/` scaffold (exists ONCE, at the repo root only): `state-machine.md`, `coordination.md`, `process.md`, `aeg-manual-flow.md`, `tranche-model.md`, `roles/`, `skills/` (the AEG skills — canonical home); plus `projects.md` only once multi-project.
+1. **The model layer** — `aeg-root/` scaffold (exists ONCE, at the repo root only): `state-machine.md`, `process.md`, `aeg-manual-flow.md`, `tranche-model.md`, `roles/`, `skills/` (the AEG skills — canonical home); plus `projects.md` only once multi-project.
 2. **The living-state layer** — forge-native. State only, never the model: active/blocked/next is derived from Issue/branch/PR state, and completed-work history, lessons, per-project operational state, and ratification items live in `git log`/PR history, pinned Issues, and the `needs:principal-input` label respectively.
 3. **The enforcement layer (referenced by the model, so it must travel with it):**
    - Blast-radius collision domains (conflicts are package-level, `tranche-model.md` §5) — live-derived from `package.json`'s `workspaces` (or `pnpm-workspace.yaml`'s `packages:` list, on a pnpm repo — pnpm ignores `package.json`'s `workspaces` key entirely) for `packages/*`, plus a built-in cross-cutting default set (lockfile, monorepo config, CI, git hooks); `vinaya.config.json`'s `blastRadius.extraDomains` for anything beyond those. No file to scaffold — the legacy static `.aeg/packages` list is retired, no longer read at all.
@@ -104,7 +104,7 @@ This is a **shared, model-level protocol**. Each role specializes it in its own 
 
 8. **Proactive coherence status report — before any phase that touches a prior task's archival state.** Before beginning any brief-authoring or execution phase, the chat-surface role MUST proactively report the coherence status of relevant prior tasks to the Principal — not just silently gate-fail on a mismatch. The pattern is **detect-and-INFORM**, not only detect-and-refuse. Do not wait for the Principal to ask. State the status of each predicate for each in-scope prior task, then declare whether the gate passes or fails and what is owed if it fails. Example: *"Before beginning brief for task X, I must report: prior task Y — Issue #N is closed ✓, PR #M is merged to main ✓, provenance block is absent ✗. Gate fails — the Archivist must post the provenance block on PR #M before I can author this brief. Here is what is owed: [list]."* Or, when all predicates pass: *"Prior task Y gate: Issue #N closed ✓, PR #M merged ✓, provenance block present ✓ — gate passes."* This report is mandatory even when the gate passes (one line suffices) — silence is not an acceptable "all good" signal.
 
-Keep all of this **light** — a sentence at each seam, not paragraphs. The goal is a Principal who always feels oriented, never managed. Terse remains the house style (`coordination.md`); this protocol adds **signposting, not verbosity.** A role that runs the whole flow in silence and dumps a result at the end is violating the protocol even if the result is correct — because the Principal could not see, and therefore could not govern, the steps that produced it.
+Keep all of this **light** — a sentence at each seam, not paragraphs. The goal is a Principal who always feels oriented, never managed. Terse remains the house style; this protocol adds **signposting, not verbosity.** A role that runs the whole flow in silence and dumps a result at the end is violating the protocol even if the result is correct — because the Principal could not see, and therefore could not govern, the steps that produced it.
 
 ---
 
@@ -180,7 +180,7 @@ If any fails: post a comment listing the exact items missing. The Principal deci
 
 **Archivist** (close-out)
 - Requires a **merged** PR. Refuses: not merged → *"Nothing to close out; merge first."*
-- Confirms: Issue closed (the merge auto-closes it if linked), docs updated, per-project pinned state Issue updated for every project the task listed. Sets the tranche's `Lifecycle: complete` marker and moves the file to `tranches/completed/` when every task is merged (`tranche-model.md` §11). (`now.md` no longer exists.)
+- Confirms: Issue closed (the merge auto-closes it if linked), docs updated. Sets the tranche's `Lifecycle: complete` marker and moves the file to `tranches/completed/` when every task is merged (`tranche-model.md` §11). (`now.md` and the hand-edited per-project state Issue are both retired — non-derivable facts live as ordinary open Issues, closed when resolved.)
 - Assembles the **provenance block** from frozen facts (brief, PR reviews, merge metadata) and posts it to the merged PR (append-only, never a status field) — see `roles/archivist.md`.
 - Flags — does not perform — orphaned branches (branch with no/stale PR) and local worktree removal as cleanup candidates for the human. Writes no status (the merge already is the status).
 - Produces a close-out report listing anything dangling.

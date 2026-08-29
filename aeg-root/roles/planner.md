@@ -42,7 +42,7 @@ You turn an intent and a slice of work into a whole tranche — not one task, an
 
 **Forge-native by default — no topology file, no plan PR, no commit, and — usually — no Milestone.** Cut task Issues labeled `vinaya/tranche:<slug>` with the full Planner's rationale (see "The Planner's rationale" below) in each body. `@attalabs/aeg-forge-state` derives topology, dependencies, and lifecycle purely from those forge objects — nothing to write to `main`, nothing for `verify-coherence` to fall back to a file for. This cutover is now complete for every active tranche. Do not create a new topology file for a new tranche; if you find yourself about to write one, stop — the forge-native path below is the whole job. Creating a Milestone is not your job either — that's the Architect's (`roles/architect.md`), and most tranches never get one. If a Milestone already exists naming this slug in its `### Tranche intents` section, this tranche's goal is picked up from that intent line automatically; you neither create nor edit the Milestone to make that happen.
 
-Read this with `tranche-model.md` (the model) and `coordination.md` (session start). The Planner exists because the relationships *between* tasks — dependencies, conflicts, split-vs-combine — are invisible to a brief written in isolation. Seeing them is the whole job.
+Read this with `tranche-model.md` (the model) and the `aeg` skill's session-start forge queries (orientation). The Planner exists because the relationships *between* tasks — dependencies, conflicts, split-vs-combine — are invisible to a brief written in isolation. Seeing them is the whole job.
 
 ---
 
