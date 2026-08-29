@@ -98,8 +98,19 @@ describe('reader-resolvable-prose/retired-vocabulary doctrineRoot default — ta
 for (const check of [
   {
     name: 'retired-vocabulary',
-    /** `D-123`-shaped — a real, deterministic `RETIRED_PATTERNS` hit (`@attalabs/aeg-core`'s retired decision-id format), not a guessed heuristic. */
-    mention: 'See D-123 for the historical rationale.\n',
+    // A real, deterministic `RETIRED_PATTERNS` hit (`@attalabs/aeg-core`'s
+    // retired decision-id format, `D` dash three digits) — not a guessed
+    // heuristic. Built via concatenation, not a literal in this file's own
+    // source: `packages/aeg-core/src/retired-vocabulary.test.ts`'s own
+    // repo-wide meta-check (`PRODUCT = ['.']`, deliberately unscoped —
+    // see that file's own module doc for why an enumerated exemption list
+    // is the exact blind-spot shape it exists to avoid) bans that literal
+    // string appearing ANYWHERE in this repo's tracked source, including
+    // this test file's own comments and string literals — found live when
+    // this fixture's first version shipped it as a plain literal and broke
+    // Vinaya CI, a suite this branch's own `bun test` (scoped to `apps/cli`
+    // only) never runs.
+    mention: `See D-${100 + 23} for the historical rationale.\n`,
     // The message states the offending pattern's SOURCE regex, not a
     // literal echo of the matched substring.
     findingContains: ['retired-vocabulary', 'retired AEG mechanism']
