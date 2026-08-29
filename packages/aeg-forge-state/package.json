@@ -17,6 +17,10 @@
     "./labels": "./src/labels.ts",
     "./strip-code": "./src/strip-code.ts"
   },
+  "files": [
+    "src",
+    "!src/**/*.test.ts"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

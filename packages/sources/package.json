@@ -16,6 +16,10 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "files": [
+    "src",
+    "!src/**/*.test.ts"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",

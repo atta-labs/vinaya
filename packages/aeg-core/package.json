@@ -16,6 +16,10 @@
     ".": "./src/index.ts",
     "./docs": "./src/docs/index.ts"
   },
+  "files": [
+    "src",
+    "!src/**/*.test.ts"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
