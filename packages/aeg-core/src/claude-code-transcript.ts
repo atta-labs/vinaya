@@ -89,3 +89,155 @@ export function summarizeTranscript(jsonl: string): TranscriptSummary {
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
+
+/**
+ * `resolveMeteringCapability`'s I/O — injected, never imported directly, per
+ * this package's purity charter (`fs`/`process.env` stay out of `src/`). The
+ * real caller (`apps/cli`'s `tokens`/`doctor` commands) supplies
+ * `existsSync`/`readFileSync`/`process.env`/`process.cwd()`; tests supply
+ * fakes.
+ */
+export type MeteringCapabilityDeps = {
+  env: Record<string, string | undefined>
+  cwd: string
+  exists: (path: string) => boolean
+  readFile: (path: string) => string
+}
+
+export type MeteringIncapableReason = 'no-transcript-resolved' | 'transcript-unreadable' | 'transcript-empty'
+
+export type MeteringCapability =
+  | { capable: true; transcriptPath: string; summary: TranscriptSummary }
+  | { capable: false; reason: MeteringIncapableReason; detail: string }
+
+function sanitizeKey(value: string): string {
+  return value.replace(/[^A-Za-z0-9]+/g, '-')
+}
+
+/**
+ * Mirrors `bin/report-tokens.ts`'s own pointer-file convention (a
+ * `track-transcript.sh` Stop hook, keyed by `CLAUDE_PROJECT_DIR`) so a repo
+ * that already wires that hook gets probe support for free. Deliberately
+ * duplicated rather than imported from `bin/`: `bin/` is I/O-shim code that
+ * imports `src/`, never the reverse, and is not part of this package's
+ * published `exports` map — the whole reason this probe exists is to work
+ * where that path is unreachable.
+ */
+function transcriptPointerPath(projectDir: string, tmpDir: string): string {
+  return `${tmpDir}/claude-transcript-${sanitizeKey(projectDir)}.txt`
+}
+
+/**
+ * Resolves a transcript path to probe — `explicitTranscriptPath` (the
+ * caller's own `--transcript`) wins outright, exactly like
+ * `bin/report-tokens.ts`'s `--transcript`. Otherwise consults the Stop-hook
+ * pointer file, applying the same `CLAUDE_CODE_SESSION_ID` staleness
+ * cross-check that adapter uses — a stale pointer left by a previous session
+ * sharing this worktree must not be silently trusted.
+ *
+ * Returns an error string rather than throwing: this is the
+ * "nothing to even try" case (Stop-and-escalate's "no transcript exists"),
+ * kept distinct in `resolveMeteringCapability` from a resolved-but-unreadable
+ * path.
+ */
+function resolvePointer(
+  explicitTranscriptPath: string | undefined,
+  deps: MeteringCapabilityDeps
+): { path: string } | { error: string } {
+  if (explicitTranscriptPath) return { path: explicitTranscriptPath }
+
+  const projectDir = deps.env.CLAUDE_PROJECT_DIR ?? deps.cwd
+  const tmpDir = deps.env.TMPDIR ?? '/tmp'
+  const pointerPath = transcriptPointerPath(projectDir, tmpDir)
+
+  if (!deps.exists(pointerPath)) {
+    return {
+      error:
+        `No transcript pointer at ${pointerPath} and no --transcript given. ` +
+        'Either this repo installs no track-transcript.sh Stop hook (lacking one is not a defect — ' +
+        'name the transcript directly instead), or no session has completed a turn yet.'
+    }
+  }
+
+  let contents: string
+  try {
+    contents = deps.readFile(pointerPath).trim()
+  } catch (err) {
+    return { error: `Transcript pointer at ${pointerPath} could not be read: ${(err as Error).message}` }
+  }
+
+  const [pointerSessionId, transcriptPath] = contents.split('\t')
+  if (!transcriptPath) {
+    return { error: `Transcript pointer file ${pointerPath} is malformed: "${contents}"` }
+  }
+
+  const currentSessionId = deps.env.CLAUDE_CODE_SESSION_ID
+  if (currentSessionId && pointerSessionId && currentSessionId !== pointerSessionId) {
+    return {
+      error:
+        `Transcript pointer at ${pointerPath} is stale: written for session ${pointerSessionId}, ` +
+        `but this session is ${currentSessionId}. Name your own transcript with --transcript instead of ` +
+        "reporting another session's figures as yours."
+    }
+  }
+
+  return { path: transcriptPath }
+}
+
+/**
+ * Probes whether this host can currently produce real token figures —
+ * capable/incapable, never declared by host identity (`vinaya doctor`'s
+ * whole reason for calling this rather than checking `process.env` itself).
+ * Distinguishes the two failure classes the Stop-and-escalate condition
+ * names: `no-transcript-resolved` (nothing to even try — no `--transcript`,
+ * no pointer file) is a different fact from `transcript-unreadable` (a path
+ * was resolved but the file can't be read) or `transcript-empty` (the file
+ * reads but summarizes to zero assistant messages — empty, unparseable, or
+ * not yet flushed). Conflating any of these into one "incapable" bit would
+ * reproduce the false "host has no usage" claim this tranche removes.
+ *
+ * `explicitTranscriptPath`, when given, wins outright over pointer-file
+ * discovery — the caller's own `--transcript` is always better evidence than
+ * any inference this function could make.
+ */
+export function resolveMeteringCapability(
+  deps: MeteringCapabilityDeps,
+  explicitTranscriptPath?: string
+): MeteringCapability {
+  const resolved = resolvePointer(explicitTranscriptPath, deps)
+  if ('error' in resolved) {
+    return { capable: false, reason: 'no-transcript-resolved', detail: resolved.error }
+  }
+
+  if (!deps.exists(resolved.path)) {
+    return {
+      capable: false,
+      reason: 'transcript-unreadable',
+      detail: `Resolved transcript path ${resolved.path} does not exist.`
+    }
+  }
+
+  let jsonl: string
+  try {
+    jsonl = deps.readFile(resolved.path)
+  } catch (err) {
+    return {
+      capable: false,
+      reason: 'transcript-unreadable',
+      detail: `Transcript at ${resolved.path} could not be read: ${(err as Error).message}`
+    }
+  }
+
+  const summary = summarizeTranscript(jsonl)
+  if (summary.messageCount === 0) {
+    return {
+      capable: false,
+      reason: 'transcript-empty',
+      detail:
+        `Transcript at ${resolved.path} yielded zero assistant messages with usage data — ` +
+        "it's empty, unparseable, or not yet flushed to disk."
+    }
+  }
+
+  return { capable: true, transcriptPath: resolved.path, summary }
+}

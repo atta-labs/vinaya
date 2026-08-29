@@ -23,7 +23,8 @@ export type { TokensLineInput, TranscriptSummary, UsageComponents } from './repo
 // The Claude Code collection adapter (`tranche-model.md` §12 layer 2) — one
 // host's way to produce a `TranscriptSummary`, exported beside the portable
 // renderers it feeds, never as a requirement of the contract.
-export { summarizeTranscript } from './claude-code-transcript'
+export { resolveMeteringCapability, summarizeTranscript } from './claude-code-transcript'
+export type { MeteringCapability, MeteringCapabilityDeps, MeteringIncapableReason } from './claude-code-transcript'
 export { declarationsIn, findCollisions } from './symbol-collisions'
 export type { SymbolCollision, SymbolDeclaration } from './symbol-collisions'
 export { isCodeFile, isDocFile, isSpecFile } from './file-classify'
