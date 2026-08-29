@@ -74,11 +74,15 @@ describe('reader-resolvable-prose/retired-vocabulary doctrineRoot default — ta
   })
 })
 
-// Code review, PR #290 MINOR: `tests/diff-evidence.test.ts` unit-tests
-// `resolveChangedFiles()` in isolation, but nothing exercised the two real
-// consumers (`check-reader-resolvable-prose.ts`/`check-retired-vocabulary.ts`)
-// end-to-end against a fixture with a genuine doctrine finding. This suite
-// spawns the real bin against one.
+// Code review, PR #290 MINOR (round 2): `tests/diff-evidence.test.ts`
+// unit-tests `resolveChangedFiles()` in isolation, but nothing exercised the
+// two real consumers (`check-reader-resolvable-prose.ts`/
+// `check-retired-vocabulary.ts`) end-to-end against a fixture with a genuine
+// doctrine finding. This suite spawns each real bin against one — BOTH
+// consumers (code review, round 3: the first version of this suite only
+// covered `retired-vocabulary`, leaving `reader-resolvable-prose` — which
+// carries the identical `repoRoot()`/diff-scoping pattern — asymmetrically
+// untested for diff-scoped filtering specifically).
 //
 // A relative `proseGates.doctrineRoot`, invoked from a SUBDIRECTORY, was
 // also tried here and deliberately dropped: it does not exercise this PR's
@@ -91,120 +95,132 @@ describe('reader-resolvable-prose/retired-vocabulary doctrineRoot default — ta
 // set out to fix — the collection side is a separate, pre-existing defect,
 // out of scope here the same way `check-doc-coverage.ts`'s own fail-open
 // class was flagged out of scope for this PR by the code-reviewer pass.
-// The subdirectory case below instead proves cwd-independence holds for the
-// path this PR's fix DOES reach: the unconfigured default, where
-// `DOCTRINE_ROOT` is already absolute (`resolveDoctrineRoot()`).
-describe('retired-vocabulary — diff-scoped filtering, end to end, with a relative doctrineRoot (PR #290 review)', () => {
-  function fixtureWithRelativeDoctrineRoot(name: string): string {
-    const root = initFixture(name)
-    writeFileSync(
-      join(root, 'vinaya.config.json'),
-      JSON.stringify({ checks: {}, proseGates: { doctrineRoot: 'docs' } }, null, 2)
-    )
-    mkdirSync(join(root, 'docs'), { recursive: true })
-    writeFileSync(join(root, 'docs', 'unrelated.md'), '# Nothing retired here\n')
-    execFileSync('git', ['add', '-A'], { cwd: root })
-    execFileSync('git', ['commit', '-q', '-m', 'Chore: base doctrine, no findings'], { cwd: root })
-    execFileSync('git', ['checkout', '-q', '-b', 'feature'], { cwd: root })
-    return root
+for (const check of [
+  {
+    name: 'retired-vocabulary',
+    /** `D-123`-shaped — a real, deterministic `RETIRED_PATTERNS` hit (`@attalabs/aeg-core`'s retired decision-id format), not a guessed heuristic. */
+    mention: 'See D-123 for the historical rationale.\n',
+    // The message states the offending pattern's SOURCE regex, not a
+    // literal echo of the matched substring.
+    findingContains: ['retired-vocabulary', 'retired AEG mechanism']
+  },
+  {
+    name: 'reader-resolvable-prose',
+    /** `#123`-shaped — a real, deterministic `FORGE_NUMBER_PATTERN` hit (`checkUnresolvableReferences`, `@attalabs/aeg-core`), not a guessed heuristic. */
+    mention: 'See #123 for the historical rationale.\n',
+    findingContains: ['reader-resolvable-prose', 'a forge number']
   }
-
-  /** `D-123`-shaped — a real, deterministic `RETIRED_PATTERNS` hit (`@attalabs/aeg-core`'s retired decision-id format), not a guessed heuristic. */
-  const RETIRED_MENTION = 'See D-123 for the historical rationale.\n'
-
-  function run(cwd: string): { exitCode: number; stderr: string } {
-    const result = Bun.spawnSync(['bun', INDEX_TS, 'check', 'retired-vocabulary'], {
-      cwd,
-      env: { ...process.env, BASE_SHA: 'main', PR_BODY: undefined }
-    })
-    return { exitCode: result.exitCode, stderr: result.stderr.toString() }
-  }
-
-  it('a touched doctrine file with a real retired-vocabulary hit is reported, from the repo root', () => {
-    const root = fixtureWithRelativeDoctrineRoot('retired-vocab-e2e-root')
-    try {
-      writeFileSync(join(root, 'docs', 'note.md'), RETIRED_MENTION)
+] as const) {
+  describe(`${check.name} — diff-scoped filtering, end to end, with a relative doctrineRoot (PR #290 review)`, () => {
+    function fixtureWithRelativeDoctrineRoot(name: string): string {
+      const root = initFixture(name)
+      writeFileSync(
+        join(root, 'vinaya.config.json'),
+        JSON.stringify({ checks: {}, proseGates: { doctrineRoot: 'docs' } }, null, 2)
+      )
+      mkdirSync(join(root, 'docs'), { recursive: true })
+      writeFileSync(join(root, 'docs', 'unrelated.md'), '# Nothing to flag here\n')
       execFileSync('git', ['add', '-A'], { cwd: root })
-      execFileSync('git', ['commit', '-q', '-m', 'Docs: add a note citing D-123'], { cwd: root })
-
-      const { exitCode, stderr } = run(root)
-      expect(exitCode).toBe(0) // report-only — never fails CI
-      expect(stderr).toContain('docs/note.md')
-      // The message states the offending pattern's SOURCE regex, not a
-      // literal echo of the matched substring — assert the shape that's
-      // actually printed, not the raw "D-123" text.
-      expect(stderr).toContain('retired-vocabulary')
-      expect(stderr).toContain('retired AEG mechanism')
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it('cwd-independence holds for the fix this PR actually makes: identical output from the repo root and from a subdirectory, unconfigured doctrineRoot (review finding, PR #290 MINOR)', () => {
-    // No `vinaya.config.json` at all — `DOCTRINE_ROOT` resolves via
-    // `resolveDoctrineRoot()`'s absolute, package-identity path (this
-    // monorepo's own real `aeg-root/`, since these bins run self-hosted from
-    // source here), never a relative literal. This is the path
-    // `repoRoot()`-anchoring in `check-retired-vocabulary.ts` actually
-    // reaches. Neither invocation's `BASE_SHA` scope can match anything in
-    // this fixture's own tiny history against the real monorepo's aeg-root
-    // paths, so both report zero findings — the point isn't the finding
-    // count, it's that a real subprocess spawned from two different cwds
-    // produces byte-identical output either way, proving the comparison
-    // path is genuinely cwd-independent rather than merely usually-correct.
-    const root = initFixture('retired-vocab-e2e-cwd-independence')
-    execFileSync('git', ['checkout', '-q', '-b', 'feature'], { cwd: root })
-    writeFileSync(join(root, 'b.md'), '# b\n')
-    execFileSync('git', ['add', '-A'], { cwd: root })
-    execFileSync('git', ['commit', '-q', '-m', 'Chore: add b'], { cwd: root })
-
-    const subdir = join(root, 'some', 'nested', 'dir')
-    mkdirSync(subdir, { recursive: true })
-
-    try {
-      const fromRoot = run(root)
-      const fromSubdir = run(subdir)
-      expect(fromRoot.exitCode).toBe(0)
-      expect(fromSubdir.exitCode).toBe(fromRoot.exitCode)
-      expect(fromSubdir.stderr).toBe(fromRoot.stderr)
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it('a diff that never touches the doctrine root reports nothing, even though a real backlog exists elsewhere in it', () => {
-    // Deliberately does NOT use `fixtureWithRelativeDoctrineRoot` — the
-    // backlog finding needs to live in the BASE commit itself (present,
-    // unchanged, on both `main` and `feature`) so the sweep genuinely finds
-    // it on disk while diff-scoping still excludes it, rather than a file
-    // that simply doesn't exist in this checkout at all.
-    const root = initFixture('retired-vocab-e2e-unrelated-diff')
-    writeFileSync(
-      join(root, 'vinaya.config.json'),
-      JSON.stringify({ checks: {}, proseGates: { doctrineRoot: 'docs' } }, null, 2)
-    )
-    mkdirSync(join(root, 'docs'), { recursive: true })
-    // The pre-existing backlog — real, on disk, present in BOTH branches.
-    writeFileSync(join(root, 'docs', 'old-note.md'), RETIRED_MENTION)
-    execFileSync('git', ['add', '-A'], { cwd: root })
-    execFileSync('git', ['commit', '-q', '-m', 'Chore: base doctrine, carries a pre-existing D-123 backlog'], {
-      cwd: root
-    })
-    try {
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: base doctrine, no findings'], { cwd: root })
       execFileSync('git', ['checkout', '-q', '-b', 'feature'], { cwd: root })
-      // This diff's own change: unrelated to docs/ entirely.
-      writeFileSync(join(root, 'unrelated-outside-docs.md'), '# not doctrine\n')
-      execFileSync('git', ['add', '-A'], { cwd: root })
-      execFileSync('git', ['commit', '-q', '-m', 'Chore: unrelated repo-root file'], { cwd: root })
-
-      const { exitCode, stderr } = run(root)
-      expect(exitCode).toBe(0)
-      // docs/old-note.md's D-123 is real and on disk — the sweep finds it —
-      // but it's identical on `main` and `feature` (never touched by this
-      // diff), so diff-scoping must exclude it from what's printed.
-      expect(stderr).not.toContain('D-123')
-    } finally {
-      rmSync(root, { recursive: true, force: true })
+      return root
     }
+
+    function run(cwd: string): { exitCode: number; stderr: string } {
+      const result = Bun.spawnSync(['bun', INDEX_TS, 'check', check.name], {
+        cwd,
+        env: { ...process.env, BASE_SHA: 'main', PR_BODY: undefined }
+      })
+      return { exitCode: result.exitCode, stderr: result.stderr.toString() }
+    }
+
+    it('a touched doctrine file with a real finding is reported, from the repo root', () => {
+      const root = fixtureWithRelativeDoctrineRoot(`${check.name}-e2e-root`)
+      try {
+        writeFileSync(join(root, 'docs', 'note.md'), check.mention)
+        execFileSync('git', ['add', '-A'], { cwd: root })
+        execFileSync('git', ['commit', '-q', '-m', 'Docs: add a note with a real finding'], { cwd: root })
+
+        const { exitCode, stderr } = run(root)
+        expect(exitCode).toBe(0) // report-only — never fails CI
+        expect(stderr).toContain('docs/note.md')
+        for (const fragment of check.findingContains) expect(stderr).toContain(fragment)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    // Named for what it actually proves (code review, round 3: the prior
+    // name/comment here claimed this discriminates the `repoRoot()` reuse
+    // fix specifically — it doesn't. `DOCTRINE_ROOT` on this path is already
+    // absolute via `resolveDoctrineRoot()`, so `resolve(pathBase, f.file)`
+    // and the pre-fix `resolve(f.file)` are identical for every finding
+    // regardless of `pathBase` — reverting the fix and re-running this test
+    // still passes, confirmed by the round-3 reviewer. Discriminating the
+    // fix itself needs a RELATIVE `finding.file`, which requires a relative
+    // `doctrineRoot` — and that combination is blocked by the separate,
+    // out-of-scope `collect()` cwd-relative bug documented above.
+    // `tests/diff-evidence.test.ts`'s own cwd-independence test is the one
+    // that genuinely discriminates `resolveChangedFiles()`'s `repoRoot()`
+    // fix. What THIS test proves instead: real, valuable, just different —
+    // invoking the installed/unconfigured shape from a subdirectory doesn't
+    // crash and produces byte-identical output to invoking it from the repo
+    // root, for the path every real adopter install actually takes.
+    it('subdirectory invocation is a safe no-op for the unconfigured/default doctrineRoot shape: identical output either way', () => {
+      const root = initFixture(`${check.name}-e2e-subdir-no-crash`)
+      execFileSync('git', ['checkout', '-q', '-b', 'feature'], { cwd: root })
+      writeFileSync(join(root, 'b.md'), '# b\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add b'], { cwd: root })
+
+      const subdir = join(root, 'some', 'nested', 'dir')
+      mkdirSync(subdir, { recursive: true })
+
+      try {
+        const fromRoot = run(root)
+        const fromSubdir = run(subdir)
+        expect(fromRoot.exitCode).toBe(0)
+        expect(fromSubdir.exitCode).toBe(fromRoot.exitCode)
+        expect(fromSubdir.stderr).toBe(fromRoot.stderr)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    it('a diff that never touches the doctrine root reports nothing, even though a real backlog exists elsewhere in it', () => {
+      // Deliberately does NOT use `fixtureWithRelativeDoctrineRoot` — the
+      // backlog finding needs to live in the BASE commit itself (present,
+      // unchanged, on both `main` and `feature`) so the sweep genuinely
+      // finds it on disk while diff-scoping still excludes it, rather than
+      // a file that simply doesn't exist in this checkout at all.
+      const root = initFixture(`${check.name}-e2e-unrelated-diff`)
+      writeFileSync(
+        join(root, 'vinaya.config.json'),
+        JSON.stringify({ checks: {}, proseGates: { doctrineRoot: 'docs' } }, null, 2)
+      )
+      mkdirSync(join(root, 'docs'), { recursive: true })
+      // The pre-existing backlog — real, on disk, present in BOTH branches.
+      writeFileSync(join(root, 'docs', 'old-note.md'), check.mention)
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: base doctrine, carries a pre-existing backlog finding'], {
+        cwd: root
+      })
+      try {
+        execFileSync('git', ['checkout', '-q', '-b', 'feature'], { cwd: root })
+        // This diff's own change: unrelated to docs/ entirely.
+        writeFileSync(join(root, 'unrelated-outside-docs.md'), '# not doctrine\n')
+        execFileSync('git', ['add', '-A'], { cwd: root })
+        execFileSync('git', ['commit', '-q', '-m', 'Chore: unrelated repo-root file'], { cwd: root })
+
+        const { exitCode, stderr } = run(root)
+        expect(exitCode).toBe(0)
+        // docs/old-note.md's finding is real and on disk — the sweep finds
+        // it — but it's identical on `main` and `feature` (never touched by
+        // this diff), so diff-scoping must exclude it from what's printed.
+        expect(stderr).toBe('')
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
   })
-})
+}
