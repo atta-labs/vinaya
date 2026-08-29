@@ -45,6 +45,11 @@ function doctorDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
     nodeVersion: () => 'v99.0.0',
     bunVersion: () => 'test-bun',
     packageVersion: () => '0.1.0-test',
+    meteringCapability: () => ({
+      capable: false,
+      reason: 'no-transcript-resolved',
+      detail: 'no --transcript given and no pointer file in this fixture'
+    }),
     ...overrides
   }
 }
@@ -796,6 +801,43 @@ describe('vinaya doctor — doc-owners binding health', () => {
     await runDoctorJson()
 
     expect(snapshot(root)).toEqual(before)
+  })
+})
+
+describe('vinaya doctor — token-metering capability', () => {
+  it('surfaces an info finding naming the reason when the probe reports incapable', async () => {
+    await runInit(['--yes'], initDeps())
+
+    const report = await runDoctorJson({
+      meteringCapability: () => ({
+        capable: false,
+        reason: 'transcript-empty',
+        detail: 'Transcript at /tmp/x.jsonl yielded zero assistant messages with usage data.'
+      })
+    })
+
+    const finding = report.findings.find((f) => f.check === 'tokens')
+    expect(finding?.severity).toBe('info')
+    expect(finding?.message).toContain('transcript-empty')
+    expect(finding?.message).toContain('/tmp/x.jsonl')
+  })
+
+  it('emits nothing when the probe reports capable — capable is the unremarkable default', async () => {
+    await runInit(['--yes'], initDeps())
+
+    const report = await runDoctorJson({
+      meteringCapability: () => ({
+        capable: true,
+        transcriptPath: '/tmp/real.jsonl',
+        summary: {
+          components: { inputTokens: 1, outputTokens: 1, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+          model: 'claude-sonnet-5',
+          messageCount: 1
+        }
+      })
+    })
+
+    expect(report.findings.filter((f) => f.check === 'tokens')).toEqual([])
   })
 })
 

@@ -58,6 +58,7 @@ function doctorDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
     nodeVersion: () => 'v99.0.0',
     bunVersion: () => null,
     packageVersion: () => '0.1.0-test',
+    meteringCapability: () => ({ capable: false, reason: 'no-transcript-resolved', detail: 'fixture' }),
     ...overrides
   }
 }

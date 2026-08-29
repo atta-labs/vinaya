@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { summarizeTranscript } from './claude-code-transcript'
+import { resolveMeteringCapability, summarizeTranscript } from './claude-code-transcript'
+import type { MeteringCapabilityDeps } from './claude-code-transcript'
 import { formatTokensLine } from './report-tokens'
 
 function assistantLine(opts: {
@@ -120,5 +121,130 @@ describe('the adapter seam', () => {
 
     const args = { phase: '113: develop', role: 'Developer' }
     expect(formatTokensLine({ ...args, summary: fromAdapter })).toBe(formatTokensLine({ ...args, summary: handBuilt }))
+  })
+})
+
+describe('resolveMeteringCapability', () => {
+  // Fake fs/env — the point of deps-injection: no real file, no real
+  // process.env, but the exact same resolution logic runs.
+  function fakeDeps(overrides: Partial<MeteringCapabilityDeps> = {}): MeteringCapabilityDeps {
+    return {
+      env: {},
+      cwd: '/repo',
+      exists: () => false,
+      readFile: () => {
+        throw new Error('unexpected readFile call')
+      },
+      ...overrides
+    }
+  }
+
+  it('is incapable with no-transcript-resolved when no --transcript and no pointer file exists', () => {
+    const result = resolveMeteringCapability(fakeDeps())
+    expect(result.capable).toBe(false)
+    if (!result.capable) expect(result.reason).toBe('no-transcript-resolved')
+  })
+
+  it('is incapable with transcript-unreadable when an explicit path does not exist', () => {
+    const result = resolveMeteringCapability(fakeDeps({ exists: () => false }), '/tmp/does-not-exist.jsonl')
+    expect(result.capable).toBe(false)
+    if (!result.capable) expect(result.reason).toBe('transcript-unreadable')
+  })
+
+  it('is incapable with transcript-unreadable when the resolved file throws on read', () => {
+    const result = resolveMeteringCapability(
+      fakeDeps({
+        exists: () => true,
+        readFile: () => {
+          throw new Error('EACCES: permission denied')
+        }
+      }),
+      '/tmp/locked.jsonl'
+    )
+    expect(result.capable).toBe(false)
+    if (!result.capable) expect(result.reason).toBe('transcript-unreadable')
+  })
+
+  it('is incapable with transcript-empty when the transcript summarizes to zero messages', () => {
+    const result = resolveMeteringCapability(fakeDeps({ exists: () => true, readFile: () => '' }), '/tmp/empty.jsonl')
+    expect(result.capable).toBe(false)
+    if (!result.capable) expect(result.reason).toBe('transcript-empty')
+  })
+
+  it('is capable and returns the real summary when an explicit transcript resolves and reads', () => {
+    const jsonl = assistantLine({ id: 'msg_1', model: 'claude-sonnet-5', input: 10, output: 5 })
+    const result = resolveMeteringCapability(fakeDeps({ exists: () => true, readFile: () => jsonl }), '/tmp/real.jsonl')
+    expect(result.capable).toBe(true)
+    if (result.capable) {
+      expect(result.transcriptPath).toBe('/tmp/real.jsonl')
+      expect(result.summary.messageCount).toBe(1)
+    }
+  })
+
+  it('resolves via the Stop-hook pointer file when no explicit path is given', () => {
+    const pointerPath = '/tmp/claude-transcript--repo.txt'
+    const jsonl = assistantLine({ id: 'msg_1', model: 'claude-sonnet-5', input: 10, output: 5 })
+    const files: Record<string, string> = {
+      [pointerPath]: 'session-a\t/real/transcript.jsonl',
+      '/real/transcript.jsonl': jsonl
+    }
+    const result = resolveMeteringCapability(
+      fakeDeps({
+        env: { TMPDIR: '/tmp' },
+        cwd: '/repo',
+        exists: (p) => p in files,
+        readFile: (p) => {
+          if (!(p in files)) throw new Error(`ENOENT: ${p}`)
+          return files[p] as string
+        }
+      })
+    )
+    expect(result.capable).toBe(true)
+    if (result.capable) expect(result.transcriptPath).toBe('/real/transcript.jsonl')
+  })
+
+  it('refuses a stale pointer whose recorded session id disagrees with the current one', () => {
+    const pointerPath = '/tmp/claude-transcript--repo.txt'
+    const files: Record<string, string> = {
+      [pointerPath]: 'session-old\t/real/transcript.jsonl'
+    }
+    const result = resolveMeteringCapability(
+      fakeDeps({
+        env: { TMPDIR: '/tmp', CLAUDE_CODE_SESSION_ID: 'session-new' },
+        cwd: '/repo',
+        exists: (p) => p in files,
+        readFile: (p) => {
+          if (!(p in files)) throw new Error(`ENOENT: ${p}`)
+          return files[p] as string
+        }
+      })
+    )
+    expect(result.capable).toBe(false)
+    if (!result.capable) expect(result.reason).toBe('no-transcript-resolved')
+  })
+
+  it('explicit --transcript wins outright over a resolvable pointer file', () => {
+    const pointerPath = '/tmp/claude-transcript--repo.txt'
+    const pointerTranscript = assistantLine({ id: 'msg_pointer', model: 'claude-sonnet-5', input: 1, output: 1 })
+    const explicitTranscript = assistantLine({ id: 'msg_explicit', model: 'claude-sonnet-5', input: 2, output: 2 })
+    const files: Record<string, string> = {
+      [pointerPath]: 'session-a\t/pointer/transcript.jsonl',
+      '/pointer/transcript.jsonl': pointerTranscript,
+      '/explicit/transcript.jsonl': explicitTranscript
+    }
+    const result = resolveMeteringCapability(
+      fakeDeps({
+        env: { TMPDIR: '/tmp' },
+        cwd: '/repo',
+        exists: (p) => p in files,
+        readFile: (p) => {
+          if (!(p in files)) throw new Error(`ENOENT: ${p}`)
+          return files[p] as string
+        }
+      }),
+      '/explicit/transcript.jsonl'
+    )
+    expect(result.capable).toBe(true)
+    if (result.capable) expect(result.transcriptPath).toBe('/explicit/transcript.jsonl')
   })
 })

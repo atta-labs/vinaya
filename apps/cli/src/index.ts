@@ -22,6 +22,7 @@ import { prReportCommand } from './commands/pr-report.js'
 import { quickstartCommand } from './commands/quickstart.js'
 import { reviewPostCommand } from './commands/review-post.js'
 import { runStudio } from './commands/studio.js'
+import { tokensCommand } from './commands/tokens.js'
 import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
 import { printJson } from './lib/envelope.js'
@@ -183,6 +184,10 @@ try {
     }
     case 'quickstart': {
       await quickstartCommand(args)
+      break
+    }
+    case 'tokens': {
+      tokensCommand(args)
       break
     }
     default:
