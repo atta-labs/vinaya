@@ -2,6 +2,8 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { anchoredRegionBounds } from '@attalabs/aeg-core'
+import { ScanContext } from '../checks/scan-context'
+import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../lib/numstat'
 import { packageRoot } from '../lib/package-root.js'
 
 /**
@@ -290,8 +292,26 @@ function renderGroupB(outcomes: GateOutcome[]): string {
   )
 }
 
+/**
+ * The `Summary:` line — column 0, one space, case-sensitive, immediately under
+ * `Head:` (Issue #189).
+ *
+ * Derived from the very numstat two lines below it, so a PR body never needs a
+ * hand-written "four files changed" sentence that a later commit silently
+ * falsifies — measured to have gone stale three times on `atta-labs/vinaya#185`.
+ * `check-evidence-fresh` recomputes this line and byte-compares it, and
+ * `body-bare-digits` exempts it on exactly that basis; both name the line
+ * through `summaryLineIndex`, never by scanning for the prefix themselves.
+ */
 function buildBlockInner(groupA: GroupA, gateOutcomes: GateOutcome[]): string {
-  return [`Head: ${groupA.head}`, '', renderGroupA(groupA), '', renderGroupB(gateOutcomes)].join('\n')
+  return [
+    `Head: ${groupA.head}`,
+    `${EVIDENCE_SUMMARY_PREFIX}${summariseNumstat(groupA.numstat)}`,
+    '',
+    renderGroupA(groupA),
+    '',
+    renderGroupB(gateOutcomes)
+  ].join('\n')
 }
 
 /**
@@ -306,7 +326,26 @@ function buildBlockInner(groupA: GroupA, gateOutcomes: GateOutcome[]): string {
  * body carries no REAL pair yet (first adoption) — a body with only a fenced
  * decoy is "no real pair" by the same rule.
  */
+export class DivergentEvidenceAnchorError extends Error {
+  constructor() {
+    super(
+      'the AEG:EVIDENCE anchor resolves differently before and after normalisation — a zero-width character or an HTML entity inside a marker makes this writer and the checks that read the block disagree about which pair is real. Remove it and re-run.'
+    )
+    this.name = 'DivergentEvidenceAnchorError'
+  }
+}
+
 export function replaceEvidenceBlock(body: string, blockInner: string): string {
+  // The writer is the third consumer of this anchor, and it cannot adopt the
+  // readers' offsets: it must splice into the raw body it was handed, and
+  // normalisation is not length-preserving. What it can do is refuse when the
+  // raw and normalised resolutions disagree about whether a real pair exists —
+  // which is precisely the channel Issue #189 closes on the reader side. Left
+  // unchecked, a body with a zero-width character in its START marker gets a
+  // SECOND block appended here while `body-bare-digits` treats the first,
+  // hand-written one as the trusted region.
+  if (!ScanContext.from(body).rawResolutionAgrees('EVIDENCE')) throw new DivergentEvidenceAnchorError()
+
   const full = `${EVIDENCE_START}\n${blockInner}\n${EVIDENCE_END}`
   const bounds = anchoredRegionBounds(body, 'EVIDENCE')
   if (bounds) {
