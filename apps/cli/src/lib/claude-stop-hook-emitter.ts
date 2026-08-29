@@ -75,6 +75,26 @@ const SH_PREAMBLE = '#!/usr/bin/env sh\n'
  * a missing `node`, a malformed hook payload, or a write failure into a
  * blocked `Stop` — `exit 0` unconditionally at the end, matching the
  * pre-existing hand-rolled `track-transcript.sh` this mirrors.
+ *
+ * Symlink-attack hardening (CWE-59, security review on this task's own PR):
+ * the pointer path is fully predictable — a pure function of
+ * `CLAUDE_PROJECT_DIR`/cwd and `TMPDIR` — in a directory (`/tmp` or
+ * `TMPDIR`) other local users/processes on the same machine can typically
+ * write to. A plain `fs.writeFileSync(pointerPath, ...)` opens with the
+ * default `'w'` flag, which FOLLOWS an existing symlink and truncates
+ * whatever it points at — a co-resident process that pre-plants a symlink
+ * at the pointer path before a Stop event fires turns this hook into a
+ * write primitive against anything the victim's OS user can write to.
+ * Fixed the standard way: write the real content to a same-directory
+ * scratch file opened with `wx` (`O_CREAT|O_EXCL`, explicit `0o600` mode —
+ * refuses to write through an existing file OR symlink at the scratch
+ * path), then `renameSync` it onto the pointer path. `rename(2)` replaces
+ * the destination's directory entry atomically and does NOT dereference a
+ * symlink sitting there — it unlinks the symlink itself and puts the real
+ * file in its place, never writing through to the symlink's target. The
+ * scratch filename carries the pid and a random suffix purely to avoid
+ * colliding with a concurrent legitimate invocation, not as the security
+ * boundary — `wx` is what makes even a fully predictable scratch name safe.
  */
 export function renderTrackTranscriptScriptBody(): string {
   return `# Vinaya-managed Stop hook. Records this session's transcript_path (and
@@ -96,10 +116,19 @@ process.stdin.on("end", () => {
   const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd()
   const tmpDir = process.env.TMPDIR || "/tmp"
   const key = projectDir.replace(/[^A-Za-z0-9]+/g, "-")
-  fs.writeFileSync(
-    tmpDir + "/claude-transcript-" + key + ".txt",
-    (hook.session_id || "") + "\\t" + hook.transcript_path + "\\n"
-  )
+  const pointerPath = tmpDir + "/claude-transcript-" + key + ".txt"
+  const content = (hook.session_id || "") + "\\t" + hook.transcript_path + "\\n"
+  const scratchPath = pointerPath + "." + process.pid + "." + Math.random().toString(36).slice(2) + ".tmp"
+  try {
+    fs.writeFileSync(scratchPath, content, { mode: 0o600, flag: "wx" })
+  } catch {
+    return
+  }
+  try {
+    fs.renameSync(scratchPath, pointerPath)
+  } catch {
+    try { fs.unlinkSync(scratchPath) } catch {}
+  }
 })
 '
 exit 0`

@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -192,6 +202,51 @@ describe('claude-stop-hook-emitter', () => {
         expect(stderr).toContain('adopter step') // their line still ran
         const contents = readFileSync(transcriptPointerPath(projectDir, tmpDir), 'utf-8')
         expect(contents.trim()).toBe(`xyz\t${transcriptPath}`)
+      } finally {
+        rmSync(projectDir, { recursive: true, force: true })
+        rmSync(tmpDir, { recursive: true, force: true })
+      }
+    })
+
+    // CWE-59 regression (security review, this task's own PR): the pointer
+    // path is fully predictable from CLAUDE_PROJECT_DIR + TMPDIR. A hostile
+    // co-resident process that pre-plants a symlink there, pointing at a
+    // file the victim can write, must never get that file overwritten — the
+    // hook must replace the symlink itself (atomic rename), never write
+    // through it.
+    it('refuses to write through a pre-planted symlink at the pointer path (CWE-59)', async () => {
+      const projectDir = mkdtempSync(join(tmpdir(), 'vinaya-stop-hook-project-'))
+      const tmpDir = mkdtempSync(join(tmpdir(), 'vinaya-stop-hook-tmp-'))
+      try {
+        const scriptPath = writeScript(projectDir)
+        const transcriptPath = join(projectDir, 'session.jsonl')
+
+        const victimPath = join(projectDir, 'victim.txt')
+        const victimContent = 'attacker must never see this truncated or overwritten\n'
+        writeFileSync(victimPath, victimContent)
+
+        const pointerPath = transcriptPointerPath(projectDir, tmpDir)
+        symlinkSync(victimPath, pointerPath)
+
+        const { exitCode } = await runHook(
+          scriptPath,
+          { session_id: 'attack-test', transcript_path: transcriptPath },
+          { CLAUDE_PROJECT_DIR: projectDir, TMPDIR: tmpDir }
+        )
+        expect(exitCode).toBe(0)
+
+        // The victim file is untouched — the symlink was never dereferenced
+        // for a write.
+        expect(readFileSync(victimPath, 'utf-8')).toBe(victimContent)
+
+        // The pointer path is now a real regular file (the symlink itself
+        // was replaced by `rename`), carrying the real pointer content.
+        expect(lstatSync(pointerPath).isSymbolicLink()).toBe(false)
+        const contents = readFileSync(pointerPath, 'utf-8')
+        expect(contents.trim()).toBe(`attack-test\t${transcriptPath}`)
+
+        // Owner-only permissions on the file the rename actually produced.
+        expect(statSync(pointerPath).mode & 0o777).toBe(0o600)
       } finally {
         rmSync(projectDir, { recursive: true, force: true })
         rmSync(tmpDir, { recursive: true, force: true })
