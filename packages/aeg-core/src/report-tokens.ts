@@ -94,9 +94,27 @@ export type TokensLineInput = {
  * an unverified guess baked into a PR's permanent history is worse than an
  * honest unknown.
  */
-/** Shared by `formatTokensLine` and `formatTokenReportRow` — one place that turns a summary into the model/tokensIn/tokensOut cells both grammars report, so the two shapes can never drift on the arithmetic. */
+/**
+ * Neutralizes characters that would corrupt the grammar a field is
+ * interpolated into: `|` (the table-row cell delimiter `splitTableRow`
+ * already expects `\|` for on read — the same escape convention, applied on
+ * write) and an embedded newline (which could forge a synthetic row/line
+ * neither writer ever intended, regardless of delimiter). Applied to every
+ * free-text field both grammars below interpolate — `phase`, `role`, the
+ * derived `model`, and (for the table row) `date` — because a phase/role/
+ * model value can arrive from an untrusted CLI flag or a git branch name,
+ * both of which can legally contain `|` and newlines (found live: a crafted
+ * branch name produced a token-report row whose columns silently shifted
+ * past `parseTokenReportEntries`, discarding real measured usage with no
+ * error).
+ */
+function sanitizeField(value: string): string {
+  return value.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|')
+}
+
+/** Shared by `formatTokensLine` and `formatTokenReportRow` — one place that turns a summary into the model/tokensIn/tokensOut cells both grammars report, so the two shapes can never drift on the arithmetic. `model` is sanitized here so every caller gets it pre-neutralized regardless of whether it came from `modelOverride` or the collected summary. */
 function renderCells(input: TokensLineInput): { model: string; tokensIn: string; tokensOut: string } {
-  const model = input.modelOverride ?? input.summary?.model ?? '—'
+  const model = sanitizeField(input.modelOverride ?? input.summary?.model ?? '—')
   if (!input.summary) return { model, tokensIn: '—', tokensOut: '—' }
   const { inputTokens, cacheCreationInputTokens, cacheReadInputTokens, outputTokens } = input.summary.components
   const tokensIn = inputTokens + cacheCreationInputTokens + cacheReadInputTokens
@@ -105,10 +123,12 @@ function renderCells(input: TokensLineInput): { model: string; tokensIn: string;
 
 export function formatTokensLine(input: TokensLineInput): string {
   const { model, tokensIn, tokensOut } = renderCells(input)
+  const phase = sanitizeField(input.phase)
+  const role = sanitizeField(input.role)
   if (!input.summary) {
-    return `Tokens: ${input.phase} — ${input.role} — ${model} — —`
+    return `Tokens: ${phase} — ${role} — ${model} — —`
   }
-  return `Tokens: ${input.phase} — ${input.role} — ${model} — ${tokensIn}/${tokensOut}/—`
+  return `Tokens: ${phase} — ${role} — ${model} — ${tokensIn}/${tokensOut}/—`
 }
 
 export type TokenReportRowInput = TokensLineInput & {
@@ -126,7 +146,10 @@ export type TokenReportRowInput = TokensLineInput & {
  */
 export function formatTokenReportRow(input: TokenReportRowInput): string {
   const { model, tokensIn, tokensOut } = renderCells(input)
-  return `| ${input.phase} | ${input.role} | ${model} | ${tokensIn} | ${tokensOut} | — | ${input.date} |`
+  const phase = sanitizeField(input.phase)
+  const role = sanitizeField(input.role)
+  const date = sanitizeField(input.date)
+  return `| ${phase} | ${role} | ${model} | ${tokensIn} | ${tokensOut} | — | ${date} |`
 }
 
 /**
