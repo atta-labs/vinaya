@@ -1331,15 +1331,25 @@ export function buildInitOps(ctx: InitContext): Op[] {
   // separately on PATH. Found live: a fresh install's `/vinaya <role>` and
   // every `.agents/skills/vinaya-*/SKILL.md` failed "command not found" on
   // their very first use, with nothing in `init`'s own output warning it.
+  //
+  // Message names only the files THIS install actually wrote — a
+  // gemini-only repo (no `claude` in `ctx.agents`) never had a working
+  // `/vinaya <role>` slash command to begin with, so telling it that one
+  // broke names a file it doesn't have while leaving its real affected
+  // file (`.gemini/commands/vinaya.toml`) unmentioned (code review, PR #279).
   if (ctx.agents.size > 0) {
+    const affected: string[] = []
+    if (ctx.agents.has('claude')) affected.push('the `/vinaya <role>` command (.claude/commands/vinaya.md)')
+    if (ctx.agents.has('gemini')) affected.push('the `/vinaya` command (.gemini/commands/vinaya.toml)')
+    if (ctx.agents.has('skills')) affected.push('every .agents/skills/vinaya-*/SKILL.md file')
     ops.push({
       kind: 'print',
       message:
         'The agent-native commands above (`vinaya doctrine`) need `vinaya` resolvable on PATH:\n\n' +
         '  npm install -g @attalabs/vinaya\n\n' +
-        'Without a global install, `/vinaya <role>` and the .agents/skills/ files above fail ' +
-        '"command not found" the first time an agent tries to use them.',
-      group: 'Branch protection (printed, never applied)'
+        `Without a global install, ${affected.join(' and ')} fail "command not found" the first time an agent ` +
+        'tries to use them.',
+      group: 'Agent-native commands (printed, never applied)'
     })
   }
 
@@ -1349,7 +1359,7 @@ export function buildInitOps(ctx: InitContext): Op[] {
   // Branch protection — printed only, never applied.
   ops.push({ kind: 'print', message: BRANCH_PROTECTION_NOTE, group: 'Branch protection (printed, never applied)' })
   ops.push({ kind: 'print', message: CODEOWNERS_NOTE, group: 'Branch protection (printed, never applied)' })
-  ops.push({ kind: 'print', message: PRINCIPALS_NOTE, group: 'Branch protection (printed, never applied)' })
+  ops.push({ kind: 'print', message: PRINCIPALS_NOTE, group: 'Review trust (printed, never applied)' })
 
   return ops
 }

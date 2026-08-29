@@ -30,6 +30,7 @@ import type { InitDeps } from '../src/commands/init.js'
 import { parseAgentsFlag, runInit, runInitProduct } from '../src/commands/init.js'
 import { runEject } from '../src/commands/eject.js'
 import type { EjectDeps } from '../src/commands/eject.js'
+import { planInstall, renderInstallDiff } from '../src/lib/ops.js'
 import type { LabelGateway } from '../src/lib/ops.js'
 
 let root: string
@@ -1686,5 +1687,103 @@ describe('vinaya eject removes all three agent-vendor emitters from a full insta
     expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
     for (const p of skillPaths) expect(existsSync(join(root, p))).toBe(false)
     expect(snapshot(root)).toEqual(before)
+  })
+})
+
+// Code review, PR #279: both new onboarding notes below were copy-pasted
+// under `group: 'Branch protection (printed, never applied)'` — a literal
+// section header (`renderInstallDiff`, lib/ops.ts) neither note is about,
+// so they rendered nested under the wrong heading with zero coverage to
+// catch it. These tests pin each note's own group, guard the pre-existing
+// branch-protection notes stay put, and cover the PATH note's per-vendor
+// wording (a gemini-only repo was told about `.claude` files it doesn't
+// have while its real affected file went unmentioned).
+describe('onboarding notes: correct groups and per-vendor wording (PR #279 review)', () => {
+  function opsFor(agents: AgentVendor[]): ReturnType<typeof buildInitOps> {
+    return buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost: null,
+      ciSetup: null,
+      agents: new Set<AgentVendor>(agents)
+    })
+  }
+
+  function printMessages(agents: AgentVendor[]): { message: string; group: string }[] {
+    return opsFor(agents)
+      .filter((op) => op.kind === 'print')
+      .map((op) => (op.kind === 'print' ? { message: op.message, group: op.group } : { message: '', group: '' }))
+  }
+
+  it('the vinaya-on-PATH note has its own group, not "Branch protection"', () => {
+    const prints = printMessages(['claude'])
+    const pathNote = prints.find((p) => p.message.includes('resolvable on PATH'))
+    expect(pathNote).toBeDefined()
+    expect(pathNote?.group).toBe('Agent-native commands (printed, never applied)')
+    expect(pathNote?.group).not.toBe('Branch protection (printed, never applied)')
+  })
+
+  it('the principals note has its own group, not "Branch protection"', () => {
+    const prints = printMessages(['claude'])
+    const principalsNote = prints.find((p) => p.message.includes('principals'))
+    expect(principalsNote).toBeDefined()
+    expect(principalsNote?.group).toBe('Review trust (printed, never applied)')
+    expect(principalsNote?.group).not.toBe('Branch protection (printed, never applied)')
+  })
+
+  it('the pre-existing branch-protection and CODEOWNERS notes still share their own group', () => {
+    const prints = printMessages(['claude'])
+    const branchNote = prints.find((p) => p.message.includes('branches/main/protection'))
+    const codeownersNote = prints.find((p) => p.message.includes('CODEOWNERS'))
+    expect(branchNote?.group).toBe('Branch protection (printed, never applied)')
+    expect(codeownersNote?.group).toBe('Branch protection (printed, never applied)')
+  })
+
+  it('no vendor selected: no PATH note is printed at all', () => {
+    const prints = printMessages([])
+    expect(prints.find((p) => p.message.includes('resolvable on PATH'))).toBeUndefined()
+  })
+
+  it('claude-only: names the claude command file, says nothing about gemini', () => {
+    const prints = printMessages(['claude'])
+    const pathNote = prints.find((p) => p.message.includes('resolvable on PATH'))
+    expect(pathNote?.message).toContain('/vinaya <role>')
+    expect(pathNote?.message).toContain('.claude/commands/vinaya.md')
+    expect(pathNote?.message).not.toContain('.gemini')
+  })
+
+  it('gemini-only: names the gemini command file, never claims a `/vinaya <role>` command it never installed', () => {
+    const prints = printMessages(['gemini'])
+    const pathNote = prints.find((p) => p.message.includes('resolvable on PATH'))
+    expect(pathNote?.message).toContain('.gemini/commands/vinaya.toml')
+    expect(pathNote?.message).not.toContain('/vinaya <role>')
+    expect(pathNote?.message).not.toContain('.claude')
+  })
+
+  it('skills-only: names the skill files, mentions neither claude nor gemini command files', () => {
+    const prints = printMessages(['skills'])
+    const pathNote = prints.find((p) => p.message.includes('resolvable on PATH'))
+    expect(pathNote?.message).toContain('.agents/skills/vinaya-*/SKILL.md')
+    expect(pathNote?.message).not.toContain('.claude/commands/vinaya.md')
+    expect(pathNote?.message).not.toContain('.gemini/commands/vinaya.toml')
+  })
+
+  it('all three vendors: the rendered diff nests each note under its own heading, not a shared one', () => {
+    // Exercise the real renderer (planInstall + renderInstallDiff), not just
+    // the op's `group` string in isolation — this is what a real
+    // `vinaya init --dry-run` run actually prints.
+    const plan = planInstall(opsFor(['claude', 'gemini', 'skills']), root)
+    const rendered = renderInstallDiff(plan)
+    const pathHeaderIdx = rendered.indexOf('── Agent-native commands (printed, never applied) ──')
+    const reviewTrustHeaderIdx = rendered.indexOf('── Review trust (printed, never applied) ──')
+    const branchHeaderIdx = rendered.indexOf('── Branch protection (printed, never applied) ──')
+    expect(pathHeaderIdx).toBeGreaterThan(-1)
+    expect(reviewTrustHeaderIdx).toBeGreaterThan(-1)
+    expect(branchHeaderIdx).toBeGreaterThan(-1)
+    // Each heading is followed by its own note before the next heading starts.
+    const pathSection = rendered.slice(pathHeaderIdx, reviewTrustHeaderIdx)
+    expect(pathSection).toContain('resolvable on PATH')
+    expect(pathSection).not.toContain('principals')
   })
 })
