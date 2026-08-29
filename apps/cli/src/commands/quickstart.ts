@@ -23,6 +23,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { resolveMeteringCapability } from '@attalabs/aeg-core'
 import { runDemoBreak } from './demo.js'
 import type { DoctorDeps } from './doctor.js'
 import { runDoctor } from './doctor.js'
@@ -239,7 +240,14 @@ function realDeps(): QuickstartDeps {
       readHooksPath: readCoreHooksPath,
       nodeVersion: () => process.version,
       bunVersion: () => (typeof Bun === 'undefined' ? null : Bun.version),
-      packageVersion: readPackageVersion
+      packageVersion: readPackageVersion,
+      meteringCapability: () =>
+        resolveMeteringCapability({
+          env: process.env,
+          cwd: process.cwd(),
+          exists: existsSync,
+          readFile: (path: string) => readFileSync(path, 'utf8')
+        })
     },
     confirm: async (q, defaultYes) => promptYesNo(q, defaultYes),
     ask: async (q) => promptAsk(q),

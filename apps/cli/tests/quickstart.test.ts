@@ -125,7 +125,8 @@ function makeDeps(
     readHooksPath: async () => null,
     nodeVersion: () => 'v99.0.0',
     bunVersion: () => 'test-bun',
-    packageVersion: () => '0.1.0-test'
+    packageVersion: () => '0.1.0-test',
+    meteringCapability: () => ({ capable: false, reason: 'no-transcript-resolved', detail: 'fixture' })
   }
   let hookSwapped = false
   const deps: QuickstartDeps = {

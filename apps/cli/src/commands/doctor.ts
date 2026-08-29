@@ -20,9 +20,11 @@ import {
   globToRegex,
   isCodeFile,
   isUrlPointer,
+  type MeteringCapability,
   parseDocOwners,
   parsePnpmWorkspaceYaml,
-  pointerToPath
+  pointerToPath,
+  resolveMeteringCapability
 } from '@attalabs/aeg-core'
 import {
   buildInitOps,
@@ -76,6 +78,7 @@ export type DoctorDeps = {
   nodeVersion: () => string
   bunVersion: () => string | null
   packageVersion: () => string
+  meteringCapability: () => MeteringCapability
 }
 
 function readVersion(): string {
@@ -92,7 +95,14 @@ function realDeps(): DoctorDeps {
     readHooksPath: readCoreHooksPath,
     nodeVersion: () => process.version,
     bunVersion: () => (typeof Bun === 'undefined' ? null : Bun.version),
-    packageVersion: readVersion
+    packageVersion: readVersion,
+    meteringCapability: () =>
+      resolveMeteringCapability({
+        env: process.env,
+        cwd: process.cwd(),
+        exists: existsSync,
+        readFile: (path: string) => readFileSync(path, 'utf8')
+      })
   }
 }
 
@@ -673,6 +683,27 @@ function diagnoseGlobalConfigChecks(): Finding[] {
 }
 
 // ---------------------------------------------------------------------------
+// Token-metering capability probe — surfaces only the incapable verdict, at
+// `info`: the expected default is `capable`, which is not a fact worth a
+// line. Reuses `resolveMeteringCapability` from `@attalabs/aeg-core` rather
+// than re-deriving "can this host meter itself" from `process.env` directly
+// — declaring capability by host identity is the exact false positive the
+// probe exists to remove.
+// ---------------------------------------------------------------------------
+function diagnoseTokenMetering(deps: DoctorDeps): Finding[] {
+  const capability = deps.meteringCapability()
+  if (capability.capable) return []
+  return [
+    info(
+      'tokens',
+      `Token-metering capability probe: incapable (${capability.reason}) — ${capability.detail} Real per-turn ` +
+        'token figures cannot currently be collected via `vinaya tokens`. Report them by whatever means your ' +
+        'host offers, or supply them directly with `vinaya tokens --in <n> --out <n>`.'
+    )
+  ]
+}
+
+// ---------------------------------------------------------------------------
 // Check 5 — environment (gh auth + scope, Node/Bun, package-vs-artifact skew)
 // ---------------------------------------------------------------------------
 async function diagnoseEnvironment(deps: DoctorDeps, hasDrift: boolean): Promise<Finding[]> {
@@ -896,6 +927,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
   findings.push(...diagnoseEnvDeclarations(repo.repoRoot, configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseCheckClassification(configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseGlobalConfigChecks())
+  findings.push(...diagnoseTokenMetering(deps))
   findings.push(...(await diagnoseEnvironment(deps, hasDrift)))
   findings.push(await diagnoseBranchProtection(deps, repo.owner, repo.repo))
   findings.push(diagnoseCodeowners(repo.repoRoot))
