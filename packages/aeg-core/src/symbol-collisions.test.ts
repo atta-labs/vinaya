@@ -229,18 +229,22 @@ describe('symbol-collision detection', () => {
  *                        `archive-task.ts`'s has capture groups, the other
  *                        three do not.
  *
- * `ContractFrontmatter`/`RoleFrontmatter` also surfaced here — a genuinely
- * divergent, unrelated pair of unexported local types in
- * `bin/verify-registry.ts` and `src/diagram-model.ts` that happened to share
- * a name. Renamed in `bin/verify-registry.ts` (`RegistryRoleRow`/
- * `RegistryContractRow`, both module-private, zero external references)
- * rather than baselined — filed as its own record instead of folded in here.
+ * `ContractFrontmatter`/`RoleFrontmatter` — an unexported local type pair in
+ * `verify-registry.ts` (`{ file, producer, consumer }` / `{ file, role_id,
+ * performs, refuses_when }`, read from a role/contract doc's frontmatter) vs
+ * two unrelated, differently-shaped unexported local types of the same names
+ * in `diagram-model.ts` (diagram-config parsing). Genuine, coincidental
+ * cross-`bin`/`src` collisions — per this widening task's own brief, NOT
+ * silently renamed inline; reported separately as Issue #287 instead.
+ * Baselined here rather than left red, same as every other unfixed entry
+ * above. Unfixed.
  */
 const KNOWN_COLLISIONS = [
   'AssociatedPr',
   'BodyResult',
   'BodySource',
   'checkClosesN',
+  'ContractFrontmatter',
   'createLabel',
   'ensureLabelExists',
   'extractTitle',
@@ -262,6 +266,7 @@ const KNOWN_COLLISIONS = [
   'REPO_ROOT',
   'resolvePrBody',
   'resolveShippableArgs',
+  'RoleFrontmatter',
   'sh',
   'shJson',
   'stripBackticks',
