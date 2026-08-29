@@ -94,14 +94,39 @@ export type TokensLineInput = {
  * an unverified guess baked into a PR's permanent history is worse than an
  * honest unknown.
  */
-export function formatTokensLine(input: TokensLineInput): string {
+/** Shared by `formatTokensLine` and `formatTokenReportRow` — one place that turns a summary into the model/tokensIn/tokensOut cells both grammars report, so the two shapes can never drift on the arithmetic. */
+function renderCells(input: TokensLineInput): { model: string; tokensIn: string; tokensOut: string } {
   const model = input.modelOverride ?? input.summary?.model ?? '—'
+  if (!input.summary) return { model, tokensIn: '—', tokensOut: '—' }
+  const { inputTokens, cacheCreationInputTokens, cacheReadInputTokens, outputTokens } = input.summary.components
+  const tokensIn = inputTokens + cacheCreationInputTokens + cacheReadInputTokens
+  return { model, tokensIn: String(tokensIn), tokensOut: String(outputTokens) }
+}
+
+export function formatTokensLine(input: TokensLineInput): string {
+  const { model, tokensIn, tokensOut } = renderCells(input)
   if (!input.summary) {
     return `Tokens: ${input.phase} — ${input.role} — ${model} — —`
   }
-  const { inputTokens, cacheCreationInputTokens, cacheReadInputTokens, outputTokens } = input.summary.components
-  const tokensIn = inputTokens + cacheCreationInputTokens + cacheReadInputTokens
-  return `Tokens: ${input.phase} — ${input.role} — ${model} — ${tokensIn}/${outputTokens}/—`
+  return `Tokens: ${input.phase} — ${input.role} — ${model} — ${tokensIn}/${tokensOut}/—`
+}
+
+export type TokenReportRowInput = TokensLineInput & {
+  /** `YYYY-MM-DD`. Caller-supplied, never derived here — this file stays `Date.now()`-free per its purity charter above. */
+  date: string
+}
+
+/**
+ * The same cells `formatTokensLine` reports, rendered as one `| Phase | Role
+ * | Agent/Model | Tokens in | Tokens out | Cost | Date |` markdown-table row
+ * — the shape `aeg-root/roles/developer.md`'s "Token report" heading and
+ * `parse-token-report.ts`'s `parseTokenReportEntries` (table form) both
+ * already expect. `Cost` is always `—`, same reasoning as `formatTokensLine`'s
+ * own Cost cell: no maintained per-model pricing table exists in this package.
+ */
+export function formatTokenReportRow(input: TokenReportRowInput): string {
+  const { model, tokensIn, tokensOut } = renderCells(input)
+  return `| ${input.phase} | ${input.role} | ${model} | ${tokensIn} | ${tokensOut} | — | ${input.date} |`
 }
 
 /**

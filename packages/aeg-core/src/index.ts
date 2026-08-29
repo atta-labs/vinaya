@@ -18,8 +18,8 @@ export { parseLedger, rowFromCells } from './parse-ledger'
 export { sumLedger } from './sum-ledger'
 export { aggregateTaskTokenRows, parseTokenReportEntries, parseTokensLines } from './parse-token-report'
 export type { TokenSourcePr } from './parse-token-report'
-export { formatBreakdown, formatTokensLine } from './report-tokens'
-export type { TokensLineInput, TranscriptSummary, UsageComponents } from './report-tokens'
+export { formatBreakdown, formatTokenReportRow, formatTokensLine } from './report-tokens'
+export type { TokenReportRowInput, TokensLineInput, TranscriptSummary, UsageComponents } from './report-tokens'
 // The Claude Code collection adapter (`tranche-model.md` §12 layer 2) — one
 // host's way to produce a `TranscriptSummary`, exported beside the portable
 // renderers it feeds, never as a requirement of the contract.
