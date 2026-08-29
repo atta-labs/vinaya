@@ -1,5 +1,53 @@
 # @attalabs/vinaya
 
+## 0.20.1
+
+### Patch Changes
+
+- 0ced2b1: `body-bare-digits` and `check-evidence-fresh` now resolve the anchored
+  `AEG:EVIDENCE` region through one shared, nominally-typed context instead of
+  each deriving it from its own text. They disagreed: the digit check normalised
+  the body first (zero-width strip, named-entity decode) while the freshness
+  check read the raw PR body, so one zero-width character inside the START
+  marker made the digit check exempt a block the freshness check could not see
+  at all — two green checks over an unverified figure.
+  
+  Also in this change:
+  
+  - `vinaya pr report` emits a `Summary:` line derived from the numstat the
+    block already carries, so a PR body no longer needs a hand-written file
+    count that goes stale. Its value is emitted inside an inline code span, so
+    it needs no new `body-bare-digits` exemption — which also means it works
+    under a checker that predates it, as the `pull_request_target` workflow
+    running from the default branch requires. The freshness check byte-compares
+    the whole line.
+  - `check-evidence-fresh` now refuses, rather than passing silently, when the
+    only `AEG:EVIDENCE` pair sits inside a `<details>` block — where the digit
+    check blanks every digit and nothing can verify what it claims.
+  - `vinaya pr report --write` refuses a body whose anchor resolves one way
+    before normalisation and another after, instead of appending a second block
+    beside a hidden one.
+- 9520aab: A managed-block path in `vinaya.config.json` that isn't byte-exactly
+  `.git/…`, `.husky/…`, or `.vinaya/hooks/…` is now refused at the parse
+  layer. Closes two escapes from the `.git/` prefix check in `lib/ops.ts`:
+  a case variant (`.GIT/config`, on case-insensitive filesystems) and a bare
+  `.git` with no trailing slash (on every filesystem, previously an unhandled
+  `EISDIR` crash rather than a clean refusal). Neither escape is reachable
+  from a vinaya-generated manifest — this only changes what a hand-edited or
+  hostile manifest can do.
+- 7dc9b9f: `vinaya init product --path` now refuses a backtick, closing a silent round-trip
+  corruption: the registry parser strips backticks from every cell (its own
+  code-span convention), so a declared path containing one was written verbatim
+  and read back as a different path, with nothing reporting the difference.
+- 2f91535: Fixes `vinaya upgrade` silently no-oping on a missing `.vinaya/doc-owners`, leaving `vinaya doctor`'s
+  "run `vinaya upgrade`" remedy provably dead-ended (`#182`): three consecutive `upgrade --yes` runs left
+  the file absent and `doctor` still erroring, because the drift-protection exemption for `.vinaya/doc-owners`
+  (and `vinaya.config.json`) was unconditional and ran before the "file is missing" check, making that
+  check unreachable for these two paths. The exemption now only fires when the file exists — a missing
+  file falls through to the ordinary recreate-from-starter handling, restoring the remedy `doctor` already
+  advertises. Existing files with real adopter bindings are untouched, exactly as before: the destruction
+  case the exemption exists to prevent is unchanged and stays regression-tested.
+
 ## 0.20.0
 
 ### Minor Changes
