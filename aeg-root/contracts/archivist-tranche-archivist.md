@@ -57,7 +57,7 @@ Every output the per-task Archivist produces (left) has exactly one obligation f
 |---|---|---|
 | **Provenance block comment** on each merged PR | Entry gate verification | The Tranche Archivist verifies every task PR has a provenance block comment before starting close-out. A missing provenance block means that task's per-task Archivist close-out was incomplete — stop and flag: *"Task N's PR has no provenance block — per-task Archivist did not run for this task. Flag for Principal before proceeding."* |
 | **Lessons Issue comments** for any `BLOCKER`/`MAJOR` findings that merged | Retrospective assembly | The Tranche Archivist reads the pinned lessons Issue's comments since the tranche started and includes the patterns they identify in the retrospective's "What stalled or caused rework" and "Carry-forward lessons" sections. |
-| **Follow-up Issues** opened for `STALE-SPEC` findings | State doc update | The Tranche Archivist notes open follow-up Issues in the relevant pinned state Issue under "Pending manual operations" (or in the output report as DANGLING items). A `STALE-SPEC` finding with no follow-up Issue is a DANGLING item — flag it for the Principal. (`now.md` is retired.) |
+| **Follow-up Issues** opened for `STALE-SPEC` findings | Close-out report | The Tranche Archivist lists open follow-up Issues in the output report as DANGLING items — the follow-up Issue itself IS the durable record, open until resolved. A `STALE-SPEC` finding with no follow-up Issue is a DANGLING item — flag it for the Principal. (`now.md` and the pinned state Issue are both retired.) |
 
 **Reading the table:** left is the producer obligation (per-task Archivist role doc and this contract enforce it), right is the consumer obligation (Tranche Archivist role doc and this contract enforce it). The two role docs must not contradict this table.
 
@@ -74,7 +74,7 @@ Every output the per-task Archivist produces (left) has exactly one obligation f
 
 - Verify every task PR has a provenance block comment before starting. If any is missing, stop and flag — do not proceed with partial close-out. Partial close-out is worse than no close-out: it creates a plausible-looking but incomplete record.
 - Read the pinned lessons Issue's comments since the tranche start date before assembling the retrospective. Carry-forward lessons that appear there but are not reflected in the retrospective are a gap.
-- Note open follow-up Issues in the relevant pinned state Issue (under "Pending manual operations") or in the close-out report as DANGLING items. If a `STALE-SPEC` finding has no follow-up Issue (the per-task Archivist missed it), flag it as DANGLING and open the Issue on behalf of the Principal. (`now.md` is retired.)
+- List open follow-up Issues in the close-out report as DANGLING items — the follow-up Issue itself is the durable record, open until resolved. If a `STALE-SPEC` finding has no follow-up Issue (the per-task Archivist missed it), flag it as DANGLING and open the Issue on behalf of the Principal. (`now.md` and the pinned state Issue are both retired.)
 - Do not assemble the tranche retrospective from memory or inference — assemble it from merged PR summaries, the pinned lessons Issue's comments, and the tranche topology file. The retrospective is a structured projection of facts.
 
 ---

@@ -70,7 +70,7 @@ You are the Brief Author when a task already exists on the forge with a planner'
 
 **The final model choice.** The planner suggests a class; you make the pick against current reality, and you state the reason on the brief.
 
-**The readable record.** The specs and per-project state notes that describe what the work makes true. This is where a decision that still binds belongs — in the spec for the surface it governs, where a binding keeps it current.
+**The readable record.** The specs that describe what the work makes true. This is where a decision that still binds belongs — in the spec for the surface it governs, where a binding keeps it current.
 
 ---
 

@@ -87,4 +87,33 @@ Principal → Planner → Brief Author → Developer → Reviewer (code + securi
 
 ## 11. What to do next (the reading order)
 
-After this skill, load in order: **`aeg-roles`** (routes you to your role doc) → your **`aeg-root/roles/<role>.md`** → the altitude you're working at — **`aeg-root/milestone-model.md`** (declaring or reading a goal), **`aeg-root/tranche-model.md`** (planning or executing across a batch), and/or **`aeg-root/task-model.md`** (executing one task) — → **`aeg-project/state.md`** (non-derivable operational facts) + **forge queries** (active tasks, blocked, next — see `coordination.md` "Session-start forge queries") → the active **`tranches/<name>.md`** if one exists. The canonical session-start protocol is `aeg-root/coordination.md`; this skill is its fast front-door summary, not a replacement. When the two disagree, `coordination.md` and `state-machine.md` win.
+After this skill, load in order: **`aeg-roles`** (routes you to your role doc) → your **`aeg-root/roles/<role>.md`** → the altitude you're working at — **`aeg-root/milestone-model.md`** (declaring or reading a goal), **`aeg-root/tranche-model.md`** (planning or executing across a batch), and/or **`aeg-root/task-model.md`** (executing one task) — → the session-start forge queries below. When anything disagrees, `state-machine.md` wins.
+
+## 12. Session-start forge queries — deriving current state
+
+Execution state is **derived from the forge, never read from a file** — there is no state file, no status doc, no hand-maintained state Issue. (`coordination.md`, which once carried a session-start protocol plus a pinned per-project state-Issue layer, is retired: its queries cited label names that don't exist in any adopter, and the state-Issue layer duplicated what Milestones and tranche labels already derive — the one live instance drifted stale and was closed.) Substitute your repo's label namespace — the queries below use this repo's `vinaya/` prefix:
+
+**"What's active?"**
+```bash
+gh issue list --label "vinaya/tranche:<slug>" --state open
+gh pr list --state open
+```
+
+**"What's blocked?"**
+```bash
+gh issue list --label "vinaya/blocked" --state open
+```
+
+**"What needs the Principal?"**
+```bash
+gh issue list --label "vinaya/needs:principal-input" --state open
+gh pr list --label "vinaya/needs:principal-input" --state open
+```
+
+**"What merged recently?"** — `gh pr list --state merged --limit 20`
+
+**"Is a specific task dispatchable?"** — don't hand-derive it: `bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>` (or the shipped `dispatch-readiness` check in an adopter repo) answers with the exact blocker.
+
+Anything genuinely non-derivable — a pending manual operation, a known production issue — is an **ordinary open Issue, closed when resolved**: never a hand-edited-in-place state document, never a label pretending to be a status field.
+
+No brief, no audit finding, no "next steps" recommendation is valid without a forge check. Forge state > file state > memory. Always.

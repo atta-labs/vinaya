@@ -5,9 +5,9 @@ sidebar_title: Process
 
 This document describes how work flows through the AEG operational model — from the moment the Principal has an idea to the moment that work merges to `main` with all specs and skills updated.
 
-It is the canonical "how do we actually work?" document. Every other PM doc (`coordination.md`, `state-machine.md`, `tranche-model.md`, role docs, `brief-authoring` skill) describes a slice of this process. This document stitches them together into a single readable walkthrough.
+It is the canonical "how do we actually work?" document. Every other PM doc (`state-machine.md`, `tranche-model.md`, role docs, `brief-authoring` skill) describes a slice of this process. This document stitches them together into a single readable walkthrough.
 
-If you are starting a new session and need to understand the workflow, read this first. Then `coordination.md` for session protocol, then the role doc that applies to you, then any project-specific specs.
+If you are starting a new session and need to understand the workflow, read this first. Then the `aeg` skill's session-start forge queries for orientation, then the role doc that applies to you, then any project-specific specs.
 
 ---
 
@@ -140,7 +140,7 @@ The branch name `task/<tranche>/<n>` is the convention that links the task to it
 
 **Who:** Developer (the coding agent — spawned or pasted).
 
-Per `roles/developer.md`, the Developer reads `coordination.md` / `state.md` / its role doc, derives live execution state from the forge (session-start queries in `coordination.md`), reads the relevant skills (auto-loaded when matching code is touched) and project specs, confirms pre-flight (starting with the worktree), and works in small, frequent commits on the `task/<tranche>/<n>` branch. When dispatched by an automation layer, it streams progress events to that layer.
+Per `roles/developer.md`, the Developer reads its role doc, derives live execution state from the forge (the `aeg` skill's session-start forge queries), reads the relevant skills (auto-loaded when matching code is touched) and project specs, confirms pre-flight (starting with the worktree), and works in small, frequent commits on the `task/<tranche>/<n>` branch. When dispatched by an automation layer, it streams progress events to that layer.
 
 The Developer cannot author its own briefs, expand scope without escalation, modify files outside scope, skip verification hooks, skip the Task Done checklist, or **write status anywhere** (status is derived). If the brief is wrong or contradicts reality, it escalates (Phase 7) — it does not paper over confusion or improvise outside scope.
 
@@ -260,9 +260,9 @@ The test plan is split by who can structurally execute each item:
 
 **Who:** Principal (or Brief Author if explicit per-PR delegation was set in the brief).
 
-The Principal merges. Tier 3 work merges during a ratification window (`coordination.md`); Tier 0/1 anytime. The merge **auto-closes the linked Issue** (via `Closes #N`) — and the merge *is* the `merged` status; nobody writes a label. An automation layer may surface a completion notification.
+The Principal merges. Tier 3 work merges during a ratification window (`roles/principal.md`); Tier 0/1 anytime. The merge **auto-closes the linked Issue** (via `Closes #N`) — and the merge *is* the `merged` status; nobody writes a label. An automation layer may surface a completion notification.
 
-**Post-merge: the Archivist closes out** (`roles/archivist.md`) — confirms the Issue closed, docs coherent, per-project pinned state Issue updated for every project the task listed, `docs-index.md` regenerated. It **flags** (does not perform) orphaned branches and worktree removal. It writes no task status.
+**Post-merge: the Archivist closes out** (`roles/archivist.md`) — confirms the Issue closed, docs coherent, `docs-index.md` regenerated. It **flags** (does not perform) orphaned branches and worktree removal. It writes no task status. (The hand-edited per-project state Issue is retired — non-derivable facts live as ordinary open Issues, closed when resolved; active state is derived from the forge.)
 
 **Exit:** code is in main, Issue closed, close-out done.
 

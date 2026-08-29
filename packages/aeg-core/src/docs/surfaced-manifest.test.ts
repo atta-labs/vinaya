@@ -72,7 +72,7 @@ describe('isSurfacedDoc: model-backed rule', () => {
   it('does NOT surface a doc no node points at — the ~60% that backs nothing reachable', () => {
     for (const relPath of [
       'state-machine.md',
-      'coordination.md',
+      'task-model.md',
       'process.md',
       'aeg-manual-flow.md',
       'reviewer-prompt.md',
@@ -97,7 +97,7 @@ describe('isSurfacedDoc: frontmatter override wins both ways', () => {
   })
 
   it('surfaced: true shows a doc no node points at', () => {
-    expect(isSurfacedDoc('coordination.md', { surfaced: true }, SURFACED)).toBe(true)
+    expect(isSurfacedDoc('task-model.md', { surfaced: true }, SURFACED)).toBe(true)
     expect(isSurfacedDoc('tranches/aeg-consolidation.md', { surfaced: true }, SURFACED)).toBe(true)
   })
 })
@@ -108,9 +108,9 @@ describe('surfacedDocs', () => {
       { relPath: 'enforcement.md', frontmatter: {} },
       { relPath: 'roles/developer.md', frontmatter: {} },
       { relPath: 'state-machine.md', frontmatter: {} },
-      { relPath: 'coordination.md', frontmatter: { surfaced: true } },
+      { relPath: 'task-model.md', frontmatter: { surfaced: true } },
       { relPath: 'roles/reviewer.md', frontmatter: { surfaced: false } }
     ]
-    expect(surfacedDocs(entries, SURFACED)).toEqual(['enforcement.md', 'roles/developer.md', 'coordination.md'])
+    expect(surfacedDocs(entries, SURFACED)).toEqual(['enforcement.md', 'roles/developer.md', 'task-model.md'])
   })
 })

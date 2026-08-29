@@ -50,7 +50,7 @@ This contract formalizes the close-out outputs the Tranche Archivist must produc
 Four artifacts, all produced by the Tranche Archivist at close-out:
 
 1. The **archived tranche file** at `aeg-root/tranches/completed/<name>.md` — the physical signal.
-2. The updated **pinned state Issue** (one per product, plus an ecosystem-wide bucket) — the authoritative current-state snapshot for the product (current-focus pointer, resolved pending-manual-ops, recently-shipped entry).
+2. The closed **Milestone** plus the tranche's `vinaya/tranche:*`-labeled closed Issues — the forge-derived record of what the tranche shipped. (The hand-edited pinned state Issue this item once named is retired: everything it held is forge-derived, in the retrospective, or an ordinary open Issue closed when resolved.)
 3. The **retrospective** posted as a new comment on the pinned lessons Issue — the durable failure-mode record.
 
 All three must exist before the Planner is authorized to plan the next tranche on the product. (`now.md` is retired. "What's next" is derived from the forge: open Issues without an assigned PR in the current tranche, plus `gh issue list --label "vinaya/tranche:<slug>" --state open`.)
@@ -64,7 +64,7 @@ Every artifact the Tranche Archivist produces (left) has exactly one obligation 
 | Tranche Archivist produces | Planner consumes at | What the consumption means |
 |---|---|---|
 | **Archived tranche file** at `aeg-root/tranches/completed/<name>.md` | Readiness gate item 8 | The Planner MUST confirm this file exists before planning any new tranche on the same product. Absence means the Tranche Archivist has not run — planning is blocked. |
-| **Updated pinned state Issue** reflecting current product state (current-focus pointer updated, pending-manual-ops current, recently-shipped entry added) | Readiness gate item 2 (specs reachable) | The Planner reads the updated state Issue as the authoritative current-state snapshot. A state Issue not updated by the Tranche Archivist means the plan is built on wrong assumptions about what the product looks like post-tranche. |
+| **Closed Milestone + retrospective** on the lessons Issue | Readiness gate item 2 (specs reachable) | The Planner derives post-tranche state from the forge (closed Milestone, closed labeled Issues, merged PRs) and reads the retrospective for judgment-carrying observations. Planning against anything hand-maintained is planning against staleness — the forge cannot go stale. |
 | **Retrospective** posted as a comment on the pinned lessons Issue | Readiness gate item 5 (prior decisions known) | The Planner reads lessons since the last tranche to avoid re-litigating resolved decisions or repeating known failure modes. A missing retrospective means the Planner plans blind to the tranche's carry-forward lessons. |
 
 > **`now.md` is retired.** "What's next" is not a produced artifact — it is derived from the forge: `gh issue list --label "vinaya/tranche:<slug>" --state open` filtered to Issues with no open PR. The Planner runs this query directly rather than reading a file that would need hand-maintenance.
@@ -76,7 +76,7 @@ Every artifact the Tranche Archivist produces (left) has exactly one obligation 
 ## Producer obligations (the Tranche Archivist)
 
 - Move the tranche file to `completed/` — this is the **physical signal** the Planner's gate checks. A close-out that does everything else but fails to move the file is an incomplete close-out that correctly blocks planning.
-- Update the relevant pinned state Issue(s) to reflect the tranche's output: update the current-focus pointer, add a recently-shipped entry, clear resolved pending-manual-ops. A state Issue that still describes work in progress after the tranche closed is a bug in the close-out.
+- Leave no hand-maintained state behind: what the tranche shipped is derived from the forge (closed Milestone, closed labeled Issues, merged PRs); observations live in the retrospective; anything still owed (a pending manual op, a known production issue) is an ordinary open Issue, closed when resolved.
 - Post the retrospective as a new comment on the pinned lessons Issue. These three outputs are the close-out contract. A close-out missing any of them is incomplete and the Planner's gate will correctly block.
 - **Do not** update `now.md` — it no longer exists. "What's next" is derived from the forge by the Planner, not written by the Archivist.
 
@@ -85,7 +85,7 @@ Every artifact the Tranche Archivist produces (left) has exactly one obligation 
 - Run readiness gate item 8 before planning any tranche that includes a product: confirm `aeg-root/tranches/completed/<name>.md` exists for the previous tranche on each product in scope.
 - If any prior tranche on an in-scope product exists in `aeg-root/tranches/` but NOT in `completed/`, STOP: *"The previous tranche `<name>` on `<product>` has not been archived — the Tranche Archivist has not run. Dispatch the Tranche Archivist for `<name>` before planning proceeds."*
 - Do not improvise around a missing close-out. "The Tranche Archivist probably ran" is not a passed gate. The filesystem check is the gate. If the file isn't there, stop.
-- Read the updated pinned state Issue and lessons Issue as the authoritative current-state snapshot — not a previous session's memory, not an earlier planning pass. These reflect what the tranche actually shipped; planning against anything else is planning against stale reality.
+- Derive the current-state snapshot from the forge (closed Milestone, closed labeled Issues, merged PRs) and read the lessons Issue's retrospective — not a previous session's memory, not an earlier planning pass. These reflect what the tranche actually shipped; planning against anything else is planning against stale reality.
 - Derive "what's next" from the forge: `gh issue list --label "vinaya/tranche:<slug>" --state open` filtered to Issues without an assigned open PR. Do not look for a `now.md` — it no longer exists.
 
 ---

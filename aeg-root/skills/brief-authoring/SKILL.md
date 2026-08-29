@@ -249,7 +249,7 @@ Do not leave documentation as an implication of the tier checklist. **List the e
 - **Never list a new file for a one-off report, audit finding, coverage summary, or working brief.** If the task's deliverable is a finding, an audit result, or a coverage report, its home is the PR body (task-scoped) or an Issue/PR comment (not task-scoped) — never a new file under `aeg-root/` or a product's `aeg-project/`. A committed scratch file has already broken AEG Studio once (a coverage report committed as `aeg-root/tranches/<name>.audit.md` was silently parsed as a broken tranche by the Studio loader) and produced a stale permanent brief once (`aeg-project/briefs/<name>-brief.md`, contradicting this skill's own "pasted, not committed" rule above). See `tranche-model.md` §9 rule 4.
 - **Tier 0** — usually none. State "No doc updates required (Tier 0)."
 - **Tier 1** — name each: which spec(s) reflect the new behavior, which skill(s) if a convention shifted, `docs-index.md` if files were added/removed/renamed.
-- **Tier 3** — all Tier 1 items, plus: which state changes (the per-project pinned state Issue; the tranche file; per-project backlogs). **Never** list `roadmap.md` or `now.md` — both retired (`roadmap.md`; `now.md`). Active-work state is derived from the forge, not written to a file.
+- **Tier 3** — all Tier 1 items, plus: which state changes (the tranche file; per-project backlogs; any non-derivable fact recorded as an ordinary open Issue). **Never** list `roadmap.md`, `now.md`, or a pinned state Issue — all retired. Active-work state is derived from the forge, not written to a file.
 
 A Tier 1+ brief with an empty doc-update list is malformed.
 
@@ -371,7 +371,7 @@ These two qualify a task and ride into the PR body. Both are reference-only — 
 ```
 **Project:** [project(s) this task touches — e.g. "web" or "engine, api"]
 ```
-Multi-valued. Resolves against `.vinaya/projects.md`. **Required in a multi-project repo; omitted entirely in a single-project repo** (no registry → one project → no field). Routes the Developer to the right specs and the Archivist to the right per-project state; a value that doesn't resolve to a registry row makes the brief malformed (refuse, don't guess). It must match the Planner's `Project(s)` for the task, including every shared-package consumer in the blast radius — see `roles/planner.md` and the planner-brief contract.
+Multi-valued. Resolves against `.vinaya/projects.md`. **Required in a multi-project repo; omitted entirely in a single-project repo** (no registry → one project → no field). Routes the Developer to the right specs; a value that doesn't resolve to a registry row makes the brief malformed (refuse, don't guess). It must match the Planner's `Project(s)` for the task, including every shared-package consumer in the blast radius — see `roles/planner.md` and the planner-brief contract.
 
 ```
 **Ticket:** [external ticket link(s) — e.g. "SAT-412 — https://…"]
