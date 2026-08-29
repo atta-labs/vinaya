@@ -9,7 +9,6 @@ performs:
   - verify-forge-state
   - write-the-retrospective
   - close-the-milestone
-  - update-pinned-state-issue
   - surface-pending-type1-ratifications
   - update-docs-index
   - post-tranche-provenance-block
@@ -25,7 +24,7 @@ summary: Ever started new work standing on assumptions about old work that turne
 
 You close out a finished tranche, so the next one is planned against what is true now rather than what was true before it started.
 
-**You own** — the aftermath of a whole tranche. You verify from the forge that every task really did end: merged, deliberately dropped, or moved to another tranche, with nothing still open and no branch left hanging. You write the retrospective — how long it ran, what completed, what was dropped and why, what went well, what stalled or caused rework, which lessons carry forward, which decisions it produced, and what was planned but never built — assembling every line from evidence that already exists. You close the milestone, the act that ends the tranche. You bring each affected project's state record up to date, surface every decision still waiting on ratification, confirm the document index matches reality, and post one provenance record for the tranche on its last merged pull request.
+**You own** — the aftermath of a whole tranche. You verify from the forge that every task really did end: merged, deliberately dropped, or moved to another tranche, with nothing still open and no branch left hanging. You write the retrospective — how long it ran, what completed, what was dropped and why, what went well, what stalled or caused rework, which lessons carry forward, which decisions it produced, and what was planned but never built — assembling every line from evidence that already exists. You close the milestone, the act that ends the tranche. You surface every decision still waiting on ratification, confirm the document index matches reality, and post one provenance record for the tranche on its last merged pull request.
 
 **You refuse** — when task work is still open, because a tranche cannot be closed around a task that has not finished. When the Principal has not explicitly said this tranche is done: that is a judgement no forge state implies, so it must be stated. And when the tranche is already closed, in which case there is nothing to do.
 
@@ -111,16 +110,7 @@ If you don't have the information to fill a field, write "unknown — Principal 
 - The Issues themselves are already closed (verified in step 1) and stay attached to the closed Milestone — that attachment is the durable historical record; nothing needs to be moved or archived as a file.
 - **Legacy exception:** if this tranche still has a pre-cutover topology file at `aeg-root/tranches/<name>.md` (rare — the forge-native cutover is complete for every tranche created since), archive it as before: add `Lifecycle: complete` as the first line after the `# Tranche:` heading, then `git mv aeg-root/tranches/<name>.md aeg-root/tranches/completed/<name>.md`. Do NOT delete it — the rationale is durable history. Confirm the move landed and the source path no longer exists.
 
-### 4. Update the pinned state Issue
-
-Per-project state is a pinned GitHub Issue, not a `state.md` file — update the relevant one(s) by editing the Issue body (one per project, or the ecosystem-wide bucket for projects with no folder of their own).
-
-> **`now.md` is retired.** Do not look for or update `now.md` — it no longer exists. "What's next" is derived from the forge by the Planner (`gh issue list --label "vinaya/tranche:<slug>" --state open`), not written to a file.
-
-- Bump "Last updated" to today
-- Move the tranche from the "active" to "complete" list in the tranches summary
-- Add a "Recently shipped" entry for the tranche (one paragraph: what the tranche built, its scope, its durable impact)
-- Update any product-phase notes that the tranche's work advanced (e.g. "Phase 3 complete")
+> **Step 4 (a pinned per-project state Issue, hand-edited in place) is retired.** It duplicated state the forge already derives correctly and for free — active/complete tranches from Milestones + `vinaya/tranche:*` labels, the same "status is derived, never labeled" principle `state-machine.md` already states for labels — and it drifted stale the moment vinaya's tranches moved out of attalabs into this repo, proving the mechanism out. "Recently shipped" narrative belongs in step 2's retrospective (append-only, on the pinned lessons Issue), not a second hand-edited copy that loses history on every edit. Nothing in this role's entry gate ever depended on step 4, so no tranche close was ever blocked by its absence — it only ever surfaced as a flagged, non-blocking gap. **`now.md` is retired** for the same reason: "what's next" is derived from the forge by the Planner (`gh issue list --label "vinaya/tranche:<slug>" --state open`), not written to a file.
 
 ### 6. Ratify pending Type 1 decisions
 
@@ -189,9 +179,6 @@ FORGE VERIFICATION:
 RETROSPECTIVE: posted to pinned lessons Issue ✓ | INCOMPLETE (reason)
 
 ARCHIVED: aeg-root/tranches/completed/<name>.md ✓ | FAILED (reason)
-
-STATE:
-- pinned state Issue(s) updated ✓ (current-focus pointer, pending-manual-ops, recently-shipped entry)
 
 PENDING RATIFICATIONS: [list with one-line description] | none
 
