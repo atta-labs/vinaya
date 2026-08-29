@@ -423,6 +423,32 @@ describe('remoteless graceful-skip (spec D3)', () => {
     expect(createdLabels).toEqual([])
     expect(existsSync(join(root, '.vinaya/projects.md'))).toBe(true)
     expect(readFileSync(join(root, '.vinaya/projects.md'), 'utf-8')).toContain('| mobile |')
+
+    const config = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(config.projects).toEqual([{ name: 'mobile', path: '.' }])
+  })
+
+  it('init product appends both the registry row and the config entry, and re-running is idempotent (task 15, #44)', async () => {
+    await runInit(['--yes'], makeDeps())
+    const deps = makeDeps({ detectRepo: async () => ({ repoRoot: root, owner: '', repo: '' }) })
+
+    const rc1 = await runInitProduct(['demo', '--path', 'apps/demo', '--yes'], deps)
+    expect(rc1).toBe(0)
+
+    const registryAfterFirst = readFileSync(join(root, '.vinaya/projects.md'), 'utf-8')
+    expect(parseRegistry(registryAfterFirst)).toEqual([
+      { name: 'demo', path: 'apps/demo', specsPath: 'apps/demo/specs/', statePath: null }
+    ])
+    const configAfterFirst = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(configAfterFirst.projects).toEqual([{ name: 'demo', path: 'apps/demo' }])
+
+    const rc2 = await runInitProduct(['demo', '--path', 'apps/demo', '--yes'], deps)
+    expect(rc2).toBe(0)
+
+    const registryAfterSecond = readFileSync(join(root, '.vinaya/projects.md'), 'utf-8')
+    const configAfterSecond = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(parseRegistry(registryAfterSecond)).toEqual(parseRegistry(registryAfterFirst))
+    expect(configAfterSecond.projects).toEqual(configAfterFirst.projects)
   })
 })
 
