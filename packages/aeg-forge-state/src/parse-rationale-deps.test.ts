@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parseRationaleDeps } from './parse-rationale-deps'
 
-const FIXTURES = join(__dirname, 'fixtures')
+const FIXTURES = join(__dirname, '..', 'tests', 'fixtures')
 /** Captured verbatim via `gh issue view <n> --json body` on 2026-07-06 — the
  * real bodies the 2026-07-06 spike and this task's own golden comparison
  * were validated against. Static fixtures, not live calls: `bun test` must

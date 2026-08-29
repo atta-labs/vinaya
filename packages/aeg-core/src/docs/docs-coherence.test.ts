@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { type DocsCoherenceEntry, evaluateDocsCoherence } from './docs-coherence'
 import { parseDocFrontmatter } from './parse-doc'
 
-const FIXTURES = join(__dirname, '..', 'fixtures', 'docs-coherence')
+const FIXTURES = join(__dirname, '..', '..', 'tests', 'fixtures', 'docs-coherence')
 
 function walkMd(root: string, dir = ''): string[] {
   const entries = readdirSync(join(root, dir), { withFileTypes: true })

@@ -24,7 +24,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..')
  * `retired-vocabulary.test.ts` uses.
  */
 function legacySlugs(): string[] {
-  return readFileSync(join(__dirname, 'fixtures/legacy-tranche-slugs.txt'), 'utf8')
+  return readFileSync(join(__dirname, '..', 'tests', 'fixtures', 'legacy-tranche-slugs.txt'), 'utf8')
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)

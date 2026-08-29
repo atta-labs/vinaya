@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { amendRationaleDeps, projectsFromBody } from '@attalabs/aeg-forge-state'
 import { describe, expect, it } from 'vitest'
-import { fenceShapes } from './fixtures/fence-shapes'
+import { fenceShapes } from '../tests/fixtures/fence-shapes'
 import {
   checkBlastRadiusScope,
   checkConflictCompleteness,
@@ -222,7 +222,8 @@ const REGISTERED = REGISTRY.map((p) => p.name)
  * than the forge. Nothing these tests assert touches the redacted span — check an
  * identifier before copying the next body in.
  */
-const realBody = (n: number): string => readFileSync(join(__dirname, 'fixtures', `issue-${n}-body.md`), 'utf8')
+const realBody = (n: number): string =>
+  readFileSync(join(__dirname, '..', 'tests', 'fixtures', `issue-${n}-body.md`), 'utf8')
 
 /**
  * The two control characters these tests smuggle through the gate, named rather
@@ -736,7 +737,7 @@ describe('checkIssueRationale / amendRationaleDeps — round-trip agreement (tas
   })
 
   it('rejects the exact colon-form body from Issue #736 (real, captured 2026-08-05) with an actionable error', () => {
-    const body = readFileSync(join(__dirname, 'fixtures', 'issue-736-body.md'), 'utf8')
+    const body = readFileSync(join(__dirname, '..', 'tests', 'fixtures', 'issue-736-body.md'), 'utf8')
     const result = checkIssueRationale(body)
     expect(result.status).toBe('fail')
     const depError = result.errors.find((e) => e.startsWith('issue-validation Dependency rationale'))
