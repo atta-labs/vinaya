@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { parseTokensLines } from './parse-token-report'
-import { formatBreakdown, formatTokensLine, type TranscriptSummary } from './report-tokens'
+import { parseTokenReportEntries, parseTokensLines } from './parse-token-report'
+import { formatBreakdown, formatTokenReportRow, formatTokensLine, type TranscriptSummary } from './report-tokens'
 
 /**
  * Every fixture here is a hand-built `TranscriptSummary` — this suite never
@@ -84,6 +84,50 @@ describe('round-trip through the real parser', () => {
     const rows = parseTokensLines(line)
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ phase: 'planning', role: 'Planner', tokensIn: null, tokensOut: null, cost: null })
+  })
+})
+
+describe('formatTokenReportRow', () => {
+  it('renders the same cells formatTokensLine reports, as a 7-cell table row with Cost always `—`', () => {
+    const row = formatTokenReportRow({
+      phase: '3: develop',
+      role: 'Developer',
+      summary: summary({ input: 100, output: 50, cacheCreation: 20, cacheRead: 30 }),
+      date: '2026-08-29'
+    })
+    expect(row).toBe('| 3: develop | Developer | claude-sonnet-5 | 150 | 50 | — | 2026-08-29 |')
+  })
+
+  it('reports all-`—` numbers for an operator-metered/incapable role, same as formatTokensLine', () => {
+    const row = formatTokenReportRow({ phase: '3: develop', role: 'Developer', summary: null, date: '2026-08-29' })
+    expect(row).toBe('| 3: develop | Developer | — | — | — | — | 2026-08-29 |')
+  })
+
+  it('round-trips through parseTokenReportEntries (table form) into the expected LedgerRow', () => {
+    const row = formatTokenReportRow({
+      phase: '3: develop',
+      role: 'Developer',
+      summary: summary({ input: 100, output: 50, cacheCreation: 20, cacheRead: 30 }),
+      date: '2026-08-29'
+    })
+    const body = [
+      '## Token report',
+      '',
+      '| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |',
+      '|---|---|---|---|---|---|---|',
+      row
+    ].join('\n')
+    const rows = parseTokenReportEntries(body)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      phase: '3: develop',
+      role: 'Developer',
+      agentModel: 'claude-sonnet-5',
+      tokensIn: 150,
+      tokensOut: 50,
+      cost: null,
+      date: '2026-08-29'
+    })
   })
 })
 
