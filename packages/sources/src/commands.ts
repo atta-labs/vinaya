@@ -300,6 +300,33 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'tokens',
+    description: "Print a role's `Tokens: …` report line — the portable front door over the collection adapter",
+    flags: [
+      { flag: '--phase', description: 'e.g. `"<task-id>: develop"` — required' },
+      { flag: '--role', description: 'e.g. `Developer` — required' },
+      { flag: '--model', description: 'Overrides the model id the adapter derived, if given' },
+      {
+        flag: '--transcript',
+        description:
+          'Read this transcript directly. Supported primary route — use it whenever you know which transcript ' +
+          'is yours, and always in a repo with no track-transcript.sh hook. Omitted resolves via the Stop-hook ' +
+          'pointer file, if this repo installs that hook.'
+      },
+      {
+        flag: '--in / --out',
+        description:
+          'Manual entry: the exact token figures, for a host whose usage arrives by some other means than a ' +
+          'Claude Code transcript. Both required together; skips transcript resolution entirely.'
+      }
+    ],
+    details: [
+      'Resolves the Claude Code collection adapter (`resolveMeteringCapability`, `summarizeTranscript`, `formatTokensLine`) from the INSTALLED `@attalabs/aeg-core` package, never by a repo-relative path — the fix for `packages/aeg-core/bin/report-tokens.ts` not existing in an adopter repo with no local `packages/`.',
+      "Refuses — never emits a `0/0/—` line — when no transcript resolves, a resolved transcript can't be read, or it summarizes to zero usage records (empty, unparseable, or not yet flushed to disk). Capability is probed by actually attempting resolution, never declared from the host being Claude Code."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'doctrine',
     description:
       "Print the absolute path of the bundled doctrine's front door (aeg-root/skills/aeg/SKILL.md) on this machine",
