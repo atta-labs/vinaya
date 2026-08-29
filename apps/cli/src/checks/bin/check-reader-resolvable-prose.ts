@@ -56,7 +56,7 @@ import { checkReaderResolvableProse, parseGlossaryTerms, type ProseSourceFile } 
 import { resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { resolveChangedFiles } from '../../lib/diff-evidence'
+import { repoRoot, resolveChangedFiles } from '../../lib/diff-evidence'
 
 const CHECK_NAME = 'reader-resolvable-prose'
 
@@ -186,11 +186,14 @@ function main(): void {
   // comparison). `finding.file` is usually already absolute — it comes from
   // `collect(DOCTRINE_ROOT)`, walked from `resolveDoctrineRoot()`'s absolute
   // path — but `DOCTRINE_ROOT` can also be a relative `proseGates
-  // .doctrineRoot` config value or the bare `'aeg-root'` fallback, both
-  // interpreted relative to `process.cwd()` by this file's own established
-  // convention (see the module doc above). `resolve()` (implicit cwd) is a
-  // no-op on an already-absolute path and correctly anchors a relative one,
-  // so it normalizes both shapes to the same comparable form.
+  // .doctrineRoot` config value or the bare `'aeg-root'` fallback. Anchor
+  // to the SAME real repo root `resolveChangedFiles()` used, not a second,
+  // independent `process.cwd()` assumption (review finding, PR #290 MINOR:
+  // the two absolute-path shapes were each internally consistent but could
+  // still diverge from each other outside the common invocation shape) —
+  // falling back to `process.cwd()` only if this process is somehow outside
+  // any git worktree at all, which `resolveChangedFiles()` itself already
+  // degrades to `null` for.
   //
   // `null` (no diff boundary could be established at all — a bare/single-
   // commit repo with no `origin` remote, or a shallow clone/orphan history
@@ -200,7 +203,8 @@ function main(): void {
   // resolved-but-empty diff suppresses findings.
   const changedFilesList = resolveChangedFiles()
   const changed = changedFilesList === null ? null : new Set(changedFilesList)
-  const reportable = changed === null ? findings : findings.filter((f) => changed.has(resolve(f.file)))
+  const pathBase = repoRoot() ?? process.cwd()
+  const reportable = changed === null ? findings : findings.filter((f) => changed.has(resolve(pathBase, f.file)))
 
   // stdout only — this check's stderr is the CheckError JSON channel
   // (`contract.ts`'s `emitCheckError`); a plain-text line there would make

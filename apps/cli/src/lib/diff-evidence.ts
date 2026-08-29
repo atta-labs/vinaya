@@ -45,8 +45,20 @@ function revParse(ref: string): string | null {
  * differently-configured runner) must not silently compare paths against the
  * wrong base. `null` only when this process is not inside a git worktree at
  * all, which every other function here already treats as "cannot answer."
+ *
+ * Exported (review finding, PR #290 MINOR): a caller that ALSO builds
+ * cwd-relative paths of its own — `check-reader-resolvable-prose.ts`/
+ * `check-retired-vocabulary.ts` do, when `DOCTRINE_ROOT` is a relative
+ * `proseGates.doctrineRoot` config value or the bare `'aeg-root'` fallback —
+ * needs the SAME anchor `resolveChangedFiles()` uses to resolve its own
+ * paths against, not a second, independent assumption that `process.cwd()`
+ * happens to equal it. Anchoring both sides to this one function is what
+ * makes them agree regardless of invocation cwd, closing the gap that
+ * remained even after the MAJOR fix: the two absolute-path shapes were each
+ * internally consistent but could still diverge from EACH OTHER outside the
+ * common case.
  */
-function repoRoot(): string | null {
+export function repoRoot(): string | null {
   try {
     return execFileSync('git', ['rev-parse', '--show-toplevel'], {
       encoding: 'utf8',
