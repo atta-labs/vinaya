@@ -129,7 +129,37 @@ function renderTokensLine(role: 'review' | 'security', roleLabel: 'Reviewer' | '
   return `Tokens: ${input.taskId}: ${role} — ${roleLabel} — ${input.model} — ${input.tokensIn}/${input.tokensOut}/${input.cost}`
 }
 
-type TokensInput = { taskId: string; model: string; tokensIn: string; tokensOut: string; cost: string }
+/**
+ * Records which role and session cast this verdict — a shared local `gh`
+ * credential means the forge attributes the comment itself to the
+ * Principal regardless (`atta-labs/vinaya#176`), so this line is the only
+ * place an agent-authored verdict is visibly agent-authored. It closes
+ * nothing on its own; it makes the inheritance auditable.
+ */
+function renderCastByLine(roleLabel: 'Reviewer' | 'Security', sessionId: string): string {
+  return `Cast by: ${roleLabel} (session ${sessionId})`
+}
+
+/**
+ * `CLAUDE_CODE_SESSION_ID` is the same best-effort session identifier
+ * `report-tokens.ts`'s transcript resolver already cross-checks (set in
+ * every Claude Code Bash tool call — confirmed empirically, not documented
+ * in the public hook schema) — reused here rather than inventing a second
+ * identifier scheme. Falls back to a literal marker, never a fabricated
+ * value, when unset (a different host, or no session concept at all).
+ */
+export function resolveSessionId(env: Record<string, string | undefined>): string {
+  return env.CLAUDE_CODE_SESSION_ID ?? '(unknown)'
+}
+
+type TokensInput = {
+  taskId: string
+  model: string
+  tokensIn: string
+  tokensOut: string
+  cost: string
+  sessionId: string
+}
 
 // --- code-reviewer shape ------------------------------------------------------
 
@@ -174,7 +204,8 @@ export function renderCodeReviewComment(input: CodeReviewInput): string {
     `TESTS: ${input.tests}`,
     `DOCS: ${input.docs}`,
     '',
-    renderTokensLine('review', 'Reviewer', input)
+    renderTokensLine('review', 'Reviewer', input),
+    renderCastByLine('Reviewer', input.sessionId)
   ].join('\n')
 }
 
@@ -221,7 +252,12 @@ export function renderSecurityComment(input: SecurityInput): string {
   if (input.secretsEvidence !== null) {
     lines.push('```', input.secretsEvidence, '```', '')
   }
-  lines.push(`SECRETS: ${input.secrets}`, '', renderTokensLine('security', 'Security', input))
+  lines.push(
+    `SECRETS: ${input.secrets}`,
+    '',
+    renderTokensLine('security', 'Security', input),
+    renderCastByLine('Security', input.sessionId)
+  )
   return lines.join('\n')
 }
 
@@ -591,7 +627,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   const tokensIn = requireTokenField(flags, '--tokens-in')
   const tokensOut = requireTokenField(flags, '--tokens-out')
   const cost = requireFlag(flags, '--cost')
-  const tokens: TokensInput = { taskId, model, tokensIn, tokensOut, cost }
+  const sessionId = resolveSessionId(process.env)
+  const tokens: TokensInput = { taskId, model, tokensIn, tokensOut, cost, sessionId }
 
   const headSha = resolveHeadSha(pr)
   // Same trust anchor `checkReviewGate` itself uses — the repo's own
