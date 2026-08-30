@@ -65,7 +65,7 @@ function isEmptySummary(summary: TranscriptSummary): boolean {
   return inputTokens === 0 && outputTokens === 0 && cacheCreationInputTokens === 0 && cacheReadInputTokens === 0
 }
 
-export type ArchiveTokensResult = { line: string; refusalReason: string | null }
+export type ArchiveTokensResult = { line: string | null; dangling: string | null }
 
 /**
  * Renders the Archivist's own one-line `Tokens: …` report from an
@@ -78,11 +78,21 @@ export type ArchiveTokensResult = { line: string; refusalReason: string | null }
  * new parser — closing the exact gap `roles/archivist.md` flags as having
  * "no durable home today" for the Archivist's own turn.
  *
- * `capable: false` posts the sanctioned all-`—` line (never refuses — this
+ * `capable: false` posts the sanctioned all-`—` line (never degrades — this
  * repo's toolchain runs `vinaya archive` from CI as often as from an agent
  * session, and a genuinely incapable host is the one case `—` is for).
- * `capable: true` refuses only when the collected totals are empty — see
- * `isEmptySummary` — never for a real nonzero figure.
+ * `capable: true` but empty — see `isEmptySummary` — omits the line (`line:
+ * null`) rather than posting a misleading zero, and returns a `dangling`
+ * note for the CALLER to fold into the provenance comment alongside its own
+ * DANGLING trailer. This never aborts the whole post: PR #305 review
+ * (BLOCKER) — an earlier version of this function returned a hard refusal
+ * that `runArchive` used to skip posting the comment and closing the Issue
+ * entirely, collateral-damaging a duty this feature has nothing to do with
+ * over one missing token row. The brief's own §10 names that exact
+ * trade-off ("losing provenance to gain a token row is a bad trade") as a
+ * Principal-only call — the fix is to never force it: provenance and
+ * Issue-closure proceed unconditionally, and the anomaly is flagged, not
+ * silently swallowed and not blocking.
  */
 export function renderArchiveTokensLine(
   capability: MeteringCapability,
@@ -90,18 +100,18 @@ export function renderArchiveTokensLine(
   role: string
 ): ArchiveTokensResult {
   if (!capability.capable) {
-    return { line: formatTokensLine({ phase, role, summary: null }), refusalReason: null }
+    return { line: formatTokensLine({ phase, role, summary: null }), dangling: null }
   }
   if (isEmptySummary(capability.summary)) {
     return {
-      line: '',
-      refusalReason:
-        `metering probe reports capable (transcript ${capability.transcriptPath}) but summarized to zero ` +
-        `tokens across ${capability.summary.messageCount} message(s) — refusing rather than posting a ` +
-        'misleading zero, since `—` is sanctioned only for a genuinely incapable host.'
+      line: null,
+      dangling:
+        `Archivist Tokens: line omitted — metering probe reports capable (transcript ${capability.transcriptPath}) ` +
+        `but summarized to zero tokens across ${capability.summary.messageCount} message(s); posting a real zero ` +
+        'would misrepresent the turn, and `—` is sanctioned only for a genuinely incapable host.'
     }
   }
-  return { line: formatTokensLine({ phase, role, summary: capability.summary }), refusalReason: null }
+  return { line: formatTokensLine({ phase, role, summary: capability.summary }), dangling: null }
 }
 
 function sh(args: string[], input?: string): string {
@@ -224,11 +234,12 @@ export async function runArchive(args: string[], deps: ArchiveDeps): Promise<num
 
   const phase = `${ref ? ref.taskId : pr.headRefName}: archive`
   const tokensResult = renderArchiveTokensLine(deps.meteringCapability(), phase, 'Archivist')
-  if (tokensResult.refusalReason !== null) {
-    console.error(`[vinaya archive] REFUSED to post — ${tokensResult.refusalReason}`)
-    return 1
-  }
-  const blockWithTokens = `${block}\n\n${tokensResult.line}`
+  // A missing/anomalous Tokens row is never a reason to withhold the whole
+  // comment: provenance and Issue-closure are a separate, pre-existing duty
+  // this feature must not put at risk (PR #305 review BLOCKER — an earlier
+  // version refused the entire post here, losing both over one token row).
+  const tokensAddition = tokensResult.line !== null ? tokensResult.line : `DANGLING (tokens): ${tokensResult.dangling}`
+  const blockWithTokens = `${block}\n\n${tokensAddition}`
 
   process.stdout.write(`[vinaya archive] posting provenance block to PR #${pr.number}...\n`)
   sh(['gh', 'pr', 'comment', String(pr.number), '-R', repoFlag, '--body-file', '-'], blockWithTokens)
@@ -236,6 +247,9 @@ export async function runArchive(args: string[], deps: ArchiveDeps): Promise<num
 
   if (dangling.length > 0) {
     process.stdout.write(`[vinaya archive] DANGLING (${dangling.length}): ${dangling.join('; ')}\n`)
+  }
+  if (tokensResult.dangling !== null) {
+    process.stdout.write(`[vinaya archive] DANGLING (tokens): ${tokensResult.dangling}\n`)
   }
 
   if (issue !== null) {

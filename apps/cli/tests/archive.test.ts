@@ -55,18 +55,18 @@ describe('renderArchiveTokensLine', () => {
       }
     }
     const result = renderArchiveTokensLine(capability, '6: archive', 'Archivist')
-    expect(result.refusalReason).toBeNull()
+    expect(result.dangling).toBeNull()
     expect(result.line).toBe('Tokens: 6: archive — Archivist — claude-sonnet-5 — 115/50/—')
-    expect(parseTokensLines(result.line)).toHaveLength(1)
+    expect(parseTokensLines(result.line as string)).toHaveLength(1)
   })
 
-  it('incapable host — posts the sanctioned all-`—` line, never refuses', () => {
+  it('incapable host — posts the sanctioned all-`—` line, never degrades', () => {
     const result = renderArchiveTokensLine(INCAPABLE, '6: archive', 'Archivist')
-    expect(result.refusalReason).toBeNull()
+    expect(result.dangling).toBeNull()
     expect(result.line).toBe('Tokens: 6: archive — Archivist — — — —')
   })
 
-  it('capable but zero totals — refuses rather than posting a misleading zero', () => {
+  it('capable but zero totals — omits the line and flags it DANGLING, never a refusal', () => {
     const capability: MeteringCapability = {
       capable: true,
       transcriptPath: '/tmp/empty-usage.jsonl',
@@ -77,8 +77,8 @@ describe('renderArchiveTokensLine', () => {
       }
     }
     const result = renderArchiveTokensLine(capability, '6: archive', 'Archivist')
-    expect(result.line).toBe('')
-    expect(result.refusalReason).toMatch(/summarized to zero/)
+    expect(result.line).toBeNull()
+    expect(result.dangling).toMatch(/summarized to zero/)
   })
 })
 
@@ -182,7 +182,12 @@ describe('vinaya archive — provenance posting (fake `gh` on PATH)', () => {
     })
   })
 
-  it('capable-but-empty refuses: no comment posted, no Issue closed', async () => {
+  it('capable-but-empty: still posts provenance and still closes the Issue — only the Tokens line degrades to DANGLING', async () => {
+    // PR #305 review (BLOCKER): an earlier version refused the whole post
+    // here, leaving the merged PR with no provenance comment and the Issue
+    // still open — collateral damage to a duty this feature has nothing to
+    // do with, over one missing token row. The brief's own §10 names that
+    // trade-off as a Principal-only call; the fix never forces it.
     const emptyCapability: MeteringCapability = {
       capable: true,
       transcriptPath: '/tmp/fake.jsonl',
@@ -197,10 +202,13 @@ describe('vinaya archive — provenance posting (fake `gh` on PATH)', () => {
         ['--merge-sha=deadbeef'],
         archiveDeps({ meteringCapability: () => emptyCapability })
       )
-      expect(exit).toBe(1)
-      expect(postedBody()).toBeNull()
-      expect(calls().some((c) => c.startsWith('pr comment'))).toBe(false)
-      expect(calls().some((c) => c.startsWith('issue close'))).toBe(false)
+      expect(exit).toBe(0)
+      const body = postedBody()
+      expect(body).not.toBeNull()
+      expect(body).not.toContain('Tokens: 6: archive')
+      expect(body).toContain('DANGLING (tokens): Archivist Tokens: line omitted')
+      expect(calls().some((c) => c.startsWith('pr comment'))).toBe(true)
+      expect(calls().some((c) => c.startsWith('issue close'))).toBe(true)
     })
   })
 })
