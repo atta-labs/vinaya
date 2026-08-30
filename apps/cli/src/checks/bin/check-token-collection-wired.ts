@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: token-collection-wired (task 5, `vinaya-token-determinism-v1`,
- * #272). Thin I/O adapter over `@attalabs/aeg-core`'s
+ * Core check: token-collection-wired (task 5, #272). Thin I/O adapter over
+ * `@attalabs/aeg-core`'s
  * `resolveMeteringCapability` (task 1's probe) and this directory's own
  * `evaluateTokenCollectionWiring` (the pure predicate, tested independently).
  *

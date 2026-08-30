@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { resolveMeteringCapability, summarizeTranscript } from './claude-code-transcript'
-import type { MeteringCapabilityDeps } from './claude-code-transcript'
+import { isTokenCollectionWiringBroken, resolveMeteringCapability, summarizeTranscript } from './claude-code-transcript'
+import type { MeteringCapability, MeteringCapabilityDeps } from './claude-code-transcript'
 import { formatTokensLine } from './report-tokens'
 
 function assistantLine(opts: {
@@ -246,5 +246,35 @@ describe('resolveMeteringCapability', () => {
     )
     expect(result.capable).toBe(true)
     if (result.capable) expect(result.transcriptPath).toBe('/explicit/transcript.jsonl')
+  })
+})
+
+describe('isTokenCollectionWiringBroken', () => {
+  it('capable: not broken', () => {
+    const capability: MeteringCapability = {
+      capable: true,
+      transcriptPath: '/tmp/session.jsonl',
+      summary: {
+        components: { inputTokens: 1, outputTokens: 1, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+        model: null,
+        messageCount: 1
+      }
+    }
+    expect(isTokenCollectionWiringBroken(capability)).toBe(false)
+  })
+
+  it('no-transcript-resolved: not broken — nothing was ever wired to try', () => {
+    const capability: MeteringCapability = { capable: false, reason: 'no-transcript-resolved', detail: 'no pointer' }
+    expect(isTokenCollectionWiringBroken(capability)).toBe(false)
+  })
+
+  it('transcript-unreadable: broken — a wiring point resolved but reaching it failed', () => {
+    const capability: MeteringCapability = { capable: false, reason: 'transcript-unreadable', detail: 'ENOENT' }
+    expect(isTokenCollectionWiringBroken(capability)).toBe(true)
+  })
+
+  it('transcript-empty: broken — a wiring point resolved but yielded nothing', () => {
+    const capability: MeteringCapability = { capable: false, reason: 'transcript-empty', detail: 'zero messages' }
+    expect(isTokenCollectionWiringBroken(capability)).toBe(true)
   })
 })

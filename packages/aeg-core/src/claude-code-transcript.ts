@@ -241,3 +241,22 @@ export function resolveMeteringCapability(
 
   return { capable: true, transcriptPath: resolved.path, summary }
 }
+
+/**
+ * The one fact `token-collection-wired` (task 5, #272) gates a commit on,
+ * factored out here — contract-agnostic (a plain boolean, no `CheckError`
+ * shape) — so both the shipped `apps/cli` check and this repo's own
+ * self-hosting `bin/check-token-collection-wired.ts` gate consume the SAME
+ * predicate, never two copies (the `isNewDiskStateFile` precedent).
+ *
+ * `no-transcript-resolved` means nothing was ever wired to try — no pointer
+ * file, no explicit path — the sanctioned operator-metered case, never a
+ * defect. Every other incapable reason (`transcript-unreadable`,
+ * `transcript-empty`) means a wiring point DID resolve (a pointer named a
+ * path) but reaching it failed — that is the wiring defect this predicate
+ * flags.
+ */
+export function isTokenCollectionWiringBroken(capability: MeteringCapability): boolean {
+  if (capability.capable) return false
+  return capability.reason !== 'no-transcript-resolved'
+}

@@ -55,6 +55,7 @@ export const GATE_AUDIENCE: Record<string, GateAudience> = {
   'check-branch-topology': { shippedAs: 'branch-topology', ring: 0 },
   'check-first-push-dispatch': { shippedAs: 'first-push-dispatch', ring: 0 },
   'check-no-disk-state': { shippedAs: 'no-disk-state', ring: 0 },
+  'check-token-collection-wired': { shippedAs: 'token-collection-wired', ring: 0 },
   'verify-brief': { shippedAs: 'brief-shape', ring: 0 },
   'verify-coherence': { shippedAs: 'coherence', ring: 0 },
   'verify-dispatch': { shippedAs: 'dispatch-readiness', ring: 0 },
