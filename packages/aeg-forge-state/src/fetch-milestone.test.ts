@@ -179,9 +179,26 @@ describe('resolveMilestoneAttachTarget', () => {
     })
   })
 
-  it('returns null for a CLOSED legacy Milestone — never a valid --milestone target, whether genuinely finished or retired via `adopt`', () => {
+  it('returns null for a CLOSED legacy Milestone with no successor — never itself a valid --milestone target', () => {
     const milestones = [{ number: 3, title: 'vinaya-cli-v1', description: '', state: 'closed' as const }]
     expect(resolveMilestoneAttachTarget(milestones, 'vinaya-cli-v1')).toBeNull()
+  })
+
+  it('falls through to the intent-declared successor when the legacy match is closed — the `vinaya milestone adopt` shape (milestone-model.md §4), and the exact gap this function exists to close', () => {
+    const successorDescription = [
+      'Ship the Engine.',
+      '',
+      '### Tranche intents',
+      '- vinaya-agentic-interface-v1: Real agent spawn.'
+    ].join('\n')
+    const milestones = [
+      { number: 7, title: 'vinaya-agentic-interface-v1', description: 'old goal', state: 'closed' as const },
+      { number: 13, title: 'Engine', description: successorDescription, state: 'open' as const }
+    ]
+    expect(resolveMilestoneAttachTarget(milestones, 'vinaya-agentic-interface-v1')).toEqual({
+      number: 13,
+      title: 'Engine'
+    })
   })
 
   it('resolves an intent-declared Milestone by ITS OWN title — the bug this function exists to fix, since gh resolves --milestone by title, not slug', () => {

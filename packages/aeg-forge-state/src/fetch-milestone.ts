@@ -278,20 +278,26 @@ export type MilestoneAttachTarget = { number: number; title: string }
  * tranche fails outright (a Milestone with that exact title does not exist).
  *
  * Two candidates, legacy first (kept forever, per `matchesLegacyMilestone`'s
- * own contract): the exact-slug-titled Milestone, if it is still open — a
- * closed legacy Milestone is never a valid attach target, whether it is a
- * genuinely finished tranche or one retired via `vinaya milestone adopt`
- * (the label's real Issues live somewhere else this function does not
- * chase; see `resolveLegacyFacts`'s doc comment for why lifecycle alone
- * cannot recover that "elsewhere" identity). Otherwise: the first OPEN
- * Milestone whose description declares this slug's intent line — the
- * modern, multi-tranche path. `null` when neither exists: no open
- * Milestone owns this slug yet, which is not an error — a tranche's first
- * Issue may legitimately precede its own Milestone.
+ * own contract): the exact-slug-titled Milestone, if it is still open —
+ * attach there. A CLOSED legacy Milestone is never itself a valid target,
+ * but it must NOT short-circuit the search: `vinaya milestone adopt`
+ * (`milestone-model.md` §4) closes the old 1:1 Milestone and reattaches the
+ * slug's real Issues to a different, still-open, intent-declaring Milestone
+ * — the exact live shape this repo runs. Falling through to the intent
+ * search on a closed legacy match is required, not optional, or every
+ * adopted tranche gets no auto-attach ever, forever, which is the very gap
+ * this function exists to close. Otherwise (no legacy match, or a closed
+ * one): the first OPEN Milestone whose description declares this slug's
+ * intent line — first in list order, a deterministic tie-break when more
+ * than one somehow declares the same slug (`gh`'s own stable milestone
+ * ordering; a genuine collision is a data problem this function does not
+ * try to arbitrate). `null` when nothing matches at all: no open Milestone
+ * owns this slug yet, which is not an error — a tranche's first Issue may
+ * legitimately precede its own Milestone.
  */
 export function resolveMilestoneAttachTarget(milestones: GhMilestone[], slug: string): MilestoneAttachTarget | null {
   const legacy = matchesLegacyMilestone(milestones, slug)
-  if (legacy) return legacy.state === 'open' ? { number: legacy.number, title: legacy.title } : null
+  if (legacy?.state === 'open') return { number: legacy.number, title: legacy.title }
 
   const intentMatch = milestones.find((m) => m.state === 'open' && intentGoalForSlug(m.description ?? '', slug) !== '')
   return intentMatch ? { number: intentMatch.number, title: intentMatch.title } : null
