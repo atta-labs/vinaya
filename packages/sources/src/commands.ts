@@ -171,6 +171,16 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'pr verify-evidence',
+    description: "Prove a pull request's AEG:EVIDENCE region was machine-generated — regenerate it and compare",
+    flags: [],
+    details: [
+      'Deliberately a command, not a check: `evidence-fresh` runs inside `vinaya check --all`, and `pr report` runs `vinaya check --all --diff-only`, so a check that regenerated the block would run the suite containing itself. That recursion is why `evidence-fresh` verifies Group A only and leaves Group B attested.',
+      "Run it from a checkout at the pull request's head. Exits 0 on MATCH, 1 on DIFFERS or when the body carries no block. Comparison ignores absolute paths and line order — a reorder is not a fabrication — and reads only the AEG:EVIDENCE region, since AEG:TOKENS appends by design."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'issue create',
     description: 'Open an issue after full brief-schema validation',
     flags: [
