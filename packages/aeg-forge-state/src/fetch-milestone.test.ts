@@ -10,12 +10,14 @@ const { ghApiGet, ghApiGetAsync, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIs
 )
 const {
   findMilestoneForSlug,
+  hasExplicitMilestoneFlag,
   indexTrancheMilestonesAsync,
   listActiveTrancheSlugs,
   listArchivedTrancheSlugs,
   intentGoalForSlug,
   milestoneLifecycleFromTrancheLifecycles,
-  releaseFromDescription
+  releaseFromDescription,
+  resolveMilestoneAttachTarget
 } = await import('./fetch-milestone')
 
 const OWNER = 'daniboomerang'
@@ -165,6 +167,109 @@ describe('findMilestoneForSlug', () => {
     vi.mocked(ghIssueListByLabel).mockReturnValue([issue('OPEN')])
 
     expect(findMilestoneForSlug(OWNER, REPO, 'vinaya-milestone-model-v1')).toEqual({ goal: '', lifecycle: 'active' })
+  })
+})
+
+describe('resolveMilestoneAttachTarget', () => {
+  it('resolves an open legacy Milestone (title equals slug) by its own number + title', () => {
+    const milestones = [{ number: 9, title: 'aeg-review-gate-v1', description: '', state: 'open' as const }]
+    expect(resolveMilestoneAttachTarget(milestones, 'aeg-review-gate-v1')).toEqual({
+      number: 9,
+      title: 'aeg-review-gate-v1'
+    })
+  })
+
+  it('returns null for a CLOSED legacy Milestone with no successor — never itself a valid --milestone target', () => {
+    const milestones = [{ number: 3, title: 'vinaya-cli-v1', description: '', state: 'closed' as const }]
+    expect(resolveMilestoneAttachTarget(milestones, 'vinaya-cli-v1')).toBeNull()
+  })
+
+  it('falls through to the intent-declared successor when the legacy match is closed — the `vinaya milestone adopt` shape (milestone-model.md §4), and the exact gap this function exists to close', () => {
+    const successorDescription = [
+      'Ship the Engine.',
+      '',
+      '### Tranche intents',
+      '- vinaya-agentic-interface-v1: Real agent spawn.'
+    ].join('\n')
+    const milestones = [
+      { number: 7, title: 'vinaya-agentic-interface-v1', description: 'old goal', state: 'closed' as const },
+      { number: 13, title: 'Engine', description: successorDescription, state: 'open' as const }
+    ]
+    expect(resolveMilestoneAttachTarget(milestones, 'vinaya-agentic-interface-v1')).toEqual({
+      number: 13,
+      title: 'Engine'
+    })
+  })
+
+  it('resolves an intent-declared Milestone by ITS OWN title — the bug this function exists to fix, since gh resolves --milestone by title, not slug', () => {
+    const description = [
+      'Ship the Engine.',
+      '',
+      '### Tranche intents',
+      '- engine-agent-spawn-v1: Real agent spawn.'
+    ].join('\n')
+    const milestones = [{ number: 64, title: 'Engine', description, state: 'open' as const }]
+    expect(resolveMilestoneAttachTarget(milestones, 'engine-agent-spawn-v1')).toEqual({ number: 64, title: 'Engine' })
+  })
+
+  it('never matches a CLOSED intent-declaring Milestone', () => {
+    const description = [
+      'Ship the Engine.',
+      '',
+      '### Tranche intents',
+      '- engine-agent-spawn-v1: Real agent spawn.'
+    ].join('\n')
+    const milestones = [{ number: 64, title: 'Engine', description, state: 'closed' as const }]
+    expect(resolveMilestoneAttachTarget(milestones, 'engine-agent-spawn-v1')).toBeNull()
+  })
+
+  it('prefers the legacy exact-title match over an intent-declared match, when somehow both exist', () => {
+    const description = [
+      'Sprint goal.',
+      '',
+      '### Tranche intents',
+      '- aeg-review-gate-v1: unrelated intent line.'
+    ].join('\n')
+    const milestones = [
+      { number: 1, title: 'sprint-42', description, state: 'open' as const },
+      { number: 9, title: 'aeg-review-gate-v1', description: '', state: 'open' as const }
+    ]
+    expect(resolveMilestoneAttachTarget(milestones, 'aeg-review-gate-v1')).toEqual({
+      number: 9,
+      title: 'aeg-review-gate-v1'
+    })
+  })
+
+  it('returns null when nothing — legacy or intent-declared — matches the slug at all', () => {
+    const milestones = [{ number: 1, title: 'sprint-42', description: 'Just a sprint.', state: 'open' as const }]
+    expect(resolveMilestoneAttachTarget(milestones, 'brand-new-tranche')).toBeNull()
+  })
+
+  it('picks the first OPEN intent-declaring Milestone when more than one somehow declares the same slug', () => {
+    const desc = (s: string) => `### Tranche intents\n- ${s}: intent.`
+    const milestones = [
+      { number: 1, title: 'sprint-41', description: desc('engine-agent-spawn-v1'), state: 'open' as const },
+      { number: 2, title: 'sprint-42', description: desc('engine-agent-spawn-v1'), state: 'open' as const }
+    ]
+    expect(resolveMilestoneAttachTarget(milestones, 'engine-agent-spawn-v1')).toEqual({ number: 1, title: 'sprint-41' })
+  })
+})
+
+describe('hasExplicitMilestoneFlag', () => {
+  it('is true for a bare --milestone flag', () => {
+    expect(hasExplicitMilestoneFlag(['--title', 't', '--milestone', 'x'])).toBe(true)
+  })
+
+  it('is true for the -m short flag', () => {
+    expect(hasExplicitMilestoneFlag(['-m', 'x'])).toBe(true)
+  })
+
+  it('is true for the --milestone=<value> inline-equals form', () => {
+    expect(hasExplicitMilestoneFlag(['--milestone=x'])).toBe(true)
+  })
+
+  it('is false when no milestone flag is present', () => {
+    expect(hasExplicitMilestoneFlag(['--title', 't'])).toBe(false)
   })
 })
 

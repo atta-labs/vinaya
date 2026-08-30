@@ -12,6 +12,7 @@ import {
   readProjectPaths,
   readSharedPackages,
   refuse,
+  resolveMilestoneAttachArgs,
   resolveSections,
   resolveShippableArgs,
   validateForgeWrite,
@@ -153,7 +154,7 @@ export function issueCreateCommand(args: string[]): void {
   const slugToEnsure = findTrancheSlug(labels)
   if (slugToEnsure) ensureTrancheLabelExists(slugToEnsure)
 
-  runGhWrite(['issue', 'create'], ghArgs, bodyResult, json)
+  runGhWrite(['issue', 'create'], resolveMilestoneAttachArgs(ghArgs, labels), bodyResult, json)
 }
 
 export function issueEditCommand(args: string[]): void {

@@ -58,11 +58,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   amendRationaleDeps,
+  findMilestoneAttachTargetForSlug,
   findTrancheSlug,
-  findMilestoneForSlug,
+  hasExplicitMilestoneFlag,
   trancheLabel,
   trancheSlugLengthError,
-  type MilestoneFacts,
+  type MilestoneAttachTarget,
   parseRationaleDeps
 } from '@attalabs/aeg-forge-state'
 import {
@@ -228,11 +229,6 @@ function trancheSlugFromLabels(labels: string[]): string | null {
   return findTrancheSlug(labels)
 }
 
-/** True when argv already carries an explicit `--milestone`/`-m` flag — the caller's choice always wins. */
-function hasExplicitMilestoneFlag(args: string[]): boolean {
-  return args.some((a) => a === '--milestone' || a === '-m' || a.startsWith('--milestone='))
-}
-
 /**
  * Milestone auto-attach on Issue CREATE (aeg-review-gate-v1 task 1 follow-up).
  * `deriveTrancheFromForge`/`listActiveTrancheSlugs` (`@attalabs/aeg-forge-state`)
@@ -243,26 +239,33 @@ function hasExplicitMilestoneFlag(args: string[]): boolean {
  * only, by design: `edit` never force-attaches retroactively (an unrelated
  * body edit must not silently reassign an Issue's milestone).
  *
- * Not a hard failure when no matching Milestone exists yet — a tranche's
- * Milestone may not exist yet at first-Issue-cut time (task 5/#429 backfilled
- * Milestones after the fact for the first cohort; a brand-new tranche's
- * very first Issue necessarily precedes its own Milestone in some workflows).
- * `lookupMilestone` is injected so this stays testable without a real `gh` call.
+ * Returns the Milestone's TITLE — what `--milestone` actually accepts —
+ * never the slug. Those coincide only in the legacy 1:1 regime; an
+ * intent-declared Milestone (vinaya-milestone-model-v1) is titled something
+ * else entirely, and `gh` handed a slug it does not match fails outright.
+ * `lookupAttachTarget` (`resolveMilestoneAttachTarget`'s forge-fetching
+ * sibling, `@attalabs/aeg-forge-state`) resolves both cases; it is injected
+ * here so this stays testable without a real `gh` call.
+ *
+ * Not a hard failure when no matching open Milestone exists yet — a
+ * tranche's Milestone may not exist yet at first-Issue-cut time (task
+ * 5/#429 backfilled Milestones after the fact for the first cohort; a
+ * brand-new tranche's very first Issue necessarily precedes its own
+ * Milestone in some workflows).
  */
 export function resolveMilestoneToAttach(
   labels: string[],
   args: string[],
   isEdit: boolean,
-  lookupMilestone: (slug: string) => MilestoneFacts | null
+  lookupAttachTarget: (slug: string) => MilestoneAttachTarget | null
 ): string | null {
   if (isEdit) return null
   if (!isTaskIssueLabelSet(labels)) return null
   if (hasExplicitMilestoneFlag(args)) return null
   const slug = trancheSlugFromLabels(labels)
   if (!slug) return null
-  const milestone = lookupMilestone(slug)
-  if (milestone?.lifecycle !== 'active') return null
-  return slug
+  const target = lookupAttachTarget(slug)
+  return target ? target.title : null
 }
 
 // ---------- amend-deps subcommand --------------------------------------------
@@ -771,17 +774,17 @@ export function main(): void {
     ensureTrancheLabelExists(labelSlugToEnsure)
   }
 
-  const milestoneSlug = resolveMilestoneToAttach(labels, bodyArgs, isEdit, (slug) => {
+  const milestoneTitle = resolveMilestoneToAttach(labels, bodyArgs, isEdit, (slug) => {
     try {
-      return findMilestoneForSlug('{owner}', '{repo}', slug)
+      return findMilestoneAttachTargetForSlug('{owner}', '{repo}', slug)
     } catch {
       console.warn(`[open-issue] milestone lookup for "${slug}" failed (gh api) — creating without --milestone.`)
       return null
     }
   })
-  const createArgs = milestoneSlug ? [...bodyArgs, '--milestone', milestoneSlug] : bodyArgs
-  if (milestoneSlug) {
-    console.log(`[open-issue] auto-attaching to open Milestone "${milestoneSlug}" (tranche label match).`)
+  const createArgs = milestoneTitle ? [...bodyArgs, '--milestone', milestoneTitle] : bodyArgs
+  if (milestoneTitle) {
+    console.log(`[open-issue] auto-attaching to open Milestone "${milestoneTitle}" (tranche label match).`)
   }
 
   const { finalArgs, cleanup } = resolveShippableArgs(createArgs, bodyResult)
