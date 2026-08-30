@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { compareEvidence, extractEvidenceRegion, normaliseLines } from './pr-verify-evidence-logic'
+import { compareEvidence, extractEvidenceRegion, normaliseLines, publishedMergeBase } from './pr-verify-evidence-logic'
 
 const wrap = (inner: string) => `intro\n<!-- AEG:EVIDENCE:START -->\n${inner}\n<!-- AEG:EVIDENCE:END -->\noutro`
 
@@ -80,5 +80,43 @@ describe('compareEvidence', () => {
     expect(v.status).toBe('differs')
     if (v.status !== 'differs') throw new Error('unreachable')
     expect(v.missing).toEqual(['w'])
+  })
+})
+
+describe('base drift is reported apart from fabrication', () => {
+  const root = '/work/vinaya'
+  const withBase = (base: string, extra = '') =>
+    `Head: ffff1111\n\`git diff ${base}...ffff1111 --numstat\`\n\`\`\`\n1\t0\ta.ts\n\`\`\`${extra}`
+
+  test('publishedMergeBase reads the base back off the Group A command line', () => {
+    expect(publishedMergeBase(withBase('aaaa1111'))).toBe('aaaa1111')
+  })
+
+  test('publishedMergeBase is null on a malformed region', () => {
+    expect(publishedMergeBase('Head: ffff1111\nno command line here')).toBeNull()
+  })
+
+  test('a moved merge-base reports STALE BASE, never DIFFERS — drift is not dishonesty', () => {
+    const v = compareEvidence(withBase('aaaa1111'), withBase('bbbb2222'), root)
+    expect(v.status).toBe('base-moved')
+    if (v.status !== 'base-moved') throw new Error('unreachable')
+    expect(v.publishedBase).toBe('aaaa1111')
+    expect(v.currentBase).toBe('bbbb2222')
+  })
+
+  test('base drift wins over content difference — it explains the content, so the content is not evidence of fabrication', () => {
+    const v = compareEvidence(withBase('aaaa1111'), withBase('bbbb2222', '\nwarning: brand new finding'), root)
+    expect(v.status).toBe('base-moved')
+  })
+
+  test('same base plus a content difference is still DIFFERS — the fabrication signal survives', () => {
+    const v = compareEvidence(
+      withBase('aaaa1111'),
+      withBase('aaaa1111', '\nwarning: omitted from the published block'),
+      root
+    )
+    expect(v.status).toBe('differs')
+    if (v.status !== 'differs') throw new Error('unreachable')
+    expect(v.missing).toEqual(['warning: omitted from the published block'])
   })
 })

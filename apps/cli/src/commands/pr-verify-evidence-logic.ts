@@ -36,6 +36,19 @@ const EVIDENCE_END = '<!-- AEG:EVIDENCE:END -->'
 export type EvidenceVerdict =
   | { status: 'match' }
   | { status: 'no-block' }
+  /**
+   * The block was generated against a different merge-base than the one that
+   * resolves now — `origin/main` moved underneath it. The block is out of date,
+   * but nothing suggests it was fabricated: a correctly generated block drifts
+   * this way on its own, with no author involvement, as siblings merge.
+   *
+   * Kept distinct from `differs` because conflating the two is a reviewer-facing
+   * defect, not a cosmetic one. "Your evidence is stale because main moved" and
+   * "your evidence does not correspond to any run" call for the same remedy
+   * (regenerate) but carry completely different weight, and a tool that reports
+   * them identically teaches its reader to discount both.
+   */
+  | { status: 'base-moved'; publishedBase: string; currentBase: string }
   | { status: 'differs'; missing: string[]; unexpected: string[] }
 
 /**
@@ -49,6 +62,17 @@ export function extractEvidenceRegion(body: string): string | null {
   const end = body.indexOf(EVIDENCE_END, start + EVIDENCE_START.length)
   if (end === -1) return null
   return body.slice(start + EVIDENCE_START.length, end)
+}
+
+/**
+ * The merge-base the published block was generated against, read back from the
+ * Group A command line the renderer emits (`git diff <base>...<head> --numstat`).
+ * `null` when the region carries no such line — a malformed block, which
+ * `evidence-fresh` already refuses on its own terms.
+ */
+export function publishedMergeBase(region: string): string | null {
+  const m = region.match(/git diff ([0-9a-f]{7,40})\.\.\.[0-9a-f]{7,40} --numstat/)
+  return m ? (m[1] as string) : null
 }
 
 /**
@@ -89,6 +113,17 @@ export function compareEvidence(
 ): EvidenceVerdict {
   if (publishedRegion === null) return { status: 'no-block' }
 
+  // Base drift is checked BEFORE content, because it EXPLAINS a content
+  // difference rather than adding to it. A block generated against an older
+  // merge-base legitimately shows different gate output — the gates ran over a
+  // different diff — so reporting those lines as suspicious would accuse an
+  // honest author of fabrication for something that happened without them.
+  const publishedBase = publishedMergeBase(publishedRegion)
+  const currentBase = publishedMergeBase(freshRegion)
+  if (publishedBase && currentBase && publishedBase !== currentBase) {
+    return { status: 'base-moved', publishedBase, currentBase }
+  }
+
   const published = normaliseLines(publishedRegion, repoRoot)
   const fresh = normaliseLines(freshRegion, repoRoot)
 
@@ -120,9 +155,20 @@ export function renderVerdict(verdict: EvidenceVerdict): string {
   if (verdict.status === 'no-block') {
     return 'pr verify-evidence: NO BLOCK — this pull request body carries no AEG:EVIDENCE anchors. Run `vinaya pr report --write <body-file>` to generate one.'
   }
+  if (verdict.status === 'base-moved') {
+    return [
+      'pr verify-evidence: STALE BASE — the block was generated against a different merge-base, so its gate output cannot be compared to a run at this one.',
+      `  published base: ${verdict.publishedBase}`,
+      `  current base:   ${verdict.currentBase}`,
+      '',
+      'This is drift, NOT a fabrication signal: `origin/main` moved after the block was written, which happens on its own as sibling pull requests merge.',
+      'Rebase or regenerate with `vinaya pr report --write <body-file>`, then re-run this command to compare content at a shared base.'
+    ].join('\n')
+  }
   const lines = [
-    'pr verify-evidence: DIFFERS — the published AEG:EVIDENCE region does not reproduce at this head.',
-    'It was hand-edited, or generated against a different head. Regenerate with `vinaya pr report --write <body-file>` and push.'
+    'pr verify-evidence: DIFFERS — the published AEG:EVIDENCE region does not reproduce, at the SAME merge-base it was generated against.',
+    'Base drift is excluded (that reports STALE BASE), so this is content the generator does not produce: the block was hand-edited, or written from a run other than the one it claims.',
+    'Regenerate with `vinaya pr report --write <body-file>` and push.'
   ]
   if (verdict.missing.length > 0) {
     lines.push('', `Present in a fresh run, absent from the published block (${verdict.missing.length}):`)

@@ -23,4 +23,11 @@ whole-body comparison always differs. A pure reordering is reported as a match â
 a reordered warning set is not a fabrication, and flagging it would train readers
 to ignore the tool.
 
-Exits 0 on MATCH, 1 on DIFFERS or when the body carries no block.
+A moved merge-base is reported as its own verdict, `STALE BASE`, never as
+`DIFFERS`. The two call for the same remedy but carry different weight: a block
+drifts out of date on its own as sibling pull requests merge, with no author
+involvement, whereas a content difference at a shared base means the block does
+not correspond to any run. Reporting them identically would accuse an honest
+author of fabrication, and would teach reviewers to discount both.
+
+Exits 0 on MATCH, 1 on STALE BASE, DIFFERS, or when the body carries no block.
