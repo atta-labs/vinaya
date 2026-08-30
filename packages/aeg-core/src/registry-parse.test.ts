@@ -67,16 +67,16 @@ describe('parseEnforcementRegistry', () => {
     expect(ring2Rows[1]?.implementation).toBe('')
   })
 
-  it('parses the real enforcement.md — 48 rows (34 plus the six standalone-shim rows G2 demanded, plus the retired-vocabulary row task 7 added, plus the G6 row task 8 added, plus the doctrine-portability row task 234 added, plus the workspace-escape row task 17 added, plus the main-branch-refusal row task 9 added, plus the published-lifecycle audit row task 36 added, plus the changeset-coverage row fix/changeset-coverage-check added, plus the quoted-command row fix/quoted-command-staleness added), only non-deterministic rows carry an empty implementation', () => {
+  it('parses the real enforcement.md — 49 rows (34 plus the six standalone-shim rows G2 demanded, plus the retired-vocabulary row task 7 added, plus the G6 row task 8 added, plus the doctrine-portability row task 234 added, plus the workspace-escape row task 17 added, plus the main-branch-refusal row task 9 added, plus the published-lifecycle audit row task 36 added, plus the changeset-coverage row fix/changeset-coverage-check added, plus the quoted-command row fix/quoted-command-staleness added, plus the token-collection-wired row task 5 added), only non-deterministic rows carry an empty implementation', () => {
     const content = readFileSync(ENFORCEMENT_PATH, 'utf8')
     const rows = parseEnforcementRegistry(content)
 
-    expect(rows).toHaveLength(48)
+    expect(rows).toHaveLength(49)
 
     const ring0Count = rows.filter((r) => r.ring === 'ring0').length
     const ring1Count = rows.filter((r) => r.ring === 'ring1').length
     const ring2Count = rows.filter((r) => r.ring === 'ring2').length
-    expect(ring0Count + ring1Count + ring2Count).toBe(48)
+    expect(ring0Count + ring1Count + ring2Count).toBe(49)
 
     const emptyImplementation = rows.filter((r) => r.implementation === '')
     // "Staleness audits" is the one genuinely non-deterministic row with no file.
