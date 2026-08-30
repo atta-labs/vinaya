@@ -587,6 +587,22 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   ],
   [
     {
+      name: 'changeset-coverage',
+      run: bin('check-changeset-coverage'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Local-only: `.changeset/config.json`, every fixed-group member's own
+      // `package.json`, and the diff itself all come from the already-local
+      // working tree and `git` — no forge call, no PR content. Report-only
+      // (severity: warning, exit 0 always — see the bin's own module doc),
+      // same rollout precedent as reader-resolvable-prose/retired-vocabulary
+      // above: registering it must not newly redden any existing install.
+      env: {}
+    },
+    0
+  ],
+  [
+    {
       name: 'main-branch-refusal',
       run: bin('check-main-branch-refusal'),
       scope: 'full',

@@ -69,6 +69,7 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         'body-bare-digits',
         'brief-shape',
         'branch-topology',
+        'changeset-coverage',
         'closes-n',
         'coherence',
         'dead-branch-push',

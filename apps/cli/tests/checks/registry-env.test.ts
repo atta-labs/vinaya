@@ -34,6 +34,7 @@ describe('registry env declarations', () => {
         'body-bare-digits',
         'brief-shape',
         'branch-topology',
+        'changeset-coverage',
         'closes-n',
         'coherence',
         'dead-branch-push',

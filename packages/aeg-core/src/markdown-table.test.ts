@@ -65,8 +65,9 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
     // G6 doctrine-registry-parity row. task 234 added the
     // `doctrine-portability` row alongside them. task 17 (Issue #78) added
     // the `workspace-escape` row. task 9 (Issue #58) added the
-    // `main-branch-refusal` row.
-    expect(ring1.rows).toHaveLength(21)
+    // `main-branch-refusal` row. fix/changeset-coverage-check (Issue #258)
+    // added the `changeset-coverage` row.
+    expect(ring1.rows).toHaveLength(22)
     // (2026-07-13) removed the "Daily drift check — stuck row-adjacent
     // blockers" ring-2 row (its subject matter, stale-blocker.ts, was retired).
     // vinaya-verification-v1 task 8 (Issue 36) added the "Published

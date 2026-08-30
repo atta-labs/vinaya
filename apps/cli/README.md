@@ -202,6 +202,10 @@ The generated review-authority workflows run only default-branch code: the requi
 
 `.vinaya/doc-owners` binds code globs to the docs that must change with them; `vinaya check`'s C5 gate enforces that binding against each pull request's own diff — it fires only when a changed file matches a bound glob. That leaves a gap C5 cannot close on its own: a binding whose code was deleted or renamed wholesale matches nothing on any later diff, ever again, and reads as healthy forever. `vinaya doctor` closes it separately — it never fails `vinaya check` — by walking every binding against the repo's full tracked-file list and reporting any whose code glob matches zero tracked files anywhere in the repo, or whose in-repo doc pointer doesn't exist on disk. Report-only, like every other `vinaya doctor` diagnostic: it repoints or removes nothing itself.
 
+## Changeset coverage
+
+The `changeset-coverage` core check couples a diff touching a published package's shipped files to a `.changeset/*.md` entry in the same diff — for each member of `.changeset/config.json`'s `fixed` group, a changed path counts as shipped iff it falls under that member's own `package.json` `files` allowlist, read live from every workspace member's own manifest, never a hardcoded path list. The Changesets-release branch itself is exempt by construction. Report-only (`scope: diff`, ring 0): findings print at `warning` severity and the check's own exit code always stays `0`, so installing it cannot newly redden an existing repo's CI. Dormant when the repo carries no `.changeset/config.json`, or none of its `fixed`-group members resolve.
+
 ## Brief-schema divergence
 
 `briefSchema` in `vinaya.config.json` is yours: `vinaya upgrade` preserves it wholesale and never rewrites it. On its own that ownership has a silent cost — nothing else reads it either, so a builtin deleted to work around a defect stays deleted, with no later upgrade to repair it and nothing to surface it.
