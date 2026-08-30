@@ -25,6 +25,7 @@ import {
   trustAnchorRepo,
   VinayaConfigSchema
 } from '../src/lib/config'
+import type { TokensCollectTrustEntry } from '../src/lib/config'
 
 // We test config.ts functions by changing process.cwd() via chdir
 // and by testing the config path logic with temp dirs.
@@ -93,10 +94,10 @@ describe('config', () => {
 
   it('loadConfig parses a repo-local "tokens.collect" field', () => {
     const localPath = join(tmpDir, 'vinaya.config.json')
-    writeFileSync(localPath, JSON.stringify({ tokens: { collect: './scripts/collect-usage.sh' } }), 'utf-8')
+    writeFileSync(localPath, JSON.stringify({ tokens: { collect: 'node scripts/collect-usage.js' } }), 'utf-8')
 
     const result = loadConfig()
-    expect(result?.tokens?.collect).toBe('./scripts/collect-usage.sh')
+    expect(result?.tokens?.collect).toBe('node scripts/collect-usage.js')
   })
 
   it('resolvePrincipalAllowlist falls back to PRINCIPAL_ALLOWLIST when no config sets principals (every existing install unaffected)', () => {
@@ -779,7 +780,7 @@ describe('VinayaConfigSchema.tokens — additive-only', () => {
     if (parsed.success) expect(parsed.data.tokens).toBeUndefined()
   })
 
-  it('accepts a declared "collect" command', () => {
+  it('accepts a well-formed "<interpreter> <script>" declaration', () => {
     const parsed = VinayaConfigSchema.safeParse({ tokens: { collect: 'node scripts/collect-usage.js' } })
     expect(parsed.success).toBe(true)
   })
@@ -794,6 +795,33 @@ describe('VinayaConfigSchema.tokens — additive-only', () => {
     expect(parsed.success).toBe(false)
   })
 
+  // Round 3 (security review, PR #303): the grammar narrowed from "any
+  // shell command" to exactly "<interpreter> <script-path>" so content
+  // pinning is rigorous, not heuristic.
+  it('rejects a single token with no script path', () => {
+    const parsed = VinayaConfigSchema.safeParse({ tokens: { collect: 'node' } })
+    expect(parsed.success).toBe(false)
+  })
+
+  it('rejects a three-token declaration (a flag, an extra argument, a piped command)', () => {
+    const parsed = VinayaConfigSchema.safeParse({ tokens: { collect: 'node -u scripts/collect-usage.js' } })
+    expect(parsed.success).toBe(false)
+  })
+
+  it('rejects shell syntax (&&, |, ;) even embedded in an otherwise two-token string', () => {
+    expect(VinayaConfigSchema.safeParse({ tokens: { collect: 'node scripts/a.js && rm -rf /' } }).success).toBe(false)
+  })
+
+  it('rejects an absolute script path', () => {
+    const parsed = VinayaConfigSchema.safeParse({ tokens: { collect: 'node /etc/passwd' } })
+    expect(parsed.success).toBe(false)
+  })
+
+  it('rejects a script path escaping the repo via ..', () => {
+    const parsed = VinayaConfigSchema.safeParse({ tokens: { collect: 'node ../../outside.js' } })
+    expect(parsed.success).toBe(false)
+  })
+
   it('globalTokensCollectIgnoredWarning names the offending path and field', async () => {
     const { globalTokensCollectIgnoredWarning } = await import('../src/lib/config.js')
     const message = globalTokensCollectIgnoredWarning('/home/x/.vinaya/config.json')
@@ -802,10 +830,44 @@ describe('VinayaConfigSchema.tokens — additive-only', () => {
   })
 })
 
-// Task 8 (#275), security review PR #303 round 2 (HIGH): a declared
-// tokens.collect must be explicitly trusted, per exact command string, per
-// machine, before it ever runs — keyed by this repo's git common directory
-// so approval survives this repo's own per-task fresh worktrees.
+describe('parseTokensCollectDeclaration', () => {
+  it('parses a well-formed "<interpreter> <script>" string', async () => {
+    const { parseTokensCollectDeclaration } = await import('../src/lib/config.js')
+    expect(parseTokensCollectDeclaration('node scripts/collect-usage.js')).toEqual({
+      interpreter: 'node',
+      script: 'scripts/collect-usage.js'
+    })
+  })
+
+  it('trims surrounding whitespace and tolerates extra internal whitespace between the two tokens', async () => {
+    const { parseTokensCollectDeclaration } = await import('../src/lib/config.js')
+    expect(parseTokensCollectDeclaration('  node   scripts/collect-usage.js  ')).toEqual({
+      interpreter: 'node',
+      script: 'scripts/collect-usage.js'
+    })
+  })
+
+  it('rejects one token, three tokens, and shell syntax', async () => {
+    const { parseTokensCollectDeclaration } = await import('../src/lib/config.js')
+    expect(parseTokensCollectDeclaration('node')).toBeNull()
+    expect(parseTokensCollectDeclaration('node -u scripts/a.js')).toBeNull()
+    expect(parseTokensCollectDeclaration('node scripts/a.js && rm -rf /')).toBeNull()
+  })
+
+  it('rejects an absolute script path or one escaping the repo via ..', async () => {
+    const { parseTokensCollectDeclaration } = await import('../src/lib/config.js')
+    expect(parseTokensCollectDeclaration('node /etc/passwd')).toBeNull()
+    expect(parseTokensCollectDeclaration('node ../../outside.js')).toBeNull()
+  })
+})
+
+// Task 8 (#275), security review PR #303 rounds 2-3: a declared
+// tokens.collect must be explicitly trusted, per exact (interpreter, script)
+// declaration AT the script's exact content, per machine, before it ever
+// runs — keyed by this repo's git common directory so approval survives
+// this repo's own per-task fresh worktrees, and pinned to the script's git
+// blob hash so an edit to the script (committed or not) needs its own fresh
+// approval too.
 describe('tokens.collect trust cache', () => {
   let trustTmpDir: string
 
@@ -834,74 +896,113 @@ describe('tokens.collect trust cache', () => {
     }
   })
 
-  it('tokensCollectTrustKey is deterministic and distinguishes both the repo and the command', async () => {
+  it("repoLocalConfigDir resolves to the directory holding this repo's own vinaya.config.json", async () => {
+    const { repoLocalConfigDir } = await import('../src/lib/config.js')
+    // originalCwd (the real repo root) still holds vinaya.config.json —
+    // this suite's own beforeEach chdir's the *outer* describe block, not
+    // this one, so cwd here is wherever the previous test left it; assert
+    // shape rather than an exact path.
+    const dir = repoLocalConfigDir()
+    if (dir !== null) expect(existsSync(join(dir, 'vinaya.config.json'))).toBe(true)
+  })
+
+  it("gitBlobHash hashes a real file's current bytes, and changes when the bytes change", async () => {
+    const { gitBlobHash } = await import('../src/lib/config.js')
+    const filePath = join(trustTmpDir, 'script.js')
+    writeFileSync(filePath, 'console.log(1)', 'utf-8')
+    const first = gitBlobHash(filePath, trustTmpDir)
+    expect(first).not.toBeNull()
+
+    writeFileSync(filePath, 'console.log(2)', 'utf-8')
+    const second = gitBlobHash(filePath, trustTmpDir)
+    expect(second).not.toBeNull()
+    expect(second).not.toBe(first)
+  })
+
+  it('gitBlobHash returns null for a file that does not exist', async () => {
+    const { gitBlobHash } = await import('../src/lib/config.js')
+    expect(gitBlobHash(join(trustTmpDir, 'missing.js'), trustTmpDir)).toBeNull()
+  })
+
+  it('tokensCollectTrustKey is deterministic and distinguishes the repo, the interpreter, and the script', async () => {
     const { tokensCollectTrustKey } = await import('../src/lib/config.js')
-    const a = tokensCollectTrustKey('/repo-a/.git', 'echo hi')
-    const b = tokensCollectTrustKey('/repo-a/.git', 'echo hi')
-    const differentRepo = tokensCollectTrustKey('/repo-b/.git', 'echo hi')
-    const differentCommand = tokensCollectTrustKey('/repo-a/.git', 'echo bye')
+    const a = tokensCollectTrustKey('/repo-a/.git', 'node', 'scripts/a.js')
+    const b = tokensCollectTrustKey('/repo-a/.git', 'node', 'scripts/a.js')
+    const differentRepo = tokensCollectTrustKey('/repo-b/.git', 'node', 'scripts/a.js')
+    const differentInterpreter = tokensCollectTrustKey('/repo-a/.git', 'python3', 'scripts/a.js')
+    const differentScript = tokensCollectTrustKey('/repo-a/.git', 'node', 'scripts/b.js')
     expect(a).toBe(b)
     expect(a).not.toBe(differentRepo)
-    expect(a).not.toBe(differentCommand)
+    expect(a).not.toBe(differentInterpreter)
+    expect(a).not.toBe(differentScript)
   })
 
   it('tokensCollectTrustKey never collides across a boundary a printable separator would confuse — adversarial, code review PR #303 round 2 follow-up', async () => {
     const { tokensCollectTrustKey } = await import('../src/lib/config.js')
-    // A plain-space join would make these two DIFFERENT pairs serialize
-    // identically: "/a" + " " + "b c" === "/a b c" === "/a b" + " " + "c".
-    const shortDirLongCommand = tokensCollectTrustKey('/a', 'b c')
-    const longDirShortCommand = tokensCollectTrustKey('/a b', 'c')
-    expect(shortDirLongCommand).not.toBe(longDirShortCommand)
+    // A plain-space join would make these two DIFFERENT triples serialize
+    // identically: "/a" + " " + "b" + " " + "c d" === "/a b c d".
+    const shortFieldsLongScript = tokensCollectTrustKey('/a', 'b', 'c d')
+    const longFieldsShortScript = tokensCollectTrustKey('/a b', 'c', 'd')
+    expect(shortFieldsLongScript).not.toBe(longFieldsShortScript)
 
-    // A command carrying the JSON-array delimiter characters themselves
-    // must not forge a different (dir, command) pair's key either.
-    const commandWithBrackets = tokensCollectTrustKey('/repo/.git', '"],["injected')
-    const literalInjectedPair = tokensCollectTrustKey('/repo/.git', 'injected')
-    expect(commandWithBrackets).not.toBe(literalInjectedPair)
-
-    // A command containing the exact repo path as a substring must not
-    // forge the key of a DIFFERENT command that happens to start with it.
-    const embeddedRepoPath = tokensCollectTrustKey('/repo/.git', '/repo/.git/rest')
-    const wholeStringAsCommand = tokensCollectTrustKey('', '/repo/.git/rest')
-    expect(embeddedRepoPath).not.toBe(wholeStringAsCommand)
+    // A script path carrying the JSON-array delimiter characters themselves
+    // must not forge a different triple's key either.
+    const scriptWithBrackets = tokensCollectTrustKey('/repo/.git', 'node', '"],["injected')
+    const literalInjectedTriple = tokensCollectTrustKey('/repo/.git', 'node', 'injected')
+    expect(scriptWithBrackets).not.toBe(literalInjectedTriple)
   })
 
-  it('isTokensCollectTrusted is false until trustTokensCollectCommand records exactly that (repo, command) pair', async () => {
-    const { isTokensCollectTrusted, trustTokensCollectCommand } = await import('../src/lib/config.js')
+  it('getTokensCollectTrust is null until trustTokensCollectCommand records exactly this (repo, interpreter, script) triple', async () => {
+    const { getTokensCollectTrust, trustTokensCollectCommand } = await import('../src/lib/config.js')
     const storePath = join(trustTmpDir, 'trust.json')
-    expect(isTokensCollectTrusted('/repo-a/.git', 'echo hi', storePath)).toBe(false)
+    expect(getTokensCollectTrust('/repo-a/.git', 'node', 'scripts/a.js', storePath)).toBeNull()
 
-    trustTokensCollectCommand('/repo-a/.git', 'echo hi', storePath)
-    expect(isTokensCollectTrusted('/repo-a/.git', 'echo hi', storePath)).toBe(true)
+    trustTokensCollectCommand('/repo-a/.git', 'node', 'scripts/a.js', 'hash-1', storePath)
+    const entry = getTokensCollectTrust('/repo-a/.git', 'node', 'scripts/a.js', storePath)
+    expect(entry?.scriptBlobHash).toBe('hash-1')
 
-    // A different command string, or a different repo, is a stranger again.
-    expect(isTokensCollectTrusted('/repo-a/.git', 'echo bye', storePath)).toBe(false)
-    expect(isTokensCollectTrusted('/repo-b/.git', 'echo hi', storePath)).toBe(false)
+    // A different script path, interpreter, or repo is a stranger again.
+    expect(getTokensCollectTrust('/repo-a/.git', 'node', 'scripts/b.js', storePath)).toBeNull()
+    expect(getTokensCollectTrust('/repo-a/.git', 'python3', 'scripts/a.js', storePath)).toBeNull()
+    expect(getTokensCollectTrust('/repo-b/.git', 'node', 'scripts/a.js', storePath)).toBeNull()
   })
 
-  it('isTokensCollectTrusted is false, never throws, when the store file does not exist yet', async () => {
-    const { isTokensCollectTrusted } = await import('../src/lib/config.js')
+  it('getTokensCollectTrust reports the OLD trusted hash unchanged when the script content later differs — the caller compares, this function never does', async () => {
+    const { getTokensCollectTrust, trustTokensCollectCommand } = await import('../src/lib/config.js')
+    const storePath = join(trustTmpDir, 'trust.json')
+    trustTokensCollectCommand('/repo-a/.git', 'node', 'scripts/a.js', 'hash-at-approval-time', storePath)
+
+    const entry = getTokensCollectTrust('/repo-a/.git', 'node', 'scripts/a.js', storePath)
+    expect(entry?.scriptBlobHash).toBe('hash-at-approval-time')
+    // A caller comparing against a NEW current hash sees the mismatch itself:
+    expect(entry?.scriptBlobHash).not.toBe('hash-after-someone-edited-the-script')
+  })
+
+  it('getTokensCollectTrust is null, never throws, when the store file does not exist yet', async () => {
+    const { getTokensCollectTrust } = await import('../src/lib/config.js')
     const storePath = join(trustTmpDir, 'never-written.json')
-    expect(isTokensCollectTrusted('/repo-a/.git', 'echo hi', storePath)).toBe(false)
+    expect(getTokensCollectTrust('/repo-a/.git', 'node', 'scripts/a.js', storePath)).toBeNull()
   })
 
-  it('isTokensCollectTrusted is false, never throws, on a corrupt store file', async () => {
-    const { isTokensCollectTrusted } = await import('../src/lib/config.js')
+  it('getTokensCollectTrust is null, never throws, on a corrupt store file', async () => {
+    const { getTokensCollectTrust } = await import('../src/lib/config.js')
     const storePath = join(trustTmpDir, 'corrupt.json')
     writeFileSync(storePath, 'not json at all', 'utf-8')
-    expect(isTokensCollectTrusted('/repo-a/.git', 'echo hi', storePath)).toBe(false)
+    expect(getTokensCollectTrust('/repo-a/.git', 'node', 'scripts/a.js', storePath)).toBeNull()
   })
 
-  it('trustTokensCollectCommand records a real, readable timestamp alongside the command', async () => {
+  it('trustTokensCollectCommand records a real, readable timestamp alongside the interpreter, script, and hash', async () => {
     const { trustTokensCollectCommand } = await import('../src/lib/config.js')
     const storePath = join(trustTmpDir, 'trust-record.json')
-    trustTokensCollectCommand('/repo-a/.git', 'echo hi', storePath)
+    trustTokensCollectCommand('/repo-a/.git', 'node', 'scripts/a.js', 'hash-1', storePath)
 
     const raw = JSON.parse(readFileSync(storePath, 'utf-8'))
-    const entries = Object.values(raw) as Array<{ command: string; trustedAt: string }>
+    const entries = Object.values(raw) as TokensCollectTrustEntry[]
     expect(entries).toHaveLength(1)
-    const entry = entries[0] as { command: string; trustedAt: string }
-    expect(entry.command).toBe('echo hi')
+    const entry = entries[0] as TokensCollectTrustEntry
+    expect(entry.interpreter).toBe('node')
+    expect(entry.script).toBe('scripts/a.js')
+    expect(entry.scriptBlobHash).toBe('hash-1')
     expect(new Date(entry.trustedAt).toString()).not.toBe('Invalid Date')
   })
 })

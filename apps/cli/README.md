@@ -100,7 +100,7 @@ To declare a domain beyond those two — a `migrations/` folder, a codegen outpu
 }
 ```
 
-**`tokens.collect` executes as a shell command**, exactly like `ci.setup` — the same reasoning applies: vinaya cannot know a non-Claude-Code host's own usage surface (an API usage response, a meter's CLI, a log format), so this is declared, never inferred. `vinaya tokens` runs the command itself, whenever it is declared and `--in`/`--out` are not given, and parses its stdout as a JSON object shaped:
+**`tokens.collect` must be exactly `"<interpreter> <repo-relative-script-path>"`** — two whitespace-separated tokens, nothing else: no flags, no extra arguments, no shell syntax (`&&`/`|`/`;`), no quoting. `vinaya tokens` spawns the interpreter directly with the script as its one argument — never through a shell — whenever it is declared and `--in`/`--out` are not given, and parses its stdout as a JSON object shaped:
 
 ```json
 {
@@ -118,12 +118,13 @@ This is an opt-in collection route, not a capability declaration: whether a host
 
 Read from the repo-root config only, same trust class as `checks`/`principals`/`releaseActor`: a value that decides what command runs on this turn must come from the reviewed, committed per-repo file, never a machine-wide personal config — a global `~/.vinaya/config.json`'s `tokens` key is stripped at load time with a loud stderr warning, never resolved.
 
-Unlike `ci.setup` — which only ever executes inside a generated, reviewed CI workflow step, under the runner's own isolation — a declared `tokens.collect` command executes IN-PROCESS, unsandboxed, on whatever machine runs the ordinary `vinaya tokens` command. Two layers close that gap:
+Unlike `ci.setup` — which only ever executes inside a generated, reviewed CI workflow step, under the runner's own isolation — a declared `tokens.collect` script executes IN-PROCESS, unsandboxed, on whatever machine runs the ordinary `vinaya tokens` command. Three layers close that gap:
 
-- **Trust gate.** `vinaya tokens` refuses to run `tokens.collect` at all until a human has explicitly approved that exact command string, for this repo, on this machine: run `vinaya tokens --trust-collect` once. Approval is keyed to this repo's git common directory, not to any one worktree, so it survives a fresh `git worktree add` of the same repo; a command string that changes — even by one character — needs its own fresh approval. Approvals live in `~/.vinaya/tokens-collect-trust.json`, machine-local and never read from any committed file, so a pull request can no more grant itself trust than it can add itself to `principals`.
-- **Printed audit trail.** Once trusted, `vinaya tokens` still prints the exact command to stderr immediately before every run, so nothing executes invisibly even after approval.
+- **Rigid grammar.** The `"<interpreter> <script>"` restriction above is not a style preference — it is what makes the content pin below rigorous rather than heuristic. Because a declaration can only ever mean one file, `vinaya tokens` never has to guess which token of an open-ended shell string "looks like a path".
+- **Trust gate, content-pinned.** `vinaya tokens` refuses to run `tokens.collect` at all until a human has explicitly approved this exact interpreter/script declaration, AT the script's exact current content, for this repo, on this machine: run `vinaya tokens --trust-collect` once. Approval is keyed to this repo's git common directory, not to any one worktree, so it survives a fresh `git worktree add` of the same repo; a different interpreter, a different script path, or so much as one byte of script content changing — committed or not — needs its own fresh approval. Approvals live in `~/.vinaya/tokens-collect-trust.json`, machine-local and never read from any committed file, so a pull request can no more grant itself trust than it can add itself to `principals`.
+- **Printed audit trail.** Once trusted, `vinaya tokens` still prints the exact interpreter/script to stderr immediately before every run, so nothing executes invisibly even after approval.
 
-This is a trust-then-verify design, not a blocking interactive prompt — the unattended-agent path this key exists for keeps working once a human has approved the command a single time.
+This is a trust-then-verify design, not a blocking interactive prompt — the unattended-agent path this key exists for keeps working once a human has approved the script's content a single time. Editing only the script, never `vinaya.config.json`, requires that same fresh approval again — this is the specific gap two earlier, less rigid designs left open (security review, PR #303), and the reason the grammar above is fixed rather than an arbitrary shell string.
 
 ## Where the git hooks live
 

