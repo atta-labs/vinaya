@@ -89,6 +89,44 @@ To declare a domain beyond those two — a `migrations/` folder, a codegen outpu
 
 `name` is required (the dedup key, matching the registry row's own `Project` column); `description` and `path` are optional. This key is display metadata only — no gate or resolver reads it, and single-project repos rightly have none. `vinaya doctor` reports, at `info` severity, when a registry row and a `projects` entry name the same project but only one of the two exists — never an error, since keeping only the registry file is a fully supported shape.
 
+### Token-usage collection for non-Claude-Code hosts (`tokens.collect`)
+
+`vinaya tokens` ships one collection adapter, for Claude Code — it reads that host's own session transcript. A repo whose coding-agent host is something else (Codex, Grok build, or any other harness) has no route to a real `Tokens:` line without declaring one:
+
+```json
+{
+  "tokens": {
+    "collect": "node scripts/collect-usage.js"
+  }
+}
+```
+
+**`tokens.collect` must be exactly `"<interpreter> <repo-relative-script-path>"`** — two whitespace-separated tokens, nothing else: no flags, no extra arguments, no shell syntax (`&&`/`|`/`;`), no quoting. `vinaya tokens` spawns the interpreter directly with the script as its one argument — never through a shell — whenever it is declared and `--in`/`--out` are not given, and parses its stdout as a JSON object shaped:
+
+```json
+{
+  "inputTokens": 0,
+  "outputTokens": 0,
+  "cacheCreationInputTokens": 0,
+  "cacheReadInputTokens": 0,
+  "model": "your-model-id-or-null"
+}
+```
+
+Absent, `vinaya tokens` falls back to the shipped Claude Code transcript adapter unchanged — this key only adds a second route, never removes the first, and a Claude Code adopter continues to get working enforcement on `vinaya upgrade` having declared nothing. When declared, a command that exits non-zero or prints output that doesn't parse into that shape fails loudly rather than silently falling back to the transcript route or emitting a plausible `0/0/—`.
+
+This is an opt-in collection route, not a capability declaration: whether a host is treated as capable of metering itself is always *probed*, never read from this key — there is no `tokens.metering` field.
+
+Read from the repo-root config only, same trust class as `checks`/`principals`/`releaseActor`: a value that decides what command runs on this turn must come from the reviewed, committed per-repo file, never a machine-wide personal config — a global `~/.vinaya/config.json`'s `tokens` key is stripped at load time with a loud stderr warning, never resolved.
+
+Unlike `ci.setup` — which only ever executes inside a generated, reviewed CI workflow step, under the runner's own isolation — a declared `tokens.collect` script executes IN-PROCESS, unsandboxed, on whatever machine runs the ordinary `vinaya tokens` command. Three layers close that gap:
+
+- **Rigid grammar.** The `"<interpreter> <script>"` restriction above is not a style preference — it is what makes the content pin below rigorous rather than heuristic. Because a declaration can only ever mean one file, `vinaya tokens` never has to guess which token of an open-ended shell string "looks like a path".
+- **Trust gate, content-pinned.** `vinaya tokens` refuses to run `tokens.collect` at all until a human has explicitly approved this exact interpreter/script declaration, AT the script's exact current content, for this repo, on this machine: run `vinaya tokens --trust-collect` once. Approval is keyed to this repo's git common directory, not to any one worktree, so it survives a fresh `git worktree add` of the same repo; a different interpreter, a different script path, or so much as one byte of script content changing — committed or not — needs its own fresh approval. Approvals live in `~/.vinaya/tokens-collect-trust.json`, machine-local and never read from any committed file, so a pull request can no more grant itself trust than it can add itself to `principals`.
+- **Printed audit trail.** Once trusted, `vinaya tokens` still prints the exact interpreter/script to stderr immediately before every run, so nothing executes invisibly even after approval.
+
+This is a trust-then-verify design, not a blocking interactive prompt — the unattended-agent path this key exists for keeps working once a human has approved the script's content a single time. Editing only the script, never `vinaya.config.json`, requires that same fresh approval again — this is the specific gap two earlier, less rigid designs left open (security review, PR #303), and the reason the grammar above is fixed rather than an arbitrary shell string.
+
 ## Where the git hooks live
 
 `vinaya init` installs the ring-0 hooks (`pre-commit`, `pre-push`, `commit-msg`) into a **tracked** `.vinaya/hooks/` directory and points git at it with `git config core.hooksPath .vinaya/hooks` — commit that directory. Raw `.git/hooks` is never versioned by git, so hooks installed there exist only on the installing machine; tracked hooks travel with the repo into every clone and every linked worktree checkout.

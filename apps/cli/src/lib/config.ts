@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { DEFAULT_RELEASE_ACTOR, PRINCIPAL_ALLOWLIST } from '@attalabs/aeg-core'
 import { AGENT_VENDORS, type AgentVendor } from './agent-vendors.js'
@@ -355,6 +356,34 @@ const ProjectEntrySchema = z.object({
 })
 export type ProjectEntry = z.infer<typeof ProjectEntrySchema>
 
+/** A parsed `tokens.collect` declaration — see `tokens.collect`'s own schema comment. */
+export type TokensCollectDeclaration = { interpreter: string; script: string }
+
+/**
+ * Parses a `tokens.collect` string into its two required parts, or `null`
+ * if the string is not shaped that way. Deliberately RIGID, not a shell
+ * tokenizer: exactly one interpreter token, one script-path token, nothing
+ * else — no flags, no quoting, no `&&`/`|`/`;`, no extra arguments. This is
+ * what makes the round-3 content-pinning fix (`tokens.collect trust cache`,
+ * below) rigorous rather than heuristic: there is exactly one file this
+ * declaration can ever mean, identified by parsing alone, never by
+ * guessing which whitespace-delimited token of an otherwise-arbitrary
+ * shell string "looks like a path" (security review, PR #303, round 3 —
+ * that guessing was the earlier design this one replaces).
+ *
+ * The script segment must additionally satisfy `isSafeRepoRelPath` — no
+ * absolute path, no `..` segment — since it is later resolved relative to
+ * this repo-local config file's own directory, exactly like
+ * `RoleEntrySchema.contract`'s resolution.
+ */
+export function parseTokensCollectDeclaration(value: string): TokensCollectDeclaration | null {
+  const m = value.trim().match(/^(\S+)\s+(\S+)$/)
+  if (!m) return null
+  const [, interpreter, script] = m as [string, string, string]
+  if (!isSafeRepoRelPath(script)) return null
+  return { interpreter, script }
+}
+
 export const VinayaConfigSchema = z.object({
   rings: z
     .object({
@@ -396,6 +425,67 @@ export const VinayaConfigSchema = z.object({
   // (`init`/`upgrade`/`doctor`) from the repo-root config only
   // (`readRepoCiSetup`) — a global config's `ci` is never consulted.
   ci: z.object({ setup: z.string().min(1) }).optional(),
+  // Adopter-declared token-usage collection for `vinaya tokens`
+  // (`aeg-root/tranche-model.md` §12 layer 2), for a non-Claude-Code host —
+  // whose stdout must be a JSON object shaped `{ inputTokens, outputTokens,
+  // cacheCreationInputTokens, cacheReadInputTokens, model }` — the
+  // `TranscriptSummary` seam flattened to JSON. Absent, `vinaya tokens`
+  // falls back to the shipped Claude Code transcript adapter unchanged —
+  // this key is a pure ADDITION of a second route, never a replacement of
+  // the first, and the shipped adapter is never removed when this key is
+  // present.
+  //
+  // This is an opt-in collection route, not a capability declaration:
+  // `resolveMeteringCapability`'s probe stays host-identity-blind exactly as
+  // ruled (Principal, 2026-08-28) — there is no `tokens.metering` key, and
+  // this key is read only inside `vinaya tokens`'s own command path, never
+  // consulted by the probe `vinaya doctor`/`vinaya upgrade` call.
+  //
+  // Read from the repo-root config only, same trust class as `checks` and
+  // `principals`: a value that decides what runs on this turn must come
+  // from the reviewed, committed per-repo file, never a machine-wide
+  // personal config — stripped from a global config below with a loud
+  // warning, never resolved.
+  //
+  // GRAMMAR (round 3, security review PR #303): exactly
+  // `"<interpreter> <repo-relative-script-path>"` — two whitespace-
+  // delimited tokens, nothing else. `parseTokensCollectDeclaration`
+  // (above) is the one parser; no flags, no shell syntax (`&&`/`|`/`;`),
+  // no quoting are ever part of this grammar, and the script segment must
+  // satisfy `isSafeRepoRelPath`. This is deliberately RIGID, replacing an
+  // earlier, more permissive "any shell command" shape two rounds of
+  // security review found real holes in:
+  //   - Round 1: an arbitrary shell command ran with no printed trace at
+  //     all. Fixed: `vinaya tokens` prints the exact command to stderr
+  //     immediately before every run (`tokens.ts`) — an audit trail, never
+  //     a gate on its own.
+  //   - Round 2: a printed trace is not a gate — nothing stopped a
+  //     malicious or mistaken value from running the first time anyone ran
+  //     `vinaya tokens`. Fixed: `vinaya tokens` REFUSES to run at all until
+  //     a human has explicitly approved it, per exact declaration, per
+  //     repo, per machine, via `vinaya tokens --trust-collect`
+  //     (`tokens.collect trust cache`, below).
+  //   - Round 3: trust from round 2 bound to the command STRING alone,
+  //     never to the CONTENT of the script it invoked — editing only the
+  //     script, never this config, executed the new content silently on
+  //     the next run. Closed by narrowing the grammar itself (this
+  //     comment): the interpreter/script split is exact, never heuristic,
+  //     so the ONE file a declaration can mean is always identifiable, and
+  //     trust now pins that file's content (a real `git hash-object` blob
+  //     hash) alongside the declaration. Spawned via `execFile` — never a
+  //     shell — closing the earlier "shell interpretation" surface as a
+  //     side effect of the narrower grammar, not a separate fix.
+  tokens: z
+    .object({
+      collect: z
+        .string()
+        .min(1)
+        .refine((v) => parseTokensCollectDeclaration(v) !== null, {
+          message:
+            'tokens.collect must be exactly "<interpreter> <repo-relative-script-path>" — two whitespace-separated tokens, no flags, no shell syntax, no quoting'
+        })
+    })
+    .optional(),
   // The sanctioned "I need one more blast-radius collision domain" path —
   // the legacy `.aeg/packages` static file is retired, zero backward
   // compatibility, so this is now the ONLY way to declare one beyond
@@ -514,6 +604,11 @@ export function globalReleaseActorIgnoredWarning(path: string): string {
   return `${path}: "releaseActor" in the global config is ignored — releaseActor may only be declared from a repo-local vinaya.config.json.`
 }
 
+/** Same reasoning as `globalChecksIgnoredWarning` — `tokens.collect` decides what command runs on this turn, and that decision must come from the reviewed, committed repo file, never a machine-wide personal config. */
+export function globalTokensCollectIgnoredWarning(path: string): string {
+  return `${path}: "tokens" in the global config is ignored — tokens.collect may only be declared from a repo-local vinaya.config.json.`
+}
+
 /**
  * `checks` and `principals` from the global config are both explicitly out
  * of scope for it (`checks`: spec chapter, "Explicitly out of scope for this
@@ -549,6 +644,10 @@ function stripGlobalOnlyKeys(config: VinayaConfig, path: string): VinayaConfig {
   if (result.releaseActor) {
     console.error(`⚠ ${globalReleaseActorIgnoredWarning(path)}`)
     result = { ...result, releaseActor: undefined }
+  }
+  if (result.tokens) {
+    console.error(`⚠ ${globalTokensCollectIgnoredWarning(path)}`)
+    result = { ...result, tokens: undefined }
   }
   return result
 }
@@ -862,6 +961,201 @@ export function writeConfig(scope: 'local' | 'global', config: VinayaConfig, rep
     targetPath = GLOBAL_CONFIG_PATH
   }
   writeFileSync(targetPath, JSON.stringify(config, null, 2), 'utf-8')
+}
+
+// ---------------------------------------------------------------------------
+// tokens.collect trust cache (security review, PR #303, rounds 2-3).
+//
+// The problem the printed pre-exec warning (round 1) did NOT solve: a
+// declared `tokens.collect` command executes IN-PROCESS, unsandboxed,
+// automatically, the first time anyone (human or unattended Developer/
+// Archivist agent) runs the ordinary `vinaya tokens` command against a repo
+// carrying it — with no barrier between "this value exists in a commit" and
+// "this value ran". A warning printed synchronously immediately before a
+// blocking `execFile` call gives a human no real window to react.
+//
+// Round 2's fix, direnv-shaped: a declaration must be explicitly TRUSTED
+// once, per exact declaration, per machine, before `vinaya tokens` will ever
+// execute it — `getTokensCollectTrust` returns nothing (never runs, never
+// falls back) until `trustTokensCollectCommand` records it. Approval is a
+// real human act (`vinaya tokens --trust-collect`, run once, not part of any
+// generated or automated flow) — this file contains no code path that
+// self-trusts.
+//
+// Round 2 shipped with a real gap round 3 closes: trust bound to the
+// command STRING alone, never to the CONTENT of the script it invoked —
+// approving `"node scripts/collect-usage.js"` once trusted whatever that
+// script currently contained, so a LATER commit editing only the script
+// (never this config) executed silently on the next run, no re-prompt.
+// Live-reproduced by security review. Closed by `tokens.collect`'s own
+// grammar narrowing (`parseTokensCollectDeclaration`, above) rather than by
+// this cache alone: because a declaration is EXACTLY one interpreter and
+// one script path, never an open shell string, there is exactly one file it
+// can ever mean — so trust can pin that file's content (`gitBlobHash`) and
+// stay rigorous rather than heuristically guessing which token of an
+// arbitrary command "looks like a path".
+//
+// Trust is keyed by (this repo's git common directory, interpreter, script
+// path) — NOT by worktree path. This repo's own Developer/Archivist
+// dispatch model creates a fresh worktree per task
+// (`.worktrees/task/<tranche>/<n>/`), and `git rev-parse --git-common-dir`
+// resolves to the ONE shared `.git` directory every worktree of a repo
+// points at — approving a declaration once on a machine covers every future
+// task worktree of that same repo (the script's bytes are identical there
+// too, for the same commit), while a genuinely new interpreter, script
+// path, OR script CONTENT always needs its own fresh approval. A repo the
+// trust identity cannot be resolved for (`gitCommonDir` returns `null` — no
+// git, or `git` itself unavailable) is refused, never silently trusted.
+//
+// Storage is machine-local (`~/.vinaya/`, the same home `GLOBAL_VINAYA_HOME`
+// already uses for the global config) and deliberately NOT the repo-local
+// `vinaya.config.json` or anything else a commit can touch — trust is a
+// standing fact about what THIS operator has personally approved on THIS
+// machine, and a PR can no more grant itself that trust than it can add
+// itself to `principals`.
+// ---------------------------------------------------------------------------
+
+const TOKENS_COLLECT_TRUST_PATH = join(GLOBAL_VINAYA_HOME, 'tokens-collect-trust.json')
+
+export type TokensCollectTrustEntry = {
+  interpreter: string
+  script: string
+  /** `git hash-object` blob hash of `script`'s bytes at the moment trust was granted. */
+  scriptBlobHash: string
+  trustedAt: string
+}
+export type TokensCollectTrustStore = Record<string, TokensCollectTrustEntry>
+
+function readTokensCollectTrustStore(storePath: string): TokensCollectTrustStore {
+  try {
+    if (!existsSync(storePath)) return {}
+    const raw = JSON.parse(readFileSync(storePath, 'utf-8'))
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeTokensCollectTrustStore(storePath: string, store: TokensCollectTrustStore): void {
+  const dir = dirname(storePath)
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  writeFileSync(storePath, JSON.stringify(store, null, 2), 'utf-8')
+}
+
+/** Plumbing (`git rev-parse`/`git hash-object`) is expected instant; a hang past this is a stuck/hostile `git`, not a slow legitimate answer — never block the caller indefinitely (code review, PR #303, round 2 follow-up: neither exec call site in this file previously bounded its own runtime). */
+const GIT_IDENTITY_TIMEOUT_MS = 5_000
+
+/**
+ * This repo's git common directory — the ONE directory every worktree of a
+ * repo (the primary checkout and every `git worktree add` linked one) shares
+ * — canonicalized (`realpathSync`) so two different paths to the same
+ * directory (a symlinked home, a relative vs. absolute cwd) hash identically.
+ * `null` on any failure (no `git`, not inside a git repository, timeout):
+ * callers MUST treat that as "identity unknown", never as license to trust
+ * anyway.
+ */
+export function gitCommonDir(cwd: string = process.cwd()): string | null {
+  try {
+    const raw = execFileSync('git', ['rev-parse', '--git-common-dir'], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: GIT_IDENTITY_TIMEOUT_MS
+    }).trim()
+    if (!raw) return null
+    return realpathSync(resolve(cwd, raw))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The directory holding this repo's own repo-local `vinaya.config.json` —
+ * `null` if none resolves (mirrors `findLocalConfig`'s own walk-up-to-the-
+ * repo-root bound). `tokens.collect`'s script segment is resolved relative
+ * to THIS directory, exactly like `RoleEntrySchema.contract`'s own
+ * resolution rule.
+ */
+export function repoLocalConfigDir(): string | null {
+  const local = findLocalConfig()
+  return local ? dirname(local) : null
+}
+
+/**
+ * The `git hash-object` blob hash of a file's CURRENT on-disk bytes —
+ * whatever is actually checked out right now, committed or not (so an
+ * uncommitted local edit is caught exactly like a committed one). If this
+ * content is ever committed unchanged, this is the identical hash that
+ * commit's tree entry for this path carries — the trust cache pins the same
+ * identifier a `git show`/`git cat-file` investigation would use, not a
+ * bespoke one. `null` on any failure (file missing, `git` unavailable,
+ * timeout) — never a license to trust anyway.
+ */
+export function gitBlobHash(absolutePath: string, cwd: string): string | null {
+  try {
+    const raw = execFileSync('git', ['hash-object', absolutePath], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: GIT_IDENTITY_TIMEOUT_MS
+    }).trim()
+    return raw || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The trust key for one (repo, interpreter, script path) triple — changing
+ * any of the three changes the key, so a different repo, interpreter, or
+ * script path is always a stranger. Script CONTENT is checked separately
+ * (`TokensCollectTrustEntry.scriptBlobHash`, a value the caller compares
+ * itself) rather than folded into this key, so "never approved" and
+ * "approved, but the script's content has since changed" stay two
+ * distinguishable refusals instead of one opaque "not trusted".
+ *
+ * Hashes `JSON.stringify([...])` — provably injective for any well-formed
+ * strings (the surrounding `[`/`,`/`]` structure and per-string escaping can
+ * never itself be produced by escaped content), so no two distinct triples
+ * can ever collide, regardless of what characters any of the three fields
+ * contain.
+ */
+export function tokensCollectTrustKey(repoGitCommonDir: string, interpreter: string, script: string): string {
+  return createHash('sha256')
+    .update(JSON.stringify([repoGitCommonDir, interpreter, script]))
+    .digest('hex')
+}
+
+/**
+ * The recorded trust entry for this exact (repo, interpreter, script path)
+ * triple, or `null` if it has never been approved on this machine. Callers
+ * compare `entry.scriptBlobHash` against the CURRENT content hash
+ * themselves (`gitBlobHash`) — this function does not, precisely so "never
+ * trusted" and "trusted, but content has since changed" stay distinguishable
+ * refusals for the caller to report separately.
+ */
+export function getTokensCollectTrust(
+  repoGitCommonDir: string,
+  interpreter: string,
+  script: string,
+  storePath: string = TOKENS_COLLECT_TRUST_PATH
+): TokensCollectTrustEntry | null {
+  const key = tokensCollectTrustKey(repoGitCommonDir, interpreter, script)
+  return readTokensCollectTrustStore(storePath)[key] ?? null
+}
+
+/** Records explicit, one-time approval of this exact (repo, interpreter, script path) triple AT this exact content hash — the only function in this file that grants trust, called from nowhere except the `--trust-collect` CLI path a human types themselves. */
+export function trustTokensCollectCommand(
+  repoGitCommonDir: string,
+  interpreter: string,
+  script: string,
+  scriptBlobHash: string,
+  storePath: string = TOKENS_COLLECT_TRUST_PATH
+): void {
+  const store = readTokensCollectTrustStore(storePath)
+  const key = tokensCollectTrustKey(repoGitCommonDir, interpreter, script)
+  store[key] = { interpreter, script, scriptBlobHash, trustedAt: new Date().toISOString() }
+  writeTokensCollectTrustStore(storePath, store)
 }
 
 export { GLOBAL_VINAYA_HOME, GLOBAL_CONFIG_PATH, LOCAL_CONFIG_FILENAME }

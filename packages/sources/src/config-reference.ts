@@ -309,6 +309,33 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
 }`
   },
   {
+    key: 'tokens',
+    type: 'object (optional)',
+    semantics: [
+      'Adopter-declared token-usage collection for `vinaya tokens` on a non-Claude-Code host — layer 2 of the token-report obligation. Vinaya ships one collection adapter, for Claude Code, which reads that host’s own session transcript; a host with no such transcript has no route to a real `Tokens:` line without this key.',
+      'This is an opt-in collection route, never a capability declaration: `vinaya`’s metering-capability probe stays host-identity-blind — there is no `tokens.metering` key, and this key is read only inside `vinaya tokens`’s own command path, never consulted by the probe `vinaya doctor`/`vinaya upgrade` call.',
+      'Declaring this key is not enough to make it run: see `tokens.collect`’s own entry for the explicit machine-local trust gate a declared command must pass before `vinaya tokens` will ever execute it.'
+    ],
+    example: `{ "tokens": { "collect": "node scripts/collect-usage.js" } }`
+  },
+  {
+    key: 'tokens.collect',
+    type: 'string (optional, min 1)',
+    semantics: [
+      'Exactly `"<interpreter> <repo-relative-script-path>"` — two whitespace-separated tokens, nothing else (no flags, no extra arguments, no shell syntax, no quoting; security review, PR #303, round 3). `vinaya tokens` spawns the interpreter directly with the script as its one argument — never through a shell — whenever declared and `--in`/`--out` are not given. Its stdout must be a JSON object shaped `{"inputTokens":N,"outputTokens":N,"cacheCreationInputTokens":N,"cacheReadInputTokens":N,"model":"…"|null}` — the `TranscriptSummary` seam flattened to JSON.',
+      'Declared, never inferred: vinaya cannot know a non-Claude-Code host’s own usage surface (an API response shape, a meter’s CLI, a log format) — same argument as `ci.setup`, applied to usage collection instead of CI preparation.',
+      'When absent, `vinaya tokens` falls back to the shipped Claude Code transcript adapter unchanged — this key only adds a second route, never removes the first. When declared, a script that fails to run or whose output cannot be parsed fails loudly rather than silently falling back to the transcript route or emitting zeros.',
+      'Read from the repo-root config only, same trust class as `checks`/`principals`/`releaseActor`: a value that decides what runs on this turn must come from the reviewed, committed per-repo file — a global `~/.vinaya/config.json`’s `tokens` key is stripped at load time with a loud stderr warning, never resolved.',
+      'Unlike `ci.setup` — which only ever executes inside a generated, reviewed CI workflow step, under the runner’s own isolation — a declared `tokens.collect` script executes IN-PROCESS, unsandboxed, wherever `vinaya tokens` runs. Three layers close that gap (security review, PR #303, rounds 1-3): the rigid grammar above (so a declaration can only ever mean one file, never a guess); a trust gate that refuses to run ANY declaration at all until it has been explicitly approved via a one-time `vinaya tokens --trust-collect`, keyed to the exact interpreter, script path, AND the script’s exact content (a real `git hash-object` blob hash) together with this repo’s git identity — survives this repo’s own per-task fresh worktrees, but a different interpreter, script path, or so much as one byte of script content, committed or not, needs its own fresh approval; and a printed audit trail — once trusted, the exact interpreter/script is still printed to stderr immediately before every run. Approvals live machine-local at `~/.vinaya/tokens-collect-trust.json`, never in any committed file — a pull request can no more grant itself trust than it can add itself to `principals`.',
+      'The script itself runs with a bounded timeout — a stuck or hostile process is killed rather than blocking `vinaya tokens` forever — and never falls back to the shipped transcript adapter on any failure (untrusted, content changed since approval, timed out, non-zero exit, unparseable output): a declared route that fails is reported as a failure, never silently masked by a different result.'
+    ],
+    example: `{
+  "tokens": {
+    "collect": "node scripts/collect-usage.js"
+  }
+}`
+  },
+  {
     key: 'blastRadius',
     type: 'object (optional)',
     semantics: [
