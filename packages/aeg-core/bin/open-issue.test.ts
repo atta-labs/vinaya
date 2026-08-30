@@ -13,6 +13,7 @@ import {
   resolveMilestoneToAttach,
   resolveShippableArgs,
   runAmendDeps,
+  taskIdFromTitle,
   validateAmendFlags
 } from './open-issue'
 
@@ -253,6 +254,23 @@ describe('resolveMilestoneToAttach (aeg-review-gate-v1 task 1 follow-up)', () =>
       activeLookup
     )
     expect(result).toBe('aeg-review-gate-v1')
+  })
+})
+
+// ---------- taskIdFromTitle (leftover-detection print, #309) -----------------
+
+describe('taskIdFromTitle', () => {
+  it('extracts the task id from a well-formed task title', () => {
+    expect(taskIdFromTitle('[vinaya-ui-pages-v1] 3 — Build /compare page')).toBe('3')
+  })
+  it('accepts a non-numeric task id (the grammar is \\S+, not digits-only)', () => {
+    expect(taskIdFromTitle('[vinaya-ui-pages-v1] 3a — Split follow-up')).toBe('3a')
+  })
+  it('returns null for a non-task (commitlint-style) title', () => {
+    expect(taskIdFromTitle('Fix(cli): open-issue prints leftover-detection')).toBeNull()
+  })
+  it('returns null when the em dash is missing', () => {
+    expect(taskIdFromTitle('[vinaya-ui-pages-v1] 3 no dash here')).toBeNull()
   })
 })
 

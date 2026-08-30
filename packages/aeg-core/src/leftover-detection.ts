@@ -20,6 +20,13 @@ export type LeftoverInput = {
   worktreeExistsLocal: boolean
   /** Commits on the task branch that are not yet on `origin/main`. */
   commitsAheadOfMain: number
+  /**
+   * An OPEN pull request already exists for this task's branch, or `null`/
+   * omitted when unknown or none exists. Optional and additive — a caller
+   * that has no PR-number fact (e.g. `verify-dispatch.ts`'s existing call
+   * site, which only ever needed the three fields above) is unaffected.
+   */
+  openPrNumber?: number | null
 }
 
 export type LeftoverVerdict = 'clean' | 'resume' | 'stop'
@@ -37,12 +44,13 @@ export type LeftoverResult = { verdict: LeftoverVerdict; reason: string }
  *            resume in the existing worktree, not re-run Step 0.
  */
 export function classifyLeftover(input: LeftoverInput): LeftoverResult {
-  const { branchExistsRemote, worktreeExistsLocal, commitsAheadOfMain } = input
+  const { branchExistsRemote, worktreeExistsLocal, commitsAheadOfMain, openPrNumber } = input
+  const prSuffix = openPrNumber ? ` PR #${openPrNumber} is already open for this task.` : ''
 
   if (commitsAheadOfMain > 0) {
     return {
       verdict: 'stop',
-      reason: `${commitsAheadOfMain} commit(s) already ahead of origin/main on this task branch — real work exists. Do not re-run Step 0 (which would branch fresh from origin/main and orphan that work); resume in the existing worktree instead.`
+      reason: `${commitsAheadOfMain} commit(s) already ahead of origin/main on this task branch — real work exists.${prSuffix} Do not re-run Step 0 (which would branch fresh from origin/main and orphan that work); resume in the existing worktree instead.`
     }
   }
 

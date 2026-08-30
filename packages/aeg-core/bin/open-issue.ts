@@ -84,6 +84,7 @@ import {
   type ProjectPath,
   type TaskIssueFacts
 } from '../src/issue-validation'
+import { classifyLeftover } from '../src/leftover-detection'
 import { parseRegistry } from '../src/parse-registry'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
@@ -227,6 +228,80 @@ function fetchForgeLabels(issueRef: string): string[] {
 /** First `vinaya/tranche:<slug>` label's slug, or `null` when the set carries none. */
 function trancheSlugFromLabels(labels: string[]): string | null {
   return findTrancheSlug(labels)
+}
+
+/** `<n>` out of a task title `[<slug>] <n> — …` (the same grammar `checkForgeTitle`'s `taskStyle` accepts), or `null`. */
+export function taskIdFromTitle(title: string): string | null {
+  const m = title.match(/^\[[a-z0-9._-]+\] (\S+) —/)
+  return m ? (m[1] as string) : null
+}
+
+/** Soft-fail title fetch — unlike `fetchForgeLabels`/`fetchForgeBody`, this only feeds an informational print, never a blocking gate, so an unreachable forge yields `null` rather than refusing the whole command. */
+function fetchForgeTitle(issueRef: string): string | null {
+  try {
+    const out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'title'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+    const parsed = JSON.parse(out) as { title: string }
+    return parsed.title
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Unconditional leftover print — this repo's fix for the class of failure
+ * `classifyLeftover`/`verify-dispatch.ts` already solves for the Developer's
+ * Step 0, one stage too late for a *planning/authoring* session that never
+ * runs any command until it opens or edits this exact task Issue. This is
+ * the one command every legitimate task-Issue touch already goes through
+ * (`open-issue.ts` is the sole sanctioned create/edit path), so printing
+ * here — success or in-flight, every invocation, no flag — needs no agent
+ * to remember to ask for it. Soft-fail throughout: this is informational,
+ * never a refusal (re-planning an in-flight task via `edit` is legitimate),
+ * so any `git`/`gh` failure just skips the print rather than blocking the
+ * write this command exists to perform.
+ */
+function printLeftoverStatus(slug: string, taskId: string): void {
+  const branch = `task/${slug}/${taskId}`
+  try {
+    const branchExistsRemote =
+      execFileSync('git', ['ls-remote', '--heads', 'origin', branch], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).trim().length > 0
+
+    let commitsAheadOfMain = 0
+    if (branchExistsRemote) {
+      execFileSync('git', ['fetch', 'origin', branch, '--quiet'], { stdio: 'ignore' })
+      const count = execFileSync('git', ['rev-list', '--count', `origin/main..origin/${branch}`], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).trim()
+      commitsAheadOfMain = count && !Number.isNaN(Number(count)) ? Number(count) : 0
+    }
+
+    const prOut = execFileSync(
+      'gh',
+      ['pr', 'list', '--head', branch, '--state', 'open', '--json', 'number', '--limit', '1'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    )
+    const prs = JSON.parse(prOut) as Array<{ number: number }>
+    const openPrNumber = prs[0]?.number ?? null
+
+    const result = classifyLeftover({
+      branchExistsRemote,
+      worktreeExistsLocal: false,
+      commitsAheadOfMain,
+      openPrNumber
+    })
+    console.log(`[open-issue] leftover-detection: task ${taskId} (${slug}) — ${result.verdict}. ${result.reason}`)
+  } catch {
+    console.log(
+      `[open-issue] leftover-detection: could not check task ${taskId} (${slug}) — git/gh unreachable, skipping.`
+    )
+  }
 }
 
 /**
@@ -671,6 +746,17 @@ export function main(): void {
     if (labelSlug !== null) {
       const lengthError = trancheSlugLengthError(labelSlug)
       if (lengthError) fail(`open-issue label-length: ${lengthError}`)
+    }
+
+    // Unconditional, every invocation — see printLeftoverStatus's own doc
+    // comment for why this runs here rather than relying on an agent to
+    // separately invoke `verify-dispatch`/`check dispatch-readiness`.
+    if (labelSlug !== null) {
+      const titleForLeftoverCheck = extractTitle(bodyArgs) ?? (isEdit ? fetchForgeTitle(ghArgs[0] as string) : null)
+      const taskIdForLeftoverCheck = titleForLeftoverCheck ? taskIdFromTitle(titleForLeftoverCheck) : null
+      if (taskIdForLeftoverCheck !== null) {
+        printLeftoverStatus(labelSlug, taskIdForLeftoverCheck)
+      }
     }
 
     const title = extractTitle(bodyArgs)
