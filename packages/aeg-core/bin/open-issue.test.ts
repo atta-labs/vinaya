@@ -179,11 +179,11 @@ describe('regular-file body-file input is unaffected by the fix', () => {
 
 describe('resolveMilestoneToAttach (aeg-review-gate-v1 task 1 follow-up)', () => {
   const activeLookup = vi.fn((slug: string) =>
-    slug === 'aeg-review-gate-v1' ? { goal: '', lifecycle: 'active' as const } : null
+    slug === 'aeg-review-gate-v1' ? { number: 9, title: 'aeg-review-gate-v1' } : null
   )
 
-  it('attaches the slug when the label is present, an open Milestone matches, and no explicit --milestone was given', () => {
-    const lookup = vi.fn().mockReturnValue({ goal: '', lifecycle: 'active' as const })
+  it('attaches the legacy Milestone TITLE when the label is present, an open Milestone matches, and no explicit --milestone was given', () => {
+    const lookup = vi.fn().mockReturnValue({ number: 9, title: 'aeg-review-gate-v1' })
     const result = resolveMilestoneToAttach(
       ['vinaya/tranche:aeg-review-gate-v1', 'vinaya/tier:1'],
       ['--title', 't'],
@@ -194,8 +194,14 @@ describe('resolveMilestoneToAttach (aeg-review-gate-v1 task 1 follow-up)', () =>
     expect(lookup).toHaveBeenCalledWith('aeg-review-gate-v1')
   })
 
+  it('attaches an intent-declared Milestone by its OWN title, not the slug — gh resolves --milestone by title only', () => {
+    const lookup = vi.fn().mockReturnValue({ number: 64, title: 'Engine' })
+    const result = resolveMilestoneToAttach(['vinaya/tranche:engine-agent-spawn-v1'], ['--title', 't'], false, lookup)
+    expect(result).toBe('Engine')
+  })
+
   it('returns null on edit — creation-time behavior only, never force-attaches retroactively', () => {
-    const lookup = vi.fn().mockReturnValue({ goal: '', lifecycle: 'active' as const })
+    const lookup = vi.fn().mockReturnValue({ number: 9, title: 'aeg-review-gate-v1' })
     const result = resolveMilestoneToAttach(['vinaya/tranche:aeg-review-gate-v1'], ['--title', 't'], true, lookup)
     expect(result).toBeNull()
     expect(lookup).not.toHaveBeenCalled()
@@ -233,8 +239,8 @@ describe('resolveMilestoneToAttach (aeg-review-gate-v1 task 1 follow-up)', () =>
     expect(result).toBeNull()
   })
 
-  it('returns null when a Milestone exists for the slug but is closed (complete, not active)', () => {
-    const lookup = vi.fn().mockReturnValue({ goal: '', lifecycle: 'complete' as const })
+  it('returns null when the lookup finds no attach target (e.g. the only match is a closed legacy Milestone)', () => {
+    const lookup = vi.fn().mockReturnValue(null)
     const result = resolveMilestoneToAttach(['vinaya/tranche:aeg-forge-state-v1'], ['--title', 't'], false, lookup)
     expect(result).toBeNull()
   })
