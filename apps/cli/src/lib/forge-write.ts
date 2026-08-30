@@ -48,14 +48,17 @@ import {
   checkWorktreeStep0,
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
+  findTrancheSlug,
   isBriefShaped,
   isTaskBranch,
+  isTaskIssueLabelSet,
   parsePnpmWorkspaceYaml,
   parseRegistry,
   type ProjectPath,
   readTierFromPrBody,
   trancheLabel
 } from '@attalabs/aeg-core'
+import { findMilestoneAttachTargetForSlug, hasExplicitMilestoneFlag } from '@attalabs/aeg-forge-state'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks/contract'
 import { type BriefBuiltin, type BriefSection, VinayaConfigSchema, loadConfigChecked } from './config'
 
@@ -225,6 +228,34 @@ export function ensureTrancheLabelExists(slug: string): void {
       )
     ])
   }
+}
+
+/**
+ * `issue create`'s Milestone auto-attach: appends `--milestone <title>` to a
+ * task Issue's argv when the tranche it declares has a matching OPEN
+ * Milestone and the caller didn't already pass one. Never a hard refusal —
+ * `findMilestoneAttachTargetForSlug` throwing (network/auth) or resolving
+ * nothing degrades to "create without --milestone", identically to
+ * `ensureTrancheLabelExists`'s label-write half being best-effort here: a
+ * cosmetic GitHub-view attachment is never worth blocking the write for.
+ * `labels` is the full label set already computed by the caller — not
+ * re-derived — the same union of argv `--label`s and the ensured tranche
+ * label `issueCreateCommand` already has in hand.
+ */
+export function resolveMilestoneAttachArgs(ghArgs: string[], labels: string[]): string[] {
+  if (!isTaskIssueLabelSet(labels)) return ghArgs
+  if (hasExplicitMilestoneFlag(ghArgs)) return ghArgs
+  const slug = findTrancheSlug(labels)
+  if (!slug) return ghArgs
+
+  let target: ReturnType<typeof findMilestoneAttachTargetForSlug>
+  try {
+    target = findMilestoneAttachTargetForSlug('{owner}', '{repo}', slug)
+  } catch {
+    process.stderr.write(`vinaya: milestone lookup for '${slug}' failed (\`gh api\`) — creating without --milestone.\n`)
+    return ghArgs
+  }
+  return target ? [...ghArgs, '--milestone', target.title] : ghArgs
 }
 
 /**
