@@ -845,6 +845,27 @@ describe('tokens.collect trust cache', () => {
     expect(a).not.toBe(differentCommand)
   })
 
+  it('tokensCollectTrustKey never collides across a boundary a printable separator would confuse — adversarial, code review PR #303 round 2 follow-up', async () => {
+    const { tokensCollectTrustKey } = await import('../src/lib/config.js')
+    // A plain-space join would make these two DIFFERENT pairs serialize
+    // identically: "/a" + " " + "b c" === "/a b c" === "/a b" + " " + "c".
+    const shortDirLongCommand = tokensCollectTrustKey('/a', 'b c')
+    const longDirShortCommand = tokensCollectTrustKey('/a b', 'c')
+    expect(shortDirLongCommand).not.toBe(longDirShortCommand)
+
+    // A command carrying the JSON-array delimiter characters themselves
+    // must not forge a different (dir, command) pair's key either.
+    const commandWithBrackets = tokensCollectTrustKey('/repo/.git', '"],["injected')
+    const literalInjectedPair = tokensCollectTrustKey('/repo/.git', 'injected')
+    expect(commandWithBrackets).not.toBe(literalInjectedPair)
+
+    // A command containing the exact repo path as a substring must not
+    // forge the key of a DIFFERENT command that happens to start with it.
+    const embeddedRepoPath = tokensCollectTrustKey('/repo/.git', '/repo/.git/rest')
+    const wholeStringAsCommand = tokensCollectTrustKey('', '/repo/.git/rest')
+    expect(embeddedRepoPath).not.toBe(wholeStringAsCommand)
+  })
+
   it('isTokensCollectTrusted is false until trustTokensCollectCommand records exactly that (repo, command) pair', async () => {
     const { isTokensCollectTrusted, trustTokensCollectCommand } = await import('../src/lib/config.js')
     const storePath = join(trustTmpDir, 'trust.json')

@@ -970,20 +970,25 @@ function writeTokensCollectTrustStore(storePath: string, store: TokensCollectTru
   writeFileSync(storePath, JSON.stringify(store, null, 2), 'utf-8')
 }
 
+/** Plumbing (`git rev-parse`) is expected instant; a hang past this is a stuck/hostile `git`, not a slow legitimate answer — never block the caller indefinitely (code review, PR #303, round 2 follow-up: neither exec call site in this file previously bounded its own runtime). */
+const GIT_IDENTITY_TIMEOUT_MS = 5_000
+
 /**
  * This repo's git common directory — the ONE directory every worktree of a
  * repo (the primary checkout and every `git worktree add` linked one) shares
  * — canonicalized (`realpathSync`) so two different paths to the same
  * directory (a symlinked home, a relative vs. absolute cwd) hash identically.
- * `null` on any failure (no `git`, not inside a git repository): callers
- * MUST treat that as "identity unknown", never as license to trust anyway.
+ * `null` on any failure (no `git`, not inside a git repository, timeout):
+ * callers MUST treat that as "identity unknown", never as license to trust
+ * anyway.
  */
 export function gitCommonDir(cwd: string = process.cwd()): string | null {
   try {
     const raw = execFileSync('git', ['rev-parse', '--git-common-dir'], {
       cwd,
       encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: GIT_IDENTITY_TIMEOUT_MS
     }).trim()
     if (!raw) return null
     return realpathSync(resolve(cwd, raw))
@@ -992,7 +997,23 @@ export function gitCommonDir(cwd: string = process.cwd()): string | null {
   }
 }
 
-/** The trust key for one (repo, exact command string) pair — changing either changes the key, so an edited command is a stranger again, never silently inherited trust. */
+/**
+ * The trust key for one (repo, exact command string) pair — changing either
+ * changes the key, so an edited command is a stranger again, never silently
+ * inherited trust.
+ *
+ * Joined on a literal NUL byte (`\0`), not a printable delimiter: a `command`
+ * string can legitimately contain almost any character (spaces above all —
+ * a declared shell command is nearly always full of them), so a printable
+ * separator risks two GENUINELY DIFFERENT `(dir, command)` pairs joining to
+ * the identical string — e.g. `dir="/a"`, `command="b c"` on a space
+ * separator joins to `"/a b c"`, indistinguishable from `dir="/a b"`,
+ * `command="c"`. `repoGitCommonDir` is always the output of `realpathSync`
+ * on a real filesystem path, and NO filesystem permits an embedded NUL byte
+ * in a path — so the join's first `\0` is unambiguously the boundary,
+ * regardless of what `command` itself contains, and no two distinct pairs
+ * can ever collide (code review, PR #303, round 2 follow-up).
+ */
 export function tokensCollectTrustKey(repoGitCommonDir: string, command: string): string {
   return createHash('sha256').update(`${repoGitCommonDir} ${command}`).digest('hex')
 }

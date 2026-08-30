@@ -260,6 +260,9 @@ function runDeclaredCollect(command: string, deps: TokensDeps): TranscriptSummar
   return parseDeclaredCollectOutput(raw, command)
 }
 
+/** A declared command may legitimately do real work (hit an API, read a log) — longer than `config.ts`'s plumbing-only `GIT_IDENTITY_TIMEOUT_MS` — but a stuck or hostile command must not block `vinaya tokens` forever either (code review, PR #303, round 2 follow-up). */
+const COLLECT_COMMAND_TIMEOUT_MS = 30_000
+
 /** Exported so other commands collecting real usage figures (`pr-report.ts`'s `AEG:TOKENS` writer) share this exact I/O shim rather than a second copy of it. */
 export function realDeps(): TokensDeps {
   return {
@@ -268,7 +271,8 @@ export function realDeps(): TokensDeps {
     exists: existsSync,
     readFile: (path: string) => readFileSync(path, 'utf8'),
     loadConfig,
-    runCollectCommand: (command: string, cwd: string) => execSync(command, { cwd, encoding: 'utf-8' }),
+    runCollectCommand: (command: string, cwd: string) =>
+      execSync(command, { cwd, encoding: 'utf-8', timeout: COLLECT_COMMAND_TIMEOUT_MS }),
     warn: (message: string) => console.error(message),
     gitCommonDir,
     isCollectTrusted: isTokensCollectTrusted,
