@@ -1,13 +1,27 @@
+import { parseTokensLines } from '@attalabs/aeg-core'
+import type { MeteringCapability } from '@attalabs/aeg-core'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ArchiveDeps } from '../src/commands/archive.js'
-import { runArchive, runArchiveTranche, trancheArchivalStatus } from '../src/commands/archive.js'
+import {
+  renderArchiveTokensLine,
+  runArchive,
+  runArchiveTranche,
+  trancheArchivalStatus
+} from '../src/commands/archive.js'
+
+const INCAPABLE: MeteringCapability = {
+  capable: false,
+  reason: 'no-transcript-resolved',
+  detail: 'test default — no transcript pointer set up'
+}
 
 function archiveDeps(overrides: Partial<ArchiveDeps> = {}): ArchiveDeps {
   return {
     detectRepo: async () => ({ repoRoot: '/tmp/does-not-matter', owner: 'acme', repo: 'widget' }),
+    meteringCapability: () => INCAPABLE,
     ...overrides
   }
 }
@@ -24,6 +38,170 @@ describe('vinaya archive — pre-flight', () => {
       archiveDeps({ detectRepo: async () => ({ repoRoot: '/tmp/does-not-matter', owner: '', repo: '' }) })
     )
     expect(exit).toBe(1)
+  })
+})
+
+// vinaya-token-determinism-v1 task 6 (#273) — the Archivist's own `Tokens: …`
+// row in the provenance comment it already posts.
+describe('renderArchiveTokensLine', () => {
+  it('capable, real figures — a parseable `Tokens: …` line', () => {
+    const capability: MeteringCapability = {
+      capable: true,
+      transcriptPath: '/tmp/real.jsonl',
+      summary: {
+        components: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 10, cacheReadInputTokens: 5 },
+        model: 'claude-sonnet-5',
+        messageCount: 3
+      }
+    }
+    const result = renderArchiveTokensLine(capability, '6: archive', 'Archivist')
+    expect(result.refusalReason).toBeNull()
+    expect(result.line).toBe('Tokens: 6: archive — Archivist — claude-sonnet-5 — 115/50/—')
+    expect(parseTokensLines(result.line)).toHaveLength(1)
+  })
+
+  it('incapable host — posts the sanctioned all-`—` line, never refuses', () => {
+    const result = renderArchiveTokensLine(INCAPABLE, '6: archive', 'Archivist')
+    expect(result.refusalReason).toBeNull()
+    expect(result.line).toBe('Tokens: 6: archive — Archivist — — — —')
+  })
+
+  it('capable but zero totals — refuses rather than posting a misleading zero', () => {
+    const capability: MeteringCapability = {
+      capable: true,
+      transcriptPath: '/tmp/empty-usage.jsonl',
+      summary: {
+        components: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+        model: 'claude-sonnet-5',
+        messageCount: 2
+      }
+    }
+    const result = renderArchiveTokensLine(capability, '6: archive', 'Archivist')
+    expect(result.line).toBe('')
+    expect(result.refusalReason).toMatch(/summarized to zero/)
+  })
+})
+
+// Fakes `gh` as a tiny script placed ahead of the real one on `$PATH` —
+// `detect.test.ts`'s own top comment records why `mock.module('node:child_process', ...)`
+// is rejected repo-wide (a bun-process-wide binding race across every command
+// module that imports `execFileSync`): this is the sanctioned alternative,
+// deterministic per test and unable to leak into another test file's real
+// subprocess calls.
+function withFakeGh<T>(
+  prView: unknown,
+  fn: (calls: () => string[], postedBody: () => string | null) => Promise<T>
+): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-archive-fakegh-'))
+  const logPath = join(dir, 'calls.log')
+  const prViewPath = join(dir, 'pr-view.json')
+  const postedPath = join(dir, 'posted.txt')
+  writeFileSync(prViewPath, JSON.stringify(prView))
+  writeFileSync(logPath, '')
+  const script = `#!/usr/bin/env bash
+echo "$*" >> "${logPath}"
+case "$1 $2" in
+  "api "*)
+    echo '[{"number":42}]'
+    ;;
+  "pr view")
+    cat "${prViewPath}"
+    ;;
+  "pr comment")
+    cat > "${postedPath}"
+    ;;
+  "issue view")
+    echo '{"state":"CLOSED"}'
+    ;;
+  "issue close")
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`
+  const ghPath = join(dir, 'gh')
+  writeFileSync(ghPath, script)
+  chmodSync(ghPath, 0o755)
+  const originalPath = process.env.PATH
+  process.env.PATH = `${dir}:${originalPath}`
+  return fn(
+    () =>
+      readFileSync(logPath, 'utf8')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean),
+    () => {
+      try {
+        return readFileSync(postedPath, 'utf8')
+      } catch {
+        return null
+      }
+    }
+  ).finally(() => {
+    process.env.PATH = originalPath
+    rmSync(dir, { recursive: true, force: true })
+  })
+}
+
+const PR_WITH_PROVENANCE = {
+  number: 42,
+  headRefName: 'task/fake-tranche/6',
+  body: 'Closes #99\n\n**Tier:** 1',
+  mergedAt: '2026-01-01T00:00:00Z',
+  comments: [{ body: '### AEG provenance — task 6 (tranche fake-tranche)\n- Issue:        #99  (closed by merge)' }]
+}
+
+const PR_WITHOUT_PROVENANCE = { ...PR_WITH_PROVENANCE, comments: [] as { body: string }[] }
+
+describe('vinaya archive — provenance posting (fake `gh` on PATH)', () => {
+  it('idempotent re-run: posts nothing new, and the new token logic never even runs', async () => {
+    let meteringCalled = false
+    await withFakeGh(PR_WITH_PROVENANCE, async (calls) => {
+      const exit = await runArchive(
+        ['--merge-sha=deadbeef'],
+        archiveDeps({
+          meteringCapability: () => {
+            meteringCalled = true
+            return INCAPABLE
+          }
+        })
+      )
+      expect(exit).toBe(0)
+      expect(calls().some((c) => c.startsWith('pr comment'))).toBe(false)
+      expect(calls().some((c) => c.startsWith('issue close'))).toBe(false)
+    })
+    expect(meteringCalled).toBe(false)
+  })
+
+  it('first-time post, incapable host: the posted comment carries the sanctioned all-`—` Tokens line', async () => {
+    await withFakeGh(PR_WITHOUT_PROVENANCE, async (_calls, postedBody) => {
+      const exit = await runArchive(['--merge-sha=deadbeef'], archiveDeps())
+      expect(exit).toBe(0)
+      expect(postedBody()).toContain('Tokens: 6: archive — Archivist — — — —')
+    })
+  })
+
+  it('capable-but-empty refuses: no comment posted, no Issue closed', async () => {
+    const emptyCapability: MeteringCapability = {
+      capable: true,
+      transcriptPath: '/tmp/fake.jsonl',
+      summary: {
+        components: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+        model: 'claude-sonnet-5',
+        messageCount: 1
+      }
+    }
+    await withFakeGh(PR_WITHOUT_PROVENANCE, async (calls, postedBody) => {
+      const exit = await runArchive(
+        ['--merge-sha=deadbeef'],
+        archiveDeps({ meteringCapability: () => emptyCapability })
+      )
+      expect(exit).toBe(1)
+      expect(postedBody()).toBeNull()
+      expect(calls().some((c) => c.startsWith('pr comment'))).toBe(false)
+      expect(calls().some((c) => c.startsWith('issue close'))).toBe(false)
+    })
   })
 })
 

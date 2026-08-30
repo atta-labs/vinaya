@@ -15,15 +15,20 @@ import { execFileSync } from 'node:child_process'
 import {
   buildProvenanceBlock,
   extractIssue,
+  formatTokensLine,
   hasProvenance,
   isEligibleForProvenance,
+  resolveMeteringCapability,
   taskRefFromBranch,
   trancheLabel,
-  type MergedPrFacts
+  type MergedPrFacts,
+  type MeteringCapability,
+  type TranscriptSummary
 } from '@attalabs/aeg-core'
 import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
 import { loadConfig } from '../lib/config.js'
+import { realDeps as meteringRealDeps } from './tokens.js'
 
 // `rings.ring2_asyncAudits` is additive, never disabling: `false` (or absent
 // — every pre-existing `vinaya init` starter config reads `false` here) is a
@@ -37,14 +42,78 @@ function ring2Accelerated(): boolean {
 
 export type ArchiveDeps = {
   detectRepo: () => Promise<RepoInfo | null>
+  /** Injected so the Archivist token-row decision (`renderArchiveTokensLine`) is testable without touching real transcripts/env — same seam `doctor.ts`'s `DoctorDeps` already uses for the identical probe. */
+  meteringCapability: () => MeteringCapability
 }
 
 function realDeps(): ArchiveDeps {
-  return { detectRepo: detectGitRepo }
+  return { detectRepo: detectGitRepo, meteringCapability: () => resolveMeteringCapability(meteringRealDeps()) }
+}
+
+/**
+ * True when a `capable: true` probe still summarized to zero tokens across
+ * every component. Distinct from `resolveMeteringCapability`'s own
+ * `transcript-empty` (zero *messages*) — this is zero *tokens* from at least
+ * one real message, an edge case the probe itself doesn't classify as
+ * incapable. Treated as its own failure rather than silently formatting as
+ * `0/0/—`: a capable host's blank is not the `—` case §12 sanctions
+ * (`aeg-root/roles/developer.md`) — that placeholder means "the host has no
+ * usage API," never "the host reported nothing usable this turn."
+ */
+function isEmptySummary(summary: TranscriptSummary): boolean {
+  const { inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = summary.components
+  return inputTokens === 0 && outputTokens === 0 && cacheCreationInputTokens === 0 && cacheReadInputTokens === 0
+}
+
+export type ArchiveTokensResult = { line: string; refusalReason: string | null }
+
+/**
+ * Renders the Archivist's own one-line `Tokens: …` report from an
+ * already-resolved probe result — pure, so every branch is directly
+ * testable with a literal `MeteringCapability` value, no fake transcript or
+ * env needed. Mirrors `roles/reviewer.md`/`security.md`'s bare-line
+ * convention (never the Developer's table row): appended as its own line in
+ * the provenance comment, `parseTokensLines` already scans any comment body
+ * for that shape, so Studio's live token-ledger read picks this up with no
+ * new parser — closing the exact gap `roles/archivist.md` flags as having
+ * "no durable home today" for the Archivist's own turn.
+ *
+ * `capable: false` posts the sanctioned all-`—` line (never refuses — this
+ * repo's toolchain runs `vinaya archive` from CI as often as from an agent
+ * session, and a genuinely incapable host is the one case `—` is for).
+ * `capable: true` refuses only when the collected totals are empty — see
+ * `isEmptySummary` — never for a real nonzero figure.
+ */
+export function renderArchiveTokensLine(
+  capability: MeteringCapability,
+  phase: string,
+  role: string
+): ArchiveTokensResult {
+  if (!capability.capable) {
+    return { line: formatTokensLine({ phase, role, summary: null }), refusalReason: null }
+  }
+  if (isEmptySummary(capability.summary)) {
+    return {
+      line: '',
+      refusalReason:
+        `metering probe reports capable (transcript ${capability.transcriptPath}) but summarized to zero ` +
+        `tokens across ${capability.summary.messageCount} message(s) — refusing rather than posting a ` +
+        'misleading zero, since `—` is sanctioned only for a genuinely incapable host.'
+    }
+  }
+  return { line: formatTokensLine({ phase, role, summary: capability.summary }), refusalReason: null }
 }
 
 function sh(args: string[], input?: string): string {
-  return execFileSync(args[0] as string, args.slice(1), { encoding: 'utf8', input }).trim()
+  // `env: process.env` explicit rather than relying on execFileSync's own
+  // default: measured live under Bun, an omitted `env` resolves `PATH`
+  // against a snapshot taken at process start, so a test that mutates
+  // `process.env.PATH` after that (to place a fake `gh` ahead of the real
+  // one — `detect.test.ts`'s sanctioned PATH-boundary technique, since
+  // module-level mocking is rejected repo-wide) silently falls through to
+  // the real binary. Passing it explicitly is also just Node's own
+  // documented default made real under this runtime.
+  return execFileSync(args[0] as string, args.slice(1), { encoding: 'utf8', input, env: process.env }).trim()
 }
 
 function shJson<T>(args: string[]): T {
@@ -153,8 +222,16 @@ export async function runArchive(args: string[], deps: ArchiveDeps): Promise<num
 
   const { block, issue, dangling } = buildProvenanceBlock(facts)
 
+  const phase = `${ref ? ref.taskId : pr.headRefName}: archive`
+  const tokensResult = renderArchiveTokensLine(deps.meteringCapability(), phase, 'Archivist')
+  if (tokensResult.refusalReason !== null) {
+    console.error(`[vinaya archive] REFUSED to post — ${tokensResult.refusalReason}`)
+    return 1
+  }
+  const blockWithTokens = `${block}\n\n${tokensResult.line}`
+
   process.stdout.write(`[vinaya archive] posting provenance block to PR #${pr.number}...\n`)
-  sh(['gh', 'pr', 'comment', String(pr.number), '-R', repoFlag, '--body-file', '-'], block)
+  sh(['gh', 'pr', 'comment', String(pr.number), '-R', repoFlag, '--body-file', '-'], blockWithTokens)
   process.stdout.write(`[vinaya archive] provenance block posted to PR #${pr.number}.\n`)
 
   if (dangling.length > 0) {
