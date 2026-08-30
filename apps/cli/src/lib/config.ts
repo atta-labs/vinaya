@@ -338,6 +338,23 @@ export function resolveAgentVendors(manifest: Pick<ManagedManifest, 'agents'> | 
   return new Set(manifest.agents)
 }
 
+// `projects`: a config-native home for project metadata, alongside (not
+// instead of) `.vinaya/projects.md` (`registry-write.ts`'s `PROJECTS_REGISTRY_PATH`).
+// `init product <name>` appends an entry here at the same time it appends the
+// registry row — see `registry-write.ts`'s `planConfigProjectEntry`/
+// `applyConfigProjectEntry`, the config-side sibling of `planRegistryRow`/
+// `applyRegistryRow`. Minimal metadata only, matching the config grammar's
+// declarative discipline: `name` identifies the entry (dedup key, mirrors the
+// registry row's own `Project` column); `description`/`path` are optional
+// display metadata. Never load-bearing for enforcement — no gate or resolver
+// reads this key, exactly like the registry file it sits beside.
+const ProjectEntrySchema = z.object({
+  name: z.string().min(1),
+  description: z.string().min(1).optional(),
+  path: z.string().min(1).optional()
+})
+export type ProjectEntry = z.infer<typeof ProjectEntrySchema>
+
 export const VinayaConfigSchema = z.object({
   rings: z
     .object({
@@ -418,7 +435,10 @@ export const VinayaConfigSchema = z.object({
       // an explicitly dormant legacy-slug class, never an error.
       legacySlugDir: z.string().min(1).optional()
     })
-    .optional()
+    .optional(),
+  // Config-native project metadata — see the `ProjectEntrySchema` comment
+  // above. Additive-only; absent entirely for a single-project repo.
+  projects: z.array(ProjectEntrySchema).optional()
 })
 
 export type VinayaConfig = z.infer<typeof VinayaConfigSchema>

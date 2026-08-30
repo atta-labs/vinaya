@@ -325,6 +325,20 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "extraDomains": ["migrations"] }`
   },
   {
+    key: 'projects',
+    type: 'ProjectEntry[] (optional)',
+    semantics: [
+      'A config-native home for project metadata, alongside — not instead of — `.vinaya/projects.md` (the project registry). `vinaya init product <name>` appends an entry here at the same time it appends the registry row.',
+      "Minimal metadata only: `name` (required, the dedup key — matches the registry row's own `Project` column), `description` (optional), `path` (optional). Display metadata, never load-bearing for enforcement — no gate or resolver reads this key.",
+      'Absent entirely for a single-project repo, or for any repo that has never run `init product`. `vinaya doctor` reports (at `info` severity, never an error) when a registry row and a `projects` entry name the same project but only one of the two exists.'
+    ],
+    example: `{
+  "projects": [
+    { "name": "mobile", "path": "apps/mobile", "description": "The mobile client" }
+  ]
+}`
+  },
+  {
     key: 'proseGates',
     type: 'object (optional)',
     semantics: [

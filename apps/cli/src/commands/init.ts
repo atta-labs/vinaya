@@ -24,7 +24,14 @@ import {
 } from '../lib/detect.js'
 import { applyInstall, type LabelGateway, planInstall, renderInstallDiff } from '../lib/ops.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
-import { applyRegistryRow, planRegistryRow, renderRegistryRowDiffLine } from '../lib/registry-write.js'
+import {
+  applyConfigProjectEntry,
+  applyRegistryRow,
+  planConfigProjectEntry,
+  planRegistryRow,
+  renderConfigProjectEntryDiffLine,
+  renderRegistryRowDiffLine
+} from '../lib/registry-write.js'
 
 export type InitDeps = {
   detectRepo: () => Promise<RepoInfo | null>
@@ -305,10 +312,13 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
   // remote to do a job that is a pure local write. It no longer does: no
   // remote, no `gh`, no credentials.
   const registryPlan = planRegistryRow(repo.repoRoot, name, productPath, specsPath)
+  const configPlan = planConfigProjectEntry(repo.repoRoot, { name, path: productPath })
 
   process.stdout.write(`vinaya init product ${name} — the full diff:\n\n`)
   process.stdout.write('── Project registry ─────────────────────────────\n')
   process.stdout.write(`${renderRegistryRowDiffLine(registryPlan)}\n\n`)
+  process.stdout.write('── Config ────────────────────────────────────────\n')
+  process.stdout.write(`${renderConfigProjectEntryDiffLine(configPlan)}\n\n`)
 
   if (dryRun) {
     process.stdout.write('--dry-run: nothing was written.\n')
@@ -324,9 +334,11 @@ export async function runInitProduct(args: string[], deps: InitDeps): Promise<nu
   }
 
   applyRegistryRow(repo.repoRoot, registryPlan, name, productPath, specsPath)
+  applyConfigProjectEntry(repo.repoRoot, configPlan)
   // No manifest write: this command now creates nothing vinaya owns. The
-  // registry row is adopter-declared data, deliberately outside the manifest
-  // (so `eject` never reverses it), and there is no longer a label to record.
+  // registry row and the config `projects` entry are both adopter-declared
+  // data, deliberately outside the manifest (so `eject` never reverses
+  // either), and there is no longer a label to record.
 
   process.stdout.write(`\nGoverned product area '${name}' scaffolded.\n`)
   return 0

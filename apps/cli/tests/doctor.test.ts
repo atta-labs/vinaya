@@ -13,6 +13,7 @@ import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
 import { CLAUDE_SETTINGS_PATH, CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
 import type { LabelGateway } from '../src/lib/ops.js'
+import { freshProjectsRegistry, PROJECTS_REGISTRY_PATH } from '../src/lib/registry-write.js'
 
 let root: string
 
@@ -924,6 +925,77 @@ describe('vinaya doctor — blast-radius deprecation', () => {
     mkdirSync(join(root, 'packages/foo'), { recursive: true })
     mkdirSync(join(root, '.aeg'), { recursive: true })
     writeFileSync(join(root, '.aeg/packages'), 'packages/foo\nmigrations/legacy\n', 'utf8')
+    const before = snapshot(root)
+
+    await runDoctorJson()
+
+    expect(snapshot(root)).toEqual(before)
+  })
+})
+
+describe('vinaya doctor — projects coherence (task 15, #44)', () => {
+  it('neither the registry nor config projects exist — silent, no finding', async () => {
+    const report = await runDoctorJson()
+    expect(report.findings.find((f) => f.check === 'projects')).toBeUndefined()
+  })
+
+  it('a registry row with no config entry — info finding, never error, exit stays healthy', async () => {
+    await runInit(['--yes'], initDeps())
+    mkdirSync(join(root, '.vinaya'), { recursive: true })
+    writeFileSync(
+      join(root, PROJECTS_REGISTRY_PATH),
+      freshProjectsRegistry('mobile', 'apps/mobile', 'apps/mobile/specs')
+    )
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'projects')
+    expect(hit?.severity).toBe('info')
+    expect(hit?.message).toContain('mobile')
+    expect(hit?.message).toContain(PROJECTS_REGISTRY_PATH)
+    expect(hit?.message).toContain('no matching')
+    expect(report.healthy).toBe(true)
+  })
+
+  it('a config entry with no registry row — info finding, never error', async () => {
+    await runInit(['--yes'], initDeps())
+    const config = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    writeFileSync(
+      join(root, CONFIG_PATH),
+      JSON.stringify({ ...config, projects: [{ name: 'mobile', path: 'apps/mobile' }] })
+    )
+
+    const report = await runDoctorJson()
+    const hit = report.findings.find((f) => f.check === 'projects')
+    expect(hit?.severity).toBe('info')
+    expect(hit?.message).toContain('mobile')
+    expect(hit?.message).toContain('vinaya.config.json')
+    expect(report.healthy).toBe(true)
+  })
+
+  it('a project declared in both — no finding for it, no incoherence at all', async () => {
+    await runInit(['--yes'], initDeps())
+    mkdirSync(join(root, '.vinaya'), { recursive: true })
+    writeFileSync(
+      join(root, PROJECTS_REGISTRY_PATH),
+      freshProjectsRegistry('mobile', 'apps/mobile', 'apps/mobile/specs')
+    )
+    const config = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    writeFileSync(
+      join(root, CONFIG_PATH),
+      JSON.stringify({ ...config, projects: [{ name: 'mobile', path: 'apps/mobile' }] })
+    )
+
+    const report = await runDoctorJson()
+    expect(report.findings.find((f) => f.check === 'projects')).toBeUndefined()
+    expect(report.healthy).toBe(true)
+  })
+
+  it('never mutates: fixture tree is byte-identical before and after this diagnostic runs', async () => {
+    mkdirSync(join(root, '.vinaya'), { recursive: true })
+    writeFileSync(
+      join(root, PROJECTS_REGISTRY_PATH),
+      freshProjectsRegistry('mobile', 'apps/mobile', 'apps/mobile/specs')
+    )
     const before = snapshot(root)
 
     await runDoctorJson()
