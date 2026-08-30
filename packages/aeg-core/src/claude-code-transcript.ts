@@ -104,7 +104,11 @@ export type MeteringCapabilityDeps = {
   readFile: (path: string) => string
 }
 
-export type MeteringIncapableReason = 'no-transcript-resolved' | 'transcript-unreadable' | 'transcript-empty'
+export type MeteringIncapableReason =
+  | 'no-transcript-resolved'
+  | 'pointer-unusable'
+  | 'transcript-unreadable'
+  | 'transcript-empty'
 
 export type MeteringCapability =
   | { capable: true; transcriptPath: string; summary: TranscriptSummary }
@@ -140,18 +144,31 @@ function transcriptPointerPath(projectDir: string, tmpDir: string): string {
  * kept distinct in `resolveMeteringCapability` from a resolved-but-unreadable
  * path.
  */
-function resolvePointer(
-  explicitTranscriptPath: string | undefined,
-  deps: MeteringCapabilityDeps
-): { path: string } | { error: string } {
-  if (explicitTranscriptPath) return { path: explicitTranscriptPath }
+type PointerResolution =
+  | { path: string; corroborated: boolean }
+  | { error: string; pointerExisted: boolean; corroborated: boolean }
+
+function resolvePointer(explicitTranscriptPath: string | undefined, deps: MeteringCapabilityDeps): PointerResolution {
+  // A caller-named transcript is self-corroborating: they told us which file
+  // is theirs, so there is no session to cross-check it against.
+  if (explicitTranscriptPath) return { path: explicitTranscriptPath, corroborated: true }
 
   const projectDir = deps.env.CLAUDE_PROJECT_DIR ?? deps.cwd
   const tmpDir = deps.env.TMPDIR ?? '/tmp'
   const pointerPath = transcriptPointerPath(projectDir, tmpDir)
 
+  // Corroboration = we can tell this pointer belongs to THIS session. Without
+  // `CLAUDE_CODE_SESSION_ID` there is nothing to cross-check against, so a
+  // pointer left by an earlier session is indistinguishable from our own. A
+  // plain human terminal is exactly that case, and gating its commits on
+  // another session's leftovers is the false positive `#272` names as the
+  // expensive failure mode.
+  const currentSessionId = deps.env.CLAUDE_CODE_SESSION_ID
+
   if (!deps.exists(pointerPath)) {
     return {
+      pointerExisted: false,
+      corroborated: false,
       error:
         `No transcript pointer at ${pointerPath} and no --transcript given. ` +
         'Either this repo installs no track-transcript.sh Stop hook (lacking one is not a defect — ' +
@@ -163,17 +180,26 @@ function resolvePointer(
   try {
     contents = deps.readFile(pointerPath).trim()
   } catch (err) {
-    return { error: `Transcript pointer at ${pointerPath} could not be read: ${(err as Error).message}` }
+    return {
+      pointerExisted: true,
+      corroborated: Boolean(currentSessionId),
+      error: `Transcript pointer at ${pointerPath} could not be read: ${(err as Error).message}`
+    }
   }
 
   const [pointerSessionId, transcriptPath] = contents.split('\t')
   if (!transcriptPath) {
-    return { error: `Transcript pointer file ${pointerPath} is malformed: "${contents}"` }
+    return {
+      pointerExisted: true,
+      corroborated: Boolean(currentSessionId),
+      error: `Transcript pointer file ${pointerPath} is malformed: "${contents}"`
+    }
   }
 
-  const currentSessionId = deps.env.CLAUDE_CODE_SESSION_ID
   if (currentSessionId && pointerSessionId && currentSessionId !== pointerSessionId) {
     return {
+      pointerExisted: true,
+      corroborated: true,
       error:
         `Transcript pointer at ${pointerPath} is stale: written for session ${pointerSessionId}, ` +
         `but this session is ${currentSessionId}. Name your own transcript with --transcript instead of ` +
@@ -181,7 +207,7 @@ function resolvePointer(
     }
   }
 
-  return { path: transcriptPath }
+  return { path: transcriptPath, corroborated: Boolean(currentSessionId && pointerSessionId) }
 }
 
 /**
@@ -206,13 +232,25 @@ export function resolveMeteringCapability(
 ): MeteringCapability {
   const resolved = resolvePointer(explicitTranscriptPath, deps)
   if ('error' in resolved) {
-    return { capable: false, reason: 'no-transcript-resolved', detail: resolved.error }
+    // A pointer that EXISTS but cannot be used is a wiring defect, not an
+    // absence of wiring — but only when we can corroborate it is ours.
+    // Uncorroborated, it is indistinguishable from another session's leftover
+    // and degrades to the sanctioned operator-metered case.
+    const reason: MeteringIncapableReason =
+      resolved.pointerExisted && resolved.corroborated ? 'pointer-unusable' : 'no-transcript-resolved'
+    return { capable: false, reason, detail: resolved.error }
   }
+
+  // Downstream transcript failures gate only on a corroborated pointer, for the
+  // same reason: a stale pointer naming a since-pruned transcript must not
+  // refuse a human's commit.
+  const downstream = (r: 'transcript-unreadable' | 'transcript-empty'): MeteringIncapableReason =>
+    resolved.corroborated ? r : 'no-transcript-resolved'
 
   if (!deps.exists(resolved.path)) {
     return {
       capable: false,
-      reason: 'transcript-unreadable',
+      reason: downstream('transcript-unreadable'),
       detail: `Resolved transcript path ${resolved.path} does not exist.`
     }
   }
@@ -223,7 +261,7 @@ export function resolveMeteringCapability(
   } catch (err) {
     return {
       capable: false,
-      reason: 'transcript-unreadable',
+      reason: downstream('transcript-unreadable'),
       detail: `Transcript at ${resolved.path} could not be read: ${(err as Error).message}`
     }
   }
@@ -232,7 +270,7 @@ export function resolveMeteringCapability(
   if (summary.messageCount === 0) {
     return {
       capable: false,
-      reason: 'transcript-empty',
+      reason: downstream('transcript-empty'),
       detail:
         `Transcript at ${resolved.path} yielded zero assistant messages with usage data — ` +
         "it's empty, unparseable, or not yet flushed to disk."
@@ -249,12 +287,23 @@ export function resolveMeteringCapability(
  * self-hosting `bin/check-token-collection-wired.ts` gate consume the SAME
  * predicate, never two copies (the `isNewDiskStateFile` precedent).
  *
- * `no-transcript-resolved` means nothing was ever wired to try — no pointer
- * file, no explicit path — the sanctioned operator-metered case, never a
- * defect. Every other incapable reason (`transcript-unreadable`,
- * `transcript-empty`) means a wiring point DID resolve (a pointer named a
- * path) but reaching it failed — that is the wiring defect this predicate
- * flags.
+ * `no-transcript-resolved` means this session has no corroborated wiring to
+ * try — no pointer file at all, or a pointer it cannot show is its own. That
+ * is the sanctioned operator-metered case, never a defect.
+ *
+ * Every other reason means a pointer BOTH existed AND was corroborated as this
+ * session's, and reaching the figures still failed: `pointer-unusable` (the
+ * pointer itself is unreadable, malformed, or stale) or `transcript-unreadable`
+ * / `transcript-empty` (the path it named could not be read or held nothing).
+ * Those are the wiring defect this predicate flags.
+ *
+ * The corroboration condition is load-bearing in BOTH directions, and an
+ * earlier revision got both wrong. Without it, a pointer left in a shared
+ * `TMPDIR` by an unrelated session refuses a plain human's commit (a false
+ * positive `#272` names as the expensive failure mode); and folding every
+ * pointer failure into `no-transcript-resolved` let an unreadable, malformed,
+ * or stale pointer pass silently — the exact wired-but-unreachable state this
+ * check exists to refuse.
  */
 export function isTokenCollectionWiringBroken(capability: MeteringCapability): boolean {
   if (capability.capable) return false
