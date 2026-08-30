@@ -118,7 +118,12 @@ This is an opt-in collection route, not a capability declaration: whether a host
 
 Read from the repo-root config only, same trust class as `checks`/`principals`/`releaseActor`: a value that decides what command runs on this turn must come from the reviewed, committed per-repo file, never a machine-wide personal config — a global `~/.vinaya/config.json`'s `tokens` key is stripped at load time with a loud stderr warning, never resolved.
 
-Unlike `ci.setup` — which only ever executes inside a generated, reviewed CI workflow step, under the runner's own isolation — a declared `tokens.collect` command executes IN-PROCESS, unsandboxed, on whatever machine runs the ordinary `vinaya tokens` command. `vinaya tokens` prints the exact command to stderr before running it, every time, so a value never runs silently; this is a visibility measure, not a confirmation gate — the unattended-agent path this key exists for cannot pause for one.
+Unlike `ci.setup` — which only ever executes inside a generated, reviewed CI workflow step, under the runner's own isolation — a declared `tokens.collect` command executes IN-PROCESS, unsandboxed, on whatever machine runs the ordinary `vinaya tokens` command. Two layers close that gap:
+
+- **Trust gate.** `vinaya tokens` refuses to run `tokens.collect` at all until a human has explicitly approved that exact command string, for this repo, on this machine: run `vinaya tokens --trust-collect` once. Approval is keyed to this repo's git common directory, not to any one worktree, so it survives a fresh `git worktree add` of the same repo; a command string that changes — even by one character — needs its own fresh approval. Approvals live in `~/.vinaya/tokens-collect-trust.json`, machine-local and never read from any committed file, so a pull request can no more grant itself trust than it can add itself to `principals`.
+- **Printed audit trail.** Once trusted, `vinaya tokens` still prints the exact command to stderr immediately before every run, so nothing executes invisibly even after approval.
+
+This is a trust-then-verify design, not a blocking interactive prompt — the unattended-agent path this key exists for keeps working once a human has approved the command a single time.
 
 ## Where the git hooks live
 

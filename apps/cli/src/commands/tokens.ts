@@ -2,7 +2,7 @@ import { execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { formatBreakdown, formatTokensLine, resolveMeteringCapability } from '@attalabs/aeg-core'
 import type { MeteringCapabilityDeps, TranscriptSummary, UsageComponents } from '@attalabs/aeg-core'
-import { loadConfig } from '../lib/config.js'
+import { gitCommonDir, isTokensCollectTrusted, loadConfig, trustTokensCollectCommand } from '../lib/config.js'
 import type { VinayaConfig } from '../lib/config.js'
 
 /**
@@ -32,7 +32,12 @@ import type { VinayaConfig } from '../lib/config.js'
  *     transcript route on a run/parse failure, since that would risk
  *     masking a real collection bug behind a plausible-looking
  *     transcript-route result. See `config.ts`'s `tokens` comment for the
- *     full trust framing (same class as `ci.setup`).
+ *     full trust framing (same class as `ci.setup`). **Gated on trust**
+ *     (security review, PR #303, round 2): a declared command never runs
+ *     until a human has explicitly approved that exact command string for
+ *     this repo on this machine, via `vinaya tokens --trust-collect` — see
+ *     `config.ts`'s `tokens.collect trust cache` section for the full
+ *     mechanism and why it survives this repo's per-task fresh worktrees.
  *   - **Transcript-based** (default, or `--transcript <path>`, when
  *     `tokens.collect` is undeclared): resolves a Claude Code session
  *     transcript (explicit path, or the Stop-hook pointer file) and
@@ -50,7 +55,12 @@ const USAGE = [
   '  (omitted)      Resolve via the Stop-hook pointer file, if this repo installs that hook.',
   '  --in/--out     Manual entry: the exact token figures, for a host whose usage arrives by some other',
   '                 means than a Claude Code transcript. Both required together; skips transcript',
-  '                 resolution entirely.'
+  '                 resolution entirely.',
+  '',
+  'Usage: vinaya tokens --trust-collect',
+  "  Approves this repo's declared tokens.collect command for this exact string, on this machine.",
+  '  Run this once before tokens.collect will ever execute. A changed command string needs its own',
+  '  fresh approval — this does not take --phase/--role and never emits a Tokens: line.'
 ].join('\n')
 
 export type ParsedTokensArgs = {
@@ -116,37 +126,43 @@ function manualSummary(tokensIn: number, tokensOut: number): TranscriptSummary {
 }
 
 /**
- * `MeteringCapabilityDeps` plus the two seams the declared-command route
- * needs: `loadConfig` (which config resolution to consult — the walking,
+ * `MeteringCapabilityDeps` plus the seams the declared-command route needs:
+ * `loadConfig` (which config resolution to consult — the walking,
  * global-stripping `loadConfig()` from `lib/config.ts`, same as every other
  * repo-local-only key) and `runCollectCommand` (how to execute the declared
- * shell command). Both injected for the same reason `MeteringCapabilityDeps`
- * itself is — testable without touching real `fs`/`process.env`/a real
- * child process. A `TokensDeps` value satisfies `MeteringCapabilityDeps`
+ * shell command). All injected for the same reason `MeteringCapabilityDeps`
+ * itself is — testable without touching real `fs`/`process.env`/a real git
+ * or child process. A `TokensDeps` value satisfies `MeteringCapabilityDeps`
  * structurally, so it passes unchanged into `resolveMeteringCapability`.
  */
 export type TokensDeps = MeteringCapabilityDeps & {
   loadConfig: () => VinayaConfig | null
   runCollectCommand: (command: string, cwd: string) => string
   /**
-   * Announces the exact command about to run, to stderr, before it runs —
-   * security review, PR #303: a repo-local `tokens.collect` is trusted
-   * config content, same class as `checks.run`/`ci.setup`, but unlike
-   * `ci.setup` (which only ever executes inside a generated, reviewed CI
-   * workflow step, under the runner's own isolation) this command executes
-   * IN-PROCESS, unsandboxed, on whatever machine runs the ordinary
-   * `vinaya tokens` command this repo's own doctrine has the Developer and
-   * Archivist roles invoke routinely — silently, with no confirmation and no
-   * printed trace, a malicious or mistaken value would run unnoticed the
-   * next time anyone (human or unattended agent) simply reports tokens. A
-   * blocking confirmation prompt is not the fix — the unattended-agent path
-   * this key exists for cannot answer one — so this stays print-only: it
-   * cannot stop a bad command, but it can no longer run invisibly. The
-   * deeper question this does NOT resolve — whether `tokens.collect` should
-   * execute this way at all — is a trust-boundary call for the Principal,
-   * not this fix.
+   * Announces the exact command about to run, to stderr, immediately before
+   * it runs. Round 1 of security review, PR #303 — kept as a per-run audit
+   * trail even now that trust (below) is what actually gates execution.
    */
   warn: (message: string) => void
+  /**
+   * This repo's git common directory, or `null` if it cannot be resolved —
+   * `config.ts`'s `gitCommonDir`. The trust-gate's repo identity: shared by
+   * every worktree of one repo, so approving a command once covers this
+   * repo's own per-task fresh worktrees (`.worktrees/task/<tranche>/<n>/`).
+   */
+  gitCommonDir: () => string | null
+  /**
+   * `true` only if a human has explicitly approved this exact (repo,
+   * command) pair on this machine via `vinaya tokens --trust-collect` —
+   * `config.ts`'s `isTokensCollectTrusted`. Security review, PR #303, round
+   * 2 (HIGH): a printed warning alone (round 1's fix) gave no real window to
+   * react before a blocking `execSync` ran — this is the actual gate.
+   * `buildTokensResult` refuses outright, never runs, never falls back to
+   * the transcript route, when this returns `false`.
+   */
+  isCollectTrusted: (repoGitCommonDir: string, command: string) => boolean
+  /** Records approval — `config.ts`'s `trustTokensCollectCommand`. Called from nowhere in this file except the `--trust-collect` CLI path a human types themselves; `buildTokensResult`'s own declared-route branch never calls this. */
+  trustCollect: (repoGitCommonDir: string, command: string) => void
 }
 
 /** `messageCount: 1` for the same reason `manualSummary` uses it — the declared command handed us real figures directly, never the "nothing usable collected" `0` sentinel. */
@@ -204,8 +220,36 @@ export function parseDeclaredCollectOutput(raw: string, command: string): Transc
   return declaredSummary(components, typeof model === 'string' ? model : null)
 }
 
-/** Runs the declared command and parses its output — throws on either failure, never falling back to the transcript route (that would risk masking a real collection bug behind a different, plausible-looking result). Announces the exact command to stderr before running it — see `TokensDeps.warn`'s doc comment. */
+/**
+ * Runs the declared command and parses its output — throws on any failure,
+ * never falling back to the transcript route (that would risk masking a
+ * real collection bug behind a different, plausible-looking result).
+ *
+ * Gated on trust before anything else runs (security review, PR #303, round
+ * 2, HIGH): refuses outright — no execution — unless a human has already
+ * approved this exact command string for this repo on this machine via
+ * `vinaya tokens --trust-collect`. A repo whose git identity cannot be
+ * resolved (`gitCommonDir()` returns `null`) is refused the same way —
+ * never treated as automatically trusted. Once past the gate, the exact
+ * command is still announced to stderr before it runs (round 1's fix,
+ * kept as a per-run audit trail).
+ */
 function runDeclaredCollect(command: string, deps: TokensDeps): TranscriptSummary {
+  const repoGitCommonDir = deps.gitCommonDir()
+  if (repoGitCommonDir === null) {
+    throw new Error(
+      "vinaya tokens: declared tokens.collect command could not be verified — this repo's git common " +
+        'directory could not be resolved. Refusing to run an unverifiable command.'
+    )
+  }
+  if (!deps.isCollectTrusted(repoGitCommonDir, command)) {
+    throw new Error(
+      'vinaya tokens: declared tokens.collect command is not yet trusted on this machine:\n' +
+        `  ${command}\n` +
+        'Run `vinaya tokens --trust-collect` once to approve it. Refusing — no `Tokens:` line emitted, no zeros.'
+    )
+  }
+
   deps.warn(`⚠ vinaya tokens: running declared tokens.collect command from this repo's vinaya.config.json: ${command}`)
   let raw: string
   try {
@@ -225,7 +269,10 @@ export function realDeps(): TokensDeps {
     readFile: (path: string) => readFileSync(path, 'utf8'),
     loadConfig,
     runCollectCommand: (command: string, cwd: string) => execSync(command, { cwd, encoding: 'utf-8' }),
-    warn: (message: string) => console.error(message)
+    warn: (message: string) => console.error(message),
+    gitCommonDir,
+    isCollectTrusted: isTokensCollectTrusted,
+    trustCollect: trustTokensCollectCommand
   }
 }
 
@@ -268,7 +315,49 @@ export function buildTokensResult(parsed: ParsedTokensArgs, deps: TokensDeps): T
   }
 }
 
+/**
+ * `vinaya tokens --trust-collect` — the only sanctioned way to make
+ * `runDeclaredCollect`'s trust gate pass. Requires a declared command (no
+ * key, nothing to trust) and a resolvable repo identity (no git identity,
+ * nothing safe to key trust to) — either missing is a refusal, never a
+ * silent no-op. Never emits a `Tokens:` line; approving is a distinct act
+ * from reporting.
+ */
+export function runTrustCollect(deps: TokensDeps): { ok: true; command: string } | { ok: false; message: string } {
+  const declaredCommand = deps.loadConfig()?.tokens?.collect
+  if (!declaredCommand) {
+    return {
+      ok: false,
+      message:
+        "vinaya tokens --trust-collect: no tokens.collect declared in this repo's vinaya.config.json — nothing to trust."
+    }
+  }
+  const repoGitCommonDir = deps.gitCommonDir()
+  if (repoGitCommonDir === null) {
+    return {
+      ok: false,
+      message:
+        "vinaya tokens --trust-collect: this repo's git common directory could not be resolved — refusing to trust blindly."
+    }
+  }
+  deps.trustCollect(repoGitCommonDir, declaredCommand)
+  return { ok: true, command: declaredCommand }
+}
+
 export function tokensCommand(argv: string[]): void {
+  if (argv.includes('--trust-collect')) {
+    const outcome = runTrustCollect(realDeps())
+    if (!outcome.ok) {
+      console.error(outcome.message)
+      process.exit(1)
+    }
+    process.stdout.write(
+      'Trusted. Future `vinaya tokens` runs on this machine execute it without asking again until the ' +
+        `command string changes.\n${outcome.command}\n`
+    )
+    return
+  }
+
   let parsed: ParsedTokensArgs
   try {
     parsed = parseArgs(argv)

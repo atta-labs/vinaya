@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { DEFAULT_RELEASE_ACTOR, PRINCIPAL_ALLOWLIST } from '@attalabs/aeg-core'
 import { AGENT_VENDORS, type AgentVendor } from './agent-vendors.js'
@@ -907,6 +908,115 @@ export function writeConfig(scope: 'local' | 'global', config: VinayaConfig, rep
     targetPath = GLOBAL_CONFIG_PATH
   }
   writeFileSync(targetPath, JSON.stringify(config, null, 2), 'utf-8')
+}
+
+// ---------------------------------------------------------------------------
+// tokens.collect trust cache (security review, PR #303, round 2 — HIGH).
+//
+// The problem the printed pre-exec warning (round 1) did NOT solve: a
+// declared `tokens.collect` command executes IN-PROCESS, unsandboxed,
+// automatically, the first time anyone (human or unattended Developer/
+// Archivist agent) runs the ordinary `vinaya tokens` command against a repo
+// carrying it — with no barrier between "this value exists in a commit" and
+// "this value ran". A warning printed synchronously immediately before a
+// blocking `execSync` call gives a human no real window to react.
+//
+// The fix, direnv-shaped: a declared command must be explicitly TRUSTED
+// once, per exact command string, per machine, before `vinaya tokens` will
+// ever execute it — `isTokensCollectTrusted` refuses (never runs, never
+// falls back) until `trustTokensCollectCommand` records it. Approval is a
+// real human act (`vinaya tokens --trust-collect`, run once, not part of
+// any generated or automated flow) — this file contains no code path that
+// self-trusts.
+//
+// Trust is keyed by (this repo's git common directory, the exact command
+// string) — NOT by worktree path. This repo's own Developer/Archivist
+// dispatch model creates a fresh worktree per task
+// (`.worktrees/task/<tranche>/<n>/`), and `git rev-parse --git-common-dir`
+// resolves to the ONE shared `.git` directory every worktree of a repo
+// points at — approving a command once on a machine covers every future
+// task worktree of that same repo, while a genuinely new or edited command
+// string (a different hash) always needs its own fresh approval, however it
+// arrived. A repo the trust identity cannot be resolved for (`gitCommonDir`
+// returns `null` — no git, or `git` itself unavailable) is refused, never
+// silently trusted.
+//
+// Storage is machine-local (`~/.vinaya/`, the same home `GLOBAL_VINAYA_HOME`
+// already uses for the global config) and deliberately NOT the repo-local
+// `vinaya.config.json` or anything else a commit can touch — trust is a
+// standing fact about what THIS operator has personally approved on THIS
+// machine, and a PR can no more grant itself that trust than it can add
+// itself to `principals`.
+// ---------------------------------------------------------------------------
+
+const TOKENS_COLLECT_TRUST_PATH = join(GLOBAL_VINAYA_HOME, 'tokens-collect-trust.json')
+
+export type TokensCollectTrustEntry = { command: string; trustedAt: string }
+export type TokensCollectTrustStore = Record<string, TokensCollectTrustEntry>
+
+function readTokensCollectTrustStore(storePath: string): TokensCollectTrustStore {
+  try {
+    if (!existsSync(storePath)) return {}
+    const raw = JSON.parse(readFileSync(storePath, 'utf-8'))
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeTokensCollectTrustStore(storePath: string, store: TokensCollectTrustStore): void {
+  const dir = dirname(storePath)
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  writeFileSync(storePath, JSON.stringify(store, null, 2), 'utf-8')
+}
+
+/**
+ * This repo's git common directory — the ONE directory every worktree of a
+ * repo (the primary checkout and every `git worktree add` linked one) shares
+ * — canonicalized (`realpathSync`) so two different paths to the same
+ * directory (a symlinked home, a relative vs. absolute cwd) hash identically.
+ * `null` on any failure (no `git`, not inside a git repository): callers
+ * MUST treat that as "identity unknown", never as license to trust anyway.
+ */
+export function gitCommonDir(cwd: string = process.cwd()): string | null {
+  try {
+    const raw = execFileSync('git', ['rev-parse', '--git-common-dir'], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+    if (!raw) return null
+    return realpathSync(resolve(cwd, raw))
+  } catch {
+    return null
+  }
+}
+
+/** The trust key for one (repo, exact command string) pair — changing either changes the key, so an edited command is a stranger again, never silently inherited trust. */
+export function tokensCollectTrustKey(repoGitCommonDir: string, command: string): string {
+  return createHash('sha256').update(`${repoGitCommonDir} ${command}`).digest('hex')
+}
+
+/** `true` only if this exact command string has been explicitly approved (`trustTokensCollectCommand`) for this exact repo, on this machine. Never `true` by default, never inferred from the key existing in `vinaya.config.json`. */
+export function isTokensCollectTrusted(
+  repoGitCommonDir: string,
+  command: string,
+  storePath: string = TOKENS_COLLECT_TRUST_PATH
+): boolean {
+  const key = tokensCollectTrustKey(repoGitCommonDir, command)
+  return key in readTokensCollectTrustStore(storePath)
+}
+
+/** Records explicit, one-time approval of this exact (repo, command) pair — the only function in this file that grants trust, and it is called from nowhere except the `--trust-collect` CLI path a human types themselves. */
+export function trustTokensCollectCommand(
+  repoGitCommonDir: string,
+  command: string,
+  storePath: string = TOKENS_COLLECT_TRUST_PATH
+): void {
+  const store = readTokensCollectTrustStore(storePath)
+  const key = tokensCollectTrustKey(repoGitCommonDir, command)
+  store[key] = { command, trustedAt: new Date().toISOString() }
+  writeTokensCollectTrustStore(storePath, store)
 }
 
 export { GLOBAL_VINAYA_HOME, GLOBAL_CONFIG_PATH, LOCAL_CONFIG_FILENAME }

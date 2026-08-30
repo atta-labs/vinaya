@@ -801,3 +801,86 @@ describe('VinayaConfigSchema.tokens — additive-only', () => {
     expect(message).toContain('tokens.collect')
   })
 })
+
+// Task 8 (#275), security review PR #303 round 2 (HIGH): a declared
+// tokens.collect must be explicitly trusted, per exact command string, per
+// machine, before it ever runs — keyed by this repo's git common directory
+// so approval survives this repo's own per-task fresh worktrees.
+describe('tokens.collect trust cache', () => {
+  let trustTmpDir: string
+
+  beforeEach(() => {
+    trustTmpDir = mkdtempSync(join(tmpdir(), 'vinaya-trust-cache-test-'))
+  })
+
+  afterEach(() => {
+    rmSync(trustTmpDir, { recursive: true, force: true })
+  })
+
+  it('gitCommonDir resolves to the real, canonical, shared .git directory for this checkout', async () => {
+    const { gitCommonDir } = await import('../src/lib/config.js')
+    const dir = gitCommonDir(process.cwd())
+    expect(dir).not.toBeNull()
+    expect(dir).toContain('.git')
+  })
+
+  it('gitCommonDir returns null outside any git repository', async () => {
+    const { gitCommonDir } = await import('../src/lib/config.js')
+    const noGitDir = mkdtempSync(join(tmpdir(), 'vinaya-no-git-'))
+    try {
+      expect(gitCommonDir(noGitDir)).toBeNull()
+    } finally {
+      rmSync(noGitDir, { recursive: true, force: true })
+    }
+  })
+
+  it('tokensCollectTrustKey is deterministic and distinguishes both the repo and the command', async () => {
+    const { tokensCollectTrustKey } = await import('../src/lib/config.js')
+    const a = tokensCollectTrustKey('/repo-a/.git', 'echo hi')
+    const b = tokensCollectTrustKey('/repo-a/.git', 'echo hi')
+    const differentRepo = tokensCollectTrustKey('/repo-b/.git', 'echo hi')
+    const differentCommand = tokensCollectTrustKey('/repo-a/.git', 'echo bye')
+    expect(a).toBe(b)
+    expect(a).not.toBe(differentRepo)
+    expect(a).not.toBe(differentCommand)
+  })
+
+  it('isTokensCollectTrusted is false until trustTokensCollectCommand records exactly that (repo, command) pair', async () => {
+    const { isTokensCollectTrusted, trustTokensCollectCommand } = await import('../src/lib/config.js')
+    const storePath = join(trustTmpDir, 'trust.json')
+    expect(isTokensCollectTrusted('/repo-a/.git', 'echo hi', storePath)).toBe(false)
+
+    trustTokensCollectCommand('/repo-a/.git', 'echo hi', storePath)
+    expect(isTokensCollectTrusted('/repo-a/.git', 'echo hi', storePath)).toBe(true)
+
+    // A different command string, or a different repo, is a stranger again.
+    expect(isTokensCollectTrusted('/repo-a/.git', 'echo bye', storePath)).toBe(false)
+    expect(isTokensCollectTrusted('/repo-b/.git', 'echo hi', storePath)).toBe(false)
+  })
+
+  it('isTokensCollectTrusted is false, never throws, when the store file does not exist yet', async () => {
+    const { isTokensCollectTrusted } = await import('../src/lib/config.js')
+    const storePath = join(trustTmpDir, 'never-written.json')
+    expect(isTokensCollectTrusted('/repo-a/.git', 'echo hi', storePath)).toBe(false)
+  })
+
+  it('isTokensCollectTrusted is false, never throws, on a corrupt store file', async () => {
+    const { isTokensCollectTrusted } = await import('../src/lib/config.js')
+    const storePath = join(trustTmpDir, 'corrupt.json')
+    writeFileSync(storePath, 'not json at all', 'utf-8')
+    expect(isTokensCollectTrusted('/repo-a/.git', 'echo hi', storePath)).toBe(false)
+  })
+
+  it('trustTokensCollectCommand records a real, readable timestamp alongside the command', async () => {
+    const { trustTokensCollectCommand } = await import('../src/lib/config.js')
+    const storePath = join(trustTmpDir, 'trust-record.json')
+    trustTokensCollectCommand('/repo-a/.git', 'echo hi', storePath)
+
+    const raw = JSON.parse(readFileSync(storePath, 'utf-8'))
+    const entries = Object.values(raw) as Array<{ command: string; trustedAt: string }>
+    expect(entries).toHaveLength(1)
+    const entry = entries[0] as { command: string; trustedAt: string }
+    expect(entry.command).toBe('echo hi')
+    expect(new Date(entry.trustedAt).toString()).not.toBe('Invalid Date')
+  })
+})

