@@ -250,21 +250,15 @@ function fetchForgeTitle(issueRef: string): string | null {
   }
 }
 
-/**
- * Unconditional leftover print — this repo's fix for the class of failure
- * `classifyLeftover`/`verify-dispatch.ts` already solves for the Developer's
- * Step 0, one stage too late for a *planning/authoring* session that never
- * runs any command until it opens or edits this exact task Issue. This is
- * the one command every legitimate task-Issue touch already goes through
- * (`open-issue.ts` is the sole sanctioned create/edit path), so printing
- * here — success or in-flight, every invocation, no flag — needs no agent
- * to remember to ask for it. Soft-fail throughout: this is informational,
- * never a refusal (re-planning an in-flight task via `edit` is legitimate),
- * so any `git`/`gh` failure just skips the print rather than blocking the
- * write this command exists to perform.
- */
-function printLeftoverStatus(slug: string, taskId: string): void {
-  const branch = `task/${slug}/${taskId}`
+/** The three raw facts `classifyLeftover` needs, already fetched — the injectable boundary `printLeftoverStatus` tests against. */
+export type LeftoverFacts = {
+  branchExistsRemote: boolean
+  commitsAheadOfMain: number
+  openPrNumber: number | null
+}
+
+/** Real git/gh fetch. Soft-fail: `null` on any failure, never throws — the caller treats that as "could not check," not a refusal. */
+function fetchLeftoverFacts(branch: string): LeftoverFacts | null {
   try {
     const branchExistsRemote =
       execFileSync('git', ['ls-remote', '--heads', 'origin', branch], {
@@ -288,20 +282,48 @@ function printLeftoverStatus(slug: string, taskId: string): void {
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
     )
     const prs = JSON.parse(prOut) as Array<{ number: number }>
-    const openPrNumber = prs[0]?.number ?? null
-
-    const result = classifyLeftover({
-      branchExistsRemote,
-      worktreeExistsLocal: false,
-      commitsAheadOfMain,
-      openPrNumber
-    })
-    console.log(`[open-issue] leftover-detection: task ${taskId} (${slug}) — ${result.verdict}. ${result.reason}`)
+    return { branchExistsRemote, commitsAheadOfMain, openPrNumber: prs[0]?.number ?? null }
   } catch {
-    console.log(
-      `[open-issue] leftover-detection: could not check task ${taskId} (${slug}) — git/gh unreachable, skipping.`
-    )
+    return null
   }
+}
+
+/** Pure message builder — the whole reason `printLeftoverStatus` is testable without mocking `console.log` or shelling out. `facts: null` is the soft-fail case (git/gh unreachable). */
+export function formatLeftoverPrint(slug: string, taskId: string, facts: LeftoverFacts | null): string {
+  if (!facts) {
+    return `[open-issue] leftover-detection: could not check task ${taskId} (${slug}) — git/gh unreachable, skipping.`
+  }
+  const result = classifyLeftover({ ...facts, worktreeExistsLocal: false })
+  return `[open-issue] leftover-detection: task ${taskId} (${slug}) — ${result.verdict}. ${result.reason}`
+}
+
+/**
+ * Unconditional leftover print on `edit` — this repo's fix for the class of
+ * failure `classifyLeftover`/`verify-dispatch.ts` already solves for the
+ * Developer's Step 0, one stage too late for a *planning/authoring* session
+ * that never runs any command until it re-opens this exact task Issue.
+ * `open-issue.ts edit` is the one command every legitimate re-plan of an
+ * existing task already goes through, so printing here — success or
+ * in-flight, every invocation, no flag — needs no agent to remember to ask
+ * for it.
+ *
+ * Edit-only, deliberately (review finding on #311): a task's Issue must
+ * exist before its branch can (`Step 0`'s worktree command needs the Issue
+ * number for `Closes #N`, and the Developer's entry gate refuses to start
+ * otherwise), so on `create` — this Issue does not exist on the forge yet —
+ * no branch or PR for it can possibly exist either. Checking there was dead
+ * weight: an unconditional `gh pr list` call on a path that always returns
+ * empty. `fetchFacts` is injected (mirrors `resolveMilestoneToAttach`'s
+ * `lookupAttachTarget`) purely so the real git/gh shim can be swapped for a
+ * fixture in tests; `formatLeftoverPrint` above carries the actual, tested
+ * logic.
+ */
+export function printLeftoverStatus(
+  slug: string,
+  taskId: string,
+  fetchFacts: (branch: string) => LeftoverFacts | null = fetchLeftoverFacts
+): void {
+  console.log(formatLeftoverPrint(slug, taskId, fetchFacts(`task/${slug}/${taskId}`)))
 }
 
 /**
@@ -748,11 +770,10 @@ export function main(): void {
       if (lengthError) fail(`open-issue label-length: ${lengthError}`)
     }
 
-    // Unconditional, every invocation — see printLeftoverStatus's own doc
-    // comment for why this runs here rather than relying on an agent to
-    // separately invoke `verify-dispatch`/`check dispatch-readiness`.
-    if (labelSlug !== null) {
-      const titleForLeftoverCheck = extractTitle(bodyArgs) ?? (isEdit ? fetchForgeTitle(ghArgs[0] as string) : null)
+    // Unconditional on every `edit`, never on `create` — see printLeftoverStatus's
+    // own doc comment for why `edit`-only is correct, not merely simpler.
+    if (isEdit && labelSlug !== null) {
+      const titleForLeftoverCheck = extractTitle(bodyArgs) ?? fetchForgeTitle(ghArgs[0] as string)
       const taskIdForLeftoverCheck = titleForLeftoverCheck ? taskIdFromTitle(titleForLeftoverCheck) : null
       if (taskIdForLeftoverCheck !== null) {
         printLeftoverStatus(labelSlug, taskIdForLeftoverCheck)

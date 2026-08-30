@@ -6,9 +6,12 @@ import {
   type AmendDepsDeps,
   type AmendDepsFlags,
   edgesEqual,
+  formatLeftoverPrint,
+  type LeftoverFacts,
   locateBody,
   parseAmendArgs,
   parseEdgeFlag,
+  printLeftoverStatus,
   readSharedPackages,
   resolveMilestoneToAttach,
   resolveShippableArgs,
@@ -271,6 +274,56 @@ describe('taskIdFromTitle', () => {
   })
   it('returns null when the em dash is missing', () => {
     expect(taskIdFromTitle('[vinaya-ui-pages-v1] 3 no dash here')).toBeNull()
+  })
+})
+
+// ---------- formatLeftoverPrint / printLeftoverStatus (edit-time leftover-detection, #309/#311) -----
+
+describe('formatLeftoverPrint', () => {
+  it('reports clean when no branch and no PR exist', () => {
+    const facts: LeftoverFacts = { branchExistsRemote: false, commitsAheadOfMain: 0, openPrNumber: null }
+    const msg = formatLeftoverPrint('vinaya-ui-pages-v1', '3', facts)
+    expect(msg).toContain('task 3 (vinaya-ui-pages-v1) — clean')
+  })
+
+  it('reports stop and names the open PR when real work already exists (the #919 shape)', () => {
+    const facts: LeftoverFacts = { branchExistsRemote: true, commitsAheadOfMain: 2, openPrNumber: 1025 }
+    const msg = formatLeftoverPrint('vinaya-ui-pages-v1', '3', facts)
+    expect(msg).toContain('— stop.')
+    expect(msg).toContain('PR #1025 is already open for this task.')
+  })
+
+  it('reports resume when the branch exists but carries no commits yet', () => {
+    const facts: LeftoverFacts = { branchExistsRemote: true, commitsAheadOfMain: 0, openPrNumber: null }
+    const msg = formatLeftoverPrint('some-tranche', '7', facts)
+    expect(msg).toContain('— resume.')
+  })
+
+  it('reports "could not check" without throwing when facts are null (git/gh unreachable)', () => {
+    const msg = formatLeftoverPrint('some-tranche', '7', null)
+    expect(msg).toContain('could not check task 7 (some-tranche) — git/gh unreachable, skipping.')
+  })
+})
+
+describe('printLeftoverStatus', () => {
+  it('calls the injected fetcher with the derived task branch and logs its formatted result', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const fetchFacts = vi.fn((branch: string): LeftoverFacts | null =>
+      branch === 'task/vinaya-ui-pages-v1/3'
+        ? { branchExistsRemote: true, commitsAheadOfMain: 2, openPrNumber: 1025 }
+        : null
+    )
+    printLeftoverStatus('vinaya-ui-pages-v1', '3', fetchFacts)
+    expect(fetchFacts).toHaveBeenCalledWith('task/vinaya-ui-pages-v1/3')
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('PR #1025 is already open'))
+    log.mockRestore()
+  })
+
+  it('never throws when the injected fetcher returns null', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    expect(() => printLeftoverStatus('some-tranche', '7', () => null)).not.toThrow()
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('could not check'))
+    log.mockRestore()
   })
 })
 
