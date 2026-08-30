@@ -34,8 +34,8 @@
  * is a later, separately-dispatched decision once the false-positive rate
  * is observed against real corpora — not designed here.
  *
- * scope: diff, ring 0 (registry.ts): offline and local (no `gh`, no forge
- * call — every fact comes from already-checked-out working-tree files), so
+ * scope: diff, ring 0 (registry.ts): offline and local (no gh CLI call, no
+ * forge call — every fact comes from already-checked-out working-tree files), so
  * the managed local hooks can run it; CI re-runs it like every
  * `--all --diff-only` check. `env: {}`: no environment variable is read.
  */
