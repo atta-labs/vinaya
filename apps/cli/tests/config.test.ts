@@ -91,6 +91,14 @@ describe('config', () => {
     expect(result?.principals).toEqual(['alice', 'bob'])
   })
 
+  it('loadConfig parses a repo-local "tokens.collect" field', () => {
+    const localPath = join(tmpDir, 'vinaya.config.json')
+    writeFileSync(localPath, JSON.stringify({ tokens: { collect: './scripts/collect-usage.sh' } }), 'utf-8')
+
+    const result = loadConfig()
+    expect(result?.tokens?.collect).toBe('./scripts/collect-usage.sh')
+  })
+
   it('resolvePrincipalAllowlist falls back to PRINCIPAL_ALLOWLIST when no config sets principals (every existing install unaffected)', () => {
     expect(resolvePrincipalAllowlist(null)).toEqual(PRINCIPAL_ALLOWLIST)
     expect(resolvePrincipalAllowlist({})).toEqual(PRINCIPAL_ALLOWLIST)
@@ -758,5 +766,38 @@ describe('VinayaConfigSchema.projects — additive-only', () => {
   it('rejects an empty-string name', () => {
     const parsed = VinayaConfigSchema.safeParse({ projects: [{ name: '' }] })
     expect(parsed.success).toBe(false)
+  })
+})
+
+// Task 8 (#275): tokens.collect — a declared command an adopter on a
+// non-Claude-Code host uses to satisfy `vinaya tokens` layer 2.
+describe('VinayaConfigSchema.tokens — additive-only', () => {
+  it('an existing config with no "tokens" key still validates (this repo\'s own vinaya.config.json)', () => {
+    const raw = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', '..', 'vinaya.config.json'), 'utf-8'))
+    const parsed = VinayaConfigSchema.safeParse(raw)
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.data.tokens).toBeUndefined()
+  })
+
+  it('accepts a declared "collect" command', () => {
+    const parsed = VinayaConfigSchema.safeParse({ tokens: { collect: 'node scripts/collect-usage.js' } })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('rejects an empty-string "collect" command', () => {
+    const parsed = VinayaConfigSchema.safeParse({ tokens: { collect: '' } })
+    expect(parsed.success).toBe(false)
+  })
+
+  it('rejects "tokens" present with no "collect" key', () => {
+    const parsed = VinayaConfigSchema.safeParse({ tokens: {} })
+    expect(parsed.success).toBe(false)
+  })
+
+  it('globalTokensCollectIgnoredWarning names the offending path and field', async () => {
+    const { globalTokensCollectIgnoredWarning } = await import('../src/lib/config.js')
+    const message = globalTokensCollectIgnoredWarning('/home/x/.vinaya/config.json')
+    expect(message).toContain('/home/x/.vinaya/config.json')
+    expect(message).toContain('tokens.collect')
   })
 })

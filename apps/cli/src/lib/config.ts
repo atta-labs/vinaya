@@ -396,6 +396,33 @@ export const VinayaConfigSchema = z.object({
   // (`init`/`upgrade`/`doctor`) from the repo-root config only
   // (`readRepoCiSetup`) — a global config's `ci` is never consulted.
   ci: z.object({ setup: z.string().min(1) }).optional(),
+  // Adopter-declared token-usage collection for `vinaya tokens`
+  // (`aeg-root/tranche-model.md` §12 layer 2). `tokens.collect` is a shell
+  // command, run by `vinaya tokens` itself (not at generation time, unlike
+  // `ci.setup`), whose stdout must be a JSON object shaped
+  // `{ inputTokens, outputTokens, cacheCreationInputTokens,
+  // cacheReadInputTokens, model }` — the `TranscriptSummary` seam
+  // (`aeg-root/tranche-model.md` §12) flattened to JSON. Same argument as
+  // `ci.setup`, applied to usage collection instead of CI preparation:
+  // vinaya cannot know a non-Claude-Code host's own usage surface (an API
+  // response shape, a meter's CLI, a log format), so this is declared,
+  // never inferred. Absent, `vinaya tokens` falls back to the shipped
+  // Claude Code transcript adapter unchanged — this key is a pure ADDITION
+  // of a second route, never a replacement of the first, and the shipped
+  // adapter is never removed when this key is present.
+  //
+  // This is an opt-in collection route, not a capability declaration:
+  // `resolveMeteringCapability`'s probe stays host-identity-blind exactly as
+  // ruled (Principal, 2026-08-28) — there is no `tokens.metering` key, and
+  // this key is read only inside `vinaya tokens`'s own command path, never
+  // consulted by the probe `vinaya doctor`/`vinaya upgrade` call.
+  //
+  // Read from the repo-root config only, same trust class as `checks` and
+  // `principals`: a value that decides what command runs on this turn must
+  // come from the reviewed, committed per-repo file, never a machine-wide
+  // personal config — stripped from a global config below with a loud
+  // warning, never resolved.
+  tokens: z.object({ collect: z.string().min(1) }).optional(),
   // The sanctioned "I need one more blast-radius collision domain" path —
   // the legacy `.aeg/packages` static file is retired, zero backward
   // compatibility, so this is now the ONLY way to declare one beyond
@@ -514,6 +541,11 @@ export function globalReleaseActorIgnoredWarning(path: string): string {
   return `${path}: "releaseActor" in the global config is ignored — releaseActor may only be declared from a repo-local vinaya.config.json.`
 }
 
+/** Same reasoning as `globalChecksIgnoredWarning` — `tokens.collect` decides what command runs on this turn, and that decision must come from the reviewed, committed repo file, never a machine-wide personal config. */
+export function globalTokensCollectIgnoredWarning(path: string): string {
+  return `${path}: "tokens" in the global config is ignored — tokens.collect may only be declared from a repo-local vinaya.config.json.`
+}
+
 /**
  * `checks` and `principals` from the global config are both explicitly out
  * of scope for it (`checks`: spec chapter, "Explicitly out of scope for this
@@ -549,6 +581,10 @@ function stripGlobalOnlyKeys(config: VinayaConfig, path: string): VinayaConfig {
   if (result.releaseActor) {
     console.error(`⚠ ${globalReleaseActorIgnoredWarning(path)}`)
     result = { ...result, releaseActor: undefined }
+  }
+  if (result.tokens) {
+    console.error(`⚠ ${globalTokensCollectIgnoredWarning(path)}`)
+    result = { ...result, tokens: undefined }
   }
   return result
 }
