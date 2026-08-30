@@ -90,6 +90,7 @@ export function milestoneLifecycleFromTrancheLifecycles(lifecycles: Lifecycle[])
 }
 
 type GhMilestone = {
+  number: number
   title: string
   description: string | null
   state: 'open' | 'closed'
@@ -262,6 +263,53 @@ export function findMilestoneForSlug(owner: string, repo: string, slug: string):
   if (legacy) return resolveLegacyFacts(legacy, issues)
 
   return { goal: goalFromMilestones(milestones, slug), lifecycle: lifecycleFromIssues(issues) }
+}
+
+/** The `gh`-resolvable identity of a Milestone: `--milestone` accepts a TITLE, never a number or a slug. */
+export type MilestoneAttachTarget = { number: number; title: string }
+
+/**
+ * The OPEN Milestone a new task Issue's `--milestone` flag should name.
+ * `gh issue create --milestone <value>` resolves `<value>` by TITLE — a
+ * tranche's SLUG is only ever a valid title in the legacy 1:1 regime
+ * (Milestone titled exactly the slug). Once a Milestone can hold several
+ * tranches via `### Tranche intents` (vinaya-milestone-model-v1), the slug
+ * is not a title at all, and handing `gh` the slug for an intent-declared
+ * tranche fails outright (a Milestone with that exact title does not exist).
+ *
+ * Two candidates, legacy first (kept forever, per `matchesLegacyMilestone`'s
+ * own contract): the exact-slug-titled Milestone, if it is still open — a
+ * closed legacy Milestone is never a valid attach target, whether it is a
+ * genuinely finished tranche or one retired via `vinaya milestone adopt`
+ * (the label's real Issues live somewhere else this function does not
+ * chase; see `resolveLegacyFacts`'s doc comment for why lifecycle alone
+ * cannot recover that "elsewhere" identity). Otherwise: the first OPEN
+ * Milestone whose description declares this slug's intent line — the
+ * modern, multi-tranche path. `null` when neither exists: no open
+ * Milestone owns this slug yet, which is not an error — a tranche's first
+ * Issue may legitimately precede its own Milestone.
+ */
+export function resolveMilestoneAttachTarget(milestones: GhMilestone[], slug: string): MilestoneAttachTarget | null {
+  const legacy = matchesLegacyMilestone(milestones, slug)
+  if (legacy) return legacy.state === 'open' ? { number: legacy.number, title: legacy.title } : null
+
+  const intentMatch = milestones.find((m) => m.state === 'open' && intentGoalForSlug(m.description ?? '', slug) !== '')
+  return intentMatch ? { number: intentMatch.number, title: intentMatch.title } : null
+}
+
+/** Forge-fetching sibling of `resolveMilestoneAttachTarget` — the injected-lookup boundary callers wire in. */
+export function findMilestoneAttachTargetForSlug(
+  owner: string,
+  repo: string,
+  slug: string
+): MilestoneAttachTarget | null {
+  const milestones = ghApiGet<GhMilestone[]>(`repos/${owner}/${repo}/milestones?state=all&per_page=100`)
+  return resolveMilestoneAttachTarget(milestones, slug)
+}
+
+/** True when argv already carries an explicit `--milestone`/`-m` flag — the caller's choice always wins over auto-attach. */
+export function hasExplicitMilestoneFlag(args: string[]): boolean {
+  return args.some((a) => a === '--milestone' || a === '-m' || a.startsWith('--milestone='))
 }
 
 export type ActiveTrancheRef = { slug: string; goal: string }

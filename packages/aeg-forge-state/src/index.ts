@@ -2,7 +2,9 @@ export { amendRationaleDeps } from './amend-rationale-deps'
 export type { AmendDepsInput } from './amend-rationale-deps'
 export { deriveTrancheFromForge, trancheFromIssues } from './derive-from-forge'
 export {
+  findMilestoneAttachTargetForSlug,
   findMilestoneForSlug,
+  hasExplicitMilestoneFlag,
   indexTrancheMilestonesAsync,
   intentGoalForSlug,
   listActiveTrancheSlugs,
@@ -10,9 +12,10 @@ export {
   listArchivedTrancheSlugs,
   listArchivedTrancheSlugsAsync,
   milestoneLifecycleFromTrancheLifecycles,
-  releaseFromDescription
+  releaseFromDescription,
+  resolveMilestoneAttachTarget
 } from './fetch-milestone'
-export type { ActiveTrancheRef, MilestoneFacts, TrancheMilestoneIndex } from './fetch-milestone'
+export type { ActiveTrancheRef, MilestoneAttachTarget, MilestoneFacts, TrancheMilestoneIndex } from './fetch-milestone'
 export type { GhIssue } from './gh'
 export { fetchProvenance } from './fetch-provenance'
 export { buildBranchName, fetchForgeFacts, fetchForgeTasksByLabel } from './fetch-forge-facts'
