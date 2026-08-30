@@ -6,13 +6,18 @@ import {
   type AmendDepsDeps,
   type AmendDepsFlags,
   edgesEqual,
+  formatLeftoverPrint,
+  type LeftoverFacts,
   locateBody,
   parseAmendArgs,
   parseEdgeFlag,
+  printLeftoverStatus,
   readSharedPackages,
   resolveMilestoneToAttach,
   resolveShippableArgs,
+  resolveTitleForLeftoverCheck,
   runAmendDeps,
+  taskIdFromTitle,
   validateAmendFlags
 } from './open-issue'
 
@@ -253,6 +258,113 @@ describe('resolveMilestoneToAttach (aeg-review-gate-v1 task 1 follow-up)', () =>
       activeLookup
     )
     expect(result).toBe('aeg-review-gate-v1')
+  })
+})
+
+// ---------- taskIdFromTitle (leftover-detection print, #309) -----------------
+
+describe('taskIdFromTitle', () => {
+  it('extracts the task id from a well-formed task title', () => {
+    expect(taskIdFromTitle('[vinaya-ui-pages-v1] 3 — Build /compare page')).toBe('3')
+  })
+  it('accepts a non-numeric task id (the grammar is \\S+, not digits-only)', () => {
+    expect(taskIdFromTitle('[vinaya-ui-pages-v1] 3a — Split follow-up')).toBe('3a')
+  })
+  it('returns null for a non-task (commitlint-style) title', () => {
+    expect(taskIdFromTitle('Fix(cli): open-issue prints leftover-detection')).toBeNull()
+  })
+  it('returns null when the em dash is missing', () => {
+    expect(taskIdFromTitle('[vinaya-ui-pages-v1] 3 no dash here')).toBeNull()
+  })
+})
+
+// ---------- formatLeftoverPrint / printLeftoverStatus (edit-time leftover-detection, #309/#311) -----
+
+describe('formatLeftoverPrint', () => {
+  it('reports clean when no branch and no PR exist', () => {
+    const facts: LeftoverFacts = { branchExistsRemote: false, commitsAheadOfMain: 0, openPrNumber: null }
+    const msg = formatLeftoverPrint('vinaya-ui-pages-v1', '3', facts)
+    expect(msg).toContain('task 3 (vinaya-ui-pages-v1) — clean')
+  })
+
+  it('reports stop and names the open PR when real work already exists (the #919 shape)', () => {
+    const facts: LeftoverFacts = { branchExistsRemote: true, commitsAheadOfMain: 2, openPrNumber: 1025 }
+    const msg = formatLeftoverPrint('vinaya-ui-pages-v1', '3', facts)
+    expect(msg).toContain('— stop.')
+    expect(msg).toContain('PR #1025 is already open for this task.')
+  })
+
+  it('reports resume when the branch exists but carries no commits yet', () => {
+    const facts: LeftoverFacts = { branchExistsRemote: true, commitsAheadOfMain: 0, openPrNumber: null }
+    const msg = formatLeftoverPrint('some-tranche', '7', facts)
+    expect(msg).toContain('— resume.')
+  })
+
+  it('reports "could not check" without throwing when facts are null (git/gh unreachable)', () => {
+    const msg = formatLeftoverPrint('some-tranche', '7', null)
+    expect(msg).toContain('could not check task 7 (some-tranche) — git/gh unreachable, skipping.')
+  })
+})
+
+describe('printLeftoverStatus', () => {
+  it('calls the injected fetcher with the derived task branch and logs its formatted result', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const fetchFacts = vi.fn((branch: string): LeftoverFacts | null =>
+      branch === 'task/vinaya-ui-pages-v1/3'
+        ? { branchExistsRemote: true, commitsAheadOfMain: 2, openPrNumber: 1025 }
+        : null
+    )
+    printLeftoverStatus('vinaya-ui-pages-v1', '3', fetchFacts)
+    expect(fetchFacts).toHaveBeenCalledWith('task/vinaya-ui-pages-v1/3')
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('PR #1025 is already open'))
+    log.mockRestore()
+  })
+
+  it('never throws when the injected fetcher returns null', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    expect(() => printLeftoverStatus('some-tranche', '7', () => null)).not.toThrow()
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('could not check'))
+    log.mockRestore()
+  })
+})
+
+describe('resolveTitleForLeftoverCheck (the create-path coverage restored on review, #311 round 2)', () => {
+  it('uses the argv title on create — never touches the injected fetcher', () => {
+    const fetchTitle = vi.fn(() => 'should not be called')
+    const title = resolveTitleForLeftoverCheck(
+      ['--title', '[vinaya-ui-pages-v1] 3 — Build /compare'],
+      false,
+      null,
+      fetchTitle
+    )
+    expect(title).toBe('[vinaya-ui-pages-v1] 3 — Build /compare')
+    expect(fetchTitle).not.toHaveBeenCalled()
+  })
+
+  it('uses the argv title on edit when one is given — never touches the injected fetcher', () => {
+    const fetchTitle = vi.fn(() => 'should not be called')
+    const title = resolveTitleForLeftoverCheck(
+      ['--title', '[vinaya-ui-pages-v1] 3 — Retitled'],
+      true,
+      '919',
+      fetchTitle
+    )
+    expect(title).toBe('[vinaya-ui-pages-v1] 3 — Retitled')
+    expect(fetchTitle).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the injected fetcher on edit with no argv title — the common body-only re-plan', () => {
+    const fetchTitle = vi.fn((issueRef: string) => (issueRef === '919' ? '[vinaya-ui-pages-v1] 3 — From forge' : null))
+    const title = resolveTitleForLeftoverCheck(['--body-file', '/tmp/body.md'], true, '919', fetchTitle)
+    expect(title).toBe('[vinaya-ui-pages-v1] 3 — From forge')
+    expect(fetchTitle).toHaveBeenCalledWith('919')
+  })
+
+  it('returns null on create with no argv title, without ever calling the fetcher — create always requires --title to open the Issue at all, but this function must not assume that and reach for the forge', () => {
+    const fetchTitle = vi.fn(() => 'should not be called')
+    const title = resolveTitleForLeftoverCheck(['--body-file', '/tmp/body.md'], false, null, fetchTitle)
+    expect(title).toBeNull()
+    expect(fetchTitle).not.toHaveBeenCalled()
   })
 })
 

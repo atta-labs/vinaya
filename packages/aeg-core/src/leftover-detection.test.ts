@@ -32,4 +32,28 @@ describe('classifyLeftover', () => {
     const result = classifyLeftover({ branchExistsRemote: true, worktreeExistsLocal: true, commitsAheadOfMain: 0 })
     expect(result.verdict).toBe('resume')
   })
+
+  it('names the open PR in the stop reason when one is given', () => {
+    const result = classifyLeftover({
+      branchExistsRemote: true,
+      worktreeExistsLocal: false,
+      commitsAheadOfMain: 2,
+      openPrNumber: 1025
+    })
+    expect(result.verdict).toBe('stop')
+    expect(result.reason).toContain('PR #1025 is already open for this task.')
+  })
+
+  it('omits the PR clause when openPrNumber is null or absent', () => {
+    const withNull = classifyLeftover({
+      branchExistsRemote: true,
+      worktreeExistsLocal: false,
+      commitsAheadOfMain: 1,
+      openPrNumber: null
+    })
+    expect(withNull.reason).not.toContain('PR #')
+
+    const omitted = classifyLeftover({ branchExistsRemote: true, worktreeExistsLocal: false, commitsAheadOfMain: 1 })
+    expect(omitted.reason).not.toContain('PR #')
+  })
 })
