@@ -1,6 +1,6 @@
-import type { MeteringCapabilityDeps } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
-import { buildTokensResult, parseArgs } from '../src/commands/tokens'
+import { buildTokensResult, parseArgs, parseDeclaredCollectOutput } from '../src/commands/tokens'
+import type { TokensDeps } from '../src/commands/tokens'
 
 function assistantLine(opts: { id: string; model: string; input: number; output: number }): string {
   return JSON.stringify({
@@ -13,13 +13,17 @@ function assistantLine(opts: { id: string; model: string; input: number; output:
   })
 }
 
-function fakeDeps(overrides: Partial<MeteringCapabilityDeps> = {}): MeteringCapabilityDeps {
+function fakeDeps(overrides: Partial<TokensDeps> = {}): TokensDeps {
   return {
     env: {},
     cwd: '/repo',
     exists: () => false,
     readFile: () => {
       throw new Error('unexpected readFile call')
+    },
+    loadConfig: () => null,
+    runCollectCommand: () => {
+      throw new Error('unexpected runCollectCommand call')
     },
     ...overrides
   }
@@ -113,5 +117,134 @@ describe('buildTokensResult — transcript route', () => {
   it('refuses with a clear message when no transcript resolves at all', () => {
     const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
     expect(() => buildTokensResult(parsed, fakeDeps())).toThrow(/no-transcript-resolved/)
+  })
+})
+
+describe('buildTokensResult — declared tokens.collect route', () => {
+  it('prefers the declared command over the transcript route, with no transcript present anywhere', () => {
+    const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
+    const payload = JSON.stringify({
+      inputTokens: 120,
+      outputTokens: 40,
+      cacheCreationInputTokens: 5,
+      cacheReadInputTokens: 3,
+      model: 'grok-5'
+    })
+    const result = buildTokensResult(
+      parsed,
+      fakeDeps({
+        loadConfig: () => ({ tokens: { collect: './scripts/collect-usage.sh' } }),
+        runCollectCommand: () => payload
+      })
+    )
+    expect(result.line).toBe('Tokens: 1: develop — Developer — grok-5 — 128/40/—')
+    expect(result.breakdown).toBeDefined()
+  })
+
+  it('falls back to the transcript route unchanged when tokens.collect is absent', () => {
+    const jsonl = assistantLine({ id: 'msg_1', model: 'claude-sonnet-5', input: 10, output: 5 })
+    const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer', '--transcript', '/tmp/real.jsonl'])
+    const result = buildTokensResult(
+      parsed,
+      fakeDeps({ loadConfig: () => null, exists: () => true, readFile: () => jsonl })
+    )
+    expect(result.line).toBe('Tokens: 1: develop — Developer — claude-sonnet-5 — 10/5/—')
+  })
+
+  it('fails loudly when the declared command exits non-zero, never falling back to the transcript route', () => {
+    const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
+    expect(() =>
+      buildTokensResult(
+        parsed,
+        fakeDeps({
+          loadConfig: () => ({ tokens: { collect: 'exit 1' } }),
+          runCollectCommand: () => {
+            throw new Error('Command failed: exit 1')
+          }
+        })
+      )
+    ).toThrow(/declared tokens\.collect command "exit 1" failed/)
+  })
+
+  it('fails loudly on unparseable output rather than producing zeros', () => {
+    const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
+    expect(() =>
+      buildTokensResult(
+        parsed,
+        fakeDeps({
+          loadConfig: () => ({ tokens: { collect: './garbage.sh' } }),
+          runCollectCommand: () => 'not json at all'
+        })
+      )
+    ).toThrow(/did not print valid JSON/)
+  })
+})
+
+describe('parseDeclaredCollectOutput', () => {
+  it('parses a valid payload into the TranscriptSummary shape', () => {
+    const summary = parseDeclaredCollectOutput(
+      JSON.stringify({
+        inputTokens: 1,
+        outputTokens: 2,
+        cacheCreationInputTokens: 3,
+        cacheReadInputTokens: 4,
+        model: 'grok-5'
+      }),
+      'cmd'
+    )
+    expect(summary).toEqual({
+      components: { inputTokens: 1, outputTokens: 2, cacheCreationInputTokens: 3, cacheReadInputTokens: 4 },
+      model: 'grok-5',
+      messageCount: 1
+    })
+  })
+
+  it('defaults model to null when absent', () => {
+    const summary = parseDeclaredCollectOutput(
+      JSON.stringify({ inputTokens: 1, outputTokens: 2, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 }),
+      'cmd'
+    )
+    expect(summary.model).toBeNull()
+  })
+
+  it('rejects invalid JSON', () => {
+    expect(() => parseDeclaredCollectOutput('not json', 'cmd')).toThrow(/did not print valid JSON/)
+  })
+
+  it('rejects a JSON array', () => {
+    expect(() => parseDeclaredCollectOutput('[1,2,3]', 'cmd')).toThrow(/not an object/)
+  })
+
+  it('rejects a missing usage field', () => {
+    expect(() =>
+      parseDeclaredCollectOutput(
+        JSON.stringify({ outputTokens: 2, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 }),
+        'cmd'
+      )
+    ).toThrow(/invalid "inputTokens"/)
+  })
+
+  it('rejects a negative usage field', () => {
+    expect(() =>
+      parseDeclaredCollectOutput(
+        JSON.stringify({ inputTokens: -1, outputTokens: 2, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 }),
+        'cmd'
+      )
+    ).toThrow(/invalid "inputTokens"/)
+  })
+
+  it('rejects a non-string model', () => {
+    expect(() =>
+      parseDeclaredCollectOutput(
+        JSON.stringify({
+          inputTokens: 1,
+          outputTokens: 2,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+          model: 42
+        }),
+        'cmd'
+      )
+    ).toThrow(/non-string "model"/)
   })
 })
