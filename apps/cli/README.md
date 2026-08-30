@@ -88,6 +88,36 @@ To declare a domain beyond those two — a `migrations/` folder, a codegen outpu
 
 `name` is required (the dedup key, matching the registry row's own `Project` column); `description` and `path` are optional. This key is display metadata only — no gate or resolver reads it, and single-project repos rightly have none. `vinaya doctor` reports, at `info` severity, when a registry row and a `projects` entry name the same project but only one of the two exists — never an error, since keeping only the registry file is a fully supported shape.
 
+### Token-usage collection for non-Claude-Code hosts (`tokens.collect`)
+
+`vinaya tokens` ships one collection adapter, for Claude Code — it reads that host's own session transcript. A repo whose coding-agent host is something else (Codex, Grok build, or any other harness) has no route to a real `Tokens:` line without declaring one:
+
+```json
+{
+  "tokens": {
+    "collect": "node scripts/collect-usage.js"
+  }
+}
+```
+
+**`tokens.collect` executes as a shell command**, exactly like `ci.setup` — the same reasoning applies: vinaya cannot know a non-Claude-Code host's own usage surface (an API usage response, a meter's CLI, a log format), so this is declared, never inferred. `vinaya tokens` runs the command itself, whenever it is declared and `--in`/`--out` are not given, and parses its stdout as a JSON object shaped:
+
+```json
+{
+  "inputTokens": 0,
+  "outputTokens": 0,
+  "cacheCreationInputTokens": 0,
+  "cacheReadInputTokens": 0,
+  "model": "your-model-id-or-null"
+}
+```
+
+Absent, `vinaya tokens` falls back to the shipped Claude Code transcript adapter unchanged — this key only adds a second route, never removes the first, and a Claude Code adopter continues to get working enforcement on `vinaya upgrade` having declared nothing. When declared, a command that exits non-zero or prints output that doesn't parse into that shape fails loudly rather than silently falling back to the transcript route or emitting a plausible `0/0/—`.
+
+This is an opt-in collection route, not a capability declaration: whether a host is treated as capable of metering itself is always *probed*, never read from this key — there is no `tokens.metering` field.
+
+Read from the repo-root config only, same trust class as `checks`/`principals`/`releaseActor`: a value that decides what command runs on this turn must come from the reviewed, committed per-repo file, never a machine-wide personal config — a global `~/.vinaya/config.json`'s `tokens` key is stripped at load time with a loud stderr warning, never resolved.
+
 ## Where the git hooks live
 
 `vinaya init` installs the ring-0 hooks (`pre-commit`, `pre-push`, `commit-msg`) into a **tracked** `.vinaya/hooks/` directory and points git at it with `git config core.hooksPath .vinaya/hooks` — commit that directory. Raw `.git/hooks` is never versioned by git, so hooks installed there exist only on the installing machine; tracked hooks travel with the repo into every clone and every linked worktree checkout.

@@ -309,6 +309,30 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
 }`
   },
   {
+    key: 'tokens',
+    type: 'object (optional)',
+    semantics: [
+      'Adopter-declared token-usage collection for `vinaya tokens` on a non-Claude-Code host — layer 2 of the token-report obligation. Vinaya ships one collection adapter, for Claude Code, which reads that host’s own session transcript; a host with no such transcript has no route to a real `Tokens:` line without this key.',
+      'This is an opt-in collection route, never a capability declaration: `vinaya`’s metering-capability probe stays host-identity-blind — there is no `tokens.metering` key, and this key is read only inside `vinaya tokens`’s own command path, never consulted by the probe `vinaya doctor`/`vinaya upgrade` call.'
+    ],
+    example: `{ "tokens": { "collect": "node scripts/collect-usage.js" } }`
+  },
+  {
+    key: 'tokens.collect',
+    type: 'string (optional, min 1)',
+    semantics: [
+      'A shell command `vinaya tokens` runs itself (not at generation time, unlike `ci.setup`) whenever declared and `--in`/`--out` are not given. Its stdout must be a JSON object shaped `{"inputTokens":N,"outputTokens":N,"cacheCreationInputTokens":N,"cacheReadInputTokens":N,"model":"…"|null}` — the `TranscriptSummary` seam flattened to JSON.',
+      'Declared, never inferred: vinaya cannot know a non-Claude-Code host’s own usage surface (an API response shape, a meter’s CLI, a log format) — same argument as `ci.setup`, applied to usage collection instead of CI preparation.',
+      'When absent, `vinaya tokens` falls back to the shipped Claude Code transcript adapter unchanged — this key only adds a second route, never removes the first. When declared, a command that fails to run or whose output cannot be parsed fails loudly rather than silently falling back to the transcript route or emitting zeros.',
+      'Read from the repo-root config only, same trust class as `checks`/`principals`/`releaseActor`: a value that decides what command runs on this turn must come from the reviewed, committed per-repo file — a global `~/.vinaya/config.json`’s `tokens` key is stripped at load time with a loud stderr warning, never resolved.'
+    ],
+    example: `{
+  "tokens": {
+    "collect": "node scripts/collect-usage.js"
+  }
+}`
+  },
+  {
     key: 'blastRadius',
     type: 'object (optional)',
     semantics: [
