@@ -631,6 +631,26 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       env: {}
     },
     0
+  ],
+  [
+    {
+      name: 'token-collection-wired',
+      run: bin('check-token-collection-wired'),
+      scope: 'full',
+      timeoutMs: 15_000,
+      // `resolveMeteringCapability` (`@attalabs/aeg-core`) reads
+      // `CLAUDE_PROJECT_DIR`/`CLAUDE_CODE_SESSION_ID` directly — both must be
+      // declared or the runner strips them before spawn (the same #870 trap
+      // `brief-shape`'s `BRANCH` comment above names) and the pointer-file
+      // resolution silently falls back to `cwd`/no-staleness-check on every
+      // hook run. `TMPDIR` needs no declaration: it's already in the
+      // runner's fixed baseline.
+      env: {
+        CLAUDE_PROJECT_DIR: { optional: true },
+        CLAUDE_CODE_SESSION_ID: { optional: true }
+      }
+    },
+    0
   ]
 ]
 
