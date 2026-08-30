@@ -118,6 +118,8 @@ This is an opt-in collection route, not a capability declaration: whether a host
 
 Read from the repo-root config only, same trust class as `checks`/`principals`/`releaseActor`: a value that decides what command runs on this turn must come from the reviewed, committed per-repo file, never a machine-wide personal config — a global `~/.vinaya/config.json`'s `tokens` key is stripped at load time with a loud stderr warning, never resolved.
 
+Unlike `ci.setup` — which only ever executes inside a generated, reviewed CI workflow step, under the runner's own isolation — a declared `tokens.collect` command executes IN-PROCESS, unsandboxed, on whatever machine runs the ordinary `vinaya tokens` command. `vinaya tokens` prints the exact command to stderr before running it, every time, so a value never runs silently; this is a visibility measure, not a confirmation gate — the unattended-agent path this key exists for cannot pause for one.
+
 ## Where the git hooks live
 
 `vinaya init` installs the ring-0 hooks (`pre-commit`, `pre-push`, `commit-msg`) into a **tracked** `.vinaya/hooks/` directory and points git at it with `git config core.hooksPath .vinaya/hooks` — commit that directory. Raw `.git/hooks` is never versioned by git, so hooks installed there exist only on the installing machine; tracked hooks travel with the repo into every clone and every linked worktree checkout.

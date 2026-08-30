@@ -422,6 +422,15 @@ export const VinayaConfigSchema = z.object({
   // come from the reviewed, committed per-repo file, never a machine-wide
   // personal config — stripped from a global config below with a loud
   // warning, never resolved.
+  //
+  // Unlike `ci.setup` — which only ever executes inside a generated,
+  // reviewed CI workflow step, under the runner's own isolation — this
+  // command runs IN-PROCESS, unsandboxed, on whatever machine runs the
+  // ordinary `vinaya tokens` command (security review, PR #303). `tokens.ts`
+  // prints the exact command to stderr before running it, every time, so a
+  // value never runs silently — a visibility measure, not a confirmation
+  // gate, since the unattended-agent path this key exists for cannot pause
+  // for one.
   tokens: z.object({ collect: z.string().min(1) }).optional(),
   // The sanctioned "I need one more blast-radius collision domain" path —
   // the legacy `.aeg/packages` static file is retired, zero backward

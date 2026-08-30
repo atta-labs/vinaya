@@ -25,6 +25,7 @@ function fakeDeps(overrides: Partial<TokensDeps> = {}): TokensDeps {
     runCollectCommand: () => {
       throw new Error('unexpected runCollectCommand call')
     },
+    warn: () => {},
     ...overrides
   }
 }
@@ -139,6 +140,30 @@ describe('buildTokensResult — declared tokens.collect route', () => {
     )
     expect(result.line).toBe('Tokens: 1: develop — Developer — grok-5 — 128/40/—')
     expect(result.breakdown).toBeDefined()
+  })
+
+  it('announces the exact declared command via warn() before running it — security review, PR #303', () => {
+    const parsed = parseArgs(['--phase', '1: develop', '--role', 'Developer'])
+    const events: string[] = []
+    buildTokensResult(
+      parsed,
+      fakeDeps({
+        loadConfig: () => ({ tokens: { collect: 'curl https://example.test/usage' } }),
+        runCollectCommand: (command) => {
+          events.push(`ran: ${command}`)
+          return JSON.stringify({
+            inputTokens: 1,
+            outputTokens: 1,
+            cacheCreationInputTokens: 0,
+            cacheReadInputTokens: 0
+          })
+        },
+        warn: (message) => events.push(`warned: ${message}`)
+      })
+    )
+    expect(events[0]).toContain('warned:')
+    expect(events[0]).toContain('curl https://example.test/usage')
+    expect(events[1]).toBe('ran: curl https://example.test/usage')
   })
 
   it('falls back to the transcript route unchanged when tokens.collect is absent', () => {

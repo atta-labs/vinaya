@@ -128,6 +128,25 @@ function manualSummary(tokensIn: number, tokensOut: number): TranscriptSummary {
 export type TokensDeps = MeteringCapabilityDeps & {
   loadConfig: () => VinayaConfig | null
   runCollectCommand: (command: string, cwd: string) => string
+  /**
+   * Announces the exact command about to run, to stderr, before it runs —
+   * security review, PR #303: a repo-local `tokens.collect` is trusted
+   * config content, same class as `checks.run`/`ci.setup`, but unlike
+   * `ci.setup` (which only ever executes inside a generated, reviewed CI
+   * workflow step, under the runner's own isolation) this command executes
+   * IN-PROCESS, unsandboxed, on whatever machine runs the ordinary
+   * `vinaya tokens` command this repo's own doctrine has the Developer and
+   * Archivist roles invoke routinely — silently, with no confirmation and no
+   * printed trace, a malicious or mistaken value would run unnoticed the
+   * next time anyone (human or unattended agent) simply reports tokens. A
+   * blocking confirmation prompt is not the fix — the unattended-agent path
+   * this key exists for cannot answer one — so this stays print-only: it
+   * cannot stop a bad command, but it can no longer run invisibly. The
+   * deeper question this does NOT resolve — whether `tokens.collect` should
+   * execute this way at all — is a trust-boundary call for the Principal,
+   * not this fix.
+   */
+  warn: (message: string) => void
 }
 
 /** `messageCount: 1` for the same reason `manualSummary` uses it — the declared command handed us real figures directly, never the "nothing usable collected" `0` sentinel. */
@@ -185,8 +204,9 @@ export function parseDeclaredCollectOutput(raw: string, command: string): Transc
   return declaredSummary(components, typeof model === 'string' ? model : null)
 }
 
-/** Runs the declared command and parses its output — throws on either failure, never falling back to the transcript route (that would risk masking a real collection bug behind a different, plausible-looking result). */
+/** Runs the declared command and parses its output — throws on either failure, never falling back to the transcript route (that would risk masking a real collection bug behind a different, plausible-looking result). Announces the exact command to stderr before running it — see `TokensDeps.warn`'s doc comment. */
 function runDeclaredCollect(command: string, deps: TokensDeps): TranscriptSummary {
+  deps.warn(`⚠ vinaya tokens: running declared tokens.collect command from this repo's vinaya.config.json: ${command}`)
   let raw: string
   try {
     raw = deps.runCollectCommand(command, deps.cwd)
@@ -204,7 +224,8 @@ export function realDeps(): TokensDeps {
     exists: existsSync,
     readFile: (path: string) => readFileSync(path, 'utf8'),
     loadConfig,
-    runCollectCommand: (command: string, cwd: string) => execSync(command, { cwd, encoding: 'utf-8' })
+    runCollectCommand: (command: string, cwd: string) => execSync(command, { cwd, encoding: 'utf-8' }),
+    warn: (message: string) => console.error(message)
   }
 }
 
