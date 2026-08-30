@@ -236,7 +236,7 @@ export function taskIdFromTitle(title: string): string | null {
   return m ? (m[1] as string) : null
 }
 
-/** Soft-fail title fetch — unlike `fetchForgeLabels`/`fetchForgeBody`, this only feeds an informational print, never a blocking gate, so an unreachable forge yields `null` rather than refusing the whole command. */
+/** Soft-fail title fetch — unlike `fetchForgeLabels`/`fetchForgeBody`, this only feeds an informational print, never a blocking gate, so an unreachable forge yields `null` rather than refusing the whole command. Untested directly, by the same established convention as its siblings `fetchForgeLabels`/`fetchForgeBody`/`ghEditBody` — a real `gh` shim, not logic. `resolveTitleForLeftoverCheck` below is what actually carries the decision logic, and that IS tested, via injection. */
 function fetchForgeTitle(issueRef: string): string | null {
   try {
     const out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'title'], {
@@ -248,6 +248,26 @@ function fetchForgeTitle(issueRef: string): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * The title to derive a task id from, for the leftover-detection print.
+ * Argv title first — works identically on `create` and `edit`, no forge
+ * call needed. Falls back to a forge fetch only on `edit` with no `--title`
+ * in argv (the common re-plan-a-body-only case); `create` always carries a
+ * title in argv (required to open the Issue at all), so it never reaches
+ * the fetch branch — `issueRef` is `null` there and the ternary short-circuits.
+ * `fetchTitle` is injected (mirrors `fetchLeftoverFacts`/`printLeftoverStatus`
+ * and this file's own `resolveMilestoneToAttach`/`lookupAttachTarget`) so
+ * this branching is unit-tested without a real `gh` call.
+ */
+export function resolveTitleForLeftoverCheck(
+  bodyArgs: string[],
+  isEdit: boolean,
+  issueRef: string | null,
+  fetchTitle: (issueRef: string) => string | null = fetchForgeTitle
+): string | null {
+  return extractTitle(bodyArgs) ?? (isEdit && issueRef ? fetchTitle(issueRef) : null)
 }
 
 /** The three raw facts `classifyLeftover` needs, already fetched — the injectable boundary `printLeftoverStatus` tests against. */
@@ -298,25 +318,29 @@ export function formatLeftoverPrint(slug: string, taskId: string, facts: Leftove
 }
 
 /**
- * Unconditional leftover print on `edit` — this repo's fix for the class of
- * failure `classifyLeftover`/`verify-dispatch.ts` already solves for the
- * Developer's Step 0, one stage too late for a *planning/authoring* session
- * that never runs any command until it re-opens this exact task Issue.
- * `open-issue.ts edit` is the one command every legitimate re-plan of an
- * existing task already goes through, so printing here — success or
- * in-flight, every invocation, no flag — needs no agent to remember to ask
- * for it.
+ * Unconditional leftover print on both `create` and `edit` — this repo's fix
+ * for the class of failure `classifyLeftover`/`verify-dispatch.ts` already
+ * solves for the Developer's `Step 0`, one stage too late for a
+ * *planning/authoring* session that never runs any command until it opens
+ * or re-opens this exact task Issue. `open-issue.ts` is the one command
+ * every legitimate task-Issue touch already goes through, so printing here
+ * — success or in-flight, every invocation, no flag — needs no agent to
+ * remember to ask for it.
  *
- * Edit-only, deliberately (review finding on #311): a task's Issue must
- * exist before its branch can (`Step 0`'s worktree command needs the Issue
- * number for `Closes #N`, and the Developer's entry gate refuses to start
- * otherwise), so on `create` — this Issue does not exist on the forge yet —
- * no branch or PR for it can possibly exist either. Checking there was dead
- * weight: an unconditional `gh pr list` call on a path that always returns
- * empty. `fetchFacts` is injected (mirrors `resolveMilestoneToAttach`'s
- * `lookupAttachTarget`) purely so the real git/gh shim can be swapped for a
- * fixture in tests; `formatLeftoverPrint` above carries the actual, tested
- * logic.
+ * On `create` too, deliberately (review correction on #311 — an earlier
+ * revision of this PR restricted this to `edit` on the reasoning that "an
+ * Issue must exist before its branch can," which is true of THIS Issue's
+ * own future branch but does not establish that no branch sharing the same
+ * `task/<slug>/<n>` name exists yet: `n` is parsed from TITLE TEXT
+ * (`taskIdFromTitle`), not derived from this Issue's own number or history,
+ * so a brand-new `create` whose title happens to name a task id that
+ * collides with an already-in-flight or abandoned branch — two Planner
+ * sessions independently cutting `[slug] 3 — …` unaware of each other, the
+ * same root cause as the incident this whole check exists to catch, one
+ * stage earlier — is exactly the scenario this must not miss. `fetchFacts`
+ * is injected (mirrors `resolveMilestoneToAttach`'s `lookupAttachTarget`)
+ * purely so the real git/gh shim can be swapped for a fixture in tests;
+ * `formatLeftoverPrint` above carries the actual, tested logic.
  */
 export function printLeftoverStatus(
   slug: string,
@@ -770,10 +794,14 @@ export function main(): void {
       if (lengthError) fail(`open-issue label-length: ${lengthError}`)
     }
 
-    // Unconditional on every `edit`, never on `create` — see printLeftoverStatus's
-    // own doc comment for why `edit`-only is correct, not merely simpler.
-    if (isEdit && labelSlug !== null) {
-      const titleForLeftoverCheck = extractTitle(bodyArgs) ?? fetchForgeTitle(ghArgs[0] as string)
+    // Unconditional on every create/edit — see printLeftoverStatus's own doc
+    // comment for why create must be covered too, not just edit.
+    if (labelSlug !== null) {
+      const titleForLeftoverCheck = resolveTitleForLeftoverCheck(
+        bodyArgs,
+        isEdit,
+        isEdit ? (ghArgs[0] as string) : null
+      )
       const taskIdForLeftoverCheck = titleForLeftoverCheck ? taskIdFromTitle(titleForLeftoverCheck) : null
       if (taskIdForLeftoverCheck !== null) {
         printLeftoverStatus(labelSlug, taskIdForLeftoverCheck)

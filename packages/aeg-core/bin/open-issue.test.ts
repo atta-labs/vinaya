@@ -15,6 +15,7 @@ import {
   readSharedPackages,
   resolveMilestoneToAttach,
   resolveShippableArgs,
+  resolveTitleForLeftoverCheck,
   runAmendDeps,
   taskIdFromTitle,
   validateAmendFlags
@@ -324,6 +325,46 @@ describe('printLeftoverStatus', () => {
     expect(() => printLeftoverStatus('some-tranche', '7', () => null)).not.toThrow()
     expect(log).toHaveBeenCalledWith(expect.stringContaining('could not check'))
     log.mockRestore()
+  })
+})
+
+describe('resolveTitleForLeftoverCheck (the create-path coverage restored on review, #311 round 2)', () => {
+  it('uses the argv title on create — never touches the injected fetcher', () => {
+    const fetchTitle = vi.fn(() => 'should not be called')
+    const title = resolveTitleForLeftoverCheck(
+      ['--title', '[vinaya-ui-pages-v1] 3 — Build /compare'],
+      false,
+      null,
+      fetchTitle
+    )
+    expect(title).toBe('[vinaya-ui-pages-v1] 3 — Build /compare')
+    expect(fetchTitle).not.toHaveBeenCalled()
+  })
+
+  it('uses the argv title on edit when one is given — never touches the injected fetcher', () => {
+    const fetchTitle = vi.fn(() => 'should not be called')
+    const title = resolveTitleForLeftoverCheck(
+      ['--title', '[vinaya-ui-pages-v1] 3 — Retitled'],
+      true,
+      '919',
+      fetchTitle
+    )
+    expect(title).toBe('[vinaya-ui-pages-v1] 3 — Retitled')
+    expect(fetchTitle).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the injected fetcher on edit with no argv title — the common body-only re-plan', () => {
+    const fetchTitle = vi.fn((issueRef: string) => (issueRef === '919' ? '[vinaya-ui-pages-v1] 3 — From forge' : null))
+    const title = resolveTitleForLeftoverCheck(['--body-file', '/tmp/body.md'], true, '919', fetchTitle)
+    expect(title).toBe('[vinaya-ui-pages-v1] 3 — From forge')
+    expect(fetchTitle).toHaveBeenCalledWith('919')
+  })
+
+  it('returns null on create with no argv title, without ever calling the fetcher — create always requires --title to open the Issue at all, but this function must not assume that and reach for the forge', () => {
+    const fetchTitle = vi.fn(() => 'should not be called')
+    const title = resolveTitleForLeftoverCheck(['--body-file', '/tmp/body.md'], false, null, fetchTitle)
+    expect(title).toBeNull()
+    expect(fetchTitle).not.toHaveBeenCalled()
   })
 })
 
