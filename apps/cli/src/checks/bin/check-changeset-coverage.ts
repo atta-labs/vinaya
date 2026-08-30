@@ -18,7 +18,10 @@
  * scope: diff, ring 0 (registry.ts) — offline and diff-only, so the managed
  * local hooks can run it; CI re-runs it like every `--all --diff-only`
  * check. `env: {}`: every fact this bin needs comes from already-local git
- * state and the working tree's own manifests, no caller-supplied override.
+ * state and the working tree's own manifests — this bin reads no env var of
+ * its own at all (the current branch is `git rev-parse`d directly, never
+ * `process.env.BRANCH`), so there is nothing for the runner's env allowlist
+ * to need to strip in the first place.
  *
  * Release-branch exemption: reuses `@attalabs/aeg-core`'s own
  * `CHANGESET_RELEASE_BRANCH` constant — the same one `check-body-bare-digits.ts`'s
@@ -137,12 +140,40 @@ function main(): void {
   const root = repoRoot() ?? process.cwd()
 
   const changedAbs = resolveChangedFiles()
-  if (changedAbs === null || changedAbs.length === 0) {
+  // `null` (indeterminate — a shallow clone, no merge base, an orphan or
+  // bare/single-commit history) is NOT the same fact as `[]` (a real,
+  // resolved, genuinely empty diff) — collapsing the two into the same
+  // silent pass is the exact fail-open class `diff-evidence.ts`'s own
+  // module doc documents as a real, reproduced incident (review finding,
+  // PR #290). This check has no non-diff-dependent corpus to fall back to
+  // the way `retired-vocabulary`/`reader-resolvable-prose` do (their
+  // "report everything unfiltered" fallback), so the loud direction here is
+  // a `warning` finding naming the ambiguity — never a bypass, and still
+  // exit `0` always, same report-only contract as every other outcome.
+  if (changedAbs === null) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'warning',
+      message:
+        'changeset-coverage: could not determine this diff against origin/main or main (a shallow clone, no merge base, or an orphan/single-commit history) — shipped-path coverage could not be evaluated for this diff.',
+      agent_recovery_prompt:
+        'Fetch enough history to establish a real merge base against origin/main (e.g. remove a shallow --depth from the checkout, or run `git fetch --unshallow`), then re-run `vinaya check changeset-coverage`.'
+    })
+    process.exit(0)
+  }
+  if (changedAbs.length === 0) {
     process.exit(0)
   }
   const changedFiles = changedAbs.map((p) => toPosix(relative(root, p)))
 
-  const branch = process.env.BRANCH || git(['rev-parse', '--abbrev-ref', 'HEAD'])
+  // Always self-computed via git, never `process.env.BRANCH` — this check
+  // declares `env: {}` (registry.ts) and the runner's env allowlist already
+  // strips any caller-supplied BRANCH before the real registered path ever
+  // spawns this bin, so reading it here would only be live for a direct,
+  // out-of-band invocation of this file — a narrow, needless spoofing
+  // surface for a fact `git rev-parse` already gives for free.
+  const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'])
   const isReleaseBranch = branch === CHANGESET_RELEASE_BRANCH
 
   const workspaceMembers = resolveWorkspaceMembers(root)
