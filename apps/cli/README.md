@@ -210,6 +210,7 @@ Full field-by-field reference: [vinaya.attalabs.dev/docs/cli](https://vinaya.att
 - `agent_recovery_prompt` is a corrective **instruction**, not a restated diagnosis — it tells the model what to do, not what is wrong (that's `message`'s job).
 - Never self-enforce a timeout — the runner does that (`vinaya.config.json`'s `timeoutMs`, or the runner's default).
 - Never reach the network unless explicitly declared as an exception (today: none of the custom-check surface; the core `coherence`/`dispatch-readiness` checks are the only declared exceptions).
+- `token-collection-wired` (ring 0, part of `vinaya check --all --local`'s managed hooks) is a worked example of this contract's narrowest shape: it consults only local `fs`/`process.env` — no PR body, no network — and refuses a commit only when the host's token-metering probe (`resolveMeteringCapability`, `@attalabs/aeg-core`) found something wired (a transcript pointer resolved) that it then could not reach. A host never wired to meter at all passes; that is the sanctioned operator-metered case, not a wiring defect.
 
 `vinaya new check <yourname>/<id>` scaffolds a worked, self-contained example that honors this contract out of the box, and prints the exact — namespaced — registration to paste.
 
