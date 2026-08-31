@@ -9,6 +9,10 @@ sidebar_title: "Template: Issue rationale"
 
 [tranche-slug] [n] — [task title, repeated from the Issue title]
 
+**Tier:** [0 | 1 | 3]
+**Project:** [project(s), comma-separated, matching the blast radius stated in the "Project(s) + blast radius" field below]
+**Type:** [build | chore | docs | feat | fix | perf | refactor | revert | style | test — the commit-type word this task belongs to; free-text metadata, not a forge label]
+
 ## Planner's rationale
 
 **Boundary** — [BOUNDARY — what this task is and, crucially, what it is NOT: what was deliberately split out, where the edges sit. Make the in/out sets concrete enough that the Brief Author can bound a file surface from them.]
@@ -30,7 +34,3 @@ sidebar_title: "Template: Issue rationale"
 ## Origin
 
 [ORIGIN — where this task came from: Principal-directed, backlog item, incident follow-up — with dates and the Issue/PR references that motivated it.]
-
-**Tier:** [0 | 1 | 3]
-**Project:** [project(s), comma-separated, matching the blast radius above]
-**Type:** [build | chore | docs | feat | fix | perf | refactor | revert | style | test — one, matching a `vinaya/type:*` label]
