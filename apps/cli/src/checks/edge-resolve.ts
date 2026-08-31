@@ -18,6 +18,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
+import { deriveTrancheFromForge, fetchForgeFacts, splitSlugQualifiedEdge } from '@attalabs/aeg-forge-state'
 
 export type ResolvedEdge = {
   issue: number | null
@@ -26,6 +27,15 @@ export type ResolvedEdge = {
   issueState: 'open' | 'closed' | null
   stateReason: 'completed' | 'not_planned' | null
   closedByActor: string | null
+  /**
+   * `false` only when this edge matched no known shape at all — not a
+   * same-tranche task id, nothing containing `#NNN`, and (for a
+   * slug-qualified edge) either the slug or the task id doesn't resolve on
+   * the forge. Distinct from every other field staying at its unmerged/
+   * not-open default, which also covers a resolvable edge whose target
+   * lookup itself failed (an outage) — that case is `resolved: true` (#196).
+   */
+  resolved: boolean
 }
 
 export type EdgeTaskRef = { id: string; issue: number | null }
@@ -101,9 +111,40 @@ function fetchIssueState(num: number, repo: EdgeRepo): IssueStateJson | null {
   return out
 }
 
+/** One sibling tranche's tasks + forge facts — everything a slug-qualified
+ * edge (`<slug> <n>`) needs to resolve the same way a same-tranche edge
+ * resolves. */
+export type SiblingTranche = { tasks: Map<string, EdgeTaskRef>; facts: Map<string, EdgeFactsSubset> }
+
+/** Injectable so tests can fake a sibling tranche without a real forge call.
+ * `null` means the slug does not resolve on the forge at all. The default
+ * impl reuses `deriveTrancheFromForge`/`fetchForgeFacts` — the same
+ * primitives `check-dispatch-readiness.ts` already calls for its own
+ * tranche, not a second forge-read path. */
+export type SiblingTrancheResolver = (slug: string, repo: EdgeRepo) => Promise<SiblingTranche | null>
+
+const defaultResolveSiblingTranche: SiblingTrancheResolver = async (slug, repo) => {
+  let tranche: Awaited<ReturnType<typeof deriveTrancheFromForge>>
+  try {
+    tranche = await deriveTrancheFromForge(repo.owner, repo.repo, slug)
+  } catch {
+    return null
+  }
+  const taskRefs = tranche.tasks.map((t) => ({ id: t.id, issue: t.issue }))
+  const snapshot = await fetchForgeFacts({ owner: repo.owner, repo: repo.repo, tranche: slug, tasks: taskRefs })
+  return {
+    tasks: new Map(tranche.tasks.map((t) => [t.id, { id: t.id, issue: t.issue }])),
+    facts: snapshot.facts
+  }
+}
+
+/** Keyed by `owner/repo:slug` — mirrors `issueCache`'s repo-scoping reasoning. */
+const siblingTrancheCache = new Map<string, SiblingTranche | null>()
+
 /** Test seam — the parity test drives real fixtures through the pure half. */
 export function clearEdgeCache(): void {
   issueCache.clear()
+  siblingTrancheCache.clear()
 }
 
 /**
@@ -131,7 +172,15 @@ export function clearEdgeCache(): void {
  */
 export function edgeFromIssueJson(num: number, json: IssueStateJson | null): ResolvedEdge {
   if (json === null) {
-    return { issue: num, merged: false, open: false, issueState: null, stateReason: null, closedByActor: null }
+    return {
+      issue: num,
+      merged: false,
+      open: false,
+      issueState: null,
+      stateReason: null,
+      closedByActor: null,
+      resolved: true
+    }
   }
   const state = json.state === 'CLOSED' ? 'closed' : json.state === 'OPEN' ? 'open' : null
   const reason =
@@ -143,20 +192,25 @@ export function edgeFromIssueJson(num: number, json: IssueStateJson | null): Res
     open: false,
     issueState: state,
     stateReason: reason,
-    closedByActor: null
+    closedByActor: null,
+    resolved: true
   }
 }
 
 /**
- * Resolve one edge: a same-tranche task id from already-fetched facts, or a
- * `#NNN` reference by looking the Issue up.
+ * Resolve one edge: a same-tranche task id from already-fetched facts, a
+ * `#NNN` reference by looking the Issue up, or a slug-qualified bare task id
+ * (`<slug> <n>`) by looking the sibling tranche up (#196) — the same
+ * `SLUG_QUALIFIED_ID` form `@attalabs/aeg-forge-state`'s grammar sanctions
+ * and `packages/aeg-core/bin/verify-dispatch.ts`'s resolver already handles.
  */
-export function resolveEdge(
+export async function resolveEdge(
   id: string,
   taskById: Map<string, EdgeTaskRef>,
   factsByTaskId: Map<string, EdgeFactsSubset>,
-  repo: EdgeRepo
-): ResolvedEdge {
+  repo: EdgeRepo,
+  resolveSibling: SiblingTrancheResolver = defaultResolveSiblingTranche
+): Promise<ResolvedEdge> {
   const target = taskById.get(id)
   if (target) {
     const facts = target.issue !== null ? factsByTaskId.get(target.id) : undefined
@@ -166,7 +220,8 @@ export function resolveEdge(
       open: facts?.prState === 'open',
       issueState: facts?.issueState ?? null,
       stateReason: facts?.stateReason ?? null,
-      closedByActor: facts?.closedByActor ?? null
+      closedByActor: facts?.closedByActor ?? null,
+      resolved: true
     }
   }
   const direct = id.match(DIRECT_ISSUE_REF)
@@ -174,8 +229,39 @@ export function resolveEdge(
     const num = Number(direct[1])
     return edgeFromIssueJson(num, fetchIssueState(num, repo))
   }
-  // Neither a same-tranche task id nor anything containing a `#NNN` reference.
-  // Genuinely unresolvable with this toolset, and the one case where the
+  const qualified = splitSlugQualifiedEdge(id)
+  if (qualified) {
+    const cacheKey = `${repo.owner}/${repo.repo}:${qualified.slug}`
+    let sibling = siblingTrancheCache.get(cacheKey)
+    if (sibling === undefined) {
+      sibling = await resolveSibling(qualified.slug, repo)
+      siblingTrancheCache.set(cacheKey, sibling)
+    }
+    const siblingTask = sibling?.tasks.get(qualified.bareId)
+    if (sibling && siblingTask) {
+      const facts = siblingTask.issue !== null ? sibling.facts.get(siblingTask.id) : undefined
+      return {
+        issue: siblingTask.issue,
+        merged: facts?.prState === 'merged',
+        open: facts?.prState === 'open',
+        issueState: facts?.issueState ?? null,
+        stateReason: facts?.stateReason ?? null,
+        closedByActor: facts?.closedByActor ?? null,
+        resolved: true
+      }
+    }
+  }
+  // Neither a same-tranche task id, anything containing a `#NNN` reference,
+  // nor a slug-qualified edge whose slug AND task both resolve on the forge.
+  // Genuinely unresolvable with this toolset — the one case where the
   // conservative default is the honest answer rather than a missing query.
-  return { issue: null, merged: false, open: false, issueState: null, stateReason: null, closedByActor: null }
+  return {
+    issue: null,
+    merged: false,
+    open: false,
+    issueState: null,
+    stateReason: null,
+    closedByActor: null,
+    resolved: false
+  }
 }

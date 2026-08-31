@@ -119,21 +119,26 @@ async function classifyReadiness(trancheSlug: string, taskId: string): Promise<D
     const taskById = new Map(tranche.tasks.map((t) => [t.id, t]))
     const factsByTaskId = snapshot.facts
 
-    const dependsOn: DispatchDependsOnFact[] = task.dependsOn.map((dep) => {
-      const r = resolveEdge(dep, taskById, factsByTaskId, repo)
-      return {
-        id: dep,
-        issue: r.issue,
-        merged: r.merged,
-        issueState: r.issueState,
-        stateReason: r.stateReason,
-        closedByActor: r.closedByActor
-      }
-    })
-    const conflictsWith: DispatchConflictsWithFact[] = task.conflictsWith.map((c) => {
-      const r = resolveEdge(c, taskById, factsByTaskId, repo)
-      return { id: c, issue: r.issue, openOrInFlight: r.open }
-    })
+    const dependsOn: DispatchDependsOnFact[] = await Promise.all(
+      task.dependsOn.map(async (dep) => {
+        const r = await resolveEdge(dep, taskById, factsByTaskId, repo)
+        return {
+          id: dep,
+          issue: r.issue,
+          merged: r.merged,
+          resolved: r.resolved,
+          issueState: r.issueState,
+          stateReason: r.stateReason,
+          closedByActor: r.closedByActor
+        }
+      })
+    )
+    const conflictsWith: DispatchConflictsWithFact[] = await Promise.all(
+      task.conflictsWith.map(async (c) => {
+        const r = await resolveEdge(c, taskById, factsByTaskId, repo)
+        return { id: c, issue: r.issue, openOrInFlight: r.open }
+      })
+    )
 
     const input: DispatchGateInput = {
       trancheSlug,
