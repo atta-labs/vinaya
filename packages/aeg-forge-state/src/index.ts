@@ -1,5 +1,7 @@
 export { amendRationaleDeps } from './amend-rationale-deps'
 export type { AmendDepsInput } from './amend-rationale-deps'
+export { checkMilestoneAttachment } from './check-milestone-attachment'
+export type { MilestoneAttachmentReport } from './check-milestone-attachment'
 export { deriveTrancheFromForge, trancheFromIssues } from './derive-from-forge'
 export {
   findMilestoneAttachTargetForSlug,
