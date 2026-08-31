@@ -26,6 +26,23 @@ export const ID_TOKEN = /^(?:[\w.-]+\s+)?#?\d+[a-z]?$/i
  * `3`). */
 const SLUG_QUALIFIED_ID = /^([\w.-]+)\s+(#?\d+[a-z]?)$/i
 
+export type SlugQualifiedEdge = { slug: string; bareId: string }
+
+/**
+ * Splits a raw `Depends-on`/`Conflicts-with` edge string against
+ * `SLUG_QUALIFIED_ID` — `null` for an edge with no slug qualifier (a bare
+ * task id or a bare `#NNN`). Exported so every resolver of a cross-tranche
+ * edge (`verify-dispatch.ts`'s `resolveDependsOn`/`resolveConflictsWith`,
+ * `apps/cli`'s `edge-resolve.ts`) reuses this exact split instead of
+ * re-deriving a second copy of the regex — one grammar, N consumers (#196).
+ * Does not change what the grammar accepts; only exposes the existing split.
+ */
+export function splitSlugQualifiedEdge(edge: string): SlugQualifiedEdge | null {
+  const m = edge.trim().match(SLUG_QUALIFIED_ID)
+  if (!m) return null
+  return { slug: m[1] as string, bareId: m[2] as string }
+}
+
 function isEmptyMarker(s: string): boolean {
   const t = s.trim()
   return t === '' || t === '—' || t === '-' || t === '–'
