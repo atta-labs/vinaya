@@ -305,7 +305,9 @@ export function resolveMeteringCapability(
  * or stale pointer pass silently — the exact wired-but-unreachable state this
  * check exists to refuse.
  */
-export function isTokenCollectionWiringBroken(capability: MeteringCapability): boolean {
+export function isTokenCollectionWiringBroken(
+  capability: MeteringCapability
+): capability is { capable: false; reason: MeteringIncapableReason; detail: string } {
   if (capability.capable) return false
   return capability.reason !== 'no-transcript-resolved'
 }

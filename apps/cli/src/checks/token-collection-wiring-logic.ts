@@ -11,7 +11,12 @@
  * (`transcript-unreadable`/`transcript-empty` — something WAS wired but
  * reaching it failed) fails — lives in `@attalabs/aeg-core`'s
  * `isTokenCollectionWiringBroken`, shared verbatim with this repo's own
- * self-hosting `packages/aeg-core/bin/check-token-collection-wired.ts` gate
+ * shipped check — there is no second bin. An `aeg-core` bin briefly existed
+ * only so `registry-scaffold.ts`'s classifier had a candidate to place an
+ * `enforcement.md` stub row for; it shipped to nobody (`aeg-core`'s `files`
+ * is `["src", …]`) and made the row cite a path no adopter has. The row now
+ * cites this shipped check directly, as `main-branch-refusal`'s row does,
+ * so the bin had no remaining purpose
  * (the `isNewDiskStateFile` precedent: one predicate, two thin shims). This
  * module's only job is wrapping that one boolean into this check's
  * `CheckError` contract, naming the wiring `capability.detail` already
@@ -26,8 +31,11 @@ export function evaluateTokenCollectionWiring(
   checkName: string,
   capability: MeteringCapability
 ): TokenCollectionWiringResult {
+  // `isTokenCollectionWiringBroken` is a type predicate, so a false result
+  // narrows `capability` for the caller and no second `capable` re-guard is
+  // needed — an earlier revision carried one purely to satisfy the compiler,
+  // where it read as dead code.
   if (!isTokenCollectionWiringBroken(capability)) return { pass: true }
-  if (capability.capable) return { pass: true }
 
   return {
     pass: false,
