@@ -140,6 +140,22 @@ export async function prVerifyEvidenceCommand(args: string[]): Promise<void> {
     process.exit(2)
   }
 
+  // Local guards FIRST, before anything touches the network.
+  //
+  // They ran after the `gh` call until now, which had two consequences. A user
+  // in the wrong directory, or with an unreachable forge, got a generic
+  // "could not read pull request" instead of the actionable local message that
+  // names what to fix. And the guard test suite carried an undisclosed live
+  // dependency: it claimed to be network-free and was not, passing only
+  // because `gh` happened to work. Substituting a failing `gh` on PATH made
+  // the network error fire first, which is how a reviewer found it.
+  //
+  // Cheap, deterministic, offline refusals belong ahead of an expensive one
+  // that can fail for reasons the caller cannot act on.
+  assertRepoRootCwd()
+  assertCleanWorktree()
+  assertNoBaseOverride()
+
   let body: string
   let forgeHead: string
   try {
@@ -151,10 +167,6 @@ export async function prVerifyEvidenceCommand(args: string[]): Promise<void> {
     process.exit(1)
     return
   }
-
-  assertRepoRootCwd()
-  assertCleanWorktree()
-  assertNoBaseOverride()
 
   // Head binding, not head attestation. Printing the local head to stderr and
   // trusting the reader to compare it is the same shape as the hand-pasted
