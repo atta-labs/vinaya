@@ -87,6 +87,45 @@ function assertNoBaseOverride(): void {
   process.exit(2)
 }
 
+/**
+ * Refuses unless the process cwd IS the repository root.
+ *
+ * `buildReport()` spawns the gate suite with `cwd: process.cwd()`
+ * (`pr-report.ts`'s `runRealGates`), and several gates resolve their scan root
+ * from that cwd. Run from `apps/cli` there is no `aeg-root/` above them, so
+ * `reader-resolvable-prose` collects nothing and `registry-gates` reports
+ * itself dormant — an entire class of findings vanishes from the regenerated
+ * Group B with no error, and a block with those findings deleted compares
+ * MATCH.
+ *
+ * Two reviewers demonstrated it independently at the same head, on a clean
+ * tree with the correct head and no `BASE_SHA`: a fabricated block reported
+ * DIFFERS naming every deleted warning from the repo root, and MATCH from
+ * `apps/cli`. Only the cwd changed.
+ *
+ * `assertCleanWorktree` already pins its own `git status` to `repoRoot()`,
+ * with a comment saying a subdirectory invocation must not narrow what is
+ * inspected. That reasoning was applied to the cheap half and not to the half
+ * that decides the verdict. This closes it.
+ *
+ * Refusing rather than `chdir`-ing: a silent `chdir` would make the command
+ * quietly do something other than what the caller asked, and every other guard
+ * in this module refuses. Refusals cannot manufacture a MATCH — the failure
+ * direction that matters here — whereas a wrong cwd can.
+ */
+function assertRepoRootCwd(): void {
+  const root = repoRoot()
+  const cwd = process.cwd()
+  if (cwd === root) return
+  process.stderr.write(
+    `pr verify-evidence: REFUSED — run this from the repository root (${root}), not ${cwd}.\n` +
+      'The regeneration inherits this working directory, and several gates resolve their scan root from it,\n' +
+      'so a subdirectory silently narrows what the fresh run inspects and can report MATCH on a block that\n' +
+      'omits real findings.\n'
+  )
+  process.exit(2)
+}
+
 function repoRoot(): string {
   return execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
 }
@@ -113,6 +152,7 @@ export async function prVerifyEvidenceCommand(args: string[]): Promise<void> {
     return
   }
 
+  assertRepoRootCwd()
   assertCleanWorktree()
   assertNoBaseOverride()
 
