@@ -220,11 +220,8 @@ describe('resolveMeteringCapability', () => {
       })
     )
     expect(result.capable).toBe(false)
-    // Was `no-transcript-resolved` until 2026-08-30. That expectation encoded
-    // the defect two independent reviewers found: a pointer that EXISTS and is
-    // corroborated as stale for this session is wiring that resolved and could
-    // not be reached — precisely what the gate refuses — and calling it
-    // "nothing was ever wired" let it pass silently.
+    // A pointer whose recorded id disagrees with ours is provably NOT this
+    // session's, so it is the can't-claim-it case and passes.
     if (!result.capable) expect(result.reason).toBe('no-transcript-resolved')
   })
 
@@ -350,16 +347,20 @@ describe('reason ↔ probe condition, and what each means for the wiring gate', 
     expect(isTokenCollectionWiringBroken(r)).toBe(false)
   })
 
-  // The three conditions an earlier revision passed silently. Each is a pointer
-  // that EXISTS and is corroborated as this session's — wired, and unreachable.
-  it('pointer present but UNREADABLE, corroborated — wiring defect, FAILS', () => {
-    const r = probe(world({ sessionId: 's1', pointer: 'unreadable' }))
+  // Conditions an earlier revision passed silently. These two do NOT establish
+  // corroboration and must not claim to: an unreadable pointer's id is never
+  // read, and a malformed one carries none. They refuse on the other ground —
+  // a file we own at our own pointer path that we cannot use, which is broken
+  // wiring whoever wrote it. Hence no session id in the fixtures.
+  it('pointer present but UNREADABLE — ours by location, wiring defect, FAILS', () => {
+    const r = probe(world({ pointer: 'unreadable' }))
     if (r.capable) throw new Error('unreachable')
     expect(r.reason).toBe('pointer-unusable')
     expect(isTokenCollectionWiringBroken(r)).toBe(true)
   })
 
-  it('pointer present but MALFORMED, corroborated — wiring defect, FAILS', () => {
+  it('pointer present but MALFORMED — ours by location, FAILS with or without a session id', () => {
+    expect(probe(world({ pointer: 'no-tab-no-path' })).capable).toBe(false)
     const r = probe(world({ sessionId: 's1', pointer: 'no-tab-no-path' }))
     if (r.capable) throw new Error('unreachable')
     expect(r.reason).toBe('pointer-unusable')
@@ -409,10 +410,22 @@ describe('reason ↔ probe condition, and what each means for the wiring gate', 
     expect(r.detail).toContain('could not be shown to belong to this session')
   })
 
-  it('UNCORROBORATED pointer that is itself broken — PASSES for the same reason', () => {
-    const r = probe(world({ pointer: 'unreadable' }))
+  // The BLOCKER a reviewer proved end to end against the real Stop hook body.
+  // The hook writes `(session_id || "") + "\t" + path`, so a Stop payload with
+  // no session id yields a pointer beginning with a TAB. `.trim()` ate it, the
+  // split found no separator, and a pointer naming a present, readable,
+  // summarizable transcript was called malformed — refusing every commit on a
+  // host that meters perfectly.
+  it('a pointer with an EMPTY session-id field still resolves — the leading tab survives', () => {
+    const r = probe(world({ pointer: `\t${TRANSCRIPT}`, transcript: REAL_JSONL }))
+    expect(r.capable).toBe(true)
+    expect(isTokenCollectionWiringBroken(r)).toBe(false)
+  })
+
+  it('a stale pointer degrades its DETAIL as well as its reason, so the pair cannot contradict', () => {
+    const r = probe(world({ sessionId: 's2', pointer: `s1\t${TRANSCRIPT}`, transcript: REAL_JSONL }))
     if (r.capable) throw new Error('unreachable')
     expect(r.reason).toBe('no-transcript-resolved')
-    expect(isTokenCollectionWiringBroken(r)).toBe(false)
+    expect(r.detail).toContain('belongs to another session')
   })
 })

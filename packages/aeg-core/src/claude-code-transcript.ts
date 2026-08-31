@@ -146,7 +146,16 @@ function transcriptPointerPath(projectDir: string, tmpDir: string): string {
  */
 type PointerResolution =
   | { path: string; corroborated: boolean }
-  | { error: string; pointerExisted: boolean; corroborated: boolean }
+  /**
+   * `corroborated` — we read the pointer's session id and it is ours.
+   * `oursByLocation` — we could NOT read an id, but the file sits at this
+   * project's own pointer path and is owned by this user. Two different
+   * grounds, deliberately not one field: an earlier revision set
+   * `corroborated: Boolean(currentSessionId)` on branches where the id was
+   * never read, which asserted a match that had not been established and put
+   * three shipped docs at odds with the code.
+   */
+  | { error: string; pointerExisted: boolean; corroborated?: boolean; oursByLocation?: boolean }
 
 function resolvePointer(explicitTranscriptPath: string | undefined, deps: MeteringCapabilityDeps): PointerResolution {
   // A caller-named transcript is self-corroborating: they told us which file
@@ -178,12 +187,26 @@ function resolvePointer(explicitTranscriptPath: string | undefined, deps: Meteri
 
   let contents: string
   try {
-    contents = deps.readFile(pointerPath).trim()
+    // Trailing newline only — NEVER `.trim()`. The shipped Stop hook writes
+    // `(hook.session_id || "") + "\t" + transcript_path`, so a Stop payload
+    // carrying no `session_id` produces a pointer beginning with a TAB.
+    // `.trim()` ate that leading tab, `split('\t')` then found no separator,
+    // and a pointer naming a present, readable, summarizable transcript was
+    // classified malformed — refusing every commit on a host that meters
+    // perfectly. Proven end to end against the real hook body.
+    contents = deps.readFile(pointerPath).replace(/\r?\n+$/, '')
   } catch (err) {
     return {
       pointerExisted: true,
-      corroborated: Boolean(currentSessionId),
-      error: `Transcript pointer at ${pointerPath} could not be read: ${(err as Error).message}`
+      // NOT a corroboration claim: an unreadable pointer's session id is never
+      // read, so nothing here can show whose it is. The refusal rests on a
+      // different and sufficient ground — this is OUR project's pointer path,
+      // holding a file WE own, which we cannot use. That is broken wiring
+      // whoever wrote it, and it is repaired by removing the file.
+      oursByLocation: true,
+      error:
+        `Transcript pointer at ${pointerPath} could not be read: ${(err as Error).message}. ` +
+        'Remove that file to clear this — the Stop hook rewrites it on the next turn.'
     }
   }
 
@@ -191,12 +214,17 @@ function resolvePointer(explicitTranscriptPath: string | undefined, deps: Meteri
   if (!transcriptPath) {
     return {
       pointerExisted: true,
-      corroborated: Boolean(currentSessionId),
+      // Same ground as the unreadable branch, and NOT a corroboration claim: a
+      // malformed pointer carries no parseable session id, so whose it is
+      // cannot be established. Ours by location and ownership, and unusable.
+      oursByLocation: true,
       // Bounded: this echoes an on-disk file's contents into check output,
       // which in the hook path reaches commit output and CI logs. The guard
       // upstream proves the file is owned by this user, so it is not
       // attacker-controlled — but an unbounded echo is still wrong.
-      error: `Transcript pointer file ${pointerPath} is malformed: "${contents.slice(0, 120)}${contents.length > 120 ? '…' : ''}"`
+      error:
+        `Transcript pointer file ${pointerPath} is malformed: "${contents.slice(0, 120)}${contents.length > 120 ? '…' : ''}". ` +
+        'Remove that file to clear this — the Stop hook rewrites it on the next turn.'
     }
   }
 
@@ -254,9 +282,23 @@ export function resolveMeteringCapability(
     // absence of wiring — but only when we can corroborate it is ours.
     // Uncorroborated, it is indistinguishable from another session's leftover
     // and degrades to the sanctioned operator-metered case.
-    const reason: MeteringIncapableReason =
-      resolved.pointerExisted && resolved.corroborated ? 'pointer-unusable' : 'no-transcript-resolved'
-    return { capable: false, reason, detail: resolved.error }
+    // Refuse when the pointer is ours on EITHER ground: its id matches, or it
+    // is a file we own at our own pointer path that we cannot use. Pass when
+    // it is provably another session's (the stale branch sets neither).
+    const ours = resolved.pointerExisted && (resolved.corroborated || resolved.oursByLocation)
+    if (ours) return { capable: false, reason: 'pointer-unusable', detail: resolved.error }
+    // Degraded, so the detail is rewritten to match. An earlier revision
+    // degraded only the reason on this path, leaving a `no-transcript-resolved`
+    // verdict whose detail described a pointer that HAD resolved — the
+    // contradictory pair that reaches `vinaya doctor` and `pr report`'s token
+    // cell. The original condition is kept, marked as diagnostic.
+    return {
+      capable: false,
+      reason: 'no-transcript-resolved',
+      detail: resolved.pointerExisted
+        ? `A transcript pointer exists but belongs to another session, so this session has no wiring of its own to use. (Underlying condition, for diagnosis only: ${resolved.error})`
+        : resolved.error
+    }
   }
 
   // Downstream transcript failures gate only on a corroborated pointer, for the

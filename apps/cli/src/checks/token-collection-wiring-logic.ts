@@ -13,11 +13,11 @@
  * `isTokenCollectionWiringBroken`, shared verbatim with this repo's own
  * shipped check — there is no second bin.
  *
- * Refuses on `pointer-unusable` (the pointer itself is unreadable or
- * malformed), `transcript-unreadable`, and `transcript-empty`. Passes on
- * `no-transcript-resolved`, which now covers both "no pointer at all" and "a
- * pointer that cannot be shown to be this session's" — including a stale one
- * left by another session in the same project directory. An `aeg-core` bin briefly existed
+ * Refuses on `pointer-unusable`, `transcript-unreadable` and
+ * `transcript-empty`. Passes on `no-transcript-resolved`, which covers both
+ * "no pointer at all" and "a pointer that provably belongs to another
+ * session" — including a stale one left by a sibling session in the same
+ * project directory. An `aeg-core` bin briefly existed
  * only so `registry-scaffold.ts`'s classifier had a candidate to place an
  * `enforcement.md` stub row for; it shipped to nobody (`aeg-core`'s `files`
  * is `["src", …]`) and made the row cite a path no adopter has. The row now

@@ -123,7 +123,19 @@ describe('token-collection-wired — pointer hardening (CWE-59)', () => {
     expect(run()).toBe(1)
   })
 
-  it('refuses rather than following a symlinked transcript, and does not hang on a FIFO transcript', () => {
+  it('refuses rather than following a symlinked transcript', () => {
+    const realTranscript = join(dir, 'elsewhere.jsonl')
+    writeFileSync(realTranscript, REAL_JSONL)
+    const linked = join(dir, 'linked.jsonl')
+    symlinkSync(realTranscript, linked)
+    writeFileSync(pointerPath, `sess-1\t${linked}\n`)
+    // The symlink is refused, not followed — even though its target is a
+    // perfectly good transcript. Following it would let whoever controls the
+    // pointer steer what gets read.
+    expect(run()).toBe(1)
+  })
+
+  it('does not hang on a FIFO transcript', () => {
     const fifoTranscript = join(dir, 'fifo.jsonl')
     execFileSync('mkfifo', [fifoTranscript])
     writeFileSync(pointerPath, `sess-1\t${fifoTranscript}\n`)
