@@ -69,9 +69,12 @@ function existsFn(path: string): boolean {
 
 /**
  * `.husky/*` (excluding the `_` internal dir), `.claude/hooks/*.sh`,
- * `packages/aeg-core/bin/*.ts` (excluding `*.test.ts` — tests aren't
- * hooks/CLIs that enforcement.md would ever register; including them would
- * flood G2 with noise the brief's own dig never contemplated).
+ * `packages/aeg-core/bin/*.ts`, and `apps/cli/src/checks/bin/*.ts` (each
+ * excluding `*.test.ts` — tests aren't hooks/CLIs that enforcement.md would
+ * ever register; including them would flood G2 with noise the brief's own
+ * dig never contemplated). The fourth location (Issue #307) is where most
+ * core check bins actually live — the classifier (`registry-scaffold.ts`)
+ * can only place a stub for a candidate reaching it from here.
  */
 function globCandidateFiles(): string[] {
   const out: string[] = []
@@ -105,6 +108,13 @@ function globCandidateFiles(): string[] {
   for (const name of readdirSync(binDir)) {
     if (name.endsWith('.ts') && !name.endsWith('.test.ts')) {
       out.push(`packages/aeg-core/bin/${name}`)
+    }
+  }
+
+  const cliBinDir = join(REPO_ROOT, 'apps/cli/src/checks/bin')
+  for (const name of readdirSync(cliBinDir)) {
+    if (name.endsWith('.ts') && !name.endsWith('.test.ts')) {
+      out.push(`apps/cli/src/checks/bin/${name}`)
     }
   }
 

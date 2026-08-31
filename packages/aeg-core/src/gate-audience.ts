@@ -105,6 +105,49 @@ export const GATE_AUDIENCE: Record<string, GateAudience> = {
 export const SHIPPED_BIN_AUDIENCE: Record<string, GateAudience> = {}
 
 /**
+ * `name` -> `ring` for every check registered in `coreCheckRegistry()` whose
+ * bin lives under `apps/cli/src/checks/bin/` — the direct analogue of
+ * `ShippedGate.ring` above, for the OTHER directory. Mirrors
+ * `apps/cli/src/checks/registry.ts`'s `CORE_CHECK_RING` — duplicated, not
+ * imported, for the identical dependency-cycle reason `ShippedGate.ring`'s
+ * own comment gives: `aeg-core` cannot import `apps/cli`. This is the
+ * registry-derived fact `registry-scaffold.ts` reads to place a stub row for
+ * an `apps/cli/src/checks/bin/` G2 candidate; a bin whose stripped name has
+ * no entry here gets no stub — same no-guess discipline `classify()`
+ * already applies to `packages/aeg-core/bin/` candidates via
+ * `GATE_AUDIENCE`. Kept from drifting by `shipped-bin-audience.test.ts`
+ * (`apps/cli`)'s own ring-parity block, the only place both sides are in
+ * scope at once — same shape as this file's `ShippedGate.ring` check.
+ */
+export const CLI_CHECK_RING: Readonly<Record<string, 0 | 1 | 2>> = {
+  'brief-shape': 0,
+  'doc-coverage': 0,
+  coherence: 0,
+  'dispatch-readiness': 0,
+  'closes-n': 1,
+  'single-plan-pr': 0,
+  'test-plan': 1,
+  'body-bare-digits': 1,
+  'no-disk-state': 0,
+  'registry-gates': 0,
+  'review-gate': 1,
+  'branch-topology': 0,
+  'dead-branch-push': 0,
+  'first-push-dispatch': 0,
+  'doc-coverage-push': 0,
+  'issue-assignment': 0,
+  'evidence-fresh': 1,
+  'reader-resolvable-prose': 0,
+  'retired-vocabulary': 0,
+  'doctrine-portability': 0,
+  'workspace-escape': 0,
+  'changeset-coverage': 0,
+  'quoted-command': 0,
+  'main-branch-refusal': 0,
+  'token-collection-wired': 0
+}
+
+/**
  * Files in `bin/` that are not gates and therefore have no audience: forge
  * writers and one-shot reporters. Listed explicitly rather than pattern-matched
  * so a NEW file cannot slip through by being named unlike a gate.
