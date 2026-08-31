@@ -18,7 +18,7 @@ import {
   checkAdoptable,
   checkMilestoneShape
 } from '@attalabs/aeg-core'
-import { trancheLabel } from '@attalabs/aeg-forge-state'
+import { checkMilestoneAttachment, resolveMilestoneAttachTarget, trancheLabel } from '@attalabs/aeg-forge-state'
 import { detectGitRepo } from '../lib/detect.js'
 import { printJson } from '../lib/envelope.js'
 import {
@@ -35,6 +35,7 @@ import {
 const RETRY_CREATE = 'vinaya milestone create --title <title> --body-file <path>'
 const RETRY_ADOPT = 'vinaya milestone adopt --target <title> --slug <slug> [--slug <slug> ...]'
 const RETRY_EDIT = 'vinaya milestone edit <n> --body-file <path>'
+const RETRY_CLOSE = 'vinaya milestone close --slug <slug>'
 
 function sh(args: string[], input?: string): string {
   // `env: process.env` is explicit, not redundant — same reason `waiver.ts`'s
@@ -301,7 +302,7 @@ export async function milestoneEditCommand(args: string[]): Promise<void> {
 // history and Issue associations survive).
 
 type GhLabelEntry = { name: string }
-type GhMilestoneEntry = { number: number; title: string; state: 'open' | 'closed' }
+type GhMilestoneEntry = { number: number; title: string; description: string | null; state: 'open' | 'closed' }
 type GhIssueRef = { number: number; state: 'OPEN' | 'CLOSED'; milestone: { title: string } | null }
 
 function extractTarget(args: string[]): string | null {
@@ -327,8 +328,13 @@ function extractSlugs(args: string[]): string[] {
   return slugs
 }
 
-/** A failed forge READ, before any refusal has run — same `CheckError` shape every other forge-fetch failure in this file uses. */
-function ghJsonOrRefuse<T>(args: string[], what: string): T {
+/**
+ * A failed forge READ, before any refusal has run — same `CheckError` shape
+ * every other forge-fetch failure in this file uses. `retryCommand` names
+ * whichever invocation actually failed (`adopt` and `close` both share this
+ * helper rather than each keeping its own fetch-or-refuse copy).
+ */
+function ghJsonOrRefuse<T>(args: string[], what: string, retryCommand: string): T {
   try {
     return shJson<T>(args)
   } catch (e) {
@@ -336,7 +342,7 @@ function ghJsonOrRefuse<T>(args: string[], what: string): T {
       makeCheckError(
         'forge-fetch',
         `could not fetch ${what} from the forge: ${ghErrorDetail(e)}`,
-        `Check \`gh auth status\` and network, then re-run \`${RETRY_ADOPT}\`.`
+        `Check \`gh auth status\` and network, then re-run \`${retryCommand}\`.`
       )
     ])
   }
@@ -357,11 +363,13 @@ function fetchAdoptFacts(
 ): { facts: AdoptFacts; milestones: GhMilestoneEntry[] } {
   const labels = ghJsonOrRefuse<GhLabelEntry[]>(
     ['gh', 'api', `repos/${repoFlag}/labels?per_page=100`],
-    "this repo's labels"
+    "this repo's labels",
+    RETRY_ADOPT
   )
   const milestones = ghJsonOrRefuse<GhMilestoneEntry[]>(
     ['gh', 'api', `repos/${repoFlag}/milestones?state=all&per_page=100`],
-    "this repo's Milestones"
+    "this repo's Milestones",
+    RETRY_ADOPT
   )
 
   const targetMilestone = milestones.find((m) => m.title === target)
@@ -390,7 +398,8 @@ function fetchAdoptFacts(
             '--limit',
             '200'
           ],
-          `Issues for \`${trancheLabel(slug)}\``
+          `Issues for \`${trancheLabel(slug)}\``,
+          RETRY_ADOPT
         )
       : []
 
@@ -519,4 +528,172 @@ export async function milestoneAdoptCommand(args: string[]): Promise<void> {
       process.stdout.write(`${a.slug}: ${a.issueCount} Issue(s) → "${target}"${closedNote}\n`)
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// `vinaya milestone close` — replaces the raw `gh api .../milestones/<n> -X
+// PATCH -f state=closed` recipe `tranche-archivist.md` step 3 used to carry,
+// unconditionally, on faith. The one forge write in the whole lifecycle that
+// shipped with zero validation in front of it (Issue #301): step 1 verifies
+// each task Issue is CLOSED and LABELED, never that it is ATTACHED (the
+// native `milestone` field) — an assumption that was live-false (`vinaya
+// issue create` never attached before #300's fix) and is checked here, on
+// the write, rather than trusted. `checkMilestoneAttachment`
+// (`@attalabs/aeg-forge-state`) is the pure diff between the two forge facts;
+// this command's only job is fetching them and gating the PATCH on the
+// result — same discipline as every other forge write in this file.
+// ---------------------------------------------------------------------------
+
+function extractSlug(args: string[]): string | null {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string
+    if (a === '--slug') return args[i + 1] ?? null
+    if (a.startsWith('--slug=')) return a.slice('--slug='.length)
+  }
+  return null
+}
+
+export async function milestoneCloseCommand(args: string[]): Promise<void> {
+  const json = args.includes('--json')
+  const validateOnly = args.includes('--validate-only')
+  const rest = args.filter((a) => a !== '--json' && a !== '--validate-only')
+
+  const slug = extractSlug(rest)
+  if (!slug) {
+    refuse([
+      makeCheckError(
+        'forge-args',
+        '`vinaya milestone close` requires a `--slug <slug>` — the tranche whose Milestone is being closed.',
+        `Add \`--slug <slug>\`, then re-run \`${RETRY_CLOSE}\`.`
+      )
+    ])
+  }
+
+  const repoFlag = await resolveRepoFlagOrRefuse(RETRY_CLOSE)
+
+  // ---- resolve the target Milestone — same legacy-or-intent-declared match
+  // `resolveMilestoneAttachTarget` already applies at Issue-create time
+  // (#300) — closing must find the same Milestone an Issue's auto-attach
+  // would have named, or step 3's recipe silently does nothing for any
+  // intent-declared tranche, exactly the gap this task exists to close. ----
+  const milestones = ghJsonOrRefuse<GhMilestoneEntry[]>(
+    ['gh', 'api', `repos/${repoFlag}/milestones?state=all&per_page=100`],
+    "this repo's Milestones",
+    RETRY_CLOSE
+  )
+
+  const target = resolveMilestoneAttachTarget(milestones, slug)
+  if (!target) {
+    refuse([
+      makeCheckError(
+        'milestone-close',
+        `No OPEN Milestone resolves for tranche \`${slug}\` — it may already be closed, or never had one attached.`,
+        `Confirm with \`gh issue list --label ${trancheLabel(slug)} --json milestone\`, or run \`vinaya milestone ` +
+          `create\`/\`${RETRY_ADOPT}\` if a Milestone is genuinely still owed, then re-run \`${RETRY_CLOSE}\`.`
+      )
+    ])
+  }
+
+  // ---- gather the two facts the pure function diffs — both fetched here,
+  // never inside `checkMilestoneAttachment` itself. ----
+  const labeledIssues = ghJsonOrRefuse<GhIssueRef[]>(
+    [
+      'gh',
+      'issue',
+      'list',
+      '-R',
+      repoFlag,
+      '--label',
+      trancheLabel(slug),
+      '--state',
+      'all',
+      '--json',
+      'number,state,milestone',
+      '--limit',
+      '200'
+    ],
+    `Issues for \`${trancheLabel(slug)}\``,
+    RETRY_CLOSE
+  )
+
+  const attachedIssues = ghJsonOrRefuse<GhIssueRef[]>(
+    [
+      'gh',
+      'issue',
+      'list',
+      '-R',
+      repoFlag,
+      '--milestone',
+      target.title,
+      '--state',
+      'all',
+      '--json',
+      'number,state,milestone',
+      '--limit',
+      '200'
+    ],
+    `Issues attached to Milestone "${target.title}"`,
+    RETRY_CLOSE
+  )
+
+  const report = checkMilestoneAttachment(
+    labeledIssues.map((i) => i.number),
+    attachedIssues.map((i) => i.number)
+  )
+
+  // ---- refuse on any mismatch, naming the repair path — BEFORE the PATCH,
+  // always. ----
+  if (report.status === 'mismatch') {
+    const errors = []
+    if (report.unattached.length > 0) {
+      errors.push(
+        makeCheckError(
+          'milestone-close',
+          `Issue(s) ${report.unattached.map((n) => `#${n}`).join(', ')} carry \`${trancheLabel(slug)}\` but ` +
+            `are not attached to Milestone "${target.title}".`,
+          `Attach each with \`gh issue edit <n> --milestone "${target.title}"\`, then re-run \`${RETRY_CLOSE}\`.`
+        )
+      )
+    }
+    if (report.foreign.length > 0) {
+      errors.push(
+        makeCheckError(
+          'milestone-close',
+          `Issue(s) ${report.foreign.map((n) => `#${n}`).join(', ')} are attached to Milestone "${target.title}" ` +
+            `but do not carry \`${trancheLabel(slug)}\` — closing would end tracking for whatever they belong to as well.`,
+          `Move them with \`${RETRY_ADOPT}\` if they belong to a different tranche, or \`gh issue edit <n> ` +
+            `--milestone <title>\` to relocate them, then re-run \`${RETRY_CLOSE}\`.`
+        )
+      )
+    }
+    refuse(errors)
+  }
+
+  if (validateOnly) {
+    if (json) printJson({ validated: true, written: false, command: 'milestone close', number: target.number })
+    else {
+      process.stdout.write(
+        `✓ Milestone "${target.title}" (#${target.number}) attachment verified — nothing written (--validate-only).\n`
+      )
+    }
+    return
+  }
+
+  // ---- then write — never before every refusal above has run ----
+  let out: string
+  try {
+    out = sh(['gh', 'api', '-X', 'PATCH', `repos/${repoFlag}/milestones/${target.number}`, '-f', 'state=closed'])
+  } catch (e) {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `\`gh api repos/${repoFlag}/milestones/${target.number}\` failed: ${ghErrorDetail(e)}`,
+        `Check \`gh auth status\` and network, then re-run \`${RETRY_CLOSE}\`.`
+      )
+    ])
+  }
+
+  const closed = JSON.parse(out) as { number: number; html_url: string }
+  if (json) printJson({ validated: true, written: true, number: closed.number, url: closed.html_url })
+  else process.stdout.write(`${closed.html_url}\n`)
 }

@@ -259,6 +259,19 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'milestone close',
+    description: "Close a tranche's Milestone after verifying every labeled Issue is actually attached",
+    flags: [
+      { flag: '--slug', description: 'The tranche whose Milestone is being closed' },
+      { flag: '--validate-only', description: 'Run every gate and report PASS without closing the Milestone' },
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
+    ],
+    details: [
+      "Resolves the target Milestone the same legacy-or-intent-declared way Issue create auto-attach does, then refuses to close on any mismatch between the label's Issues and the Milestone's natively attached Issues — naming each unattached or foreign Issue and its repair path (`gh issue edit <n> --milestone <title>`, or `vinaya milestone adopt`) — before the PATCH ever reaches the forge."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'review post',
     description: 'Render, post, and self-verify a code-reviewer or security-review verdict comment on a PR',
     flags: [
