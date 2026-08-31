@@ -76,6 +76,7 @@ import {
   listActiveTrancheSlugs,
   resolveGithubToken,
   resolveRepo,
+  splitSlugQualifiedEdge,
   type RepoRef
 } from '@attalabs/aeg-forge-state'
 import {
@@ -200,52 +201,135 @@ function resolveSameTrancheTask(edge: string, tranche: Tranche): Task | undefine
   return tranche.tasks.find((t) => t.id === edge.trim())
 }
 
-function resolveDependsOn(
+/** A sibling tranche's tasks + its branch-PR state — everything a
+ * slug-qualified edge (`<slug> <n>`) needs to resolve the same way a
+ * same-tranche edge resolves. */
+export type SiblingTranche = { tranche: Tranche; branchPrs: Map<string, PrListEntry> }
+
+/** Injectable so tests can fake a sibling tranche without a real forge call.
+ * `null` means the slug does not resolve on the forge at all (unknown
+ * tranche) — the default impl reuses `deriveTrancheFromForge`, the same
+ * derivation every other tranche lookup in this file already uses (one
+ * derivation, N consumers — not a second forge-read path). */
+export type SiblingTrancheResolver = (slug: string, repo: RepoRef) => Promise<SiblingTranche | null>
+
+const defaultResolveSiblingTranche: SiblingTrancheResolver = async (slug, repo) => {
+  try {
+    const tranche = await deriveTrancheFromForge(repo.owner, repo.repo, slug)
+    return { tranche, branchPrs: fetchTrancheBranchPrs(slug, repo) }
+  } catch {
+    return null
+  }
+}
+
+/** Resolves one task the same way a same-tranche `Depends-on` edge resolves
+ * — reused for both the current tranche and a sibling tranche found via a
+ * slug-qualified edge. */
+function dependsOnFactForTask(
+  edge: string,
+  task: Task,
+  pr: PrListEntry | undefined,
+  repo: RepoRef
+): DispatchDependsOnFact {
+  if (pr) return { id: edge, issue: task.issue, merged: pr.state === 'MERGED' }
+  if (task.issue !== null) {
+    const issueJson = ghIssueView(task.issue, repo)
+    return { id: edge, issue: task.issue, merged: issueJson?.state === 'CLOSED' }
+  }
+  return { id: edge, issue: null, merged: false }
+}
+
+export async function resolveDependsOn(
   edges: string[],
   tranche: Tranche,
   branchPrs: Map<string, PrListEntry>,
-  repo: RepoRef
-): DispatchDependsOnFact[] {
-  return edges.map((edge) => {
+  repo: RepoRef,
+  resolveSibling: SiblingTrancheResolver = defaultResolveSiblingTranche
+): Promise<DispatchDependsOnFact[]> {
+  const siblingCache = new Map<string, SiblingTranche | null>()
+  const facts: DispatchDependsOnFact[] = []
+  for (const edge of edges) {
     const sameTask = resolveSameTrancheTask(edge, tranche)
     if (sameTask) {
-      const pr = branchPrs.get(sameTask.id)
-      if (pr) return { id: edge, issue: sameTask.issue, merged: pr.state === 'MERGED' }
-      if (sameTask.issue !== null) {
-        const issueJson = ghIssueView(sameTask.issue, repo)
-        return { id: edge, issue: sameTask.issue, merged: issueJson?.state === 'CLOSED' }
-      }
-      return { id: edge, issue: null, merged: false }
+      facts.push(dependsOnFactForTask(edge, sameTask, branchPrs.get(sameTask.id), repo))
+      continue
     }
     const directIssue = directIssueNumFromEdge(edge)
     if (directIssue !== null) {
       const issueJson = ghIssueView(directIssue, repo)
-      return { id: edge, issue: directIssue, merged: issueJson?.state === 'CLOSED' }
+      facts.push({ id: edge, issue: directIssue, merged: issueJson?.state === 'CLOSED' })
+      continue
     }
-    // Unresolvable edge (neither a same-tranche task id nor a #NNN ref) —
-    // conservative default: treat as unmerged so dispatch blocks rather than
-    // silently proceeding. Known limitation, see PR body.
-    return { id: edge, issue: null, merged: false }
-  })
+    const qualified = splitSlugQualifiedEdge(edge)
+    if (qualified) {
+      let sibling = siblingCache.get(qualified.slug)
+      if (sibling === undefined) {
+        sibling = await resolveSibling(qualified.slug, repo)
+        siblingCache.set(qualified.slug, sibling)
+      }
+      const siblingTask = sibling ? resolveSameTrancheTask(qualified.bareId, sibling.tranche) : undefined
+      if (sibling && siblingTask) {
+        facts.push(dependsOnFactForTask(edge, siblingTask, sibling.branchPrs.get(siblingTask.id), repo))
+        continue
+      }
+    }
+    // Genuinely unresolvable: neither a same-tranche task id, anything
+    // containing a `#NNN` reference, nor a slug-qualified edge whose slug
+    // AND task both resolve on the forge. Still blocks (conservative
+    // default), but flagged distinctly from "not merged yet" (#196) —
+    // dispatch-gate.ts reads `resolved: false` to report UNRESOLVABLE
+    // rather than misattributing the failure to the forge.
+    facts.push({ id: edge, issue: null, merged: false, resolved: false })
+  }
+  return facts
 }
 
-function resolveConflictsWith(
+export async function resolveConflictsWith(
   edges: string[],
   tranche: Tranche,
-  branchPrs: Map<string, PrListEntry>
-): DispatchConflictsWithFact[] {
-  return edges.map((edge) => {
+  branchPrs: Map<string, PrListEntry>,
+  repo: RepoRef,
+  resolveSibling: SiblingTrancheResolver = defaultResolveSiblingTranche
+): Promise<DispatchConflictsWithFact[]> {
+  const siblingCache = new Map<string, SiblingTranche | null>()
+  const facts: DispatchConflictsWithFact[] = []
+  for (const edge of edges) {
     const sameTask = resolveSameTrancheTask(edge, tranche)
     if (sameTask) {
       const pr = branchPrs.get(sameTask.id)
-      return { id: edge, issue: sameTask.issue, openOrInFlight: pr ? pr.state === 'OPEN' : false }
+      facts.push({ id: edge, issue: sameTask.issue, openOrInFlight: pr ? pr.state === 'OPEN' : false })
+      continue
     }
     const directIssue = directIssueNumFromEdge(edge)
-    // No branch-PR knowledge for a cross-tranche edge — default to
-    // not-blocking (a conflict only matters if a PR genuinely exists and is
-    // open; we have no evidence of one). Known limitation, see PR body.
-    return { id: edge, issue: directIssue, openOrInFlight: false }
-  })
+    if (directIssue !== null) {
+      // No branch-PR knowledge for a cross-tranche #NNN edge — default to
+      // not-blocking (a conflict only matters if a PR genuinely exists and
+      // is open; we have no evidence of one). Known limitation, unchanged.
+      facts.push({ id: edge, issue: directIssue, openOrInFlight: false })
+      continue
+    }
+    const qualified = splitSlugQualifiedEdge(edge)
+    if (qualified) {
+      let sibling = siblingCache.get(qualified.slug)
+      if (sibling === undefined) {
+        sibling = await resolveSibling(qualified.slug, repo)
+        siblingCache.set(qualified.slug, sibling)
+      }
+      const siblingTask = sibling ? resolveSameTrancheTask(qualified.bareId, sibling.tranche) : undefined
+      if (sibling && siblingTask) {
+        const pr = sibling.branchPrs.get(siblingTask.id)
+        facts.push({ id: edge, issue: siblingTask.issue, openOrInFlight: pr ? pr.state === 'OPEN' : false })
+        continue
+      }
+    }
+    // Genuinely unresolvable (or a resolvable slug with no matching task) —
+    // conservative default stays "not blocking": a conflict only matters
+    // while a PR genuinely exists and is open, and there is no evidence of
+    // one. Unlike depends-on, no message is ever emitted for this case, so
+    // there is no misleading "unmerged"-style claim to correct here.
+    facts.push({ id: edge, issue: null, openOrInFlight: false })
+  }
+  return facts
 }
 
 /**
@@ -766,8 +850,8 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
   const issueRationalePass = issueJson ? checkIssueRationale(issueJson.body).status === 'pass' : true
 
   const branchPrs = fetchTrancheBranchPrs(trancheSlug, repo)
-  const dependsOn = resolveDependsOn(task.dependsOn, tranche as Tranche, branchPrs, repo)
-  const conflictsWith = resolveConflictsWith(task.conflictsWith, tranche as Tranche, branchPrs)
+  const dependsOn = await resolveDependsOn(task.dependsOn, tranche as Tranche, branchPrs, repo)
+  const conflictsWith = await resolveConflictsWith(task.conflictsWith, tranche as Tranche, branchPrs, repo)
 
   const priorTaskRaw = resolvePriorTaskRaw(tranche as Tranche, taskId)
   let provenanceByIssue = new Map<number, boolean>()
