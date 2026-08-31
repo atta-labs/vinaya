@@ -76,7 +76,14 @@ describe('token-collection-wired — pointer hardening (CWE-59)', () => {
   // path must not be able to steer what the check reads, nor to block commits.
   it('IGNORES a symlink planted at the pointer path, rather than following it', () => {
     const realPointer = join(dir, 'attacker-controlled.txt')
-    writeFileSync(realPointer, `sess-1\t${transcriptPath}\n`)
+    // The attacker's file names a transcript that does NOT exist. That is what
+    // makes this test discriminate: without the guard the symlink is followed,
+    // the missing transcript is reached, and the check exits 1. With the guard
+    // the symlink is never read and the result is exit 0. An earlier version
+    // pointed the attacker's file at a VALID transcript, so both the guarded
+    // and unguarded paths exited 0 and the assertion proved nothing — the
+    // steering attack it is named for was exactly what it could not see.
+    writeFileSync(realPointer, `sess-1\t${join(dir, 'no-such-transcript.jsonl')}\n`)
     symlinkSync(realPointer, pointerPath)
     // Ignored means "no pointer", which is the sanctioned operator-metered case
     // — a pass. Refusing here would hand the attacker a commit-blocking denial

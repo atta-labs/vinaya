@@ -22,5 +22,9 @@ doctrine row cite a path no adopter has. The row now cites the shipped
 itself stays in `aeg-core` on its own merits — a pure function of a type that
 package owns.
 
-`isTokenCollectionWiringBroken` is now a type predicate, which removes the
-narrowing re-guards that read as dead code at both call sites.
+`isTokenCollectionWiringBroken` briefly became a type predicate in this branch
+and was reverted before release: as a predicate it was unsound, since `false`
+also covers the sanctioned incapable case, so the negative branch narrowed to
+`capable: true` and a `.summary` dereference compiled clean while throwing at
+runtime. It ships as a plain boolean. Recorded here because these notes are the
+published changelog and a reader must not be told a predicate exists.
