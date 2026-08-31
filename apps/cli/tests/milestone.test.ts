@@ -48,7 +48,7 @@ function initGitRepo(cwd: string): void {
 }
 
 type IssueFixture = { number: number; state: 'OPEN' | 'CLOSED'; milestone: { title: string } | null }
-type MilestoneFixture = { number: number; title: string; state: 'open' | 'closed' }
+type MilestoneFixture = { number: number; title: string; description?: string; state: 'open' | 'closed' }
 
 function fakeAdoptGh(
   logPath: string,
@@ -511,5 +511,204 @@ describe('vinaya milestone adopt', () => {
     const log = ghLog()
     expect(log).not.toContain('issue edit 201')
     expect(log).not.toContain('PATCH')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// `vinaya milestone close` (Issue #301) — the attachment gate the raw
+// `gh api .../milestones/<n> -X PATCH -f state=closed` recipe in
+// `tranche-archivist.md` step 3 never had. Same fake-`gh`-on-PATH technique:
+// one case for the Milestone list fetch, one for the `--label`-filtered
+// labeled-Issue fetch, one for the `--milestone`-filtered attached-Issue
+// fetch, and PATCH for the close write itself.
+// ---------------------------------------------------------------------------
+
+function fakeCloseGh(
+  logPathArg: string,
+  opts: {
+    milestones: MilestoneFixture[]
+    labeledIssuesBySlug: Record<string, IssueFixture[]>
+    attachedIssuesByTitle: Record<string, IssueFixture[]>
+  }
+): string {
+  // `printf '%s\n'`, never `echo` — a Milestone description can carry real
+  // newlines (`### Tranche intents` needs its own line), and dash's `echo`
+  // is XSI-conformant: it reinterprets a literal `\n` inside the quoted JSON
+  // as an actual newline BEFORE `gh api`'s caller ever sees it, corrupting
+  // the JSON (`Unterminated string`) the moment a fixture's description
+  // isn't single-line. `printf`'s `%s` argument is never escape-expanded.
+  const milestonesJson = JSON.stringify(opts.milestones)
+  const labelCases = Object.entries(opts.labeledIssuesBySlug)
+    .map(([slug, issues]) => `  *"--label vinaya/tranche:${slug}"*) printf '%s\\n' '${JSON.stringify(issues)}' ;;`)
+    .join('\n')
+  const attachedCases = Object.entries(opts.attachedIssuesByTitle)
+    .map(([title, issues]) => `  *"--milestone ${title} --state"*) printf '%s\\n' '${JSON.stringify(issues)}' ;;`)
+    .join('\n')
+  return `#!/usr/bin/env sh
+echo "$@" >> "${logPathArg}"
+case "$*" in
+  *"milestones?state=all"*) printf '%s\\n' '${milestonesJson}' ;;
+${labelCases}
+${attachedCases}
+  *"-X PATCH"*) printf '%s\\n' '{"number":1,"html_url":"https://github.com/test-owner/test-repo/milestone/1"}' ;;
+  *) printf '%s\\n' '[]' ;;
+esac
+exit 0
+`
+}
+
+function installFakeCloseGh(opts: {
+  milestones: MilestoneFixture[]
+  labeledIssuesBySlug: Record<string, IssueFixture[]>
+  attachedIssuesByTitle: Record<string, IssueFixture[]>
+}): void {
+  const { dir, log } = newFakeGhBinDir('close')
+  binDir = dir
+  logPath = log
+  activateFakeGh(dir, fakeCloseGh(log, opts))
+}
+
+describe('vinaya milestone close', () => {
+  let cwd: string
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-milestone-close-test-'))
+    initGitRepo(cwd)
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+    process.env.PATH = originalPath
+    rmSync(binDir, { recursive: true, force: true })
+  })
+
+  it('closes the legacy-titled Milestone when every labeled Issue is attached and nothing foreign is (clean path)', () => {
+    installFakeCloseGh({
+      milestones: [{ number: 5, title: 'tranche-a', state: 'open' }],
+      labeledIssuesBySlug: {
+        'tranche-a': [
+          { number: 101, state: 'CLOSED', milestone: { title: 'tranche-a' } },
+          { number: 102, state: 'CLOSED', milestone: { title: 'tranche-a' } }
+        ]
+      },
+      attachedIssuesByTitle: {
+        'tranche-a': [
+          { number: 101, state: 'CLOSED', milestone: { title: 'tranche-a' } },
+          { number: 102, state: 'CLOSED', milestone: { title: 'tranche-a' } }
+        ]
+      }
+    })
+
+    const r = runCli(['milestone', 'close', '--slug', 'tranche-a'], cwd)
+
+    expect(r.status).toBe(0)
+    expect(ghLog()).toContain('-X PATCH repos/test-owner/test-repo/milestones/5')
+    expect(r.stdout).toContain('milestone/1')
+  })
+
+  it('resolves an intent-declared Milestone by its own title, not the slug, and closes it (clean path)', () => {
+    const description = ['Ship the Engine.', '', '### Tranche intents', '- engine-v1: Real agent spawn.'].join('\n')
+    installFakeCloseGh({
+      milestones: [{ number: 64, title: 'Engine', description, state: 'open' }],
+      labeledIssuesBySlug: {
+        'engine-v1': [{ number: 981, state: 'CLOSED', milestone: { title: 'Engine' } }]
+      },
+      attachedIssuesByTitle: {
+        Engine: [{ number: 981, state: 'CLOSED', milestone: { title: 'Engine' } }]
+      }
+    })
+
+    const r = runCli(['milestone', 'close', '--slug', 'engine-v1'], cwd)
+
+    expect(r.status).toBe(0)
+    expect(ghLog()).toContain('-X PATCH repos/test-owner/test-repo/milestones/64')
+  })
+
+  it('refuses — names the Issue and the repair path — when a labeled Issue is never attached (the live #301 defect)', () => {
+    installFakeCloseGh({
+      milestones: [{ number: 5, title: 'tranche-a', state: 'open' }],
+      labeledIssuesBySlug: {
+        'tranche-a': [
+          { number: 101, state: 'CLOSED', milestone: { title: 'tranche-a' } },
+          { number: 102, state: 'CLOSED', milestone: null }
+        ]
+      },
+      attachedIssuesByTitle: {
+        'tranche-a': [{ number: 101, state: 'CLOSED', milestone: { title: 'tranche-a' } }]
+      }
+    })
+
+    const r = runCli(['milestone', 'close', '--slug', 'tranche-a'], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('milestone-close')
+    expect(finding.message).toContain('#102')
+    expect(finding.agent_recovery_prompt).toContain('gh issue edit')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+
+  it("refuses — names the foreign Issue — when the Milestone holds an Issue outside the closing tranche's label", () => {
+    installFakeCloseGh({
+      milestones: [{ number: 5, title: 'tranche-a', state: 'open' }],
+      labeledIssuesBySlug: {
+        'tranche-a': [{ number: 101, state: 'CLOSED', milestone: { title: 'tranche-a' } }]
+      },
+      attachedIssuesByTitle: {
+        'tranche-a': [
+          { number: 101, state: 'CLOSED', milestone: { title: 'tranche-a' } },
+          { number: 999, state: 'OPEN', milestone: { title: 'tranche-a' } }
+        ]
+      }
+    })
+
+    const r = runCli(['milestone', 'close', '--slug', 'tranche-a'], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('milestone-close')
+    expect(finding.message).toContain('#999')
+    expect(finding.message).toContain('do not carry')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+
+  it('refuses before any write when no open Milestone resolves for the slug', () => {
+    installFakeCloseGh({ milestones: [], labeledIssuesBySlug: {}, attachedIssuesByTitle: {} })
+
+    const r = runCli(['milestone', 'close', '--slug', 'no-such-tranche'], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('milestone-close')
+    expect(finding.message).toContain('No OPEN Milestone resolves')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+
+  it('--validate-only verifies attachment and writes nothing', () => {
+    installFakeCloseGh({
+      milestones: [{ number: 5, title: 'tranche-a', state: 'open' }],
+      labeledIssuesBySlug: {
+        'tranche-a': [{ number: 101, state: 'CLOSED', milestone: { title: 'tranche-a' } }]
+      },
+      attachedIssuesByTitle: {
+        'tranche-a': [{ number: 101, state: 'CLOSED', milestone: { title: 'tranche-a' } }]
+      }
+    })
+
+    const r = runCli(['milestone', 'close', '--slug', 'tranche-a', '--validate-only'], cwd)
+
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('verified')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+
+  it('refuses when --slug is missing', () => {
+    installFakeCloseGh({ milestones: [], labeledIssuesBySlug: {}, attachedIssuesByTitle: {} })
+
+    const r = runCli(['milestone', 'close'], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.message).toContain('--slug')
+    expect(ghLog()).toBe('')
   })
 })
