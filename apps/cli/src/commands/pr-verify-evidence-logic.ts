@@ -70,7 +70,11 @@ export type EvidenceVerdict =
  * fence and the `Summary:` line.
  */
 export function publishedMergeBase(region: string): string | null {
-  const m = region.match(/^\s*`git diff ([0-9a-f]{7,40})\.\.\.[0-9a-f]{7,40} --numstat`\s*$/m)
+  // `[ \t]*` rather than `\s*`: with `\s` (which matches newlines) and the `m`
+  // flag, the leading and trailing quantifiers overlap across lines and the
+  // match goes quadratic — measured at 3.5s on a 65 KB body, and this runs
+  // twice per invocation over attacker-authored text.
+  const m = region.match(/^[ \t]*`git diff ([0-9a-f]{7,40})\.\.\.[0-9a-f]{7,40} --numstat`[ \t]*$/m)
   return m ? (m[1] as string) : null
 }
 
@@ -87,16 +91,26 @@ export function normaliseLines(region: string, repoRoot: string): string[] {
   for (const raw of region.split('\n')) {
     // Two passes, because the published block and the fresh one are often
     // generated on DIFFERENT machines — CI and a laptop — and only the local
-    // root is known here. First the local root, then any absolute prefix
-    // sitting immediately before a top-level entry of this repo, which is what
-    // a foreign checkout root looks like from here. Without the second pass an
-    // identical finding rooted at `/home/runner/work/vinaya/vinaya` and at
-    // `/private/tmp/wt310` compared as two different lines — the module's own
-    // first justification claimed it handled that and did not.
+    // root is known here.
+    //
+    // The second pass is anchored HARD, and the anchoring is the whole safety
+    // property. An earlier revision matched any interior segment sitting before
+    // a known directory name, which collapsed two genuinely different in-repo
+    // files onto one line — `packages/sources/tests/a.spec.ts` and
+    // `packages/aeg-core/tests/a.spec.ts` both became `packagestests/a.spec.ts`
+    // — and a body containing both then compared MATCH. That is the exact
+    // false-MATCH class this command refuses a dirty worktree to prevent, and
+    // it was reachable from pull-request text alone.
+    //
+    // So: only an ABSOLUTE path, only at a token boundary (line start or after
+    // whitespace), and only immediately before a real top-level entry of this
+    // repository. `tests` is deliberately absent from that list — it is not a
+    // top-level directory here, and including it is what made the match
+    // interior. A relative path is never rewritten.
     const localStripped = root ? raw.split(`${root}/`).join('').split(root).join('') : raw
     const stripped = localStripped.replace(
-      /\/\S*?\/(?=(?:apps|packages|aeg-root|scripts|tests|\.changeset|\.vinaya|\.github)\/)/g,
-      ''
+      /(^|\s)\/\S*?\/(?=(?:apps|packages|aeg-root|scripts|\.changeset|\.vinaya|\.github)\/)/g,
+      '$1'
     )
     // C0 controls and DEL are removed before anything is echoed. These lines
     // come from a pull-request body, which in an adopter repo is written by
@@ -104,8 +118,14 @@ export function normaliseLines(region: string, repoRoot: string): string[] {
     // or an ANSI-rendering CI log and forge this tool's own MATCH text over
     // its DIFFERS header. Stripping here rather than at render time keeps the
     // comparison and the output reading the same bytes.
+    // C0 and DEL, plus the vectors a C0-only strip leaves behind: U+0080-U+009F
+    // (C1, including U+009B CSI — an alternate escape introducer), U+0085 /
+    // U+2028 / U+2029 (Unicode line terminators, which can split one line into
+    // two in a renderer), and U+202A-U+202E / U+2066-U+2069 (bidi overrides,
+    // which reorder displayed text without changing bytes). All of these reach
+    // a terminal or an ANSI-rendering CI log through the rendered verdict.
     // biome-ignore lint/suspicious/noControlCharactersInRegex: removing them is the point
-    const line = stripped.replace(/[\u0000-\u001F\u007F]/g, ' ').trim()
+    const line = stripped.replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g, ' ').trim()
     if (line) out.push(line)
   }
   return out
@@ -189,7 +209,7 @@ export function renderVerdict(verdict: EvidenceVerdict): string {
     )
   } else {
     lines.push(
-      'The merge-base is unchanged, so drift does not explain this: the block was hand-edited, or written from a run other than the one it claims.'
+      'No merge-base difference was detected — either the base is unchanged, or one side carries no readable Group A command line to compare. Drift therefore does not account for this difference.'
     )
   }
   lines.push('', 'Regenerate with `vinaya pr report --write <body-file>` and push.')

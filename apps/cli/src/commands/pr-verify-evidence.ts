@@ -65,6 +65,28 @@ function assertCleanWorktree(): void {
   process.exit(2)
 }
 
+/**
+ * Refuses when an environment override would steer the regeneration.
+ *
+ * `buildReport` resolves its merge-base from `process.env.BASE_SHA || 'origin/main'`
+ * (`pr-report.ts`), so a `BASE_SHA` set to the published block's own base makes
+ * a drifted comparison look like a shared-base one. That is the same
+ * contamination class as a dirty worktree — an input this command does not
+ * control silently changing what "a fresh run" means — and it is refused for
+ * the same reason: a verifier that can be quietly steered toward MATCH is worse
+ * than no verifier.
+ */
+function assertNoBaseOverride(): void {
+  const override = process.env.BASE_SHA
+  if (!override) return
+  process.stderr.write(
+    `pr verify-evidence: REFUSED — BASE_SHA is set (${override}).\n` +
+      'The regeneration resolves its merge-base from that variable, so an override changes what a "fresh run"\n' +
+      'means and can turn a drifted comparison into an apparently shared-base one. Unset it and re-run.\n'
+  )
+  process.exit(2)
+}
+
 function repoRoot(): string {
   return execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
 }
@@ -92,13 +114,24 @@ export async function prVerifyEvidenceCommand(args: string[]): Promise<void> {
   }
 
   assertCleanWorktree()
+  assertNoBaseOverride()
 
   // Head binding, not head attestation. Printing the local head to stderr and
   // trusting the reader to compare it is the same shape as the hand-pasted
   // claims this command exists to abolish — and a verdict redirected to a file
   // would carry no commit at all. A mismatch refuses.
   const localHead = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
-  if (forgeHead && forgeHead !== localHead) {
+  if (!forgeHead) {
+    // Fails CLOSED. An absent `headRefOid` means the binding could not be
+    // established, and silently skipping the check would leave the verdict
+    // unbound to any commit — the attestation-instead-of-binding shape this
+    // command exists to remove.
+    process.stderr.write(
+      `pr verify-evidence: REFUSED — could not read #${prRef}'s head from the forge, so the verdict cannot be bound to a commit.\n`
+    )
+    process.exit(2)
+  }
+  if (forgeHead !== localHead) {
     process.stderr.write(
       `pr verify-evidence: REFUSED — this checkout is at ${localHead}, but #${prRef}'s head is ${forgeHead}.\n` +
         'Comparing against a different tree produces a difference that is real and uninteresting. Check out the head first.\n'

@@ -145,10 +145,110 @@ describe('renderVerdict never asserts non-fabrication', () => {
   test('MATCH states what was actually compared rather than claiming byte equality', () => {
     const out = renderVerdict({ status: 'match' })
     expect(out).toContain('multiset')
-    expect(out).not.toContain('reproduces exactly')
+    // States the limits of what was compared, so the sentence a reviewer quotes
+    // as evidence matches what the function actually did.
+    expect(out).toContain('order and whitespace are not compared')
   })
 
   test('hidden explains why nothing can be verified', () => {
     expect(renderVerdict({ status: 'hidden' })).toContain('<details>')
+  })
+})
+
+describe('normalisation must not create a false MATCH (security review, round two)', () => {
+  // The HIGH. The foreign-root pass matched any INTERIOR segment sitting before
+  // a known directory name, so two genuinely different in-repo files collapsed
+  // onto one line and a body containing both compared MATCH — the exact
+  // false-MATCH class this command refuses a dirty worktree to prevent,
+  // reachable from pull-request text alone.
+  test('two different in-repo paths do NOT collapse onto one line', () => {
+    const a = 'packages/sources/tests/a.spec.ts'
+    const b = 'packages/aeg-core/tests/a.spec.ts'
+    expect(normaliseLines(a, ROOT)).toEqual([a])
+    expect(normaliseLines(b, ROOT)).toEqual([b])
+    expect(compareEvidence(region(a), b, ROOT).status).toBe('differs')
+  })
+
+  test('a relative path containing a top-level name is never rewritten', () => {
+    const line = 'node_modules/@attalabs/vinaya/apps/cli/x.ts'
+    expect(normaliseLines(line, ROOT)).toEqual([line])
+  })
+
+  // The property the second pass exists for must still hold.
+  test('but a genuine foreign checkout root is still normalised away', () => {
+    const ci = normaliseLines('warning: /home/runner/work/vinaya/vinaya/aeg-root/x.md:3: t', ROOT)
+    const laptop = normaliseLines('warning: /private/tmp/wt310/aeg-root/x.md:3: t', ROOT)
+    expect(ci).toEqual(laptop)
+    expect(ci).toEqual(['warning: aeg-root/x.md:3: t'])
+  })
+})
+
+describe('control-character stripping covers more than C0', () => {
+  test('C1 CSI, Unicode line terminators and bidi overrides are removed', () => {
+    const vectors = [0x9b, 0x85, 0x2028, 0x2029, 0x202e, 0x2066].map((c) => String.fromCharCode(c))
+    for (const v of vectors) {
+      const [out] = normaliseLines(`before${v}after`, ROOT)
+      expect(out).not.toContain(v)
+    }
+  })
+})
+
+describe('publishedMergeBase is linear on adversarial whitespace', () => {
+  test('a large whitespace-heavy region parses fast', () => {
+    const hostile = `${' '.repeat(65_000)}\nHead: ffff1111\n${groupA('aaaa1111')}\n`
+    const started = Date.now()
+    expect(publishedMergeBase(hostile)).toBe('aaaa1111')
+    expect(Date.now() - started).toBeLessThan(1_000)
+  })
+})
+
+describe('renderVerdict does not overclaim about the base', () => {
+  test('with no readable Group A line it says so, rather than asserting the base is unchanged', () => {
+    const out = renderVerdict({ status: 'differs', missing: ['x'], unexpected: [] })
+    expect(out).not.toContain('The merge-base is unchanged')
+    expect(out).toContain('No merge-base difference was detected')
+  })
+})
+
+describe('the hidden verdict is pinned end to end, not just at the switch arm', () => {
+  test('resolveAnchoredRegion returns hidden for a <details>-wrapped pair, and no-block for none', async () => {
+    const { ScanContext, resolveAnchoredRegion } = await import('../checks/scan-context')
+    const wrapped = [
+      '<details><summary>x</summary>',
+      '<!-- AEG:EVIDENCE:START -->',
+      'Head: aaaaaaa',
+      '<!-- AEG:EVIDENCE:END -->',
+      '</details>'
+    ].join('\n')
+    expect(resolveAnchoredRegion(ScanContext.from(wrapped), 'EVIDENCE')).toBe('hidden')
+    expect(resolveAnchoredRegion(ScanContext.from('## Summary\nno anchors'), 'EVIDENCE')).toBeNull()
+  })
+
+  test('a decoy pair inside <details> loses to the real block outside it', async () => {
+    const { ScanContext, resolveAnchoredRegion } = await import('../checks/scan-context')
+    const body = [
+      '<details><summary>worked example</summary>',
+      '<!-- AEG:EVIDENCE:START -->',
+      'DECOY',
+      '<!-- AEG:EVIDENCE:END -->',
+      '</details>',
+      '<!-- AEG:EVIDENCE:START -->',
+      'REAL',
+      '<!-- AEG:EVIDENCE:END -->'
+    ].join('\n')
+    const r = resolveAnchoredRegion(ScanContext.from(body), 'EVIDENCE')
+    if (typeof r !== 'object' || r === null) throw new Error('expected a resolved region')
+    expect(r.region).toContain('REAL')
+    expect(r.region).not.toContain('DECOY')
+  })
+})
+
+describe('whitespace normalisation is bounded, and its limit is stated', () => {
+  // Tabs collapse to spaces, so a hand-typed Group A line written with spaces
+  // compares equal to a generated tab-separated one. That is a real limit of
+  // this tool and is why it is not the only guard: `evidence-fresh` byte-
+  // verifies Group A's fence in CI, where a typed numstat cannot survive.
+  test('a tab-separated and a space-separated numstat row compare equal here', () => {
+    expect(normaliseLines('1\t0\ta.ts', ROOT)).toEqual(normaliseLines('1 0 a.ts', ROOT))
   })
 })
