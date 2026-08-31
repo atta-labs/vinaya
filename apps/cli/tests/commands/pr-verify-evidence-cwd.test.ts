@@ -18,14 +18,22 @@ describe('pr verify-evidence — refuses outside the repository root', () => {
   const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
   const ENTRY = join(REPO_ROOT, 'apps/cli/src/index.ts')
 
-  /** Runs the command from `cwd` and returns its exit code and stderr. */
+  /**
+   * Runs the command from `cwd` and returns its exit code and stderr.
+   *
+   * `BASE_SHA` is set on purpose. It trips `assertNoBaseOverride`, which runs
+   * immediately AFTER the cwd guard and before anything reaches the network —
+   * so every case here terminates on a local guard and the suite never depends
+   * on `gh`, a live pull request, or a working connection. Without it the
+   * root-cwd case fell through to a real forge call and flaked.
+   */
   function run(cwd: string): { code: number; stderr: string } {
     try {
       execFileSync('bun', [ENTRY, 'pr', 'verify-evidence', '310'], {
         cwd,
         encoding: 'utf8',
         stdio: 'pipe',
-        env: { ...process.env, GITHUB_REPOSITORY: 'atta-labs/vinaya' }
+        env: { ...process.env, GITHUB_REPOSITORY: 'atta-labs/vinaya', BASE_SHA: 'deadbeef' }
       })
       return { code: 0, stderr: '' }
     } catch (err) {
@@ -56,9 +64,16 @@ describe('pr verify-evidence — refuses outside the repository root', () => {
   })
 
   it('does NOT refuse on cwd grounds at the repository root', () => {
-    // This repo's own worktree is normally dirty while developing, so the
-    // clean-tree guard may fire here. What must NOT appear is the cwd refusal.
-    const { stderr } = run(REPO_ROOT)
+    // Reaches a LATER guard, which is the point: the cwd guard let it through.
+    // Asserting the absence of the cwd message alone would pass even if the
+    // command died earlier for some unrelated reason, so this also pins which
+    // guard it did reach.
+    const { code, stderr } = run(REPO_ROOT)
     expect(stderr).not.toContain('run this from the repository root')
+    expect(code).toBe(2)
+    // It must reach a LATER guard — which one depends on whether this working
+    // tree happens to be clean, so pinning a single message would flake. What
+    // is deterministic is that execution got PAST the cwd guard.
+    expect(stderr).toMatch(/BASE_SHA is set|uncommitted or untracked changes/)
   })
 })
