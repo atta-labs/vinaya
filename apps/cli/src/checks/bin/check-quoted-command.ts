@@ -42,7 +42,12 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
-import { evaluateCitedQuotes, findCitedQuotes, type QuotedCommandSourceFile } from '@attalabs/aeg-core'
+import {
+  evaluateCitedQuotes,
+  findCitedQuotes,
+  isValidCitedFilePath,
+  type QuotedCommandSourceFile
+} from '@attalabs/aeg-core'
 import { resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
@@ -135,9 +140,16 @@ function main(): void {
 
   const citedQuotes = findCitedQuotes(docs, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
 
+  // `findCitedQuotes` already refuses a traversal/absolute `citedFile` at
+  // discovery time — `isValidCitedFilePath` is re-checked here too, at the
+  // actual point of disk access, so this loop stays safe even for a
+  // `citedQuotes` array built by some future caller that skipped that
+  // discovery step (security finding, this check's own PR round 2: an
+  // unvalidated `citedFile` turns this check into a file-content oracle).
   const citedFileContents = new Map<string, string>()
   for (const quote of citedQuotes) {
     if (citedFileContents.has(quote.citedFile)) continue
+    if (!isValidCitedFilePath(quote.citedFile)) continue
     const abs = join(root, quote.citedFile)
     if (existsSync(abs) && statSync(abs).isFile()) {
       citedFileContents.set(quote.citedFile, readFileSync(abs, 'utf8'))

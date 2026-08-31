@@ -191,7 +191,12 @@ export {
   stripNonProse
 } from './reader-resolvable-prose'
 export type { ProseFileClass, ProseFinding, ProseSourceFile } from './reader-resolvable-prose'
-export { checkQuotedCommandStaleness, evaluateCitedQuotes, findCitedQuotes } from './quoted-command'
+export {
+  checkQuotedCommandStaleness,
+  evaluateCitedQuotes,
+  findCitedQuotes,
+  isValidCitedFilePath
+} from './quoted-command'
 export type { CitedQuote, QuotedCommandFinding, QuotedCommandSourceFile } from './quoted-command'
 export {
   PATTERN_EXEMPT,

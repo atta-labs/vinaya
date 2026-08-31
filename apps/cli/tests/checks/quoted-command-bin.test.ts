@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import type { CheckError } from '../../src/checks/contract'
 
 // Bin-level tests for check-quoted-command.ts's own I/O wiring — the pure
@@ -111,5 +111,41 @@ describe('check-quoted-command (bin) — path relativization', () => {
     const { exitCode, stderr } = await runBin(root)
     expect(exitCode).toBe(0)
     expect(parseFindings(stderr)).toEqual([])
+  })
+})
+
+describe('check-quoted-command (bin) — path-traversal file-content oracle is closed (security finding, round 2)', () => {
+  it('a `..`-traversal citedFile pointing at a real file OUTSIDE the repo is never read: zero findings, not even a mismatch, even though the quoted text does NOT match the real target', async () => {
+    const root = newRoot('traversal')
+    initRepo(root)
+
+    // A real, readable file one level above the fixture repo — the exact
+    // shape the reviewer reproduced against `/etc/hosts`. The marker's
+    // quoted text deliberately does NOT match this file's real content —
+    // an exact-match fixture would pass "zero findings" in BOTH the
+    // vulnerable and fixed code (silent pass on a match is itself one of
+    // the oracle's three distinguishable signals, not evidence of safety).
+    // Only a genuine mismatch discriminates: vulnerable code reads the
+    // escaped file and emits a real finding (the file was reached, and
+    // does not contain the claimed text — an oracle bit on its own); fixed
+    // code never lets the citation reach the file-read stage at all, so
+    // the mismatch is never even computed.
+    const secretPath = join(tmpdir(), `vinaya-secret-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`)
+    const secretContent = 'root:x:0:0:root:/root:/bin/bash'
+    writeFileSync(secretPath, secretContent)
+    roots.push(secretPath)
+
+    const traversalPath = relative(root, secretPath)
+    scaffoldFixture(
+      root,
+      `<!-- AEG:QUOTES-FILE:START:${traversalPath} -->\`this text does not appear in the target file\`<!-- AEG:QUOTES-FILE:END -->`,
+      'irrelevant — this fixture asserts the traversal target is never touched, not the in-repo cited.txt'
+    )
+
+    const { exitCode, stdout, stderr } = await runBin(root)
+    expect(exitCode).toBe(0)
+    expect(parseFindings(stderr)).toEqual([])
+    expect(stdout).not.toContain(secretContent)
+    expect(stderr).not.toContain(secretContent)
   })
 })

@@ -109,6 +109,30 @@ const QUOTED_COMMAND_SWEPT_CLASSES: ReadonlySet<ProseFileClass> = new Set(['ship
 const START_PATTERN = /<!--\s*AEG:QUOTES-FILE:START:(\S+?)\s*-->/g
 const END_PATTERN = /<!--\s*AEG:QUOTES-FILE:END\s*-->/
 
+/**
+ * A marker's `citedFile` must be a plain repo-root-relative path — never
+ * absolute, never carrying a `..` traversal segment. Security finding
+ * (this check's own PR, round 2): an unvalidated `citedFile` turns this
+ * check into a file-content oracle any doc author can drive — a crafted
+ * marker naming `../../../../etc/hosts` (or any path outside the repo the
+ * check process can reach) gets its content read and compared against
+ * attacker-chosen `quotedText`, and the three distinguishable outcomes
+ * (silent pass on an exact match, a "no longer contains" finding on a
+ * miss, a "could not be read" finding when the target is absent) form a
+ * working binary-search oracle over that file's real content — reproduced
+ * live, three ways, including a working read of `/etc/hosts`. A path
+ * failing this check is not a valid citation at all: the marker is treated
+ * exactly like an unterminated START/END pair (silently not an anchor),
+ * never reaching the file-read stage, so there is no signal difference
+ * between "malformed marker" and "no marker" for an attacker to probe.
+ */
+export function isValidCitedFilePath(path: string): boolean {
+  if (path.length === 0) return false
+  if (path.startsWith('/') || path.startsWith('\\')) return false
+  if (/^[A-Za-z]:[\\/]/.test(path)) return false
+  return !path.split(/[\\/]+/).includes('..')
+}
+
 function quotedCommandLineAt(content: string, index: number): number {
   let line = 1
   for (let i = 0; i < index; i++) {
@@ -162,9 +186,11 @@ function findQuotesInFile(path: string, content: string): CitedQuote[] {
       continue
     }
     const innerEnd = innerStart + end.index
-    const quotedText = extractQuotedText(content.slice(innerStart, innerEnd))
-    if (quotedText.length > 0) {
-      quotes.push({ file: path, line: quotedCommandLineAt(content, innerStart), quotedText, citedFile })
+    if (isValidCitedFilePath(citedFile)) {
+      const quotedText = extractQuotedText(content.slice(innerStart, innerEnd))
+      if (quotedText.length > 0) {
+        quotes.push({ file: path, line: quotedCommandLineAt(content, innerStart), quotedText, citedFile })
+      }
     }
     START_PATTERN.lastIndex = innerEnd + end[0].length
     start = START_PATTERN.exec(masked)

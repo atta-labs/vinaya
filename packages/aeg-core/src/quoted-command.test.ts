@@ -6,6 +6,7 @@ import {
   checkQuotedCommandStaleness,
   evaluateCitedQuotes,
   findCitedQuotes,
+  isValidCitedFilePath,
   type QuotedCommandSourceFile
 } from './quoted-command'
 
@@ -99,6 +100,63 @@ describe('findCitedQuotes — marker discovery', () => {
     ].join('\n')
     const quotes = findCitedQuotes([{ path: 'aeg-root/x.md', content }], READER_FACING_PREFIX, READER_FACING_SUFFIX)
     expect(quotes[0]?.quotedText).toBe('line one')
+  })
+})
+
+describe('isValidCitedFilePath — closing the file-content oracle (security finding, round 2)', () => {
+  it('rejects a `..` traversal segment, however deep', () => {
+    expect(isValidCitedFilePath('../etc/hosts')).toBe(false)
+    expect(isValidCitedFilePath('../../../../../../etc/hosts')).toBe(false)
+    expect(isValidCitedFilePath('aeg-root/../../../etc/hosts')).toBe(false)
+  })
+
+  it('rejects a POSIX-absolute path', () => {
+    expect(isValidCitedFilePath('/etc/hosts')).toBe(false)
+  })
+
+  it('rejects a Windows drive-letter absolute path', () => {
+    expect(isValidCitedFilePath('C:\\Windows\\System32\\config')).toBe(false)
+  })
+
+  it('rejects a leading-backslash path', () => {
+    expect(isValidCitedFilePath('\\etc\\hosts')).toBe(false)
+  })
+
+  it('rejects an empty path', () => {
+    expect(isValidCitedFilePath('')).toBe(false)
+  })
+
+  it('accepts an ordinary repo-relative path', () => {
+    expect(isValidCitedFilePath('.github/workflows/vinaya-checks.yml')).toBe(true)
+    expect(isValidCitedFilePath('aeg-root/enforcement.md')).toBe(true)
+  })
+})
+
+describe('findCitedQuotes — a traversal/absolute citedFile is not a valid citation at all', () => {
+  it('a `..`-traversal citedFile never becomes a discovered quote — same as no marker present', () => {
+    const content = '<!-- AEG:QUOTES-FILE:START:../../../../../etc/hosts -->`localhost`<!-- AEG:QUOTES-FILE:END -->'
+    const quotes = findCitedQuotes([{ path: 'aeg-root/x.md', content }], READER_FACING_PREFIX, READER_FACING_SUFFIX)
+    expect(quotes).toEqual([])
+  })
+
+  it('an absolute citedFile never becomes a discovered quote', () => {
+    const content = '<!-- AEG:QUOTES-FILE:START:/etc/hosts -->`localhost`<!-- AEG:QUOTES-FILE:END -->'
+    const quotes = findCitedQuotes([{ path: 'aeg-root/x.md', content }], READER_FACING_PREFIX, READER_FACING_SUFFIX)
+    expect(quotes).toEqual([])
+  })
+
+  it('a hostile marker produces zero findings end to end, indistinguishable from no marker — no oracle signal survives', () => {
+    const hostile: QuotedCommandSourceFile = {
+      path: 'aeg-root/x.md',
+      content: '<!-- AEG:QUOTES-FILE:START:../../../../../etc/hosts -->`root:x:0:0`<!-- AEG:QUOTES-FILE:END -->'
+    }
+    const findings = checkQuotedCommandStaleness(
+      [hostile],
+      new Map([['../../../../../etc/hosts', 'root:x:0:0:root:/root:/bin/bash']]),
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
   })
 })
 
