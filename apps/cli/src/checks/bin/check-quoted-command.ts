@@ -41,7 +41,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { evaluateCitedQuotes, findCitedQuotes, type QuotedCommandSourceFile } from '@attalabs/aeg-core'
 import { resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
@@ -89,23 +89,52 @@ function readAll(paths: string[]): QuotedCommandSourceFile[] {
   return paths.map((p) => ({ path: p, content: readFileSync(p, 'utf8') }))
 }
 
+function toPosix(p: string): string {
+  return p.split('\\').join('/')
+}
+
+/**
+ * Every path this check ever names in a finding is repo-root-relative, never
+ * absolute. `DOCTRINE_ROOT` (`resolveDoctrineRoot()`'s default) is an
+ * absolute filesystem path — the sibling `check-reader-resolvable-prose.ts`
+ * collects and reports directly off it, which leaks the developer's own
+ * local checkout path into every finding's `file` field (review finding on
+ * this check's own first PR; the sibling carries the identical bug and is
+ * out of this PR's surface to fix — reader-resolvable-prose.ts is read as a
+ * model, never modified). This bin resolves `DOCTRINE_ROOT`/`READER_FACING_PREFIX`
+ * to an absolute path ONLY for the `fs` walk, then immediately relativizes
+ * every collected path — and the ships/reader-facing prefixes themselves —
+ * against `root` before anything is classified, matched, or emitted, the
+ * same `toPosix(relative(root, p))` shape `check-changeset-coverage.ts`
+ * already uses correctly.
+ */
 function main(): void {
-  const shipsPrefix = `${DOCTRINE_ROOT}/`
-  const shipsPaths = collect(DOCTRINE_ROOT).filter((p) => p.endsWith('.md'))
+  const root = repoRoot() ?? process.cwd()
+
+  const docRootAbs = resolve(root, DOCTRINE_ROOT)
+  const shipsPrefix = `${toPosix(relative(root, docRootAbs))}/`
+  const shipsPaths = collect(docRootAbs).filter((p) => p.endsWith('.md'))
+
+  const readerFacingRootAbs =
+    READER_FACING_ACTIVE && READER_FACING_PREFIX !== null ? resolve(root, READER_FACING_PREFIX) : null
   const readerFacingPaths =
-    READER_FACING_ACTIVE && READER_FACING_SUFFIX !== null
-      ? collect(READER_FACING_PREFIX as string).filter((p) => p.endsWith(READER_FACING_SUFFIX))
+    readerFacingRootAbs !== null && READER_FACING_SUFFIX !== null
+      ? collect(readerFacingRootAbs).filter((p) => p.endsWith(READER_FACING_SUFFIX))
       : []
 
-  const docs = readAll([...shipsPaths, ...readerFacingPaths])
+  // Read while paths are still absolute (reliable regardless of cwd), then
+  // relativize the ONE time it matters: what a finding actually names.
+  const docs = readAll([...shipsPaths, ...readerFacingPaths]).map((f) => ({
+    ...f,
+    path: toPosix(relative(root, f.path))
+  }))
 
   const readerFacingPrefix =
-    READER_FACING_ACTIVE && READER_FACING_PREFIX !== null ? `${READER_FACING_PREFIX}/` : '/no-reader-facing-surface'
+    readerFacingRootAbs !== null ? `${toPosix(relative(root, readerFacingRootAbs))}/` : '/no-reader-facing-surface'
   const readerFacingSuffix = READER_FACING_ACTIVE && READER_FACING_SUFFIX !== null ? READER_FACING_SUFFIX : '/page.tsx'
 
   const citedQuotes = findCitedQuotes(docs, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
 
-  const root = repoRoot() ?? process.cwd()
   const citedFileContents = new Map<string, string>()
   for (const quote of citedQuotes) {
     if (citedFileContents.has(quote.citedFile)) continue
