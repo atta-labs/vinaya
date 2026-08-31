@@ -18,9 +18,10 @@ The second `packages/aeg-core/bin/check-token-collection-wired.ts` gate is
 removed. It shipped to nobody (`aeg-core`'s `files` is `["src", …]`) and existed
 only so the registry scaffold's classifier had a candidate, which made the
 doctrine row cite a path no adopter has. The row now cites the shipped
-`apps/cli` check directly, as `main-branch-refusal`'s row does. The predicate
-itself stays in `aeg-core` on its own merits — a pure function of a type that
-package owns.
+`apps/cli` check directly, as `main-branch-refusal`'s row does. Whether the
+predicate itself should also move out of `aeg-core` now that the scaffold
+argument for keeping it there is gone is a separate, still-open question
+(issue #307) — not decided or settled by this change.
 
 `isTokenCollectionWiringBroken` briefly became a type predicate in this branch
 and was reverted before release: as a predicate it was unsound, since `false`
