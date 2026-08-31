@@ -74,6 +74,37 @@ describe('checkDispatchReadiness', () => {
     expect(result.ready).toBe(true)
   })
 
+  /**
+   * #196: `resolved: false` (the edge never matched any tranche/task/Issue at
+   * all) must report UNRESOLVABLE, quoting the edge text — never the "not
+   * merged yet" claim, which is a fact about the forge this case never
+   * observed. Still blocks (conservative default), just says why honestly.
+   */
+  it('blocks an unresolvable depends-on edge with a distinct message, quoting the edge', () => {
+    const result = checkDispatchReadiness(
+      makeInput({ dependsOn: [{ id: 'unknown-tranche 2', issue: null, merged: false, resolved: false }] })
+    )
+    expect(result.ready).toBe(false)
+    expect(result.blockers[0]).toContain('depends-on')
+    expect(result.blockers[0]).toContain('UNRESOLVABLE')
+    expect(result.blockers[0]).toContain('"unknown-tranche 2"')
+    expect(result.blockers[0]).not.toContain('not merged yet')
+  })
+
+  it('an unmerged-but-resolved edge still gets the original "not merged yet" message', () => {
+    const result = checkDispatchReadiness(
+      makeInput({ dependsOn: [{ id: '5', issue: 266, merged: false, resolved: true }] })
+    )
+    expect(result.blockers[0]).toContain('not merged yet')
+    expect(result.blockers[0]).not.toContain('UNRESOLVABLE')
+  })
+
+  it('`resolved` absent (every caller before #196) behaves exactly as before', () => {
+    const result = checkDispatchReadiness(makeInput({ dependsOn: [{ id: '5', issue: 266, merged: false }] }))
+    expect(result.blockers[0]).toContain('not merged yet')
+    expect(result.blockers[0]).not.toContain('UNRESOLVABLE')
+  })
+
   it('blocks on an open conflicts-with edge', () => {
     const result = checkDispatchReadiness(
       makeInput({ conflictsWith: [{ id: '15', issue: 329, openOrInFlight: true }] })
