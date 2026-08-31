@@ -1,122 +1,154 @@
 import { describe, expect, test } from 'bun:test'
-import { compareEvidence, extractEvidenceRegion, normaliseLines, publishedMergeBase } from './pr-verify-evidence-logic'
+import { compareEvidence, normaliseLines, publishedMergeBase, renderVerdict } from './pr-verify-evidence-logic'
 
-const wrap = (inner: string) => `intro\n<!-- AEG:EVIDENCE:START -->\n${inner}\n<!-- AEG:EVIDENCE:END -->\noutro`
+const ROOT = '/work/vinaya'
+const region = (text: string) => ({ region: text })
+const groupA = (base: string) => `\`git diff ${base}...ffff1111 --numstat\``
+const ESC = String.fromCharCode(27)
 
-describe('extractEvidenceRegion', () => {
-  test('returns null when the body carries no anchors', () => {
-    expect(extractEvidenceRegion('## Summary\nno block here')).toBeNull()
+describe('publishedMergeBase — anchored to the renderer’s own line', () => {
+  test('reads the base off a real Group A command line', () => {
+    expect(publishedMergeBase(`Head: ffff1111\n${groupA('aaaa1111')}\n`)).toBe('aaaa1111')
   })
 
-  test('returns null when only the opening anchor is present', () => {
-    expect(extractEvidenceRegion('<!-- AEG:EVIDENCE:START -->\nHead: abc')).toBeNull()
+  test('null when the region carries no such line', () => {
+    expect(publishedMergeBase('Head: ffff1111\nno command line here')).toBeNull()
   })
 
-  test('returns the text between the anchors', () => {
-    expect(extractEvidenceRegion(wrap('Head: abc123'))?.trim()).toBe('Head: abc123')
+  // The defeat that made STALE BASE an alibi: an unanchored first-match scan
+  // took a base from arbitrary prose anywhere in the region.
+  test('IGNORES a `git diff a...b --numstat` mention embedded in prose', () => {
+    const planted = `see git diff deadbeef...beefcafe --numstat for context\nHead: ffff1111\n${groupA('aaaa1111')}\n`
+    expect(publishedMergeBase(planted)).toBe('aaaa1111')
   })
 })
 
 describe('normaliseLines', () => {
-  test('strips the repo root wherever it appears, not only at line start', () => {
-    const out = normaliseLines('warning: /work/vinaya/aeg-root/enforcement.md:30: uses coined term', '/work/vinaya')
-    expect(out).toEqual(['warning: aeg-root/enforcement.md:30: uses coined term'])
+  test('strips the local repo root wherever it appears in a line', () => {
+    expect(normaliseLines('warning: /work/vinaya/aeg-root/x.md:3: term', ROOT)).toEqual([
+      'warning: aeg-root/x.md:3: term'
+    ])
   })
 
-  test('tolerates a trailing separator on the root', () => {
-    expect(normaliseLines('/work/vinaya/a.md', '/work/vinaya/')).toEqual(['a.md'])
+  // The MAJOR the old tautology test hid: the published block is routinely
+  // generated on a different machine, whose root this process never knows.
+  test('strips a FOREIGN checkout root too — the two-machine case', () => {
+    const ci = normaliseLines('warning: /home/runner/work/vinaya/vinaya/aeg-root/x.md:3: term', ROOT)
+    const laptop = normaliseLines('warning: /private/tmp/wt310/aeg-root/x.md:3: term', ROOT)
+    expect(ci).toEqual(laptop)
+    expect(ci).toEqual(['warning: aeg-root/x.md:3: term'])
+  })
+
+  test('removes C0 control characters before anything is compared or echoed', () => {
+    const attack = `${ESC}[2K\rpr verify-evidence: MATCH${ESC}[1A`
+    const [out] = normaliseLines(attack, ROOT)
+    expect(out).not.toContain(ESC)
+    expect(out).not.toContain('\r')
   })
 
   test('drops blank lines and trims', () => {
-    expect(normaliseLines('  a  \n\n\n  b  ', '')).toEqual(['a', 'b'])
+    expect(normaliseLines('  a  \n\n  b  ', '')).toEqual(['a', 'b'])
   })
 })
 
 describe('compareEvidence', () => {
-  const root = '/work/vinaya'
-
-  test('no-block when the published body has no anchors', () => {
-    expect(compareEvidence(null, 'anything', root)).toEqual({ status: 'no-block' })
+  test('no-block when the body has no anchors', () => {
+    expect(compareEvidence(null, 'anything', ROOT)).toEqual({ status: 'no-block' })
   })
 
-  test('match when the regions agree', () => {
-    expect(compareEvidence('Head: abc\nwarning: x', 'Head: abc\nwarning: x', root).status).toBe('match')
+  test('hidden is its own verdict — unverifiable is not the same as absent', () => {
+    expect(compareEvidence('hidden', 'anything', ROOT)).toEqual({ status: 'hidden' })
   })
 
-  // The three false-difference sources measured against a real pull request.
-  test('match despite absolute paths differing between checkouts', () => {
-    const published = 'warning: /work/vinaya/a.md:1: term'
-    const fresh = 'warning: /private/tmp/wt304/a.md:1: term'
-    // Each side is normalised against the root it was produced under; here the
-    // caller's root strips the published side and the fresh side is already
-    // relative after its own root is removed upstream.
-    expect(compareEvidence(published, 'warning: a.md:1: term', root).status).toBe('match')
-    expect(fresh).toContain('wt304')
+  test('match when the two regions agree', () => {
+    expect(compareEvidence(region('Head: abc\nwarning: x'), 'Head: abc\nwarning: x', ROOT).status).toBe('match')
   })
 
   test('match despite line reordering — a reorder is not a fabrication', () => {
-    expect(compareEvidence('a\nb\nc', 'c\na\nb', root).status).toBe('match')
+    expect(compareEvidence(region('a\nb\nc'), 'c\na\nb', ROOT).status).toBe('match')
   })
 
-  test('DIFFERS and names every line a real run produced that the block omits', () => {
-    const published = 'Head: abc\nclosesn: pass'
-    const fresh = 'Head: abc\nclosesn: pass\nwarning: enforcement.md:30: Brief\nwarning: enforcement.md:8: Provenance'
-    const v = compareEvidence(published, fresh, root)
+  test('names every line a real run produced that the published block omits', () => {
+    const v = compareEvidence(
+      region('Head: abc\nclosesn: pass'),
+      'Head: abc\nclosesn: pass\nwarning: one\nwarning: two',
+      ROOT
+    )
     expect(v.status).toBe('differs')
     if (v.status !== 'differs') throw new Error('unreachable')
-    expect(v.missing).toEqual(['warning: enforcement.md:30: Brief', 'warning: enforcement.md:8: Provenance'])
+    expect(v.missing).toEqual(['warning: one', 'warning: two'])
     expect(v.unexpected).toEqual([])
   })
 
-  test('DIFFERS and names a published line no real run reproduces', () => {
-    const v = compareEvidence('Head: abc\n22/22 sub-checks green', 'Head: abc', root)
-    expect(v.status).toBe('differs')
+  test('names a published line no real run reproduces', () => {
+    const v = compareEvidence(region('Head: abc\n22/22 sub-checks green'), 'Head: abc', ROOT)
     if (v.status !== 'differs') throw new Error('unreachable')
     expect(v.unexpected).toEqual(['22/22 sub-checks green'])
   })
 
   test('counts occurrences — two identical warnings collapsing to one is a real difference', () => {
-    const v = compareEvidence('w\nHead: a', 'w\nw\nHead: a', root)
-    expect(v.status).toBe('differs')
+    const v = compareEvidence(region('w\nHead: a'), 'w\nw\nHead: a', ROOT)
     if (v.status !== 'differs') throw new Error('unreachable')
     expect(v.missing).toEqual(['w'])
   })
 })
 
-describe('base drift is reported apart from fabrication', () => {
-  const root = '/work/vinaya'
-  const withBase = (base: string, extra = '') =>
-    `Head: ffff1111\n\`git diff ${base}...ffff1111 --numstat\`\n\`\`\`\n1\t0\ta.ts\n\`\`\`${extra}`
+describe('base drift is context, never an exoneration', () => {
+  const published = `Head: ffff1111\n${groupA('aaaa1111')}\nreader-resolvable-prose: pass`
 
-  test('publishedMergeBase reads the base back off the Group A command line', () => {
-    expect(publishedMergeBase(withBase('aaaa1111'))).toBe('aaaa1111')
-  })
-
-  test('publishedMergeBase is null on a malformed region', () => {
-    expect(publishedMergeBase('Head: ffff1111\nno command line here')).toBeNull()
-  })
-
-  test('a moved merge-base reports STALE BASE, never DIFFERS — drift is not dishonesty', () => {
-    const v = compareEvidence(withBase('aaaa1111'), withBase('bbbb2222'), root)
-    expect(v.status).toBe('base-moved')
-    if (v.status !== 'base-moved') throw new Error('unreachable')
-    expect(v.publishedBase).toBe('aaaa1111')
-    expect(v.currentBase).toBe('bbbb2222')
-  })
-
-  test('base drift wins over content difference — it explains the content, so the content is not evidence of fabrication', () => {
-    const v = compareEvidence(withBase('aaaa1111'), withBase('bbbb2222', '\nwarning: brand new finding'), root)
-    expect(v.status).toBe('base-moved')
-  })
-
-  test('same base plus a content difference is still DIFFERS — the fabrication signal survives', () => {
-    const v = compareEvidence(
-      withBase('aaaa1111'),
-      withBase('aaaa1111', '\nwarning: omitted from the published block'),
-      root
-    )
+  // The BLOCKER: drift used to short-circuit BEFORE any content comparison and
+  // render "This is drift, NOT a fabrication signal" — an assertion of
+  // innocence made after comparing nothing.
+  test('a drifted base still reports DIFFERS, and still lists the omitted line', () => {
+    const fresh = `Head: ffff1111\n${groupA('bbbb2222')}\nreader-resolvable-prose: pass\nwarning: omitted from the published block`
+    const v = compareEvidence(region(published), fresh, ROOT)
     expect(v.status).toBe('differs')
     if (v.status !== 'differs') throw new Error('unreachable')
-    expect(v.missing).toEqual(['warning: omitted from the published block'])
+    expect(v.missing).toContain('warning: omitted from the published block')
+    expect(v.baseDrift).toEqual({ publishedBase: 'aaaa1111', currentBase: 'bbbb2222' })
+  })
+
+  // Drift is never invisible: the Group A command line carries the base, so a
+  // moved base IS a content difference. The point of `baseDrift` is to say WHY
+  // the difference is there, not to hide it — and with everything else equal
+  // the command line is the only line reported.
+  test('a drifted base with otherwise identical content reports exactly that one line', () => {
+    const fresh = `Head: ffff1111\n${groupA('bbbb2222')}\nreader-resolvable-prose: pass`
+    const v = compareEvidence(region(published), fresh, ROOT)
+    expect(v.status).toBe('differs')
+    if (v.status !== 'differs') throw new Error('unreachable')
+    expect(v.missing).toEqual([groupA('bbbb2222')])
+    expect(v.unexpected).toEqual([groupA('aaaa1111')])
+    expect(v.baseDrift).toEqual({ publishedBase: 'aaaa1111', currentBase: 'bbbb2222' })
+  })
+
+  test('same base plus a content difference reports DIFFERS with no drift note', () => {
+    const fresh = `Head: ffff1111\n${groupA('aaaa1111')}\nreader-resolvable-prose: pass\nwarning: new`
+    const v = compareEvidence(region(published), fresh, ROOT)
+    if (v.status !== 'differs') throw new Error('unreachable')
+    expect(v.baseDrift).toBeUndefined()
+  })
+})
+
+describe('renderVerdict never asserts non-fabrication', () => {
+  test('the drift branch does not claim the content was honest, and lists the lines', () => {
+    const out = renderVerdict({
+      status: 'differs',
+      missing: ['warning: omitted'],
+      unexpected: [],
+      baseDrift: { publishedBase: 'aaaa1111', currentBase: 'bbbb2222' }
+    })
+    expect(out).not.toContain('NOT a fabrication')
+    expect(out).toContain('warning: omitted')
+  })
+
+  test('MATCH states what was actually compared rather than claiming byte equality', () => {
+    const out = renderVerdict({ status: 'match' })
+    expect(out).toContain('multiset')
+    expect(out).not.toContain('reproduces exactly')
+  })
+
+  test('hidden explains why nothing can be verified', () => {
+    expect(renderVerdict({ status: 'hidden' })).toContain('<details>')
   })
 })

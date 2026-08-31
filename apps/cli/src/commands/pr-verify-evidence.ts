@@ -16,8 +16,9 @@
  */
 
 import { execFileSync } from 'node:child_process'
+import { ScanContext, resolveAnchoredRegion } from '../checks/scan-context.js'
 import { buildReport } from './pr-report.js'
-import { compareEvidence, extractEvidenceRegion, renderVerdict } from './pr-verify-evidence-logic.js'
+import { compareEvidence, renderVerdict } from './pr-verify-evidence-logic.js'
 
 function gh(args: string[]): string {
   return execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
@@ -39,7 +40,14 @@ function gh(args: string[]): string {
  * refuses rather than warns.
  */
 function assertCleanWorktree(): void {
-  const dirty = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim()
+  // `--ignored` matters: porcelain hides gitignored paths by default, and a
+  // diff-scoped check that reads a gitignored tree would be contaminated by one
+  // without this guard ever seeing it. Run at the repo root, not the inherited
+  // cwd, so a subdirectory invocation cannot narrow what is inspected.
+  const dirty = execFileSync('git', ['status', '--porcelain', '--ignored'], {
+    encoding: 'utf8',
+    cwd: repoRoot()
+  }).trim()
   if (!dirty) return
   process.stderr.write(
     'pr verify-evidence: REFUSED — the worktree has uncommitted or untracked changes.\n' +
@@ -55,15 +63,21 @@ function repoRoot(): string {
 }
 
 export async function prVerifyEvidenceCommand(args: string[]): Promise<void> {
-  const prRef = args.find((a) => !a.startsWith('--'))
+  // Positional only, and only the first one. `find(a => !a.startsWith('--'))`
+  // would silently read the VALUE of a future `--flag value` pair as the pull
+  // request number.
+  const prRef = args[0] && !args[0].startsWith('-') ? args[0] : undefined
   if (!prRef) {
     process.stderr.write('Usage: vinaya pr verify-evidence <pr-number>\n')
     process.exit(2)
   }
 
   let body: string
+  let forgeHead: string
   try {
-    body = JSON.parse(gh(['pr', 'view', prRef, '--json', 'body'])).body ?? ''
+    const view = JSON.parse(gh(['pr', 'view', prRef, '--json', 'body,headRefOid']))
+    body = view.body ?? ''
+    forgeHead = view.headRefOid ?? ''
   } catch (err) {
     process.stderr.write(`pr verify-evidence: could not read pull request #${prRef} — ${(err as Error).message}\n`)
     process.exit(1)
@@ -72,15 +86,37 @@ export async function prVerifyEvidenceCommand(args: string[]): Promise<void> {
 
   assertCleanWorktree()
 
+  // Head binding, not head attestation. Printing the local head to stderr and
+  // trusting the reader to compare it is the same shape as the hand-pasted
+  // claims this command exists to abolish — and a verdict redirected to a file
+  // would carry no commit at all. A mismatch refuses.
   const localHead = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
-  process.stderr.write(`[pr verify-evidence] comparing #${prRef} against the working tree at ${localHead}\n`)
+  if (forgeHead && forgeHead !== localHead) {
+    process.stderr.write(
+      `pr verify-evidence: REFUSED — this checkout is at ${localHead}, but #${prRef}'s head is ${forgeHead}.\n` +
+        'Comparing against a different tree produces a difference that is real and uninteresting. Check out the head first.\n'
+    )
+    process.exit(2)
+  }
 
   // Regenerating runs the real gates — the same run `pr report --write` would
   // have written. This is the whole point: the comparison is against a real
   // run, never against an assertion about one.
   const fresh = await buildReport()
 
-  const verdict = compareEvidence(extractEvidenceRegion(body), fresh.blockInner, repoRoot())
+  // Resolved through the SHARED resolver, never a raw `indexOf`. `pr-report.ts`
+  // records why in its own splice path: a body that quotes a worked example of
+  // its own anchor gets the quoted example picked instead of the real field —
+  // "found live, in this task's own PR body". A raw scan here would have let
+  // this command certify a decoy pair inside a fence or a `<details>` block
+  // while `body-bare-digits` and `evidence-fresh` both read the real one.
+  const resolved = resolveAnchoredRegion(ScanContext.from(body), 'EVIDENCE')
+  const verdict = compareEvidence(
+    resolved === null || resolved === 'hidden' ? resolved : { region: resolved.region },
+    fresh.blockInner,
+    repoRoot()
+  )
   process.stdout.write(`${renderVerdict(verdict)}\n`)
+  process.stdout.write(`  compared at head ${localHead}\n`)
   process.exit(verdict.status === 'match' ? 0 : 1)
 }
