@@ -44,6 +44,8 @@ The **Architect** (`roles/architect.md`) is the only role that creates a Milesto
 
 Moving an **existing** tranche into a Milestone is a separate act: `vinaya milestone adopt --target <title> --slug <slug> [--slug <slug> ...]`, never done by hand. It reattaches every Issue carrying each named tranche label to the target Milestone's native `milestone` field (GitHub-view hygiene — no reader in this model consults that field, only the label — the same reason `vinaya issue create` auto-attaches a brand-new task Issue to its tranche's open Milestone at creation time, resolving `resolveMilestoneAttachTarget`'s legacy-title-or-intent-declared match to the Milestone's own title before handing it to `gh`), then closes (never deletes) each slug's old legacy tranche-Milestone. `checkAdoptable` gathers every fact for every named slug and refuses the whole invocation before any write — an unknown slug, a slug whose label carries no Issues, a target that doesn't exist or is closed, a slug already adopted elsewhere — so one bad slug blocks the whole call, never a partial move.
 
+Correcting an already-written Milestone's goal or `Release:` field — `vinaya milestone edit <n> --body-file <path>`, gated by the same `checkMilestoneShape` check `create` uses — belongs to neither role above. Revising a stated goal is the same product call declaring it was (§5, stage 1: "the goal and its scope are a product call, not a derivable fact"), so it is the Principal's (`roles/principal.md` "What the Principal owns"), never the Architect's (its one write is create-once, `roles/architect.md` "What you own") and never the Planner's (its altitude is tranche shape, not Milestone-body grammar).
+
 ---
 
 ## 4. The lifecycle: `planned → active → complete`
