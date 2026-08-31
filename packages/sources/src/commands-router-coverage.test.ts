@@ -29,7 +29,10 @@ function routedCommandNames(source: string): string[] {
     const label = match[1] as string
     const block = match[2] as string
     const subcommands = [...block.matchAll(/subcommand === '([a-z-]+)'/g)].map((m) => m[1] as string)
-    const hasBareForm = subcommands.length === 0 || !/console\.error\(`Unknown/.test(block)
+    // `\s*` matters: biome wraps a long `Unknown '<x>' subcommand` message onto
+    // its own line, which silently defeated an adjacency-only regex and made the
+    // parser report a bare `pr` form that has no registry row.
+    const hasBareForm = subcommands.length === 0 || !/console\.error\(\s*`Unknown/.test(block)
     if (hasBareForm) names.push(label)
     for (const sub of subcommands) names.push(`${label} ${sub}`)
   }
@@ -68,6 +71,7 @@ describe('router -> COMMANDS coverage', () => {
         'pr create',
         'pr edit',
         'pr report',
+        'pr verify-evidence',
         'issue create',
         'issue edit',
         'milestone create',

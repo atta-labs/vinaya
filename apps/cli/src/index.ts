@@ -19,6 +19,7 @@ import { newNoopCheckCommand } from './commands/new-noop-check.js'
 import { newRoleCommand } from './commands/new-role.js'
 import { prCreateCommand, prEditCommand } from './commands/pr.js'
 import { prReportCommand } from './commands/pr-report.js'
+import { prVerifyEvidenceCommand } from './commands/pr-verify-evidence.js'
 import { quickstartCommand } from './commands/quickstart.js'
 import { reviewPostCommand } from './commands/review-post.js'
 import { runStudio } from './commands/studio.js'
@@ -126,8 +127,12 @@ try {
         prEditCommand(rest)
       } else if (subcommand === 'report') {
         await prReportCommand(rest)
+      } else if (subcommand === 'verify-evidence') {
+        await prVerifyEvidenceCommand(rest)
       } else {
-        console.error(`Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'create', 'edit', or 'report')`)
+        console.error(
+          `Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'create', 'edit', 'report', or 'verify-evidence')`
+        )
         process.exit(2)
       }
       break
