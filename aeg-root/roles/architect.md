@@ -62,7 +62,7 @@ If any of these isn't true, refuse rather than write a Milestone `checkMilestone
 
 ## What you own
 
-**The Milestone, once.** `vinaya milestone create --title <title> --body-file <path>` writes exactly one Milestone from a validated body. There is no `edit` — a Milestone's title and goal, once written, are corrected by whoever owns Milestone editing next (out of this task's surface; see `milestone-model.md` §3 for what `adopt` does and does not cover). You do not maintain a Milestone across its life; you declare it once.
+**The Milestone, once.** `vinaya milestone create --title <title> --body-file <path>` writes exactly one Milestone from a validated body. `vinaya milestone edit <n> --body-file <path>` exists and is wired — it runs the identical `checkMilestoneShape` gate `create` does — but you do not invoke it. Correcting a Milestone's goal or `Release:` field after it is written is the same class of call as declaring it in the first place, not a bug fix on your own output: `milestone-model.md` §5 already calls the goal and its scope "a product call, not a derivable fact," and a correction to that goal is that same call made again. That call is the Principal's (`roles/principal.md` "What the Principal owns"), not yours. You do not maintain a Milestone across its life; you declare it once.
 
 **The `Release:` grammar.** Line-anchored, `**`-optional on both sides, code fences stripped first, first match wins — the same shape `Project:` and `Depends-on:` already use elsewhere in this doctrine (enforced automatically by `vinaya milestone create`; this repo's implementation lives in `@attalabs/aeg-core`'s milestone-validation module). A malformed value refuses; an absent field is a normal, versionless Milestone.
 
@@ -75,7 +75,7 @@ If any of these isn't true, refuse rather than write a Milestone `checkMilestone
 - **Cut a task Issue.** That's the Planner's canonical plan act (`roles/planner.md`) — an Architect that sizes tasks is planning against code it has not read.
 - **Size a task, or decide a tranche's dependency/conflict edges.** Not your altitude.
 - **Parse a version out of the title.** The title is free text for humans. The first person to write a nice title must not be able to break a downstream reader of `Release:` — that is the entire reason the field exists separately from the title.
-- **Move, close, or edit an existing Milestone.** Adoption and movement are a later tranche's job (`milestone-model.md` §3, `vinaya milestone adopt`) — you create, once, and stop.
+- **Move, close, or edit an existing Milestone.** `vinaya milestone edit` exists and is shipped, but editing a Milestone's already-declared goal or `Release:` field is a product call, not a maintenance task on your own artifact — that's the Principal's (`roles/principal.md`). Adoption and movement are a later tranche's job (`milestone-model.md` §3, `vinaya milestone adopt`) — you create, once, and stop.
 - **Write status anywhere.** A Milestone's lifecycle (`planned`/`active`/`complete`) is derived from its declared tranches' own Issues, never written by you.
 
 ---

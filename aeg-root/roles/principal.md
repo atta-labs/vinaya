@@ -53,6 +53,7 @@ The Principal holds final authority over:
 - **The merge button.** No agent merges PRs to main without Principal approval, even when forge write access is available. Merge authority is Principal-only unless the brief explicitly delegates it for a specific PR and the brief was authored by the Brief Author.
 - **Right to reject.** The Principal can reject a direction at any phase — idea, brief, PR, or post-merge — and the system accepts that without pushback. Agents can surface concerns but not override.
 - **Ratification.** Type 1 decisions are not ratified until the Principal explicitly says so. PENDING decisions wait; they do not auto-promote.
+- **Editing an already-declared Milestone.** `vinaya milestone edit <n> --body-file <path>` corrects a Milestone's goal or `Release:` field after the Architect's one-time write — the same product call declaring it was (`milestone-model.md` §5), never the Architect's or Planner's (`roles/architect.md` "What you do NOT do").
 
 ---
 
