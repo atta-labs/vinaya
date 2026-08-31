@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { resolveMeteringCapability, summarizeTranscript } from './claude-code-transcript'
-import type { MeteringCapabilityDeps } from './claude-code-transcript'
+import { isTokenCollectionWiringBroken, resolveMeteringCapability, summarizeTranscript } from './claude-code-transcript'
+import type { MeteringCapability, MeteringCapabilityDeps } from './claude-code-transcript'
 import { formatTokensLine } from './report-tokens'
 
 function assistantLine(opts: {
@@ -203,7 +203,7 @@ describe('resolveMeteringCapability', () => {
     if (result.capable) expect(result.transcriptPath).toBe('/real/transcript.jsonl')
   })
 
-  it('refuses a stale pointer whose recorded session id disagrees with the current one', () => {
+  it('does not claim a stale pointer whose recorded session id disagrees with the current one', () => {
     const pointerPath = '/tmp/claude-transcript--repo.txt'
     const files: Record<string, string> = {
       [pointerPath]: 'session-old\t/real/transcript.jsonl'
@@ -220,6 +220,8 @@ describe('resolveMeteringCapability', () => {
       })
     )
     expect(result.capable).toBe(false)
+    // A pointer whose recorded id disagrees with ours is provably NOT this
+    // session's, so it is the can't-claim-it case and passes.
     if (!result.capable) expect(result.reason).toBe('no-transcript-resolved')
   })
 
@@ -246,5 +248,184 @@ describe('resolveMeteringCapability', () => {
     )
     expect(result.capable).toBe(true)
     if (result.capable) expect(result.transcriptPath).toBe('/explicit/transcript.jsonl')
+  })
+})
+
+describe('isTokenCollectionWiringBroken', () => {
+  it('capable: not broken', () => {
+    const capability: MeteringCapability = {
+      capable: true,
+      transcriptPath: '/tmp/session.jsonl',
+      summary: {
+        components: { inputTokens: 1, outputTokens: 1, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+        model: null,
+        messageCount: 1
+      }
+    }
+    expect(isTokenCollectionWiringBroken(capability)).toBe(false)
+  })
+
+  it('no-transcript-resolved: not broken — nothing was ever wired to try', () => {
+    const capability: MeteringCapability = { capable: false, reason: 'no-transcript-resolved', detail: 'no pointer' }
+    expect(isTokenCollectionWiringBroken(capability)).toBe(false)
+  })
+
+  it('transcript-unreadable: broken — a wiring point resolved but reaching it failed', () => {
+    const capability: MeteringCapability = { capable: false, reason: 'transcript-unreadable', detail: 'ENOENT' }
+    expect(isTokenCollectionWiringBroken(capability)).toBe(true)
+  })
+
+  it('transcript-empty: broken — a wiring point resolved but yielded nothing', () => {
+    const capability: MeteringCapability = { capable: false, reason: 'transcript-empty', detail: 'zero messages' }
+    expect(isTokenCollectionWiringBroken(capability)).toBe(true)
+  })
+})
+
+/**
+ * Binds each `MeteringIncapableReason` to the REAL probe condition that
+ * produces it, driving `resolveMeteringCapability` through fake deps rather
+ * than constructing `MeteringCapability` literals by hand.
+ *
+ * This is the test whose absence hid a live defect: every existing predicate
+ * test handed `isTokenCollectionWiringBroken` a reason it had chosen itself,
+ * so none of them could notice that four distinct pointer conditions all
+ * collapsed into `no-transcript-resolved` — three of them wired-but-unreachable
+ * states the check exists to refuse. A reviewer found it by probing the built
+ * binary; these cases move that probe into the suite.
+ */
+describe('reason ↔ probe condition, and what each means for the wiring gate', () => {
+  const POINTER = '/tmp/claude-transcript--repo.txt'
+  const TRANSCRIPT = '/tmp/session.jsonl'
+  const REAL_JSONL = JSON.stringify({
+    type: 'assistant',
+    message: { id: 'm1', model: 'claude-opus-5', usage: { input_tokens: 1, output_tokens: 2 } }
+  })
+
+  /** Pointer-file world: `TMPDIR`/`CLAUDE_PROJECT_DIR` fixed so the pointer path is deterministic. */
+  function world(opts: {
+    sessionId?: string
+    pointer?: string | 'missing' | 'unreadable'
+    transcript?: string | 'missing' | 'unreadable'
+  }): MeteringCapabilityDeps {
+    const env: Record<string, string | undefined> = { TMPDIR: '/tmp', CLAUDE_PROJECT_DIR: '/repo' }
+    if (opts.sessionId) env.CLAUDE_CODE_SESSION_ID = opts.sessionId
+    return {
+      env,
+      cwd: '/repo',
+      exists: (p) => {
+        if (p === POINTER) return opts.pointer !== 'missing' && opts.pointer !== undefined
+        if (p === TRANSCRIPT) return opts.transcript !== 'missing' && opts.transcript !== undefined
+        return false
+      },
+      readFile: (p) => {
+        if (p === POINTER) {
+          if (opts.pointer === 'unreadable') throw new Error('EACCES: permission denied')
+          return opts.pointer as string
+        }
+        if (p === TRANSCRIPT) {
+          if (opts.transcript === 'unreadable') throw new Error('EISDIR: illegal operation on a directory')
+          return opts.transcript as string
+        }
+        throw new Error(`unexpected read: ${p}`)
+      }
+    }
+  }
+
+  const probe = (deps: MeteringCapabilityDeps) => resolveMeteringCapability(deps)
+
+  it('capable — corroborated pointer naming a readable transcript with usage', () => {
+    const r = probe(world({ sessionId: 's1', pointer: `s1\t${TRANSCRIPT}`, transcript: REAL_JSONL }))
+    expect(r.capable).toBe(true)
+    expect(isTokenCollectionWiringBroken(r)).toBe(false)
+  })
+
+  it('no pointer at all — the sanctioned operator-metered case, PASSES', () => {
+    const r = probe(world({ sessionId: 's1', pointer: 'missing' }))
+    expect(r.capable).toBe(false)
+    if (r.capable) throw new Error('unreachable')
+    expect(r.reason).toBe('no-transcript-resolved')
+    expect(isTokenCollectionWiringBroken(r)).toBe(false)
+  })
+
+  // Conditions an earlier revision passed silently. These two do NOT establish
+  // corroboration and must not claim to: an unreadable pointer's id is never
+  // read, and a malformed one carries none. They refuse on the other ground —
+  // a file we own at our own pointer path that we cannot use, which is broken
+  // wiring whoever wrote it. Hence no session id in the fixtures.
+  it('pointer present but UNREADABLE — ours by location, wiring defect, FAILS', () => {
+    const r = probe(world({ pointer: 'unreadable' }))
+    if (r.capable) throw new Error('unreachable')
+    expect(r.reason).toBe('pointer-unusable')
+    expect(isTokenCollectionWiringBroken(r)).toBe(true)
+  })
+
+  it('pointer present but MALFORMED — ours by location, FAILS with or without a session id', () => {
+    expect(probe(world({ pointer: 'no-tab-no-path' })).capable).toBe(false)
+    const r = probe(world({ sessionId: 's1', pointer: 'no-tab-no-path' }))
+    if (r.capable) throw new Error('unreachable')
+    expect(r.reason).toBe('pointer-unusable')
+    expect(isTokenCollectionWiringBroken(r)).toBe(true)
+  })
+
+  // Ruled 2026-08-31 after two reviewers disagreed. A stale pointer is provably
+  // NOT this session's, so it is the can't-claim-it case, not a wiring defect:
+  // refusing it blocks a second session's very first commit — its own Stop hook
+  // fires only after its first turn completes — with no action that clears the
+  // refusal, since `vinaya check` accepts no `--transcript`.
+  it('pointer present but STALE for this session — not ours to claim, PASSES', () => {
+    const r = probe(world({ sessionId: 's2', pointer: `s1\t${TRANSCRIPT}`, transcript: REAL_JSONL }))
+    if (r.capable) throw new Error('unreachable')
+    expect(r.reason).toBe('no-transcript-resolved')
+    expect(isTokenCollectionWiringBroken(r)).toBe(false)
+  })
+
+  it('corroborated pointer naming a MISSING transcript — wiring defect, FAILS', () => {
+    const r = probe(world({ sessionId: 's1', pointer: `s1\t${TRANSCRIPT}`, transcript: 'missing' }))
+    if (r.capable) throw new Error('unreachable')
+    expect(r.reason).toBe('transcript-unreadable')
+    expect(isTokenCollectionWiringBroken(r)).toBe(true)
+  })
+
+  it('corroborated pointer naming an EMPTY transcript — wiring defect, FAILS', () => {
+    const r = probe(world({ sessionId: 's1', pointer: `s1\t${TRANSCRIPT}`, transcript: '' }))
+    if (r.capable) throw new Error('unreachable')
+    expect(r.reason).toBe('transcript-empty')
+    expect(isTokenCollectionWiringBroken(r)).toBe(true)
+  })
+
+  // The false positive: a plain human terminal has no session id, so a pointer
+  // left by an earlier session cannot be shown to be theirs. Refusing their
+  // commit over it is the expensive failure `#272` names.
+  it('UNCORROBORATED pointer (no session id) naming a missing transcript — PASSES, not the human’s problem', () => {
+    const r = probe(world({ pointer: `s1\t${TRANSCRIPT}`, transcript: 'missing' }))
+    if (r.capable) throw new Error('unreachable')
+    expect(r.reason).toBe('no-transcript-resolved')
+    expect(isTokenCollectionWiringBroken(r)).toBe(false)
+  })
+
+  it('a degraded verdict carries a detail consistent with its reason, never a contradictory one', () => {
+    const r = probe(world({ pointer: `s1\t${TRANSCRIPT}`, transcript: 'missing' }))
+    if (r.capable) throw new Error('unreachable')
+    expect(r.reason).toBe('no-transcript-resolved')
+    expect(r.detail).toContain('could not be shown to belong to this session')
+  })
+
+  // The BLOCKER a reviewer proved end to end against the real Stop hook body.
+  // The hook writes `(session_id || "") + "\t" + path`, so a Stop payload with
+  // no session id yields a pointer beginning with a TAB. `.trim()` ate it, the
+  // split found no separator, and a pointer naming a present, readable,
+  // summarizable transcript was called malformed — refusing every commit on a
+  // host that meters perfectly.
+  it('a pointer with an EMPTY session-id field still resolves — the leading tab survives', () => {
+    const r = probe(world({ pointer: `\t${TRANSCRIPT}`, transcript: REAL_JSONL }))
+    expect(r.capable).toBe(true)
+    expect(isTokenCollectionWiringBroken(r)).toBe(false)
+  })
+
+  it('a stale pointer degrades its DETAIL as well as its reason, so the pair cannot contradict', () => {
+    const r = probe(world({ sessionId: 's2', pointer: `s1\t${TRANSCRIPT}`, transcript: REAL_JSONL }))
+    if (r.capable) throw new Error('unreachable')
+    expect(r.reason).toBe('no-transcript-resolved')
+    expect(r.detail).toContain('belongs to another session')
   })
 })
