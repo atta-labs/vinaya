@@ -68,3 +68,21 @@ describe('evaluateTokenCollectionWiring', () => {
     expect(result.error.message.toLowerCase()).not.toContain('agent')
   })
 })
+
+describe('pointer-unusable — the reason this round introduced', () => {
+  it('renders a CheckError naming the wiring, not the agent', () => {
+    const result = evaluateTokenCollectionWiring('token-collection-wired', {
+      capable: false,
+      reason: 'pointer-unusable',
+      detail: 'Transcript pointer file /tmp/x.txt is malformed: "no-tab"'
+    })
+    expect(result.pass).toBe(false)
+    if (result.pass) throw new Error('unreachable')
+    expect(result.error.severity).toBe('error')
+    expect(result.error.message).toContain('pointer-unusable')
+    expect(result.error.message).toContain('malformed')
+    // The failure must point at the wiring. Naming the agent is what the
+    // measured attalabs failure did, and what this check exists to stop.
+    expect(result.error.message).not.toMatch(/\byou (did|failed|forgot)\b/i)
+  })
+})

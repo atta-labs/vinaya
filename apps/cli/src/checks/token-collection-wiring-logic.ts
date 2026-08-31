@@ -11,7 +11,13 @@
  * (`transcript-unreadable`/`transcript-empty` — something WAS wired but
  * reaching it failed) fails — lives in `@attalabs/aeg-core`'s
  * `isTokenCollectionWiringBroken`, shared verbatim with this repo's own
- * shipped check — there is no second bin. An `aeg-core` bin briefly existed
+ * shipped check — there is no second bin.
+ *
+ * Refuses on `pointer-unusable` (the pointer itself is unreadable or
+ * malformed), `transcript-unreadable`, and `transcript-empty`. Passes on
+ * `no-transcript-resolved`, which now covers both "no pointer at all" and "a
+ * pointer that cannot be shown to be this session's" — including a stale one
+ * left by another session in the same project directory. An `aeg-core` bin briefly existed
  * only so `registry-scaffold.ts`'s classifier had a candidate to place an
  * `enforcement.md` stub row for; it shipped to nobody (`aeg-core`'s `files`
  * is `["src", …]`) and made the row cite a path no adopter has. The row now
@@ -31,11 +37,12 @@ export function evaluateTokenCollectionWiring(
   checkName: string,
   capability: MeteringCapability
 ): TokenCollectionWiringResult {
-  // `isTokenCollectionWiringBroken` is a type predicate, so a false result
-  // narrows `capability` for the caller and no second `capable` re-guard is
-  // needed — an earlier revision carried one purely to satisfy the compiler,
-  // where it read as dead code.
   if (!isTokenCollectionWiringBroken(capability)) return { pass: true }
+  // Narrowing only. `isTokenCollectionWiringBroken` returns a plain boolean on
+  // purpose — as a type predicate it was unsound, since `false` also covers the
+  // incapable-but-sanctioned case — so the compiler still needs this, and it is
+  // unreachable at runtime rather than dead.
+  if (capability.capable) return { pass: true }
 
   return {
     pass: false,

@@ -7,4 +7,4 @@ New `token-collection-wired` core check (ring 0, part of the managed `pre-commit
 
 Local and offline only: no PR body is read (none exists yet at pre-commit) and no network call is made.
 
-`@attalabs/aeg-core` gains a new export, `isTokenCollectionWiringBroken` — the pass/fail predicate above, factored out contract-agnostic so both the shipped check and this repo's own self-hosting gate consume the same fact. Additive only.
+`@attalabs/aeg-core` gains a new export, `isTokenCollectionWiringBroken` — the pass/fail predicate above, factored out contract-agnostic so both the shipped check and the shipped check consume the same fact. Additive on the exported surface.

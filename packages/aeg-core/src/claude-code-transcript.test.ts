@@ -203,7 +203,7 @@ describe('resolveMeteringCapability', () => {
     if (result.capable) expect(result.transcriptPath).toBe('/real/transcript.jsonl')
   })
 
-  it('refuses a stale pointer whose recorded session id disagrees with the current one', () => {
+  it('does not claim a stale pointer whose recorded session id disagrees with the current one', () => {
     const pointerPath = '/tmp/claude-transcript--repo.txt'
     const files: Record<string, string> = {
       [pointerPath]: 'session-old\t/real/transcript.jsonl'
@@ -225,7 +225,7 @@ describe('resolveMeteringCapability', () => {
     // corroborated as stale for this session is wiring that resolved and could
     // not be reached — precisely what the gate refuses — and calling it
     // "nothing was ever wired" let it pass silently.
-    if (!result.capable) expect(result.reason).toBe('pointer-unusable')
+    if (!result.capable) expect(result.reason).toBe('no-transcript-resolved')
   })
 
   it('explicit --transcript wins outright over a resolvable pointer file', () => {
@@ -366,11 +366,16 @@ describe('reason ↔ probe condition, and what each means for the wiring gate', 
     expect(isTokenCollectionWiringBroken(r)).toBe(true)
   })
 
-  it('pointer present but STALE for this session — wiring defect, FAILS', () => {
+  // Ruled 2026-08-31 after two reviewers disagreed. A stale pointer is provably
+  // NOT this session's, so it is the can't-claim-it case, not a wiring defect:
+  // refusing it blocks a second session's very first commit — its own Stop hook
+  // fires only after its first turn completes — with no action that clears the
+  // refusal, since `vinaya check` accepts no `--transcript`.
+  it('pointer present but STALE for this session — not ours to claim, PASSES', () => {
     const r = probe(world({ sessionId: 's2', pointer: `s1\t${TRANSCRIPT}`, transcript: REAL_JSONL }))
     if (r.capable) throw new Error('unreachable')
-    expect(r.reason).toBe('pointer-unusable')
-    expect(isTokenCollectionWiringBroken(r)).toBe(true)
+    expect(r.reason).toBe('no-transcript-resolved')
+    expect(isTokenCollectionWiringBroken(r)).toBe(false)
   })
 
   it('corroborated pointer naming a MISSING transcript — wiring defect, FAILS', () => {
@@ -395,6 +400,13 @@ describe('reason ↔ probe condition, and what each means for the wiring gate', 
     if (r.capable) throw new Error('unreachable')
     expect(r.reason).toBe('no-transcript-resolved')
     expect(isTokenCollectionWiringBroken(r)).toBe(false)
+  })
+
+  it('a degraded verdict carries a detail consistent with its reason, never a contradictory one', () => {
+    const r = probe(world({ pointer: `s1\t${TRANSCRIPT}`, transcript: 'missing' }))
+    if (r.capable) throw new Error('unreachable')
+    expect(r.reason).toBe('no-transcript-resolved')
+    expect(r.detail).toContain('could not be shown to belong to this session')
   })
 
   it('UNCORROBORATED pointer that is itself broken — PASSES for the same reason', () => {

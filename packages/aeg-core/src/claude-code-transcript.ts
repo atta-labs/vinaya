@@ -192,14 +192,32 @@ function resolvePointer(explicitTranscriptPath: string | undefined, deps: Meteri
     return {
       pointerExisted: true,
       corroborated: Boolean(currentSessionId),
-      error: `Transcript pointer file ${pointerPath} is malformed: "${contents}"`
+      // Bounded: this echoes an on-disk file's contents into check output,
+      // which in the hook path reaches commit output and CI logs. The guard
+      // upstream proves the file is owned by this user, so it is not
+      // attacker-controlled — but an unbounded echo is still wrong.
+      error: `Transcript pointer file ${pointerPath} is malformed: "${contents.slice(0, 120)}${contents.length > 120 ? '…' : ''}"`
     }
   }
 
   if (currentSessionId && pointerSessionId && currentSessionId !== pointerSessionId) {
+    // `corroborated: false`, and the distinction is the whole point: the ids
+    // DISAGREE, so this pointer is provably NOT this session's. Two reviewers
+    // reached opposite conclusions here and the second is right. Treating a
+    // stale pointer as a wiring defect refuses a correctly wired host: a second
+    // session in the same project directory sees the first session's pointer
+    // until its own Stop hook fires, which by construction is only after its
+    // first turn completes — so its very first commit is blocked, and the
+    // remedy the message names (`--transcript`) is a flag `vinaya check` does
+    // not accept, leaving no action that clears the refusal.
+    //
+    // It also makes `corroborated` mean one thing rather than two. Everywhere
+    // else it answers "can we show this pointer is ours"; setting it true here
+    // made it mean "we could tell, and it wasn't", which is what put the three
+    // shipped docs at odds with the code.
     return {
       pointerExisted: true,
-      corroborated: true,
+      corroborated: false,
       error:
         `Transcript pointer at ${pointerPath} is stale: written for session ${pointerSessionId}, ` +
         `but this session is ${currentSessionId}. Name your own transcript with --transcript instead of ` +
@@ -244,14 +262,35 @@ export function resolveMeteringCapability(
   // Downstream transcript failures gate only on a corroborated pointer, for the
   // same reason: a stale pointer naming a since-pruned transcript must not
   // refuse a human's commit.
-  const downstream = (r: 'transcript-unreadable' | 'transcript-empty'): MeteringIncapableReason =>
-    resolved.corroborated ? r : 'no-transcript-resolved'
+  // Returns the reason AND a detail consistent with it. An earlier revision
+  // degraded only the reason and kept the original detail, so an incapable
+  // verdict could read `no-transcript-resolved` while its detail said a
+  // transcript HAD been resolved and was unreadable. That pair leaks past this
+  // check into `vinaya doctor` and into `pr report`'s token cell, which is the
+  // false-provenance class this whole tranche exists to remove.
+  const downstream = (
+    r: 'transcript-unreadable' | 'transcript-empty',
+    detail: string
+  ): { reason: MeteringIncapableReason; detail: string } =>
+    resolved.corroborated
+      ? { reason: r, detail }
+      : {
+          reason: 'no-transcript-resolved',
+          detail: `A transcript pointer was found but could not be shown to belong to this session, so it is not treated as this session's wiring. (Underlying condition, for diagnosis only: ${detail})`
+        }
 
   if (!deps.exists(resolved.path)) {
     return {
       capable: false,
-      reason: downstream('transcript-unreadable'),
-      detail: `Resolved transcript path ${resolved.path} does not exist.`
+      // "not readable as a regular file owned by this user" rather than "does
+      // not exist": the shipped check's `exists` dep is `lstat`-hardened, so a
+      // symlinked, foreign-owned, or non-regular transcript reports false here
+      // for a path that does exist. Saying "does not exist" of such a file is
+      // both wrong and unactionable.
+      ...downstream(
+        'transcript-unreadable',
+        `Resolved transcript path ${resolved.path} is not readable as a regular file owned by this user.`
+      )
     }
   }
 
@@ -261,8 +300,10 @@ export function resolveMeteringCapability(
   } catch (err) {
     return {
       capable: false,
-      reason: downstream('transcript-unreadable'),
-      detail: `Transcript at ${resolved.path} could not be read: ${(err as Error).message}`
+      ...downstream(
+        'transcript-unreadable',
+        `Transcript at ${resolved.path} could not be read: ${(err as Error).message}`
+      )
     }
   }
 
@@ -270,10 +311,11 @@ export function resolveMeteringCapability(
   if (summary.messageCount === 0) {
     return {
       capable: false,
-      reason: downstream('transcript-empty'),
-      detail:
+      ...downstream(
+        'transcript-empty',
         `Transcript at ${resolved.path} yielded zero assistant messages with usage data — ` +
-        "it's empty, unparseable, or not yet flushed to disk."
+          "it's empty, unparseable, or not yet flushed to disk."
+      )
     }
   }
 
@@ -305,9 +347,15 @@ export function resolveMeteringCapability(
  * or stale pointer pass silently — the exact wired-but-unreachable state this
  * check exists to refuse.
  */
-export function isTokenCollectionWiringBroken(
-  capability: MeteringCapability
-): capability is { capable: false; reason: MeteringIncapableReason; detail: string } {
+/*
+ * Returns a plain boolean, deliberately NOT a type predicate. As a predicate it
+ * was unsound: `false` also covers `{capable: false, reason:
+ * 'no-transcript-resolved'}`, so the negative branch narrowed to `capable:
+ * true` and `cap.summary` compiled clean while throwing at runtime. That is a
+ * false capability guarantee handed to every adopter of a published package,
+ * and no caller needs the narrowing badly enough to be worth it.
+ */
+export function isTokenCollectionWiringBroken(capability: MeteringCapability): boolean {
   if (capability.capable) return false
   return capability.reason !== 'no-transcript-resolved'
 }
