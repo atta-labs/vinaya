@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { GATE_AUDIENCE, isShipped, SHIPPED_BIN_AUDIENCE } from '@attalabs/aeg-core'
+import { CLI_CHECK_RING, GATE_AUDIENCE, isShipped, SHIPPED_BIN_AUDIENCE } from '@attalabs/aeg-core'
 import { CORE_CHECK_RING, coreCheckRegistry } from '../../src/checks/registry.js'
 
 /**
@@ -169,6 +169,44 @@ describe('GATE_AUDIENCE.ring mirrors CORE_CHECK_RING — the only place both are
     expect(
       mismatches,
       'GATE_AUDIENCE.ring has drifted from registry.ts REGISTRY — update gate-audience.ts to match.'
+    ).toEqual([])
+  })
+})
+
+describe('CLI_CHECK_RING mirrors CORE_CHECK_RING — the only place both are in scope at once', () => {
+  // `registry-scaffold.ts` (aeg-core) reads CLI_CHECK_RING to place a stub row
+  // for an `apps/cli/src/checks/bin/` G2 candidate (Issue #307); `registry.ts`'s
+  // `REGISTRY` pairing is the actual source of truth `CORE_CHECK_RING` derives
+  // from. aeg-core cannot import `apps/cli` to check this itself (same
+  // dependency-cycle constraint `GATE_AUDIENCE.ring` runs into above), so the
+  // duplicated table is asserted in sync here, same shape as that check.
+  it('every CLI_CHECK_RING entry agrees with CORE_CHECK_RING on its ring', () => {
+    const mismatches: string[] = []
+    for (const [name, ring] of Object.entries(CLI_CHECK_RING)) {
+      const real = CORE_CHECK_RING[name]
+      if (real !== ring) {
+        mismatches.push(`${name}: CLI_CHECK_RING says ring ${ring}, registry.ts says ${real}`)
+      }
+    }
+    expect(
+      mismatches,
+      'CLI_CHECK_RING has drifted from registry.ts REGISTRY — update gate-audience.ts to match.'
+    ).toEqual([])
+  })
+
+  it('declares nothing that is not registered — a stale entry cannot leave a fake ring', () => {
+    const registered = new Set(coreCheckRegistry().map((s) => s.name))
+    const stale = Object.keys(CLI_CHECK_RING).filter((name) => !registered.has(name))
+    expect(stale, `Declared in CLI_CHECK_RING but not registered: ${stale.join(', ')}`).toEqual([])
+  })
+
+  it('leaves nothing registered undeclared — a new check bin fails here, by name, until CLI_CHECK_RING is updated', () => {
+    const registered = coreCheckRegistry().map((s) => s.name)
+    const missing = registered.filter((name) => !(name in CLI_CHECK_RING))
+    expect(
+      missing,
+      `Registered but missing from CLI_CHECK_RING: ${missing.join(', ')}. ` +
+        'Add it so registry-scaffold.ts can derive a ring for its apps/cli bin.'
     ).toEqual([])
   })
 })
