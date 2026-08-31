@@ -10,16 +10,22 @@
  * aeg-core-local data table — see its own doc comment for why aeg-core
  * cannot instead import `apps/cli`'s `CORE_CHECK_RING` directly).
  *
- * Two derivation classes, per Issue #104's Principal decision:
+ * Three derivation classes, per Issue #104's Principal decision (extended
+ * by Issue #307 for the second registry-backed location):
  *   - a `packages/aeg-core/bin/*.ts` candidate that IS a registered check
  *     (its basename resolves in `GATE_AUDIENCE` to a `ShippedGate`) gets a
  *     stub in the ring `GATE_AUDIENCE` names for it;
+ *   - an `apps/cli/src/checks/bin/*.ts` candidate that IS a registered check
+ *     (its `check-`-stripped basename resolves in `CLI_CHECK_RING`) gets a
+ *     stub in the ring `CLI_CHECK_RING` names for it — most core check bins
+ *     live here, not under `packages/aeg-core/bin/` (Issue #307: 22 of 27 at
+ *     the time it was filed);
  *   - a `.husky/*` or `.claude/hooks/*.sh` candidate is a managed hook by
  *     construction — ring 0, no registry lookup needed.
- * Anything else (an aeg-core bin with no registry entry — `internal`,
- * `NON_GATE_BINS`, or simply undeclared) gets NO stub: ring is genuinely
- * underivable there, and guessing is exactly what this task's Stop-and-
- * escalate condition forbids. It stays a plain G2 finding, same as today.
+ * Anything else (a bin with no registry entry — `internal`, `NON_GATE_BINS`,
+ * or simply undeclared) gets NO stub: ring is genuinely underivable there,
+ * and guessing is exactly what this task's Stop-and-escalate condition
+ * forbids. It stays a plain G2 finding, same as today.
  *
  * Never touches an existing row: stubs are computed only for candidates
  * whose path is absent from every parsed row's `implementation` — the
@@ -39,7 +45,7 @@
  * on every stub this module ever produces.
  */
 
-import { GATE_AUDIENCE, isShipped } from './gate-audience'
+import { CLI_CHECK_RING, GATE_AUDIENCE, isShipped } from './gate-audience'
 import { findHeadingLine, findTable } from './markdown-table'
 import type { GateRing, GateRow } from './registry-parse'
 
@@ -51,6 +57,7 @@ export const PLACEHOLDER = '[undocumented — fill in why]'
 const HUSKY_PREFIX = '.husky/'
 const CLAUDE_HOOKS_PREFIX = '.claude/hooks/'
 const AEG_CORE_BIN_PREFIX = 'packages/aeg-core/bin/'
+const CLI_BIN_PREFIX = 'apps/cli/src/checks/bin/'
 
 const RING_CATEGORY: Record<GateRing, string> = { ring0: 'hook', ring1: 'ci', ring2: 'event' }
 
@@ -95,6 +102,14 @@ function classify(path: string): { ring: GateRing; checkName?: string } | null {
       return { ring: ringFromNumber(audience.ring), checkName }
     }
     return null
+  }
+  if (path.startsWith(CLI_BIN_PREFIX) && path.endsWith('.ts')) {
+    const base = path.slice(CLI_BIN_PREFIX.length, -'.ts'.length)
+    if (!base.startsWith('check-')) return null
+    const checkName = base.slice('check-'.length)
+    const ring = CLI_CHECK_RING[checkName]
+    if (ring === undefined) return null
+    return { ring: ringFromNumber(ring), checkName }
   }
   return null
 }

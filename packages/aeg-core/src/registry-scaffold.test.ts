@@ -90,6 +90,41 @@ describe('computeScaffoldPlan', () => {
     expect(plan.skipped).toHaveLength(0)
   })
 
+  it('apps/cli-backed class (Issue #307): a registered check bin resolving via CLI_CHECK_RING to ring-0 gets a ring-0 stub naming the check', () => {
+    const rows = parseEnforcementRegistry(fixtureContent())
+    // `check-brief-shape` -> `brief-shape`, ring 0 (CLI_CHECK_RING).
+    const plan = computeScaffoldPlan(rows, ['apps/cli/src/checks/bin/check-brief-shape.ts'])
+    expect(plan.stubs).toHaveLength(1)
+    expect(plan.stubs[0]?.ring).toBe('ring0')
+    expect(plan.stubs[0]?.checkName).toBe('brief-shape')
+    expect(plan.stubs[0]?.cells[0]).toBe('brief-shape')
+    expect(plan.stubs[0]?.cells[7]).toBe('`apps/cli/src/checks/bin/check-brief-shape.ts`')
+  })
+
+  it('apps/cli-backed class: a ring-1 check (closes-n, requiresOpenPr) gets a ring-1 stub', () => {
+    const rows = parseEnforcementRegistry(fixtureContent())
+    // `check-closes-n` -> `closes-n`, ring 1 (CLI_CHECK_RING).
+    const plan = computeScaffoldPlan(rows, ['apps/cli/src/checks/bin/check-closes-n.ts'])
+    expect(plan.stubs).toHaveLength(1)
+    expect(plan.stubs[0]?.ring).toBe('ring1')
+    expect(plan.stubs[0]?.checkName).toBe('closes-n')
+  })
+
+  it('an apps/cli bin with no CLI_CHECK_RING entry gets NO stub, and is reported skipped — the same no-guess discipline as the aeg-core-bin class', () => {
+    const rows = parseEnforcementRegistry(fixtureContent())
+    const plan = computeScaffoldPlan(rows, ['apps/cli/src/checks/bin/check-some-brand-new-tool.ts'])
+    expect(plan.stubs).toHaveLength(0)
+    expect(plan.skipped).toHaveLength(1)
+    expect(plan.skipped[0]?.path).toBe('apps/cli/src/checks/bin/check-some-brand-new-tool.ts')
+  })
+
+  it('an apps/cli bin whose name does not follow the check-<name> convention gets NO stub rather than a guessed name', () => {
+    const rows = parseEnforcementRegistry(fixtureContent())
+    const plan = computeScaffoldPlan(rows, ['apps/cli/src/checks/bin/not-a-check-prefixed-file.ts'])
+    expect(plan.stubs).toHaveLength(0)
+    expect(plan.skipped).toHaveLength(1)
+  })
+
   it('only mechanical cells are filled; every other cell is the exact placeholder marker', () => {
     const rows = parseEnforcementRegistry(fixtureContent())
     const plan = computeScaffoldPlan(rows, ['packages/aeg-core/bin/check-branch-topology.ts'])
