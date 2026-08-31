@@ -34,6 +34,19 @@ export type DispatchEdgeFact = {
 export type DispatchDependsOnFact = DispatchEdgeFact & {
   merged: boolean
   /**
+   * `false` when the resolver could not find any tranche/task/Issue matching
+   * this edge at all — a fact distinct from `merged: false`, which means the
+   * edge resolved to a real target that just hasn't merged yet. Conflating
+   * the two produced a false "not merged yet" claim for #193's
+   * `vinaya-milestone-model-v1 2` edge, which had genuinely already merged
+   * (#196) — the message this distinction exists to correct. Absent or
+   * `true` for every edge the resolver actually matched to a target,
+   * including one whose target lookup itself then failed (an outage), which
+   * stays under the existing conservative `merged: false` default rather
+   * than this one.
+   */
+  resolved?: boolean
+  /**
    * Hand-close recognition facts (task `vinaya-engine-v1` 21, #99) — a
    * second, narrower path alongside `merged` for a dependency Issue closed
    * directly by a recognized Principal, with a stated `COMPLETED` reason,
@@ -161,6 +174,17 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
   // `vinaya-engine-v1` 21, #99): a second, narrower path for a dependency
   // Issue closed directly rather than via a merged PR.
   for (const dep of input.dependsOn) {
+    if (dep.resolved === false) {
+      // Distinct from the "not merged yet" branch below (#196): this edge
+      // never resolved to any tranche/task/Issue at all, so a "not merged"
+      // claim would misattribute the failure to the forge rather than to
+      // the edge text. Still blocks — the conservative default is correct
+      // for a genuinely unresolvable edge — but says so honestly.
+      blockers.push(
+        `dispatch-gate depends-on: ${taskLabel} depends on "${dep.id}", which is UNRESOLVABLE — the resolver could not find a matching tranche/task/Issue for this edge (not a claim about merge status). Not dispatchable until the edge is corrected.`
+      )
+      continue
+    }
     if (!dep.merged && !isHandClosedByRecognizedPrincipal(dep, principalAllowlist)) {
       const issueStr = dep.issue !== null ? ` (#${dep.issue})` : ''
       blockers.push(

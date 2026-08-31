@@ -278,21 +278,26 @@ async function main(): Promise<void> {
   const taskById = new Map(tranche.tasks.map((t) => [t.id, t]))
   const factsByTaskId = snapshot.facts
 
-  const dependsOn: DispatchDependsOnFact[] = task.dependsOn.map((dep) => {
-    const r = resolveEdge(dep, taskById, factsByTaskId, repo)
-    return {
-      id: dep,
-      issue: r.issue,
-      merged: r.merged,
-      issueState: r.issueState,
-      stateReason: r.stateReason,
-      closedByActor: r.closedByActor
-    }
-  })
-  const conflictsWith: DispatchConflictsWithFact[] = task.conflictsWith.map((c) => {
-    const r = resolveEdge(c, taskById, factsByTaskId, repo)
-    return { id: c, issue: r.issue, openOrInFlight: r.open }
-  })
+  const dependsOn: DispatchDependsOnFact[] = await Promise.all(
+    task.dependsOn.map(async (dep) => {
+      const r = await resolveEdge(dep, taskById, factsByTaskId, repo)
+      return {
+        id: dep,
+        issue: r.issue,
+        merged: r.merged,
+        resolved: r.resolved,
+        issueState: r.issueState,
+        stateReason: r.stateReason,
+        closedByActor: r.closedByActor
+      }
+    })
+  )
+  const conflictsWith: DispatchConflictsWithFact[] = await Promise.all(
+    task.conflictsWith.map(async (c) => {
+      const r = await resolveEdge(c, taskById, factsByTaskId, repo)
+      return { id: c, issue: r.issue, openOrInFlight: r.open }
+    })
+  )
 
   const priorTrancheArchival: DispatchPriorTrancheFact[] = []
 
@@ -339,6 +344,9 @@ function recoveryPromptFor(blocker: string): string {
   }
   if (blocker.startsWith('dispatch-gate rationale:')) {
     return "The task's Issue fails the rationale gate. Ask the Planner to complete the eight-field rationale on the Issue body, then re-run `vinaya check dispatch-readiness`."
+  }
+  if (blocker.startsWith('dispatch-gate depends-on:') && blocker.includes('UNRESOLVABLE')) {
+    return 'A declared dependency edge could not be resolved to any tranche/task/Issue — check the tranche slug and task id in the edge text, then re-run `vinaya check dispatch-readiness`.'
   }
   if (blocker.startsWith('dispatch-gate depends-on:')) {
     return 'A declared dependency is not merged yet. Do not start this task — wait for the named dependency PR to merge, then re-run `vinaya check dispatch-readiness`.'

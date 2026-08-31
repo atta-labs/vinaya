@@ -34,6 +34,7 @@ describe('edge resolution — what counts as merged', () => {
     expect(e.merged).toBe(true)
     expect(e.issueState).toBe('closed')
     expect(e.stateReason).toBe('completed')
+    expect(e.resolved).toBe(true)
   })
 
   it('an Issue closed NOT_PLANNED is NOT merged — abandoned work shipped nothing', () => {
@@ -79,7 +80,11 @@ describe('edge resolution — a failed lookup blocks, it never passes', () => {
       open: false,
       issueState: null,
       stateReason: null,
-      closedByActor: null
+      closedByActor: null,
+      // `#NNN` is a recognized edge shape — the lookup itself failing (an
+      // outage) is a different fact from the edge never matching anything at
+      // all (#196): still `resolved: true`, same conservative `merged: false`.
+      resolved: true
     })
   })
 
@@ -97,34 +102,65 @@ describe('edge resolution — which edge shapes are recognised', () => {
    * resolves via its unanchored `/#(\d+)/`. That gap is invisible in review and
    * terminal in production.
    */
-  it('recognises the slug-qualified form the grammar sanctions', () => {
+  it('recognises the slug-qualified #NNN form the grammar sanctions', async () => {
     clearEdgeCache()
-    const bare = resolveEdge('#999999999', NO_TASKS, NO_FACTS, REPO)
-    const qualified = resolveEdge('some-tranche #999999999', NO_TASKS, NO_FACTS, REPO)
+    const bare = await resolveEdge('#999999999', NO_TASKS, NO_FACTS, REPO)
+    const qualified = await resolveEdge('some-tranche #999999999', NO_TASKS, NO_FACTS, REPO)
     expect(qualified.issue).toBe(bare.issue)
     expect(qualified.issue).toBe(999999999)
   })
 
-  it('leaves an edge with no issue reference unresolved', () => {
-    const e = resolveEdge('some-tranche 2', NO_TASKS, NO_FACTS, REPO)
+  /**
+   * The #196 regression: `some-tranche 2` is the documented cross-tranche
+   * form with a BARE task id (no `#`), the one row the pre-fix resolver
+   * silently missed. `resolveSibling` is faked so this never hits the
+   * network — it pins the resolution logic, not `deriveTrancheFromForge`.
+   */
+  it('resolves a slug-qualified bare task id via the sibling tranche', async () => {
+    const fakeSibling = async (slug: string) =>
+      slug === 'some-tranche'
+        ? {
+            tasks: new Map([['2', { id: '2', issue: 4242 }]]),
+            facts: new Map([['2', { prState: 'merged' as const }]])
+          }
+        : null
+    const e = await resolveEdge('some-tranche 2', NO_TASKS, NO_FACTS, REPO, fakeSibling)
+    expect(e.issue).toBe(4242)
+    expect(e.merged).toBe(true)
+    expect(e.resolved).toBe(true)
+  })
+
+  it('reports UNRESOLVABLE (not unmerged) for an unknown slug', async () => {
+    const fakeSibling = async () => null
+    const e = await resolveEdge('unknown-tranche 2', NO_TASKS, NO_FACTS, REPO, fakeSibling)
+    expect(e.resolved).toBe(false)
     expect(e.issue).toBeNull()
     expect(e.merged).toBe(false)
   })
 
-  it('prefers a same-tranche task id over an issue lookup', () => {
+  it('reports UNRESOLVABLE (not unmerged) for an unknown task id in a known slug', async () => {
+    const fakeSibling = async () => ({ tasks: new Map(), facts: new Map() })
+    const e = await resolveEdge('some-tranche 99', NO_TASKS, NO_FACTS, REPO, fakeSibling)
+    expect(e.resolved).toBe(false)
+    expect(e.issue).toBeNull()
+    expect(e.merged).toBe(false)
+  })
+
+  it('prefers a same-tranche task id over an issue lookup', async () => {
     const tasks = new Map([['2', { id: '2', issue: 4242 }]])
     const facts = new Map([['2', { prState: 'merged' }]])
-    const e = resolveEdge('2', tasks, facts, REPO)
+    const e = await resolveEdge('2', tasks, facts, REPO)
     expect(e.issue).toBe(4242)
     expect(e.merged).toBe(true)
+    expect(e.resolved).toBe(true)
   })
 })
 
 describe('edge resolution — the cache is keyed by repository, not by number', () => {
-  it('does not let one repo answer for another', () => {
+  it('does not let one repo answer for another', async () => {
     clearEdgeCache()
-    const a = resolveEdge('#999999999', NO_TASKS, NO_FACTS, { owner: 'atta-labs', repo: 'vinaya' })
-    const b = resolveEdge('#999999999', NO_TASKS, NO_FACTS, { owner: 'other', repo: 'elsewhere' })
+    const a = await resolveEdge('#999999999', NO_TASKS, NO_FACTS, { owner: 'atta-labs', repo: 'vinaya' })
+    const b = await resolveEdge('#999999999', NO_TASKS, NO_FACTS, { owner: 'other', repo: 'elsewhere' })
     // Both lookups fail (the Issue does not exist), so both are unresolved —
     // the point is that the second was attempted at all rather than served a
     // cached answer belonging to a different repository.
