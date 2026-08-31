@@ -436,6 +436,22 @@ exercise; never actually opened (--validate-only, no network write).
 `
 
 const EXEMPTIONS: Record<string, string> = {
+  'pr verify-evidence':
+    "`pr verify-evidence` reads the target pull request's body and head via `gh pr view <n> --json body," +
+    'headRefOid` UNCONDITIONALLY — there is no offline path, and the comparison is meaningless without a real ' +
+    'published block to compare against. Same forge/credential boundary as `review post` and `archive` above. ' +
+    "It also requires a CLEAN checkout at that pull request's head and refuses from a subdirectory, none of " +
+    "which this script's shared fixtureDir can supply. Its own guards — repo-root cwd, clean worktree, " +
+    'BASE_SHA override, head binding — are each proven against the real binary in ' +
+    'tests/commands/pr-verify-evidence-cwd.test.ts and the comparison logic in ' +
+    'src/commands/pr-verify-evidence-logic.test.ts.',
+  tokens:
+    "`tokens` collects a role's usage from the host's own session transcript, which no fixture directory has: " +
+    'the pointer file is written by a Stop hook during a real agent session, and `--transcript` needs a real ' +
+    'JSONL transcript to summarize. **PRE-EXISTING GAP, not introduced by the change that added this note.** ' +
+    '`tokens` has been `status: shipped` and unlisted here since it landed, so this script refused on `main` ' +
+    'before `pr verify-evidence` existed. Recorded as an exemption rather than left as a silent refusal so ' +
+    'the script runs at all; whether a synthetic-transcript exercise is worth building is a separate question.',
   archive:
     '`archive` is a ring-2 post-merge mechanism: it resolves merged PRs and their associated Issues from the ' +
     'live forge (`gh` reads against real merge history) UNCONDITIONALLY — there is no dry-run path that skips ' +

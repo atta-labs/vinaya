@@ -194,11 +194,26 @@ describe('control-character stripping covers more than C0', () => {
 })
 
 describe('publishedMergeBase is linear on adversarial whitespace', () => {
-  test('a large whitespace-heavy region parses fast', () => {
-    const hostile = `${' '.repeat(65_000)}\nHead: ffff1111\n${groupA('aaaa1111')}\n`
+  // Two things make this discriminate, and the earlier version had neither.
+  //
+  // NEWLINES, not spaces: the pathological case needs `\s` to match the line
+  // separator, so the leading and trailing quantifiers can overlap across lines
+  // under the `m` flag. A run of spaces cannot produce that overlap.
+  //
+  // NO MATCH anywhere: the backtracking only happens while the engine is
+  // failing to find one. The earlier input ended with a real Group A line, so
+  // the regex succeeded early and returned in 0 ms with `\s*` in place — the
+  // test passed with the defect present and proved nothing.
+  test('a region of newlines with NO Group A line does not backtrack', () => {
+    const hostile = '\n'.repeat(65_000)
     const started = Date.now()
-    expect(publishedMergeBase(hostile)).toBe('aaaa1111')
+    expect(publishedMergeBase(hostile)).toBeNull()
     expect(Date.now() - started).toBeLessThan(1_000)
+  })
+
+  test('and still reads a real base out of a large region', () => {
+    const big = `${'\n'.repeat(65_000)}Head: ffff1111\n${groupA('aaaa1111')}\n`
+    expect(publishedMergeBase(big)).toBe('aaaa1111')
   })
 })
 
