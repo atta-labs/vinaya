@@ -134,10 +134,10 @@ function findCrossingFiles(candidateFiles: string[]): string[] {
   )
 }
 
-type RoleFrontmatter = { file: string; role_id: string; performs: string[]; refuses_when: string }
-type ContractFrontmatter = { file: string; producer: string; consumer: string }
+type GatesRoleFrontmatter = { file: string; role_id: string; performs: string[]; refuses_when: string }
+type GatesContractFrontmatter = { file: string; producer: string; consumer: string }
 
-function readRoles(): RoleFrontmatter[] {
+function readRoles(): GatesRoleFrontmatter[] {
   if (!existsSync(ROLES_DIR)) return []
   return readdirSync(ROLES_DIR)
     .filter((name) => name.endsWith('.md'))
@@ -153,7 +153,7 @@ function readRoles(): RoleFrontmatter[] {
     })
 }
 
-function readContracts(): ContractFrontmatter[] {
+function readContracts(): GatesContractFrontmatter[] {
   if (!existsSync(CONTRACTS_DIR)) return []
   return readdirSync(CONTRACTS_DIR)
     .filter((name) => name.endsWith('.md'))
