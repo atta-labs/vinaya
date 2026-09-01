@@ -251,6 +251,86 @@ describe('resolveMeteringCapability', () => {
   })
 })
 
+/**
+ * `#315`: `sanitizeKey` (unexported, still collision-prone by design — see
+ * its own doc comment) collapses `/a/b` and `/a-b` to the same string, so
+ * two repos checked out at colliding paths shared one pointer file, and a
+ * pointer legitimately written by a session in the OTHER project could be
+ * read by this one as its own — reaching `pointer-unusable`, which refuses a
+ * commit. `transcriptPointerPath`/`legacyTranscriptPointerPath` are private,
+ * so these tests observe the PRIMARY (new-format) pointer path indirectly —
+ * the first path `resolvePointer` probes via `deps.exists` — rather than
+ * importing them.
+ */
+describe('resolveMeteringCapability — pointer-key collision resistance (#315)', () => {
+  function primaryPointerPathFor(projectDir: string): string {
+    const probed: string[] = []
+    resolveMeteringCapability({
+      env: { TMPDIR: '/tmp', CLAUDE_PROJECT_DIR: projectDir },
+      cwd: projectDir,
+      exists: (p) => {
+        probed.push(p)
+        return false
+      },
+      readFile: () => {
+        throw new Error('unexpected read')
+      }
+    })
+    // resolvePointer probes the primary (new-format) path first, then the
+    // legacy path — see the source doc comment on that ordering.
+    expect(probed.length).toBe(2)
+    return probed[0] as string
+  }
+
+  it("the Issue's exact example: /a/b and /a-b no longer share a pointer path", () => {
+    expect(primaryPointerPathFor('/a/b')).not.toBe(primaryPointerPathFor('/a-b'))
+  })
+
+  it.each([
+    ['/a/b', '/a_b'],
+    ['/a/b', '/a..b'],
+    ['/a/b', '//a/b']
+  ])('%s and %s (colliding under the pre-#315 scheme) now probe distinct pointer paths', (x, y) => {
+    expect(primaryPointerPathFor(x)).not.toBe(primaryPointerPathFor(y))
+  })
+})
+
+/**
+ * `#315` migration: a pointer the shipped Stop hook wrote under the
+ * PRE-#315 (legacy) filename — `sanitizeKey` alone, no digest — must stay
+ * readable once this fix ships, never orphaned. `resolvePointer` falls back
+ * to that legacy name only when the new, collision-resistant name is
+ * absent.
+ */
+describe('resolveMeteringCapability — legacy pointer migration (#315)', () => {
+  const LEGACY_POINTER = '/tmp/claude-transcript--repo.txt' // sanitizeKey('/repo'), no digest suffix
+  const TRANSCRIPT = '/tmp/session.jsonl'
+  const REAL_JSONL = JSON.stringify({
+    type: 'assistant',
+    message: { id: 'm1', model: 'claude-opus-5', usage: { input_tokens: 1, output_tokens: 2 } }
+  })
+
+  it('a pointer written under the OLD key format is still found and read correctly by the NEW code', () => {
+    const files: Record<string, string> = {
+      [LEGACY_POINTER]: `s1\t${TRANSCRIPT}`,
+      [TRANSCRIPT]: REAL_JSONL
+    }
+    const result = resolveMeteringCapability({
+      env: { TMPDIR: '/tmp', CLAUDE_PROJECT_DIR: '/repo', CLAUDE_CODE_SESSION_ID: 's1' },
+      cwd: '/repo',
+      exists: (p) => p in files,
+      readFile: (p) => {
+        if (!(p in files)) throw new Error(`ENOENT: ${p}`)
+        return files[p] as string
+      }
+    })
+    // Nothing here is dropped silently — the legacy pointer resolves to a
+    // real, corroborated, capable result, exactly as the new-format one would.
+    expect(result.capable).toBe(true)
+    if (result.capable) expect(result.transcriptPath).toBe(TRANSCRIPT)
+  })
+})
+
 describe('isTokenCollectionWiringBroken', () => {
   it('capable: not broken', () => {
     const capability: MeteringCapability = {

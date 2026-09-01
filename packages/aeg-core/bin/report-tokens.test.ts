@@ -24,6 +24,81 @@ describe('sanitizeKey / transcriptPointerPath', () => {
   })
 })
 
+/**
+ * `#315`: `sanitizeKey` alone collapses every run of non-alphanumeric
+ * characters to one `-`, so any two paths of the shape `<prefix><non-alnum
+ * run>a<non-alnum run>b` land on the identical `sanitizeKey` output —
+ * `/a/b` and `/a-b` are just one instance of an unbounded family of
+ * collisions, not a one-off. `transcriptPointerPath` now appends a full
+ * SHA-256 digest of the untouched original value, so these tests check the
+ * PATH function actually used to name pointer files, not `sanitizeKey` in
+ * isolation (which is intentionally still collision-prone — see its own doc
+ * comment).
+ */
+describe('transcriptPointerPath — collision resistance (#315)', () => {
+  it("the Issue's exact example: /a/b and /a-b now produce distinct pointer paths", () => {
+    const a = transcriptPointerPath('/a/b', '/tmp')
+    const b = transcriptPointerPath('/a-b', '/tmp')
+    expect(sanitizeKey('/a/b')).toBe(sanitizeKey('/a-b')) // sanity: still collides pre-digest
+    expect(a).not.toBe(b)
+  })
+
+  it.each([
+    ['/a/b', '/a_b'],
+    ['/a/b', '/a..b'],
+    ['/a/b', '//a/b']
+  ])('%s and %s collide under sanitizeKey alone but produce distinct pointer paths', (x, y) => {
+    expect(sanitizeKey(x)).toBe(sanitizeKey(y)) // sanity: these really do collide pre-digest
+    expect(transcriptPointerPath(x, '/tmp')).not.toBe(transcriptPointerPath(y, '/tmp'))
+  })
+})
+
+describe('resolveTranscriptPath — legacy pointer migration (#315)', () => {
+  const NEW_POINTER = transcriptPointerPath('/repo', '/tmp')
+  // The pre-#315 name: sanitizeKey alone, no digest — what a pointer already
+  // on disk before this fix shipped (or written by a not-yet-upgraded
+  // `track-transcript.sh`) is named.
+  const LEGACY_POINTER = `/tmp/claude-transcript-${sanitizeKey('/repo')}.txt`
+
+  const baseDeps = { env: { CLAUDE_PROJECT_DIR: '/repo', TMPDIR: '/tmp' }, cwd: '/repo' }
+
+  it('finds and reads a pointer written under the OLD (legacy) name when the new one is absent — no orphaning', () => {
+    const resolved = resolveTranscriptPath(undefined, {
+      ...baseDeps,
+      exists: (path) => path === LEGACY_POINTER,
+      readFile: (path) => {
+        if (path !== LEGACY_POINTER) throw new Error(`unexpected read: ${path}`)
+        return 'session-legacy\t/home/user/.claude/projects/-repo/legacy.jsonl\n'
+      }
+    })
+    expect(resolved).toBe('/home/user/.claude/projects/-repo/legacy.jsonl')
+  })
+
+  it('prefers the NEW (collision-resistant) pointer over the legacy one when both exist', () => {
+    const files: Record<string, string> = {
+      [NEW_POINTER]: 'session-new\t/new/transcript.jsonl\n',
+      [LEGACY_POINTER]: 'session-old\t/legacy/transcript.jsonl\n'
+    }
+    const resolved = resolveTranscriptPath(undefined, {
+      ...baseDeps,
+      exists: (path) => path in files,
+      readFile: (path) => files[path] as string
+    })
+    expect(resolved).toBe('/new/transcript.jsonl')
+  })
+
+  it('throws naming BOTH the new and legacy paths when neither pointer exists', () => {
+    let message = ''
+    try {
+      resolveTranscriptPath(undefined, { ...baseDeps, exists: () => false, readFile: () => '' })
+    } catch (err) {
+      message = (err as Error).message
+    }
+    expect(message).toContain(NEW_POINTER)
+    expect(message).toContain(LEGACY_POINTER)
+  })
+})
+
 describe('parseArgs', () => {
   it('requires --phase and --role', () => {
     expect(() => parseArgs([])).toThrow(/Usage:/)

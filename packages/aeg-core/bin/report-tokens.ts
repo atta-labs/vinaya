@@ -44,15 +44,53 @@
  * would win regardless of which one asked.
  */
 
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { summarizeTranscript } from '../src/claude-code-transcript'
 import { formatBreakdown, formatTokensLine } from '../src/report-tokens'
 
+/**
+ * Collapses every run of non-alphanumeric characters to a single `-`. Kept
+ * (unchanged) as the readable prefix of a pointer key and as the sole
+ * derivation for a pre-migration (legacy) pointer filename — see
+ * `legacyTranscriptPointerPath`. On its own it is not collision-resistant:
+ * `/a/b` and `/a-b` both collapse to `-a-b` (`#315`). Exported because this
+ * file's own tests exercise it directly.
+ */
 export function sanitizeKey(value: string): string {
   return value.replace(/[^A-Za-z0-9]+/g, '-')
 }
 
+/**
+ * Collision-resistant (`#315`), matching
+ * `../src/claude-code-transcript.ts`'s `collisionResistantKey` byte-for-byte
+ * (deliberately duplicated, not imported — see `transcriptPointerPath`'s own
+ * doc comment in that file for why `bin/` cannot be imported from `src/`).
+ * See that file's `collisionResistantKey` for the full reasoning on why the
+ * digest is full-length, not truncated.
+ */
+function collisionResistantKey(value: string): string {
+  const digest = createHash('sha256').update(value).digest('hex')
+  return `${sanitizeKey(value)}-${digest}`
+}
+
+/**
+ * The PRIMARY (post-migration, `#315`) pointer path — collision-resistant.
+ * `resolveTranscriptPath` also consults `legacyTranscriptPointerPath` as a
+ * fallback, so a pointer a not-yet-upgraded `track-transcript.sh` (or one
+ * written before this fix shipped) already has on disk is still found
+ * rather than orphaned.
+ */
 export function transcriptPointerPath(projectDir: string, tmpDir: string): string {
+  return `${tmpDir}/claude-transcript-${collisionResistantKey(projectDir)}.txt`
+}
+
+/**
+ * The pre-`#315` pointer filename — `sanitizeKey` alone, collision-prone.
+ * Never the primary read target going forward; consulted only when
+ * `transcriptPointerPath` is absent.
+ */
+function legacyTranscriptPointerPath(projectDir: string, tmpDir: string): string {
   return `${tmpDir}/claude-transcript-${sanitizeKey(projectDir)}.txt`
 }
 
@@ -97,11 +135,22 @@ export function resolveTranscriptPath(explicit: string | undefined, deps: Resolv
 
   const projectDir = deps.env.CLAUDE_PROJECT_DIR ?? deps.cwd
   const tmpDir = deps.env.TMPDIR ?? '/tmp'
-  const pointerPath = transcriptPointerPath(projectDir, tmpDir)
+  const primaryPointerPath = transcriptPointerPath(projectDir, tmpDir)
+  const legacyPointerPath = legacyTranscriptPointerPath(projectDir, tmpDir)
 
-  if (!deps.exists(pointerPath)) {
+  // `#315` migration: the primary (collision-resistant) path wins when both
+  // exist. The legacy path is consulted ONLY when the primary is absent, so
+  // a pointer written before this fix shipped is still found, not orphaned.
+  const pointerPath = deps.exists(primaryPointerPath)
+    ? primaryPointerPath
+    : deps.exists(legacyPointerPath)
+      ? legacyPointerPath
+      : undefined
+
+  if (!pointerPath) {
     throw new Error(
-      `No transcript pointer at ${pointerPath}, so this adapter has nothing to auto-resolve. ` +
+      `No transcript pointer at ${primaryPointerPath} (nor its pre-migration name ${legacyPointerPath}), ` +
+        'so this adapter has nothing to auto-resolve. ' +
         'Name the transcript directly instead — `--transcript <path>` is a fully supported route, not a ' +
         'workaround, and is the normal one here. Your session transcript is the JSONL file the harness ' +
         'passes hooks as `transcript_path` (typically under ~/.claude/projects/<project-slug>/). ' +
