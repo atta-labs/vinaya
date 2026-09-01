@@ -1,5 +1,0 @@
----
-"@attalabs/vinaya": patch
----
-
-`roles/planner.md`'s token-reporting paragraph stops claiming planning normally runs operator-metered by default — a false absolute on any host that exposes its own session usage, the same class of claim task 1 corrected on `roles/developer.md` — and now reads the probe, self-metering first, with the pinned lessons Issue `#239` named as the durable destination when no plan PR exists yet. `tranche-model.md` §12's "Known gap" paragraph is rewritten to state precisely what's closed and what remains open: the Planner's no-plan-PR case is closed (Issue `#239`), the Brief Author's plan-PR case was never actually open, the Archivist's own row already lands in the same provenance comment `vinaya archive` posts — and the one case still genuinely open is a Brief Author session that ends with no PR of any kind yet to write into. `templates/pr-report-template.md`'s `## Token report` section gains the `AEG:TOKENS` anchor pair `apps/cli/src/commands/pr-report.ts` (shipped by task 3) already searches for and writes into — the shipped template was the one place still silent about a mechanism that already ships.
