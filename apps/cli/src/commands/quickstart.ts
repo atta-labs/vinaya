@@ -23,7 +23,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { resolveMeteringCapability } from '@attalabs/aeg-core'
+import { hardenedMeteringDeps, resolveMeteringCapability } from '@attalabs/aeg-core'
 import { runDemoBreak } from './demo.js'
 import type { DoctorDeps } from './doctor.js'
 import { runDoctor } from './doctor.js'
@@ -219,7 +219,8 @@ function readPackageVersion(): string {
   return pkg.version
 }
 
-function realDeps(): QuickstartDeps {
+/** Exported so `#313`'s per-call-site hardening proof can invoke this exact wiring, not a reimplementation of it. */
+export function realDeps(): QuickstartDeps {
   return {
     detectRepo: detectGitRepo,
     initDeps: {
@@ -241,13 +242,7 @@ function realDeps(): QuickstartDeps {
       nodeVersion: () => process.version,
       bunVersion: () => (typeof Bun === 'undefined' ? null : Bun.version),
       packageVersion: readPackageVersion,
-      meteringCapability: () =>
-        resolveMeteringCapability({
-          env: process.env,
-          cwd: process.cwd(),
-          exists: existsSync,
-          readFile: (path: string) => readFileSync(path, 'utf8')
-        })
+      meteringCapability: () => resolveMeteringCapability(hardenedMeteringDeps())
     },
     confirm: async (q, defaultYes) => promptYesNo(q, defaultYes),
     ask: async (q) => promptAsk(q),
