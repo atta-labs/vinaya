@@ -32,7 +32,10 @@
  *
  * Report-only, same rollout precedent as `reader-resolvable-prose`
  * (`aeg-root/enforcement.md`'s G1/G2 period): findings print as `warning`
- * severity, exit code always 0.
+ * severity, exit code stays 0 for that class. Orthogonal exception (Issue
+ * #314): a genuinely unresolvable doctrine root is not a backlog finding —
+ * `main()` exits non-`0`/non-`1` for that case, so it reads as a distinct
+ * `status: 'error'`, never a clean pass.
  *
  * scope: full — the SWEEP stays the whole doctrine tree (a retired-vocabulary
  * leak can sit in any doctrine file regardless of what a given PR touches).
@@ -45,7 +48,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { scanRetiredVocabulary, type VocabSourceFile } from '@attalabs/aeg-core'
-import { resolveDoctrineRoot } from '../../commands/doctrine.js'
+import { hasDoctrineEntry, resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { repoRoot, resolveChangedFiles } from '../../lib/diff-evidence'
@@ -54,12 +57,30 @@ const CHECK_NAME = 'retired-vocabulary'
 
 /**
  * Same default, same config key, and same fix as `reader-resolvable-prose`
- * (task `vinaya-adopter-portability-v1` 2, Issue #232) — see that file's
- * module header for why `resolveDoctrineRoot()` (the package's own shipped
- * copy) is the right unconfigured default here, unlike a check that reads
- * adopter-specific forge facts.
+ * (Issue #314) — see that file's `resolveCheckDoctrineRoot()` for the full
+ * reasoning: `resolveDoctrineRoot()`'s own default resolves relative to
+ * wherever ITS OWN calling module physically sits on disk, which makes
+ * whether it finds this repo's `aeg-root/` depend on checkout-path shape
+ * rather than on whether that `aeg-root/` exists. `repoRoot()` (`git
+ * rev-parse --show-toplevel`) is the deterministic anchor instead; falling
+ * back to `resolveDoctrineRoot()`'s package-relative "my own shipped copy"
+ * resolution only when the repo under check has no local `aeg-root/` of its
+ * own (a `vinaya init` adopter, Issue #232). `null` — a genuinely
+ * unresolvable root — is reported by `main()` as its own distinct outcome,
+ * never silently as a clean zero-finding pass.
  */
-const DOCTRINE_ROOT = loadConfig()?.proseGates?.doctrineRoot ?? resolveDoctrineRoot() ?? 'aeg-root'
+function resolveCheckDoctrineRoot(): string | null {
+  const configured = loadConfig()?.proseGates?.doctrineRoot
+  if (configured !== undefined) return configured
+  const root = repoRoot()
+  if (root !== null) {
+    const candidate = join(root, 'aeg-root')
+    if (hasDoctrineEntry(candidate)) return candidate
+  }
+  return resolveDoctrineRoot()
+}
+
+const DOCTRINE_ROOT = resolveCheckDoctrineRoot()
 
 /** Text extensions worth sweeping — mirrors `retired-vocabulary.test.ts`'s own `grep --include` list. */
 function isSweptFile(name: string): boolean {
@@ -97,6 +118,28 @@ function readAll(paths: string[]): VocabSourceFile[] {
 }
 
 function main(): void {
+  // Genuinely unresolvable — see `check-reader-resolvable-prose.ts`'s
+  // identical guard for the full reasoning. `severity: 'error'` and a
+  // non-{0,1} exit code (never `'warning'`, which the reportable-findings
+  // loop below uses) make the runner mark this run `status: 'error'`, never
+  // `'pass'` with zero findings — structurally indistinguishable, before
+  // this fix, from "swept the real tree and found nothing" (Issue #314).
+  if (DOCTRINE_ROOT === null) {
+    console.log(`${CHECK_NAME}: doctrine root unresolvable — sweep did not run.`)
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message:
+        'doctrine root unresolvable: no aeg-root found at the repo root under check, and no bundled copy found ' +
+        "relative to this package's own install.",
+      agent_recovery_prompt:
+        'Set proseGates.doctrineRoot in vinaya.config.json to the doctrine tree this repo actually uses, or ' +
+        "confirm aeg-root/ exists at the repo root (or that this package's own bundled aeg-root/ is present)."
+    })
+    process.exit(2)
+  }
+
   const paths = collect(DOCTRINE_ROOT)
   const files = readAll(paths)
   const findings = scanRetiredVocabulary(files)
@@ -106,7 +149,7 @@ function main(): void {
   // needs, for the identical reasons: `finding.file` comes from
   // `collect(DOCTRINE_ROOT)`, usually already absolute but not always
   // (`DOCTRINE_ROOT` can be a relative `proseGates.doctrineRoot` config
-  // value or the bare `'aeg-root'` fallback). Anchor to the SAME real repo
+  // value). Anchor to the SAME real repo
   // root `resolveChangedFiles()` used (`repoRoot()`, review finding, PR #290
   // MINOR) rather than a second, independent `process.cwd()` assumption that
   // could diverge from it outside the common invocation shape; and

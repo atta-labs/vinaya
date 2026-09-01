@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
@@ -235,3 +235,290 @@ for (const check of [
     })
   })
 }
+
+// Issue #314: `resolveDoctrineRoot()`'s own default resolves relative to
+// wherever ITS OWN calling module physically sits on disk — the right anchor
+// for `vinaya doctrine`'s "my own package" lookup, but the wrong one for a
+// check sweeping the repo actually under check. Whether that default finds a
+// real doctrine root depended on whether the checkout's ancestor path
+// happened to contain a directory literally named `node_modules` (which
+// gates `resolveDoctrineRoot`'s internal fallback candidate) — a fact with no
+// relation to whether the checkout's own `aeg-root/` exists. Measured live:
+// the same commit, checked out one directory deeper under a `node_modules`-
+// named ancestor, silently swept zero files instead of its real backlog.
+//
+// The fix anchors both checks' unconfigured default to `repoRoot()` (`git
+// rev-parse --show-toplevel`) first — deterministic regardless of checkout
+// shape — falling back to `resolveDoctrineRoot()`'s package-relative
+// resolution only when the repo under check has no local `aeg-root/` of its
+// own. These tests exercise both halves of that fix against the REAL bins,
+// not a unit test of the resolution logic in isolation, because the bug was
+// specifically about what the real subprocess does under a real checkout
+// shape.
+describe('doctrine-root checkout-location independence (Issue #314)', () => {
+  function fixtureWithOwnDoctrine(root: string, checkName: 'reader-resolvable-prose' | 'retired-vocabulary'): void {
+    mkdirSync(join(root, 'aeg-root', 'skills', 'aeg'), { recursive: true })
+    writeFileSync(join(root, 'aeg-root', 'skills', 'aeg', 'SKILL.md'), '# entry\n')
+    // A real, deterministic finding for each check — same patterns the rest
+    // of this suite uses (a live `FORGE_NUMBER_PATTERN`/retired-decision-id
+    // hit), not a guessed heuristic.
+    const mention =
+      checkName === 'retired-vocabulary'
+        ? `See D-${100 + 23} for the historical rationale.\n`
+        : 'See #123 for the historical rationale.\n'
+    writeFileSync(join(root, 'aeg-root', 'note.md'), mention)
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root })
+    execFileSync('git', ['add', '-A'], { cwd: root })
+    execFileSync('git', ['commit', '-q', '-m', 'Chore: fixture doctrine with one real finding'], { cwd: root })
+  }
+
+  // The raw bin, not the `vinaya check <name>` wrapper — the wrapper reformats
+  // stdout into its own `✓ <name>: pass` summary and drops the bin's own
+  // "N finding(s) swept" line, which this test needs to compare sweep counts.
+  function run(cwd: string, checkName: string): { exitCode: number; stdout: string } {
+    const binPath = join(
+      import.meta.dir,
+      '..',
+      '..',
+      'src',
+      'checks',
+      'bin',
+      checkName === 'reader-resolvable-prose' ? 'check-reader-resolvable-prose.ts' : 'check-retired-vocabulary.ts'
+    )
+    const result = Bun.spawnSync(['bun', binPath], {
+      cwd,
+      env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+    })
+    return { exitCode: result.exitCode, stdout: result.stdout.toString() }
+  }
+
+  /**
+   * Pulls the total finding count out of the check's own stdout summary
+   * line — `reader-resolvable-prose` prints `N finding(s) swept, ...`,
+   * `retired-vocabulary` prints `... M file(s) swept; N finding(s), ...`;
+   * both name the total (pre-diff-scoping) count as `N finding(s)`.
+   */
+  function sweptCount(stdout: string): number {
+    const match = stdout.match(/(\d+) finding\(s\)/)
+    if (!match) throw new Error(`no "finding(s)" summary line in stdout: ${stdout}`)
+    return Number(match[1])
+  }
+
+  /**
+   * Pulls the resolved doctrine root path out of the check's own stdout
+   * summary line (`doctrine root "<path>"`). A matching finding COUNT alone
+   * does not prove checkout-independence: with the fix reverted, both
+   * fixtures' `resolveDoctrineRoot()` fallback resolves relative to wherever
+   * `doctrine.ts` itself physically sits (this dev repo), so both runs
+   * silently escape to the SAME real `aeg-root/` and can coincidentally
+   * report the same count without ever having swept the fixture at all —
+   * caught live in review by reverting the three fixed source files and
+   * re-running this suite unmodified. Asserting the reported path actually
+   * points INTO the fixture directory closes that gap.
+   */
+  function doctrineRootPath(stdout: string): string {
+    const match = stdout.match(/doctrine root "([^"]+)"/)
+    if (!match) throw new Error(`no doctrine-root summary line in stdout: ${stdout}`)
+    return match[1] as string
+  }
+
+  for (const checkName of ['reader-resolvable-prose', 'retired-vocabulary'] as const) {
+    it(`${checkName}: identical finding count from a plain checkout and one nested several directories deeper`, () => {
+      const rand = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      const plainRoot = join(tmpdir(), `vinaya-checkout-plain-${checkName}-${rand}`)
+      // Nested under an unrelated multi-level ancestor — deliberately NOT
+      // literally named `node_modules`: `retired-vocabulary`'s own scanner
+      // (`packages/aeg-core/src/retired-vocabulary.ts`) exempts any file
+      // whose path contains `/node_modules/` as vendored/third-party code —
+      // a real, correct, unrelated exemption. Nesting the fixture itself
+      // under that literal name would make its own finding vanish for a
+      // reason that has nothing to do with THIS fix, confounding the test.
+      // Depth/shape (not that one specific name) is what the checkout-
+      // independence property under test actually needs to vary.
+      const deepParent = join(tmpdir(), `vinaya-checkout-deep-${checkName}-${rand}`, 'linked', 'vendored-checkout')
+      const nestedRoot = join(deepParent, 'nested-repo')
+      try {
+        mkdirSync(plainRoot, { recursive: true })
+        mkdirSync(nestedRoot, { recursive: true })
+        fixtureWithOwnDoctrine(plainRoot, checkName)
+        fixtureWithOwnDoctrine(nestedRoot, checkName)
+
+        const plain = run(plainRoot, checkName)
+        const nested = run(nestedRoot, checkName)
+
+        expect(plain.exitCode).toBe(0)
+        expect(nested.exitCode).toBe(0)
+        // Each run actually resolved INTO its own fixture, not (with the fix
+        // reverted) both silently escaping to this dev repo's own real
+        // `aeg-root/` — see `doctrineRootPath`'s doc comment for why a
+        // finding-count match alone cannot prove this.
+        expect(doctrineRootPath(plain.stdout)).toStartWith(realpathSync(plainRoot))
+        expect(doctrineRootPath(nested.stdout)).toStartWith(realpathSync(nestedRoot))
+        const plainCount = sweptCount(plain.stdout)
+        const nestedCount = sweptCount(nested.stdout)
+        // Non-zero: proves both actually swept the fixture's real doctrine
+        // content, not both coincidentally reporting nothing.
+        expect(plainCount).toBeGreaterThan(0)
+        expect(nestedCount).toBe(plainCount)
+      } finally {
+        rmSync(plainRoot, { recursive: true, force: true })
+        rmSync(join(tmpdir(), `vinaya-checkout-deep-${checkName}-${rand}`), { recursive: true, force: true })
+      }
+    })
+  }
+
+  // The exact historical trigger (Issue #314's own measured incident):
+  // `resolveDoctrineRoot()`'s internal fallback candidate is gated on whether
+  // the resolved package path contains a literal `node_modules` segment —
+  // reader-resolvable-prose's own scanner carries no equivalent path
+  // exemption (unlike retired-vocabulary's, see above), so this is safe to
+  // reproduce literally for this one check.
+  it('reader-resolvable-prose: identical finding count nested under a literal "node_modules" ancestor specifically', () => {
+    const rand = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const plainRoot = join(tmpdir(), `vinaya-checkout-plain-nm-${rand}`)
+    const nmParent = join(tmpdir(), `vinaya-checkout-nm-${rand}`, 'node_modules')
+    const nestedRoot = join(nmParent, 'nested-repo')
+    try {
+      mkdirSync(plainRoot, { recursive: true })
+      mkdirSync(nestedRoot, { recursive: true })
+      fixtureWithOwnDoctrine(plainRoot, 'reader-resolvable-prose')
+      fixtureWithOwnDoctrine(nestedRoot, 'reader-resolvable-prose')
+
+      const plain = run(plainRoot, 'reader-resolvable-prose')
+      const nested = run(nestedRoot, 'reader-resolvable-prose')
+
+      expect(plain.exitCode).toBe(0)
+      expect(nested.exitCode).toBe(0)
+      expect(doctrineRootPath(plain.stdout)).toStartWith(realpathSync(plainRoot))
+      expect(doctrineRootPath(nested.stdout)).toStartWith(realpathSync(nestedRoot))
+      const plainCount = sweptCount(plain.stdout)
+      const nestedCount = sweptCount(nested.stdout)
+      expect(plainCount).toBeGreaterThan(0)
+      expect(nestedCount).toBe(plainCount)
+    } finally {
+      rmSync(plainRoot, { recursive: true, force: true })
+      rmSync(join(tmpdir(), `vinaya-checkout-nm-${rand}`), { recursive: true, force: true })
+    }
+  })
+})
+
+// Issue #314's second acceptance criterion: where the doctrine root
+// genuinely cannot be resolved (no local `aeg-root/`, and no bundled copy
+// findable relative to the check's own install either), the check must
+// report that as its own distinct outcome — never silently as a clean,
+// zero-finding pass, which is structurally indistinguishable from "ran and
+// found nothing."
+//
+// Constructing this for real means defeating BOTH resolution paths: the
+// `repoRoot()`-anchored candidate (no local `aeg-root/`) AND
+// `resolveDoctrineRoot()`'s own package-relative fallback (no bundled copy
+// reachable from the check bin's own install location). Every real caller
+// in this dev monorepo's own tree finds ITS OWN `aeg-root/` via that second
+// path, so the only way to exercise genuine unresolvability for real is a
+// separate checkout with its `aeg-root/` actually removed — a fixture
+// clone, not the shared dev tree these tests run inside of. `git clone`
+// (local, same filesystem) hardlinks objects, so this is fast; `node_modules`
+// is symlinked in from THIS run's own real install rather than reinstalled,
+// since only `aeg-root`'s absence is under test here, not dependency
+// resolution.
+describe('doctrine root genuinely unresolvable (Issue #314)', () => {
+  const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
+
+  function cloneWithoutAegRoot(name: string): string {
+    const dest = join(tmpdir(), `vinaya-no-aeg-root-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    execFileSync('git', ['clone', '--quiet', REPO_ROOT, dest])
+    execFileSync('git', ['checkout', '-q', '-b', 'test-no-aeg-root'], { cwd: dest })
+    symlinkSync(join(REPO_ROOT, 'node_modules'), join(dest, 'node_modules'))
+    execFileSync('git', ['rm', '-rq', '--', 'aeg-root'], { cwd: dest })
+    execFileSync(
+      'git',
+      ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'commit', '-q', '-m', 'Chore: remove aeg-root'],
+      {
+        cwd: dest
+      }
+    )
+    return dest
+  }
+
+  for (const checkName of ['reader-resolvable-prose', 'retired-vocabulary'] as const) {
+    it(`${checkName}: reports doctrine-root-unresolvable as a distinct outcome, never a silent clean pass`, () => {
+      const clone = cloneWithoutAegRoot(checkName)
+      const binPath = join(
+        clone,
+        'apps',
+        'cli',
+        'src',
+        'checks',
+        'bin',
+        checkName === 'reader-resolvable-prose' ? 'check-reader-resolvable-prose.ts' : 'check-retired-vocabulary.ts'
+      )
+      try {
+        const result = Bun.spawnSync(['bun', binPath], { cwd: clone })
+        const exitCode = result.exitCode
+        const stderr = result.stderr.toString()
+
+        // Never 0 (a clean/empty sweep) — a distinct code so the runner's
+        // own generic exit-code mapping (0 → pass, 1 → fail, else → error)
+        // marks this run `status: 'error'`, never `status: 'pass'` with
+        // zero findings.
+        expect(exitCode).not.toBe(0)
+        const errors = stderr
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+        expect(errors).toHaveLength(1)
+        expect(errors[0].severity).toBe('error')
+        expect(errors[0].check).toBe(checkName)
+        expect(errors[0].message).toContain('doctrine root unresolvable')
+      } finally {
+        rmSync(clone, { recursive: true, force: true })
+      }
+    })
+  }
+})
+
+// Regression: an explicit `proseGates.doctrineRoot` must still win outright
+// over both the `repoRoot()`-anchored candidate and `resolveDoctrineRoot()`'s
+// fallback, for BOTH checks. The reader-resolvable-prose half of this is
+// already covered above (task `vinaya-adopter-portability-v1` 2); this adds
+// the retired-vocabulary half, which that earlier suite never exercised.
+describe('explicit proseGates.doctrineRoot still wins — retired-vocabulary (Issue #314 regression)', () => {
+  it('a configured doctrineRoot is read even when a real repo-root aeg-root/ also exists', () => {
+    const root = join(tmpdir(), `vinaya-retired-config-wins-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    try {
+      // A real `aeg-root/` at the repo root too, so this test actually
+      // discriminates "configured wins" from "repoRoot() candidate would
+      // have won anyway" — the two must differ for the assertion to mean
+      // anything.
+      mkdirSync(join(root, 'aeg-root', 'skills', 'aeg'), { recursive: true })
+      writeFileSync(join(root, 'aeg-root', 'skills', 'aeg', 'SKILL.md'), '# entry\n')
+      writeFileSync(join(root, 'aeg-root', 'note.md'), `See D-${100 + 23} for the historical rationale.\n`)
+
+      mkdirSync(join(root, 'configured-doctrine'), { recursive: true })
+      writeFileSync(join(root, 'configured-doctrine', 'note.md'), '# nothing retired here\n')
+      writeFileSync(
+        join(root, 'vinaya.config.json'),
+        JSON.stringify({ checks: {}, proseGates: { doctrineRoot: 'configured-doctrine' } }, null, 2)
+      )
+      execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root })
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add fixture doctrine'], { cwd: root })
+
+      const result = Bun.spawnSync(['bun', INDEX_TS, 'check', 'retired-vocabulary'], {
+        cwd: root,
+        env: { ...process.env, PR_BODY: undefined }
+      })
+      expect(result.exitCode).toBe(0)
+      // Positive proof it read the CONFIGURED root, not the repo-root
+      // aeg-root/: the real retired-decision-id finding in aeg-root/note.md
+      // (the same pattern `mention` above writes there) never surfaces.
+      expect(result.stderr.toString()).not.toContain('retired AEG mechanism')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})

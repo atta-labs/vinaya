@@ -41,9 +41,22 @@ export function resolveDoctrineRoot(pkg: string = packageRoot(import.meta.url)):
   const candidates = [join(pkg, 'aeg-root')]
   if (!pkg.split(sep).includes('node_modules')) candidates.push(join(dirname(dirname(pkg)), 'aeg-root'))
   for (const root of candidates) {
-    if (existsSync(join(root, ...ENTRY_SEGMENTS))) return root
+    if (hasDoctrineEntry(root)) return root
   }
   return null
+}
+
+/**
+ * Whether `root` is itself a real doctrine root — i.e. `<root>/skills/aeg/SKILL.md`
+ * exists. Exported so a caller resolving `root` by a DIFFERENT anchor than
+ * `resolveDoctrineRoot`'s own package-relative default (e.g. the repo actually
+ * under check, via `git rev-parse --show-toplevel`, rather than wherever the
+ * calling module's own file happens to sit on disk) can validate its own
+ * candidate with the same test this function uses, instead of duplicating the
+ * `ENTRY_SEGMENTS` check inline.
+ */
+export function hasDoctrineEntry(root: string): boolean {
+  return existsSync(join(root, ...ENTRY_SEGMENTS))
 }
 
 /**

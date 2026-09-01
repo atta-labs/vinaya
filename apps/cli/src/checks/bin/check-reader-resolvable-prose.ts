@@ -34,9 +34,12 @@
  *
  * **Report-only (rollout precedent: `aeg-root/enforcement.md`'s G1/G2
  * report-only period).** Findings print as `warning` severity; the exit code
- * always stays 0. A blocking check on day one would fail every open PR that
- * already carries some of this backlog — the report-only period is what lets
- * that backlog surface and get cleaned up before the gate turns strict.
+ * stays 0 for that class. A blocking check on day one would fail every open
+ * PR that already carries some of this backlog — the report-only period is
+ * what lets that backlog surface and get cleaned up before the gate turns
+ * strict. Orthogonal exception (Issue #314): a genuinely unresolvable
+ * doctrine root is not a backlog finding — `main()` exits non-`0`/non-`1` for
+ * that case, so it reads as a distinct `status: 'error'`, never a clean pass.
  *
  * scope: full — the SWEEP is the whole doctrine tree and the whole
  * reader-facing surface (when configured), never the PR's own diff; the
@@ -53,7 +56,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { checkReaderResolvableProse, parseGlossaryTerms, type ProseSourceFile } from '@attalabs/aeg-core'
-import { resolveDoctrineRoot } from '../../commands/doctrine.js'
+import { hasDoctrineEntry, resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { repoRoot, resolveChangedFiles } from '../../lib/diff-evidence'
@@ -63,22 +66,46 @@ const CHECK_NAME = 'reader-resolvable-prose'
 const proseGates = loadConfig()?.proseGates
 
 /**
- * `<doctrineRoot>/**` when `proseGates.doctrineRoot` is unset. Was a bare
- * `'aeg-root'` literal, cwd-relative — correct inside this monorepo (where
- * cwd IS the tree that owns it), but a permanently-empty sweep for every
- * `vinaya init` adopter, none of whom ever have a repo-relative `aeg-root/`
- * (Issue #232 — settled by experiment). Unlike `registry-gates`, this
- * check's corpus IS portable:
- * the doctrine prose it sweeps for unresolvable references/coined terms is
- * the same shipped text for every install, so `resolveDoctrineRoot()`
- * (`../../commands/doctrine.js` — the same "package's own copy" resolution
- * `vinaya doctrine` already uses) is the right default target, not a wrong
- * one the way it would be for a check that resolves adopter-specific forge
- * facts. Falls back to the old literal only if even that resolution comes
- * up empty (no bundled doctrine found at all) — the same degrade
- * `doctrineCommand` documents.
+ * `<doctrineRoot>/**` when `proseGates.doctrineRoot` is unset.
+ *
+ * `resolveDoctrineRoot()`'s own default resolves relative to wherever ITS
+ * OWN calling module physically sits on disk (`packageRoot(import.meta.url)`,
+ * evaluated in `doctrine.ts`'s scope) — the right anchor for `vinaya doctrine`
+ * (a command resolving its OWN package's bundled copy), but the wrong one
+ * here: this check sweeps the repo actually UNDER CHECK, and whether that
+ * repo's checkout happens to sit under an ancestor directory literally named
+ * `node_modules` (a nested/linked checkout, a worktree under a differently-
+ * shaped path) flips `resolveDoctrineRoot`'s internal fallback-candidate gate
+ * with no relation to whether this repo's own `aeg-root/` exists (Issue
+ * #314 — reproduced live: the same commit, checked out one directory deeper
+ * under a `node_modules`-named ancestor, silently swept zero files instead
+ * of its real backlog).
+ *
+ * So the first-choice anchor here is `repoRoot()` (`git rev-parse
+ * --show-toplevel`) — deterministic regardless of checkout shape, and
+ * already the anchor `resolveChangedFiles()` below uses for the same reason.
+ * Only when THAT doesn't resolve to a real doctrine root (a `vinaya init`
+ * adopter with no repo-local `aeg-root/` of their own — Issue #232, settled
+ * by experiment) does this fall back to `resolveDoctrineRoot()`'s package-
+ * relative "my own shipped copy" resolution, which is genuinely the right
+ * target for that case: the doctrine prose this check sweeps is the same
+ * shipped text for every install. `null` when NEITHER resolves — a
+ * genuinely unresolvable root, reported by `main()` as its own distinct
+ * outcome, never silently as a clean zero-finding pass (the bare `'aeg-root'`
+ * literal this constant previously fell back to was itself the bug: a
+ * cwd-relative guess that only ever worked by coincidence).
  */
-const DOCTRINE_ROOT = proseGates?.doctrineRoot ?? resolveDoctrineRoot() ?? 'aeg-root'
+function resolveCheckDoctrineRoot(): string | null {
+  if (proseGates?.doctrineRoot !== undefined) return proseGates.doctrineRoot
+  const root = repoRoot()
+  if (root !== null) {
+    const candidate = join(root, 'aeg-root')
+    if (hasDoctrineEntry(candidate)) return candidate
+  }
+  return resolveDoctrineRoot()
+}
+
+const DOCTRINE_ROOT = resolveCheckDoctrineRoot()
 
 /**
  * BOTH must be configured for the reader-facing sweep to run at all — same
@@ -91,8 +118,14 @@ const READER_FACING_PREFIX = proseGates?.readerFacingPrefix ?? null
 const READER_FACING_SUFFIX = proseGates?.readerFacingSuffix ?? null
 const READER_FACING_ACTIVE = READER_FACING_PREFIX !== null && READER_FACING_SUFFIX !== null
 
-/** `<doctrineRoot>/tranches/completed` when unset — mirrors the doctrine root's own default. */
-const LEGACY_SLUG_DIR = proseGates?.legacySlugDir ?? `${DOCTRINE_ROOT}/tranches/completed`
+/**
+ * `<doctrineRoot>/tranches/completed` when unset — mirrors the doctrine
+ * root's own default. `null` only when `DOCTRINE_ROOT` itself is (the
+ * genuinely-unresolvable case), in which case `main()` reports that distinct
+ * outcome and returns before this would ever be read.
+ */
+const LEGACY_SLUG_DIR =
+  proseGates?.legacySlugDir ?? (DOCTRINE_ROOT === null ? null : `${DOCTRINE_ROOT}/tranches/completed`)
 
 /** Recursively collects repo-relative paths under `dir`. Missing/unreadable `dir` degrades to `[]`, never throws — the same dormancy discipline `legacySlugs()` below documents. */
 function collect(dir: string, out: string[] = []): string[] {
@@ -133,13 +166,14 @@ function readAll(paths: string[]): ProseSourceFile[] {
  * `existsSync` is the common-case short-circuit; `readdirSync` is still
  * wrapped so an unexpected read failure (permissions, a TOCTOU race between
  * the two calls) degrades to dormant with a warning rather than throwing
- * uncaught out of `main()` — this check's own contract is report-only, exit
- * code always 0, and an uncaught exception would break that.
+ * uncaught out of `main()` — a read failure here is not a backlog finding
+ * and not the genuinely-unresolvable-root case either, so it must not turn
+ * into an uncaught exception that would exit non-`0` for the wrong reason.
  */
-function legacySlugs(): { slugs: string[]; dormant: boolean } {
-  if (!existsSync(LEGACY_SLUG_DIR)) return { slugs: [], dormant: true }
+function legacySlugs(legacySlugDir: string): { slugs: string[]; dormant: boolean } {
+  if (!existsSync(legacySlugDir)) return { slugs: [], dormant: true }
   try {
-    const slugs = readdirSync(LEGACY_SLUG_DIR)
+    const slugs = readdirSync(legacySlugDir)
       .filter((f) => f.endsWith('.md') && !f.endsWith('.tokens.md'))
       .map((f) => f.slice(0, -3))
       .filter((slug) => !/-v[0-9]+$/.test(slug))
@@ -147,13 +181,40 @@ function legacySlugs(): { slugs: string[]; dormant: boolean } {
   } catch (err) {
     // stdout, not stderr — same reasoning as the summary line in `main()`.
     console.log(
-      `${CHECK_NAME}: could not read ${LEGACY_SLUG_DIR} (${err instanceof Error ? err.message : String(err)}) — legacy-slug class treated as dormant.`
+      `${CHECK_NAME}: could not read ${legacySlugDir} (${err instanceof Error ? err.message : String(err)}) — legacy-slug class treated as dormant.`
     )
     return { slugs: [], dormant: true }
   }
 }
 
 function main(): void {
+  // Genuinely unresolvable — no `aeg-root` found relative to the repo under
+  // check (`repoRoot()/aeg-root`), and no bundled copy found relative to this
+  // package's own install either. Report this as its OWN distinct outcome:
+  // `severity: 'error'` (never `'warning'`, which the reportable-findings
+  // loop below uses) and a non-{0,1} exit code, so the runner's own generic
+  // exit-code mapping (`runner.ts`: 0 → pass, 1 → fail, else → error) marks
+  // this run `status: 'error'` — never `'pass'` with zero findings, which
+  // would be structurally indistinguishable from "swept the real tree and
+  // found nothing" (the exact failure this task exists to close, Issue
+  // #314). This is orthogonal to the check's own report-only exit-0 policy
+  // for the PROSE-FINDINGS class below, which is unchanged.
+  if (DOCTRINE_ROOT === null) {
+    console.log(`${CHECK_NAME}: doctrine root unresolvable — sweep did not run.`)
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message:
+        'doctrine root unresolvable: no aeg-root found at the repo root under check, and no bundled copy found ' +
+        "relative to this package's own install.",
+      agent_recovery_prompt:
+        'Set proseGates.doctrineRoot in vinaya.config.json to the doctrine tree this repo actually uses, or ' +
+        "confirm aeg-root/ exists at the repo root (or that this package's own bundled aeg-root/ is present)."
+    })
+    process.exit(2)
+  }
+
   const shipsPrefix = `${DOCTRINE_ROOT}/`
   const shipsPaths = collect(DOCTRINE_ROOT).filter((p) => p.endsWith('.md'))
   const readerFacingPaths =
@@ -164,7 +225,8 @@ function main(): void {
   const files = readAll([...shipsPaths, ...readerFacingPaths])
   const glossaryPath = join(DOCTRINE_ROOT, 'glossary.md')
   const glossaryTerms = existsSync(glossaryPath) ? parseGlossaryTerms(readFileSync(glossaryPath, 'utf8')) : []
-  const { slugs, dormant: legacySlugsDormant } = legacySlugs()
+  const legacySlugDir = LEGACY_SLUG_DIR ?? `${DOCTRINE_ROOT}/tranches/completed`
+  const { slugs, dormant: legacySlugsDormant } = legacySlugs(legacySlugDir)
 
   const readerFacingPrefix =
     READER_FACING_ACTIVE && READER_FACING_PREFIX !== null ? `${READER_FACING_PREFIX}/` : '/no-reader-facing-surface'
@@ -184,9 +246,9 @@ function main(): void {
   // `process.cwd()` (review finding, PR #290 MAJOR: a check bin invoked from
   // any other cwd silently matched nothing under the old cwd-relative
   // comparison). `finding.file` is usually already absolute — it comes from
-  // `collect(DOCTRINE_ROOT)`, walked from `resolveDoctrineRoot()`'s absolute
-  // path — but `DOCTRINE_ROOT` can also be a relative `proseGates
-  // .doctrineRoot` config value or the bare `'aeg-root'` fallback. Anchor
+  // `collect(DOCTRINE_ROOT)`, walked from an absolute `repoRoot()`- or
+  // `resolveDoctrineRoot()`-derived path — but `DOCTRINE_ROOT` can also be a
+  // relative `proseGates.doctrineRoot` config value. Anchor
   // to the SAME real repo root `resolveChangedFiles()` used, not a second,
   // independent `process.cwd()` assumption (review finding, PR #290 MINOR:
   // the two absolute-path shapes were each internally consistent but could
@@ -212,7 +274,7 @@ function main(): void {
   // report `status: 'error'` regardless of exit code.
   console.log(
     `${CHECK_NAME}: doctrine root "${DOCTRINE_ROOT}"; reader-facing class ${READER_FACING_ACTIVE ? 'ran' : 'dormant — proseGates.readerFacingPrefix/readerFacingSuffix not both set'}; ` +
-      `legacy-slug class ${legacySlugsDormant ? `dormant — ${LEGACY_SLUG_DIR} is absent` : `ran (${slugs.length} slug(s))`}; ` +
+      `legacy-slug class ${legacySlugsDormant ? `dormant — ${legacySlugDir} is absent` : `ran (${slugs.length} slug(s))`}; ` +
       `${findings.length} finding(s) swept, ${reportable.length} in this diff`
   )
 
