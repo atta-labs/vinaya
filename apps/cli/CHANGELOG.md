@@ -1,5 +1,18 @@
 # @attalabs/vinaya
 
+## 0.22.0
+
+### Minor Changes
+
+- 1c7ba48: New core check: `token-report` (ring 1, `requiresOpenPr`). Fails a pull request whose "Token report" section is missing, or carries a blank/non-numeric Tokens in/out cell, whenever the host running the check is metering-capable (`resolveMeteringCapability`, `@attalabs/aeg-core`) — an incapable host, or a run with no PR body yet, passes silently. Proves presence and shape only, never that the reported figures are true; the `Cost` cell is exempt in every case. Never treats a probe that itself fails to run as a clean incapable verdict — that distinction surfaces as `status: 'error'`, not a silent pass.
+
+### Patch Changes
+
+- 36d69e7: Harden the transcript-pointer read every `resolveMeteringCapability` caller shares — `vinaya tokens`, `doctor`, and `quickstart` no longer follow a symlink, hang on a FIFO, or trust a file owned by another local user at the predictable `$TMPDIR` pointer path, mirroring the write-side CWE-59 hardening already shipped for this path. Also neutralizes a `|` in an attacker-controlled `model` field in the `Tokens: …` line output, matching the escaping the markdown table row renderer already applied.
+- 089517a: Fix a transcript-pointer key collision: two project directories whose paths differed only in non-alphanumeric characters (e.g. `/a/b` and `/a-b`) collapsed to the same `$TMPDIR` pointer filename, so a pointer legitimately written by a session in one project could be read by an unrelated project as its own — reaching `resolveMeteringCapability`'s `pointer-unusable` reason, which refuses a commit. The pointer key now appends a full SHA-256 digest of the untouched project directory, which is collision-resistant rather than merely less likely to collide. Reads fall back to the pre-fix (legacy) pointer name when the new one is absent, so no pointer the shipped `track-transcript.sh` Stop hook already wrote on disk is orphaned by this change.
+- ba69dac: `roles/planner.md`'s token-reporting paragraph stops claiming planning normally runs operator-metered by default — a false absolute on any host that exposes its own session usage, the same class of claim task 1 corrected on `roles/developer.md` — and now reads the probe, self-metering first, with the pinned lessons Issue `#239` named as the durable destination when no plan PR exists yet. `tranche-model.md` §12's "Known gap" paragraph is rewritten to state precisely what's closed and what remains open: the Planner's no-plan-PR case is closed (Issue `#239`), the Brief Author's plan-PR case was never actually open, the Archivist's own row already lands in the same provenance comment `vinaya archive` posts — and the one case still genuinely open is a Brief Author session that ends with no PR of any kind yet to write into. `templates/pr-report-template.md`'s `## Token report` section gains the `AEG:TOKENS` anchor pair `apps/cli/src/commands/pr-report.ts` (shipped by task 3) already searches for and writes into — the shipped template was the one place still silent about a mechanism that already ships.
+- 0aabb96: Proves, with tests, that the `AEG:TOKENS` block carries distinct rows for a Brief Author's turn and a Planner's turn alongside a Developer's, each round-tripping through `parseTokenReportEntries` into its own `LedgerRow` with no collapse or drop and a read-time sum (`sumLedger`) reflecting all three. Task 3's `--role`/`--phase` flags on `vinaya pr report --write` and its role-agnostic `writeTokensBlock` already routed multi-role rows correctly end to end — this ships the missing proof, not a behavior change; no source file changed.
+
 ## 0.21.0
 
 ### Minor Changes
