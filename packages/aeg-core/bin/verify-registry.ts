@@ -222,10 +222,10 @@ function makeResolveFn(repoFlag: string): (n: number) => boolean {
 
 // ---------- G5: role/contract frontmatter --------------------------------------
 
-type RoleFrontmatter = { file: string; role_id: string; performs: string[]; refuses_when: string }
-type ContractFrontmatter = { file: string; producer: string; consumer: string }
+type RegistryRoleFrontmatter = { file: string; role_id: string; performs: string[]; refuses_when: string }
+type RegistryContractFrontmatter = { file: string; producer: string; consumer: string }
 
-function readRoles(): RoleFrontmatter[] {
+function readRoles(): RegistryRoleFrontmatter[] {
   return readdirSync(join(REPO_ROOT, ROLES_DIR))
     .filter((name) => name.endsWith('.md'))
     .map((name) => {
@@ -240,7 +240,7 @@ function readRoles(): RoleFrontmatter[] {
     })
 }
 
-function readContracts(): ContractFrontmatter[] {
+function readContracts(): RegistryContractFrontmatter[] {
   return readdirSync(join(REPO_ROOT, CONTRACTS_DIR))
     .filter((name) => name.endsWith('.md'))
     .map((name) => {

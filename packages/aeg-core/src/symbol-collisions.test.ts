@@ -229,16 +229,6 @@ describe('symbol-collision detection', () => {
  *                        `archive-task.ts`'s has capture groups, the other
  *                        three do not.
  *
- * `ContractFrontmatter`/`RoleFrontmatter` — an unexported local type pair in
- * `verify-registry.ts` (`{ file, producer, consumer }` / `{ file, role_id,
- * performs, refuses_when }`, read from a role/contract doc's frontmatter) vs
- * two unrelated, differently-shaped unexported local types of the same names
- * in `diagram-model.ts` (diagram-config parsing). Genuine, coincidental
- * cross-`bin`/`src` collisions — per this widening task's own brief, NOT
- * silently renamed inline; reported separately as Issue #287 instead.
- * Baselined here rather than left red, same as every other unfixed entry
- * above. Unfixed.
- *
  * `sanitizeKey`/`transcriptPointerPath` — private helpers in
  * `src/claude-code-transcript.ts`, each with an identically-named counterpart
  * in `bin/report-tokens.ts`. Deliberately duplicated, not a collision to fix:
@@ -255,7 +245,6 @@ const KNOWN_COLLISIONS = [
   'BodyResult',
   'BodySource',
   'checkClosesN',
-  'ContractFrontmatter',
   'createLabel',
   'ensureLabelExists',
   'extractTitle',
@@ -277,7 +266,6 @@ const KNOWN_COLLISIONS = [
   'REPO_ROOT',
   'resolvePrBody',
   'resolveShippableArgs',
-  'RoleFrontmatter',
   'sanitizeKey',
   'sh',
   'shJson',
