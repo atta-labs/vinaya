@@ -514,7 +514,8 @@ describe('explicit proseGates.doctrineRoot still wins — retired-vocabulary (Is
       })
       expect(result.exitCode).toBe(0)
       // Positive proof it read the CONFIGURED root, not the repo-root
-      // aeg-root/: the real D-123 finding in aeg-root/note.md never surfaces.
+      // aeg-root/: the real retired-decision-id finding in aeg-root/note.md
+      // (the same pattern `mention` above writes there) never surfaces.
       expect(result.stderr.toString()).not.toContain('retired AEG mechanism')
     } finally {
       rmSync(root, { recursive: true, force: true })
