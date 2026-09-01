@@ -45,8 +45,8 @@
  */
 
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
 import { summarizeTranscript } from '../src/claude-code-transcript'
+import { hardenedMeteringDeps } from '../src/metering-io-guard'
 import { formatBreakdown, formatTokensLine } from '../src/report-tokens'
 
 /**
@@ -247,10 +247,5 @@ export function main(argv: string[], deps: ResolveDeps): void {
 }
 
 if (import.meta.main) {
-  main(process.argv.slice(2), {
-    env: process.env,
-    cwd: process.cwd(),
-    exists: existsSync,
-    readFile: (path: string) => readFileSync(path, 'utf8')
-  })
+  main(process.argv.slice(2), hardenedMeteringDeps())
 }
