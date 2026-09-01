@@ -64,9 +64,11 @@ The block opens with `Head:` and a `Summary:` line — a file and line count der
 
 ## Token report
 
+<!-- AEG:TOKENS:START -->
 | Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |
 |---|---|---|---|---|---|---|
 | [task-id]: develop | Developer | [model] | [exact in] | [exact out] | [cost] | [YYYY-MM-DD] |
+<!-- AEG:TOKENS:END -->
 
 ## Reference — the dispatched brief
 
