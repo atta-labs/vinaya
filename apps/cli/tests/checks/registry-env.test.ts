@@ -55,6 +55,7 @@ describe('registry env declarations', () => {
         'single-plan-pr',
         'test-plan',
         'token-collection-wired',
+        'token-report',
         'workspace-escape'
       ].sort()
     )
