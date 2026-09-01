@@ -229,22 +229,28 @@ describe('symbol-collision detection', () => {
  *                        `archive-task.ts`'s has capture groups, the other
  *                        three do not.
  *
- * `sanitizeKey`/`transcriptPointerPath` — private helpers in
- * `src/claude-code-transcript.ts`, each with an identically-named counterpart
- * in `bin/report-tokens.ts`. Deliberately duplicated, not a collision to fix:
- * `bin/` is I/O-shim code that imports `src/`, never the reverse, and is not
- * part of this package's published `exports` map, so `claude-code-transcript.ts`
- * cannot import `bin/report-tokens.ts`'s copies without inverting that
- * direction — see the doc comment on `transcriptPointerPath` in
- * `claude-code-transcript.ts` for the full reasoning. Introduced by #284;
- * omitted from this list by that PR, which is why this gate went red the
- * first time the full (non-diff-scoped) suite ran against it.
+ * `sanitizeKey`/`collisionResistantKey`/`legacyTranscriptPointerPath`/
+ * `transcriptPointerPath` — private helpers in `src/claude-code-transcript.ts`,
+ * each with an identically-named counterpart in `bin/report-tokens.ts`.
+ * Deliberately duplicated, not a collision to fix: `bin/` is I/O-shim code
+ * that imports `src/`, never the reverse, and is not part of this package's
+ * published `exports` map, so `claude-code-transcript.ts` cannot import
+ * `bin/report-tokens.ts`'s copies without inverting that direction — see the
+ * doc comment on `transcriptPointerPath` in `claude-code-transcript.ts` for
+ * the full reasoning. `sanitizeKey`/`transcriptPointerPath` introduced by
+ * #284; omitted from this list by that PR, which is why this gate went red
+ * the first time the full (non-diff-scoped) suite ran against it.
+ * `collisionResistantKey`/`legacyTranscriptPointerPath` added by `#315`,
+ * which gave `transcriptPointerPath` a collision-resistant key while keeping
+ * `sanitizeKey` as the (still collision-prone) legacy derivation, so a
+ * pointer already on disk under the old name stays readable.
  */
 const KNOWN_COLLISIONS = [
   'AssociatedPr',
   'BodyResult',
   'BodySource',
   'checkClosesN',
+  'collisionResistantKey',
   'createLabel',
   'ensureLabelExists',
   'extractTitle',
@@ -255,6 +261,7 @@ const KNOWN_COLLISIONS = [
   'isSpecFile',
   'LABEL',
   'LABEL_DESCRIPTION',
+  'legacyTranscriptPointerPath',
   'listLabelNames',
   'locateBody',
   'main',

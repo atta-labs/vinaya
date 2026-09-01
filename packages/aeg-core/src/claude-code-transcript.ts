@@ -30,6 +30,7 @@
  * CLI shim reads the file; this takes its text.
  */
 
+import { createHash } from 'node:crypto'
 import type { TranscriptSummary, UsageComponents } from './report-tokens'
 
 /**
@@ -114,8 +115,35 @@ export type MeteringCapability =
   | { capable: true; transcriptPath: string; summary: TranscriptSummary }
   | { capable: false; reason: MeteringIncapableReason; detail: string }
 
+/**
+ * Collapses every run of non-alphanumeric characters to a single `-`. Kept
+ * (unchanged) as the READABLE prefix of a pointer key and as the sole
+ * derivation for a pre-migration (legacy) pointer filename — see
+ * `legacyTranscriptPointerPath`. On its own it is not collision-resistant:
+ * `/a/b` and `/a-b` both collapse to `-a-b` (`#315`).
+ */
 function sanitizeKey(value: string): string {
   return value.replace(/[^A-Za-z0-9]+/g, '-')
+}
+
+/**
+ * Collision-resistant (`#315`). `sanitizeKey` alone collapses distinct paths
+ * that differ only in which non-alphanumeric characters they use — a full
+ * SHA-256 digest of the UNCOLLAPSED, UNTRUNCATED original `value` restores
+ * distinctness: two different `value`s can share a `sanitizeKey` prefix, but
+ * cannot share this digest without an actual SHA-256 collision, which is
+ * cryptographically negligible regardless of how many paths ever run through
+ * this on one machine. The digest is not truncated — truncating to, say, 64
+ * bits would trade that guarantee for a birthday-bound one; the two extra
+ * lines of filename length buy a strictly stronger property, and a pointer
+ * filename is never displayed to a person who needs it short. `sanitizeKey`'s
+ * output is kept as a prefix purely so the filename still hints at which
+ * project it belongs to when a human is looking at a `/tmp` listing — the
+ * digest suffix, not the prefix, is what the uniqueness guarantee rests on.
+ */
+function collisionResistantKey(value: string): string {
+  const digest = createHash('sha256').update(value).digest('hex')
+  return `${sanitizeKey(value)}-${digest}`
 }
 
 /**
@@ -126,8 +154,25 @@ function sanitizeKey(value: string): string {
  * imports `src/`, never the reverse, and is not part of this package's
  * published `exports` map — the whole reason this probe exists is to work
  * where that path is unreachable.
+ *
+ * This is the PRIMARY (post-migration, `#315`) pointer path — collision-
+ * resistant. `resolvePointer` also consults `legacyTranscriptPointerPath`
+ * as a fallback, so a pointer the shipped Stop hook already wrote under the
+ * old, collision-prone name is still found rather than orphaned.
  */
 function transcriptPointerPath(projectDir: string, tmpDir: string): string {
+  return `${tmpDir}/claude-transcript-${collisionResistantKey(projectDir)}.txt`
+}
+
+/**
+ * The pre-`#315` pointer filename — `sanitizeKey` alone, collision-prone.
+ * Never the primary read or write target going forward; consulted only when
+ * `transcriptPointerPath` is absent, so a pointer a not-yet-upgraded
+ * `track-transcript.sh` (or one written before this fix shipped) already has
+ * on disk is still readable. Removing this fallback would orphan every such
+ * pointer the moment this fix ships, which `#315`'s Acceptance forbids.
+ */
+function legacyTranscriptPointerPath(projectDir: string, tmpDir: string): string {
   return `${tmpDir}/claude-transcript-${sanitizeKey(projectDir)}.txt`
 }
 
@@ -164,7 +209,8 @@ function resolvePointer(explicitTranscriptPath: string | undefined, deps: Meteri
 
   const projectDir = deps.env.CLAUDE_PROJECT_DIR ?? deps.cwd
   const tmpDir = deps.env.TMPDIR ?? '/tmp'
-  const pointerPath = transcriptPointerPath(projectDir, tmpDir)
+  const primaryPointerPath = transcriptPointerPath(projectDir, tmpDir)
+  const legacyPointerPath = legacyTranscriptPointerPath(projectDir, tmpDir)
 
   // Corroboration = we can tell this pointer belongs to THIS session. Without
   // `CLAUDE_CODE_SESSION_ID` there is nothing to cross-check against, so a
@@ -174,14 +220,25 @@ function resolvePointer(explicitTranscriptPath: string | undefined, deps: Meteri
   // expensive failure mode.
   const currentSessionId = deps.env.CLAUDE_CODE_SESSION_ID
 
-  if (!deps.exists(pointerPath)) {
+  // `#315` migration: the primary (collision-resistant) path wins when both
+  // exist — it is what any Stop hook upgraded past this fix writes. The
+  // legacy path is consulted ONLY when the primary is absent, so a pointer
+  // written before this fix shipped (or by a not-yet-upgraded hook script)
+  // is still found rather than orphaned.
+  const pointerPath = deps.exists(primaryPointerPath)
+    ? primaryPointerPath
+    : deps.exists(legacyPointerPath)
+      ? legacyPointerPath
+      : undefined
+
+  if (!pointerPath) {
     return {
       pointerExisted: false,
       corroborated: false,
       error:
-        `No transcript pointer at ${pointerPath} and no --transcript given. ` +
-        'Either this repo installs no track-transcript.sh Stop hook (lacking one is not a defect — ' +
-        'name the transcript directly instead), or no session has completed a turn yet.'
+        `No transcript pointer at ${primaryPointerPath} (nor its pre-migration name ${legacyPointerPath}) ` +
+        'and no --transcript given. Either this repo installs no track-transcript.sh Stop hook (lacking one ' +
+        'is not a defect — name the transcript directly instead), or no session has completed a turn yet.'
     }
   }
 
