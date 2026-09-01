@@ -29,6 +29,9 @@ export {
   summarizeTranscript
 } from './claude-code-transcript'
 export type { MeteringCapability, MeteringCapabilityDeps, MeteringIncapableReason } from './claude-code-transcript'
+// The hardened deps every real caller of `resolveMeteringCapability` should
+// build from (`#313`) — a sibling module, not part of the pure adapter above.
+export { hardenedMeteringDeps, isTrustedMeteringStat } from './metering-io-guard'
 export { declarationsIn, findCollisions } from './symbol-collisions'
 export type { SymbolCollision, SymbolDeclaration } from './symbol-collisions'
 export { isCodeFile, isDocFile, isSpecFile } from './file-classify'
