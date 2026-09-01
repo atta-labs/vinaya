@@ -60,15 +60,26 @@ const SH_PREAMBLE = '#!/usr/bin/env sh\n'
  * dependency the way a `jq`-based script would.
  *
  * Pointer FORMAT — session id and transcript path, tab-separated — and the
- * `sanitizeKey` algorithm (`[^A-Za-z0-9]+` collapsed to one `-`) match
+ * key algorithm (`sanitizeKey`'s `[^A-Za-z0-9]+` collapsed to one `-`, then
+ * `-` plus a full SHA-256 hex digest of the uncollapsed `projectDir`) match
  * `packages/aeg-core/bin/report-tokens.ts`'s `sanitizeKey`/
- * `transcriptPointerPath` byte-for-byte, confirmed by reading that file's
- * parser directly (Dig, task 10). Concatenation (`+`), not template
- * interpolation, so `tmpDir`'s own value (including a trailing slash, which
- * `TMPDIR` commonly carries) is reproduced exactly as `report-tokens.ts`'s
- * own naive `${tmpDir}/claude-transcript-...` concatenation does — neither
- * side strips it, so both sides agree on the same (possibly
- * double-slashed, and that's fine — the OS collapses it) path string.
+ * `collisionResistantKey`/`transcriptPointerPath` byte-for-byte, confirmed by
+ * reading that file's parser directly (Dig, task 10; re-confirmed `#315`,
+ * which added the digest suffix — before it, distinct project directories
+ * whose `sanitizeKey` output collapsed to the same string shared one pointer
+ * file). Concatenation (`+`), not template interpolation, so `tmpDir`'s own
+ * value (including a trailing slash, which `TMPDIR` commonly carries) is
+ * reproduced exactly as `report-tokens.ts`'s own naive
+ * `${tmpDir}/claude-transcript-...` concatenation does — neither side strips
+ * it, so both sides agree on the same (possibly double-slashed, and that's
+ * fine — the OS collapses it) path string.
+ *
+ * `#315` migration: this writer always writes the NEW (collision-resistant)
+ * pointer name — never the pre-`#315` legacy name. The read side
+ * (`resolveMeteringCapability`/`resolveTranscriptPath`) still falls back to
+ * the legacy name when the new one is absent, so a pointer an unupgraded
+ * copy of this same script already wrote stays readable; this writer itself
+ * never needs to touch that legacy name.
  *
  * Never fails loudly: a hook whose job is optional convenience (the
  * probe/reporter degrade to `--transcript <path>` without it) must not turn
@@ -113,9 +124,11 @@ process.stdin.on("end", () => {
     return
   }
   if (!hook.transcript_path) return
+  const crypto = require("crypto")
   const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd()
   const tmpDir = process.env.TMPDIR || "/tmp"
-  const key = projectDir.replace(/[^A-Za-z0-9]+/g, "-")
+  const digest = crypto.createHash("sha256").update(projectDir).digest("hex")
+  const key = projectDir.replace(/[^A-Za-z0-9]+/g, "-") + "-" + digest
   const pointerPath = tmpDir + "/claude-transcript-" + key + ".txt"
   const content = (hook.session_id || "") + "\\t" + hook.transcript_path + "\\n"
   const scratchPath = pointerPath + "." + process.pid + "." + Math.random().toString(36).slice(2) + ".tmp"

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   lstatSync,
@@ -24,18 +25,23 @@ import {
 
 /**
  * Mirrors `packages/aeg-core/bin/report-tokens.ts`'s `sanitizeKey`/
- * `transcriptPointerPath` — reimplemented here (not imported across the
- * package boundary; that file is a `bin/` adapter, not this package's public
- * export) directly from that file's own source, read at Dig time (task 10).
- * Any future drift between the two is exactly what
- * "round-trips through the real parser" below would catch, since it asserts
- * against the SAME algorithm restated independently.
+ * `collisionResistantKey`/`transcriptPointerPath` — reimplemented here (not
+ * imported across the package boundary; that file is a `bin/` adapter, not
+ * this package's public export) directly from that file's own source, read
+ * at Dig time (task 10; re-confirmed `#315`, which added the digest suffix).
+ * Any future drift between the two is exactly what "round-trips through the
+ * real parser" below would catch, since it asserts against the SAME
+ * algorithm restated independently.
  */
 function sanitizeKey(value: string): string {
   return value.replace(/[^A-Za-z0-9]+/g, '-')
 }
+function collisionResistantKey(value: string): string {
+  const digest = createHash('sha256').update(value).digest('hex')
+  return `${sanitizeKey(value)}-${digest}`
+}
 function transcriptPointerPath(projectDir: string, tmpDir: string): string {
-  return `${tmpDir}/claude-transcript-${sanitizeKey(projectDir)}.txt`
+  return `${tmpDir}/claude-transcript-${collisionResistantKey(projectDir)}.txt`
 }
 
 describe('claude-stop-hook-emitter', () => {
