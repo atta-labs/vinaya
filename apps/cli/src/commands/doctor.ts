@@ -18,6 +18,7 @@ import {
   deriveWorkspacePackageDomains,
   DOC_OWNERS_PATH,
   globToRegex,
+  hardenedMeteringDeps,
   isCodeFile,
   isUrlPointer,
   type MeteringCapability,
@@ -89,7 +90,8 @@ function readVersion(): string {
   return pkg.version
 }
 
-function realDeps(): DoctorDeps {
+/** Exported so `#313`'s per-call-site hardening proof can invoke this exact wiring, not a reimplementation of it. */
+export function realDeps(): DoctorDeps {
   return {
     detectRepo: detectGitRepo,
     ghAuthStatus,
@@ -99,13 +101,7 @@ function realDeps(): DoctorDeps {
     nodeVersion: () => process.version,
     bunVersion: () => (typeof Bun === 'undefined' ? null : Bun.version),
     packageVersion: readVersion,
-    meteringCapability: () =>
-      resolveMeteringCapability({
-        env: process.env,
-        cwd: process.cwd(),
-        exists: existsSync,
-        readFile: (path: string) => readFileSync(path, 'utf8')
-      })
+    meteringCapability: () => resolveMeteringCapability(hardenedMeteringDeps())
   }
 }
 

@@ -1,7 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
-import { formatBreakdown, formatTokensLine, resolveMeteringCapability } from '@attalabs/aeg-core'
+import { formatBreakdown, formatTokensLine, hardenedMeteringDeps, resolveMeteringCapability } from '@attalabs/aeg-core'
 import type { MeteringCapabilityDeps, TranscriptSummary, UsageComponents } from '@attalabs/aeg-core'
 import {
   getTokensCollectTrust,
@@ -345,10 +344,7 @@ const COLLECT_COMMAND_TIMEOUT_MS = 30_000
 /** Exported so other commands collecting real usage figures (`pr-report.ts`'s `AEG:TOKENS` writer) share this exact I/O shim rather than a second copy of it. */
 export function realDeps(): TokensDeps {
   return {
-    env: process.env,
-    cwd: process.cwd(),
-    exists: existsSync,
-    readFile: (path: string) => readFileSync(path, 'utf8'),
+    ...hardenedMeteringDeps(),
     loadConfig,
     repoConfigDir: repoLocalConfigDir,
     runScript: (interpreter: string, scriptAbsolutePath: string, cwd: string) =>
