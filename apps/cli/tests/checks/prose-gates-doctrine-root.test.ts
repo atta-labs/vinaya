@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
@@ -306,6 +306,24 @@ describe('doctrine-root checkout-location independence (Issue #314)', () => {
     return Number(match[1])
   }
 
+  /**
+   * Pulls the resolved doctrine root path out of the check's own stdout
+   * summary line (`doctrine root "<path>"`). A matching finding COUNT alone
+   * does not prove checkout-independence: with the fix reverted, both
+   * fixtures' `resolveDoctrineRoot()` fallback resolves relative to wherever
+   * `doctrine.ts` itself physically sits (this dev repo), so both runs
+   * silently escape to the SAME real `aeg-root/` and can coincidentally
+   * report the same count without ever having swept the fixture at all —
+   * caught live in review by reverting the three fixed source files and
+   * re-running this suite unmodified. Asserting the reported path actually
+   * points INTO the fixture directory closes that gap.
+   */
+  function doctrineRootPath(stdout: string): string {
+    const match = stdout.match(/doctrine root "([^"]+)"/)
+    if (!match) throw new Error(`no doctrine-root summary line in stdout: ${stdout}`)
+    return match[1] as string
+  }
+
   for (const checkName of ['reader-resolvable-prose', 'retired-vocabulary'] as const) {
     it(`${checkName}: identical finding count from a plain checkout and one nested several directories deeper`, () => {
       const rand = `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -332,6 +350,12 @@ describe('doctrine-root checkout-location independence (Issue #314)', () => {
 
         expect(plain.exitCode).toBe(0)
         expect(nested.exitCode).toBe(0)
+        // Each run actually resolved INTO its own fixture, not (with the fix
+        // reverted) both silently escaping to this dev repo's own real
+        // `aeg-root/` — see `doctrineRootPath`'s doc comment for why a
+        // finding-count match alone cannot prove this.
+        expect(doctrineRootPath(plain.stdout)).toStartWith(realpathSync(plainRoot))
+        expect(doctrineRootPath(nested.stdout)).toStartWith(realpathSync(nestedRoot))
         const plainCount = sweptCount(plain.stdout)
         const nestedCount = sweptCount(nested.stdout)
         // Non-zero: proves both actually swept the fixture's real doctrine
@@ -367,6 +391,8 @@ describe('doctrine-root checkout-location independence (Issue #314)', () => {
 
       expect(plain.exitCode).toBe(0)
       expect(nested.exitCode).toBe(0)
+      expect(doctrineRootPath(plain.stdout)).toStartWith(realpathSync(plainRoot))
+      expect(doctrineRootPath(nested.stdout)).toStartWith(realpathSync(nestedRoot))
       const plainCount = sweptCount(plain.stdout)
       const nestedCount = sweptCount(nested.stdout)
       expect(plainCount).toBeGreaterThan(0)

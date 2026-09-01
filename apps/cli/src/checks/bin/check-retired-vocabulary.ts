@@ -32,7 +32,10 @@
  *
  * Report-only, same rollout precedent as `reader-resolvable-prose`
  * (`aeg-root/enforcement.md`'s G1/G2 period): findings print as `warning`
- * severity, exit code always 0.
+ * severity, exit code stays 0 for that class. Orthogonal exception (Issue
+ * #314): a genuinely unresolvable doctrine root is not a backlog finding —
+ * `main()` exits non-`0`/non-`1` for that case, so it reads as a distinct
+ * `status: 'error'`, never a clean pass.
  *
  * scope: full — the SWEEP stays the whole doctrine tree (a retired-vocabulary
  * leak can sit in any doctrine file regardless of what a given PR touches).
@@ -68,7 +71,7 @@ const CHECK_NAME = 'retired-vocabulary'
  */
 function resolveCheckDoctrineRoot(): string | null {
   const configured = loadConfig()?.proseGates?.doctrineRoot
-  if (configured) return configured
+  if (configured !== undefined) return configured
   const root = repoRoot()
   if (root !== null) {
     const candidate = join(root, 'aeg-root')

@@ -34,9 +34,12 @@
  *
  * **Report-only (rollout precedent: `aeg-root/enforcement.md`'s G1/G2
  * report-only period).** Findings print as `warning` severity; the exit code
- * always stays 0. A blocking check on day one would fail every open PR that
- * already carries some of this backlog — the report-only period is what lets
- * that backlog surface and get cleaned up before the gate turns strict.
+ * stays 0 for that class. A blocking check on day one would fail every open
+ * PR that already carries some of this backlog — the report-only period is
+ * what lets that backlog surface and get cleaned up before the gate turns
+ * strict. Orthogonal exception (Issue #314): a genuinely unresolvable
+ * doctrine root is not a backlog finding — `main()` exits non-`0`/non-`1` for
+ * that case, so it reads as a distinct `status: 'error'`, never a clean pass.
  *
  * scope: full — the SWEEP is the whole doctrine tree and the whole
  * reader-facing surface (when configured), never the PR's own diff; the
@@ -93,7 +96,7 @@ const proseGates = loadConfig()?.proseGates
  * cwd-relative guess that only ever worked by coincidence).
  */
 function resolveCheckDoctrineRoot(): string | null {
-  if (proseGates?.doctrineRoot) return proseGates.doctrineRoot
+  if (proseGates?.doctrineRoot !== undefined) return proseGates.doctrineRoot
   const root = repoRoot()
   if (root !== null) {
     const candidate = join(root, 'aeg-root')
@@ -163,8 +166,9 @@ function readAll(paths: string[]): ProseSourceFile[] {
  * `existsSync` is the common-case short-circuit; `readdirSync` is still
  * wrapped so an unexpected read failure (permissions, a TOCTOU race between
  * the two calls) degrades to dormant with a warning rather than throwing
- * uncaught out of `main()` — this check's own contract is report-only, exit
- * code always 0, and an uncaught exception would break that.
+ * uncaught out of `main()` — a read failure here is not a backlog finding
+ * and not the genuinely-unresolvable-root case either, so it must not turn
+ * into an uncaught exception that would exit non-`0` for the wrong reason.
  */
 function legacySlugs(legacySlugDir: string): { slugs: string[]; dormant: boolean } {
   if (!existsSync(legacySlugDir)) return { slugs: [], dormant: true }
