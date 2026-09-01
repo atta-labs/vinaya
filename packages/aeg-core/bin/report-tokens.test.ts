@@ -3,8 +3,7 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { hardenedMeteringDeps } from '../src/metering-io-guard'
-import { main, parseArgs, resolveTranscriptPath, sanitizeKey, transcriptPointerPath } from './report-tokens'
+import { main, parseArgs, realDeps, resolveTranscriptPath, sanitizeKey, transcriptPointerPath } from './report-tokens'
 
 describe('sanitizeKey / transcriptPointerPath', () => {
   it('replaces every run of non-alphanumeric characters with a single hyphen', () => {
@@ -246,13 +245,18 @@ describe('resolveTranscriptPath', () => {
  * transcript pointer through `hardenedMeteringDeps()`, not hand-rolled
  * `existsSync`/`readFileSync` — the same CWE-59 class `#313` closed at
  * every `resolveMeteringCapability` call site (`tokens-metering-io.test.ts`
- * is the sibling pattern this mirrors). Foreign-owner refusal is not
- * re-tested here: it's proven once, against a faked stat, in
- * `metering-io-guard.test.ts`, and is inherited automatically now that
- * this file's entry point consumes that same factory rather than
- * re-deriving its own I/O.
+ * is the sibling pattern this mirrors). These tests call `realDeps()` —
+ * the exact function `import.meta.main` calls — rather than rebuilding an
+ * equivalent object from `hardenedMeteringDeps()` directly: a hand-rebuilt
+ * object still passes if `realDeps()` itself regresses back to the
+ * unguarded pair, which is the one line this PR actually changes
+ * (caught by review round 1: reverting that line left all of these
+ * green). Foreign-owner refusal is not re-tested here: it's proven once,
+ * against a faked stat, in `metering-io-guard.test.ts`, and is inherited
+ * automatically now that `realDeps()` consumes that same factory rather
+ * than re-deriving its own I/O.
  */
-describe('resolveTranscriptPath — real entry-point hardening (hardenedMeteringDeps)', () => {
+describe('resolveTranscriptPath — real entry-point hardening (realDeps)', () => {
   let dir: string
 
   beforeEach(() => {
@@ -264,7 +268,7 @@ describe('resolveTranscriptPath — real entry-point hardening (hardenedMetering
   })
 
   const deps = () => ({
-    ...hardenedMeteringDeps(),
+    ...realDeps(),
     env: { CLAUDE_PROJECT_DIR: 'repro', TMPDIR: dir },
     cwd: dir
   })
