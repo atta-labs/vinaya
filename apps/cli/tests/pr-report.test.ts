@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseTokenReportEntries } from '@attalabs/aeg-core'
+import { parseTokenReportEntries, sumLedger } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 import {
   anyGateFailed,
@@ -395,6 +395,67 @@ describe('writeTokensBlock', () => {
     expect(rows).toHaveLength(2)
     expect(rows[0]).toMatchObject({ phase: '3: develop', role: 'Developer', tokensIn: 100, tokensOut: 50 })
     expect(rows[1]).toMatchObject({ phase: '3: develop', role: 'Developer', tokensIn: 200, tokensOut: 75 })
+  })
+})
+
+// Task 7 (#274): the block already appends any given row without collapsing
+// or merging — task 3's `writeTokensBlock` is role-agnostic by construction
+// (no dedup, no lookup by role). What this proves is narrower: that a
+// Developer row, a Brief Author row and a Planner row — each produced through
+// the same shipped `--role`/`--phase` mechanism `pr-report.ts` already wires
+// up — round-trip through `parseTokenReportEntries` into three distinct,
+// correctly-attributed `LedgerRow`s, that no earlier row's bytes are touched
+// by a later append, and that `sumLedger` (the read-time aggregate §12
+// requires) reflects all three rather than the last-written one.
+describe('AEG:TOKENS carries distinct rows per role (task 7, #274)', () => {
+  const DEV_ROW = '| 7: develop | Developer | claude-sonnet-5 | 6050 | 200 | — | 2026-09-01 |'
+  const BRIEF_AUTHOR_ROW = '| 7: brief | Brief Author | claude-sonnet-5 | 1210 | 80 | — | 2026-09-01 |'
+  const PLANNER_ROW = '| 7: plan | Planner | claude-sonnet-5 | 2720 | 150 | — | 2026-09-01 |'
+
+  it('appends a Brief Author row then a Planner row onto an existing Developer row without collapsing any of the three', () => {
+    const withDev = writeTokensBlock('## Summary\n\nwhy.', DEV_ROW)
+    const withBriefAuthor = writeTokensBlock(withDev, BRIEF_AUTHOR_ROW)
+    const final = writeTokensBlock(withBriefAuthor, PLANNER_ROW)
+
+    expect(final).toContain(DEV_ROW)
+    expect(final).toContain(BRIEF_AUTHOR_ROW)
+    expect(final).toContain(PLANNER_ROW)
+    // Exactly one anchor pair throughout — three rows inside one block, never three blocks.
+    expect(final.match(/<!-- AEG:TOKENS:START -->/g)).toHaveLength(1)
+    expect(final.match(/<!-- AEG:TOKENS:END -->/g)).toHaveLength(1)
+    // Append order preserved.
+    expect(final.indexOf(DEV_ROW)).toBeLessThan(final.indexOf(BRIEF_AUTHOR_ROW))
+    expect(final.indexOf(BRIEF_AUTHOR_ROW)).toBeLessThan(final.indexOf(PLANNER_ROW))
+
+    const rows = parseTokenReportEntries(final)
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toMatchObject({ phase: '7: develop', role: 'Developer', tokensIn: 6050, tokensOut: 200 })
+    expect(rows[1]).toMatchObject({ phase: '7: brief', role: 'Brief Author', tokensIn: 1210, tokensOut: 80 })
+    expect(rows[2]).toMatchObject({ phase: '7: plan', role: 'Planner', tokensIn: 2720, tokensOut: 150 })
+  })
+
+  it('leaves each prior row byte-for-byte untouched as later rows are appended', () => {
+    const withDev = writeTokensBlock('## Summary\n\nwhy.', DEV_ROW)
+    const withBriefAuthor = writeTokensBlock(withDev, BRIEF_AUTHOR_ROW)
+    const final = writeTokensBlock(withBriefAuthor, PLANNER_ROW)
+
+    // The Developer row's own line is identical across all three bodies.
+    const devLine = (body: string) => body.split('\n').find((l) => l.includes('Developer'))
+    expect(devLine(withDev)).toBe(devLine(withBriefAuthor))
+    expect(devLine(withBriefAuthor)).toBe(devLine(final))
+
+    // The Brief Author row's own line is identical before and after the Planner append.
+    const briefAuthorLine = (body: string) => body.split('\n').find((l) => l.includes('Brief Author'))
+    expect(briefAuthorLine(withBriefAuthor)).toBe(briefAuthorLine(final))
+  })
+
+  it('sums all three rows at read time — never fewer, never the last row alone', () => {
+    const withDev = writeTokensBlock('## Summary\n\nwhy.', DEV_ROW)
+    const withBriefAuthor = writeTokensBlock(withDev, BRIEF_AUTHOR_ROW)
+    const final = writeTokensBlock(withBriefAuthor, PLANNER_ROW)
+
+    const totals = sumLedger(parseTokenReportEntries(final))
+    expect(totals).toMatchObject({ tokensIn: 6050 + 1210 + 2720, tokensOut: 200 + 80 + 150, rows: 3 })
   })
 })
 
