@@ -215,6 +215,28 @@ describe('pipe/newline injection — phase, role, and model are untrusted (CLI f
     expect(rows[0]?.role).not.toMatch(/\s[-–—]\s/)
   })
 
+  it("formatTokensLine: an attacker-shaped `model` field (`#313`'s own reproduction) never carries a real `|` out", () => {
+    // The exact string a security reviewer's live reproduction produced at
+    // `#313`'s authoring: a transcript's `message.model` read
+    // `attacker-injected | evil-injected-cell | extra`, and the resulting
+    // `Tokens: …` line carried the raw `|` characters straight through.
+    // `formatTokenReportRow`'s own table cell already escaped `|` (tested
+    // above); this line has no such reader, so it is neutralized with the
+    // same same-glyph-lookalike approach `DASH_LOOKALIKES` already uses,
+    // rather than a `\|` escape nothing here would ever unescape.
+    const maliciousModel = 'attacker-injected | evil-injected-cell | extra'
+    const line = formatTokensLine({
+      phase: '313: develop',
+      role: 'Developer',
+      summary: summary({ input: 5, output: 7, model: maliciousModel })
+    })
+    expect(line).not.toContain('|')
+    expect(line).toContain('attacker-injected ｜ evil-injected-cell ｜ extra')
+    // And the real, measured figures are exactly the five/seven a naive
+    // pipe-split of the model field could otherwise have shifted.
+    expect(line.endsWith('5/7/—')).toBe(true)
+  })
+
   it('formatTokensLine: an entirely ordinary hyphenated phase — no attacker needed — no longer discards the real usage', () => {
     // Reported live: `vinaya tokens --phase "9 - fix token report edge case"
     // --role Developer --in 2417499 --out 25604` produced a line

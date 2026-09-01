@@ -160,11 +160,34 @@ const DASH_LOOKALIKES: Record<string, string> = {
 }
 const DASH_CHARS = new Set(Object.keys(DASH_LOOKALIKES))
 
+/**
+ * `formatTokenReportRow`'s own table cells escape `|` as `\|` because
+ * `splitTableRow` reads that convention back on the other side (`#313`).
+ * This line has no such reader — nothing unescapes a backslash out of it —
+ * so a literal `\|` here would just be a backslash followed by a visible
+ * bar, one more hazardous character rather than fewer. A same-glyph
+ * lookalike, matching `DASH_LOOKALIKES`'s own approach, neutralizes the
+ * delimiter unconditionally (unlike a dash, no ordinary model id legitimately
+ * contains a pipe, so there is no adjacency case to preserve): an
+ * attacker-controlled `model` field (`#313`'s live reproduction: a transcript
+ * whose `message.model` read `attacker | evil-injected-cell | extra`) must
+ * not survive with a real `|` if this line is later quoted verbatim inside
+ * an actual markdown table cell by anything downstream — `pr report --write`
+ * already escapes correctly at its own render step (`formatTokenReportRow`),
+ * but this line, not that one, is what `#313`'s reproduction actually
+ * printed, and it carries no such guarantee of its own once it leaves here.
+ */
+const PIPE_LOOKALIKE = '｜' // U+FF5C FULLWIDTH VERTICAL LINE
+
 function sanitizeForTokensLine(value: string): string {
   const stripped = stripNewlines(value)
   let result = ''
   for (let i = 0; i < stripped.length; i++) {
     const ch = stripped[i] as string
+    if (ch === '|') {
+      result += PIPE_LOOKALIKE
+      continue
+    }
     if (DASH_CHARS.has(ch)) {
       const leftReachable = i === 0 || /\s/.test(stripped[i - 1] as string)
       const rightReachable = i === stripped.length - 1 || /\s/.test(stripped[i + 1] as string)
