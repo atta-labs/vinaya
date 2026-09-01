@@ -45,8 +45,8 @@
  */
 
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
 import { summarizeTranscript } from '../src/claude-code-transcript'
+import { hardenedMeteringDeps } from '../src/metering-io-guard'
 import { formatBreakdown, formatTokensLine } from '../src/report-tokens'
 
 /**
@@ -246,11 +246,18 @@ export function main(argv: string[], deps: ResolveDeps): void {
   console.log(formatTokensLine({ phase, role, summary, modelOverride: model }))
 }
 
+/**
+ * The real deps `import.meta.main` wires into `main()`. Exported (not
+ * inlined below) so a test can call the exact same production wiring
+ * rather than reconstructing an equivalent object that happens to look
+ * right — a hand-rebuilt deps object in a test survives a regression at
+ * this line undetected. Mirrors `apps/cli/src/commands/tokens.ts`'s own
+ * `realDeps()` export for the same reason.
+ */
+export function realDeps(): ResolveDeps {
+  return hardenedMeteringDeps()
+}
+
 if (import.meta.main) {
-  main(process.argv.slice(2), {
-    env: process.env,
-    cwd: process.cwd(),
-    exists: existsSync,
-    readFile: (path: string) => readFileSync(path, 'utf8')
-  })
+  main(process.argv.slice(2), realDeps())
 }

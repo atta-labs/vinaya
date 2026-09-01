@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest'
-import { main, parseArgs, resolveTranscriptPath, sanitizeKey, transcriptPointerPath } from './report-tokens'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { main, parseArgs, realDeps, resolveTranscriptPath, sanitizeKey, transcriptPointerPath } from './report-tokens'
 
 describe('sanitizeKey / transcriptPointerPath', () => {
   it('replaces every run of non-alphanumeric characters with a single hyphen', () => {
@@ -233,6 +237,66 @@ describe('resolveTranscriptPath', () => {
       readFile: () => 'some-session\t/home/user/.claude/projects/-repo/some-session.jsonl\n'
     })
     expect(resolved).toBe('/home/user/.claude/projects/-repo/some-session.jsonl')
+  })
+})
+
+/**
+ * `#328`: the real `import.meta.main` entry point must resolve the
+ * transcript pointer through `hardenedMeteringDeps()`, not hand-rolled
+ * `existsSync`/`readFileSync` — the same CWE-59 class `#313` closed at
+ * every `resolveMeteringCapability` call site (`tokens-metering-io.test.ts`
+ * is the sibling pattern this mirrors). These tests call `realDeps()` —
+ * the exact function `import.meta.main` calls — rather than rebuilding an
+ * equivalent object from `hardenedMeteringDeps()` directly: a hand-rebuilt
+ * object still passes if `realDeps()` itself regresses back to the
+ * unguarded pair, which is the one line this PR actually changes
+ * (caught by review round 1: reverting that line left all of these
+ * green). Foreign-owner refusal is not re-tested here: it's proven once,
+ * against a faked stat, in `metering-io-guard.test.ts`, and is inherited
+ * automatically now that `realDeps()` consumes that same factory rather
+ * than re-deriving its own I/O.
+ */
+describe('resolveTranscriptPath — real entry-point hardening (realDeps)', () => {
+  let dir: string
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'report-tokens-io-'))
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const deps = () => ({
+    ...realDeps(),
+    env: { CLAUDE_PROJECT_DIR: 'repro', TMPDIR: dir },
+    cwd: dir
+  })
+
+  it('refuses a symlinked pointer file rather than following it', () => {
+    const victim = join(dir, 'victim-secret.txt')
+    const link = transcriptPointerPath('repro', dir)
+    writeFileSync(victim, 'sess-x\t/home/user/.claude/projects/-repo/sess-x.jsonl\n')
+    symlinkSync(victim, link)
+
+    expect(() => resolveTranscriptPath(undefined, deps())).toThrow()
+  })
+
+  it('refuses a FIFO pointer file without hanging', () => {
+    const fifo = transcriptPointerPath('repro', dir)
+    execFileSync('mkfifo', [fifo])
+
+    const start = Date.now()
+    expect(() => resolveTranscriptPath(undefined, deps())).toThrow()
+    expect(Date.now() - start).toBeLessThan(2000)
+  })
+
+  it('a legitimate pointer file still resolves correctly', () => {
+    const pointer = transcriptPointerPath('repro', dir)
+    writeFileSync(pointer, 'sess-x\t/home/user/.claude/projects/-repo/sess-x.jsonl\n')
+
+    const resolved = resolveTranscriptPath(undefined, deps())
+    expect(resolved).toBe('/home/user/.claude/projects/-repo/sess-x.jsonl')
   })
 })
 
