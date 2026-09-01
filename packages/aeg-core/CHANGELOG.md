@@ -1,5 +1,115 @@
 # @atta/aeg-core
 
+## 0.21.0
+
+### Minor Changes
+
+- a97e483: New core check: `quoted-command` (report-only). A doc that quotes a command or config line verbatim, in backticks, as a statement of present fact can now opt that span in with an `AEG:QUOTES-FILE` citation marker naming the file it quotes; the check re-verifies the quoted text still appears there. Marker-based only — no inference, no heuristic fallback for an unmarked command-looking span, since that is the exact false-positive shape that gets a gate disabled. Findings print at `warning` severity and the check's own exit code always stays `0`, so installing it cannot newly redden an existing repo's CI.
+  
+  The pure evaluator (`findCitedQuotes`/`evaluateCitedQuotes`) ships from `@attalabs/aeg-core`; the check bin and registration ship from `@attalabs/vinaya`.
+- b0e8078: New `token-collection-wired` core check (ring 0, part of the managed `pre-commit`/`pre-push` hooks' `vinaya check --all --local`): when the token-metering probe (`resolveMeteringCapability`, `@attalabs/aeg-core`) finds a wiring point resolved — a transcript pointer that names a path — but cannot reach what it names, the commit is refused with the wiring named. A host never wired to meter at all (no pointer, no `--transcript`) passes unchanged: that is the sanctioned operator-metered case, not a defect.
+  
+  Local and offline only: no PR body is read (none exists yet at pre-commit) and no network call is made.
+  
+  `@attalabs/aeg-core` gains a new export, `isTokenCollectionWiringBroken` — the pass/fail predicate above, factored out contract-agnostic so both the shipped check and the shipped check consume the same fact. Additive on the exported surface.
+
+### Patch Changes
+
+- 64a85ca: `verify-dispatch`'s dispatch-readiness gate (and the shipped `vinaya check dispatch-readiness` / `vinaya check first-push-dispatch` adapters) now resolve the documented cross-tranche `Depends-on`/`Conflicts-with` form with a bare task id (`<slug> <n>`) — previously it parsed as valid, resolved to nothing, and blocked forever with a message claiming the dependency was "not merged yet" even after it had genuinely merged (#196). An edge that still cannot be resolved (unknown slug, or unknown task id within a known slug) now reports `UNRESOLVABLE`, quoting the edge text, instead of the misleading "not merged" claim — still blocking (the conservative default is unchanged), just honest about why.
+- 21ccea4: `vinaya issue create` now auto-attaches a new task Issue to its tranche's open Milestone — a `resolveMilestoneAttachTarget` resolver (`@attalabs/aeg-forge-state`) matches the legacy exact-slug-titled Milestone or, new, an intent-declared one (`### Tranche intents`), and always hands `gh` the Milestone's own TITLE rather than the slug. Explicit `--milestone` on argv still wins; no matching open Milestone silently skips attach rather than failing the create. Fixes the gap where the only documented path (`milestone create` then `issue create` per task) left every task Issue labeled but never attached, and fixes the pre-existing `open-issue.ts` auto-attach, which crashed intent-declared-tranche creates by handing `gh` a slug no Milestone was titled.
+- aaa21c3: `verify-registry.ts --scaffold` now classifies `apps/cli/src/checks/bin/*.ts` candidates, not just `packages/aeg-core/bin/*.ts`, `.husky/*`, and `.claude/hooks/*.sh` — the location most core check bins actually live in. A registered check's bin there now gets a correctly-ringed stub row via the new `CLI_CHECK_RING` mirror table (`@attalabs/aeg-core`), the same no-guess-unless-derivable discipline `GATE_AUDIENCE` already applies to the other prefix. Hand-authoring an `enforcement.md` row, or relocating a check's implementation across packages, is no longer necessary just to satisfy the classifier's glob.
+- b0e8078: `token-collection-wired` gated on the wrong condition in both directions.
+  
+  `resolveMeteringCapability` returned `no-transcript-resolved` for four distinct
+  situations, and the predicate treated all four as "nothing was ever wired, pass".
+  Only one of them is: a pointer file that exists but is unreadable, malformed, or
+  stale for this session is wiring that resolved and could not be reached — exactly
+  the state the check exists to refuse — and all three passed silently.
+  
+  The opposite failure was reachable too: a plain human terminal, with no
+  `CLAUDE_CODE_SESSION_ID` to cross-check against, holding an earlier session's
+  leftover pointer in a shared `TMPDIR`, had its commits refused.
+  
+  Both now turn on one condition — whether the pointer can be **corroborated** as
+  this session's. A new `pointer-unusable` reason distinguishes a broken pointer
+  from an absent one, and any incapable verdict on an uncorroborated pointer
+  degrades to the sanctioned operator-metered case rather than gating a commit.
+- b0e8078: `token-collection-wired` review follow-ups.
+  
+  The pointer file sits at a fully predictable path in a directory other local
+  users can usually write to, and this check is what makes it read automatically,
+  unattended, on every commit and push in every adopter. The read is now
+  `lstat`-guarded: a symlink, a non-regular file, or a file owned by another user
+  is treated as no pointer at all rather than followed. The repo had already
+  accepted this threat model on the writer side — `claude-stop-hook-emitter.ts`
+  records a prior review's CWE-59 finding and hardens the write — and the read side
+  had inherited the threat with none of the hardening.
+  
+  The second `packages/aeg-core/bin/check-token-collection-wired.ts` gate is
+  removed. It shipped to nobody (`aeg-core`'s `files` is `["src", …]`) and existed
+  only so the registry scaffold's classifier had a candidate, which made the
+  doctrine row cite a path no adopter has. The row now cites the shipped
+  `apps/cli` check directly, as `main-branch-refusal`'s row does. Whether the
+  predicate itself should also move out of `aeg-core` now that the scaffold
+  argument for keeping it there is gone is a separate, still-open question
+  (issue #307) — not decided or settled by this change.
+  
+  `isTokenCollectionWiringBroken` briefly became a type predicate in this branch
+  and was reverted before release: as a predicate it was unsound, since `false`
+  also covers the sanctioned incapable case, so the negative branch narrowed to
+  `capable: true` and a `.summary` dereference compiled clean while throwing at
+  runtime. It ships as a plain boolean. Recorded here because these notes are the
+  published changelog and a reader must not be told a predicate exists.
+- b0e8078: A transcript pointer written with an empty session id no longer refuses every
+  commit.
+  
+  The shipped Stop hook writes `(hook.session_id || "") + "\t" + transcript_path`,
+  so a Stop payload carrying no `session_id` produces a pointer whose first
+  character is a tab. `resolveMeteringCapability` read it with `.trim()`, which ate
+  that leading tab; the subsequent `split('\t')` found no separator and classified
+  the pointer malformed. A pointer naming a present, readable, summarizable
+  transcript therefore refused every commit on a host that meters perfectly — the
+  expensive false-positive class this check was written to avoid. The read now
+  strips a trailing newline only.
+  
+  The refusal condition is also stated honestly for the first time. It rests on two
+  grounds, and only one of them involves a session id: the pointer's recorded id
+  matches ours and the transcript it named could not be reached, or the id could
+  not be read at all and the file nonetheless sits at this project's own pointer
+  path owned by this user. An earlier revision set a single `corroborated` flag
+  from `Boolean(currentSessionId)` on branches where the id was never read, which
+  asserted a match that had not been established and left three shipped documents
+  describing a rule the code did not implement. Those documents now describe both
+  grounds.
+- b0e8078: A stale transcript pointer no longer refuses a commit.
+  
+  Two reviewers reached opposite conclusions on this. The first read a stale
+  pointer as wiring that resolved and could not be reached — a defect. The second
+  showed that refusing it blocks a correctly wired host: a second agent session in
+  the same project directory sees the first session's pointer until its own Stop
+  hook fires, which by construction is only after its first turn completes, so its
+  very first commit is refused — and the remedy the message named (`--transcript`)
+  is a flag `vinaya check` does not accept, leaving no action that clears it.
+  
+  The second reading wins. A pointer whose recorded session id disagrees with the
+  current one is provably NOT this session's, which is the can't-claim-it case,
+  not a broken-wiring case. `corroborated` now means one thing everywhere — "can
+  we show this pointer is ours" — which is also what the three shipped docs had
+  said all along while the code did something else.
+  
+  Two related corrections ride along. A verdict degraded to
+  `no-transcript-resolved` now carries a detail consistent with that reason, where
+  before it kept a detail asserting a transcript HAD been resolved and was
+  unreadable — a contradictory pair that reached `vinaya doctor` and `pr report`'s
+  token cell. And `isTokenCollectionWiringBroken` returns a plain boolean again:
+  as a type predicate it was unsound, since `false` also covers the sanctioned
+  incapable case, so the negative branch narrowed to `capable: true` and a
+  `.summary` dereference compiled clean while throwing at runtime.
+- Updated dependencies [21ccea4]
+- Updated dependencies [4c0f755]
+  - @attalabs/aeg-forge-state@0.21.0
+  - @attalabs/aeg-types@0.21.0
+
 ## 0.20.1
 
 ### Patch Changes

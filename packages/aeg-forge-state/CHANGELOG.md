@@ -1,5 +1,16 @@
 # @atta/aeg-forge-state
 
+## 0.21.0
+
+### Minor Changes
+
+- 4c0f755: `vinaya milestone close --slug <slug>` replaces the raw `gh api .../milestones/<n> -X PATCH -f state=closed` recipe `tranche-archivist.md` used to run on faith. It resolves the target Milestone the same legacy-or-intent-declared way `vinaya issue create`'s auto-attach does, fetches the tranche's labeled Issues and the Milestone's natively attached Issues, and refuses to close on any mismatch — naming each unattached or foreign Issue and its repair path (`gh issue edit <n> --milestone <title>`, or `vinaya milestone adopt`) — before the PATCH ever reaches the forge. The mismatch diff itself is a new pure function, `checkMilestoneAttachment` (`@attalabs/aeg-forge-state`): no network inside it, both Issue lists are fetched and injected by the caller. `--validate-only` verifies attachment without writing.
+
+### Patch Changes
+
+- 21ccea4: `vinaya issue create` now auto-attaches a new task Issue to its tranche's open Milestone — a `resolveMilestoneAttachTarget` resolver (`@attalabs/aeg-forge-state`) matches the legacy exact-slug-titled Milestone or, new, an intent-declared one (`### Tranche intents`), and always hands `gh` the Milestone's own TITLE rather than the slug. Explicit `--milestone` on argv still wins; no matching open Milestone silently skips attach rather than failing the create. Fixes the gap where the only documented path (`milestone create` then `issue create` per task) left every task Issue labeled but never attached, and fixes the pre-existing `open-issue.ts` auto-attach, which crashed intent-declared-tranche creates by handing `gh` a slug no Milestone was titled.
+- @attalabs/aeg-types@0.21.0
+
 ## 0.20.1
 
 ### Patch Changes
