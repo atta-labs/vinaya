@@ -6,7 +6,7 @@ import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
 import { ScanContext } from '../checks/scan-context'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../lib/numstat'
 import { packageRoot } from '../lib/package-root.js'
-import { realDeps } from './tokens'
+import { meteringRefusalMessage, realDeps } from './tokens'
 
 /**
  * `vinaya pr report` — emits the `AEG:EVIDENCE` block: a PR body's factual
@@ -24,8 +24,11 @@ import { realDeps } from './tokens'
  * heading's table. Unlike Evidence, re-entry APPENDS a row rather than
  * replacing the block — see `writeTokensBlock`'s doc comment and this
  * task's brief (#270) for why. Cost is always `—` by design (no maintained
- * pricing table); an incapable host gets an all-`—` row carrying the
- * probe's reason inline (Agent/Model cell), never a fabricated `0/0/—`.
+ * pricing table). A host whose corroborated wiring exists but cannot be read
+ * gets an all-`—` row carrying the probe's reason inline (Agent/Model cell),
+ * never a fabricated `0/0/—`; a session that resolved no transcript at all
+ * gets NO row and a refusal (`collectTokensAddition`, Issue #365) — the
+ * Evidence block is written either way.
  *
  * Two groups, deliberately kept apart, because they are verifiable to
  * different degrees:
@@ -488,13 +491,54 @@ function isoToday(): string {
 }
 
 /**
+ * Named in the refusal below rather than left to the reader: both routes out
+ * of `no-transcript-resolved` are real, and neither is a fallback to a blank
+ * row.
+ */
+const TOKEN_ROW_REMEDY = [
+  'The AEG:EVIDENCE block was still written; only the token row was withheld.',
+  '',
+  'Nothing here established that this host cannot meter — only that this session resolved no',
+  'transcript of its own. Report real figures by naming your own transcript:',
+  '',
+  '  vinaya pr report --write <body-file> --transcript <path>',
+  '',
+  'or, on a host whose usage arrives by some other means, emit the row directly and paste it into',
+  'the `## Token report` table:',
+  '',
+  '  vinaya tokens --phase "<task-id>: develop" --role Developer --in <tokens-in> --out <tokens-out>'
+].join('\n')
+
+/**
+ * Either the `AEG:TOKENS` row to append, or a refusal to append one. A
+ * discriminated union rather than a nullable string because the caller must
+ * not be able to splice "no row" into the block as an empty line: the two
+ * outcomes carry different obligations (write the row / print the refusal and
+ * exit non-zero), and the type is what enforces that both are handled.
+ */
+export type TokensAddition = { collected: true; row: string } | { collected: false; refusal: string }
+
+/**
  * Collects real usage figures via the same `resolveMeteringCapability` probe
- * `vinaya tokens` uses, and renders the `AEG:TOKENS` addition: a real row
- * when capable, or an all-`—` row carrying the probe's `reason` inline in
- * the Agent/Model cell when not — legible without a second line, which
- * would break table contiguity for any row appended after it (see the
- * comment inside) — never a fabricated `0/0/—` row (`bin/report-tokens.ts`'s
- * own throw-rather-than-guess discipline, which must survive here too).
+ * `vinaya tokens` uses, and renders the `AEG:TOKENS` addition — never a
+ * fabricated `0/0/—` row (`bin/report-tokens.ts`'s own throw-rather-than-guess
+ * discipline, which must survive here too). Three outcomes, not two:
+ *
+ *   - **Capable** — a real row.
+ *   - **Incapable, `no-transcript-resolved`** — REFUSES (Issue #365). That
+ *     reason covers "no pointer file at all" and "a pointer that could not be
+ *     corroborated as this session's": both mean this session has no wiring of
+ *     its own, and neither means this host cannot produce usage figures. A
+ *     blank-celled row here would assert the latter, which
+ *     `aeg-root/roles/developer.md` reserves for the host-has-no-usage case
+ *     alone — the misrepresentation that doc names in its own words. The
+ *     caller writes Evidence anyway and exits non-zero; see `prReportCommand`.
+ *   - **Incapable, any other reason** (`pointer-unusable`,
+ *     `transcript-unreadable`, `transcript-empty`) — the all-`—` row carrying
+ *     the probe's `reason` inline in the Agent/Model cell, unchanged. There a
+ *     corroborated pointer DID exist and reaching the figures failed, so the
+ *     row states a fact the probe actually reached, and
+ *     `token-collection-wired` already flags it as the wiring defect it is.
  */
 export function collectTokensAddition(opts: {
   phase: string
@@ -502,30 +546,54 @@ export function collectTokensAddition(opts: {
   date: string
   transcriptPath?: string
   modelOverride?: string
-}): string {
+}): TokensAddition {
   const capability = resolveMeteringCapability(realDeps(), opts.transcriptPath)
   if (!capability.capable) {
+    if (capability.reason === 'no-transcript-resolved') {
+      return {
+        collected: false,
+        refusal: `${meteringRefusalMessage('vinaya pr report', capability)}\n\n${TOKEN_ROW_REMEDY}`
+      }
+    }
     // The reason rides inside the Agent/Model cell, never a sibling line: a
     // second line here that doesn't start with `|` breaks `parseTableSection`'s
     // contiguous row scan for every row appended after it (found live —
     // a first incapable row followed by a later real row silently
     // truncated `parseTokenReportEntries` to one row). One line per row,
     // always, is what keeps append-then-round-trip sound.
-    return formatTokenReportRow({
+    return {
+      collected: true,
+      row: formatTokenReportRow({
+        phase: opts.phase,
+        role: opts.role,
+        summary: null,
+        modelOverride: `— (${capability.reason})`,
+        date: opts.date
+      })
+    }
+  }
+  return {
+    collected: true,
+    row: formatTokenReportRow({
       phase: opts.phase,
       role: opts.role,
-      summary: null,
-      modelOverride: `— (${capability.reason})`,
+      summary: capability.summary,
+      modelOverride: opts.modelOverride,
       date: opts.date
     })
   }
-  return formatTokenReportRow({
-    phase: opts.phase,
-    role: opts.role,
-    summary: capability.summary,
-    modelOverride: opts.modelOverride,
-    date: opts.date
-  })
+}
+
+/**
+ * The body `--write` writes: Evidence always, the token row only when one was
+ * collected. Split out of `prReportCommand` so the invariant that matters
+ * most here — a refused token row never costs the caller its Evidence block —
+ * is a directly testable fact rather than a claim about a function that ends
+ * in `process.exit`.
+ */
+export function composeWrittenBody(existing: string, blockInner: string, tokens: TokensAddition): string {
+  const withEvidence = replaceEvidenceBlock(existing, blockInner)
+  return tokens.collected ? writeTokensBlock(withEvidence, tokens.row) : withEvidence
 }
 
 export type ReportResult = { block: string; blockInner: string; gatesFailed: boolean; gateOutcomes: GateOutcome[] }
@@ -580,22 +648,33 @@ export async function prReportCommand(args: string[]): Promise<void> {
     throw err
   }
 
+  // A refused token row must not cost the caller its Evidence block.
+  // `aeg-root/roles/developer.md` makes this command's exit code the
+  // Developer's pre-open verification run, and states that a red gate still
+  // writes the block and exits non-zero — so refusing here means withholding
+  // the row and exiting non-zero, never aborting before the write. Aborting
+  // would leave every unwired host unable to populate Evidence at all.
+  let tokensRefused = false
   if (writePath) {
     const existing = existsSync(writePath) ? readFileSync(writePath, 'utf8') : ''
-    const withEvidence = replaceEvidenceBlock(existing, result.blockInner)
-    const tokensAddition = collectTokensAddition({
+    const tokens = collectTokensAddition({
       phase: phaseOverride ?? derivePhase(),
       role: roleOverride ?? 'Developer',
       date: isoToday(),
       transcriptPath,
       modelOverride
     })
-    const updated = writeTokensBlock(withEvidence, tokensAddition)
-    writeFileSync(writePath, updated)
-    process.stdout.write(`Wrote AEG:EVIDENCE and AEG:TOKENS blocks to ${writePath}\n`)
+    writeFileSync(writePath, composeWrittenBody(existing, result.blockInner, tokens))
+    if (tokens.collected) {
+      process.stdout.write(`Wrote AEG:EVIDENCE and AEG:TOKENS blocks to ${writePath}\n`)
+    } else {
+      tokensRefused = true
+      process.stdout.write(`Wrote AEG:EVIDENCE block to ${writePath}\n`)
+      console.error(tokens.refusal)
+    }
   } else {
     process.stdout.write(`${result.block}\n`)
   }
 
-  process.exit(result.gatesFailed ? 1 : 0)
+  process.exit(result.gatesFailed || tokensRefused ? 1 : 0)
 }

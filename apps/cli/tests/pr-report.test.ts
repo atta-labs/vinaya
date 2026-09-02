@@ -8,6 +8,7 @@ import {
   anyGateFailed,
   buildReport,
   collectTokensAddition,
+  composeWrittenBody,
   computeGroupA,
   type GateOutcome,
   type GateRunResult,
@@ -476,7 +477,10 @@ describe('collectTokensAddition', () => {
         date: '2026-08-29',
         transcriptPath
       })
-      expect(addition).toBe('| 3: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-08-29 |')
+      expect(addition).toEqual({
+        collected: true,
+        row: '| 3: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-08-29 |'
+      })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -489,9 +493,119 @@ describe('collectTokensAddition', () => {
       date: '2026-08-29',
       transcriptPath: '/nonexistent/path/does/not/exist.jsonl'
     })
-    expect(addition.split('\n')).toHaveLength(1)
-    expect(addition).toContain('transcript-unreadable')
-    expect(addition).toBe('| 3: develop | Developer | — (transcript-unreadable) | — | — | — | 2026-08-29 |')
-    expect(addition).not.toMatch(/\|\s*0\s*\|\s*0\s*\|/)
+    expect(addition.collected).toBe(true)
+    const row = addition.collected ? addition.row : ''
+    expect(row.split('\n')).toHaveLength(1)
+    expect(row).toContain('transcript-unreadable')
+    expect(row).toBe('| 3: develop | Developer | — (transcript-unreadable) | — | — | — | 2026-08-29 |')
+    expect(row).not.toMatch(/\|\s*0\s*\|\s*0\s*\|/)
+  })
+
+  it('still renders the inline-reason row for a corroborated but empty transcript — `transcript-empty` is unchanged', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-tokens-empty-'))
+    const transcriptPath = join(dir, 'transcript.jsonl')
+    try {
+      writeFileSync(transcriptPath, '')
+      const addition = collectTokensAddition({
+        phase: '3: develop',
+        role: 'Developer',
+        date: '2026-08-29',
+        transcriptPath
+      })
+      expect(addition).toEqual({
+        collected: true,
+        row: '| 3: develop | Developer | — (transcript-empty) | — | — | — | 2026-08-29 |'
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+/**
+ * Issue #365. `no-transcript-resolved` means this session resolved no
+ * transcript of its own — no pointer file, or one it cannot corroborate. It
+ * does NOT mean the host cannot meter, which is the only case
+ * `aeg-root/roles/developer.md` sanctions a blank token cell for. The
+ * emitter must therefore withhold the row rather than assert that fact, while
+ * still writing the Evidence block: `developer.md` makes this command's exit
+ * code the Developer's pre-open verification run, so an abort-before-write
+ * would leave every unwired host unable to populate Evidence at all.
+ *
+ * The unwired state is produced by pointing `TMPDIR`/`CLAUDE_PROJECT_DIR` at
+ * a fresh empty directory (no pointer file can exist there) and clearing
+ * `CLAUDE_CODE_SESSION_ID` — `hardenedMeteringDeps` reads `process.env` live,
+ * and `collectTokensAddition` builds its deps per call.
+ */
+describe('collectTokensAddition refuses rather than claiming the host cannot meter (#365)', () => {
+  function withUnwiredEnv<T>(fn: () => T): T {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-unwired-'))
+    const saved = {
+      TMPDIR: process.env.TMPDIR,
+      CLAUDE_PROJECT_DIR: process.env.CLAUDE_PROJECT_DIR,
+      CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID
+    }
+    process.env.TMPDIR = dir
+    process.env.CLAUDE_PROJECT_DIR = dir
+    delete process.env.CLAUDE_CODE_SESSION_ID
+    try {
+      return fn()
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  it('returns a refusal, not a row, when no transcript resolves', () => {
+    const addition = withUnwiredEnv(() =>
+      collectTokensAddition({ phase: '3: develop', role: 'Developer', date: '2026-08-29' })
+    )
+    expect(addition.collected).toBe(false)
+    const refusal = addition.collected ? '' : addition.refusal
+    expect(refusal).toContain('vinaya pr report: refused')
+    expect(refusal).toContain('no-transcript-resolved')
+    // Both ways out are named, so the refusal is actionable rather than terminal.
+    expect(refusal).toContain('--transcript')
+    expect(refusal).toContain('--in <tokens-in> --out <tokens-out>')
+    // The row it would have written is exactly what must not appear anywhere.
+    expect(refusal).not.toContain('| — | — | — |')
+  })
+
+  // Template-shaped: an Evidence anchor pair under its own heading, the Token
+  // report heading last — the body `aeg-root/templates/pr-report-template.md`
+  // produces, and the shape `writeTokensBlock` sites a fresh block into.
+  const TEMPLATE_BODY = [
+    '## Summary',
+    '',
+    'why.',
+    '',
+    '## Evidence',
+    '',
+    '<!-- AEG:EVIDENCE:START -->',
+    '[populated by `vinaya pr report --write`]',
+    '<!-- AEG:EVIDENCE:END -->',
+    '',
+    '## Token report',
+    ''
+  ].join('\n')
+
+  it('still writes the Evidence block when the token row is refused', () => {
+    const written = composeWrittenBody(TEMPLATE_BODY, 'Head: abc', { collected: false, refusal: 'refused' })
+    expect(written).toContain('<!-- AEG:EVIDENCE:START -->')
+    expect(written).toContain('Head: abc')
+    expect(written).not.toContain('<!-- AEG:TOKENS:START -->')
+    expect(written).not.toContain('no-transcript-resolved')
+  })
+
+  it('writes both blocks when a row was collected', () => {
+    const row = '| 3: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-08-29 |'
+    const written = composeWrittenBody(TEMPLATE_BODY, 'Head: abc', { collected: true, row })
+    expect(written).toContain('<!-- AEG:EVIDENCE:START -->')
+    expect(written).toContain('Head: abc')
+    expect(written).toContain('<!-- AEG:TOKENS:START -->')
+    expect(written).toContain(row)
   })
 })
