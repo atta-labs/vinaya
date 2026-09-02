@@ -21,6 +21,12 @@
  * 0), the same "nothing to evaluate yet" shape `brief-shape`/`test-plan`
  * already use for a missing `PR_BODY`.
  *
+ * Mechanical-check status (#337) is
+ * resolved via a separate `gh pr checks --json name,bucket` call, filtering
+ * out this repo's own review-gate check-run name before handing the result
+ * to `checkReviewGate` — that exclusion is repo-specific and belongs here,
+ * never inside `aeg-core`'s pure logic, which ships to every adopter.
+ *
  * scope: full — a review verdict is a property of the PR, not the diff.
  */
 
@@ -30,6 +36,15 @@ import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 
 const CHECK_NAME = 'review-gate'
+
+// This repo's own review-gate check-run name (`.github/workflows/vinaya-review.yml:51`).
+// `vinaya-review-verdict.yml`'s retrigger job re-runs that same workflow run
+// rather than opening a new one (GitHub's 2025-02-12 check-run-ownership
+// restriction), so verdict re-evaluation reports under this identical name
+// too — there is only ever one review-gate check-run name to exclude. The
+// exclusion lives HERE, never inside `checkReviewGate` itself: `aeg-core`
+// ships to every adopter, and an adopter's workflow will not be named this.
+const OWN_CHECK_RUN_NAME = 'vinaya review gate'
 
 type PrView = {
   number: number
@@ -46,6 +61,36 @@ function fetchPr(prNumber: number): PrView | null {
     })
     return JSON.parse(out) as PrView
   } catch {
+    return null
+  }
+}
+
+type CheckRun = { name: string; bucket: string }
+
+/**
+ * Every check-run `gh` reports for the PR, excluding `OWN_CHECK_RUN_NAME`.
+ * `null` on a genuine fetch failure — distinct from an empty result: `gh pr
+ * checks` exits non-zero whenever any check is failing or still pending, but
+ * still prints valid JSON on stdout in that case (only the exit code, not the
+ * output, reflects the checks' own state), so a non-zero exit is read from
+ * the thrown error's own `stdout` before being treated as a failure.
+ */
+function fetchMechanicalChecks(prNumber: number): CheckRun[] | null {
+  try {
+    const out = execFileSync('gh', ['pr', 'checks', String(prNumber), '--json', 'name,bucket'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    return (JSON.parse(out) as CheckRun[]).filter((c) => c.name !== OWN_CHECK_RUN_NAME)
+  } catch (err) {
+    const stdout = (err as { stdout?: unknown }).stdout
+    if (typeof stdout === 'string') {
+      try {
+        return (JSON.parse(stdout) as CheckRun[]).filter((c) => c.name !== OWN_CHECK_RUN_NAME)
+      } catch {
+        return null
+      }
+    }
     return null
   }
 }
@@ -93,6 +138,19 @@ function main(): void {
     ? fetchWaiverLabelActor(prNumber, WAIVER_LABEL_REVIEW)
     : null
 
+  const mechanicalChecks = fetchMechanicalChecks(prNumber)
+  if (mechanicalChecks === null) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `review-gate severity:infra — could not fetch check-run status for PR #${prNumber} via \`gh pr checks\`.`,
+      agent_recovery_prompt:
+        'Confirm `gh auth status` passes and PR_NUMBER is correct, then re-run `vinaya check review-gate`.'
+    })
+    process.exit(1)
+  }
+
   // `principals` comes from GitHub's API (default-branch, server-side state),
   // never local git / the PR's checkout / any env var. The generated authority
   // workflows likewise execute only their explicit default-branch checkout;
@@ -104,6 +162,7 @@ function main(): void {
     labels,
     waiverLabelActor,
     principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig()),
+    mechanicalChecks,
     headSha: pr.headRefOid
   })
 
