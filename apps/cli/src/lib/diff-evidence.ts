@@ -43,8 +43,20 @@ function revParse(ref: string): string | null {
  * The real repo root, independent of the caller's `process.cwd()` — a check
  * bin spawned from a different cwd than the repo root (a subdirectory, a
  * differently-configured runner) must not silently compare paths against the
- * wrong base. `null` only when this process is not inside a git worktree at
- * all, which every other function here already treats as "cannot answer."
+ * wrong base. `null` in both cases where there is no root to report: this
+ * process is not inside a git worktree at all (git throws), and git exits `0`
+ * having printed nothing. Both are the "cannot answer" every other function
+ * here already reports the same way.
+ *
+ * The empty-output case returns `null` rather than the `''` a bare `.trim()`
+ * would yield, because `''` is not a root and yet satisfies every caller's
+ * `null` guard: `repoRoot() ?? process.cwd()` does not fire on `''`, and
+ * `root !== null` is true for it. A caller then builds `join('', 'aeg-root')`
+ * — the bare relative string `'aeg-root'` — and resolves its doctrine root
+ * against whatever cwd it happens to hold, which is precisely the
+ * cwd-relative escape this function exists to close (Issues #232, #314).
+ * Returning `''` would reopen that door silently: the sweep runs, reports
+ * findings and exits `0`, having never located the root it names.
  *
  * Exported (review finding, PR #290 MINOR): a caller that ALSO builds
  * cwd-relative paths of its own — `check-reader-resolvable-prose.ts`/
@@ -60,10 +72,11 @@ function revParse(ref: string): string | null {
  */
 export function repoRoot(): string | null {
   try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    const out = execFileSync('git', ['rev-parse', '--show-toplevel'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     }).trim()
+    return out === '' ? null : out
   } catch {
     return null
   }
