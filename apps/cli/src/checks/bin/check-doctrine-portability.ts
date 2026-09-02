@@ -174,6 +174,18 @@ function main(): void {
       `baseline ${baselineFindings.length}, current ${currentFindings.length}, delta ${comparison.delta}; ${newFindings.length} new finding(s)`
   )
 
+  const PATH_RECOVERY_PROMPT =
+    'This doctrine page cites a path that only resolves in the authoring repository, not in an adopter’s ' +
+    'install — an adopter cannot follow it. Rewrite the citation to a doctrine-relative path (`roles/...`, ' +
+    '`contracts/...`, `skills/...`, `aeg-root/...`) or an adopter-owned one (`.github/...`, `.vinaya/...`, ' +
+    '`.claude/...`), or state the fact without pointing at the file at all.'
+
+  const VENDOR_NAME_RECOVERY_PROMPT =
+    'This doctrine page names an AI vendor/product/agent by name outside the one sanctioned fenced home ' +
+    '(`<!-- AEG:VENDOR-EXAMPLE:START -->` … `<!-- AEG:VENDOR-EXAMPLE:END -->` in `tranche-model.md` §12). ' +
+    'Rewrite the mention to refer to the host/agent generically (e.g. "the coding agent," "this repo\'s ' +
+    'shipped reference host," "an external, independently-hosted model") instead of by product name.'
+
   for (const finding of newFindings) {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
@@ -182,11 +194,7 @@ function main(): void {
       message: `${finding.file}:${finding.line}: ${finding.message}`,
       file: finding.file,
       line: finding.line,
-      agent_recovery_prompt:
-        'This doctrine page cites a path that only resolves in the authoring repository, not in an adopter’s ' +
-        'install — an adopter cannot follow it. Rewrite the citation to a doctrine-relative path (`roles/...`, ' +
-        '`contracts/...`, `skills/...`, `aeg-root/...`) or an adopter-owned one (`.github/...`, `.vinaya/...`, ' +
-        '`.claude/...`), or state the fact without pointing at the file at all.'
+      agent_recovery_prompt: finding.kind === 'vendor-name' ? VENDOR_NAME_RECOVERY_PROMPT : PATH_RECOVERY_PROMPT
     })
   }
 
