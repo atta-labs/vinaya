@@ -28,9 +28,14 @@
  * sections" — structured detail belongs in a section of its own below
  * Summary/Scope/Test-plan/Evidence, not folded into one of the four. A
  * multi-line blockquote is the one shape this rule does NOT split on (its
- * `\n>\n` continuation lines are never blank), so it is the sanctioned way
- * to carry a short structured aside inside Summary/Scope itself, if one is
- * genuinely needed there rather than in its own section.
+ * `\n>\n` continuation lines are never blank) — but only when the
+ * blockquote IS the section, start to finish: prose before or after it is
+ * still a separate blank-line-delimited block, so "intro sentence, then a
+ * blockquote aside, then a closing sentence" is three blocks and still
+ * fails (confirmed by probe, PR review on #358 — this is not the
+ * "structured aside alongside prose" shape it can look like at a glance).
+ * The exemption only covers a section whose entire content, quoted in
+ * full, is the one thing being said.
  */
 
 import { anchoredRegionBounds, stripCode } from './anchored-region'
