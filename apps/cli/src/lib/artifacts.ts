@@ -493,6 +493,7 @@ jobs:
       contents: read
       pull-requests: read
       issues: read
+      checks: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -614,6 +615,7 @@ jobs:
       contents: read
       pull-requests: read
       issues: read
+      checks: read
     outputs:
       number: \${{ steps.pr.outputs.number }}
       sha: \${{ steps.pr.outputs.sha }}
