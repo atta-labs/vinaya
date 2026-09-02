@@ -21,7 +21,7 @@
  * 0), the same "nothing to evaluate yet" shape `brief-shape`/`test-plan`
  * already use for a missing `PR_BODY`.
  *
- * Mechanical-check status (review-mechanical-gate-v1 task 2, #337) is
+ * Mechanical-check status (#337) is
  * resolved via a separate `gh pr checks --json name,bucket` call, filtering
  * out this repo's own review-gate check-run name before handing the result
  * to `checkReviewGate` — that exclusion is repo-specific and belongs here,
