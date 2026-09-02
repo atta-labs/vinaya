@@ -101,6 +101,12 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
     const root = initFixture('rc3')
     try {
       const indexTs = join(import.meta.dir, '..', '..', 'src', 'index.ts')
+      // This spawn transpiles the whole CLI graph before a single check
+      // runs, which costs roughly four and a half seconds cold against under
+      // one second warm. Bun's default per-test timeout sits directly on that
+      // cold path, so the case died intermittently on first runs in a freshly
+      // installed worktree (Issue #361). The explicit budget below matches the
+      // RC2 fixture cases, which spawn the same way and have never flaked.
       const result = spawnSync('bun', [indexTs, 'check', '--all', '--diff-only'], {
         cwd: root,
         encoding: 'utf8',
@@ -118,7 +124,7 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
 
   it("unconfigured doctrineRoot resolves via resolveDoctrineRoot() (the package's own copy), not a cwd-relative literal — task vinaya-adopter-portability-v1 2, Issue #232", () => {
     // The pre-232 default was the bare literal `'aeg-root'`, cwd-relative —
@@ -135,6 +141,8 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
     const root = initFixture('rc3-doctrine-root')
     try {
       const indexTs = join(import.meta.dir, '..', '..', 'src', 'index.ts')
+      // Same cold-start budget as the sibling above, for the same reason
+      // (Issue #361) — this case spawns the CLI against a fixture repo too.
       const result = spawnSync('bun', [indexTs, 'check', 'reader-resolvable-prose'], {
         cwd: root,
         encoding: 'utf8',
@@ -147,7 +155,7 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
 })
 
 describe('RC2 — coherence/dispatch-readiness evaluate the CALLER’s repo, never this monorepo’s own', () => {
