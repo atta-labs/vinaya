@@ -24,40 +24,53 @@ describe('parseRationaleDeps', () => {
     expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['1', '2'], conflictsWith: ['3'] })
   })
 
-  it('parses multiple separate backtick spans with prose between them (cross-tranche form), inheriting the slug qualifier onto the bare continuation', () => {
-    // Regression for Issue #388's real body (aeg-forge-state-v1 3b, #437):
-    // the bare continuation span `#372` is ALSO an aeg-governance-hardening
-    // reference — it must inherit that slug, not resolve as this
-    // tranche's own #372.
+  it('resolves a bare id that follows a slug-qualified one inside the SAME labeled span', () => {
+    // Issue #388's real body (aeg-forge-state-v1 3b, #437) meant `#372` as a
+    // second aeg-governance-hardening reference, not this tranche's own #372.
+    // Since #347 that inheritance lives inside one labeled span's comma list —
+    // the form `amendRationaleDeps` writes — rather than across spans.
     const body =
-      '**Dependency rationale** — `Depends-on: aeg-governance-hardening #368` (task 26) and `#372` (task 28): both reshape the surface.\n\n**Traps to avoid** — none.'
+      '**Dependency rationale** — `Depends-on: aeg-governance-hardening #368, #372`: both reshape the surface.\n\n**Traps to avoid** — none.'
     expect(parseRationaleDeps(body)).toEqual({
       dependsOn: ['aeg-governance-hardening #368', 'aeg-governance-hardening #372'],
       conflictsWith: []
     })
   })
 
-  it('does NOT attach a spurious slug to a same-tranche bare-then-bare sequence', () => {
+  it('resets slug inheritance after one bare id, so a THIRD id does not inherit a stale qualifier', () => {
     const body =
-      '**Dependency rationale** — `Depends-on: 1` (rationale prose) and `2` (more prose): both same-tranche tasks.\n\n**Traps to avoid** — none.'
-    expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['1', '2'], conflictsWith: [] })
-  })
-
-  it('resets slug inheritance after one bare span, so a THIRD span does not inherit a stale qualifier', () => {
-    const body =
-      "**Dependency rationale** — `Depends-on: aeg-governance-hardening #368` (task 26), `#372` (task 28, inherits), and `5` (this tranche's own task, must NOT inherit).\n\n**Traps to avoid** — none."
+      "**Dependency rationale** — `Depends-on: aeg-governance-hardening #368, #372, 5` — the last is this tranche's own task and must NOT inherit.\n\n**Traps to avoid** — none."
     expect(parseRationaleDeps(body)).toEqual({
       dependsOn: ['aeg-governance-hardening #368', 'aeg-governance-hardening #372', '5'],
       conflictsWith: []
     })
   })
 
-  it("parses Issue #383's real body — two separate backtick spans, `1` then `2`", () => {
+  it('ignores a bare backtick span that follows a labeled span (Issue #347)', () => {
+    // The worked example from Issue #347's own body. The trailing `1` is
+    // ordinary prose naming a task, not a second declared edge; before the
+    // narrowing it was scavenged as one, and — once the Issue was itself task
+    // 1 — read back as a self-dependency.
+    const body =
+      '**Dependency rationale** — `Depends-on: #1034` — `engine-conditional-edges-v1` task `1` — because the engine must land first.\n\n**Traps to avoid** — none.'
+    expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['#1034'], conflictsWith: [] })
+  })
+
+  it("ignores the bare continuation spans in Issue #383's real body", () => {
+    // #383 wrote its second edge as a separate bare span (`2`) with prose
+    // between. That convention is no longer read (#347): only the labeled
+    // span declares. A body needing both edges states them comma-separated in
+    // the labeled span, which is what `amendRationaleDeps` emits.
     const body = readIssueBodyFixture(383)
-    const result = parseRationaleDeps(body)
-    expect(result.dependsOn).toContain('1')
-    expect(result.dependsOn).toContain('2')
-    expect(result.dependsOn).toEqual(['1', '2'])
+    expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['1'], conflictsWith: [] })
+  })
+
+  it("does not scavenge task ids named in prose beside an empty field (Issue #243's real shape)", () => {
+    // Both fields read `—`; the ids are prose explaining the disjointness
+    // check. The old reader declared three conflicts that were never declared.
+    const body =
+      '**Dependency rationale** — No `depends-on`. `Conflicts-with: —` verified by file-set disjointness: task `35` owns tests, task `78` owns check bins, task `38` owns labels.\n\n**Traps to avoid** — none.'
+    expect(parseRationaleDeps(body)).toEqual({ dependsOn: [], conflictsWith: [] })
   })
 
   it("ignores an unrelated backtick span in the same paragraph (Issue #384's `vinaya check` mention)", () => {
@@ -76,15 +89,14 @@ describe('parseRationaleDeps', () => {
     expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['1'], conflictsWith: [] })
   })
 
-  it('does NOT duplicate an id that a later bare span merely re-mentions in prose (Issue #569 regression)', () => {
-    // Regression for Issue #569 ([vinaya-pages-v1] 9): `Conflicts-with: #570`
-    // is the live declaration; the later bare `#570` span is plain prose
-    // ("the `#570` edge is sequencing, not exclusion...") re-mentioning the
-    // SAME id, not a continuation value. Before the fix this resolved to
-    // conflictsWith: ['#570', '#570'], which propagated to a React key
-    // collision in Vinaya Studio's task table (DepList, page.tsx).
+  it('does NOT duplicate an id repeated inside one labeled span (Issue #569 regression)', () => {
+    // Regression for Issue #569 ([vinaya-pages-v1] 9): a duplicated id
+    // propagated to a React key collision in Vinaya Studio's task table
+    // (DepList, page.tsx). #569's own body duplicated via a bare prose span,
+    // which #347 stopped reading at all; the within-span repeat below is the
+    // remaining way to reach `pushUnique`.
     const body =
-      '**Dependency rationale** — `Depends-on: —`. `Conflicts-with: #570`. The `#570` edge is sequencing, not exclusion: task 10 re-derives `/known-limits`.\n\n**Traps to avoid** — none.'
+      '**Dependency rationale** — `Depends-on: —`. `Conflicts-with: #570, #570`. The `#570` edge is sequencing, not exclusion.\n\n**Traps to avoid** — none.'
     expect(parseRationaleDeps(body)).toEqual({ dependsOn: [], conflictsWith: ['#570'] })
   })
 
