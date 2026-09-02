@@ -167,7 +167,20 @@ describe('vendor-name finding (Issue #298)', () => {
   })
 
   it('flags each distinct vendor name in the word list', () => {
-    const names = ['Claude', 'Anthropic', 'ChatGPT', 'OpenAI', 'GPT', 'Gemini', 'Codex', 'Grok', 'DeepSeek']
+    const names = [
+      'Claude',
+      'Anthropic',
+      'ChatGPT',
+      'OpenAI',
+      'GPT',
+      'Gemini',
+      'Codex',
+      'Grok',
+      'DeepSeek',
+      'Opus',
+      'Sonnet',
+      'Haiku'
+    ]
     for (const name of names) {
       const findings = checkDoctrinePortability([file('aeg-root/sample.md', `See ${name} for an example.`)])
       expect(findings, `vendor word never fires on its own sample: ${name}`).toHaveLength(1)
@@ -231,6 +244,17 @@ describe('vendor-name finding (Issue #298)', () => {
       file('aeg-root/sample.md', ['<!-- AEG:VENDOR-EXAMPLE:START -->', 'Claude Code, unterminated fence.'].join('\n'))
     ])
     expect(findings.filter((f) => f.kind === 'vendor-name')).toHaveLength(1)
+  })
+
+  it('flags a bare model-tier name, not just a company/product name (review round 2 finding)', () => {
+    // Round-1 shipped this list with company/product names only, missing that
+    // a MODEL-TIER name ("Sonnet") is the identical vendor-coupling class — the
+    // real `brief-authoring/SKILL.md` gap a code-review pass caught.
+    const findings = checkDoctrinePortability([
+      file('aeg-root/sample.md', '**For:** [model + environment, e.g., "Sonnet (a coding-agent CLI)"]')
+    ])
+    expect(findings.filter((f) => f.kind === 'vendor-name')).toHaveLength(1)
+    expect(findings.find((f) => f.kind === 'vendor-name')?.cited).toBe('Sonnet')
   })
 
   it("the corpus-fix regression: this repo's own rewritten aeg-root/** produces zero vendor-name findings", () => {

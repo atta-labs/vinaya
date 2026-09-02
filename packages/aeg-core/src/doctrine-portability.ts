@@ -138,9 +138,20 @@ export const NON_PATH_TOP_SEGMENTS: ReadonlySet<string> = new Set(['origin', 're
  * alternative first ("claude code" before "claude") so a two-word mention
  * is reported whole rather than as a truncated single-word match followed
  * by a dangling "code".
+ *
+ * Includes model-TIER names (`opus`/`sonnet`/`haiku`), not just
+ * company/product names — a review round on this task's own PR (#338)
+ * found the first cut missed exactly this class: `brief-authoring/SKILL.md`
+ * and `brief-template.md` named a specific model tier bare, in prose, in
+ * three places the path-shape predicate could never see either. `sonnet`
+ * and `haiku` are ordinary English words outside this domain — a real
+ * false-positive risk for a general-purpose tool, accepted here on the
+ * same "reasonable hardcoded list for this repo's own corpus" basis as the
+ * rest of this list (verified against the live corpus: no non-vendor use
+ * of either word exists in `aeg-root/**` today).
  */
 const VENDOR_NAME_SOURCE =
-  '\\bclaude code\\b|\\bclaude\\b|\\banthropic\\b|\\bchatgpt\\b|\\bopenai\\b|\\bgpt\\b|\\bgemini\\b|\\bcodex\\b|\\bgrok\\b|\\bdeepseek\\b'
+  '\\bclaude code\\b|\\bclaude\\b|\\banthropic\\b|\\bchatgpt\\b|\\bopenai\\b|\\bgpt\\b|\\bgemini\\b|\\bcodex\\b|\\bgrok\\b|\\bdeepseek\\b|\\bopus\\b|\\bsonnet\\b|\\bhaiku\\b'
 
 const VENDOR_EXAMPLE_START = /<!--\s*AEG:VENDOR-EXAMPLE:START\s*-->/
 const VENDOR_EXAMPLE_END = /<!--\s*AEG:VENDOR-EXAMPLE:END\s*-->/
@@ -156,6 +167,14 @@ const VENDOR_EXAMPLE_END = /<!--\s*AEG:VENDOR-EXAMPLE:END\s*-->/
  * decoy pair quoted inside a fenced example never wins. A START with no
  * following END is not a fence at all — the same "malformed half-pair is no
  * anchor" rule `anchored-region.ts` applies.
+ *
+ * **First pair wins, same as `anchoredRegionBounds` — a SECOND pair in the
+ * same file is not masked.** By design there is exactly one fenced home in
+ * the whole doctrine tree (the Goal this check exists to hold), so a
+ * second pair anywhere is itself a doctrine defect, not a shape this
+ * function needs to accommodate; scanning per-file rather than per-pair
+ * keeps that failure visible (a second, unmasked pair still reports its
+ * own `vendor-name` findings) instead of silently exempting it too.
  */
 function maskVendorExampleRegion(masked: string): string {
   const start = VENDOR_EXAMPLE_START.exec(masked)

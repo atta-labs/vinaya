@@ -107,15 +107,20 @@ function collectAtRef(ref: string, dir: string): PortabilitySourceFile[] {
 }
 
 /**
- * Content identity, not position: `file:cited`, never `line`. A doctrine
- * edit that inserts or removes a line earlier in the same file shifts every
- * later citation's line number without changing what it cites — keying on
- * line would make every one of those unmoved citations register as "new"
- * on the very next unrelated edit, spamming false positives on any
- * non-append change (found live reviewing this same PR's own diff).
+ * Content identity, not position: `file:kind:cited`, never `line`. A
+ * doctrine edit that inserts or removes a line earlier in the same file
+ * shifts every later citation's line number without changing what it
+ * cites — keying on line would make every one of those unmoved citations
+ * register as "new" on the very next unrelated edit, spamming false
+ * positives on any non-append change (found live reviewing this same PR's
+ * own diff). `kind` is included explicitly (Issue #298's `vendor-name`
+ * finding kind, review round 2) rather than left to the fact that a `path`
+ * finding's `cited` always contains a `/` and a `vendor-name` finding's
+ * never does — that separation is real today but is an invariant of the
+ * word list, not of this function, and this key should not depend on it.
  */
 function findingKey(f: PortabilityFinding): string {
-  return `${f.file}:${f.cited}`
+  return `${f.file}:${f.kind}:${f.cited}`
 }
 
 /**
