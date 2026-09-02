@@ -349,8 +349,7 @@ describe('checkDispatchReadiness — self-dependency guard', () => {
  * resolved against the HOST tranche — on that tranche's own task `1`, a task
  * depending on itself. Issue #347 removed that cause: bare spans are no longer
  * read as edges, so this body now declares only `#1034` and reaches the gate
- * clean. The expectation below is updated consciously, as the note it replaces
- * asked a later parser fix to do.
+ * clean.
  *
  * The guard itself is unchanged and still needed — a body CAN still declare a
  * self-edge inside its labeled span, which is the second case below.
