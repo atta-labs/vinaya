@@ -24,8 +24,6 @@ vinaya/
 └── aeg-root/                 # AEG doctrine
 ```
 
-Only `packages/typescript-config` exists today; the remaining workspaces arrive with the extraction.
-
 ## Tooling
 
 Bun + Turborepo, Biome for formatting and linting, TypeScript in strict mode.
