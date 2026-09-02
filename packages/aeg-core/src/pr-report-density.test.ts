@@ -56,6 +56,18 @@ describe('checkSummaryDensity', () => {
   it('passes an empty Summary section (a different check catches the missing content)', () => {
     expect(checkSummaryDensity('## Summary\n\n## Test plan')).toEqual({ status: 'pass', errors: [] })
   })
+
+  it('passes a multi-line blockquote as the whole section — the one sanctioned pass-through shape for structured content (review finding, PR #358)', () => {
+    const body = '## Summary\n\n> first line\n>\n> second line\n\n## Test plan'
+    expect(checkSummaryDensity(body)).toEqual({ status: 'pass', errors: [] })
+  })
+
+  it('fails a blockquote MIXED with separate prose paragraphs — only a standalone blockquote is exempt, not one embedded in prose', () => {
+    const body = '## Summary\n\nIntro paragraph.\n\n> quoted aside\n\nClosing paragraph.\n\n## Test plan'
+    const result = checkSummaryDensity(body)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('3 paragraphs')
+  })
 })
 
 describe('checkScopeDensity', () => {
