@@ -85,9 +85,9 @@ describe('doctrine pointer machine-independence (atta-labs/attalabs#928)', () =>
 describe('doctrine pointer content (atta-labs/vinaya#41 — honest adopter entry point)', () => {
   it('names all three rings, one sentence each', () => {
     const content = doctrinePointer(null)
-    expect(content).toContain('Ring 0 (git hooks)')
-    expect(content).toContain('Ring 1 (forge-write interception)')
-    expect(content).toContain('Ring 2 (async audits)')
+    expect(content).toContain('Ring 0 (hooks)')
+    expect(content).toContain('Ring 1 (branch rules)')
+    expect(content).toContain('Ring 2 (audits)')
   })
 
   it('points at real, shipped governance surfaces in THIS repo — never attalabs-internal aeg-root/', () => {

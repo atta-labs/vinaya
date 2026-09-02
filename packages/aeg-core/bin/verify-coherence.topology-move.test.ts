@@ -1,7 +1,5 @@
 import { execFileSync, execSync } from 'node:child_process'
-import { fetchTrancheIssuesAsync, indexTrancheMilestonesAsync, resolveRepo } from '@attalabs/aeg-forge-state'
-import { describe, expect, it } from 'vitest'
-import { loadTrancheSweep } from './verify-coherence'
+import { describe, expect, it, vi } from 'vitest'
 
 /**
  * Regression coverage for the sweep's enumeration predicate (task 9, review
@@ -33,6 +31,59 @@ import { loadTrancheSweep } from './verify-coherence'
  * `#999999`, which cannot exist on the real forge, so any task appearing in
  * the result demonstrably came from the fixture content and not a forge read.
  */
+
+/**
+ * The fourth case below (round-3 review finding 4, then `#333`) needs a slug
+ * with a real Milestone AND real labeled Issues — the one thing the other
+ * three cases' throwaway slugs deliberately lack. Reading that off this
+ * repo's live forge state threw whenever no active Milestone carries labeled
+ * Issues, which is this repo's normal resting state between tranche waves
+ * (every task merged, next tranche not yet planned), not an error condition.
+ *
+ * So the Milestone/Issues are built instead, the same way the tranche files
+ * above are: synthetic, fixture-owned, and independent of what the live forge
+ * currently holds. Only `indexTrancheMilestonesAsync` and
+ * `fetchTrancheIssuesAsync` are replaced, and `fetchTrancheIssuesAsync` only
+ * for `FORGE_FIXTURE_SLUG` — every other forge read, and every other slug
+ * this file's other cases query, is the real one. Same discipline
+ * `verify-coherence.index-outage.test.ts` documents for its own single
+ * replaced function.
+ */
+const FORGE_FIXTURE_SLUG = 'zzz-topology-move-forge-fixture'
+const FORGE_FIXTURE_ISSUE_NUMBER = 424242
+
+vi.mock('@attalabs/aeg-forge-state', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@attalabs/aeg-forge-state')>()
+  return {
+    ...actual,
+    indexTrancheMilestonesAsync: async () => ({
+      active: [{ slug: FORGE_FIXTURE_SLUG, goal: 'synthetic Milestone for the forge-fetch regression case' }],
+      archived: [],
+      facts: new Map([
+        [
+          FORGE_FIXTURE_SLUG,
+          { goal: 'synthetic Milestone for the forge-fetch regression case', lifecycle: 'active' as const }
+        ]
+      ]),
+      legacySlugs: new Set<string>()
+    }),
+    fetchTrancheIssuesAsync: async (owner: string, repo: string, slug: string) => {
+      if (slug !== FORGE_FIXTURE_SLUG) return actual.fetchTrancheIssuesAsync(owner, repo, slug)
+      return [
+        {
+          number: FORGE_FIXTURE_ISSUE_NUMBER,
+          title: `[${FORGE_FIXTURE_SLUG}] 1 — Fixture task delivered by the mocked forge`,
+          body: '',
+          state: 'OPEN' as const,
+          labels: [{ name: `vinaya/tranche:${FORGE_FIXTURE_SLUG}` }],
+          milestone: null
+        }
+      ]
+    }
+  }
+})
+
+const { loadTrancheSweep } = await import('./verify-coherence')
 
 const FIXTURE_ENV = {
   ...process.env,
@@ -168,19 +219,33 @@ describe('a PR that removes a topology file cannot narrow the sweep', () => {
    * list. The tranche is then present with zero forge-derived tasks — every
    * task-level check trivially passes it. That is invisible to a presence
    * assertion and needs a slug whose Milestone and labeled Issues are real.
+   *
+   * "Real" here means the mocked forge above, not this repo's live state:
+   * a slug with an actual Milestone and labeled Issues is not always
+   * available live (the repo's normal resting state between tranche waves
+   * has zero open tranches), so the Milestone/Issues are fixture-built. This
+   * case no longer reads live repo state at all — regressing back to a live
+   * lookup would reintroduce the false-red this fixture replaces.
    */
   it('fetches the forge for a deleted tranche whose Milestone is real, so its tasks survive the deletion', async () => {
-    const live = await liveTrancheWithIssues()
-    const livePath = `aeg-root/tranches/${live.slug}.md`
+    const forgeFixturePath = `aeg-root/tranches/${FORGE_FIXTURE_SLUG}.md`
 
-    // Base carries a topology file for a REAL tranche slug, with one row that
-    // exists nowhere on the forge; the PR deletes that file.
-    const base = commitWithFiles('origin/main', { [livePath]: trancheFileContent(live.slug, 'active') }, 'fixture base')
-    const head = commitWithFiles(base, { [livePath]: '' }, 'fixture head: delete the tranche file')
+    // Base carries a topology file for the mocked-forge slug, with one row
+    // that exists nowhere on the (mocked) forge; the PR deletes that file.
+    const base = commitWithFiles(
+      'origin/main',
+      { [forgeFixturePath]: trancheFileContent(FORGE_FIXTURE_SLUG, 'active') },
+      'fixture base'
+    )
+    const head = commitWithFiles(base, { [forgeFixturePath]: '' }, 'fixture head: delete the tranche file')
 
-    const sweep = await loadTrancheSweep({ prHeadSha: head, touchedFiles: new Set([livePath]) }, live.slug, base)
+    const sweep = await loadTrancheSweep(
+      { prHeadSha: head, touchedFiles: new Set([forgeFixturePath]) },
+      FORGE_FIXTURE_SLUG,
+      base
+    )
 
-    const entries = sweep.files.filter((f) => f.slug === live.slug)
+    const entries = sweep.files.filter((f) => f.slug === FORGE_FIXTURE_SLUG)
     expect(entries).toHaveLength(1)
 
     // The forge WAS consulted for this slug: at least one task carries a real
@@ -189,23 +254,6 @@ describe('a PR that removes a topology file cannot narrow the sweep', () => {
     // the fixture's own unreachable `#999999` row.
     const issues = entries[0]?.tranche.tasks.map((t) => t.issue) ?? []
     expect(issues.filter((n) => n !== null && n !== 999999).length).toBeGreaterThan(0)
-    expect(sweep.issuesBySlug.get(live.slug)?.length ?? 0).toBeGreaterThan(0)
-  }, 120_000)
+    expect(sweep.issuesBySlug.get(FORGE_FIXTURE_SLUG)?.length ?? 0).toBeGreaterThan(0)
+  }, 60_000)
 })
-
-/**
- * The first active Milestone in this repo that has at least one
- * `vinaya/tranche:<slug>`-labeled Issue. Resolved live rather than hardcoded:
- * a pinned slug becomes a false red the day that tranche is archived.
- */
-async function liveTrancheWithIssues(): Promise<{ slug: string }> {
-  const repo = await resolveRepo()
-  if (!repo) throw new Error('no repo resolved — this test needs a live forge')
-
-  const index = await indexTrancheMilestonesAsync(repo.owner, repo.repo)
-  for (const { slug } of index.active) {
-    const issues = await fetchTrancheIssuesAsync(repo.owner, repo.repo, slug)
-    if (issues.length > 0) return { slug }
-  }
-  throw new Error('no active Milestone in this repo carries labeled Issues — cannot observe the fetch predicate')
-}
