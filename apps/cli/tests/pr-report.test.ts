@@ -13,6 +13,7 @@ import {
   type GateOutcome,
   type GateRunResult,
   GitCommandError,
+  prReportExitCode,
   replaceEvidenceBlock,
   UnresolvableMergeBaseError,
   writeTokensBlock
@@ -572,6 +573,10 @@ describe('collectTokensAddition refuses rather than claiming the host cannot met
     expect(refusal).toContain('--in <tokens-in> --out <tokens-out>')
     // The row it would have written is exactly what must not appear anywhere.
     expect(refusal).not.toContain('| — | — | — |')
+    // The message claims nothing about a file being written: this function
+    // writes none, and only the caller knows whether Evidence landed or where
+    // (code review, PR #369).
+    expect(refusal).not.toContain('AEG:EVIDENCE')
   })
 
   // Template-shaped: an Evidence anchor pair under its own heading, the Token
@@ -607,5 +612,17 @@ describe('collectTokensAddition refuses rather than claiming the host cannot met
     expect(written).toContain('Head: abc')
     expect(written).toContain('<!-- AEG:TOKENS:START -->')
     expect(written).toContain(row)
+  })
+
+  // The exit half of the same fix. `prReportCommand` ends in `process.exit`,
+  // so without this the widened condition rested on a manual run alone —
+  // narrowing it back to `gatesFailed` would leave every other test green
+  // (code review, PR #369).
+  it('exits non-zero for a refused token row, a failing gate, or both — and zero for neither', () => {
+    expect(prReportExitCode({ gatesFailed: false, tokensRefused: false })).toBe(0)
+    expect(prReportExitCode({ gatesFailed: false, tokensRefused: true })).toBe(1)
+    expect(prReportExitCode({ gatesFailed: true, tokensRefused: false })).toBe(1)
+    // Both failing is still ONE non-zero exit, never a second reason lost.
+    expect(prReportExitCode({ gatesFailed: true, tokensRefused: true })).toBe(1)
   })
 })

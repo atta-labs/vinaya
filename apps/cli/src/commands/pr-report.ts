@@ -494,10 +494,15 @@ function isoToday(): string {
  * Named in the refusal below rather than left to the reader: both routes out
  * of `no-transcript-resolved` are real, and neither is a fallback to a blank
  * row.
+ *
+ * Deliberately says nothing about what else was written. This constant is
+ * composed inside `collectTokensAddition`, which writes no file — a sentence
+ * here claiming the Evidence block was written would be true only because
+ * one caller happens to write it, which is the same shape of unearned claim
+ * this whole change exists to remove (code review, PR #369). The caller
+ * states that, where it is the caller's own fact.
  */
 const TOKEN_ROW_REMEDY = [
-  'The AEG:EVIDENCE block was still written; only the token row was withheld.',
-  '',
   'Nothing here established that this host cannot meter — only that this session resolved no',
   'transcript of its own. Report real figures by naming your own transcript:',
   '',
@@ -596,6 +601,21 @@ export function composeWrittenBody(existing: string, blockInner: string, tokens:
   return tokens.collected ? writeTokensBlock(withEvidence, tokens.row) : withEvidence
 }
 
+/**
+ * This command's exit code: non-zero when the gate run failed, when the token
+ * row was refused, or both — one non-zero exit either way, never two reasons
+ * competing for it.
+ *
+ * Pulled out as its own pure, exported function for the reason `anyGateFailed`
+ * was: `prReportCommand` ends in `process.exit`, so the computation is
+ * otherwise reachable only through a real subprocess run, and an inline
+ * expression there is invisible to the unit suite — the exact mutation-survivor
+ * gap this module's own doc comment records (code review, PR #369).
+ */
+export function prReportExitCode(opts: { gatesFailed: boolean; tokensRefused: boolean }): number {
+  return opts.gatesFailed || opts.tokensRefused ? 1 : 0
+}
+
 export type ReportResult = { block: string; blockInner: string; gatesFailed: boolean; gateOutcomes: GateOutcome[] }
 
 /**
@@ -670,11 +690,14 @@ export async function prReportCommand(args: string[]): Promise<void> {
     } else {
       tokensRefused = true
       process.stdout.write(`Wrote AEG:EVIDENCE block to ${writePath}\n`)
-      console.error(tokens.refusal)
+      // The Evidence half is the CALLER's fact — this is the only place that
+      // knows a file was written, and to which path. `TOKEN_ROW_REMEDY` says
+      // nothing about it on purpose; see its doc comment.
+      console.error(`${tokens.refusal}\n\nThe AEG:EVIDENCE block was still written to ${writePath}.`)
     }
   } else {
     process.stdout.write(`${result.block}\n`)
   }
 
-  process.exit(result.gatesFailed || tokensRefused ? 1 : 0)
+  process.exit(prReportExitCode({ gatesFailed: result.gatesFailed, tokensRefused }))
 }
