@@ -541,9 +541,12 @@ export type TokensAddition = { collected: true; row: string } | { collected: fal
  *   - **Incapable, any other reason** (`pointer-unusable`,
  *     `transcript-unreadable`, `transcript-empty`) — the all-`—` row carrying
  *     the probe's `reason` inline in the Agent/Model cell, unchanged. There a
- *     corroborated pointer DID exist and reaching the figures failed, so the
- *     row states a fact the probe actually reached, and
- *     `token-collection-wired` already flags it as the wiring defect it is.
+ *     pointer this session OWNS was reached — its id matches, or it sits at
+ *     this project's own pointer path (`resolvePointer`'s error arms set
+ *     `oursByLocation`, never `corroborated`, and say so themselves) — and the
+ *     figures still could not be, so the row states a fact the probe actually
+ *     established, and `token-collection-wired` already flags it as the wiring
+ *     defect it is.
  */
 export function collectTokensAddition(opts: {
   phase: string
