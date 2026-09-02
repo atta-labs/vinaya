@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
 import { checkDispatchReadiness, type DispatchGateInput } from './dispatch-gate'
 import type { Task } from './types'
 
@@ -281,5 +282,118 @@ describe('checkDispatchReadiness', () => {
       })
     )
     expect(result.blockers).toHaveLength(2)
+  })
+})
+
+/**
+ * A self-dependency is unsatisfiable by construction, so it is never a real
+ * gate state — it is proof of a parser defect. Reported as INTERNAL rather
+ * than through the "not merged yet" branch, which reads as a legitimate
+ * serialization: two Developer agents faced with exactly that message
+ * concluded the gate was a false positive and committed with `--no-verify`.
+ */
+describe('checkDispatchReadiness — self-dependency guard', () => {
+  it("reports INTERNAL when an edge carries this task's own bare id", () => {
+    const result = checkDispatchReadiness(makeInput({ dependsOn: [{ id: '12', issue: null, merged: false }] }))
+    expect(result.ready).toBe(false)
+    expect(result.blockers).toHaveLength(1)
+    expect(result.blockers[0]).toContain('INTERNAL:')
+    expect(result.blockers[0]).toContain('parser bug')
+    expect(result.blockers[0]).toContain('parseRationaleDeps')
+  })
+
+  it('never claims "not merged yet" for a self-dependency', () => {
+    const result = checkDispatchReadiness(makeInput({ dependsOn: [{ id: '12', issue: null, merged: false }] }))
+    expect(result.blockers[0]).not.toContain('not merged yet')
+  })
+
+  it("reports INTERNAL when an edge resolves to this task's own Issue number", () => {
+    const result = checkDispatchReadiness(makeInput({ dependsOn: [{ id: '#326', issue: 326, merged: false }] }))
+    expect(result.blockers[0]).toContain('INTERNAL:')
+    expect(result.blockers[0]).toContain('#326')
+  })
+
+  it('matches a `#`-prefixed bare id against the task id', () => {
+    const result = checkDispatchReadiness(makeInput({ dependsOn: [{ id: '#12', issue: null, merged: false }] }))
+    expect(result.blockers[0]).toContain('INTERNAL:')
+  })
+
+  it('prefers INTERNAL over UNRESOLVABLE when a self-reference also failed to resolve', () => {
+    const result = checkDispatchReadiness(
+      makeInput({ dependsOn: [{ id: '12', issue: null, merged: false, resolved: false }] })
+    )
+    expect(result.blockers[0]).toContain('INTERNAL:')
+    expect(result.blockers[0]).not.toContain('UNRESOLVABLE')
+  })
+
+  it('leaves an ordinary unmerged edge to a different task completely unchanged', () => {
+    const result = checkDispatchReadiness(makeInput({ dependsOn: [{ id: '5', issue: 266, merged: false }] }))
+    expect(result.blockers[0]).toContain('not merged yet')
+    expect(result.blockers[0]).not.toContain('INTERNAL:')
+  })
+
+  it('a merged self-edge is still INTERNAL — merge status is irrelevant to an impossible edge', () => {
+    const result = checkDispatchReadiness(makeInput({ dependsOn: [{ id: '12', issue: null, merged: true }] }))
+    expect(result.ready).toBe(false)
+    expect(result.blockers[0]).toContain('INTERNAL:')
+  })
+})
+
+/**
+ * End-to-end reproduction of the reported failure: a real rationale body
+ * through the real parser, then through the gate. This is the test that
+ * proves the guard actually covers the case, rather than covering a
+ * hand-built fact object that merely resembles it.
+ *
+ * The body phrases a CROSS-tranche reference as slug-then-number in separate
+ * inline-code spans. The slug-only span sets no qualifier (only a span
+ * carrying slug AND number does), so the trailing bare span resolves against
+ * the HOST tranche — and on that tranche's own task `1`, the task depends on
+ * itself. The parser is deliberately NOT changed by this task; its output is
+ * asserted here as-is so a later parser fix has to update this expectation
+ * consciously.
+ */
+describe('self-dependency — end-to-end from a real rationale body', () => {
+  const BODY = [
+    '**Dependency rationale** — `Depends-on: #1034` — `engine-conditional-edges-v1` task `1`',
+    ' — because the conditional-edge work lands the shared type this task consumes.',
+    '',
+    '**Traps to avoid** — none known.'
+  ].join('')
+
+  it('the parser still produces the self-referencing edge (unchanged by this task)', () => {
+    expect(parseRationaleDeps(BODY).dependsOn).toEqual(['#1034', '1'])
+  })
+
+  it('the gate reports it as INTERNAL, not as an unmerged dependency', () => {
+    const parsed = parseRationaleDeps(BODY)
+    const result = checkDispatchReadiness(
+      makeInput({
+        trancheSlug: 'engine-parallel-steps-v1',
+        task: makeTask({ id: '1', issue: 1037 }),
+        issue: { number: 1037, state: 'open' },
+        dependsOn: parsed.dependsOn.map((id) => ({ id, issue: null, merged: false }))
+      })
+    )
+    const internal = result.blockers.filter((b) => b.includes('INTERNAL:'))
+    expect(internal).toHaveLength(1)
+    expect(internal[0]).toContain('parseRationaleDeps')
+    expect(internal[0]).toContain('task 1')
+    expect(internal[0]).toContain('#1037')
+  })
+
+  it('the legitimate cross-tranche edge in the same body is untouched by the guard', () => {
+    const parsed = parseRationaleDeps(BODY)
+    const result = checkDispatchReadiness(
+      makeInput({
+        trancheSlug: 'engine-parallel-steps-v1',
+        task: makeTask({ id: '1', issue: 1037 }),
+        issue: { number: 1037, state: 'open' },
+        dependsOn: parsed.dependsOn.map((id) => ({ id, issue: null, merged: false }))
+      })
+    )
+    const notMerged = result.blockers.filter((b) => b.includes('not merged yet'))
+    expect(notMerged).toHaveLength(1)
+    expect(notMerged[0]).toContain('#1034')
   })
 })
