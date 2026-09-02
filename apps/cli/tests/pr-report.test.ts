@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseTokenReportEntries, sumLedger } from '@attalabs/aeg-core'
+import { parseTokenReportEntries, resolveMeteringCapability, sumLedger } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 import {
   anyGateFailed,
@@ -618,6 +618,54 @@ describe('collectTokensAddition refuses rather than claiming the host cannot met
     expect(written).toContain('Head: abc')
     expect(written).toContain('<!-- AEG:TOKENS:START -->')
     expect(written).toContain(row)
+  })
+
+  // The classification these docs ASSERT, pinned as behaviour.
+  //
+  // `apps/cli/README.md`, this module's doc comments and the changeset all
+  // state which incapable reason a given pointer state produces. Three review
+  // rounds were spent on those sentences being wrong in prose while the code
+  // was right, and prose has no gate: `quoted-command` sweeps only
+  // `${doctrineRoot}/**/*.md` (this repo: `aeg-root/`, `proseGates` unset), so
+  // a citation marker in a README, a `.ts` file or a changeset is never read,
+  // and its predicate wants a verbatim quote rather than a paraphrase anyway.
+  //
+  // What CAN be mechanised is the fact underneath: if the classification ever
+  // moves, these go red and name the docs that claim otherwise — no reviewer
+  // needs to suspect a particular word first.
+  describe('the incapable classification those docs describe', () => {
+    const deps = (over: Partial<Parameters<typeof resolveMeteringCapability>[0]>) => ({
+      env: { TMPDIR: '/tmp', CLAUDE_PROJECT_DIR: '/proj' } as Record<string, string | undefined>,
+      cwd: '/proj',
+      exists: () => true,
+      readFile: () => '',
+      ...over
+    })
+
+    it('classifies an owned-but-unreadable pointer as `pointer-unusable` — never via `corroborated`', () => {
+      const cap = resolveMeteringCapability(
+        deps({
+          readFile: () => {
+            throw new Error('EACCES: permission denied')
+          }
+        })
+      )
+      expect(cap.capable).toBe(false)
+      expect(cap.capable === false && cap.reason).toBe('pointer-unusable')
+    })
+
+    it('classifies a STALE pointer as `no-transcript-resolved`, not `pointer-unusable`', () => {
+      const cap = resolveMeteringCapability(
+        deps({
+          env: { TMPDIR: '/tmp', CLAUDE_PROJECT_DIR: '/proj', CLAUDE_CODE_SESSION_ID: 'mine' },
+          readFile: () => 'theirs\t/somewhere/their-transcript.jsonl'
+        })
+      )
+      expect(cap.capable).toBe(false)
+      // The whole point: a stale pointer is another session's, so it is not
+      // this session's wiring, so it REFUSES rather than keeping a row.
+      expect(cap.capable === false && cap.reason).toBe('no-transcript-resolved')
+    })
   })
 
   // The exit half of the same fix. `prReportCommand` ends in `process.exit`,
