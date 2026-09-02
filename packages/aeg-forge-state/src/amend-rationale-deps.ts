@@ -34,11 +34,26 @@ function canonicalValue(ids: string[]): string {
 type SpanHit = { start: number; end: number; inner: string; field: FieldKey }
 
 /**
- * Scans the section's backtick spans left-to-right EXACTLY as
- * `parseRationaleDeps` does — carrying forward whichever field was last
- * labeled — and returns, in order, every span attributed to `field` (its
- * labeled span first, then any bare continuation spans). Shares the parser's
- * own `FIELD_LABEL` grammar; it does not re-implement it.
+ * Scans the section's backtick spans left-to-right, carrying forward whichever
+ * field was last labeled, and returns in order every span so attributed to
+ * `field` — its labeled span first, then any bare continuation spans.
+ *
+ * This carry-forward is DELIBERATELY WIDER than the reader's. Since Issue #347
+ * `parseRationaleDeps` reads edges from the labeled span only and ignores every
+ * other span; the writer keeps scanning so `rewriteField` can unwrap the bare
+ * continuation spans a body written in the old multi-span form still contains.
+ * Narrowing this to match the reader would leave those spans backticked in the
+ * rewritten body — harmless to the parse, but leaving stale ids beside a freshly
+ * amended field for a human to misread.
+ *
+ * It is wider than that job strictly needs, and not precise: EVERY span after a
+ * field's label is attributed to that field, so an unrelated prose span in the
+ * same paragraph is unwrapped too. Issue #384's real body loses the backticks
+ * around its `` `vinaya check` `` command-name mention when its Depends-on is
+ * amended. That is cosmetic — the id set round-trips either way, and it predates
+ * Issue #347 — but it is a wart, not a guarantee, and this comment should not be
+ * read as promising continuation spans are the only thing touched. Shares the
+ * parser's own `FIELD_LABEL` grammar either way; it does not re-implement it.
  */
 function collectFieldSpans(section: string, field: FieldKey): SpanHit[] {
   const hits: SpanHit[] = []

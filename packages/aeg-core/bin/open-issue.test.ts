@@ -501,7 +501,9 @@ describe('runAmendDeps', () => {
     expect(edited).toHaveLength(1)
     expect(edited[0]?.issue).toBe('429')
     expect(edited[0]?.body).toContain('**Amendment (2026-07-13, Planner)')
-    expect(logs.some((l) => l.includes('Depends-on: [1, 3a, 3b] → [2, 3]'))).toBe(true)
+    // The before-set is what the reader declares for fixture #429: since #347
+    // that is its labeled span alone, not the bare `3a`/`3b` continuations.
+    expect(logs.some((l) => l.includes('Depends-on: [1] → [2, 3]'))).toBe(true)
   })
 })
 

@@ -340,18 +340,19 @@ describe('checkDispatchReadiness — self-dependency guard', () => {
 })
 
 /**
- * End-to-end reproduction of the reported failure: a real rationale body
- * through the real parser, then through the gate. This is the test that
- * proves the guard actually covers the case, rather than covering a
- * hand-built fact object that merely resembles it.
+ * End-to-end from a real rationale body through the real parser, then through
+ * the gate. This is the test that proves the guard covers a body, rather than
+ * covering a hand-built fact object that merely resembles one.
  *
- * The body phrases a CROSS-tranche reference as slug-then-number in separate
- * inline-code spans. The slug-only span sets no qualifier (only a span
- * carrying slug AND number does), so the trailing bare span resolves against
- * the HOST tranche — and on that tranche's own task `1`, the task depends on
- * itself. The parser is deliberately NOT changed by this task; its output is
- * asserted here as-is so a later parser fix has to update this expectation
- * consciously.
+ * The originally-reported body phrased a CROSS-tranche reference as
+ * slug-then-number in separate inline-code spans, and the trailing bare span
+ * resolved against the HOST tranche — on that tranche's own task `1`, a task
+ * depending on itself. Issue #347 removed that cause: bare spans are no longer
+ * read as edges, so this body now declares only `#1034` and reaches the gate
+ * clean.
+ *
+ * The guard itself is unchanged and still needed — a body CAN still declare a
+ * self-edge inside its labeled span, which is the second case below.
  */
 describe('self-dependency — end-to-end from a real rationale body', () => {
   const BODY = [
@@ -361,12 +362,30 @@ describe('self-dependency — end-to-end from a real rationale body', () => {
     '**Traps to avoid** — none known.'
   ].join('')
 
-  it('the parser still produces the self-referencing edge (unchanged by this task)', () => {
-    expect(parseRationaleDeps(BODY).dependsOn).toEqual(['#1034', '1'])
+  it('the parser no longer produces the self-referencing edge (Issue #347)', () => {
+    expect(parseRationaleDeps(BODY).dependsOn).toEqual(['#1034'])
   })
 
-  it('the gate reports it as INTERNAL, not as an unmerged dependency', () => {
+  it('the gate raises no INTERNAL blocker for that body any more — the cause is gone', () => {
     const parsed = parseRationaleDeps(BODY)
+    const result = checkDispatchReadiness(
+      makeInput({
+        trancheSlug: 'engine-parallel-steps-v1',
+        task: makeTask({ id: '1', issue: 1037 }),
+        issue: { number: 1037, state: 'open' },
+        dependsOn: parsed.dependsOn.map((id) => ({ id, issue: null, merged: false }))
+      })
+    )
+    expect(result.blockers.filter((b) => b.includes('INTERNAL:'))).toHaveLength(0)
+  })
+
+  it('a body that DECLARES a self-edge in its labeled span is still INTERNAL', () => {
+    // The guard's end-to-end coverage, on the shape that can still reach it:
+    // task 1 of this tranche naming itself inside the labeled span.
+    const selfBody =
+      '**Dependency rationale** — `Depends-on: 1` — the shared type lands there.\n\n**Traps to avoid** — none known.'
+    const parsed = parseRationaleDeps(selfBody)
+    expect(parsed.dependsOn).toEqual(['1'])
     const result = checkDispatchReadiness(
       makeInput({
         trancheSlug: 'engine-parallel-steps-v1',

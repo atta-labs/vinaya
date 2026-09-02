@@ -19,7 +19,10 @@ const DATE = '2026-07-13'
 describe('amendRationaleDeps — round-trip against real drifted bodies', () => {
   it('#429: single labeled span + bare continuations — rewrites to the requested set', () => {
     const body = readBody(429)
-    expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['1', '3a', '3b'], conflictsWith: [] })
+    // Since #347 only the labeled span declares: #429's bare `3a`/`3b`
+    // continuation spans are prose. The rewrite still replaces that labeled
+    // span and unwraps the superseded continuations.
+    expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['1'], conflictsWith: [] })
     const out = amendRationaleDeps(body, { dependsOn: ['2', '3'], note: 'Task 3 dropped.', date: DATE })
     expect(parseRationaleDeps(out)).toEqual({ dependsOn: ['2', '3'], conflictsWith: [] })
   })
@@ -33,7 +36,7 @@ describe('amendRationaleDeps — round-trip against real drifted bodies', () => 
   it('#382: preserves slug-qualified ids through a round-trip', () => {
     const body = readBody(382)
     expect(parseRationaleDeps(body)).toEqual({
-      dependsOn: ['aeg-governance-hardening #372', 'aeg-forge-state-v1 #425'],
+      dependsOn: ['aeg-governance-hardening #372'],
       conflictsWith: ['aeg-governance-hardening 25']
     })
     const out = amendRationaleDeps(body, {
@@ -50,9 +53,10 @@ describe('amendRationaleDeps — round-trip against real drifted bodies', () => 
   it('#382: amends one field and leaves the other untouched', () => {
     const body = readBody(382)
     const out = amendRationaleDeps(body, { conflictsWith: [], note: 'Conflict cleared.', date: DATE })
-    // conflicts-with cleared to the empty marker; depends-on spans untouched.
+    // conflicts-with cleared to the empty marker; depends-on spans untouched,
+    // so it still reads exactly its own labeled span (#347).
     expect(parseRationaleDeps(out)).toEqual({
-      dependsOn: ['aeg-governance-hardening #372', 'aeg-forge-state-v1 #425'],
+      dependsOn: ['aeg-governance-hardening #372'],
       conflictsWith: []
     })
   })
@@ -69,16 +73,21 @@ describe('amendRationaleDeps — empty markers, both directions', () => {
   it('none → deps: adds a Conflicts-with field that did not exist before', () => {
     const body = readBody(429) // has Depends-on only, no Conflicts-with span
     const out = amendRationaleDeps(body, { conflictsWith: ['5'], note: 'New conflict.', date: DATE })
-    expect(parseRationaleDeps(out)).toEqual({ dependsOn: ['1', '3a', '3b'], conflictsWith: ['5'] })
+    expect(parseRationaleDeps(out)).toEqual({ dependsOn: ['1'], conflictsWith: ['5'] })
   })
 })
 
 describe('amendRationaleDeps — invariants', () => {
-  it('idempotence: amending to the current value still round-trips', () => {
+  it('an old multi-span body amends into one labeled span that round-trips', () => {
     const body = readBody(383)
-    expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['1', '2'], conflictsWith: [] })
+    // #383's second edge lived in a bare continuation span, which #347 no
+    // longer reads; amending to the intended pair writes both into the one
+    // labeled span, and THAT round-trips — the migration path for any body
+    // still written in the old multi-span form.
+    expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['1'], conflictsWith: [] })
     const out = amendRationaleDeps(body, { dependsOn: ['1', '2'], note: 'No change.', date: DATE })
     expect(parseRationaleDeps(out)).toEqual({ dependsOn: ['1', '2'], conflictsWith: [] })
+    expect(out).toContain('`Depends-on: 1, 2`')
   })
 
   it('the appended Amendment paragraph never alters what parseRationaleDeps extracts', () => {
