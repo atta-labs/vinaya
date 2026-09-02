@@ -24,8 +24,9 @@ import { meteringRefusalMessage, realDeps } from './tokens'
  * heading's table. Unlike Evidence, re-entry APPENDS a row rather than
  * replacing the block — see `writeTokensBlock`'s doc comment and this
  * task's brief (#270) for why. Cost is always `—` by design (no maintained
- * pricing table). A host whose corroborated wiring exists but cannot be read
- * gets an all-`—` row carrying the probe's reason inline (Agent/Model cell),
+ * pricing table). A session whose OWN wiring was reached but failed — a pointer
+ * whose id matches, or one at this project's own pointer path — gets an
+ * all-`—` row carrying the probe's reason inline (Agent/Model cell),
  * never a fabricated `0/0/—`; a session that resolved no transcript at all
  * gets NO row and a refusal (`collectTokensAddition`, Issue #365) — the
  * Evidence block is written either way.
