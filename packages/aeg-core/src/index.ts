@@ -93,6 +93,8 @@ export {
   isTaskBranch
 } from './brief-validation'
 export type { BriefSectionResult, BriefSectionsOptions } from './brief-validation'
+export { checkPrReportDensity, checkScopeDensity, checkSummaryDensity } from './pr-report-density'
+export type { DensityResult } from './pr-report-density'
 export {
   checkA1,
   checkA2,

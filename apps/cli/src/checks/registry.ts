@@ -139,6 +139,22 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   ],
   [
     {
+      // Density is checkable against a DRAFT body before the PR exists —
+      // same reasoning as `brief-shape` above, not `closes-n`/`test-plan`'s
+      // `requiresOpenPr`: `PR_BODY="$(cat draft.md)" vinaya check
+      // pr-report-density` is the intended pre-`pr create` dry run.
+      name: 'pr-report-density',
+      run: bin('check-pr-report-density'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      env: {
+        PR_BODY: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
       name: 'doc-coverage',
       run: bin('check-doc-coverage'),
       scope: 'diff',
