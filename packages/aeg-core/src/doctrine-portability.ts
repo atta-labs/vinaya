@@ -17,9 +17,30 @@
  * from), where a deny-list of "known author-repo prefixes" would fail open
  * on the next unlisted one instead.
  *
+ * **A second, additive dimension (Issue #298): a portable path is not the
+ * only way doctrine couples itself to one vendor.** Prose can name a
+ * specific AI company, product, or agent directly — "Claude Code", "GPT",
+ * "Anthropic" — with no path shape for the path-based predicate above to
+ * even look at. `checkDoctrinePortability` now emits a SECOND finding kind
+ * for exactly that: a fixed vendor-name word list, scanned against prose
+ * (never against code — a masked, `maskCode`-blind scan, the identical
+ * code-recognition grammar `anchored-region.ts` uses for the `AEG:*` PR/Issue
+ * body anchors, imported directly rather than re-implemented), with exactly
+ * ONE standing exemption: text inside a `<!-- AEG:VENDOR-EXAMPLE:START -->` /
+ * `<!-- AEG:VENDOR-EXAMPLE:END -->` pair — doctrine's one sanctioned, fenced
+ * home for naming today's shipped reference host by product name
+ * (`tranche-model.md` §12). A vendor word that is itself part of an
+ * already-portable path citation (`` `.claude/hooks/x.sh` ``, `` `CLAUDE.md` ``)
+ * is not re-flagged here: it is inline code, already masked by `maskCode`
+ * before the word scan ever runs, and the path-shape predicate above already
+ * has an opinion about it. This dimension has no I/O of its own either — same
+ * inputs, same adapter.
+ *
  * Zero I/O: every input (file paths + contents) is read by the adapter and
  * passed in.
  */
+
+import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
 
 export type PortabilitySourceFile = { path: string; content: string }
 
@@ -28,6 +49,8 @@ export type PortabilityFinding = {
   line: number
   cited: string
   message: string
+  /** `'path'` — the original non-portable-path predicate. `'vendor-name'` — Issue #298's word-list predicate. */
+  kind: 'path' | 'vendor-name'
 }
 
 /** `aeg-root/**` by default — what this repo's own package ships and every adopter installs read-only. */
@@ -105,6 +128,68 @@ const CITED_PATH_PATTERN = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]*)+$/
  */
 export const NON_PATH_TOP_SEGMENTS: ReadonlySet<string> = new Set(['origin', 'refs', 'HEAD', 'vinaya', 'fix'])
 
+/**
+ * The vendor-name word list (Issue #298's re-count, live at authoring):
+ * every AI company/product/agent name this doctrine's own prose has
+ * actually used, as either the shipped reference host or a peer example —
+ * a real, hardcoded list for this repo's own corpus, not a growable
+ * config surface (brief `fix/doctrine-vendor-neutrality` §10: ship a
+ * reasonable hardcoded list, flag generalization for later). Longest
+ * alternative first ("claude code" before "claude") so a two-word mention
+ * is reported whole rather than as a truncated single-word match followed
+ * by a dangling "code".
+ */
+const VENDOR_NAME_SOURCE =
+  '\\bclaude code\\b|\\bclaude\\b|\\banthropic\\b|\\bchatgpt\\b|\\bopenai\\b|\\bgpt\\b|\\bgemini\\b|\\bcodex\\b|\\bgrok\\b|\\bdeepseek\\b'
+
+const VENDOR_EXAMPLE_START = /<!--\s*AEG:VENDOR-EXAMPLE:START\s*-->/
+const VENDOR_EXAMPLE_END = /<!--\s*AEG:VENDOR-EXAMPLE:END\s*-->/
+
+/**
+ * Blanks (same-length, index-preserving — same discipline as `maskCode`
+ * itself) the region between the first well-formed
+ * `<!-- AEG:VENDOR-EXAMPLE:START -->` … `<!-- AEG:VENDOR-EXAMPLE:END -->`
+ * pair in `masked` — doctrine's one sanctioned home for naming today's
+ * shipped reference host by product name (`tranche-model.md` §12).
+ * Markers are searched on already-`maskCode`d text, the same order
+ * `anchoredRegionBounds` searches the `AEG:*` PR/Issue-body anchors, so a
+ * decoy pair quoted inside a fenced example never wins. A START with no
+ * following END is not a fence at all — the same "malformed half-pair is no
+ * anchor" rule `anchored-region.ts` applies.
+ */
+function maskVendorExampleRegion(masked: string): string {
+  const start = VENDOR_EXAMPLE_START.exec(masked)
+  if (!start) return masked
+  const afterStart = start.index + start[0].length
+  const end = VENDOR_EXAMPLE_END.exec(masked.slice(afterStart))
+  if (!end) return masked
+  const regionEnd = afterStart + end.index + end[0].length
+  const region = masked.slice(start.index, regionEnd)
+  const blanked = region.replace(/[^\n]/g, ' ')
+  return masked.slice(0, start.index) + blanked + masked.slice(regionEnd)
+}
+
+/**
+ * Every vendor-name-list match in `content`, code-blind (`maskCode`, the
+ * same grammar `anchored-region.ts` uses) and blind to the one fenced
+ * `AEG:VENDOR-EXAMPLE` home. A vendor word that is only part of an
+ * already-portable inline-code path citation (`` `.claude/hooks/x.sh` ``,
+ * `` `CLAUDE.md` ``) never reaches this scan at all — it is masked before
+ * the word list ever runs, the same way a fenced worked example is blind to
+ * `body-bare-digits`.
+ */
+function extractVendorMentions(content: string): { name: string; index: number }[] {
+  const scoped = maskVendorExampleRegion(maskCode(content))
+  const found: { name: string; index: number }[] = []
+  const pattern = new RegExp(VENDOR_NAME_SOURCE, 'gi')
+  let match: RegExpExecArray | null = pattern.exec(scoped)
+  while (match !== null) {
+    found.push({ name: match[0], index: match.index })
+    match = pattern.exec(scoped)
+  }
+  return found
+}
+
 /** Every inline-backtick span in `content`, tested against `CITED_PATH_PATTERN`. */
 function extractCitedPaths(content: string): { cited: string; index: number }[] {
   const found: { cited: string; index: number }[] = []
@@ -140,10 +225,12 @@ function isPortable(cited: string, shipsPrefix: string): boolean {
 }
 
 /**
- * Sweeps every file under `shipsPrefix` for a cited path whose top segment
- * is not allow-listed portable. Files outside `shipsPrefix` are out of
- * scope entirely — this check only judges what the shipped doctrine tree
- * itself cites, never a repo's other source.
+ * Sweeps every file under `shipsPrefix` for two independent finding kinds:
+ * a cited path whose top segment is not allow-listed portable (`'path'`),
+ * and a vendor-name-list word used in prose outside the one fenced
+ * `AEG:VENDOR-EXAMPLE` home (`'vendor-name'`, Issue #298). Files outside
+ * `shipsPrefix` are out of scope entirely — this check only judges what the
+ * shipped doctrine tree itself cites/names, never a repo's other source.
  */
 export function checkDoctrinePortability(
   files: readonly PortabilitySourceFile[],
@@ -161,7 +248,18 @@ export function checkDoctrinePortability(
         file: file.path,
         line: lineAtIndex(file.content, index),
         cited,
-        message: `cites "${cited}", a path that only exists in the authoring repository — not portable doctrine`
+        message: `cites "${cited}", a path that only exists in the authoring repository — not portable doctrine`,
+        kind: 'path'
+      })
+    }
+
+    for (const { name, index } of extractVendorMentions(file.content)) {
+      findings.push({
+        file: file.path,
+        line: lineAtIndex(file.content, index),
+        cited: name,
+        message: `names "${name}" outside the one fenced vendor-example home (an <!-- AEG:VENDOR-EXAMPLE:START --> … <!-- AEG:VENDOR-EXAMPLE:END --> pair) — portable doctrine refers to a host generically everywhere else`,
+        kind: 'vendor-name'
       })
     }
   }
