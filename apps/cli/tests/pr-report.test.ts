@@ -577,6 +577,12 @@ describe('collectTokensAddition refuses rather than claiming the host cannot met
     // writes none, and only the caller knows whether Evidence landed or where
     // (code review, PR #369).
     expect(refusal).not.toContain('AEG:EVIDENCE')
+    // `vinaya tokens` prints a `Tokens:` line, never a `|`-delimited row, so
+    // the remedy must say transcribe — telling a reader to paste that output
+    // into the block puts a non-`|` line inside it, which truncates
+    // `parseTokenReportEntries` for every row appended after it.
+    expect(refusal).toContain('transcribe')
+    expect(refusal).not.toMatch(/paste it into\s+the `## Token report` table/)
   })
 
   // Template-shaped: an Evidence anchor pair under its own heading, the Token

@@ -509,10 +509,13 @@ const TOKEN_ROW_REMEDY = [
   '',
   '  vinaya pr report --write <body-file> --transcript <path>',
   '',
-  'or, on a host whose usage arrives by some other means, emit the row directly and paste it into',
-  'the `## Token report` table:',
+  'or, on a host whose usage arrives by some other means, read the figures with:',
   '',
-  '  vinaya tokens --phase "<task-id>: develop" --role Developer --in <tokens-in> --out <tokens-out>'
+  '  vinaya tokens --phase "<task-id>: develop" --role Developer --in <tokens-in> --out <tokens-out>',
+  '',
+  'and transcribe them into the `## Token report` table. That command prints a `Tokens:` line, not',
+  'a table row — the table takes | Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |,',
+  'and a line inside the block that does not start with `|` truncates the table for every row after it.'
 ].join('\n')
 
 /**
