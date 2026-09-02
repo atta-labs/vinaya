@@ -379,6 +379,25 @@ export function checkD1(
       const depEntry = resolveDepEntry(dep, e.trancheSlug, issueToEntry, taskToEntry)
       if (!depEntry) continue // unknown dep — not a D1 concern
 
+      // A self-dependency is unsatisfiable by construction, so it is never a
+      // real D1 state — it is proof of a parser defect upstream. Reported as
+      // an INTERNAL error rather than as "is not closed", which reads as a
+      // legitimate unmet dependency and invites routing around the gate.
+      // Mirrors `isSelfDependency` in `dispatch-gate.ts`; deliberately a
+      // second small local predicate rather than a shared export, since the
+      // two modules match on different fact shapes.
+      const sameTask = depEntry.trancheSlug === e.trancheSlug && depEntry.task.id === e.task.id
+      const sameIssue = depEntry.task.issue !== null && e.task.issue !== null && depEntry.task.issue === e.task.issue
+      if (sameTask || sameIssue) {
+        failures.push({
+          issue: e.task.issue,
+          tranche: e.trancheSlug,
+          task: e.task.id,
+          reason: `INTERNAL: parsed a self-dependency (depends-on ${dep}) — this is a parser bug in parseRationaleDeps, not a real dependency. Please report it upstream.`
+        })
+        continue
+      }
+
       const depFacts = depEntry.facts
       const depClosed = depFacts?.issueState === 'closed'
       if (!depClosed) {

@@ -145,6 +145,35 @@ export type DispatchGateInput = {
 
 export type DispatchResult = { ready: boolean; blockers: string[] }
 
+/**
+ * True when a parsed `depends-on` edge points back at its own host task.
+ *
+ * A self-dependency is unsatisfiable by construction, so it is never a real
+ * gate state — its presence is proof of a defect in the edge text or in
+ * `parseRationaleDeps` (`@attalabs/aeg-forge-state`), which scavenges every
+ * bare inline-code span in the "Dependency rationale" section as a further id
+ * for the last-labeled field. A slug-then-number reference split across spans
+ * therefore resolves its trailing bare number against the HOST tranche, and
+ * on that tranche's own task `1` the task ends up depending on itself.
+ *
+ * Reported as an INTERNAL error rather than through the ordinary
+ * "not merged yet" branch below, because that message reads as a legitimate
+ * serialization and invites the reader to route around it: two Developer
+ * agents faced with exactly this gate concluded it was a false positive and
+ * committed with `--no-verify` to get past their hooks. Naming it a tool bug
+ * converts "agent improvises around a nonsense gate" into "agent escalates,"
+ * which is the behavior the gate architecture assumes.
+ *
+ * Two arms, because the edge can carry either shape: a resolved Issue number
+ * equal to this task's own, or — the live case — a bare same-tranche id equal
+ * to this task's own id.
+ */
+function isSelfDependency(dep: DispatchDependsOnFact, task: Task, issue: DispatchIssueFact): boolean {
+  if (dep.issue !== null && issue !== null && dep.issue === issue.number) return true
+  const bare = dep.id.trim().replace(/^#/, '')
+  return bare.toLowerCase() === task.id.trim().toLowerCase()
+}
+
 export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult {
   const { trancheSlug, task } = input
   const taskLabel = `task ${task.id} (tranche ${trancheSlug})`
@@ -174,6 +203,17 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
   // `vinaya-engine-v1` 21, #99): a second, narrower path for a dependency
   // Issue closed directly rather than via a merged PR.
   for (const dep of input.dependsOn) {
+    // Evaluated BEFORE the unresolvable branch: a self-reference that also
+    // failed to resolve is still a parser bug, and reporting it as an
+    // unresolvable edge would send the reader to correct edge text that is
+    // not actually the fault.
+    if (isSelfDependency(dep, task, input.issue)) {
+      const issueStr = input.issue !== null ? `#${input.issue.number}` : '?'
+      blockers.push(
+        `dispatch-gate INTERNAL: parsed a self-dependency for task ${task.id} (${issueStr}) — this is a parser bug in parseRationaleDeps, not a real dependency. Please report it upstream. Re-run once the rationale is corrected or the fix ships.`
+      )
+      continue
+    }
     if (dep.resolved === false) {
       // Distinct from the "not merged yet" branch below (#196): this edge
       // never resolved to any tranche/task/Issue at all, so a "not merged"

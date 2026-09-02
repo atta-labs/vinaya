@@ -1194,3 +1194,51 @@ describe('extractClosesReferences', () => {
     expect(extractClosesReferences(`Closes${' '.repeat(40)}#5`).size).toBe(0)
   })
 })
+
+// ---------- D1: self-dependency guard ----------------------------------------
+
+/**
+ * Mirror of `dispatch-gate.ts`'s INTERNAL guard, on the second consumer of the
+ * same parsed edges. A self-dependency is unsatisfiable by construction, so
+ * "is not closed" would be a lie that reads as an ordinary unmet dependency.
+ */
+describe('D1: self-dependency is an INTERNAL parser bug, not an unmet dep', () => {
+  it('fail — a task whose depends-on names its own task id in its own tranche', () => {
+    const main = makeEntry('iter-1', '1', 100, makeFacts({ prState: 'open' }), false, ['1'])
+    const r = checkD1([main], new Map(), new Map([['iter-1/1', main]]))
+    expect(r.status).toBe('fail')
+    expect(r.failures).toHaveLength(1)
+    expect(r.failures[0]!.reason).toContain('INTERNAL:')
+    expect(r.failures[0]!.reason).toContain('parser bug')
+    expect(r.failures[0]!.reason).toContain('parseRationaleDeps')
+  })
+
+  it('fail — a task whose depends-on resolves to its own Issue number', () => {
+    const main = makeEntry('iter-1', '1', 100, makeFacts({ prState: 'open' }), false, ['#100'])
+    const r = checkD1([main], new Map([[100, main]]), new Map())
+    expect(r.failures[0]!.reason).toContain('INTERNAL:')
+  })
+
+  it('never emits the ordinary "is not closed" wording for a self-dependency', () => {
+    const main = makeEntry('iter-1', '1', 100, makeFacts({ prState: 'open' }), false, ['1'])
+    const r = checkD1([main], new Map(), new Map([['iter-1/1', main]]))
+    expect(r.failures[0]!.reason).not.toContain('is not closed')
+  })
+
+  it('an ordinary unclosed dependency still fails with the original wording', () => {
+    const dep = makeEntry('iter-1', '1', 100, makeFacts({ issueState: 'open' }))
+    const main = makeEntry('iter-1', '2', 200, makeFacts({ prState: 'open' }), false, ['#100'])
+    const r = checkD1([main, dep], new Map([[100, dep]]), new Map())
+    expect(r.status).toBe('fail')
+    expect(r.failures[0]!.reason).toContain('is not closed')
+    expect(r.failures[0]!.reason).not.toContain('INTERNAL:')
+  })
+
+  it('a same task id in a DIFFERENT tranche is a legitimate edge, not a self-dependency', () => {
+    const dep = makeEntry('iter-2', '1', 300, makeFacts({ issueState: 'open' }))
+    const main = makeEntry('iter-1', '1', 100, makeFacts({ prState: 'open' }), false, ['#300'])
+    const r = checkD1([main, dep], new Map([[300, dep]]), new Map())
+    expect(r.failures[0]!.reason).toContain('is not closed')
+    expect(r.failures[0]!.reason).not.toContain('INTERNAL:')
+  })
+})
