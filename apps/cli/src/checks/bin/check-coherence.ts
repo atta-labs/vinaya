@@ -150,8 +150,23 @@ function taskToEntry(entries: TaskEntry[], slug: string): Map<string, TaskEntry>
   return m
 }
 
-/** Tailors the instruction to the specific coherence check code that fired, rather than one canned prompt for every failure class. */
-function recoveryPromptFor(checkCode: string): string {
+/**
+ * Tailors the instruction to the specific coherence check code that fired,
+ * rather than one canned prompt for every failure class.
+ *
+ * `detail` is the joined failure reasons, not just the check code, because a
+ * single check code can carry failures whose correct recovery is opposite.
+ * D1 is the live case: an ordinary unmet dependency is fixed by closing the
+ * dependency, while a self-dependency can never be closed at all and must be
+ * escalated as a tool bug. Keying only on the code told an agent to close an
+ * uncloseable dependency — the same "improvise around a nonsense gate"
+ * failure the INTERNAL guard exists to eliminate, reproduced on the check
+ * that reports it.
+ */
+export function recoveryPromptFor(checkCode: string, detail = ''): string {
+  if (detail.includes('INTERNAL:')) {
+    return 'This is an INTERNAL parser-bug report, not a real coherence failure — a task cannot depend on itself, so there is nothing here to close or resolve. Do NOT work around it. Report it upstream, and re-run once the rationale text is corrected or the parser fix ships.'
+  }
   switch (checkCode) {
     case 'A1':
       return "The task's Issue is closed but its closing PR is not merged. Verify the PR actually merged (or reopen the Issue if it was closed in error), then re-run `vinaya check coherence`."
@@ -179,7 +194,7 @@ function emitFailure(result: CheckResult): void {
     check: CHECK_NAME,
     severity: 'error',
     message: `${result.check}: ${detail}`,
-    agent_recovery_prompt: recoveryPromptFor(result.check)
+    agent_recovery_prompt: recoveryPromptFor(result.check, detail)
   })
 }
 
@@ -282,4 +297,8 @@ async function main(): Promise<void> {
   process.exit(0)
 }
 
-main()
+// Guarded so this module can be imported by unit tests without executing the
+// check. Spawned as a bin (the only way it runs for real) this is still true.
+if (import.meta.main) {
+  main()
+}

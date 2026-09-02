@@ -338,7 +338,14 @@ async function main(): Promise<void> {
 }
 
 /** Tailors the instruction to `checkDispatchReadiness`'s own `dispatch-gate <category>:` blocker prefixes, rather than one canned prompt for every failure type. */
-function recoveryPromptFor(blocker: string): string {
+export function recoveryPromptFor(blocker: string): string {
+  // Checked first: an INTERNAL blocker is a tool-bug report, not a gate state,
+  // and every prompt below tells the agent to resolve something. Falling
+  // through to the generic "resolve the named dispatch blocker" would invite
+  // exactly the improvisation this blocker class exists to prevent.
+  if (blocker.startsWith('dispatch-gate INTERNAL:')) {
+    return 'This is an INTERNAL parser-bug report, not a real dispatch gate — a task cannot depend on itself, so there is nothing here to wait for or resolve. Do NOT work around it and do NOT skip the hook. Report it upstream, and re-run once the rationale text is corrected or the parser fix ships.'
+  }
   if (blocker.startsWith('dispatch-gate issue-existence:')) {
     return 'This task has no resolvable Issue yet. Wait for the Planner to cut the Issue (or fix the phantom reference in the topology), then re-run `vinaya check dispatch-readiness`.'
   }
@@ -360,4 +367,8 @@ function recoveryPromptFor(blocker: string): string {
   return 'Resolve the named dispatch blocker before continuing work on this task, then re-run `vinaya check dispatch-readiness`.'
 }
 
-main()
+// Guarded so this module can be imported by unit tests without executing the
+// check. Spawned as a bin (the only way it runs for real) this is still true.
+if (import.meta.main) {
+  main()
+}
