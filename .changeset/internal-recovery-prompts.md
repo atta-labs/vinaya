@@ -1,0 +1,5 @@
+---
+"@attalabs/vinaya": patch
+---
+
+The `coherence` and `dispatch-readiness` checks now route an INTERNAL self-dependency report to escalation instead of to a workaround. Both build an `agent_recovery_prompt` telling the reading agent what to do about a failure, and both previously answered a self-dependency with ordinary advice: `coherence` switched on the check code alone, so a self-dependency and a genuine unmet dependency both got "close the dependency first" — advice that is impossible to follow for an edge pointing at itself — and `dispatch-readiness` had no arm for the new blocker prefix, falling through to a generic "resolve the named dispatch blocker". Both now recognise the INTERNAL class and instruct the agent to report it upstream rather than resolve, wait, or skip the hook. Ordinary unmet, unresolvable, and conflicting-edge prompts are unchanged. Both check bins now guard their entry point behind `import.meta.main`, matching the convention already used across `packages/aeg-core/bin`, so the prompt builders are directly unit-testable.
