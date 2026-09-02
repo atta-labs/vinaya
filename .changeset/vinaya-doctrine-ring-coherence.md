@@ -1,0 +1,5 @@
+---
+"@attalabs/vinaya": patch
+---
+
+Fixes `VINAYA.md` (and its generator, `doctrinePointer()`) describing a Ring 1/Ring 2 model that contradicted `aeg-root/enforcement.md`'s test-enforced doctrine: Ring 1 was named "forge-write interception" instead of the always-on Branch Rules CI, and both rings were called "opt-in" when the underlying `ring1_forgeWriteInterception`/`ring2_asyncAudits` config flags are additive accelerators, not on/off switches — `false`/absent (the default) already runs the real protection; `true` only skips its non-security-critical part. Adds a "Your role" section pointing a new agent at `vinaya doctrine --role <name>` and the `/vinaya <role>` shortcut. Also corrects two unrelated stale-path claims found while auditing: `aeg-root/skills/aeg/SKILL.md` claimed Studio lives at this repo's `apps/vinaya/`, when only the CLI (`apps/cli/`) exists here and Studio's source lives in the separate `atta-labs/attalabs` monorepo; and `README.md`'s layout section claimed only `packages/typescript-config` existed, though every listed workspace has existed for a while.
