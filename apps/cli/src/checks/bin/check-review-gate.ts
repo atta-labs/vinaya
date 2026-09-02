@@ -21,11 +21,25 @@
  * 0), the same "nothing to evaluate yet" shape `brief-shape`/`test-plan`
  * already use for a missing `PR_BODY`.
  *
- * Mechanical-check status (#337) is
- * resolved via a separate `gh pr checks --json name,bucket` call, filtering
- * out this repo's own review-gate check-run name before handing the result
- * to `checkReviewGate` — that exclusion is repo-specific and belongs here,
- * never inside `aeg-core`'s pure logic, which ships to every adopter.
+ * Mechanical-check status (#337) is resolved via the REST "list check-runs
+ * for a ref" endpoint (`gh api repos/{owner}/{repo}/commits/{sha}/check-runs`),
+ * filtering out this repo's own review-gate check-run name before handing
+ * the result to `checkReviewGate` — that exclusion is repo-specific and
+ * belongs here, never inside `aeg-core`'s pure logic, which ships to every
+ * adopter.
+ *
+ * NOT `gh pr checks --json name,bucket` (#341's original shape, #345):
+ * that command's GraphQL query asks for `checkSuite.workflowRun` on every
+ * check context, and the ephemeral `GITHUB_TOKEN` a workflow run receives
+ * is structurally forbidden from resolving `workflowRun` for a check suite
+ * belonging to a DIFFERENT workflow run than the one currently executing —
+ * "Resource not accessible by integration", unconditionally, no `permissions:`
+ * scope fixes it (confirmed live: `checks: read` granted, GraphQL query still
+ * refused; the REST endpoint below, which never touches `workflowRun`,
+ * succeeded with the identical token in the same job). A personal PAT has no
+ * such restriction, which is why every local repro of this check always
+ * passed and masked the bug through #341's original review and #346's first
+ * (incomplete) fix pass.
  *
  * scope: full — a review verdict is a property of the PR, not the diff.
  */
@@ -67,30 +81,76 @@ function fetchPr(prNumber: number): PrView | null {
 
 type CheckRun = { name: string; bucket: string }
 
+type RestCheckRun = { id: number; name: string; status: string; conclusion: string | null }
+
 /**
- * Every check-run `gh` reports for the PR, excluding `OWN_CHECK_RUN_NAME`.
- * `null` on a genuine fetch failure — distinct from an empty result: `gh pr
- * checks` exits non-zero whenever any check is failing or still pending, but
- * still prints valid JSON on stdout in that case (only the exit code, not the
- * output, reflects the checks' own state), so a non-zero exit is read from
- * the thrown error's own `stdout` before being treated as a failure.
+ * Mirrors `gh pr checks --json name,bucket`'s `bucket` vocabulary
+ * ("pass" | "fail" | "pending" | "skipping" | "cancel") from the REST
+ * check-run shape, since `checkReviewGate` (aeg-core) reads `bucket`, not
+ * raw `status`/`conclusion`. Only the `=== 'pass'` distinction is load-bearing
+ * downstream — the rest exists for the human-readable failure listing.
  */
-function fetchMechanicalChecks(prNumber: number): CheckRun[] | null {
+function bucketFor(run: RestCheckRun): string {
+  if (run.status !== 'completed') return 'pending'
+  switch (run.conclusion) {
+    case 'success':
+      return 'pass'
+    case 'neutral':
+    case 'skipped':
+      return 'skipping'
+    case 'cancelled':
+      return 'cancel'
+    default:
+      return 'fail'
+  }
+}
+
+/**
+ * Every check-run GitHub reports for `headSha`, excluding `OWN_CHECK_RUN_NAME`,
+ * deduped to the LATEST run per name. `null` on a genuine fetch failure.
+ * Paginated: a PR can carry more check-runs than one page returns.
+ *
+ * A re-triggered check (a label toggle, a re-run, a pushed fixup) leaves its
+ * earlier attempts in this endpoint's response too — it is a full history,
+ * not "current state" the way the PR's own Checks tab or `gh pr checks`
+ * renders it. Without the dedup below, one stale failed/cancelled attempt
+ * under a name that has since gone green permanently poisons the verdict,
+ * even though the PR's UI shows every check green (confirmed live: PR #343
+ * carried both a failed and a passing `vinaya check body-bare-digits` run
+ * for the same head, from before and after a mid-flight fix). Check-run ids
+ * are monotonically increasing, so the highest id per name is the latest.
+ */
+function fetchMechanicalChecks(headSha: string): CheckRun[] | null {
   try {
-    const out = execFileSync('gh', ['pr', 'checks', String(prNumber), '--json', 'name,bucket'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-    return (JSON.parse(out) as CheckRun[]).filter((c) => c.name !== OWN_CHECK_RUN_NAME)
-  } catch (err) {
-    const stdout = (err as { stdout?: unknown }).stdout
-    if (typeof stdout === 'string') {
-      try {
-        return (JSON.parse(stdout) as CheckRun[]).filter((c) => c.name !== OWN_CHECK_RUN_NAME)
-      } catch {
-        return null
-      }
+    const out = execFileSync(
+      'gh',
+      [
+        'api',
+        `repos/{owner}/{repo}/commits/${headSha}/check-runs`,
+        '--paginate',
+        '--jq',
+        '.check_runs[] | {id, name, status, conclusion}'
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+    // `--jq` streams one check-run object per line (newline-delimited JSON);
+    // `--paginate` re-applies that filter per page, so this stays one object
+    // per line across the whole PR, however many pages it takes.
+    const runs: RestCheckRun[] = out
+      .split('\n')
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as RestCheckRun)
+
+    const latestByName = new Map<string, RestCheckRun>()
+    for (const run of runs) {
+      const seen = latestByName.get(run.name)
+      if (!seen || run.id > seen.id) latestByName.set(run.name, run)
     }
+
+    return Array.from(latestByName.values())
+      .filter((r) => r.name !== OWN_CHECK_RUN_NAME)
+      .map((r) => ({ name: r.name, bucket: bucketFor(r) }))
+  } catch {
     return null
   }
 }
@@ -138,13 +198,13 @@ function main(): void {
     ? fetchWaiverLabelActor(prNumber, WAIVER_LABEL_REVIEW)
     : null
 
-  const mechanicalChecks = fetchMechanicalChecks(prNumber)
+  const mechanicalChecks = fetchMechanicalChecks(pr.headRefOid)
   if (mechanicalChecks === null) {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
       severity: 'error',
-      message: `review-gate severity:infra — could not fetch check-run status for PR #${prNumber} via \`gh pr checks\`.`,
+      message: `review-gate severity:infra — could not fetch check-run status for PR #${prNumber} via the REST check-runs endpoint.`,
       agent_recovery_prompt:
         'Confirm `gh auth status` passes and PR_NUMBER is correct, then re-run `vinaya check review-gate`.'
     })
