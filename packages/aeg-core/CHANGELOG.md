@@ -1,5 +1,19 @@
 # @atta/aeg-core
 
+## 0.23.0
+
+### Minor Changes
+
+- 12b7e33: **Breaking:** `checkReviewGate`'s `ReviewGateInput` gains a required `mechanicalChecks: MechanicalCheckStatus[]` field — every check-run reported for the PR's current head, excluding the caller's own review-gate check-run. A caller that does not supply it no longer compiles, the same required-not-optional discipline `headSha` already established (#73): an optional field that silently skipped the mechanical-check requirement on absence would fail open. `checkReviewGate` now also requires every reported mechanical check to be green (`bucket === 'pass'`) — an empty array does not count as clean, since there is no proof to point to. A red or absent mechanical check fails the gate the same way an unclean or unbound verdict does, naming which check is not green, or that none have reported yet. The `vinaya/waiver:review` label still short-circuits to pass unconditionally, regardless of mechanical-check state. Both `apps/cli/src/checks/bin/check-review-gate.ts` and `packages/aeg-core/bin/verify-review-gate.ts` now fetch check-run status via `gh pr checks --json name,bucket`, filtering out their own review-gate check-run name before calling in — that exclusion lives in the CLI shims, not in `aeg-core`'s pure logic, since `aeg-core` ships to every adopter under a different workflow name.
+
+### Patch Changes
+
+- dc803fb: Shipped doctrine now names one AI vendor by product name in exactly one fenced, clearly-labeled place (`tranche-model.md` §12's collection-adapter example) — everywhere else it refers to the coding agent's host generically. `checkDoctrinePortability` (`doctrine-portability.ts`) gains a second, additive finding kind, `'vendor-name'`: a fixed word list (Claude, Claude Code, Anthropic, GPT, ChatGPT, OpenAI, Gemini, Codex, Grok, DeepSeek, Opus, Sonnet, Haiku — company/product names and model-tier names alike) scanned against doctrine prose outside code spans and outside a new `<!-- AEG:VENDOR-EXAMPLE:START -->` / `<!-- AEG:VENDOR-EXAMPLE:END -->` fence, so the rule no longer depends on a reviewer noticing. The original path-shape predicate (`'path'` findings) is unchanged.
+- e579bec: A parsed `depends-on` edge that points back at its own task is now refused as an INTERNAL parser-bug error instead of being reported as an unmerged dependency. A self-dependency is unsatisfiable by construction, so it can never be a real gate state — its presence means the edge text or the rationale parser produced something impossible. The previous wording (`whose PR is not merged yet — not dispatchable, it serializes behind it`) read as an ordinary, legitimate serialization, which invited readers to route around the gate rather than escalate it. `checkDispatchReadiness` (`dispatch-gate.ts`) gains the guard ahead of its unresolvable-edge branch, so a self-reference that also failed to resolve is still named as a parser bug rather than as bad edge text; `checkD1` (`coherence-checks.ts`) refuses the same shape the same way. Both match on either the edge's resolved Issue number or its bare task id. Legitimate unmerged and unresolvable edges keep their existing messages unchanged.
+- Updated dependencies [12b7e33]
+  - @attalabs/aeg-forge-state@0.23.0
+  - @attalabs/aeg-types@0.23.0
+
 ## 0.22.0
 
 ### Patch Changes

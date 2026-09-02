@@ -1,5 +1,0 @@
----
-"@attalabs/aeg-core": patch
----
-
-A parsed `depends-on` edge that points back at its own task is now refused as an INTERNAL parser-bug error instead of being reported as an unmerged dependency. A self-dependency is unsatisfiable by construction, so it can never be a real gate state — its presence means the edge text or the rationale parser produced something impossible. The previous wording (`whose PR is not merged yet — not dispatchable, it serializes behind it`) read as an ordinary, legitimate serialization, which invited readers to route around the gate rather than escalate it. `checkDispatchReadiness` (`dispatch-gate.ts`) gains the guard ahead of its unresolvable-edge branch, so a self-reference that also failed to resolve is still named as a parser bug rather than as bad edge text; `checkD1` (`coherence-checks.ts`) refuses the same shape the same way. Both match on either the edge's resolved Issue number or its bare task id. Legitimate unmerged and unresolvable edges keep their existing messages unchanged.
