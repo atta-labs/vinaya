@@ -101,12 +101,18 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
     const root = initFixture('rc3')
     try {
       const indexTs = join(import.meta.dir, '..', '..', 'src', 'index.ts')
-      // This spawn transpiles the whole CLI graph before a single check
-      // runs, which costs roughly four and a half seconds cold against under
-      // one second warm. Bun's default per-test timeout sits directly on that
-      // cold path, so the case died intermittently on first runs in a freshly
-      // installed worktree (Issue #361). The explicit budget below matches the
-      // RC2 fixture cases, which spawn the same way and have never flaked.
+      // This spawn transpiles the whole CLI graph and then runs every check
+      // in the registry, so it is the heaviest subprocess any test here
+      // starts. Measured cold across twenty freshly installed worktrees, it
+      // sat near five and a half seconds for most runs but ran long on four
+      // of them, the worst over eighteen seconds. Bun's default per-test
+      // timeout lands in the middle of that spread, which is why this case
+      // died on first runs in a fresh worktree (Issue #361); the RC2 cases
+      // below survive on twenty seconds only because each spawns a single
+      // check rather than the whole registry. The budget here is deliberately
+      // far above the slowest run observed, not tight against it: a ceiling
+      // this size still catches a test that genuinely stops terminating, and
+      // the cost of setting it too low is the intermittent red this fixes.
       const result = spawnSync('bun', [indexTs, 'check', '--all', '--diff-only'], {
         cwd: root,
         encoding: 'utf8',
@@ -124,7 +130,7 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
-  }, 20_000)
+  }, 60_000)
 
   it("unconfigured doctrineRoot resolves via resolveDoctrineRoot() (the package's own copy), not a cwd-relative literal — task vinaya-adopter-portability-v1 2, Issue #232", () => {
     // The pre-232 default was the bare literal `'aeg-root'`, cwd-relative —
@@ -142,7 +148,11 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
     try {
       const indexTs = join(import.meta.dir, '..', '..', 'src', 'index.ts')
       // Same cold-start budget as the sibling above, for the same reason
-      // (Issue #361) — this case spawns the CLI against a fixture repo too.
+      // (Issue #361). This spawn runs one check rather than the whole
+      // registry, so its own cold cost is smaller — but the stall that
+      // stretched the worst runs above is a machine-level effect, not one
+      // proportional to how many checks run, so it is exposed to the same
+      // tail and gets the same ceiling.
       const result = spawnSync('bun', [indexTs, 'check', 'reader-resolvable-prose'], {
         cwd: root,
         encoding: 'utf8',
@@ -155,7 +165,7 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
-  }, 20_000)
+  }, 60_000)
 })
 
 describe('RC2 — coherence/dispatch-readiness evaluate the CALLER’s repo, never this monorepo’s own', () => {
