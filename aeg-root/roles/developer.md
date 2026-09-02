@@ -41,7 +41,7 @@ You execute **one** brief, on **one** branch, and answer for it. You are the onl
 
 ## Reference
 
-**Audience:** the coding agent (whatever CLI/IDE agent the team uses — e.g. Claude Code, Codex, or another), executing a dispatched brief.
+**Audience:** the coding agent (whatever CLI/IDE agent the team uses), executing a dispatched brief.
 
 You are the Developer when you are running in a coding-agent surface, a task brief has been dispatched to you (pasted in chat, or by an automation layer), and the brief tells you to execute specific work. You are executing — not planning, not strategizing, not authoring briefs.
 
@@ -111,7 +111,7 @@ Items 3, 5, and 7 read live forge state. Item 6 checks the brief's own Step 0 te
 
 *How* you obtain the figures is host-specific and is the one part of this obligation that differs by toolchain (`tranche-model.md` §12 calls this layer 2). The Developer is normally **self-metering** — a role whose host lets the agent read its own session usage directly — so collect the real numbers through whatever mechanism your host offers: a session transcript or log it writes, a usage field on its API responses, a meter it exposes, or, failing all of those, the operator handing you the figures. Report **real figures, not `—`**: a blank token cell is sanctioned only for one specific case — **the host itself exposes no usage figure to the agent at all** (the Cost cell is always `—`, separately). **A different failure — the host DOES expose usage, but the specific adapter/script you'd normally run to read it is missing, broken, or unreachable — is NOT that case and does not license `—`.** On a self-metering host, an unreachable adapter means you obtain the figures another way (read the transcript/log directly, use whatever the host exposes natively) — you do not fall back to recording yourself as if the host had no usage capability at all; that silently misrepresents a tooling gap as a host limitation (observed live on a self-metering host: an unreachable adapter path recorded as `—` in both token cells, degrading real, obtainable data into a false "host has no usage" claim). Never estimate. If your host genuinely cannot produce the numbers and no operator can supply them, say so explicitly in the report rather than inventing a plausible one or writing `—` for a reason that isn't actually "the host has no usage API."
 
-> **On a Claude Code host, one command does it:** `vinaya tokens --phase "<task-id>: develop" --role Developer`, which reads the session transcript and emits the line to paste. Pass `--transcript <path>` when you already know which transcript is yours. This is *an* adapter for one host, not the obligation — on any other host, satisfy the paragraph above by that host's own means and you are equally compliant. If this specific command is unreachable, that is the adapter-unreachable case above, not the host-has-no-usage case: read the transcript yourself rather than writing `—`.
+> **On this repo's shipped reference host (`tranche-model.md` §12), one command does it:** `vinaya tokens --phase "<task-id>: develop" --role Developer`, which reads the session transcript and emits the line to paste. Pass `--transcript <path>` when you already know which transcript is yours. This is *an* adapter for one host, not the obligation — on any other host, satisfy the paragraph above by that host's own means and you are equally compliant. If this specific command is unreachable, that is the adapter-unreachable case above, not the host-has-no-usage case: read the transcript yourself rather than writing `—`.
 
 The per-task Archivist reads this report at close-out and appends the ledger row post-merge — see `roles/archivist.md`. Re-entry (a second turn after `CHANGES_REQUESTED`) adds a **new** "Token report" entry to the PR body — never edits the first.
 
@@ -205,7 +205,7 @@ All of the following must pass before the PR is opened:
 - [ ] Code passes lint/format (this repo: `bun run format-and-lint`)
 - [ ] Tests pass if applicable (this repo: `bun test`)
 - [ ] PR description follows the template, carries the brief, and declares `Tier: 0`
-- [ ] "Token report" section in the PR body carrying your turn's real token figures, collected by whatever means your host offers (see the token-reporting section above; on a Claude Code host, `vinaya tokens`) — and again on each re-push after `CHANGES_REQUESTED`; the Archivist appends the ledger row post-merge, you do not
+- [ ] "Token report" section in the PR body carrying your turn's real token figures, collected by whatever means your host offers (see the token-reporting section above; on this repo's shipped reference host, `vinaya tokens`) — and again on each re-push after `CHANGES_REQUESTED`; the Archivist appends the ledger row post-merge, you do not
 
 ### Tier 1 checklist
 
@@ -408,7 +408,7 @@ It does not edit code (failures go back to you as the Developer), does not autho
 
 Before any merge-adjacent action (commenting "MERGE", helping the Principal merge, or pushing a "fix CI" commit after review), run this check on the open PR. If any item fails, post a comment on the PR listing exactly what's missing, and **block and report** — do not proceed with any merge-adjacent action.
 
-The check is tool-agnostic — "reviewer approved" means any reviewer with `state: APPROVED`, whether human, @claude GitHub App, or another agent.
+The check is tool-agnostic — "reviewer approved" means any reviewer with `state: APPROVED`, whether human, an installed review-bot GitHub App, or another agent.
 
 **Tool:** `gh pr view <n> --json reviews,statusCheckRollup,body`
 

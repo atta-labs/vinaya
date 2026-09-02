@@ -10,7 +10,7 @@ section: Overview
 **Ratifies via:** the `needs:principal-input` label
 **Amended:** the Milestone layer (`0.19.0`) added a real altitude above the tranche — this file no longer claims to be the top of AEG. See `milestone-model.md`. The task altitude below the tranche now has its own file too — see `task-model.md`.
 
-This design was reviewed in three rounds by an external panel (Gemini, DeepSeek, ChatGPT) and unanimously endorsed after the corrections below.
+This design was reviewed in three rounds by an external panel of independently-hosted models, each from a different provider than the one that authored it, and unanimously endorsed after the corrections below.
 
 The **tranche** is the middle altitude in Agentic Execution Governance — a **Milestone** may sit above it (`milestone-model.md`, most tranches have none and need none), and a **task** always sits below it (`task-model.md`). AEG's execution model is these three altitudes; nothing sits above the Milestone and nothing sits below the task.
 
@@ -312,9 +312,13 @@ Self-metering capture is real, not estimated: the adapter sums the session's own
 
 ### The collection adapter AEG ships (one layer-2 instance, not the requirement)
 
-AEG ships exactly one collection adapter, for the Claude Code host, exposed as `vinaya tokens`. It reads that host's session transcript — a JSONL file carrying a `usage` object per assistant message — sums it, and emits a layer-3 `Tokens: …` line. Every doctrine citation of it is an **example of one way to satisfy layer 2**, never the requirement; a role on another host satisfies the same obligation by other means and is equally compliant.
+This is doctrine's one fenced, concrete instance of a layer-2 adapter — named here, by product, so a first-time adopter has something real to look at; nowhere else in this doctrine tree names this or any other host by product name. Everywhere else, the concept stays generic: "the agent's own host," "whatever your harness offers."
+
+<!-- AEG:VENDOR-EXAMPLE:START -->
+AEG ships exactly one collection adapter, for today's shipped reference host, Claude Code, exposed as `vinaya tokens`. It reads that host's session transcript — a JSONL file carrying a `usage` object per assistant message — sums it, and emits a layer-3 `Tokens: …` line. Every doctrine citation of it is an **example of one way to satisfy layer 2**, never the requirement; a role on another host satisfies the same obligation by other means and is equally compliant.
 
 **The seam is the summary shape, not the file tree.** An adapter's whole job is to produce a `TranscriptSummary` — four integers (fresh input, cache creation, cache read, output) plus a model id. Everything downstream of that shape is portable and already shipped: `formatTokensLine` renders the grammar, `parse-token-report.ts` reads it back. Two things sit adapter-side because both know host-specific facts: `summarizeTranscript` (`@attalabs/aeg-core`'s Claude Code transcript module), which knows Claude Code's transcript JSONL and its `usage` field names, and the bin itself, which knows how that host points a session at its own transcript. The `bin/` vs `src/` split does **not** mark this seam and never did.
+<!-- AEG:VENDOR-EXAMPLE:END -->
 
 **To satisfy layer 2 on another harness:** obtain your turn's usage figures by whatever means your host offers — its own transcript or log, an API usage response, a meter the harness exposes, or an operator reading them off a dashboard and handing them over — and write the layer-3 line yourself. Reusing this adapter is not required, and neither is writing any code: the requirement is the reported figures, in the grammar, in the right artifact. If your host exposes nothing to the agent, you are operator-metered and the `—` rule above applies — that is the sanctioned outcome, not a failure to comply.
 
