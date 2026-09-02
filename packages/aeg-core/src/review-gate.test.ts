@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { checkReviewGate, isChangesetsReleasePr, isReviewGateExemptBranch } from './review-gate'
 
-import type { ReviewGateComment } from './review-gate'
+import type { MechanicalCheckStatus, ReviewGateComment } from './review-gate'
+
+/** A single green check-run — the default "mechanical checks are clean" fixture for tests that are about verdict logic, not mechanical-check logic. */
+const CLEAN_CHECKS: MechanicalCheckStatus[] = [{ name: 'Vinaya CI', bucket: 'pass' }]
 
 /** Principal-authored comment — the allowlisted author every legitimate verdict flows through. */
 const principal = (body: string): ReviewGateComment => ({ body, author: 'daniboomerang' })
@@ -24,6 +27,7 @@ describe('checkReviewGate', () => {
       comments: [APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA
     })
     expect(result.verdict).toBe('pass')
@@ -31,7 +35,13 @@ describe('checkReviewGate', () => {
   })
 
   it('fails when no review comments exist at all (the historical-PR case, e.g. PR #435)', () => {
-    const result = checkReviewGate({ comments: [], labels: [], waiverLabelActor: null, headSha: HEAD_SHA })
+    const result = checkReviewGate({
+      comments: [],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA
+    })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain('code-reviewer verdict is not a clean APPROVE')
     expect(result.reason).toContain('security-review verdict is not a clean PASS')
@@ -42,6 +52,7 @@ describe('checkReviewGate', () => {
       comments: [REQUEST_CHANGES_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA
     })
     expect(result.verdict).toBe('fail')
@@ -53,6 +64,7 @@ describe('checkReviewGate', () => {
       comments: [APPROVE_COMMENT, FAIL_COMMENT],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA
     })
     expect(result.verdict).toBe('fail')
@@ -64,6 +76,7 @@ describe('checkReviewGate', () => {
       comments: [APPROVE_COMMENT],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA
     })
     expect(result.verdict).toBe('fail')
@@ -75,6 +88,7 @@ describe('checkReviewGate', () => {
       comments: [PASS_COMMENT, APPROVE_COMMENT],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA
     })
     expect(result.verdict).toBe('pass')
@@ -87,6 +101,7 @@ describe('checkReviewGate', () => {
         comments: [principal(`VERDICT: APPROVE\n\nJudged head: ${staleSha}`), PASS_COMMENT],
         labels: [],
         waiverLabelActor: null,
+        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA
       })
       expect(result.verdict).toBe('fail')
@@ -98,6 +113,7 @@ describe('checkReviewGate', () => {
         comments: [APPROVE_COMMENT, principal(`VERDICT: PASS\n\nreviewed at head ${HEAD_SHA.slice(0, 8)}.`)],
         labels: [],
         waiverLabelActor: null,
+        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA
       })
       expect(result.verdict).toBe('fail')
@@ -115,6 +131,7 @@ describe('checkReviewGate', () => {
         ],
         labels: [],
         waiverLabelActor: null,
+        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA
       })
       expect(result.verdict).toBe('pass')
@@ -126,6 +143,7 @@ describe('checkReviewGate', () => {
         comments: [APPROVE_COMMENT, PASS_COMMENT],
         labels: [],
         waiverLabelActor: null,
+        mechanicalChecks: CLEAN_CHECKS,
         headSha: newHeadAfterPush
       })
       expect(result.verdict).toBe('fail')
@@ -146,6 +164,7 @@ describe('checkReviewGate', () => {
         ],
         labels: [],
         waiverLabelActor: null,
+        mechanicalChecks: CLEAN_CHECKS,
         headSha: newHeadAfterPush
       })
       expect(result.verdict).toBe('pass')
@@ -158,6 +177,7 @@ describe('checkReviewGate', () => {
         comments: [],
         labels: ['vinaya/tier:1'],
         waiverLabelActor: 'daniboomerang',
+        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA
       })
       expect(result.verdict).toBe('fail')
@@ -169,6 +189,7 @@ describe('checkReviewGate', () => {
         comments: [],
         labels: ['vinaya/waiver:review'],
         waiverLabelActor: 'some-agent-bot',
+        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA
       })
       expect(result.verdict).toBe('fail')
@@ -180,6 +201,7 @@ describe('checkReviewGate', () => {
         comments: [],
         labels: ['vinaya/waiver:review'],
         waiverLabelActor: null,
+        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA
       })
       expect(result.verdict).toBe('fail')
@@ -191,6 +213,7 @@ describe('checkReviewGate', () => {
         comments: [],
         labels: ['vinaya/waiver:review'],
         waiverLabelActor: 'daniboomerang',
+        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA
       })
       expect(result.verdict).toBe('pass')
@@ -202,10 +225,66 @@ describe('checkReviewGate', () => {
         comments: [],
         labels: ['vinaya/waiver:docs'],
         waiverLabelActor: 'daniboomerang',
+        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA
       })
       expect(result.verdict).toBe('fail')
       expect(result.waived).toBe(false)
+    })
+  })
+
+  describe('mechanical checks (review-mechanical-gate-v1 task 2, #337)', () => {
+    it('passes when mechanical checks are all green and both verdicts are clean and bound', () => {
+      const result = checkReviewGate({
+        comments: [APPROVE_COMMENT, PASS_COMMENT],
+        labels: [],
+        waiverLabelActor: null,
+        mechanicalChecks: [
+          { name: 'Vinaya CI', bucket: 'pass' },
+          { name: 'vinaya check --all --diff-only', bucket: 'pass' }
+        ],
+        headSha: HEAD_SHA
+      })
+      expect(result.verdict).toBe('pass')
+    })
+
+    it('fails, naming the red check, when a mechanical check is not green even though both verdicts are clean and bound', () => {
+      const result = checkReviewGate({
+        comments: [APPROVE_COMMENT, PASS_COMMENT],
+        labels: [],
+        waiverLabelActor: null,
+        mechanicalChecks: [
+          { name: 'Vinaya CI', bucket: 'fail' },
+          { name: 'vinaya check --all --diff-only', bucket: 'pass' }
+        ],
+        headSha: HEAD_SHA
+      })
+      expect(result.verdict).toBe('fail')
+      expect(result.reason).toContain('mechanical check(s) not green: Vinaya CI (fail)')
+    })
+
+    it('fails, naming that none have reported, when zero mechanical checks are reported', () => {
+      const result = checkReviewGate({
+        comments: [APPROVE_COMMENT, PASS_COMMENT],
+        labels: [],
+        waiverLabelActor: null,
+        mechanicalChecks: [],
+        headSha: HEAD_SHA
+      })
+      expect(result.verdict).toBe('fail')
+      expect(result.reason).toContain('no mechanical checks have reported for this head yet')
+    })
+
+    it('the waiver label still short-circuits to pass regardless of mechanical-check state', () => {
+      const result = checkReviewGate({
+        comments: [],
+        labels: ['vinaya/waiver:review'],
+        waiverLabelActor: 'daniboomerang',
+        mechanicalChecks: [],
+        headSha: HEAD_SHA
+      })
+      expect(result.verdict).toBe('pass')
+      expect(result.waived).toBe(true)
     })
   })
 })
@@ -238,6 +317,7 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       ],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA
     })
     expect(result.verdict).toBe('fail')
@@ -255,6 +335,7 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       ],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA
     })
     expect(result.verdict).toBe('fail')
@@ -266,6 +347,7 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       comments: [{ body: `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}`, author: null }, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA
     })
     expect(result.verdict).toBe('fail')
@@ -280,6 +362,7 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       ],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA
     })
     expect(result.verdict).toBe('fail')
@@ -291,6 +374,7 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       comments: [forged(`VERDICT: FAIL\n\nchaos\n\nJudged head: ${HEAD_SHA}`), APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA
     })
     expect(result.verdict).toBe('pass')
@@ -312,6 +396,7 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [adopterApprove('someone-else'), adopterPass('someone-else')],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA
       // no principalAllowlist passed
     })
@@ -323,6 +408,7 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [adopterApprove('someone-else'), adopterPass('someone-else')],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: ['someone-else'],
       headSha: HEAD_SHA
     })
@@ -334,6 +420,7 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [adopterApprove('alice'), adopterPass('ALICE')],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: ['Alice'],
       headSha: HEAD_SHA
     })
@@ -345,6 +432,7 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [adopterApprove('alice-bot'), adopterPass('alice-bot')],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: ['Alice'],
       headSha: HEAD_SHA
     })
@@ -356,6 +444,7 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [adopterApprove('daniboomerang'), adopterPass('daniboomerang')],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: ['someone-else'], // daniboomerang deliberately excluded
       headSha: HEAD_SHA
     })
@@ -373,6 +462,7 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [adopterApprove('daniboomerang'), adopterPass('daniboomerang')],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: [],
       headSha: HEAD_SHA
     })
@@ -385,6 +475,7 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [],
       labels: ['vinaya/waiver:review'],
       waiverLabelActor: 'daniboomerang',
+      mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: [],
       headSha: HEAD_SHA
     })
@@ -422,6 +513,7 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
       ],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: PR_HEAD
     })
     // The verdict names a tree that is no longer the PR's head — the gate now
@@ -446,6 +538,7 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
       ],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: newHead
     })
     expect(result.verdict).toBe('fail')
@@ -469,6 +562,7 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
       ],
       labels: [],
       waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
       headSha: PR_HEAD
     })
     expect(result.verdict).toBe('fail')

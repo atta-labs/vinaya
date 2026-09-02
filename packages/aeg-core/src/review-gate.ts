@@ -73,6 +73,13 @@ export type ReviewGateComment = {
   author: string | null
 }
 
+export type MechanicalCheckStatus = {
+  /** The check-run's display name, as GitHub reports it (`gh pr checks`' own `name` field). */
+  name: string
+  /** GitHub's own coalesced status vocabulary for this check-run — forwarded verbatim from `gh pr checks --json name,bucket`'s `bucket` field (e.g. "pass", "fail", "pending", "skipping", "cancel"). Not re-mapped to a smaller enum here — that would be a second copy of a vocabulary `gh` already owns. */
+  bucket: string
+}
+
 export type ReviewGateInput = {
   /** Every comment on the PR, with its author. */
   comments: ReviewGateComment[]
@@ -91,6 +98,15 @@ export type ReviewGateInput = {
    * default. Every verdict must cover this value to count as clean.
    */
   headSha: string
+  /**
+   * Every check-run reported for the PR's current head, EXCLUDING this
+   * repo's own review-gate check-run (the caller filters that out before
+   * calling in — see check-review-gate.ts's own comment for why the
+   * exclusion must not live here). An empty array means no mechanical
+   * check-run has reported yet, which does NOT count as clean — there is
+   * no proof to point to, not an implicit pass.
+   */
+  mechanicalChecks: MechanicalCheckStatus[]
   /**
    * Overrides `PRINCIPAL_ALLOWLIST` for this evaluation when provided — an
    * adopter repo's own `vinaya.config.json` `principals` field, resolved by
@@ -136,8 +152,11 @@ function isBoundToHead(extraction: { headSha: string | null }, headSha: string):
  * `PRINCIPAL_ALLOWLIST`, or (b) both verdicts are clean AND bound — code-reviewer
  * `APPROVE` (not `REQUEST_CHANGES`, not missing, not unclear) covering the PR's
  * current `headSha`, and security-review `PASS` (not `FAIL`, not missing, not
- * unclear) covering it too. `fail` otherwise, naming exactly which verdict(s)
- * are not clean, not bound to the current head, or both.
+ * unclear) covering it too — AND every reported mechanical check-run for that
+ * same head is green (`mechanicalChecks` non-empty and every entry's `bucket`
+ * is `"pass"`). `fail` otherwise, naming exactly which verdict(s) are not
+ * clean, not bound to the current head, which mechanical check(s) are not
+ * green, or that none have reported at all.
  */
 export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const principalAllowlist = input.principalAllowlist ?? PRINCIPAL_ALLOWLIST
@@ -154,6 +173,9 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
       waived: true
     }
   }
+
+  const mechanicalChecksClean =
+    input.mechanicalChecks.length > 0 && input.mechanicalChecks.every((c) => c.bucket === 'pass')
 
   // Verdict-AUTHOR verification (security finding on PR #806): on a public
   // repo any GitHub account can post a `VERDICT: APPROVE`-shaped comment, and
@@ -181,10 +203,10 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const codeReviewBound = isBoundToHead(codeReview, input.headSha)
   const securityBound = isBoundToHead(security, input.headSha)
 
-  if (codeReviewClean && codeReviewBound && securityClean && securityBound) {
+  if (codeReviewClean && codeReviewBound && securityClean && securityBound && mechanicalChecksClean) {
     return {
       verdict: 'pass',
-      reason: `code-reviewer verdict is a clean APPROVE and security-review verdict is a clean PASS, both covering head ${input.headSha}.`,
+      reason: `code-reviewer verdict is a clean APPROVE and security-review verdict is a clean PASS, both covering head ${input.headSha}, and every reported mechanical check is green.`,
       waived: false
     }
   }
@@ -202,6 +224,16 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   } else if (!securityBound) {
     problems.push(
       `the newest security-review verdict covers ${security.headSha ?? 'no recorded commit'}, head is ${input.headSha}`
+    )
+  }
+  if (!mechanicalChecksClean) {
+    problems.push(
+      input.mechanicalChecks.length === 0
+        ? 'no mechanical checks have reported for this head yet'
+        : `mechanical check(s) not green: ${input.mechanicalChecks
+            .filter((c) => c.bucket !== 'pass')
+            .map((c) => `${c.name} (${c.bucket})`)
+            .join(', ')}`
     )
   }
   const ignoredNote =
