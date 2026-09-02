@@ -47,6 +47,7 @@ describe('registry env declarations', () => {
         'issue-assignment',
         'main-branch-refusal',
         'no-disk-state',
+        'pr-report-density',
         'quoted-command',
         'reader-resolvable-prose',
         'registry-gates',

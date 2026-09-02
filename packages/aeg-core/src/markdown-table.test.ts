@@ -69,7 +69,8 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
     // added the `changeset-coverage` row. fix/quoted-command-staleness
     // (Issue #128) added the `quoted-command` row.
     // vinaya-token-determinism-v1 task 4 added the `token-report` row.
-    expect(ring1.rows).toHaveLength(24)
+    // fix/pr-body-density-check (Issue #357) added the `PR-report density` row.
+    expect(ring1.rows).toHaveLength(25)
     // (2026-07-13) removed the "Daily drift check — stuck row-adjacent
     // blockers" ring-2 row (its subject matter, stale-blocker.ts, was retired).
     // vinaya-verification-v1 task 8 (Issue 36) added the "Published

@@ -121,6 +121,7 @@ export const SHIPPED_BIN_AUDIENCE: Record<string, GateAudience> = {}
  */
 export const CLI_CHECK_RING: Readonly<Record<string, 0 | 1 | 2>> = {
   'brief-shape': 0,
+  'pr-report-density': 0,
   'doc-coverage': 0,
   coherence: 0,
   'dispatch-readiness': 0,
