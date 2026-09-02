@@ -4,7 +4,7 @@ sidebar_title: Brief Authoring
 description: Rules for authoring task briefs dispatched to Developer agents. Load when writing or reviewing a brief. Covers the Brief Author's conversational protocol, required sections, inheriting the Planner's rationale via the planner-brief contract, the contract-conformance checklist, the mandatory technical-dependency / tech-surface-map / agent-selection-with-reasoning sections, the optional Ticket/Project fields, model selection, the model integration (tier field, principal_delegate, Type 1/2 declaration, lock acknowledgment), the mandatory worktree-first step, the brief-lands-in-the-PR-body rule, the standing autonomy clause, the explicit documentation-update list, the post-PR review passes, and anti-patterns.
 ---
 
-<!-- CANONICAL SOURCE. This file is the canonical home of the `brief-authoring` skill, inside the AEG unit (aeg-root/skills/). provides for an agent-specific GENERATED VIEW under .claude/skills/ (or another agent's equivalent), rebuilt from this file rather than authored by hand — but no such generator exists yet, and this repo has no generated view of this skill: agents are pointed at aeg-root/ directly (root CLAUDE.md). Edit THIS file; if a generator is ever built, regenerate rather than hand-editing its output. -->
+<!-- CANONICAL SOURCE. This file is the canonical home of the `brief-authoring` skill, inside the AEG unit (aeg-root/skills/). provides for an agent-specific GENERATED VIEW under `.claude/skills/` (or another agent's equivalent), rebuilt from this file rather than authored by hand — but no such generator exists yet, and this repo has no generated view of this skill: agents are pointed at aeg-root/ directly (this repo's root agent-context file). Edit THIS file; if a generator is ever built, regenerate rather than hand-editing its output. -->
 
 # Brief Authoring Rules
 
@@ -146,7 +146,7 @@ Plus the brief's own structural gates: worktree Step 0 present; `Tier:` declared
 ### 1. Header block
 
 ```
-**For:** [model + environment, e.g., "Sonnet (a coding-agent CLI on a dev machine, interactive session)"]
+**For:** [model + environment, e.g., "your-model (a coding-agent CLI on a dev machine, interactive session)"]
 **Reason:** [why this model/environment was chosen — see "Agent/model selection" below]
 **Owner:** [who owns the task — the Principal, by default]
 **Goal:** [one sentence: what ships]
@@ -360,7 +360,7 @@ The brief MUST declare which agent/model runs the task **and why**. The planner 
 | Cross-cutting review (reads many files, judges correctness) | a high-capability model |
 | Code review / security review pass | judgment over speed — a high/mid model |
 
-When an automation layer dispatches, it passes the model through; the brief can override per its own mechanism if needed. *(In this repo the model tiers are Opus / Sonnet / Haiku — substitute your provider's equivalents.)*
+When an automation layer dispatches, it passes the model through; the brief can override per its own mechanism if needed. *(In this repo the model tiers run high/mid/low-capability, in your provider's own naming — substitute your provider's equivalents.)*
 
 ---
 
@@ -461,7 +461,7 @@ Source: GitHub Spec Kit evaluation, May 12, 2026. Adopted as inline convention o
 - ❌ **Telling the executor to delete or rename a shared symbol without first finding every importer** — if an importer is out-of-surface, "delete X" and "don't touch that file" contradict, and the executor is forced to break code or disobey. Run the §4 shared-symbol importer check; defer the deletion to the task that owns the out-of-surface importer.
 - ❌ Omitting the Technical Dependencies section — the executor discovers mid-task that something it needs doesn't exist yet
 - ❌ Omitting the Technical Surface Map — "only expected files changed" becomes uncheckable and scope creeps
-- ❌ A `For:`/`Reason:` line with no real reasoning ("Sonnet because it's good") — the capability choice must be justified against the task
+- ❌ A `For:`/`Reason:` line with no real reasoning ("this model because it's good") — the capability choice must be justified against the task
 - ❌ Dropping a blast-radius consumer from verification — a shared-package change ships a regression in a consumer nobody re-checked
 - ❌ Omitting the worktree-first Step 0 — the executor starts on the wrong branch or a dirty main checkout
 - ❌ Telling the executor to "create a branch" without first creating a worktree

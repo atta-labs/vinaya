@@ -107,15 +107,20 @@ function collectAtRef(ref: string, dir: string): PortabilitySourceFile[] {
 }
 
 /**
- * Content identity, not position: `file:cited`, never `line`. A doctrine
- * edit that inserts or removes a line earlier in the same file shifts every
- * later citation's line number without changing what it cites — keying on
- * line would make every one of those unmoved citations register as "new"
- * on the very next unrelated edit, spamming false positives on any
- * non-append change (found live reviewing this same PR's own diff).
+ * Content identity, not position: `file:kind:cited`, never `line`. A
+ * doctrine edit that inserts or removes a line earlier in the same file
+ * shifts every later citation's line number without changing what it
+ * cites — keying on line would make every one of those unmoved citations
+ * register as "new" on the very next unrelated edit, spamming false
+ * positives on any non-append change (found live reviewing this same PR's
+ * own diff). `kind` is included explicitly (Issue #298's `vendor-name`
+ * finding kind, review round 2) rather than left to the fact that a `path`
+ * finding's `cited` always contains a `/` and a `vendor-name` finding's
+ * never does — that separation is real today but is an invariant of the
+ * word list, not of this function, and this key should not depend on it.
  */
 function findingKey(f: PortabilityFinding): string {
-  return `${f.file}:${f.cited}`
+  return `${f.file}:${f.kind}:${f.cited}`
 }
 
 /**
@@ -174,6 +179,18 @@ function main(): void {
       `baseline ${baselineFindings.length}, current ${currentFindings.length}, delta ${comparison.delta}; ${newFindings.length} new finding(s)`
   )
 
+  const PATH_RECOVERY_PROMPT =
+    'This doctrine page cites a path that only resolves in the authoring repository, not in an adopter’s ' +
+    'install — an adopter cannot follow it. Rewrite the citation to a doctrine-relative path (`roles/...`, ' +
+    '`contracts/...`, `skills/...`, `aeg-root/...`) or an adopter-owned one (`.github/...`, `.vinaya/...`, ' +
+    '`.claude/...`), or state the fact without pointing at the file at all.'
+
+  const VENDOR_NAME_RECOVERY_PROMPT =
+    'This doctrine page names an AI vendor/product/agent by name outside the one sanctioned fenced home ' +
+    '(`<!-- AEG:VENDOR-EXAMPLE:START -->` … `<!-- AEG:VENDOR-EXAMPLE:END -->` in `tranche-model.md` §12). ' +
+    'Rewrite the mention to refer to the host/agent generically (e.g. "the coding agent," "this repo\'s ' +
+    'shipped reference host," "an external, independently-hosted model") instead of by product name.'
+
   for (const finding of newFindings) {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
@@ -182,11 +199,7 @@ function main(): void {
       message: `${finding.file}:${finding.line}: ${finding.message}`,
       file: finding.file,
       line: finding.line,
-      agent_recovery_prompt:
-        'This doctrine page cites a path that only resolves in the authoring repository, not in an adopter’s ' +
-        'install — an adopter cannot follow it. Rewrite the citation to a doctrine-relative path (`roles/...`, ' +
-        '`contracts/...`, `skills/...`, `aeg-root/...`) or an adopter-owned one (`.github/...`, `.vinaya/...`, ' +
-        '`.claude/...`), or state the fact without pointing at the file at all.'
+      agent_recovery_prompt: finding.kind === 'vendor-name' ? VENDOR_NAME_RECOVERY_PROMPT : PATH_RECOVERY_PROMPT
     })
   }
 

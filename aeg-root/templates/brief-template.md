@@ -9,7 +9,7 @@ The brief itself carries no anchor comments: it rides into the PR body as the *r
 
 ---
 
-**For:** [model + environment, e.g. "Sonnet (coding-agent CLI on a dev machine, dispatched locally, unattended)"]
+**For:** [model + environment, e.g. "your-model (coding-agent CLI on a dev machine, dispatched locally, unattended)"]
 **Reason:** [why this capability level fits this task — real reasoning against the task, not "because it's good"]
 **Owner:** [who owns the task — the Principal, by default]
 **Goal:** [one sentence: what ships]

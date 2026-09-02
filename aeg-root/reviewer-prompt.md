@@ -3,7 +3,7 @@ sidebar_title: Reviewer Prompt
 ---
 # Reviewer Prompt — Multi-AI Adversarial Review
 
-**Audience:** Stateless AI reviewers (Gemini, Grok, DeepSeek, ChatGPT, or equivalent). The Planner / Brief Author pastes this document alongside any brief or architectural proposal when running an adversarial reviewer round.
+**Audience:** Stateless AI reviewers — any independently-hosted model, from a provider other than the one authoring the brief. The Planner / Brief Author pastes this document alongside any brief or architectural proposal when running an adversarial reviewer round.
 
 ---
 

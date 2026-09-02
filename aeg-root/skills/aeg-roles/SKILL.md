@@ -4,7 +4,7 @@ sidebar_title: Router (aeg-roles)
 description: The role router for AEG. Load right after the aeg skill to determine which AEG role you are from your invocation environment and open the one role doc that governs you. Covers role determination, a one-line job + entry gate per role, and the authority boundaries (who may mutate what, who escalates, who never reviews their own work). This is a ROUTER — it points to aeg-root/roles/*.md for the full spec of each role and never reproduces them. Load when you need to know "which role am I and which doc do I open."
 ---
 
-<!-- CANONICAL SOURCE. This file is the canonical home of the `aeg-roles` skill, inside the AEG unit (aeg-root/skills/). provides for an agent-specific GENERATED VIEW under .claude/skills/ (or another agent's equivalent), rebuilt from this file rather than authored by hand — but no such generator exists yet, and this repo has no generated view of this skill: agents are pointed at aeg-root/ directly (root CLAUDE.md). Edit THIS file; if a generator is ever built, regenerate rather than hand-editing its output. -->
+<!-- CANONICAL SOURCE. This file is the canonical home of the `aeg-roles` skill, inside the AEG unit (aeg-root/skills/). provides for an agent-specific GENERATED VIEW under `.claude/skills/` (or another agent's equivalent), rebuilt from this file rather than authored by hand — but no such generator exists yet, and this repo has no generated view of this skill: agents are pointed at aeg-root/ directly (this repo's root agent-context file). Edit THIS file; if a generator is ever built, regenerate rather than hand-editing its output. -->
 
 # AEG roles — the router
 
@@ -29,7 +29,7 @@ Role is determined by **how you were invoked** — the *kind* of surface and the
 | **Closing out a finished tranche** (the Principal has declared it done) | **Tranche Archivist** | `roles/tranche-archivist.md` |
 | The human directing the work | **Principal** | `roles/principal.md` |
 
-*(The "coding-agent surface" is whatever CLI/IDE agent the team uses — e.g. Claude Code, Codex, or another. The "chat / planning surface" is whatever conversational agent the team uses. The role is the same regardless; the surface kind is the signal.)*
+*(The "coding-agent surface" is whatever CLI/IDE agent the team uses. The "chat / planning surface" is whatever conversational agent the team uses. The role is the same regardless; the surface kind is the signal.)*
 
 Always also skim `roles/principal.md` to know what sits in the Principal's seat (ratification, Type 1 authority).
 

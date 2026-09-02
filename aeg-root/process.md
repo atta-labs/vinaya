@@ -67,7 +67,7 @@ If already locked or specced, the conversation ends here. If genuinely new, it p
 
 **When:** high-stakes only — architectural locks, project-direction shifts, decisions blocking weeks of downstream work, or when the Principal's instinct and the Brief Author's read disagree. **Not** for tactical decisions, naming, or style. The Principal may waive it and ratify in-session (the pull request notes the skip, for audit honesty).
 
-**Who:** Brief Author orchestrates; external AI reviewers (vendor-diverse — e.g. Gemini, Grok, DeepSeek, ChatGPT) participate via pasted briefs.
+**Who:** Brief Author orchestrates; external AI reviewers (vendor-diverse — independently hosted, each from a provider other than the one authoring the brief) participate via pasted briefs.
 
 The Brief Author writes a brainstorming brief (idea, sketch, alternatives, what to pushback on), pairs it with `reviewer-prompt.md`, and pastes to each reviewer. The Brief Author synthesizes. Converge on a flaw → back to Phase 1. Validate → proceed. **Max two rounds** — if two don't converge, the issue is framing, not a third round.
 

@@ -152,6 +152,126 @@ describe('a non-default shipsPrefix is portable too, not just the hardcoded defa
   })
 })
 
+describe('vendor-name finding (Issue #298)', () => {
+  it('flags a bare vendor mention in prose', () => {
+    const findings = checkDoctrinePortability([
+      file('aeg-root/roles/developer.md', 'Any capable coding agent, Claude Code included, can take a role.')
+    ])
+    expect(findings).toHaveLength(1)
+    expect(findings[0]).toMatchObject({ kind: 'vendor-name', cited: 'Claude Code' })
+  })
+
+  it('reports the fuller two-word mention whole, not a truncated single-word match', () => {
+    const findings = checkDoctrinePortability([file('aeg-root/sample.md', 'Works on Claude Code today.')])
+    expect(findings.map((f) => f.cited)).toEqual(['Claude Code'])
+  })
+
+  it('flags each distinct vendor name in the word list', () => {
+    const names = [
+      'Claude',
+      'Anthropic',
+      'ChatGPT',
+      'OpenAI',
+      'GPT',
+      'Gemini',
+      'Codex',
+      'Grok',
+      'DeepSeek',
+      'Opus',
+      'Sonnet',
+      'Haiku'
+    ]
+    for (const name of names) {
+      const findings = checkDoctrinePortability([file('aeg-root/sample.md', `See ${name} for an example.`)])
+      expect(findings, `vendor word never fires on its own sample: ${name}`).toHaveLength(1)
+      expect(findings[0]?.kind).toBe('vendor-name')
+    }
+  })
+
+  it('is silent on a vendor word inside the fenced AEG:VENDOR-EXAMPLE home', () => {
+    const findings = checkDoctrinePortability([
+      file(
+        'aeg-root/tranche-model.md',
+        [
+          'Prose before.',
+          '<!-- AEG:VENDOR-EXAMPLE:START -->',
+          'AEG ships one adapter, for Claude Code, exposed as `vinaya tokens`.',
+          '<!-- AEG:VENDOR-EXAMPLE:END -->',
+          'Prose after, generic only.'
+        ].join('\n')
+      )
+    ])
+    expect(findings.filter((f) => f.kind === 'vendor-name')).toEqual([])
+  })
+
+  it('still flags a vendor mention OUTSIDE the fenced home in the same file', () => {
+    const findings = checkDoctrinePortability([
+      file(
+        'aeg-root/tranche-model.md',
+        [
+          'Named again right here: Claude Code.',
+          '<!-- AEG:VENDOR-EXAMPLE:START -->',
+          'AEG ships one adapter, for Claude Code, exposed as `vinaya tokens`.',
+          '<!-- AEG:VENDOR-EXAMPLE:END -->'
+        ].join('\n')
+      )
+    ])
+    const vendorFindings = findings.filter((f) => f.kind === 'vendor-name')
+    expect(vendorFindings).toHaveLength(1)
+    expect(vendorFindings[0]?.line).toBe(1)
+  })
+
+  it('is silent on a vendor word that only appears inside an already-portable path citation', () => {
+    const findings = checkDoctrinePortability([
+      file(
+        'aeg-root/sample.md',
+        'Denied by the tool-layer hook (`.claude/hooks/check-forge-gates.sh`, wired in `.claude/settings.json`); ' +
+          'a doc path may look like `` `apps/x/CLAUDE.md` ``.'
+      )
+    ])
+    expect(findings.filter((f) => f.kind === 'vendor-name')).toEqual([])
+  })
+
+  it('is silent on a vendor word inside a fenced code block (e.g. an example ledger row)', () => {
+    const findings = checkDoctrinePortability([
+      file('aeg-root/tranche-model.md', ['```markdown', '| claude-opus-4-7 (CC) |', '```'].join('\n'))
+    ])
+    expect(findings.filter((f) => f.kind === 'vendor-name')).toEqual([])
+  })
+
+  it('a malformed half-pair (START with no END) is not a fence at all — still flags the mention', () => {
+    const findings = checkDoctrinePortability([
+      file('aeg-root/sample.md', ['<!-- AEG:VENDOR-EXAMPLE:START -->', 'Claude Code, unterminated fence.'].join('\n'))
+    ])
+    expect(findings.filter((f) => f.kind === 'vendor-name')).toHaveLength(1)
+  })
+
+  it('flags a bare model-tier name, not just a company/product name (review round 2 finding)', () => {
+    // Round-1 shipped this list with company/product names only, missing that
+    // a MODEL-TIER name ("Sonnet") is the identical vendor-coupling class — the
+    // real `brief-authoring/SKILL.md` gap a code-review pass caught.
+    const findings = checkDoctrinePortability([
+      file('aeg-root/sample.md', '**For:** [model + environment, e.g., "Sonnet (a coding-agent CLI)"]')
+    ])
+    expect(findings.filter((f) => f.kind === 'vendor-name')).toHaveLength(1)
+    expect(findings.find((f) => f.kind === 'vendor-name')?.cited).toBe('Sonnet')
+  })
+
+  it("the corpus-fix regression: this repo's own rewritten aeg-root/** produces zero vendor-name findings", () => {
+    // The 12+ real files fixed by this task all pass — see the corpus proof in
+    // the PR body (§9); this unit test locks the mechanism the corpus proof
+    // depends on, not the corpus itself (which lives on disk, not as fixture
+    // text a unit test should duplicate).
+    const findings = checkDoctrinePortability([
+      file(
+        'aeg-root/roles/developer.md',
+        '**Audience:** the coding agent (whatever CLI/IDE agent the team uses), executing a dispatched brief.'
+      )
+    ])
+    expect(findings.filter((f) => f.kind === 'vendor-name')).toEqual([])
+  })
+})
+
 describe('NON_PATH_TOP_SEGMENTS is a closed, tested set — never silently grown', () => {
   it('carries exactly these five top segments, no more, no fewer', () => {
     expect([...NON_PATH_TOP_SEGMENTS].sort()).toEqual(['HEAD', 'fix', 'origin', 'refs', 'vinaya'])
