@@ -1,7 +1,0 @@
----
-"@attalabs/vinaya": patch
----
-
-Fixes `review-gate` still failing after `#346`'s `checks: read` permission fix, with the identical `review-gate severity:infra — could not fetch check-run status` error even with that scope granted. Real root cause: `gh pr checks --json name,bucket`'s underlying GraphQL query asks for `checkSuite.workflowRun` on every check context, and the ephemeral Actions `GITHUB_TOKEN` is structurally forbidden from resolving `workflowRun` for a check suite belonging to a different workflow run than the one currently executing — "Resource not accessible by integration", unconditionally, regardless of any `permissions:` scope. Confirmed live in a throwaway debug workflow: `checks: read` granted, the GraphQL call still refused with the same token in the same job; the REST "list check-runs for a ref" endpoint, which never touches `workflowRun`, succeeded immediately.
-
-`check-review-gate.ts`'s `fetchMechanicalChecks()` now calls that REST endpoint (`gh api repos/{owner}/{repo}/commits/{sha}/check-runs`) instead, computing the `bucket` value it needs from `status`/`conclusion` locally. Also fixes a bug this surfaced: the REST endpoint returns a check-run's full history, not just its current state, so a re-triggered check (a label toggle, a re-run) left a stale failed/cancelled entry alongside its later passing one — one bad old entry under a name that had since gone green permanently poisoned the verdict. Deduped to the highest-id (latest) run per name before evaluating.
