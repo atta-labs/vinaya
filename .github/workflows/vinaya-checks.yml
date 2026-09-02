@@ -77,6 +77,23 @@ jobs:
         run: |
           bun install --frozen-lockfile --ignore-scripts
           bun run --cwd apps/cli build
+      # Adopter-declared CI setup (vinaya.config.json `ci.setup`), emitted
+      # verbatim. It prepares this repository's OWN custom checks — scripts
+      # committed here that may import this repository's code — which the
+      # `npx` invocation below cannot do: npx prepares only vinaya itself.
+      # The command is repo-committed, reviewed config; under `pull_request`
+      # the workflow definition is already controlled by the pull request, so
+      # this step adds no trust surface that did not already exist.
+      - name: Adopter CI setup
+        run: |
+          set -euo pipefail
+          GITLEAKS_VERSION=8.30.1
+          GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          curl -sSL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          sudo tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+          sudo chmod +x /usr/local/bin/gitleaks
+          gitleaks version
       - name: Run checks
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
