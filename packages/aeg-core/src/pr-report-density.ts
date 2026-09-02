@@ -5,8 +5,10 @@
  * `aeg-root/roles/developer.md` § "PR body — canonical form" and
  * `aeg-root/templates/pr-report-template.md` both require `## Summary` and
  * `## Scope` to be exactly one paragraph — narrative root-cause detail
- * belongs in the Evidence block, a commit message, or the changeset, never
- * padded into the report itself. Nothing enforced that rule mechanically:
+ * belongs in a section of its own below the canonical four, a commit
+ * message, or the changeset, never padded into the report itself and never
+ * hand-typed into the AEG:EVIDENCE block. Nothing enforced that rule
+ * mechanically:
  * confirmed live, three real PRs (`atta-labs/vinaya#343`, `#346`, `#354`)
  * shipped multi-paragraph Summary/Scope sections and nothing caught it,
  * neither at `vinaya pr create`/`pr edit` time nor in CI. Longer, denser
@@ -17,6 +19,18 @@
  * Deterministic and structural only, matching `brief-validation.ts`'s own
  * "presence-only" philosophy: this counts blank-line-delimited text blocks,
  * never judges whether the prose itself is good.
+ *
+ * The rule is literal — one paragraph, full stop — so a `### subsection`, a
+ * bullet list, or a markdown table under Summary/Scope all fail too, same as
+ * a second prose paragraph would (confirmed by probe, PR review on #358).
+ * That is intentional, not an oversight: `developer.md`'s own escape hatch
+ * for exactly this case is "Add anything you want beneath the four
+ * sections" — structured detail belongs in a section of its own below
+ * Summary/Scope/Test-plan/Evidence, not folded into one of the four. A
+ * multi-line blockquote is the one shape this rule does NOT split on (its
+ * `\n>\n` continuation lines are never blank), so it is the sanctioned way
+ * to carry a short structured aside inside Summary/Scope itself, if one is
+ * genuinely needed there rather than in its own section.
  */
 
 import { anchoredRegionBounds, stripCode } from './anchored-region'
@@ -77,7 +91,7 @@ function checkSectionDensity(prBody: string, heading: string): DensityResult {
   return {
     status: 'fail',
     errors: [
-      `pr-report-density ${heading}: "## ${heading}" holds ${count} paragraphs — the canonical PR-report form (aeg-root/roles/developer.md § PR body) requires exactly one. Move the extra detail into the Evidence block, a commit message, or the changeset instead, and collapse this section to one paragraph.`
+      `pr-report-density ${heading}: "## ${heading}" holds ${count} paragraphs — the canonical PR-report form (aeg-root/roles/developer.md § PR body) requires exactly one. Collapse it to one paragraph; move the rest into a section of your own below the canonical four ("Add anything you want beneath the four sections", developer.md), a commit message, or the changeset — never into the AEG:EVIDENCE block, which is emitted only, never hand-typed.`
     ]
   }
 }

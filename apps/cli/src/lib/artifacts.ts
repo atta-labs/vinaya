@@ -405,10 +405,11 @@ ${vinayaSetupSteps(selfHost, 'pull-request')}${adopterSetupStep(ciSetup)}      -
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
-          # PR_BODY is what makes test-plan/closes-n EVALUATE: neither check
-          # fetches the body itself (both read \`process.env.PR_BODY\` only) —
-          # without it they read "no body — nothing to check" and pass
-          # vacuously regardless of the PR's real content, on every run.
+          # PR_BODY is what makes test-plan/closes-n/pr-report-density
+          # EVALUATE: none of the three fetches the body itself (all read
+          # \`process.env.PR_BODY\` only) — without it they read "no body —
+          # nothing to check" and pass vacuously regardless of the PR's real
+          # content, on every run.
           PR_BODY: \${{ github.event.pull_request.body }}
           BRANCH: \${{ github.head_ref }}
         # pipefail is load-bearing: this job's default shell is \`bash -e\`
