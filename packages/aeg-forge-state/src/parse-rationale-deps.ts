@@ -15,10 +15,13 @@ export const NEXT_HEADER = /\*\*[A-Z][^*]*\*\*/
 export const FIELD_LABEL = /^(Depends-on|Conflicts-with)\s*:\s*(.*)$/i
 
 /** A valid edge id: a bare task id (`1`, `7a`), a bare Issue ref (`#372`), or
- * a cross-tranche reference (`<slug> #372` / `<slug> 25`). Rejects plain
- * prose that happens to share a backtick span with a labeled field — e.g. a
- * `` `vinaya check` `` command-name mention inside the same "Dependency
- * rationale" paragraph (found in Issue #384's real body). */
+ * a cross-tranche reference (`<slug> #372` / `<slug> 25`).
+ *
+ * It filters the comma list INSIDE a labeled span — a value there that is not
+ * id-shaped is dropped rather than declared. It is no longer what protects the
+ * parse from unrelated prose elsewhere in the paragraph (a `` `vinaya check` ``
+ * command-name mention, Issue #384's real body): since Issue #347 an unlabeled
+ * span is not read at all, whatever its shape. */
 export const ID_TOKEN = /^(?:[\w.-]+\s+)?#?\d+[a-z]?$/i
 
 /** Splits a qualified id (`aeg-governance-hardening #368`) into its slug and

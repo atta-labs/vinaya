@@ -34,11 +34,19 @@ function canonicalValue(ids: string[]): string {
 type SpanHit = { start: number; end: number; inner: string; field: FieldKey }
 
 /**
- * Scans the section's backtick spans left-to-right EXACTLY as
- * `parseRationaleDeps` does — carrying forward whichever field was last
- * labeled — and returns, in order, every span attributed to `field` (its
- * labeled span first, then any bare continuation spans). Shares the parser's
- * own `FIELD_LABEL` grammar; it does not re-implement it.
+ * Scans the section's backtick spans left-to-right, carrying forward whichever
+ * field was last labeled, and returns in order every span so attributed to
+ * `field` — its labeled span first, then any bare continuation spans.
+ *
+ * This carry-forward is DELIBERATELY WIDER than the reader's. Since Issue #347
+ * `parseRationaleDeps` reads edges from the labeled span only and ignores every
+ * other span; the writer keeps scanning for the bare continuation spans a body
+ * written in the old multi-span form still contains, precisely so `rewriteField`
+ * can unwrap them. Narrowing this to match the reader would leave those spans
+ * backticked in the rewritten body — harmless to the parse, but leaving stale
+ * ids beside a freshly amended field for a human to misread. Do not "fix" the
+ * asymmetry; it is the migration path. Shares the parser's own `FIELD_LABEL`
+ * grammar either way; it does not re-implement it.
  */
 function collectFieldSpans(section: string, field: FieldKey): SpanHit[] {
   const hits: SpanHit[] = []

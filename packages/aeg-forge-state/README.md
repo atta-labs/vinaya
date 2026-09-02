@@ -11,9 +11,14 @@ purely from GitHub forge objects — no topology file required:
   `projects` from the Issue body's `**Project:**` field — a FIELD, never a
   label: the `project:*` label family was retired, and a residual one is
   ignored outright rather than merged — and `dependsOn`/`conflictsWith`
-  edges parsed from each Issue's "Dependency rationale" section — hardened
-  against both the topology file's single comma-joined backtick-span form
-  and the multi-span prose form real Issue bodies also use
+  edges parsed from each Issue's "Dependency rationale" section, read from a
+  field's LABELED backtick span only (`` `Depends-on: 1, 2` ``) — the
+  topology file's own comma-joined cell form. Every other backtick span in
+  that section is prose and declares nothing; the multi-span form some Issue
+  bodies were written in (a labeled span, then bare continuation spans) is no
+  longer read, because any id-shaped span in the paragraph became an edge that
+  way. Rewrite such a body with `vinaya issue amend-deps`, which emits the
+  single labeled span this reads
 
 `owner`/`repo` are explicit parameters to every public function — never
 hardcoded. All forge access shells out to the local `gh` CLI (the same
