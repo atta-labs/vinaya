@@ -113,7 +113,9 @@ Items 3, 5, and 7 read live forge state. Item 6 checks the brief's own Step 0 te
 
 > **On this repo's shipped reference host (`tranche-model.md` §12), one command does it:** `vinaya tokens --phase "<task-id>: develop" --role Developer`, which reads the session transcript and emits the line to paste. Pass `--transcript <path>` when you already know which transcript is yours. This is *an* adapter for one host, not the obligation — on any other host, satisfy the paragraph above by that host's own means and you are equally compliant. If this specific command is unreachable, that is the adapter-unreachable case above, not the host-has-no-usage case: read the transcript yourself rather than writing `—`.
 
-The per-task Archivist reads this report at close-out and appends the ledger row post-merge — see `roles/archivist.md`. Re-entry (a second turn after `CHANGES_REQUESTED`) adds one row, appended inside the `AEG:TOKENS` anchor, never editing a row already there — written in the same `pr edit` that regenerates the Evidence block (see [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed)).
+The per-task Archivist reads this report at close-out and appends the ledger row post-merge — see `roles/archivist.md`.
+
+**A re-entry turn reports its tokens in that round's own comment.** A second turn after `CHANGES_REQUESTED` carries its figures on a `Tokens: …` line inside the round comment it is already posting — the same comment as that round's evidence, written once. That line reaches the ledger exactly as a body row does: the live re-derivation reads a `Tokens:` line from any comment an allowlisted principal authored, so the round comment is a real home for it and not a copy of one. The body's `AEG:TOKENS` anchor stays the machine-regenerated destination the emitter writes to (see [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed)); what the re-entry turn never does is hand-type a row into a frozen body.
 
 ---
 
@@ -251,9 +253,23 @@ A spike is exploratory, not a permanent excuse to skip documentation. The pull r
 
 ---
 
-## After you open the PR — review handoff
+## After you open the PR — the post-open sequence
 
-Opening the PR is not the end. The work now enters Phase 10 review (`process.md`):
+Opening the PR is not the end of your turn; it is the point at which the rest of your turn becomes runnable. Several `[agent]` Test Plan items cannot run before the PR exists at all — anything that takes the PR number as an argument, anything that reads the PR's own body or comments. Those run now, in this order, and the order is load-bearing:
+
+1. **Run every `[agent]` item that needed the PR number.** They were unrunnable an hour ago; they are runnable now. An item you skipped because the PR did not exist yet is an item you have not run.
+2. **Merge the main branch first if you are behind it.** A branch behind its base is judged against a base nobody will merge into. `vinaya review status <pr>` prints that distance as a second line reading `behind main by <n> — merge first`, and exits non-zero unless the loop is converging at a branch that is not behind. Merge, push, and only then continue — the head your evidence names must be the head your reviewer will read.
+3. **Regenerate the Evidence block** — one command, `vinaya pr report --push <n>`, never a hand edit. The body is frozen at open and this is the only sanctioned write into it.
+4. **Post one comment, headed `Head: <sha>`, carrying the round marker `<!-- aeg:developer:round-<n> -->` and the actual output of every `[agent]` item you ran.** One comment per round, never an edit to the one already there. The marker is what makes the round machine-readable: the Test Plan gate reads it at that fixed position to decide whether a ticked `[agent]` box has evidence behind it at all, and the round derivation counts rounds from it. A comment carrying the evidence but not the marker is, to every gate that reads it, no round comment at all.
+5. **Tick the `[agent]` boxes you actually ran** — the checkbox character alone, nothing else in the body changes. **Never tick a `[principal]` box.** You structurally cannot satisfy one, and the asymmetry is the point.
+
+Step 2 is not optional and not reorderable: there is no path through this sequence that reaches a `Head:` comment while the branch is behind. The evidence in that comment is a claim about a head, and a head that is about to be superseded by a merge you have not done yet is the wrong head to make it about.
+
+Then stop. Review is a separate invocation.
+
+## Review handoff
+
+The work now enters Phase 10 review (`process.md`):
 
 ```
 code-reviewer pass → security pass → Principal code review → Brief Author spec review → merge
@@ -401,7 +417,7 @@ If the brief declares `unit-tests-only` and the diff really is pure logic, the p
 
 1. **Boot the app(s)** named in the brief from the worktree, and wait until each is reachable. If it does not boot, that is the failure — the plan never gets a chance to run.
 2. **Execute every `[agent]` item.** Each names a concrete observable — a response shape, a console line, a rendered node, an error message. Run the named command and **paste the actual output**. Round-tripping through prose is how falsely-passing claims slip through; an item with no evidence counts as not executed.
-3. **Report on the PR** — each item with its result and its evidence, posted as a PR comment, never written into the body. A re-run after fixes posts a new comment; it never edits the one already there. The body's `[agent]` Test Plan line carries the tick only, never pasted command output — the evidence lives solely in the comment, headed `Head: <sha>`. The `AEG:EVIDENCE` block, not this line, is what `evidence-fresh` binds to the PR's head.
+3. **Report on the PR** — each item with its result and its evidence, posted as a PR comment, never written into the body. A re-run after fixes posts a new comment; it never edits the one already there. The body's `[agent]` Test Plan line carries the tick only, never pasted command output — the evidence lives solely in the comment, headed `Head: <sha>` and carrying the round marker `<!-- aeg:developer:round-<n> -->`. The `AEG:EVIDENCE` block, not this line, is what `evidence-fresh` binds to the PR's head.
 4. **Stop there.** Do not execute `[principal]` items; you structurally cannot. Mark them as awaiting the Principal.
 
 A failed `[agent]` item makes the PR unmergeable. Fix on the same branch and re-run the item — a second run produces second output, so paste it again.

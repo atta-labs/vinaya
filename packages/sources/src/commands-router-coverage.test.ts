@@ -79,6 +79,7 @@ describe('router -> COMMANDS coverage', () => {
         'milestone edit',
         'milestone close',
         'review post',
+        'review status',
         'demo break',
         'waiver',
         'studio',
