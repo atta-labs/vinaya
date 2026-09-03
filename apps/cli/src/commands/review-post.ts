@@ -850,14 +850,6 @@ function fetchComments(pr: string): ReviewGateComment[] {
 }
 
 /**
- * `git diff <judgedHead>...HEAD -U0` — the three-dot merge-base form
- * `reviewer.md`'s own scope-violation check already prescribes, so a stale
- * local `main` on the far side of `judgedHead` cannot skew what counts as
- * "since the last round". A missing `judgedHead` (never fetched into this
- * worktree) fails here, not with a bare git error — the refusal names the
- * missing sha so the reviewer knows to fetch it.
- */
-/**
  * `resolvedHead` is the PR's real head (`resolveHeadSha`'s own return value)
  * — never the local checkout's implicit `HEAD`, which can drift from it in
  * any worktree not freshly synced to the PR. Fetches `resolvedHead` from
@@ -1030,7 +1022,15 @@ function checkRoundTwo(
   }
 
   if (judgedHead === null) return // the prior comment carries no `Judged head:` line — cannot bound a delta.
-  const nonBlocking = findings.filter((f) => !blockingSeverities.includes(f.severity))
+  // A carried-forward id (any state) is the record of a prior finding, never new scope — the
+  // delta filter below applies only to newly-raised, id-less non-blocking findings (round 6
+  // ruling on #392, F1: missingPriorIds demands every prior id restated, and restating one at
+  // its true location must not then be refused by the very filter that demanded it).
+  const newlyRaised = findings.filter((f) => {
+    const id = findingIdState(f.description)?.id
+    return id === undefined || !priorIds.includes(id)
+  })
+  const nonBlocking = newlyRaised.filter((f) => !blockingSeverities.includes(f.severity))
   const changedRanges = computeChangedRanges(pr, judgedHead, resolvedHead)
   const outside = findingsOutsideDelta(nonBlocking, changedRanges)
   if (outside.length > 0) {

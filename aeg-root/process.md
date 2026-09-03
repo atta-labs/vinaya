@@ -221,7 +221,7 @@ Each pass is a **separate fresh-context invocation** with no memory of writing t
 1. **Code-reviewer pass** — `roles/reviewer.md`. Brief conformance, scope violations, test honesty, code quality, doc coupling, lock awareness, multi-project reach. Emits `VERDICT: APPROVE | REQUEST CHANGES` (BLOCKER / MAJOR / MINOR).
 2. **Security pass** — `roles/security.md`. Secret leakage, BYOK/crypto, auth/permissions, MCP/agent-tooling exposure, injection surfaces, dependency risk. Runs a config-security scan over the agent/MCP/hook config when that config is touched. Emits `VERDICT: PASS | FAIL` (CRITICAL / HIGH / MEDIUM / LOW).
 
-A BLOCKER (code) or CRITICAL/HIGH (security) returns the PR to the Developer, who fixes on the **same branch**; the pass re-runs. (Pushing fixes returns the PR's review decision to open — the `changes-requested → in-review` transition, derived.) An `[ESCALATE]` finding routes to Brief Author (strategy) or Principal (`severity: product`).
+A BLOCKER (code) or CRITICAL/HIGH (security) returns the PR to the Developer, who fixes on the **same branch**; the pass re-runs. (Pushing fixes returns the PR's review decision to open — the `changes-requested → in-review` transition, derived.) An escalation (`--escalate authority | strategy | product`) is its own review outcome, never a finding — it routes to Brief Author (`strategy`) or Principal (`authority`/`product`).
 
 ### Stage B — Human reviews
 

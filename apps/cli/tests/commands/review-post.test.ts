@@ -917,6 +917,131 @@ describe('review post — round-two refusals (brief Part 3), end-to-end against 
     }
   })
 
+  it('prior F1-F3 restated with states at locations outside the delta are accepted — a carried-forward id is never new scope (round 6 ruling on #392, F1)', () => {
+    seedComments(stateDir, [
+      {
+        body: priorComment(
+          [
+            '1. [MINOR] src/foo.ts:1 — F1 readability: nit',
+            '2. [MINOR] src/foo.ts:2 — F2 readability: nit',
+            '3. [MINOR] src/foo.ts:3 — F3 readability: nit'
+          ].join('\n')
+        ),
+        author: 'daniboomerang'
+      }
+    ])
+    const { dir, env } = workingGhPath(stateDir, resolvedHead, 'daniboomerang')
+    const findingsFile = join(repo, 'findings.txt')
+    // All three restated at their TRUE (untouched-since-judgedHead) locations,
+    // each carrying a state — none of them is new scope, so the delta filter
+    // must not see them at all.
+    writeFileSync(
+      findingsFile,
+      [
+        'MINOR|src/foo.ts:1|F1 readability resolved: fixed',
+        'MINOR|src/foo.ts:2|F2 readability reproduced: still there',
+        'MINOR|src/foo.ts:3|F3 readability open: not yet addressed'
+      ].join('\n')
+    )
+    try {
+      const r = runCli(
+        [
+          'review',
+          'post',
+          '--role',
+          'code-reviewer',
+          '--pr',
+          '1',
+          '--findings-file',
+          findingsFile,
+          '--brief-conformance',
+          'x',
+          '--spec-conformance',
+          'x',
+          '--scope',
+          'x',
+          '--tests',
+          'x',
+          '--docs',
+          'x',
+          '--task-id',
+          't',
+          '--model',
+          'm',
+          '--tokens-in',
+          '-',
+          '--tokens-out',
+          '-',
+          '--cost',
+          '-'
+        ],
+        { cwd: repo, env: { ...process.env, ...env } }
+      )
+      expect(r.status).toBe(0)
+      expect(r.stdout).toContain('Self-verification: clean')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a NEW non-blocking finding outside the delta is still refused even when prior ids are correctly carried (round 6 ruling on #392, F1)', () => {
+    seedComments(stateDir, [
+      { body: priorComment('1. [MINOR] src/foo.ts:4 — F1 readability: nit'), author: 'daniboomerang' }
+    ])
+    const { dir, env } = workingGhPath(stateDir, resolvedHead, 'daniboomerang')
+    const findingsFile = join(repo, 'findings.txt')
+    // F1 carried forward with a state at a location outside the delta (fine —
+    // it is the record). F4 is brand new, id-less, and also outside the
+    // delta — the exemption is for carried ids only, not for every finding
+    // once one carried id is present.
+    writeFileSync(
+      findingsFile,
+      ['MINOR|src/foo.ts:4|F1 readability resolved: fixed', 'MINOR|src/foo.ts:2|a brand-new nit, on an old line'].join(
+        '\n'
+      )
+    )
+    try {
+      const r = runCli(
+        [
+          'review',
+          'post',
+          '--role',
+          'code-reviewer',
+          '--pr',
+          '1',
+          '--findings-file',
+          findingsFile,
+          '--brief-conformance',
+          'x',
+          '--spec-conformance',
+          'x',
+          '--scope',
+          'x',
+          '--tests',
+          'x',
+          '--docs',
+          'x',
+          '--task-id',
+          't',
+          '--model',
+          'm',
+          '--tokens-in',
+          '-',
+          '--tokens-out',
+          '-',
+          '--cost',
+          '-'
+        ],
+        { cwd: repo, env: { ...process.env, ...env } }
+      )
+      expect(r.status).not.toBe(0)
+      expect(r.stderr).toContain('src/foo.ts:2')
+      expect(r.stderr).toContain('outside the diff')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('no prior verdict comment on the PR — round one, no round-two checks at all', () => {
     seedComments(stateDir, [])
     const { dir, env } = workingGhPath(stateDir, resolvedHead, 'daniboomerang')
