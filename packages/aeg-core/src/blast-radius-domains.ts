@@ -46,8 +46,14 @@
  * real-world workspaces shape and is dropped rather than guessed at — this
  * applies identically whether the entry came in positive or negated (the
  * caller strips the leading `!` before calling this).
+ *
+ * Exported so `consumer-enumeration.ts` can resolve every workspace glob
+ * (`apps/*` and `packages/*` alike) rather than re-deriving this same glob
+ * grammar a second time — `deriveWorkspacePackageDomains` below deliberately
+ * narrows to `packages/*` only, which is wrong for that module's purpose
+ * (task 10 round-2 ruling item 3).
  */
-function resolveWorkspaceEntry(entry: string, listDirs: (dir: string) => string[]): string[] {
+export function resolveWorkspaceEntry(entry: string, listDirs: (dir: string) => string[]): string[] {
   if (entry.endsWith('/*')) {
     const baseDir = entry.slice(0, -2)
     return listDirs(baseDir).map((name) => `${baseDir}/${name}`)

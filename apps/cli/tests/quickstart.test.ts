@@ -209,7 +209,7 @@ describe('vinaya quickstart', () => {
 
     // a real commit landed.
     const log = git(root, ['log', '--oneline'])
-    expect(log.split('\n').length).toBe(2) // initial commit + install commit
+    expect(log.split('\n').length, out).toBe(2) // initial commit + install commit
     expect(git(root, ['log', '-1', '--format=%s'])).toBe('Chore: install Vinaya')
     expect(git(root, ['status', '--porcelain'])).toBe('')
 
@@ -540,7 +540,7 @@ describe('vinaya quickstart --yes / --dry-run passthrough (Issue #53)', () => {
 
     // the install landed as a real commit.
     const log = git(root, ['log', '--oneline'])
-    expect(log.split('\n').length).toBe(2)
+    expect(log.split('\n').length, out).toBe(2)
     expect(git(root, ['log', '-1', '--format=%s'])).toBe('Chore: install Vinaya')
 
     // demo break defaults to true and ran for real against the swapped hook.

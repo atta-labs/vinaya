@@ -613,13 +613,11 @@ Sibling to `verify-docs.ts`/`verify-coherence.ts`, same thin-CLI-shim discipline
 
 **The default-mode composite ships as the `dispatch-readiness` check** (`vinaya check dispatch-readiness`, branch-scoped) — see `enforcement.md`'s dispatch row for its known parity gap (prior-tranche-archival always reports empty). The `--premise`/`--simulate`/`--check-baseline` modes below have no shipped `vinaya` equivalent yet.
 
-**Usage (this repo's toolchain):**
-```
-bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>
-bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n> --premise <body-file>
-bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n> --simulate <body-file>
-bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n> --check-baseline <file>
-```
+**Usage (this repo's toolchain)** — four independent invocation forms, not a sequence:
+- Default mode: `bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>`
+- Premise re-assertion: `bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n> --premise <body-file>`
+- Simulate mode: `bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n> --simulate <body-file>`
+- Baseline compare: `bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n> --check-baseline <file>`
 
 **Default mode composes three checks:**
 

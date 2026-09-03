@@ -58,6 +58,29 @@ const CHECKBOX_TICK = /^([-*]\s+)\[[xX]\]/gm
  * unticked. Recomputes bounds fresh after each removal since prior removals
  * shift indices — cheap at PR-body scale, and it means field order in the
  * body never matters.
+ *
+ * **Line-ending and trailing-whitespace normalised before hashing, to
+ * exactly one trailing newline** (round-2 ruling addendum 3, corrected by
+ * addendum 4) — `vinaya pr create --body-file` hashes the body file as
+ * written to disk, which `pr create`'s own writer always ends in exactly
+ * one `\n`; `vinaya-checks.yml` re-reads the LIVE body via
+ * `${{ github.event.pull_request.body }}`, which GitHub returns with NO
+ * trailing newline at all. Same authored bytes, different hash, on every
+ * PR opened from a body file — found live on `#393` (`99d2263a…` at open
+ * vs `1547275f…` from CI). Addendum 3's first cut stripped trailing
+ * whitespace entirely (no re-added newline) — that normalises the LIVE
+ * side correctly but changes what the FILE side hashes to, so it can never
+ * match a marker already posted by `pr create`'s own (unnormalised, but
+ * always-one-`\n`) writer: every marker posted before this fix — this PR,
+ * `#392`, everything since `#390` — would go permanently unmatchable.
+ * Canonical form is instead "trimmed, then exactly one trailing newline":
+ * `\r\n` → `\n` first (order matters: collapsing CRLF before trimming
+ * trailing whitespace means a lone trailing `\r` left by a partial CRLF→LF
+ * pass can never survive as significant), trailing whitespace stripped,
+ * one `\n` appended back — which is a no-op on `pr create`'s own file-based
+ * writes (already end in exactly one `\n`) and normalises the webhook's
+ * newline-less payload up to the same form, so both sides converge on the
+ * hash `pr create` already posted.
  */
 export function authoredRegion(body: string): string {
   let result = body
@@ -67,7 +90,7 @@ export function authoredRegion(body: string): string {
       result = result.slice(0, bounds.outerStart) + result.slice(bounds.outerEnd)
     }
   }
-  return result.replace(CHECKBOX_TICK, '$1[ ]')
+  return `${result.replace(CHECKBOX_TICK, '$1[ ]').replace(/\r\n/g, '\n').replace(/\s+$/, '')}\n`
 }
 
 /** sha256 hex digest of `authoredRegion(body)`. */

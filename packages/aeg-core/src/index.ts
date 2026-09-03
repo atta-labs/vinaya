@@ -10,8 +10,11 @@ export {
   CROSS_CUTTING_CANDIDATES,
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
-  parsePnpmWorkspaceYaml
+  parsePnpmWorkspaceYaml,
+  resolveWorkspaceEntry
 } from './blast-radius-domains'
+export { buildConsumersOf, deriveWorkspaceMemberDirs } from './consumer-enumeration'
+export type { PackageManifest } from './consumer-enumeration'
 export { parseTranche } from './parse-tranche'
 export { deriveTranche } from './derive-tranche'
 export { parseLedger, rowFromCells } from './parse-ledger'
@@ -72,9 +75,13 @@ export {
   checkAutonomyClause,
   checkBriefSections,
   checkClosesN as checkBriefClosesN,
+  checkCommandsCarryOutput,
+  checkConsumerTests,
+  checkDefeatCases,
   checkDocUpdateList,
   checkForField,
   checkForgeTitle,
+  checkNoUnpinnedCodeClaims,
   checkPlanPrNoCloses,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
@@ -85,14 +92,21 @@ export {
   checkTestPlanExclusivity,
   checkTierField,
   checkWorktreeStep0,
+  BRIEF_RULES_SINCE_PR,
+  COMMAND_WORDS,
   COMMIT_TYPE_STYLE,
   COMMIT_TYPES,
+  extractFencedBlocks,
   headerRegion,
   inferBranchFromBody,
   isBriefShaped,
-  isTaskBranch
+  isGrandfatherableBriefRuleError,
+  isTaskBranch,
+  partitionBriefErrorsByRollout
 } from './brief-validation'
-export type { BriefSectionResult, BriefSectionsOptions } from './brief-validation'
+export type { BriefSectionResult, BriefSectionsOptions, FencedBlock } from './brief-validation'
+export { checkDoctrineNoProcedures } from './doctrine-no-procedures'
+export type { DoctrineFile, DoctrineProcedureFinding } from './doctrine-no-procedures'
 export { checkPrReportDensity, checkScopeDensity, checkSummaryDensity } from './pr-report-density'
 export type { DensityResult } from './pr-report-density'
 export {
