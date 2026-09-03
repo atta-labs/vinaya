@@ -149,26 +149,83 @@ describe('parseTokensLines: Reviewer/Security/Planner one-line report', () => {
 })
 
 describe('aggregateTaskTokenRows', () => {
+  const ALLOWLIST = ['daniboomerang']
+
   it('combines Token report entries and Tokens: lines across body + comments of every PR given', () => {
-    const rows = aggregateTaskTokenRows([
-      {
-        number: 454,
-        body: PR_454_BODY,
-        comments: ['Verdict: APPROVE\n\nTokens: 4: review — Reviewer — claude-opus-4-7 (chat) — —']
-      },
-      {
-        number: 999,
-        body: 'Tokens: planning — Planner — claude-opus-4-7 (chat) — 1000/200/$0.02',
-        comments: []
-      }
-    ])
+    const rows = aggregateTaskTokenRows(
+      [
+        {
+          number: 454,
+          body: PR_454_BODY,
+          comments: [
+            {
+              body: 'Verdict: APPROVE\n\nTokens: 4: review — Reviewer — claude-opus-4-7 (chat) — —',
+              author: 'daniboomerang'
+            }
+          ]
+        },
+        {
+          number: 999,
+          body: 'Tokens: planning — Planner — claude-opus-4-7 (chat) — 1000/200/$0.02',
+          comments: []
+        }
+      ],
+      ALLOWLIST
+    )
     expect(rows).toHaveLength(3)
     expect(rows.map((r) => r.role)).toEqual(['Developer', 'Reviewer', 'Planner'])
   })
 
-  it('returns [] when no PR carries any recognizable report — never a fabricated row', () => {
-    expect(aggregateTaskTokenRows([{ number: 1, body: 'no reports here', comments: ['nothing here either'] }])).toEqual(
-      []
+  it('aggregates one body entry plus two allowlisted comment entries as three rows', () => {
+    const rows = aggregateTaskTokenRows(
+      [
+        {
+          number: 381,
+          body: PR_454_BODY,
+          comments: [
+            {
+              body: 'VERDICT: APPROVE\n\nTokens: 8: review — Reviewer — claude-opus-5 (chat) — 100/20/$0.01',
+              author: 'daniboomerang'
+            },
+            {
+              body: 'VERDICT: PASS\n\nTokens: 8: security — Security — claude-opus-5 (chat) — 90/10/$0.01',
+              author: 'DaniBoomerang'
+            }
+          ]
+        }
+      ],
+      ALLOWLIST
     )
+    expect(rows).toHaveLength(3)
+    expect(rows.map((r) => r.role)).toEqual(['Developer', 'Reviewer', 'Security'])
+  })
+
+  it('ignores a Tokens: line in a comment whose author is not on the principal allowlist', () => {
+    const rows = aggregateTaskTokenRows(
+      [
+        {
+          number: 381,
+          body: 'no report in this body',
+          comments: [
+            {
+              body: 'Tokens: 8: review — Reviewer — claude-opus-5 (chat) — 999999/999999/$99.00',
+              author: 'drive-by-stranger'
+            },
+            { body: 'Tokens: 8: review — Reviewer — claude-opus-5 (chat) — 1/1/$0.01', author: null }
+          ]
+        }
+      ],
+      ALLOWLIST
+    )
+    expect(rows).toEqual([])
+  })
+
+  it('returns [] when no PR carries any recognizable report — never a fabricated row', () => {
+    expect(
+      aggregateTaskTokenRows(
+        [{ number: 1, body: 'no reports here', comments: [{ body: 'nothing here either', author: 'daniboomerang' }] }],
+        ALLOWLIST
+      )
+    ).toEqual([])
   })
 })

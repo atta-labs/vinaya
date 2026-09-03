@@ -21,6 +21,8 @@ export { parseLedger, rowFromCells } from './parse-ledger'
 export { sumLedger } from './sum-ledger'
 export { aggregateTaskTokenRows, parseTokenReportEntries, parseTokensLines } from './parse-token-report'
 export type { TokenSourcePr } from './parse-token-report'
+export { deriveReviewStatus, parseDeveloperRoundMarker, renderReviewStatus } from './review-status'
+export type { ReviewStatus, ReviewStatusInput } from './review-status'
 export { formatBreakdown, formatTokenReportRow, formatTokensLine } from './report-tokens'
 export type { TokenReportRowInput, TokensLineInput, TranscriptSummary, UsageComponents } from './report-tokens'
 // The Claude Code collection adapter (`tranche-model.md` §12 layer 2) — one

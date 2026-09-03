@@ -131,12 +131,20 @@ function shJson<T>(args: string[]): T {
 }
 
 type AssociatedPr = { number: number }
+/**
+ * `gh pr view --json comments` already returns each comment's `author`; this
+ * shim no longer drops it. A comment's `Tokens:` line is only a real ledger
+ * row when an allowlisted principal posted it (`aggregateTaskTokenRows`),
+ * and every agent in this model posts under the Principal's own `gh`
+ * identity — so the author is the only thing separating a role's own report
+ * from a stranger's pasted table.
+ */
 type PrView = {
   number: number
   headRefName: string
   body: string
   mergedAt: string
-  comments: { body: string }[]
+  comments: { body: string; author?: { login?: string } | null }[]
 }
 
 function parseMergeSha(args: string[]): string | null {
