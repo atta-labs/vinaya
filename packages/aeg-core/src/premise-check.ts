@@ -80,6 +80,41 @@ export function parsePremiseBlock(prBody: string): PremiseAssertion[] {
   return assertions
 }
 
+/**
+ * The `Premise:` block's own raw text (header line through its last bullet),
+ * mirroring `parsePremiseBlock`'s exact same header/bullet/stop rules so the
+ * two can never disagree about where the block ends. Returns `null` when no
+ * header is found. Used by `brief-validation.ts`'s `checkNoUnpinnedCodeClaims`
+ * to exclude the block's own bullets (a pin's path is a legitimate file
+ * reference, not an unpinned prose claim) — reuses this parser's block
+ * boundaries rather than a second one.
+ */
+export function premiseBlockText(prBody: string): string | null {
+  const searchIn = anchoredRegion(prBody, 'PREMISE') ?? prBody
+  const lines = searchIn.split(/\r?\n/)
+  let startIdx = -1
+  let endIdxExclusive = lines.length
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = (lines[i] as string).trim()
+    if (startIdx === -1) {
+      if (isPremiseHeader(line)) startIdx = i
+      continue
+    }
+    if (line === '') {
+      endIdxExclusive = i
+      break
+    }
+    if (!PREMISE_LINE.test(line)) {
+      endIdxExclusive = i
+      break
+    }
+  }
+
+  if (startIdx === -1) return null
+  return lines.slice(startIdx, endIdxExclusive).join('\n')
+}
+
 export type PremiseCheckResult = { pass: boolean; failures: string[] }
 
 /**

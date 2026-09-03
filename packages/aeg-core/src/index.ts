@@ -72,9 +72,12 @@ export {
   checkAutonomyClause,
   checkBriefSections,
   checkClosesN as checkBriefClosesN,
+  checkCommandsCarryOutput,
+  checkConsumerTests,
   checkDocUpdateList,
   checkForField,
   checkForgeTitle,
+  checkNoUnpinnedCodeClaims,
   checkPlanPrNoCloses,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
@@ -85,14 +88,16 @@ export {
   checkTestPlanExclusivity,
   checkTierField,
   checkWorktreeStep0,
+  COMMAND_WORDS,
   COMMIT_TYPE_STYLE,
   COMMIT_TYPES,
+  extractFencedBlocks,
   headerRegion,
   inferBranchFromBody,
   isBriefShaped,
   isTaskBranch
 } from './brief-validation'
-export type { BriefSectionResult, BriefSectionsOptions } from './brief-validation'
+export type { BriefSectionResult, BriefSectionsOptions, FencedBlock } from './brief-validation'
 export { checkPrReportDensity, checkScopeDensity, checkSummaryDensity } from './pr-report-density'
 export type { DensityResult } from './pr-report-density'
 export {

@@ -13,7 +13,7 @@
  */
 
 import { type AnchorField, anchoredRegion, stripCode } from './anchored-region'
-import { parsePremiseBlock } from './premise-check'
+import { parsePremiseBlock, premiseBlockText } from './premise-check'
 import { locateTestPlanSection } from './test-plan-section'
 
 export type BriefSectionResult = { status: 'pass' | 'fail'; errors: string[] }
@@ -466,6 +466,209 @@ export function inferBranchFromBody(prBody: string): string {
   return m?.[1] ?? ''
 }
 
+/**
+ * The shell-command-word vocabulary this task's two prose-shape rules share
+ * (`checkCommandsCarryOutput` and `doctrine-no-procedures.ts`'s sweep) — one
+ * list, so the two rules can never silently diverge on what counts as "a
+ * command". Exported for that reuse, not for callers to extend at runtime.
+ */
+export const COMMAND_WORDS = ['export', 'bun', 'gh', 'git', 'grep', 'sed', 'cat', 'diff', 'vinaya'] as const
+
+/** One fenced block's raw span and content — `start`/`end` are char offsets into the original text. */
+export type FencedBlock = { start: number; end: number; content: string }
+
+/**
+ * Every fenced (``` or ~~~) code block in `text`, in document order, with its
+ * raw content and char-offset span. Tolerant of the 3-space list-item
+ * indentation every brief's own numbered steps use (`   \`\`\``) — the fence
+ * marker need not sit at column 0. Not a full CommonMark implementation (no
+ * nested-fence-length edge cases beyond "the closer repeats the opener's
+ * exact run"), which this repo's own doctrine/brief prose never exercises.
+ *
+ * Shared by `checkCommandsCarryOutput` (below) and `doctrine-no-procedures.ts`
+ * — one fence scanner, never a second copy of this pattern.
+ */
+export function extractFencedBlocks(text: string): FencedBlock[] {
+  const re = /^[ \t]*(`{3,}|~{3,})[^\n]*\n([\s\S]*?)^[ \t]*\1[ \t]*$/gm
+  const blocks: FencedBlock[] = []
+  let m: RegExpExecArray | null = re.exec(text)
+  while (m !== null) {
+    blocks.push({ start: m.index, end: m.index + m[0].length, content: m[2] as string })
+    m = re.exec(text)
+  }
+  return blocks
+}
+
+function firstNonBlankLine(text: string): string {
+  const line = text.split('\n').find((l) => l.trim().length > 0)
+  return line?.trim() ?? ''
+}
+
+/**
+ * A file-and-line reference — `<path>.<ext>:<digits>` — the shape a brief
+ * states a code fact by pointer instead of by an executed command or a
+ * `Premise:` pin. Extension list is this repo's own doctrine/code file kinds;
+ * deliberately not "any word after a dot" (that would also catch a semver
+ * string or a decimal figure with a trailing count).
+ */
+const FILE_LINE_RE = /\b[\w./-]+\.(?:tsx?|jsx?|mjs|cjs|md|mdx|json|ya?ml|sh|py|toml):\d+\b/g
+
+/**
+ * Rule (i) (task 10, Issue #385) — a brief states no code fact as a bare
+ * `file:line` prose pointer; it either pins the fact in `Premise:` (re-
+ * asserted at dispatch, `verify-dispatch --premise`) or shows the executed
+ * command whose output names the line. A pointer that survives outside both
+ * homes is a claim nobody re-checks — exactly the class task 9's rule
+ * forbids in prose (PR #382's `security-archivist.md:88` mention, backticked
+ * but never pinned nor shown as command output).
+ *
+ * Scans `stripCode(…, { inlineSpans: 'keep' })`: fenced/indented **blocks**
+ * are removed (a worked example's own line numbers are not a live claim),
+ * but a single-backtick inline span is left as literal text — the PR #382
+ * sentence was exactly an inline span, and this rule must still catch it.
+ * This is why `maskCode` (which blanks inline spans too) is the wrong tool
+ * here, unlike `checkClosesN`/`isBriefShaped` elsewhere in this file.
+ */
+export function checkNoUnpinnedCodeClaims(prBody: string): BriefSectionResult {
+  const premiseText = premiseBlockText(prBody)
+  const withoutPremise = premiseText ? prBody.replace(premiseText, '') : prBody
+  const scanned = stripCode(withoutPremise, { inlineSpans: 'keep' })
+  const matches = scanned.match(FILE_LINE_RE) ?? []
+  if (matches.length === 0) return { status: 'pass', errors: [] }
+  return {
+    status: 'fail',
+    errors: matches.map(
+      (m) =>
+        `brief-validation unpinned code claim: "${m}" states a code fact by file-and-line reference outside a \`Premise:\` pin and outside a fenced code block — pin it in \`Premise:\`, or show the executed command and its output instead.`
+    )
+  }
+}
+
+/**
+ * Section `num`'s own text (the heading line's content, ending at the next
+ * heading of any level 1-4) — `§4`/`§5`/`§6` share this numbered-heading
+ * shape with `headingCheck`'s keyword form, so this mirrors that pattern
+ * rather than inventing a second heading grammar. `null` when no such
+ * section exists (the composer's other checks already judge whether a
+ * required section is missing; these two rules apply only when it is
+ * present).
+ */
+function extractNumberedSection(prBody: string, num: number): string | null {
+  const startRe = new RegExp(`^#{1,4}\\s*(?:\\*\\*)?${num}[a-z]?\\.\\s`, 'im')
+  const start = startRe.exec(prBody)
+  if (!start) return null
+  const afterStart = start.index + start[0].length
+  const rest = prBody.slice(afterStart)
+  const next = /^#{1,4}\s/m.exec(rest)
+  return next ? rest.slice(0, next.index) : rest
+}
+
+function commandWordOf(line: string): string {
+  return line.trim().split(/\s+/)[0] ?? ''
+}
+
+function isCommandBlock(content: string): boolean {
+  return (COMMAND_WORDS as readonly string[]).includes(commandWordOf(firstNonBlankLine(content)))
+}
+
+/** The Step 0 exemption — `git worktree add …` is a command with no separate output block by convention. */
+function isStep0Block(content: string): boolean {
+  return firstNonBlankLine(content).startsWith('git worktree add')
+}
+
+/**
+ * Rule (ii) (task 10, Issue #385) — in a brief's `§5` (Pre-flight checks) or
+ * `§6` (Numbered parts), a fenced block that opens with a shell command must
+ * be followed, later in that same section, by another fenced block (its
+ * output) — a command whose result nobody pasted is exactly the "trust me"
+ * shape task 9's rule forbids. The Step `0` `git worktree add` block is
+ * exempt: it is a setup command with no output to show, by the convention
+ * every brief's own pre-flight step already follows.
+ *
+ * Deliberately loose about what sits *between* the two fences — this
+ * brief's own pre-flight steps (`§5` items 4-9) interleave a sentence of
+ * prose between a command fence and its output fence ("Output the Brief
+ * Author obtained at authoring time…"), and the rule must not fail the very
+ * brief that documents it. What matters is that a later fenced block
+ * exists at all before the section ends; a command fence with nothing
+ * fenced after it in the section is the failure this rule catches.
+ */
+export function checkCommandsCarryOutput(prBody: string): BriefSectionResult {
+  const errors: string[] = []
+  for (const [label, num] of [
+    ['5', 5],
+    ['6', 6]
+  ] as const) {
+    const section = extractNumberedSection(prBody, num)
+    if (!section) continue
+    const blocks = extractFencedBlocks(section)
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i] as FencedBlock
+      if (isStep0Block(block.content) || !isCommandBlock(block.content)) continue
+      if (!blocks[i + 1]) {
+        errors.push(
+          `brief-validation commands carry output: §${label} has a command block ("${firstNonBlankLine(block.content)}") with no fenced output block after it — paste the command's actual output in a following fenced block.`
+        )
+      }
+    }
+  }
+  return errors.length === 0 ? { status: 'pass', errors: [] } : { status: 'fail', errors }
+}
+
+const CONSUMER_TESTS_SENTINEL_RE = /consumer-tests\s*:\s*none\s*[-—–]\s*\S/i
+
+/** Every distinct `packages/<pkg>/` reference in `text` — the packages a §4 surface map names. */
+function packagesNamedIn(text: string): string[] {
+  const re = /\bpackages\/([A-Za-z0-9_-]+)\//g
+  const pkgs = new Set<string>()
+  let m: RegExpExecArray | null = re.exec(text)
+  while (m !== null) {
+    pkgs.add(m[1] as string)
+    m = re.exec(text)
+  }
+  return [...pkgs]
+}
+
+/** Whether `text` names a test-shaped path (`*.test.<ext>`) under workspace directory `consumerDir` (e.g. `apps/cli`, `packages/sources`). */
+function hasTestPathForConsumer(text: string, consumerDir: string): boolean {
+  const escaped = consumerDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`${escaped}\\/[\\w./-]*\\.test\\.[A-Za-z0-9]+`)
+  return re.test(text)
+}
+
+/**
+ * Rule (iii) (task 10, Issue #385) — a brief whose `§4` names a path under a
+ * shared `packages/<pkg>/` must also name, for every workspace package that
+ * depends on `@attalabs/<pkg>`, a test path proving that consumer still
+ * works, or the sentinel `consumer-tests: none — <reason>` opting out with a
+ * stated reason. A shared-package edit with no consumer awareness at all is
+ * exactly the gap task 9's rule targets alongside the unpinned-claim and
+ * missing-output shapes.
+ *
+ * `consumersOf` is injected (never `fs`/`package.json` reads here) — the CLI
+ * shim (`check-brief-shape.ts`) builds it once from the real workspace
+ * dependency graph. The satisfying test path or the sentinel may appear
+ * anywhere in the body, not only inside `§4` itself — a brief's blast-radius
+ * reasoning conventionally lives in its Verification section (`§8`), and
+ * this rule does not force it to move.
+ */
+export function checkConsumerTests(prBody: string, consumersOf: (pkg: string) => string[]): BriefSectionResult {
+  const section4 = extractNumberedSection(prBody, 4)
+  if (!section4) return { status: 'pass', errors: [] }
+  if (CONSUMER_TESTS_SENTINEL_RE.test(prBody)) return { status: 'pass', errors: [] }
+
+  const errors: string[] = []
+  for (const pkg of packagesNamedIn(section4)) {
+    for (const consumerDir of consumersOf(pkg)) {
+      if (hasTestPathForConsumer(prBody, consumerDir)) continue
+      errors.push(
+        `brief-validation consumer tests: §4 names a path under packages/${pkg}/, and ${consumerDir} depends on @attalabs/${pkg}, but no test path under ${consumerDir} is named anywhere in the body — name one, or add \`consumer-tests: none — <reason>\`.`
+      )
+    }
+  }
+  return errors.length === 0 ? { status: 'pass', errors: [] } : { status: 'fail', errors }
+}
+
 /** Composition knobs for `checkBriefSections` — see each field. */
 export type BriefSectionsOptions = {
   /**
@@ -480,6 +683,15 @@ export type BriefSectionsOptions = {
    * linkage is a task-branch obligation; brief completeness is not.
    */
   requireClosesN?: boolean
+  /**
+   * Consumer enumeration for `checkConsumerTests` (task 10) — workspace
+   * directories (e.g. `apps/cli`) whose `package.json` depends on
+   * `@attalabs/<pkg>`. Defaults to `() => []`, which makes rule (iii) a
+   * no-op — the callers that don't wire a real dependency graph (tests,
+   * `verify-brief.ts`) keep today's behavior rather than silently failing
+   * on an empty consumer list.
+   */
+  consumersOf?: (pkg: string) => string[]
 }
 
 /**
@@ -492,7 +704,7 @@ export function checkBriefSections(
   readTier: (body: string) => 0 | 1 | 3 | null,
   options: BriefSectionsOptions = {}
 ): { errors: string[] } {
-  const { requireClosesN = true } = options
+  const { requireClosesN = true, consumersOf = () => [] } = options
   const results = [
     checkTierField(prBody, readTier),
     checkTestPlan(prBody),
@@ -505,6 +717,9 @@ export function checkBriefSections(
     checkAutonomyClause(prBody),
     checkProjectField(prBody),
     checkForField(prBody),
+    checkNoUnpinnedCodeClaims(prBody),
+    checkCommandsCarryOutput(prBody),
+    checkConsumerTests(prBody, consumersOf),
     ...(requireClosesN ? [checkClosesN(prBody)] : [])
   ]
   return { errors: results.flatMap((r) => r.errors) }
