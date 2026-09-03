@@ -84,6 +84,20 @@ The Principal does not need to be present during task execution. Dispatch and es
 
 ---
 
+## The review loop, by hand
+
+Until a coordinator program exists, the Principal is the loop's coordinator, per PR:
+
+- **Track the id set.** Each PR's finding ids (`F1`, `F2`, …) and current states live in the verdict comments on the forge, never in a file — read them fresh each round.
+- **Apply the three triggers.** Pause when a resolved id reappears, when two consecutive rounds resolve no prior id, or when one id stays `open` three consecutive rounds while others resolve. Round five is a backstop, not a trigger.
+- **Pause with the label.** Apply `vinaya/needs:principal-input`; never invent a new label or status field.
+- **Work the stall menu, cheapest first.** A different role in the seat, resume with the trigger overridden, reseed the Developer, abandon.
+- **Give the go on surfaced findings.** A finding outside round two's delta, any severity, waits on this decision rather than driving the verdict.
+
+A coordinator program replaces this by-hand duty when one exists.
+
+---
+
 ## Communication style with the Principal
 
 These rules apply to any agent talking to the Principal — on any chat or coding-agent surface, in any context. *(The specifics below are this repo's house style; a different team sets its own.)*
