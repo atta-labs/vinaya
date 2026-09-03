@@ -124,6 +124,19 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'brief render',
+    description: 'Emit the twelve-section brief skeleton from the forge and the tree, every derivable section filled',
+    flags: [
+      { flag: '--surfaces <glob1,glob2,...>', description: 'Intended surface globs, expanded against tracked files' },
+      { flag: '--out <path>', description: 'Write the rendered brief to a file instead of stdout' }
+    ],
+    details: [
+      "Reads the task Issue (`vinaya/tranche:<tranche>`-labeled, id `<n>`) and the tree, and fills every section a program can derive: the header `Project:`/`Tier:`/`Closes #N`, the Step 0 worktree line, the dispatch-gate status as the pre-flight line, §4's file list (with consumer packages and a `sha256` premise pin per file), §7 from the `.vinaya/doc-owners` derivation, and every remaining section from the Issue's eight-field Planner rationale. Refuses — naming the missing fact — when a derived section cannot be derived: no Issue, the dispatch gate not clear, or a `--surfaces` glob matching no tracked file.",
+      'Never writes under `aeg-root/` or to the Issue — a brief is pasted to the Developer, never committed. Reads `aeg-root/templates/brief-template.md` at run time for its one fixed sentence and the standing autonomy clause; every other byte is generated from the forge/tree facts.'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'pr create',
     description: 'Open a pull request after full brief-schema validation',
     flags: [

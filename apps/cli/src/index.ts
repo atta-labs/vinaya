@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { archiveCommand, archiveTrancheCommand } from './commands/archive.js'
 import { auditCommand } from './commands/audit.js'
+import { briefRenderCommand } from './commands/brief.js'
 import { checkCommand } from './commands/check.js'
 import { commitMsgCommand } from './commands/commit-msg.js'
 import { demoBreakCommand } from './commands/demo.js'
@@ -121,6 +122,16 @@ try {
         newRoleCommand(rest)
       } else {
         console.error(`Unknown 'new' subcommand: ${subcommand ?? '(none)'} (expected 'check', 'noop-check', or 'role')`)
+        process.exit(2)
+      }
+      break
+    }
+    case 'brief': {
+      const [subcommand, ...rest] = args
+      if (subcommand === 'render') {
+        await briefRenderCommand(rest)
+      } else {
+        console.error(`Unknown 'brief' subcommand: ${subcommand ?? '(none)'} (expected 'render')`)
         process.exit(2)
       }
       break
