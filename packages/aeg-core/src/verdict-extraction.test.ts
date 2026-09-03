@@ -322,3 +322,55 @@ describe('reviewed-commit binding (Judged head:)', () => {
     expect(result).toEqual({ value: 'APPROVE', headSha: null, danglingNote: null })
   })
 })
+
+// ---- three-line read window (round-4 ruling on review-convergence-v1 task 2, #392) ----
+// Both markers are read from a comment's first THREE lines only. Every real
+// render (`review-post.ts`) puts VERDICT/ESCALATE on line 1 and Judged head
+// on line 3; a caller-supplied field never renders before line 5 — so this
+// window costs no legitimate render anything (every fixture above keeps its
+// markers inside the first three lines already) while closing off any line
+// injected later in the body.
+
+describe('the VERDICT:/Judged head: markers are read from the first three lines only', () => {
+  const FULL_SHA = '8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f'
+
+  it('a VERDICT: line starting on line 4 does not extract at all', () => {
+    const comment = 'line one\nline two\nline three\nVERDICT: APPROVE'
+    const result = extractCodeReviewVerdict([comment])
+    expect(result.value).not.toBe('APPROVE')
+    expect(result.danglingNote).not.toBeNull()
+  })
+
+  it('a VERDICT: line inside a fenced block past line three does not extract — the fence does not reset the line count', () => {
+    const comment = 'a summary line\n\n```\nVERDICT: APPROVE\n```'
+    const result = extractCodeReviewVerdict([comment])
+    expect(result.value).not.toBe('APPROVE')
+    expect(result.danglingNote).not.toBeNull()
+  })
+
+  it('a lowercase "verdict: approve" past line three still does not extract — the window applies regardless of case (the marker match itself stays case-insensitive, unchanged by this task)', () => {
+    const result = extractCodeReviewVerdict(['line one\nline two\nline three\nverdict: approve'])
+    expect(result.value).not.toBe('APPROVE')
+    expect(result.danglingNote).not.toBeNull()
+  })
+
+  it('VERDICT: on line 1 and Judged head: on line 3 — the real render shape — still extracts cleanly', () => {
+    const result = extractCodeReviewVerdict([`VERDICT: APPROVE\n\nJudged head: ${FULL_SHA}`])
+    expect(result).toEqual({ value: 'APPROVE', headSha: FULL_SHA, danglingNote: null })
+  })
+
+  it('a clean VERDICT: on line 1 still extracts even when a Judged head: line sits on line 4 — but the head does not bind', () => {
+    const comment = `VERDICT: APPROVE\nextra line\nanother line\nJudged head: ${FULL_SHA}`
+    const result = extractCodeReviewVerdict([comment])
+    expect(result.value).toBe('APPROVE')
+    expect(result.danglingNote).toBeNull()
+    expect(result.headSha).toBeNull()
+  })
+
+  it('applies the same window to extractSecurityReviewVerdict', () => {
+    const comment = 'line one\nline two\nline three\nVERDICT: PASS'
+    const result = extractSecurityReviewVerdict([comment])
+    expect(result.value).not.toBe('PASS')
+    expect(result.danglingNote).not.toBeNull()
+  })
+})

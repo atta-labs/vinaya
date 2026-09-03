@@ -19,6 +19,18 @@
  * `Judged head:`) is rendered by this command's own code from validated
  * enum/sha inputs, never from a caller-supplied string.
  *
+ * Before any post reaches the forge, `checkRenderedComment` runs the exact
+ * same extractors over the rendered text and refuses (exit `2`) unless
+ * exactly the intended verdict comes back and the other role's extractor
+ * finds nothing — a zero-network dry run of the same shape check
+ * self-verification performs after posting. This is what actually makes free
+ * caller text (a finding, `--scope`, `--summary`) safe: `verdict-extraction.ts`
+ * reads only a comment's first three lines, which this command's own
+ * templates always occupy with `VERDICT:`/`ESCALATE:` and `Judged head:` —
+ * no caller field ever renders there (round-4 ruling on `#392`; the
+ * per-field guard layer that used to sit here is gone, replaced by this one
+ * check at the shared boundary).
+ *
  * `--role code-reviewer` and `--role security` are the only two shapes —
  * mirroring `reviewer.md`/`security.md`'s templates exactly, including each
  * doc's own internal consistency rule (a BLOCKER finding forces
@@ -172,6 +184,8 @@ export type CodeReviewInput = TokensInput & {
   specConformance: string
   findings: readonly Finding[]
   scope: string
+  /** Raw `git diff origin/main...HEAD --stat` (or equivalent) output backing the `SCOPE:` claim; null when not supplied. */
+  scopeEvidence: string | null
   tests: string
   docs: string
 }
@@ -181,15 +195,31 @@ const CODE_REVIEW_VERDICT_TEXT: Record<CodeReviewVerdict, string> = {
   REQUEST_CHANGES: 'REQUEST CHANGES'
 }
 
+const FINDING_DESCRIPTION_ID = /^F(\d+)\s+\S+(?:\s+(open|fix-claimed|reproduced|resolved))?:/
+
+/** `null` when the description carries no `F<n>` id at all (an id-less new finding is never a re-review reference). */
+function findingIdState(description: string): { id: string; state: string | null } | null {
+  const m = description.match(FINDING_DESCRIPTION_ID)
+  if (!m) return null
+  return { id: `F${m[1]}`, state: m[2] ?? null }
+}
+
+/** True when a finding's description carries the re-review state `resolved` — kept in the record, but never blocking. */
+function isResolved(finding: Finding): boolean {
+  return findingIdState(finding.description)?.state === 'resolved'
+}
+
 /**
  * The command decides, not the caller. `REQUEST_CHANGES` iff a BLOCKER
  * finding is present; the severity vocabulary is caller-asserted (unchanged
  * from before), but once assigned, the verdict it forces is no longer typed
  * by hand — this generalises the BLOCKER-vs-APPROVE contradiction check that
- * used to live only as a post-hoc refusal.
+ * used to live only as a post-hoc refusal. A finding whose re-review state is
+ * `resolved` keeps its BLOCKER severity for the record but never drives the
+ * verdict — a fix-claimed or reproduced BLOCKER still does.
  */
 export function deriveCodeReviewVerdict(findings: readonly Finding[]): CodeReviewVerdict {
-  return findings.some((f) => f.severity === 'BLOCKER') ? 'REQUEST_CHANGES' : 'APPROVE'
+  return findings.some((f) => f.severity === 'BLOCKER' && !isResolved(f)) ? 'REQUEST_CHANGES' : 'APPROVE'
 }
 
 /**
@@ -200,11 +230,14 @@ export function deriveCodeReviewVerdict(findings: readonly Finding[]): CodeRevie
  */
 export function renderCodeReviewComment(input: CodeReviewInput): string {
   const sorted = sortBySeverity(input.findings, CODE_REVIEW_SEVERITIES)
-  return [
-    `VERDICT: ${CODE_REVIEW_VERDICT_TEXT[input.verdict]}`,
-    '',
-    `Judged head: ${input.headSha}`,
-    '',
+  const lines = [`VERDICT: ${CODE_REVIEW_VERDICT_TEXT[input.verdict]}`, '', `Judged head: ${input.headSha}`, '']
+  if (input.scopeEvidence !== null) {
+    // Directly below the verdict block, per `reviewer.md`'s own evidence
+    // rule — safe as free multi-line text now that the gate's extractors
+    // read only a comment's first three lines (round-4 ruling, `#392`).
+    lines.push('```', input.scopeEvidence, '```', '')
+  }
+  lines.push(
     `BRIEF CONFORMANCE: ${input.briefConformance}`,
     `SPEC CONFORMANCE: ${input.specConformance}`,
     '',
@@ -217,7 +250,8 @@ export function renderCodeReviewComment(input: CodeReviewInput): string {
     '',
     renderTokensLine('review', 'Reviewer', input),
     renderCastByLine('Reviewer', input.sessionId)
-  ].join('\n')
+  )
+  return lines.join('\n')
 }
 
 // --- security shape ------------------------------------------------------------
@@ -235,9 +269,13 @@ export type SecurityInput = TokensInput & {
   secretsEvidence: string | null
 }
 
-/** Same derivation for the security shape: `FAIL` iff a CRITICAL or HIGH finding is present. */
+/**
+ * Same derivation for the security shape: `FAIL` iff a CRITICAL or HIGH
+ * finding is present. A `resolved` finding keeps its severity for the
+ * record but never drives the verdict, same as the code-review shape.
+ */
 export function deriveSecurityVerdict(findings: readonly Finding[]): SecurityVerdict {
-  return findings.some((f) => f.severity === 'CRITICAL' || f.severity === 'HIGH') ? 'FAIL' : 'PASS'
+  return findings.some((f) => (f.severity === 'CRITICAL' || f.severity === 'HIGH') && !isResolved(f)) ? 'FAIL' : 'PASS'
 }
 
 /** `security.md`'s "none found" claim, tolerant of `none-found`/extra whitespace/case. */
@@ -277,86 +315,90 @@ export function renderSecurityComment(input: SecurityInput): string {
   return lines.join('\n')
 }
 
-// --- injection guard ---------------------------------------------------------
-
-const VERDICT_SUBSTRING = 'VERDICT'
+// --- pre-render check ---------------------------------------------------------
 
 /**
- * Every caller-supplied free-text field (name, value) whose value contains
- * the literal substring `VERDICT`, in the given order. Every field this
- * command ever splices verbatim into a rendered comment is caller-controlled
- * text this command does not otherwise constrain: `--summary`, a
- * findings-file description, `--brief-conformance`, `--spec-conformance`,
- * `--scope`, `--tests`, `--docs`, `--config-scan`, `--secrets`, the
- * `--secrets-evidence-file` contents, `--task-id`, `--model`, `--cost`, and
- * the session id. A multi-line value containing `VERDICT: <anything>` would,
- * once spliced in, start a new line the gate's line-anchored extractors read
- * exactly like a real structural line. The extractors (`verdict-extraction.ts`)
- * pick the MOST RECENT comment carrying any matching line, then read the
- * FIRST such line within THAT comment — not "the last matching line wins";
- * an escalation comment carries no legitimate `VERDICT:` line of its own, so
- * an injected one there would be that comment's first (and only) match.
- * Checked before any of these fields reaches a render, let alone a post.
+ * Round-4 ruling on `#392`: with `verdict-extraction.ts`'s extractors now
+ * windowed to a comment's first three lines (never any caller-supplied field,
+ * which always renders at line 5 or later), no per-field injection guard is
+ * needed any more — one check at the render boundary replaces the whole
+ * layer. Before any `gh` call, this runs the SAME two extractors the merge
+ * gate calls over the text this command is about to post, and refuses unless
+ * exactly the intended one returns the intended value and the other returns
+ * none (an escalation: both return none). A caller-supplied field that
+ * somehow still produced a stray structural-looking line would be caught
+ * here, mechanically, before it ever reaches the forge — not assumed safe
+ * because the render function "shouldn't" do that.
  */
-export function fieldsContainingVerdict(fields: readonly { name: string; value: string }[]): string[] {
-  return fields.filter((f) => f.value.includes(VERDICT_SUBSTRING)).map((f) => f.name)
+export type RenderCheckResult = { ok: true } | { ok: false; reason: string }
+
+export type RenderExpectation =
+  | { kind: 'code-review'; verdict: CodeReviewVerdict }
+  | { kind: 'security'; verdict: SecurityVerdict }
+  | { kind: 'escalation' }
+
+export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
+  const code = extractCodeReviewVerdict([body])
+  const security = extractSecurityReviewVerdict([body])
+
+  if (expectation.kind === 'escalation') {
+    if (code.danglingNote === null) {
+      return {
+        ok: false,
+        reason: `the rendered comment re-parses as a code-review VERDICT ("${code.value}") through extractCodeReviewVerdict — an escalation must carry none.`
+      }
+    }
+    if (security.danglingNote === null) {
+      return {
+        ok: false,
+        reason: `the rendered comment re-parses as a security VERDICT ("${security.value}") through extractSecurityReviewVerdict — an escalation must carry none.`
+      }
+    }
+    return { ok: true }
+  }
+
+  if (expectation.kind === 'code-review') {
+    const expected = CODE_REVIEW_VERDICT_TEXT[expectation.verdict]
+    if (code.danglingNote !== null || code.value !== expected) {
+      return {
+        ok: false,
+        reason: `the rendered comment does not re-parse as VERDICT "${expected}" through extractCodeReviewVerdict (got "${code.value}").`
+      }
+    }
+    if (security.danglingNote === null) {
+      return {
+        ok: false,
+        reason: `the rendered comment also re-parses as a security VERDICT ("${security.value}") through extractSecurityReviewVerdict — cross-role contamination.`
+      }
+    }
+    return { ok: true }
+  }
+
+  // security
+  if (code.danglingNote === null) {
+    return {
+      ok: false,
+      reason: `the rendered comment also re-parses as a code-review VERDICT ("${code.value}") through extractCodeReviewVerdict — cross-role contamination.`
+    }
+  }
+  if (security.danglingNote !== null || security.value !== expectation.verdict) {
+    return {
+      ok: false,
+      reason: `the rendered comment does not re-parse as VERDICT "${expectation.verdict}" through extractSecurityReviewVerdict (got "${security.value}").`
+    }
+  }
+  return { ok: true }
 }
 
-/**
- * Every caller-supplied field (name, value) whose value contains a raw `\n`
- * or `\r`. Every field this list covers renders as one `KEY: value` line in
- * the posted comment (`Tokens: ...`, `BRIEF CONFORMANCE: ...`, `SCOPE: ...`,
- * and so on) — a value that itself smuggled a newline would let the caller
- * start an arbitrary NEW line in the rendered comment, independent of and in
- * addition to the `VERDICT`-substring risk `fieldsContainingVerdict` guards.
- * `--summary`, a finding's description, and `--secrets-evidence-file`'s
- * contents are deliberately NOT covered here: the first two are structurally
- * incapable of carrying a raw newline (a finding is parsed one line at a
- * time; free multi-paragraph prose is `--summary`'s whole point), and the
- * third is fenced, multi-line scanner output by design.
- */
-export function fieldsContainingNewline(fields: readonly { name: string; value: string }[]): string[] {
-  return fields.filter((f) => /[\r\n]/.test(f.value)).map((f) => f.name)
-}
-
-/**
- * A hard process guard, not a `CheckError` finding — same class as
- * `pr-verify-evidence.ts`'s `assertNoBaseOverride`/dirty-worktree refusals:
- * plain stderr, exit `2`, no forge contact yet possible at this point in
- * every call site.
- */
-function refuseFieldGuard(fieldName: string, reason: string, recovery: string): never {
-  process.stderr.write(`review post: REFUSED — ${fieldName} ${reason}.\n${recovery}\n`)
+/** A hard process guard, not a `CheckError` finding: plain stderr, exit `2`, before the post `gh` call. */
+function refusePreRenderCheck(reason: string): never {
+  process.stderr.write(`review post: REFUSED — ${reason}\nNothing was posted.\n`)
   process.exit(2)
 }
 
-/** Runs the `VERDICT`-substring guard over `fields`, refusing (exit `2`) on the first offender. */
-function guardAgainstVerdictInjection(fields: readonly { name: string; value: string }[]): void {
-  const offending = fieldsContainingVerdict(fields)
-  if (offending.length > 0) {
-    refuseFieldGuard(
-      offending[0] as string,
-      'contains the substring `VERDICT`',
-      "A caller-supplied field spliced verbatim into the rendered comment could start a line the merge gate's\nextractors read as a real VERDICT — the exact defect this command exists to close. Remove the literal\nword VERDICT from the field, then re-run."
-    )
-  }
-}
-
-/** Runs the newline guard over `fields`, refusing (exit `2`) on the first offender. */
-function guardAgainstNewlines(fields: readonly { name: string; value: string }[]): void {
-  const offending = fieldsContainingNewline(fields)
-  if (offending.length > 0) {
-    refuseFieldGuard(
-      offending[0] as string,
-      'contains a newline or carriage return',
-      'This field renders as a single `KEY: value` line in the posted comment; a raw newline would let it\nstart an arbitrary new line instead. Remove the newline from the field, then re-run.'
-    )
-  }
-}
-
-/** `--findings-file` description fields, named by line for a precise refusal. */
-function findingDescriptionFields(findings: readonly Finding[]): { name: string; value: string }[] {
-  return findings.map((f, i) => ({ name: `\`--findings-file\` (finding ${i + 1} description)`, value: f.description }))
+function checkRenderedCommentOrRefuse(body: string, expectation: RenderExpectation): void {
+  const result = checkRenderedComment(body, expectation)
+  if (!result.ok) refusePreRenderCheck(result.reason)
 }
 
 // --- escalation ------------------------------------------------------------
@@ -380,14 +422,16 @@ export type EscalationInput = TokensInput & {
 /**
  * An escalation is its own review outcome, never a finding stuffed inside a
  * REQUEST CHANGES. Renders `ESCALATE: <class>` where a verdict comment
- * renders `VERDICT: <value>` — the literal substring `VERDICT` never appears
- * anywhere in this output: the merge-verdict workflow fires on that
- * substring alone (`.github/workflows/vinaya-review-verdict.yml`), and an
- * escalation must never be mistaken for "a pass ran". This is enforced, not
- * merely assumed by construction — `reviewPostCommand` runs every
- * caller-supplied field this function's inputs derive from (`--summary`
- * chief among them) through `guardAgainstVerdictInjection` before render,
- * refusing before posting anything if any of them contains the substring.
+ * renders `VERDICT: <value>` — the merge-verdict workflow fires on the
+ * substring `VERDICT` alone (`.github/workflows/vinaya-review-verdict.yml`),
+ * and an escalation must never be mistaken for "a pass ran". Two structural
+ * facts make this safe even though `input.summary` is free caller text:
+ * `verdict-extraction.ts`'s extractors read only a comment's first three
+ * lines, and `input.summary` never renders before line 5 here — so it
+ * cannot reach either marker's read window at all. `reviewPostCommand` still
+ * confirms this mechanically, not by construction alone: `checkRenderedComment`
+ * runs both extractors over this exact rendered text before any `gh` call,
+ * refusing to post unless both return no verdict.
  */
 export function renderEscalationComment(input: EscalationInput): string {
   return [
@@ -540,7 +584,6 @@ export function verifyPostedEscalation(comments: readonly ReviewGateComment[], p
 
 const FINDING_ID_LINE = /^\d+\.\s+\[[A-Z]+\]\s+\S+\s+—\s+F(\d+)\b/gm
 const JUDGED_HEAD_LINE = /^[ \t]*Judged head:\s*([0-9a-f]{7,40})\b/im
-const FINDING_DESCRIPTION_ID = /^F(\d+)\s+\S+(?:\s+(open|fix-claimed|reproduced|resolved))?:/
 
 /**
  * Reads the prior round's finding ids and judged head straight out of a
@@ -552,13 +595,6 @@ export function parsePriorFindingIds(commentBody: string): { ids: string[]; judg
   const ids = [...commentBody.matchAll(FINDING_ID_LINE)].map((m) => `F${m[1]}`)
   const headMatch = commentBody.match(JUDGED_HEAD_LINE)
   return { ids: [...new Set(ids)], judgedHead: headMatch ? (headMatch[1] as string).toLowerCase() : null }
-}
-
-/** `null` when the description carries no `F<n>` id at all (an id-less new finding is never a re-review reference). */
-function findingIdState(description: string): { id: string; state: string | null } | null {
-  const m = description.match(FINDING_DESCRIPTION_ID)
-  if (!m) return null
-  return { id: `F${m[1]}`, state: m[2] ?? null }
 }
 
 /** Every prior id with no matching `F<n> <class> <state>:` description in the new findings file, in prior-list order. */
@@ -821,16 +857,38 @@ function fetchComments(pr: string): ReviewGateComment[] {
  * worktree) fails here, not with a bare git error — the refusal names the
  * missing sha so the reviewer knows to fetch it.
  */
-function computeChangedRanges(pr: string, judgedHead: string): Record<string, Array<[number, number]>> {
+/**
+ * `resolvedHead` is the PR's real head (`resolveHeadSha`'s own return value)
+ * — never the local checkout's implicit `HEAD`, which can drift from it in
+ * any worktree not freshly synced to the PR. Fetches `resolvedHead` from
+ * `origin` first (by sha — GitHub serves a reachable commit sha directly, no
+ * branch name needed) so the diff has both ends available regardless of
+ * whether this worktree's local `HEAD` happens to match, then diffs
+ * `judgedHead...resolvedHead`. Refuses, naming whichever sha is the problem,
+ * if either end is not resolvable.
+ */
+function computeChangedRanges(
+  pr: string,
+  judgedHead: string,
+  resolvedHead: string
+): Record<string, Array<[number, number]>> {
+  try {
+    execFileSync('git', ['fetch', 'origin', resolvedHead], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  } catch (err) {
+    refuseCmd(
+      `Could not compute the round-two diff for PR ${pr}: \`git fetch origin ${resolvedHead}\` failed (${err instanceof Error ? err.message : String(err)}) — the PR's current head is not reachable from this worktree's origin remote.`,
+      'Confirm the PR head is pushed to origin and reachable, then re-run.'
+    )
+  }
   let out: string
   try {
-    out = execFileSync('git', ['diff', `${judgedHead}...HEAD`, '-U0'], {
+    out = execFileSync('git', ['diff', `${judgedHead}...${resolvedHead}`, '-U0'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     })
   } catch (err) {
     refuseCmd(
-      `Could not compute the round-two diff for PR ${pr}: \`git diff ${judgedHead}...HEAD -U0\` failed (${err instanceof Error ? err.message : String(err)}) — the previously judged head is likely not in this worktree's history.`,
+      `Could not compute the round-two diff for PR ${pr}: \`git diff ${judgedHead}...${resolvedHead} -U0\` failed (${err instanceof Error ? err.message : String(err)}) — the previously judged head ${judgedHead} is likely not in this worktree's history.`,
       `Fetch the missing commit (e.g. \`git fetch origin ${judgedHead}\`) into this worktree, then re-run.`
     )
   }
@@ -867,6 +925,7 @@ const VALUE_FLAGS = [
   '--pr',
   '--role',
   '--scope',
+  '--scope-evidence-file',
   '--secrets',
   '--secrets-evidence-file',
   '--spec-conformance',
@@ -951,6 +1010,7 @@ export function rejectUnknownFlags(
 /** Every prior id named with a state, or the invocation is refused before either forge write below it runs. */
 function checkRoundTwo(
   pr: string,
+  resolvedHead: string,
   comments: readonly ReviewGateComment[],
   principalAllowlist: readonly string[],
   extract: (comments: string[]) => VerdictExtraction,
@@ -971,7 +1031,7 @@ function checkRoundTwo(
 
   if (judgedHead === null) return // the prior comment carries no `Judged head:` line — cannot bound a delta.
   const nonBlocking = findings.filter((f) => !blockingSeverities.includes(f.severity))
-  const changedRanges = computeChangedRanges(pr, judgedHead)
+  const changedRanges = computeChangedRanges(pr, judgedHead, resolvedHead)
   const outside = findingsOutsideDelta(nonBlocking, changedRanges)
   if (outside.length > 0) {
     refuseCmd(
@@ -1008,23 +1068,6 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   const roleLabel: 'Reviewer' | 'Security' = role === 'code-reviewer' ? 'Reviewer' : 'Security'
   const tokensRole: 'review' | 'security' = role === 'code-reviewer' ? 'review' : 'security'
 
-  // Shared across every path — checked before the escalate/verdict split, so
-  // no branch below can reach a forge call with one of these still dirty.
-  guardAgainstNewlines([
-    { name: '`--task-id`', value: taskId },
-    { name: '`--model`', value: model },
-    { name: '`--cost`', value: cost },
-    { name: '`--tokens-in`', value: tokensIn },
-    { name: '`--tokens-out`', value: tokensOut },
-    { name: 'the session id', value: sessionId }
-  ])
-  guardAgainstVerdictInjection([
-    { name: '`--task-id`', value: taskId },
-    { name: '`--model`', value: model },
-    { name: '`--cost`', value: cost },
-    { name: 'the session id', value: sessionId }
-  ])
-
   const escalateRaw = flags.get('--escalate')
   const verdictRaw = flags.get('--verdict')
 
@@ -1053,8 +1096,6 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
         'Post the verdict instead (`--verdict ...`), or drop the blocking finding from the escalation.'
       )
     }
-    guardAgainstVerdictInjection([{ name: '`--summary`', value: summary }, ...findingDescriptionFields(findings)])
-
     const headSha = resolveHeadSha(pr)
     const body = renderEscalationComment({
       ...tokens,
@@ -1064,6 +1105,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       role: tokensRole,
       roleLabel
     })
+    checkRenderedCommentOrRefuse(body, { kind: 'escalation' })
     const url = postComment(pr, body)
 
     let comments: ReviewGateComment[]
@@ -1110,23 +1152,16 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     const scope = requireFlag(flags, '--scope')
     const tests = requireFlag(flags, '--tests')
     const docs = requireFlag(flags, '--docs')
-    const codeReviewLineFields = [
-      { name: '`--brief-conformance`', value: briefConformance },
-      { name: '`--spec-conformance`', value: specConformance },
-      { name: '`--scope`', value: scope },
-      { name: '`--tests`', value: tests },
-      { name: '`--docs`', value: docs }
-    ]
-    guardAgainstNewlines(codeReviewLineFields)
-    guardAgainstVerdictInjection([...codeReviewLineFields, ...findingDescriptionFields(findings)])
+    const scopeEvidenceFile = flags.get('--scope-evidence-file')
+    let scopeEvidence: string | null = null
+    if (scopeEvidenceFile) {
+      try {
+        scopeEvidence = readFileSync(scopeEvidenceFile, 'utf8')
+      } catch {
+        refuseCmd(`Could not read scope evidence file at ${scopeEvidenceFile}.`, 'Check the path and re-run.')
+      }
+    }
 
-    // Same trust anchor `checkReviewGate` itself uses — the repo's own
-    // `principals` field on the default branch (never the PR's checkout),
-    // falling back to the hardcoded `PRINCIPAL_ALLOWLIST` on any read
-    // failure. This itself calls `gh` (`ghFetchTrustAnchorConfig`), so it
-    // must not run until every local guard above has cleared — it is the
-    // first forge contact this path may make, same as `resolveHeadSha`
-    // right after it.
     const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
 
     const headSha = resolveHeadSha(pr)
@@ -1140,7 +1175,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
         'Check `gh auth status`/network, then re-run.'
       )
     }
-    checkRoundTwo(pr, comments, principalAllowlist, extractCodeReviewVerdict, findings, ['BLOCKER'])
+    checkRoundTwo(pr, headSha, comments, principalAllowlist, extractCodeReviewVerdict, findings, ['BLOCKER'])
 
     const input: CodeReviewInput = {
       ...tokens,
@@ -1150,10 +1185,12 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       specConformance,
       findings,
       scope,
+      scopeEvidence,
       tests,
       docs
     }
     const body = renderCodeReviewComment(input)
+    checkRenderedCommentOrRefuse(body, { kind: 'code-review', verdict })
     const url = postComment(pr, body)
 
     let postComments: ReviewGateComment[]
@@ -1214,23 +1251,6 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       refuseCmd(`Could not read secrets evidence file at ${secretsEvidenceFile}.`, 'Check the path and re-run.')
     }
   }
-  guardAgainstNewlines([
-    { name: '`--config-scan`', value: configScan },
-    { name: '`--secrets`', value: secrets }
-  ])
-  guardAgainstVerdictInjection([
-    { name: '`--config-scan`', value: configScan },
-    { name: '`--secrets`', value: secrets },
-    ...(secretsEvidence !== null ? [{ name: '`--secrets-evidence-file`', value: secretsEvidence }] : []),
-    ...findingDescriptionFields(findings)
-  ])
-
-  // Same trust anchor `checkReviewGate` itself uses — the repo's own
-  // `principals` field on the default branch (never the PR's checkout),
-  // falling back to the hardcoded `PRINCIPAL_ALLOWLIST` on any read failure.
-  // This itself calls `gh` (`ghFetchTrustAnchorConfig`), so it must not run
-  // until every local guard above has cleared — it is the first forge
-  // contact this path may make, same as `resolveHeadSha` right after it.
   const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
 
   const headSha = resolveHeadSha(pr)
@@ -1244,7 +1264,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       'Check `gh auth status`/network, then re-run.'
     )
   }
-  checkRoundTwo(pr, comments, principalAllowlist, extractSecurityReviewVerdict, findings, ['CRITICAL', 'HIGH'])
+  checkRoundTwo(pr, headSha, comments, principalAllowlist, extractSecurityReviewVerdict, findings, ['CRITICAL', 'HIGH'])
 
   const input: SecurityInput = {
     ...tokens,
@@ -1256,6 +1276,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     secretsEvidence
   }
   const body = renderSecurityComment(input)
+  checkRenderedCommentOrRefuse(body, { kind: 'security', verdict })
   const url = postComment(pr, body)
 
   let postComments: ReviewGateComment[]

@@ -25,6 +25,14 @@
  * code-reviewer.md`/`security-reviewer.md` require verbatim) — tightening
  * to it closes the gap without inventing a new convention.
  *
+ * Windowed to the comment's first THREE lines only (review-convergence-v1
+ * task 2, round 4, `#392`) — never a line anywhere else in the body. Every
+ * shape this package's own callers render puts the `VERDICT:`/`ESCALATE:`
+ * line first and `Judged head:` third; a caller-supplied field (findings,
+ * conformance prose, a summary) never renders before line 5. Restricting the
+ * read window closes a caller-controlled-text injection route without
+ * narrowing what any real render needs matched.
+ *
  * The anchor tolerates a leading markdown EMPHASIS run — one to three `*` or
  * `_`, immediately abutting the token — so `**VERDICT: APPROVE**` and
  * `_VERDICT: APPROVE_` match (PR #636: the reviewer subagent emitted the
@@ -87,8 +95,27 @@
 
 const HEAD_SHA_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Judged head:\s*([0-9a-f]{7,40})(?![A-Za-z0-9])/im
 
+/**
+ * Round-4 ruling on `#392`: both markers are read from a comment's first
+ * THREE lines only, never anywhere else in the body. Every shape this
+ * package itself renders (`review-post.ts`'s `renderCodeReviewComment`/
+ * `renderSecurityComment`/`renderEscalationComment`) puts `VERDICT:`/
+ * `ESCALATE:` on line 1 and `Judged head:` on line 3 — every caller-supplied
+ * field (findings, conformance prose, scope, a summary) renders strictly
+ * after that, starting at line 5 at the earliest. Restricting the window to
+ * lines 1–3 costs no real render anything: it is a strictly narrower read
+ * than "anywhere in the body," and it closes the class of defect that
+ * motivated this ruling — a caller-supplied field that smuggled a raw
+ * newline followed by a `VERDICT:`- or `Judged head:`-shaped line could
+ * previously inject a structural line from outside the command's own
+ * three-line skeleton; that line can now never be read as one.
+ */
+function firstThreeLines(comment: string): string {
+  return comment.split('\n').slice(0, 3).join('\n')
+}
+
 function extractHeadSha(comment: string): string | null {
-  const m = comment.match(HEAD_SHA_PATTERN)
+  const m = firstThreeLines(comment).match(HEAD_SHA_PATTERN)
   return m ? (m[1] as string).toLowerCase() : null
 }
 
@@ -103,10 +130,10 @@ function extractHeadSha(comment: string): string | null {
 export type VerdictExtraction = { value: string; headSha: string | null; danglingNote: string | null }
 
 function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: string): VerdictExtraction {
-  const clearHits = comments.filter((c) => valuePattern.test(c))
+  const clearHits = comments.filter((c) => valuePattern.test(firstThreeLines(c)))
   if (clearHits.length > 0) {
     const latest = clearHits[clearHits.length - 1] as string
-    const m = latest.match(valuePattern) as RegExpMatchArray
+    const m = firstThreeLines(latest).match(valuePattern) as RegExpMatchArray
     return {
       value: (m[1] as string).toUpperCase().replace(/[_-]/g, ' '),
       headSha: extractHeadSha(latest),

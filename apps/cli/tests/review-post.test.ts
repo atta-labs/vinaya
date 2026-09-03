@@ -161,6 +161,7 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
       specConformance: 'clean',
       findings: [],
       scope: 'clean',
+      scopeEvidence: null,
       tests: 'honest',
       docs: 'tier-appropriate'
     })
@@ -179,6 +180,7 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
       specConformance: 'n/a',
       findings: [{ severity: 'BLOCKER', location: 'a.ts:1', description: 'bug' }],
       scope: 'clean',
+      scopeEvidence: null,
       tests: 'honest',
       docs: 'tier-appropriate'
     })
@@ -197,6 +199,7 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
       specConformance: 'x',
       findings: [],
       scope: 'x',
+      scopeEvidence: null,
       tests: 'x',
       docs: 'x'
     })
@@ -214,6 +217,7 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
       specConformance: 'x',
       findings: [],
       scope: 'x',
+      scopeEvidence: null,
       tests: 'x',
       docs: 'x'
     })

@@ -14,12 +14,17 @@ const forged = (body: string): ReviewGateComment => ({ body, author: 'drive-by-a
 /** The PR's current head throughout this file's main test block, unless a test says otherwise. */
 const HEAD_SHA = '8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f'
 
+// Judged head: sits on line 3, matching the real render shape
+// (`review-post.ts`'s templates put `VERDICT:`/`Judged head:` on lines 1/3,
+// never later) — the extractors now read both markers from a comment's
+// first three lines only (round-4 ruling, `#392`). These fixtures test
+// decoration, not marker position, so the decoration moves after the head.
 const APPROVE_COMMENT = principal(
-  `VERDICT: APPROVE\n\nBRIEF CONFORMANCE: clean. Looks good.\n\nJudged head: ${HEAD_SHA}`
+  `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}\n\nBRIEF CONFORMANCE: clean. Looks good.`
 )
-const PASS_COMMENT = principal(`VERDICT: PASS\n\nFINDINGS: none.\n\nJudged head: ${HEAD_SHA}`)
-const REQUEST_CHANGES_COMMENT = principal(`VERDICT: REQUEST_CHANGES\n\nsee inline notes.\n\nJudged head: ${HEAD_SHA}`)
-const FAIL_COMMENT = principal(`VERDICT: FAIL\n\nhardcoded credential found.\n\nJudged head: ${HEAD_SHA}`)
+const PASS_COMMENT = principal(`VERDICT: PASS\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS: none.`)
+const REQUEST_CHANGES_COMMENT = principal(`VERDICT: REQUEST_CHANGES\n\nJudged head: ${HEAD_SHA}\n\nsee inline notes.`)
+const FAIL_COMMENT = principal(`VERDICT: FAIL\n\nJudged head: ${HEAD_SHA}\n\nhardcoded credential found.`)
 
 describe('checkReviewGate', () => {
   it('passes when both verdicts are clean (APPROVE + PASS) and both cover the current head', () => {
@@ -159,8 +164,8 @@ describe('checkReviewGate', () => {
         comments: [
           APPROVE_COMMENT,
           PASS_COMMENT,
-          principal(`VERDICT: APPROVE\n\nsupersedes my prior pass.\n\nJudged head: ${newHeadAfterPush}`),
-          principal(`VERDICT: PASS\n\nsupersedes my prior pass.\n\nJudged head: ${newHeadAfterPush}`)
+          principal(`VERDICT: APPROVE\n\nJudged head: ${newHeadAfterPush}\n\nsupersedes my prior pass.`),
+          principal(`VERDICT: PASS\n\nJudged head: ${newHeadAfterPush}\n\nsupersedes my prior pass.`)
         ],
         labels: [],
         waiverLabelActor: null,
@@ -383,11 +388,11 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
 
 describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)', () => {
   const adopterApprove = (author: string) => ({
-    body: `VERDICT: APPROVE\n\nclean.\n\nJudged head: ${HEAD_SHA}`,
+    body: `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}\n\nclean.`,
     author
   })
   const adopterPass = (author: string) => ({
-    body: `VERDICT: PASS\n\nno findings.\n\nJudged head: ${HEAD_SHA}`,
+    body: `VERDICT: PASS\n\nJudged head: ${HEAD_SHA}\n\nno findings.`,
     author
   })
 
@@ -508,7 +513,7 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
       comments: [
         principal(`VERDICT: APPROVE\n\nJudged head: ${PR_HEAD}`),
         principal(
-          `VERDICT: PASS\n\nReviewed at head \`${SUPERSEDED_HEAD}\`.\n\nJudged head: ${SUPERSEDED_HEAD}\n\nSECRETS: none found.`
+          `VERDICT: PASS\n\nJudged head: ${SUPERSEDED_HEAD}\n\nReviewed at head \`${SUPERSEDED_HEAD}\`.\n\nSECRETS: none found.`
         )
       ],
       labels: [],
