@@ -34,6 +34,7 @@
 
 import { createHash } from 'node:crypto'
 import { ANCHOR_FIELDS, anchoredRegionBounds } from './anchored-region'
+import { isPrincipal } from './waiver-label'
 
 /**
  * The one marker grammar both the writer (`vinaya pr create`) and the reader
@@ -90,7 +91,7 @@ export type PrBodyFrozenResult = { status: PrBodyFrozenStatus; errors: string[] 
  */
 function findMarker(comments: readonly PrBodyFrozenComment[], principalAllowlist: readonly string[]): string | null {
   for (const comment of comments) {
-    if (comment.author === null || !principalAllowlist.includes(comment.author)) continue
+    if (!isPrincipal(comment.author, principalAllowlist as string[])) continue
     const match = BODY_HASH_MARKER_PATTERN.exec(comment.body)
     if (match) return (match[1] as string).toLowerCase()
   }

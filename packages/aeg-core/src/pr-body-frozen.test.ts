@@ -146,4 +146,14 @@ describe('checkPrBodyFrozen', () => {
     })
     expect(result.status).toBe('info')
   })
+
+  it('accepts a marker comment whose author case differs from the allowlist entry', () => {
+    const hash = authoredRegionHash(BASE_BODY)
+    const result = checkPrBodyFrozen({
+      body: BASE_BODY,
+      comments: withMarkerComment(hash, 'DaniBoomerang'),
+      principalAllowlist: PRINCIPALS
+    })
+    expect(result.status).toBe('pass')
+  })
 })
