@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs'
+import { readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { checkBareDigits } from '../../src/checks/body-bare-digits-logic'
@@ -789,11 +789,19 @@ describe('body-bare-digits — <details> block masking', () => {
 })
 
 // ---------- check bin ships executable — round 1's own MINOR, open since the very first push ----------
+// Widened (task 5, #378 review round) from a single named file to every file in the
+// directory: the original guard caught check-body-bare-digits.ts's own missing exec
+// bit but would have stayed silent had a DIFFERENT bin shipped the same way — which
+// is exactly what happened to check-pr-body-frozen.ts (mode 100644, this same PR).
 
 describe('body-bare-digits — check bin file mode', () => {
-  it('check-body-bare-digits.ts ships with mode 100755 — the exact class of bug that caused red CI in round 1 of this PR', () => {
-    const binPath = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin', 'check-body-bare-digits.ts')
-    const mode = statSync(binPath).mode & 0o777
-    expect(mode).toBe(0o755)
+  it('every file in apps/cli/src/checks/bin/ ships with mode 100755 — the exact class of bug that caused red CI in round 1 of this PR', () => {
+    const binDir = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin')
+    const files = readdirSync(binDir)
+    expect(files.length).toBeGreaterThan(0)
+    for (const file of files) {
+      const mode = statSync(join(binDir, file)).mode & 0o777
+      expect(mode).toBe(0o755)
+    }
   })
 })
