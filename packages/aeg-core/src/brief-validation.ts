@@ -669,6 +669,42 @@ export function checkConsumerTests(prBody: string, consumersOf: (pkg: string) =>
   return errors.length === 0 ? { status: 'pass', errors: [] } : { status: 'fail', errors }
 }
 
+/** A check bin filename (`check-<slug>.ts`) — the shape both a §4 "Create"/"Modify" entry and a registry entry use for a check's own name. */
+const CHECK_NAME_RE = /\bcheck-[a-z0-9-]+(?:\.ts)?\b/
+
+/** A command that writes to the forge — as opposed to a read-only query — the class this rule wants a `Defeat cases:` line for. */
+const FORGE_WRITE_COMMAND_RE =
+  /\bgh\s+(?:pr|issue)\s+(?:create|merge|close|comment|edit|review)\b|\bgit\s+push\b|\bvinaya\s+pr\s+(?:create|report\s+--write)\b/i
+
+const DEFEAT_CASES_RE = /defeat cases\s*:/i
+
+/**
+ * Rule (v) — Principal ruling amending Issue #385: a brief whose `§4`
+ * names a check (a `check-<slug>.ts` bin, or its registry entry) or a
+ * forge-writing command (`gh pr create`, `git push`, `vinaya pr create`, …)
+ * must carry a `Defeat cases:` line in `§6` — the inputs that would defeat
+ * the check, or the ones a forge-writing command must not accidentally
+ * trigger on. A check or a write path shipped with no stated defeat case is
+ * exactly the kind of untested edge this task's own sibling rules exist to
+ * close for a brief's prose claims; this one closes it for the check/command
+ * itself.
+ */
+export function checkDefeatCases(prBody: string): BriefSectionResult {
+  const section4 = extractNumberedSection(prBody, 4)
+  if (!section4) return { status: 'pass', errors: [] }
+  if (!CHECK_NAME_RE.test(section4) && !FORGE_WRITE_COMMAND_RE.test(section4)) return { status: 'pass', errors: [] }
+
+  const section6 = extractNumberedSection(prBody, 6) ?? ''
+  if (DEFEAT_CASES_RE.test(section6)) return { status: 'pass', errors: [] }
+
+  return {
+    status: 'fail',
+    errors: [
+      'brief-validation defeat cases: §4 names a check or a forge-writing command, but §6 carries no `Defeat cases:` line — name the inputs that would defeat this check, or that this command must not accidentally trigger on.'
+    ]
+  }
+}
+
 /** Composition knobs for `checkBriefSections` — see each field. */
 export type BriefSectionsOptions = {
   /**
@@ -720,6 +756,7 @@ export function checkBriefSections(
     checkNoUnpinnedCodeClaims(prBody),
     checkCommandsCarryOutput(prBody),
     checkConsumerTests(prBody, consumersOf),
+    checkDefeatCases(prBody),
     ...(requireClosesN ? [checkClosesN(prBody)] : [])
   ]
   return { errors: results.flatMap((r) => r.errors) }

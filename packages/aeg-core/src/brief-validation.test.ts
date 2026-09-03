@@ -5,6 +5,7 @@ import {
   checkClosesN,
   checkCommandsCarryOutput,
   checkConsumerTests,
+  checkDefeatCases,
   checkDocUpdateList,
   checkForField,
   checkForgeTitle,
@@ -828,6 +829,38 @@ ${extra}
 
   it('passes trivially when no §4 section exists', () => {
     const result = checkConsumerTests('no surface map here', consumersOfAegForgeState)
+    expect(result.status).toBe('pass')
+  })
+})
+
+describe('checkDefeatCases', () => {
+  it('fails when §4 names a check with no Defeat cases: line in §6', () => {
+    const body = `
+### 4. Technical surface map
+
+- Create \`apps/cli/src/checks/bin/check-doctrine-no-procedures.ts\`.
+
+### 6. Numbered parts
+
+1. Wire the registry entry.
+`
+    const result = checkDefeatCases(body)
+    expect(result.status).toBe('fail')
+  })
+
+  it('passes when §6 carries a Defeat cases: line', () => {
+    const body = `
+### 4. Technical surface map
+
+- Create \`apps/cli/src/checks/bin/check-doctrine-no-procedures.ts\`.
+
+### 6. Numbered parts
+
+1. Wire the registry entry.
+
+Defeat cases: a fenced block with two commands inside the AEG:VENDOR-EXAMPLE anchor must still pass.
+`
+    const result = checkDefeatCases(body)
     expect(result.status).toBe('pass')
   })
 })

@@ -74,6 +74,7 @@ export {
   checkClosesN as checkBriefClosesN,
   checkCommandsCarryOutput,
   checkConsumerTests,
+  checkDefeatCases,
   checkDocUpdateList,
   checkForField,
   checkForgeTitle,
