@@ -143,6 +143,7 @@ export const CLI_CHECK_RING: Readonly<Record<string, 0 | 1 | 2>> = {
   'doctrine-no-procedures': 0,
   'doctrine-portability': 0,
   'workspace-escape': 0,
+  'exec-bits': 0,
   'changeset-coverage': 0,
   'quoted-command': 0,
   'main-branch-refusal': 0,

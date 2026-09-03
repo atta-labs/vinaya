@@ -44,6 +44,7 @@ describe('registry env declarations', () => {
         'doctrine-no-procedures',
         'doctrine-portability',
         'evidence-fresh',
+        'exec-bits',
         'first-push-dispatch',
         'issue-assignment',
         'main-branch-refusal',

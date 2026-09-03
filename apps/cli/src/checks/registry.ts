@@ -675,6 +675,19 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   ],
   [
     {
+      name: 'exec-bits',
+      run: bin('check-exec-bits'),
+      scope: 'diff',
+      timeoutMs: 30_000,
+      // Local-only: `git ls-files -s` and a first-line read, never the
+      // network, `gh`, or a PR-scoped fact — same shape as
+      // `workspace-escape` below, and for the same reason.
+      env: {}
+    },
+    0
+  ],
+  [
+    {
       name: 'workspace-escape',
       run: bin('check-workspace-escape'),
       scope: 'full',
