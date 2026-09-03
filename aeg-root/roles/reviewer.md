@@ -102,7 +102,7 @@ vinaya review post --role code-reviewer --pr <n> --verdict APPROVE|REQUEST_CHANG
   --task-id <task-id> --model <model> --tokens-in <n|-> --tokens-out <n|-> --cost <text|->
 ```
 
-The findings file is one finding per line, `SEVERITY|file:line|description` (`|`-delimited: `file:line` already contains a colon), severity one of `BLOCKER|MAJOR|MINOR`. Omit `--findings-file` for zero findings. The command renders this exact shape (kept here so a human or a debugging agent can still read what it produces — this is documentation, not something to write by hand):
+The findings file is one finding per line, `SEVERITY|file:line|description` (`|`-delimited: `file:line` already contains a colon), severity one of `BLOCKER|MAJOR|MINOR`. The `description` field begins with the finding's id and class, `F<n> <class>: <what is wrong>` — class is one of `correctness`, `type-safety`, `performance`, `resource-leak`, `maintainability`, `scope`, `test-honesty`, `doc-correctness`, or `other:<slug>` when none fits. This is free text that carries no `|` character inside the existing field, not a grammar change. Omit `--findings-file` for zero findings. The command renders this exact shape (kept here so a human or a debugging agent can still read what it produces — this is documentation, not something to write by hand):
 
 ```
 VERDICT: APPROVE | REQUEST CHANGES
@@ -113,7 +113,7 @@ BRIEF CONFORMANCE: [does it do what the brief asked? 1-2 sentences]
 SPEC CONFORMANCE: [does it agree with the Product spec? "n/a — no Product named" | "clean" | drift listed in findings]
 
 FINDINGS (ordered by severity):
-1. [BLOCKER|MAJOR|MINOR] <file:line> — <what's wrong and why it matters>
+1. [BLOCKER|MAJOR|MINOR] <file:line> — F<n> <class>: <what's wrong and why it matters>
 2. ...
 
 SCOPE: [clean | N out-of-scope changes listed in findings]
@@ -131,7 +131,7 @@ The `SCOPE:` line, and any blast-radius assertion under check 7, are evidence-ba
 
 VERDICT is `REQUEST CHANGES` if and only if at least one BLOCKER finding exists. Otherwise VERDICT is `APPROVE`, with every MAJOR and MINOR finding still listed under FINDINGS — an APPROVE is not silence about them, it is a statement that none of them blocks. (A REQUEST CHANGES sets the PR's review decision to `CHANGES_REQUESTED`, which is the derived `changes-requested` status — no one writes it down.) `vinaya review post` mechanically enforces three things: the BLOCKER-plus-APPROVE contradiction, the bare `VERDICT:` line shape, and the `Judged head:` binding to the PR's current head — it refuses to exit 0 unless its own post re-parses clean through the gate's extractors. The severity you assign to each finding is caller-asserted and not checked.
 
-A re-review (a fresh-context reviewer invoked again after the Developer pushes fixes) does two things, in order: first, it lists each of the prior round's blocking findings as an item and confirms resolution by re-checking the artifact — never by assuming a push means a fix. Second, it judges the delta since the previously judged head for new findings. A new BLOCKER is reportable anywhere in the diff, on any round. A new MAJOR or MINOR is raised only if it falls inside the delta — a re-review does not re-litigate a non-blocking finding the diff hasn't touched since the last round judged it.
+A re-review (a fresh-context reviewer invoked again after the Developer pushes fixes) does two things, in order. First, it reports the state of every prior id — `F1`, `F2`, … — before listing any new finding, one of exactly `open`, `fix-claimed`, `reproduced`, or `resolved` per id, confirmed by re-checking the artifact, never by assuming a push means a fix. An id is assigned once, when a finding is first reported, and never renumbered; rewording a finding's description does not create a new id. The prior ids and the previously judged head are read from the prior verdict comment on the PR: its FINDINGS list and its `Judged head:` line. Second, round two is delta-only for every non-blocking severity: it judges only the lines changed since the previously judged head. A finding outside that delta is surfaced under FINDINGS for the Principal's go and never drives the verdict. A BLOCKER outside the delta still drives the verdict on any round; only MAJOR, MINOR, MEDIUM and LOW outside the delta are surfaced for the Principal's go. After round two the Principal decides; there is no round three unless the Principal orders it.
 
 ## Escalation
 
