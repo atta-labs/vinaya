@@ -400,9 +400,14 @@ export function agentCommandText(line: string): string {
  * past that alone. Each command's captured output is kept to its own last
  * `AGENT_COMMAND_OUTPUT_MAX_CHARS`, since the observable a §9 item states
  * (`→ summary line ends "0 fail"`) is conventionally the tail of the run,
- * never the head — never silently dropped, marked when cut.
+ * never the head — never silently dropped, marked when cut. Kept the tail,
+ * not the whole run (task 1, #397): task `12` measured a `47` KB PR body
+ * from six-command §9 lists whose full output rode into `AEG:EVIDENCE`
+ * uncut at `4_000` chars each; `renderGroupC` below puts the pass/fail
+ * status first in the block, so cutting the tail harder never costs the one
+ * fact a reviewer actually reads first.
  */
-const AGENT_COMMAND_OUTPUT_MAX_CHARS = 4_000
+const AGENT_COMMAND_OUTPUT_MAX_CHARS = 600
 
 function truncateAgentOutput(output: string): string {
   if (output.length <= AGENT_COMMAND_OUTPUT_MAX_CHARS) return output
@@ -470,7 +475,10 @@ export function renderGroupC(groupC: GroupC): string {
   }
   const blocks = groupC.commands.map((c, i) => {
     const status = c.timedOut ? '[timeout]' : c.exitCode !== 0 ? `[exit ${c.exitCode}]` : null
-    const output = [c.output, ...(status ? [status] : [])].join('\n')
+    // Status FIRST (task 5, #397): the one fact a reviewer reads is
+    // pass/fail, and a tail-truncated 600-char block should never bury it
+    // below output text — put it at the top of the fence, not the bottom.
+    const output = [...(status ? [status] : []), c.output].join('\n')
     return [`#### C${i + 1}: \`${c.command}\``, '', '```', output, '```'].join('\n')
   })
   return ['### Group C — Test Plan commands', '', blocks.join('\n\n')].join('\n')
