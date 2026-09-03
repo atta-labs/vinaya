@@ -474,26 +474,35 @@ export function inferBranchFromBody(prBody: string): string {
  */
 export const COMMAND_WORDS = ['export', 'bun', 'gh', 'git', 'grep', 'sed', 'cat', 'diff', 'vinaya'] as const
 
-/** One fenced block's raw span and content — `start`/`end` are char offsets into the original text. */
-export type FencedBlock = { start: number; end: number; content: string }
+/**
+ * One fenced block's raw span, content, and language tag — `start`/`end` are
+ * char offsets into the original text. `lang` is the fence's info-string,
+ * lowercased and trimmed to its first word (` ```ts ` → `'ts'`, ` ``` ` →
+ * `''`) — `doctrine-no-procedures.ts` uses it to exempt a non-shell block
+ * (e.g. a TypeScript illustration whose two `export` lines are not a
+ * command sequence, task 10 round-2 ruling item 2).
+ */
+export type FencedBlock = { start: number; end: number; lang: string; content: string }
 
 /**
  * Every fenced (``` or ~~~) code block in `text`, in document order, with its
- * raw content and char-offset span. Tolerant of the 3-space list-item
- * indentation every brief's own numbered steps use (`   \`\`\``) — the fence
- * marker need not sit at column 0. Not a full CommonMark implementation (no
- * nested-fence-length edge cases beyond "the closer repeats the opener's
- * exact run"), which this repo's own doctrine/brief prose never exercises.
+ * raw content, language tag, and char-offset span. Tolerant of the 3-space
+ * list-item indentation every brief's own numbered steps use (`   \`\`\``) —
+ * the fence marker need not sit at column 0. Not a full CommonMark
+ * implementation (no nested-fence-length edge cases beyond "the closer
+ * repeats the opener's exact run"), which this repo's own doctrine/brief
+ * prose never exercises.
  *
  * Shared by `checkCommandsCarryOutput` (below) and `doctrine-no-procedures.ts`
  * — one fence scanner, never a second copy of this pattern.
  */
 export function extractFencedBlocks(text: string): FencedBlock[] {
-  const re = /^[ \t]*(`{3,}|~{3,})[^\n]*\n([\s\S]*?)^[ \t]*\1[ \t]*$/gm
+  const re = /^[ \t]*(`{3,}|~{3,})([^\n]*)\n([\s\S]*?)^[ \t]*\1[ \t]*$/gm
   const blocks: FencedBlock[] = []
   let m: RegExpExecArray | null = re.exec(text)
   while (m !== null) {
-    blocks.push({ start: m.index, end: m.index + m[0].length, content: m[2] as string })
+    const lang = (m[2] as string).trim().toLowerCase().split(/\s+/)[0] ?? ''
+    blocks.push({ start: m.index, end: m.index + m[0].length, lang, content: m[3] as string })
     m = re.exec(text)
   }
   return blocks
@@ -577,21 +586,28 @@ function isStep0Block(content: string): boolean {
 }
 
 /**
- * Rule (ii) (task 10, Issue #385) — in a brief's `§5` (Pre-flight checks) or
- * `§6` (Numbered parts), a fenced block that opens with a shell command must
- * be followed, later in that same section, by another fenced block (its
- * output) — a command whose result nobody pasted is exactly the "trust me"
- * shape task 9's rule forbids. The Step `0` `git worktree add` block is
- * exempt: it is a setup command with no output to show, by the convention
- * every brief's own pre-flight step already follows.
+ * Rule (ii) (task 10, Issue #385; tightened by the round-2 ruling item 1) —
+ * in a brief's `§5` (Pre-flight checks) or `§6` (Numbered parts), a fenced
+ * block that opens with a shell command must be immediately followed by
+ * another fenced block that does NOT itself open with a shell command — its
+ * output. The Step `0` `git worktree add` block is exempt: it is a setup
+ * command with no output to show, by the convention every brief's own
+ * pre-flight step already follows.
  *
- * Deliberately loose about what sits *between* the two fences — this
- * brief's own pre-flight steps (`§5` items 4-9) interleave a sentence of
- * prose between a command fence and its output fence ("Output the Brief
- * Author obtained at authoring time…"), and the rule must not fail the very
- * brief that documents it. What matters is that a later fenced block
- * exists at all before the section ends; a command fence with nothing
- * fenced after it in the section is the failure this rule catches.
+ * **The immediately-following fence, never merely "a later one".** The first
+ * cut of this rule accepted `blocks[i + 1]` existing at all, which let three
+ * undocumented command blocks in a row pass as long as a single trailing
+ * output fence sat after the last of them — each of the first two command
+ * blocks' own "next fence" was itself another un-followed command, and the
+ * rule never noticed (round-2 ruling, found live reviewing this PR's own
+ * diff). A command block's output claim is only satisfied by the very next
+ * fence, and only if that fence is not itself a command.
+ *
+ * Deliberately loose about what sits *between* the two fences (the prose
+ * separating them, never counted) — this brief's own pre-flight steps
+ * (`§5` items 4-9) interleave a sentence of prose between a command fence
+ * and its output fence ("Output the Brief Author obtained at authoring
+ * time…"), and the rule must not fail the brief that documents it.
  */
 export function checkCommandsCarryOutput(prBody: string): BriefSectionResult {
   const errors: string[] = []
@@ -605,9 +621,10 @@ export function checkCommandsCarryOutput(prBody: string): BriefSectionResult {
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i] as FencedBlock
       if (isStep0Block(block.content) || !isCommandBlock(block.content)) continue
-      if (!blocks[i + 1]) {
+      const next = blocks[i + 1]
+      if (!next || isCommandBlock(next.content)) {
         errors.push(
-          `brief-validation commands carry output: §${label} has a command block ("${firstNonBlankLine(block.content)}") with no fenced output block after it — paste the command's actual output in a following fenced block.`
+          `brief-validation commands carry output: §${label} has a command block ("${firstNonBlankLine(block.content)}") not immediately followed by a non-command output block — the very next fenced block must hold that command's actual output, not another command.`
         )
       }
     }

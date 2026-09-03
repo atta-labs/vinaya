@@ -18,17 +18,18 @@
 
 import { readdirSync, readFileSync } from 'node:fs'
 import {
+  buildConsumersOf as buildConsumersOfShared,
   checkBriefSections,
-  deriveWorkspacePackageDomains,
   isBriefShaped,
   isTaskBranch,
+  type PackageManifest,
   readTierFromPrBody
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'brief-shape'
 
-/** Immediate child directory names of `dir` — `deriveWorkspacePackageDomains`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */
+/** Immediate child directory names of `dir` — `deriveWorkspaceMemberDirs`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */
 function listDirs(dir: string): string[] {
   try {
     return readdirSync(dir, { withFileTypes: true })
@@ -47,29 +48,22 @@ function readJson(path: string): Record<string, unknown> {
   }
 }
 
+function readManifest(dir: string): PackageManifest | null {
+  const manifest = readJson(`${dir}/package.json`)
+  return Object.keys(manifest).length === 0 ? null : (manifest as PackageManifest)
+}
+
 /**
- * `checkConsumerTests`'s consumer enumeration (task 10, Issue #385) — the
- * workspace `packages/*` directories (`deriveWorkspacePackageDomains`, the
- * same "workspace-domain derivation" `blast-radius-domains.ts` already
- * provides — reused rather than re-enumerated) whose own `package.json`
- * `dependencies`/`devDependencies` names `@attalabs/<pkg>`. Manifests are
- * read once per invocation, not per §4 pkg mention.
+ * `checkConsumerTests`'s consumer enumeration (task 10, Issue #385; round-2
+ * ruling items 3/4) — `@attalabs/aeg-core`'s `buildConsumersOf`, the SAME
+ * enumeration `packages/aeg-core/bin/verify-brief.ts` wires for the
+ * authoring-time entry point, so CI and pre-dispatch can never disagree
+ * about which workspace members count as consumers.
  */
 function buildConsumersOf(): (pkg: string) => string[] {
   const root = readJson('package.json')
   const workspaces = Array.isArray(root.workspaces) ? (root.workspaces as string[]) : []
-  const domains = deriveWorkspacePackageDomains(workspaces, listDirs)
-
-  return (pkg: string): string[] =>
-    domains.filter((domain) => {
-      if (domain === `packages/${pkg}`) return false
-      const manifest = readJson(`${domain}/package.json`)
-      const deps = {
-        ...(manifest.dependencies as Record<string, string> | undefined),
-        ...(manifest.devDependencies as Record<string, string> | undefined)
-      }
-      return `@attalabs/${pkg}` in deps
-    })
+  return buildConsumersOfShared(workspaces, listDirs, readManifest)
 }
 
 function main(): void {

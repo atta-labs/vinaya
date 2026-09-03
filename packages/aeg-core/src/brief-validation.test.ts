@@ -798,6 +798,33 @@ git worktree add .worktrees/task/x/1 -b task/x/1 origin/main
     const result = checkCommandsCarryOutput(body)
     expect(result.status).toBe('pass')
   })
+
+  it('fails three undocumented command blocks with only a trailing output fence (round-2 ruling item 1)', () => {
+    const body = `
+### 6. Numbered parts
+
+\`\`\`
+grep -n "a" one.ts
+\`\`\`
+
+\`\`\`
+grep -n "b" two.ts
+\`\`\`
+
+\`\`\`
+grep -n "c" three.ts
+\`\`\`
+
+\`\`\`
+3:c
+\`\`\`
+`
+    const result = checkCommandsCarryOutput(body)
+    expect(result.status).toBe('fail')
+    // The first two command blocks are each "followed" only by another
+    // command block — neither is satisfied by the trailing output fence.
+    expect(result.errors).toHaveLength(2)
+  })
 })
 
 describe('checkConsumerTests', () => {

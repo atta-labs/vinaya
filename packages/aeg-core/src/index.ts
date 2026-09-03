@@ -10,8 +10,11 @@ export {
   CROSS_CUTTING_CANDIDATES,
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
-  parsePnpmWorkspaceYaml
+  parsePnpmWorkspaceYaml,
+  resolveWorkspaceEntry
 } from './blast-radius-domains'
+export { buildConsumersOf, deriveWorkspaceMemberDirs } from './consumer-enumeration'
+export type { PackageManifest } from './consumer-enumeration'
 export { parseTranche } from './parse-tranche'
 export { deriveTranche } from './derive-tranche'
 export { parseLedger, rowFromCells } from './parse-ledger'

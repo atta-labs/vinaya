@@ -40,16 +40,56 @@
  * a brief-shape check at all. See `checkPlanPrNoCloses` in `src/brief-validation.ts`.
  */
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import {
+  buildConsumersOf,
   checkBriefSections,
   checkForgeTitle,
   checkPlanPrNoCloses,
   inferBranchFromBody,
   isBriefShaped,
+  type PackageManifest,
   readTierFromPrBody
 } from '../src/index'
+
+/** Immediate child directory names of `dir` — `deriveWorkspaceMemberDirs`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */
+function listDirs(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+  } catch {
+    return []
+  }
+}
+
+function readJson(path: string): Record<string, unknown> {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+function readManifest(dir: string): PackageManifest | null {
+  const manifest = readJson(`${dir}/package.json`)
+  return Object.keys(manifest).length === 0 ? null : (manifest as PackageManifest)
+}
+
+/**
+ * `checkConsumerTests`'s consumer enumeration (task 10 round-2 ruling item 4)
+ * — the SAME `buildConsumersOf` `apps/cli`'s `check-brief-shape.ts` wires for
+ * the CI entry point, so a brief that passes here at authoring time cannot
+ * be refused for a different reason once dispatched. Reads relative to
+ * `REPO_ROOT` (this script has already `chdir`'d there by the time this
+ * runs).
+ */
+function buildConsumersOfLocal(): (pkg: string) => string[] {
+  const root = readJson('package.json')
+  const workspaces = Array.isArray(root.workspaces) ? (root.workspaces as string[]) : []
+  return buildConsumersOf(workspaces, listDirs, readManifest)
+}
 
 const REPO_ROOT = join(import.meta.dir, '../../..')
 // Captured BEFORE the chdir below: a relative `--body-file` path is relative to
@@ -151,7 +191,10 @@ export function main(): void {
     process.exit(0)
   }
 
-  const { errors } = checkBriefSections(prBody, readTierFromPrBody, { requireClosesN: isTaskBranch })
+  const { errors } = checkBriefSections(prBody, readTierFromPrBody, {
+    requireClosesN: isTaskBranch,
+    consumersOf: buildConsumersOfLocal()
+  })
 
   if (!isTaskBranch) {
     console.log(

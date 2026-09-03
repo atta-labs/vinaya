@@ -47,4 +47,26 @@ git status
     const findings = checkDoctrineNoProcedures([{ path: 'aeg-root/roles/developer.md', content }])
     expect(findings).toHaveLength(0)
   })
+
+  it('passes a ```ts block with two export lines (round-2 ruling item 2)', () => {
+    const content = `# Some doctrine page
+
+\`\`\`ts
+export function checkBriefSections(
+export function checkPremiseCoverage(
+\`\`\`
+`
+    const findings = checkDoctrineNoProcedures([{ path: 'aeg-root/state-machine.md', content }])
+    expect(findings).toHaveLength(0)
+  })
+
+  it('still fails an explicit ```bash block with two command lines', () => {
+    const content = `\`\`\`bash
+git status
+bun run test
+\`\`\`
+`
+    const findings = checkDoctrineNoProcedures([{ path: 'aeg-root/roles/developer.md', content }])
+    expect(findings).toHaveLength(1)
+  })
 })

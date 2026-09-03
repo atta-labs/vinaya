@@ -39,6 +39,19 @@ function isCommandLine(line: string): boolean {
   return (COMMAND_WORDS as readonly string[]).includes(word)
 }
 
+/**
+ * A fence's language tag that reads as shell — the empty tag (` ``` `, most
+ * doctrine command blocks) or an explicit `sh`/`bash`/`shell`/`console`.
+ * Anything else (`ts`, `js`, `yaml`, `json`, …) is a real illustration in
+ * that language, not a command sequence — a two-line ` ```ts ` block with two
+ * `export` statements is TypeScript, not shell, even though `export` is also
+ * a shell builtin (round-2 ruling item 2, found live: this task's own
+ * `brief-validation.ts` excerpt in `state-machine.md` reads exactly this
+ * way). A block outside this set never reaches the command-line count at
+ * all — it is not a candidate, regardless of its content.
+ */
+const SHELL_LANGS: ReadonlySet<string> = new Set(['', 'sh', 'bash', 'shell', 'console'])
+
 function procedureLineNumberAt(content: string, index: number): number {
   return content.slice(0, index).split('\n').length
 }
@@ -64,6 +77,7 @@ export function checkDoctrineNoProcedures(files: DoctrineFile[]): DoctrineProced
 
     for (const block of extractFencedBlocks(file.content)) {
       if (span && block.start >= span.start && block.end <= span.end) continue
+      if (!SHELL_LANGS.has(block.lang)) continue
 
       const commandLineCount = block.content.split('\n').filter(isCommandLine).length
       if (commandLineCount >= 2) {
