@@ -9,13 +9,18 @@
  * verdict).
  *
  * Uses the body it fetched, never `PR_BODY` — this check's whole job is
- * comparing the LIVE forge body against a hash of what was posted at open,
- * so a caller-supplied `PR_BODY` (possibly stale, possibly a draft) is never
- * a substitute for the real thing. `PR_NUMBER` is the only env input this
- * bin reads for the body/comments/PR-number triple — `PR_NUMBER` itself
- * doubles as the grandfather cutoff input, so no extra `gh` field is needed
- * for it. Each comment's own `createdAt` (returned by `gh` without an extra
- * field request) feeds `findMarker`'s earliest-wins selection.
+ * comparing the LIVE forge body against a hash of what was posted at open
+ * (or most recently refrozen), so a caller-supplied `PR_BODY` (possibly
+ * stale, possibly a draft) is never a substitute for the real thing.
+ * `PR_NUMBER` is the only env input this bin reads for the body/comments/
+ * PR-number triple — `PR_NUMBER` itself doubles as the grandfather cutoff
+ * input, so no extra `gh` field is needed for it. Each comment's own
+ * `createdAt` (returned by `gh` without an extra field request) feeds
+ * `findMarker`'s newest-allowlisted-wins selection (task 12, #387; reversed
+ * from the original earliest-wins rule so `vinaya pr refreeze` has
+ * somewhere to land) — this bin passes every comment's author straight
+ * through unfiltered, since the allowlist filtering happens inside
+ * `findMarker` itself, not here.
  *
  * Grandfathering is by PR NUMBER (`FROZEN_BODY_SINCE_PR`,
  * `pr-body-frozen.ts`), not by marker absence: a PR numbered below the

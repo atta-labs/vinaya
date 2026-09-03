@@ -202,6 +202,16 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'pr refreeze',
+    description: 'Principal-only: post a fresh frozen-body marker over an edited PR body, with a reason',
+    flags: [{ flag: '--reason <text>', description: 'Why the frozen body needed a hand edit — required' }],
+    details: [
+      "The door the frozen-body rule otherwise lacks: refuses unless the running `gh` identity is on the principal allowlist (the same trust anchor `review-gate`/`pr-body-frozen` already use — never a local-git/env-derived source). Posts a new `aeg:body-hash` marker comment, computed from the PR's LIVE body (fetched fresh, never a local draft), with the reason in the same comment.",
+      "`pr-body-frozen`'s marker selection is newest-allowlisted-wins, not earliest — a Developer's own identity is never on the allowlist, so a later marker from one never displaces an earlier Principal marker; only a later, ALSO-allowlisted marker (this command's own write path) moves the baseline."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'issue create',
     description: 'Open an issue after full brief-schema validation',
     flags: [

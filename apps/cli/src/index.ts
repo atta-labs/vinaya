@@ -24,6 +24,7 @@ import { newCheckCommand } from './commands/new-check.js'
 import { newNoopCheckCommand } from './commands/new-noop-check.js'
 import { newRoleCommand } from './commands/new-role.js'
 import { prCreateCommand, prEditCommand } from './commands/pr.js'
+import { prRefreezeCommand } from './commands/pr-refreeze.js'
 import { prReportCommand } from './commands/pr-report.js'
 import { prVerifyEvidenceCommand } from './commands/pr-verify-evidence.js'
 import { quickstartCommand } from './commands/quickstart.js'
@@ -146,9 +147,11 @@ try {
         await prReportCommand(rest)
       } else if (subcommand === 'verify-evidence') {
         await prVerifyEvidenceCommand(rest)
+      } else if (subcommand === 'refreeze') {
+        await prRefreezeCommand(rest)
       } else {
         console.error(
-          `Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'create', 'edit', 'report', or 'verify-evidence')`
+          `Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'create', 'edit', 'report', 'verify-evidence', or 'refreeze')`
         )
         process.exit(2)
       }

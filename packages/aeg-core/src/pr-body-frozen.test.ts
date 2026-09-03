@@ -238,7 +238,7 @@ describe('checkPrBodyFrozen', () => {
     expect(result.status).toBe('pass')
   })
 
-  it('the EARLIEST allowlisted marker wins — a later repost never overrides the open-time hash', () => {
+  it('the NEWEST allowlisted marker wins — a later, allowlisted repost (vinaya pr refreeze) overrides the open-time hash (task 12, #387)', () => {
     const openTimeHash = authoredRegionHash(BASE_BODY)
     const edited = BASE_BODY.replace('Touches aeg-core and cli.', 'Touches aeg-core and cli. Also touches sources.')
     const laterHash = authoredRegionHash(edited)
@@ -248,21 +248,59 @@ describe('checkPrBodyFrozen', () => {
     ]
     // Array order deliberately does NOT match createdAt order — the function
     // must sort by createdAt, never trust array position.
-    const passResult = checkPrBodyFrozen({
+    const failResult = checkPrBodyFrozen({
       body: BASE_BODY,
       comments,
       principalAllowlist: PRINCIPALS,
       prNumber: AFTER_ROLLOUT_PR
     })
-    expect(passResult.status).toBe('pass')
+    expect(failResult.status).toBe('fail')
 
-    const failResult = checkPrBodyFrozen({
+    const passResult = checkPrBodyFrozen({
       body: edited,
       comments,
       principalAllowlist: PRINCIPALS,
       prNumber: AFTER_ROLLOUT_PR
     })
-    expect(failResult.status).toBe('fail')
+    expect(passResult.status).toBe('pass')
+  })
+
+  it("a Developer's later marker (posted under a non-allowlisted identity) never wins over a Principal's earlier one", () => {
+    const principalHash = authoredRegionHash(BASE_BODY)
+    const developerHash = authoredRegionHash(
+      BASE_BODY.replace('Touches aeg-core and cli.', 'Touches aeg-core and cli. Also touches sources.')
+    )
+    const comments = [
+      { body: renderBodyHashMarker(principalHash), author: 'daniboomerang', createdAt: '2026-09-03T01:00:00Z' },
+      // Later in time, but NOT allowlisted — a Developer's own identity is
+      // never on `principalAllowlist`, so this is never a candidate at all,
+      // regardless of how much later it was posted.
+      { body: renderBodyHashMarker(developerHash), author: 'a-developer-session', createdAt: '2026-09-03T09:00:00Z' }
+    ]
+    const result = checkPrBodyFrozen({
+      body: BASE_BODY,
+      comments,
+      principalAllowlist: PRINCIPALS,
+      prNumber: AFTER_ROLLOUT_PR
+    })
+    expect(result.status).toBe('pass')
+  })
+
+  it("a Principal's later marker DOES win over an earlier one — the refreeze door", () => {
+    const originalHash = authoredRegionHash(BASE_BODY)
+    const refrozen = BASE_BODY.replace('Touches aeg-core and cli.', 'Touches aeg-core and cli. Also touches sources.')
+    const refrozenHash = authoredRegionHash(refrozen)
+    const comments = [
+      { body: renderBodyHashMarker(originalHash), author: 'daniboomerang', createdAt: '2026-09-03T01:00:00Z' },
+      { body: renderBodyHashMarker(refrozenHash), author: 'daniboomerang', createdAt: '2026-09-03T09:00:00Z' }
+    ]
+    const result = checkPrBodyFrozen({
+      body: refrozen,
+      comments,
+      principalAllowlist: PRINCIPALS,
+      prNumber: AFTER_ROLLOUT_PR
+    })
+    expect(result.status).toBe('pass')
   })
 
   it('a later, non-allowlisted marker never displaces an earlier allowlisted one', () => {
