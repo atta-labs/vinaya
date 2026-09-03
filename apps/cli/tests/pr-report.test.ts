@@ -767,9 +767,9 @@ describe('spliceIntoLiveBody', () => {
       '',
       '## Scope'
     ].join('\n')
-    expect(() =>
-      spliceIntoLiveBody(fencedOnly, 'Head: freshsha', { collected: false, refusal: 'refused' })
-    ).toThrow(MissingEvidenceAnchorError)
+    expect(() => spliceIntoLiveBody(fencedOnly, 'Head: freshsha', { collected: false, refusal: 'refused' })).toThrow(
+      MissingEvidenceAnchorError
+    )
   })
 })
 
