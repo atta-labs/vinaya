@@ -121,7 +121,7 @@ TESTS: [honest | issues listed in findings]
 DOCS: [tier-appropriate | missing items listed in findings]
 ```
 
-`vinaya review post` also refuses before posting anything if you pass a BLOCKER finding together with `--verdict APPROVE` — that contradiction is caught mechanically, not left to review.
+`vinaya review post` also refuses before posting anything if you pass a BLOCKER finding together with `--verdict APPROVE` — that contradiction is caught mechanically, not left to review. It also refuses, before any forge contact, any field it renders (findings-file descriptions, the conformance/scope/tests/docs text, and the task-id/model/cost/session identifiers) that carries a line break or the substring `VERDICT`, naming the field — a caller value that smuggled either could start a line the merge gate's line-anchored extractors read as real.
 
 - **BLOCKER** — blocks merge. Wrong behavior; a dishonest test; a document the brief's documentation-update list names that is absent from the diff or states the changed behavior backwards; a scope violation; a **spec contradiction**.
 - **MAJOR** — surfaced, never blocks. A likely bug, weak error handling, spec drift short of contradiction, a wrong sentence in a document the brief did not name. Listed in the verdict, shown to the Principal at the go (the Principal's decision, before merge, on whether any surfaced finding blocks this change), published in the record — the Principal decides whether a surfaced finding blocks this change.

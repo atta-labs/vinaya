@@ -111,6 +111,8 @@ CONFIG SCAN: [not applicable | clean | findings folded in above]
 SECRETS: [none found | listed above, redacted]
 ```
 
+`vinaya review post` refuses, before any forge contact, any field it renders (findings-file descriptions, the config-scan/secrets text, and the task-id/model/cost/session identifiers) that carries a line break or the substring `VERDICT`, naming the field — a caller value that smuggled either could start a line the merge gate's line-anchored extractors read as real.
+
 - **CRITICAL** — leaked live credential, auth bypass, key sent to client. Any CRITICAL → FAIL.
 - **HIGH** — likely exploitable misconfig or injection surface.
 - **MEDIUM/LOW** — hardening notes.

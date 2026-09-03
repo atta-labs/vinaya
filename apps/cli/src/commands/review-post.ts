@@ -284,19 +284,39 @@ const VERDICT_SUBSTRING = 'VERDICT'
 /**
  * Every caller-supplied free-text field (name, value) whose value contains
  * the literal substring `VERDICT`, in the given order. Every field this
- * command ever splices verbatim into a rendered comment — `--summary`, a
+ * command ever splices verbatim into a rendered comment is caller-controlled
+ * text this command does not otherwise constrain: `--summary`, a
  * findings-file description, `--brief-conformance`, `--spec-conformance`,
- * `--scope`, `--tests`, `--docs`, `--config-scan`, `--secrets`, and the
- * `--secrets-evidence-file` contents — is caller-controlled text this
- * command does not otherwise constrain. A multi-line value containing
- * `VERDICT: <anything>` would, once spliced in, start a new line the gate's
- * line-anchored extractors read exactly like the real structural line this
- * command renders — and "most recent clear hit wins" means an injected line
- * AFTER the real one would win. Checked before any of these fields reaches a
- * render, let alone a post.
+ * `--scope`, `--tests`, `--docs`, `--config-scan`, `--secrets`, the
+ * `--secrets-evidence-file` contents, `--task-id`, `--model`, `--cost`, and
+ * the session id. A multi-line value containing `VERDICT: <anything>` would,
+ * once spliced in, start a new line the gate's line-anchored extractors read
+ * exactly like a real structural line. The extractors (`verdict-extraction.ts`)
+ * pick the MOST RECENT comment carrying any matching line, then read the
+ * FIRST such line within THAT comment — not "the last matching line wins";
+ * an escalation comment carries no legitimate `VERDICT:` line of its own, so
+ * an injected one there would be that comment's first (and only) match.
+ * Checked before any of these fields reaches a render, let alone a post.
  */
 export function fieldsContainingVerdict(fields: readonly { name: string; value: string }[]): string[] {
   return fields.filter((f) => f.value.includes(VERDICT_SUBSTRING)).map((f) => f.name)
+}
+
+/**
+ * Every caller-supplied field (name, value) whose value contains a raw `\n`
+ * or `\r`. Every field this list covers renders as one `KEY: value` line in
+ * the posted comment (`Tokens: ...`, `BRIEF CONFORMANCE: ...`, `SCOPE: ...`,
+ * and so on) — a value that itself smuggled a newline would let the caller
+ * start an arbitrary NEW line in the rendered comment, independent of and in
+ * addition to the `VERDICT`-substring risk `fieldsContainingVerdict` guards.
+ * `--summary`, a finding's description, and `--secrets-evidence-file`'s
+ * contents are deliberately NOT covered here: the first two are structurally
+ * incapable of carrying a raw newline (a finding is parsed one line at a
+ * time; free multi-paragraph prose is `--summary`'s whole point), and the
+ * third is fenced, multi-line scanner output by design.
+ */
+export function fieldsContainingNewline(fields: readonly { name: string; value: string }[]): string[] {
+  return fields.filter((f) => /[\r\n]/.test(f.value)).map((f) => f.name)
 }
 
 /**
@@ -305,20 +325,33 @@ export function fieldsContainingVerdict(fields: readonly { name: string; value: 
  * plain stderr, exit `2`, no forge contact yet possible at this point in
  * every call site.
  */
-function refuseInjection(fieldName: string): never {
-  process.stderr.write(
-    `review post: REFUSED — ${fieldName} contains the substring \`VERDICT\`.\n` +
-      'A caller-supplied field spliced verbatim into the rendered comment could start a line the merge\n' +
-      "gate's extractors read as a real VERDICT — the exact defect this command exists to close. Remove\n" +
-      'the literal word VERDICT from the field, then re-run.\n'
-  )
+function refuseFieldGuard(fieldName: string, reason: string, recovery: string): never {
+  process.stderr.write(`review post: REFUSED — ${fieldName} ${reason}.\n${recovery}\n`)
   process.exit(2)
 }
 
-/** Runs the injection guard over `fields`, refusing (exit `2`) on the first offender. */
+/** Runs the `VERDICT`-substring guard over `fields`, refusing (exit `2`) on the first offender. */
 function guardAgainstVerdictInjection(fields: readonly { name: string; value: string }[]): void {
   const offending = fieldsContainingVerdict(fields)
-  if (offending.length > 0) refuseInjection(offending[0] as string)
+  if (offending.length > 0) {
+    refuseFieldGuard(
+      offending[0] as string,
+      'contains the substring `VERDICT`',
+      "A caller-supplied field spliced verbatim into the rendered comment could start a line the merge gate's\nextractors read as a real VERDICT — the exact defect this command exists to close. Remove the literal\nword VERDICT from the field, then re-run."
+    )
+  }
+}
+
+/** Runs the newline guard over `fields`, refusing (exit `2`) on the first offender. */
+function guardAgainstNewlines(fields: readonly { name: string; value: string }[]): void {
+  const offending = fieldsContainingNewline(fields)
+  if (offending.length > 0) {
+    refuseFieldGuard(
+      offending[0] as string,
+      'contains a newline or carriage return',
+      'This field renders as a single `KEY: value` line in the posted comment; a raw newline would let it\nstart an arbitrary new line instead. Remove the newline from the field, then re-run.'
+    )
+  }
 }
 
 /** `--findings-file` description fields, named by line for a precise refusal. */
@@ -419,26 +452,62 @@ function principalBodies(comments: readonly ReviewGateComment[], principalAllowl
   return comments.filter((c) => isPrincipal(c.author, principalAllowlist as string[])).map((c) => c.body)
 }
 
+/**
+ * The OTHER role's extractor must find nothing in THIS specific posted
+ * comment — scoped to `postedBody` alone (exact match, same technique
+ * `verifyPostedEscalation` uses), never the PR's whole comment history: an
+ * earlier round's legitimate opposite-role verdict comment already sitting
+ * on the PR must never fail THIS post's self-verification. A security post
+ * that also re-parses as a code-review `APPROVE` is the failure this guards
+ * — the render function has one structural `VERDICT:` line, but proving that
+ * mechanically, through the same extractors the merge gate calls, is what
+ * actually closes the gap a future render change could reopen.
+ */
+function checkNoCrossRoleVerdict(
+  postedBody: string,
+  crossExtract: (comments: string[]) => VerdictExtraction,
+  crossRoleLabel: string
+): SelfVerifyResult | null {
+  const cross = crossExtract([postedBody])
+  if (cross.danglingNote === null) {
+    return {
+      ok: false,
+      reason: `the posted comment also re-parses as a ${crossRoleLabel} VERDICT ("${cross.value}") — cross-role contamination.`
+    }
+  }
+  return null
+}
+
 export function verifyPostedCodeReview(
   comments: readonly ReviewGateComment[],
   verdict: CodeReviewVerdict,
   headSha: string,
-  principalAllowlist: readonly string[]
+  principalAllowlist: readonly string[],
+  postedBody: string
 ): SelfVerifyResult {
-  return checkExtraction(
+  const own = checkExtraction(
     extractCodeReviewVerdict(principalBodies(comments, principalAllowlist)),
     CODE_REVIEW_VERDICT_TEXT[verdict],
     headSha
   )
+  if (!own.ok) return own
+  return checkNoCrossRoleVerdict(postedBody, extractSecurityReviewVerdict, 'security') ?? own
 }
 
 export function verifyPostedSecurity(
   comments: readonly ReviewGateComment[],
   verdict: SecurityVerdict,
   headSha: string,
-  principalAllowlist: readonly string[]
+  principalAllowlist: readonly string[],
+  postedBody: string
 ): SelfVerifyResult {
-  return checkExtraction(extractSecurityReviewVerdict(principalBodies(comments, principalAllowlist)), verdict, headSha)
+  const own = checkExtraction(
+    extractSecurityReviewVerdict(principalBodies(comments, principalAllowlist)),
+    verdict,
+    headSha
+  )
+  if (!own.ok) return own
+  return checkNoCrossRoleVerdict(postedBody, extractCodeReviewVerdict, 'code-review') ?? own
 }
 
 /**
@@ -563,11 +632,12 @@ export function findingsOutsideDelta(
 
 /**
  * The most recent principal-authored comment that parses clean through
- * `extract` (`extractCodeReviewVerdict`/`extractSecurityReviewVerdict`) —
- * same "latest clear hit wins" rule those extractors already apply, re-run
- * here one body at a time so this function also learns WHICH body won, not
- * just what value it carried. `null` when this is round one: no round-two
- * checks apply.
+ * `extract` (`extractCodeReviewVerdict`/`extractSecurityReviewVerdict`) — the
+ * same selection those extractors already apply (the latest comment carrying
+ * any matching line is chosen, then its first matching line is read; not
+ * "the last matching line anywhere wins"), re-run here one body at a time so
+ * this function also learns WHICH body won, not just what value it carried.
+ * `null` when this is round one: no round-two checks apply.
  */
 export function findPriorVerdictComment(
   principalBodies: readonly string[],
@@ -938,6 +1008,23 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   const roleLabel: 'Reviewer' | 'Security' = role === 'code-reviewer' ? 'Reviewer' : 'Security'
   const tokensRole: 'review' | 'security' = role === 'code-reviewer' ? 'review' : 'security'
 
+  // Shared across every path — checked before the escalate/verdict split, so
+  // no branch below can reach a forge call with one of these still dirty.
+  guardAgainstNewlines([
+    { name: '`--task-id`', value: taskId },
+    { name: '`--model`', value: model },
+    { name: '`--cost`', value: cost },
+    { name: '`--tokens-in`', value: tokensIn },
+    { name: '`--tokens-out`', value: tokensOut },
+    { name: 'the session id', value: sessionId }
+  ])
+  guardAgainstVerdictInjection([
+    { name: '`--task-id`', value: taskId },
+    { name: '`--model`', value: model },
+    { name: '`--cost`', value: cost },
+    { name: 'the session id', value: sessionId }
+  ])
+
   const escalateRaw = flags.get('--escalate')
   const verdictRaw = flags.get('--verdict')
 
@@ -1004,11 +1091,6 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     return
   }
 
-  // Same trust anchor `checkReviewGate` itself uses — the repo's own
-  // `principals` field on the default branch (never the PR's checkout),
-  // falling back to the hardcoded `PRINCIPAL_ALLOWLIST` on any read failure.
-  const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
-
   if (role === 'code-reviewer') {
     const findings = readFindingsFile(flags.get('--findings-file'), CODE_REVIEW_SEVERITIES)
     const derived = deriveCodeReviewVerdict(findings)
@@ -1028,14 +1110,24 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     const scope = requireFlag(flags, '--scope')
     const tests = requireFlag(flags, '--tests')
     const docs = requireFlag(flags, '--docs')
-    guardAgainstVerdictInjection([
+    const codeReviewLineFields = [
       { name: '`--brief-conformance`', value: briefConformance },
       { name: '`--spec-conformance`', value: specConformance },
       { name: '`--scope`', value: scope },
       { name: '`--tests`', value: tests },
-      { name: '`--docs`', value: docs },
-      ...findingDescriptionFields(findings)
-    ])
+      { name: '`--docs`', value: docs }
+    ]
+    guardAgainstNewlines(codeReviewLineFields)
+    guardAgainstVerdictInjection([...codeReviewLineFields, ...findingDescriptionFields(findings)])
+
+    // Same trust anchor `checkReviewGate` itself uses — the repo's own
+    // `principals` field on the default branch (never the PR's checkout),
+    // falling back to the hardcoded `PRINCIPAL_ALLOWLIST` on any read
+    // failure. This itself calls `gh` (`ghFetchTrustAnchorConfig`), so it
+    // must not run until every local guard above has cleared — it is the
+    // first forge contact this path may make, same as `resolveHeadSha`
+    // right after it.
+    const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
 
     const headSha = resolveHeadSha(pr)
 
@@ -1073,7 +1165,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
         'Check `gh auth status`/network and manually confirm the posted comment parses cleanly — this command could not verify it.'
       )
     }
-    const result = verifyPostedCodeReview(postComments, verdict, headSha, principalAllowlist)
+    const result = verifyPostedCodeReview(postComments, verdict, headSha, principalAllowlist, body)
     if (!result.ok) {
       refuseCmd(
         `Posted comment ${url}, but self-verification FAILED on re-parse: ${result.reason}`,
@@ -1122,12 +1214,24 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       refuseCmd(`Could not read secrets evidence file at ${secretsEvidenceFile}.`, 'Check the path and re-run.')
     }
   }
+  guardAgainstNewlines([
+    { name: '`--config-scan`', value: configScan },
+    { name: '`--secrets`', value: secrets }
+  ])
   guardAgainstVerdictInjection([
     { name: '`--config-scan`', value: configScan },
     { name: '`--secrets`', value: secrets },
     ...(secretsEvidence !== null ? [{ name: '`--secrets-evidence-file`', value: secretsEvidence }] : []),
     ...findingDescriptionFields(findings)
   ])
+
+  // Same trust anchor `checkReviewGate` itself uses — the repo's own
+  // `principals` field on the default branch (never the PR's checkout),
+  // falling back to the hardcoded `PRINCIPAL_ALLOWLIST` on any read failure.
+  // This itself calls `gh` (`ghFetchTrustAnchorConfig`), so it must not run
+  // until every local guard above has cleared — it is the first forge
+  // contact this path may make, same as `resolveHeadSha` right after it.
+  const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
 
   const headSha = resolveHeadSha(pr)
 
@@ -1163,7 +1267,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       'Check `gh auth status`/network and manually confirm the posted comment parses cleanly — this command could not verify it.'
     )
   }
-  const result = verifyPostedSecurity(postComments, verdict, headSha, principalAllowlist)
+  const result = verifyPostedSecurity(postComments, verdict, headSha, principalAllowlist, body)
   if (!result.ok) {
     refuseCmd(
       `Posted comment ${url}, but self-verification FAILED on re-parse: ${result.reason}`,

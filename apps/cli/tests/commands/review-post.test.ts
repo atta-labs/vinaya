@@ -9,6 +9,7 @@ import {
   deriveCodeReviewVerdict,
   deriveSecurityVerdict,
   type Finding,
+  fieldsContainingNewline,
   findingsOutsideDelta,
   findPriorVerdictComment,
   isEscalationClass,
@@ -16,7 +17,9 @@ import {
   parseChangedLineRanges,
   parsePriorFindingIds,
   renderEscalationComment,
-  verifyPostedEscalation
+  verifyPostedCodeReview,
+  verifyPostedEscalation,
+  verifyPostedSecurity
 } from '../../src/commands/review-post'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -1261,5 +1264,285 @@ describe('review post — round-two refusals (brief Part 3), end-to-end against 
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('fieldsContainingNewline', () => {
+  it('finds a field whose value carries a raw \\n', () => {
+    expect(fieldsContainingNewline([{ name: '--scope', value: 'a\nb' }])).toEqual(['--scope'])
+  })
+  it('finds a field whose value carries a raw \\r', () => {
+    expect(fieldsContainingNewline([{ name: '--scope', value: 'a\rb' }])).toEqual(['--scope'])
+  })
+  it('is clean on ordinary single-line text', () => {
+    expect(fieldsContainingNewline([{ name: '--scope', value: 'clean' }])).toEqual([])
+  })
+})
+
+function codeReviewArgs(overrides: Record<string, string> = {}): string[] {
+  const base: Record<string, string> = {
+    '--role': 'code-reviewer',
+    '--pr': '1',
+    '--task-id': 't',
+    '--model': 'm',
+    '--tokens-in': '-',
+    '--tokens-out': '-',
+    '--cost': '-',
+    '--brief-conformance': 'x',
+    '--spec-conformance': 'x',
+    '--scope': 'x',
+    '--tests': 'x',
+    '--docs': 'x',
+    ...overrides
+  }
+  return Object.entries(base).flat()
+}
+
+function securityArgs(overrides: Record<string, string> = {}): string[] {
+  const base: Record<string, string> = {
+    '--role': 'security',
+    '--pr': '1',
+    '--task-id': 't',
+    '--model': 'm',
+    '--tokens-in': '-',
+    '--tokens-out': '-',
+    '--cost': '-',
+    '--config-scan': 'x',
+    // Never normalizes to "none found" — every security case here needs no
+    // --secrets-evidence-file, whatever value is under test.
+    '--secrets': 'listed above, redacted',
+    ...overrides
+  }
+  return Object.entries(base).flat()
+}
+
+function minimalArgs(overrides: Record<string, string> = {}): string[] {
+  const base: Record<string, string> = {
+    '--role': 'code-reviewer',
+    '--pr': '1',
+    '--task-id': 't',
+    '--model': 'm',
+    '--tokens-in': '-',
+    '--tokens-out': '-',
+    '--cost': '-',
+    ...overrides
+  }
+  return Object.entries(base).flat()
+}
+
+describe('review post — newline guard: refuses (exit 2) before any forge contact, on all three paths', () => {
+  let cwd: string
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-review-post-newline-'))
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  const CASES: Array<[string, (bad: string) => string[]]> = [
+    ['--task-id', (bad) => minimalArgs({ '--task-id': bad })],
+    ['--model', (bad) => minimalArgs({ '--model': bad })],
+    ['--cost', (bad) => minimalArgs({ '--cost': bad })],
+    ['--brief-conformance', (bad) => codeReviewArgs({ '--brief-conformance': bad })],
+    ['--spec-conformance', (bad) => codeReviewArgs({ '--spec-conformance': bad })],
+    ['--scope', (bad) => codeReviewArgs({ '--scope': bad })],
+    ['--tests', (bad) => codeReviewArgs({ '--tests': bad })],
+    ['--docs', (bad) => codeReviewArgs({ '--docs': bad })],
+    ['--config-scan', (bad) => securityArgs({ '--config-scan': bad })],
+    ['--secrets', (bad) => securityArgs({ '--secrets': bad })]
+  ]
+
+  it.each(CASES)('%s', (label, buildArgs) => {
+    const { dir, env } = brokenGhPath()
+    try {
+      const r = runCli(['review', 'post', ...buildArgs('bad\nvalue')], { cwd, env: { ...process.env, ...env } })
+      expect(r.status).toBe(2)
+      expect(r.stderr).toContain('REFUSED')
+      expect(r.stderr).toContain(label)
+      expect(r.stderr).toContain('newline')
+      expect(r.stderr).not.toContain('unreachable (test stub)')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('the session id (via CLAUDE_CODE_SESSION_ID)', () => {
+    const { dir, env } = brokenGhPath()
+    try {
+      const r = runCli(['review', 'post', ...minimalArgs()], {
+        cwd,
+        env: { ...process.env, ...env, CLAUDE_CODE_SESSION_ID: 'bad\nvalue' }
+      })
+      expect(r.status).toBe(2)
+      expect(r.stderr).toContain('REFUSED')
+      expect(r.stderr).toContain('session id')
+      expect(r.stderr).toContain('newline')
+      expect(r.stderr).not.toContain('unreachable (test stub)')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // `--tokens-in`/`--tokens-out` are already unreachable-with-a-newline:
+  // `requireTokenField`'s anchored `/^\d+$/`-or-`-` check refuses first, so
+  // the newline guard itself never runs for these two — the security
+  // property (a newline in these fields can never reach a render) still
+  // holds, just via a different, earlier refusal.
+  it('--tokens-in — pre-existing digit-or-dash validation already refuses first', () => {
+    const { dir, env } = brokenGhPath()
+    try {
+      const r = runCli(['review', 'post', ...minimalArgs({ '--tokens-in': '5\n6' })], {
+        cwd,
+        env: { ...process.env, ...env }
+      })
+      expect(r.status).not.toBe(0)
+      expect(r.stderr).toContain('tokens-in')
+      expect(r.stderr).not.toContain('unreachable (test stub)')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('--tokens-out — pre-existing digit-or-dash validation already refuses first', () => {
+    const { dir, env } = brokenGhPath()
+    try {
+      const r = runCli(['review', 'post', ...minimalArgs({ '--tokens-out': '5\n6' })], {
+        cwd,
+        env: { ...process.env, ...env }
+      })
+      expect(r.status).not.toBe(0)
+      expect(r.stderr).toContain('tokens-out')
+      expect(r.stderr).not.toContain('unreachable (test stub)')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('review post — VERDICT-substring guard now also covers the shared token fields, before any forge contact', () => {
+  let cwd: string
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-review-post-verdict-shared-'))
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  const CASES: Array<[string, (bad: string) => string[]]> = [
+    ['--task-id', (bad) => minimalArgs({ '--task-id': bad })],
+    ['--model', (bad) => minimalArgs({ '--model': bad })],
+    ['--cost', (bad) => minimalArgs({ '--cost': bad })]
+  ]
+
+  it.each(CASES)('%s', (label, buildArgs) => {
+    const { dir, env } = brokenGhPath()
+    try {
+      const r = runCli(['review', 'post', ...buildArgs('VERDICT: sneaky')], { cwd, env: { ...process.env, ...env } })
+      expect(r.status).toBe(2)
+      expect(r.stderr).toContain('REFUSED')
+      expect(r.stderr).toContain(label)
+      expect(r.stderr).toContain('VERDICT')
+      expect(r.stderr).not.toContain('unreachable (test stub)')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('the session id (via CLAUDE_CODE_SESSION_ID)', () => {
+    const { dir, env } = brokenGhPath()
+    try {
+      const r = runCli(['review', 'post', ...minimalArgs()], {
+        cwd,
+        env: { ...process.env, ...env, CLAUDE_CODE_SESSION_ID: 'VERDICT: sneaky' }
+      })
+      expect(r.status).toBe(2)
+      expect(r.stderr).toContain('REFUSED')
+      expect(r.stderr).toContain('session id')
+      expect(r.stderr).toContain('VERDICT')
+      expect(r.stderr).not.toContain('unreachable (test stub)')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('review post — every guard runs before the principal-allowlist fetch too, on all three paths', () => {
+  let cwd: string
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-review-post-allowlist-order-'))
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  // `resolvePrincipalAllowlist(loadTrustAnchorConfig())` itself calls `gh` —
+  // it is forge contact. A field guard that ran after it would still refuse,
+  // but the broken-gh stub's stderr line would already have leaked through,
+  // proving the "before any forge contact" claim false. Regression coverage
+  // for exactly that ordering bug (round 3 finding on #392).
+  it('a code-reviewer path field guard refuses before the allowlist fetch', () => {
+    const { dir, env } = brokenGhPath()
+    try {
+      const r = runCli(['review', 'post', ...codeReviewArgs({ '--scope': 'VERDICT: sneaky' })], {
+        cwd,
+        env: { ...process.env, ...env }
+      })
+      expect(r.status).toBe(2)
+      expect(r.stderr).not.toContain('unreachable (test stub)')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a security path field guard refuses before the allowlist fetch', () => {
+    const { dir, env } = brokenGhPath()
+    try {
+      const r = runCli(['review', 'post', ...securityArgs({ '--config-scan': 'VERDICT: sneaky' })], {
+        cwd,
+        env: { ...process.env, ...env }
+      })
+      expect(r.status).toBe(2)
+      expect(r.stderr).not.toContain('unreachable (test stub)')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('self-verification refuses cross-role contamination', () => {
+  const PRINCIPALS = ['daniboomerang']
+  const asComment = (body: string, author: string | null = 'daniboomerang') => [{ body, author }]
+
+  it('a code-review post that also re-parses as a security VERDICT fails self-verification', () => {
+    const body = `VERDICT: APPROVE\n\nJudged head: ${HEAD}\n\nVERDICT: PASS`
+    const result = verifyPostedCodeReview(asComment(body), 'APPROVE', HEAD, PRINCIPALS, body)
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('cross-role contamination')
+    expect(result.reason).toContain('security')
+  })
+
+  it('a security post that also re-parses as a code-review VERDICT fails self-verification', () => {
+    const body = `VERDICT: PASS\n\nJudged head: ${HEAD}\n\nVERDICT: APPROVE`
+    const result = verifyPostedSecurity(asComment(body), 'PASS', HEAD, PRINCIPALS, body)
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('cross-role contamination')
+    expect(result.reason).toContain('code-review')
+  })
+
+  it('an ordinary clean code-review post does not trip the cross-role check', () => {
+    const body = `VERDICT: APPROVE\n\nJudged head: ${HEAD}`
+    expect(verifyPostedCodeReview(asComment(body), 'APPROVE', HEAD, PRINCIPALS, body).ok).toBe(true)
+  })
+
+  it('an ordinary clean security post does not trip the cross-role check', () => {
+    const body = `VERDICT: PASS\n\nJudged head: ${HEAD}`
+    expect(verifyPostedSecurity(asComment(body), 'PASS', HEAD, PRINCIPALS, body).ok).toBe(true)
+  })
+
+  it('a security PASS never cross-reads as a code-review LGTM even though both extractors could plausibly hit unrelated text', () => {
+    // Sanity check on the disjoint value vocabularies (APPROVE/REQUEST_CHANGES/LGTM
+    // vs PASS/FAIL) — an ordinary security post must never fail this check.
+    const body = `VERDICT: PASS\n\nJudged head: ${HEAD}\n\nCONFIG SCAN: clean\nSECRETS: none found`
+    expect(verifyPostedSecurity(asComment(body), 'PASS', HEAD, PRINCIPALS, body).ok).toBe(true)
   })
 })
