@@ -281,6 +281,8 @@ The code-reviewer and security passes are **separate, fresh-context invocations*
 
 A brief is not infallible. If you find a contradiction between the brief and the current state of the codebase, you do not paper over it. You surface it.
 
+A contradiction is not only the codebase-moved-since-the-brief case. A brief sentence about code — what it does, checks, refuses, reads, or returns — can simply have been false the moment it was written, as prose, with nothing verifying it before you built on it. Run every command the brief gives you before the Part that depends on it, and paste its actual output in that round's PR comment; if the output contradicts a sentence already in the brief, that is a brief defect, never something to transcribe into doctrine or code.
+
 Escalate with the appropriate severity — a manual escalation note, or, if you were dispatched by an automation layer, its request-input mechanism:
 
 - `severity: execution` — missing detail, deprecated dependency, flag not anticipated
