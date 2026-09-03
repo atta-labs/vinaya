@@ -6,8 +6,10 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const REPO_ROOT = join(CLI_ROOT, '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
 const FORGE_FIXTURES = join(CLI_ROOT, 'tests', 'fixtures', 'forge')
+const AEG_CORE_FIXTURES = join(REPO_ROOT, 'packages', 'aeg-core', 'tests', 'fixtures')
 
 const FULL_PR_CONFIG = {
   briefSchema: {
@@ -247,6 +249,43 @@ describe('vinaya pr create --validate-only — rings.ring1_forgeWriteInterceptio
     const noTierNoDigits = join(cwd, 'no-tier-no-digits.md')
     writeFileSync(noTierNoDigits, '## Summary\n\nno tier field here, and no digits anywhere in this body.\n', 'utf8')
     const r = runCli(['pr', 'create', '--validate-only', '--body-file', noTierNoDigits, '--title', 'Feat: x'], { cwd })
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('PASS')
+  })
+})
+
+/**
+ * `pr create` runs every registry check declaring `PR_BODY` over the body
+ * before it ever reaches the forge (task 12, #387) — the same set CI's
+ * `vinaya-checks.yml` runs against the live body, so a body that opens here
+ * is a body that passes there too. Run from THIS repo's own root (not a
+ * synthetic tmpdir): these are real registry-check subprocesses
+ * (`brief-shape`, `pr-report-density`, `doc-coverage`), and a bare tmpdir
+ * gives them no real workspace/doc-owners context to run against.
+ */
+describe('vinaya pr create --validate-only — runs the registry PR_BODY checks (task 12, #387)', () => {
+  it('refuses the PR #394-as-opened body, naming pr-report-density among the findings', () => {
+    const r = runCli(
+      [
+        'pr',
+        'create',
+        '--validate-only',
+        '--body-file',
+        join(AEG_CORE_FIXTURES, 'pr-body-394-as-opened.md'),
+        '--title',
+        'Fix: x'
+      ],
+      { cwd: REPO_ROOT }
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('"check":"pr-report-density"')
+  })
+
+  it('opens a clean, fully-conformant body — --validate-only reports PASS, writes nothing', () => {
+    const r = runCli(
+      ['pr', 'create', '--validate-only', '--body-file', join(FORGE_FIXTURES, 'pr-clean-body.md'), '--title', 'Fix: x'],
+      { cwd: REPO_ROOT }
+    )
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
   })

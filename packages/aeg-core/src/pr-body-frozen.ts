@@ -128,34 +128,40 @@ export type PrBodyFrozenResult =
   | { status: 'fail'; reason: PrBodyFrozenFailReason; errors: string[] }
 
 /**
- * Finds the EARLIEST (by `createdAt`) marker comment authored by an
+ * Finds the NEWEST (by `createdAt`) marker comment authored by an
  * allowlisted principal — never the first one encountered in whatever order
- * the caller's fetch happened to return, and never the most recent. A
- * marker from a non-allowlisted author is ignored (grandfathering an
+ * the caller's fetch happened to return, and never the oldest. A marker
+ * from a non-allowlisted author is ignored (grandfathering an
  * attacker-posted decoy marker would let them pin an arbitrary hash and
  * mask a real edit). `pr create` posts the original marker under the same
  * login that opened the PR, which the review-gate's own trust model already
  * treats as a principal-equivalent write path.
  *
- * The open-time hash is the baseline, permanently: a later repost —
- * whether a second `vinaya pr create`-style post, an allowlisted account
- * re-pinning a hash to match an edited body, or any other later marker
- * comment — never wins over the original. Picking the earliest is what
- * makes that true; picking "first in array order" or "most recent" both
- * depend on an ordering this function does not control and must not trust.
+ * Newest-wins (task 12, #387) — reversed from the original earliest-wins
+ * rule so the frozen body has a door: `vinaya pr refreeze` (Principal-only,
+ * gated on the same allowlist this function already filters by) posts a
+ * fresh marker over an edited body, and that marker must be the one this
+ * function returns from then on. Picking the earliest would make the door
+ * a no-op — the original marker would win forever regardless of any later,
+ * equally-allowlisted repost. Safety survives the reversal because the
+ * FILTER, not the ordering, is what keeps a non-Principal edit from ever
+ * winning: only an allowlisted author's marker is a candidate at all, so a
+ * Developer's later marker (posted under a non-allowlisted identity) never
+ * beats a Principal's earlier one — it is never a candidate in the first
+ * place.
  */
 function findMarker(comments: readonly PrBodyFrozenComment[], principalAllowlist: readonly string[]): string | null {
-  let earliest: { hash: string; createdAt: string } | null = null
+  let newest: { hash: string; createdAt: string } | null = null
   for (const comment of comments) {
     if (!isPrincipal(comment.author, principalAllowlist as string[])) continue
     const match = BODY_HASH_MARKER_PATTERN.exec(comment.body)
     if (!match) continue
     const hash = (match[1] as string).toLowerCase()
-    if (earliest === null || comment.createdAt < earliest.createdAt) {
-      earliest = { hash, createdAt: comment.createdAt }
+    if (newest === null || comment.createdAt > newest.createdAt) {
+      newest = { hash, createdAt: comment.createdAt }
     }
   }
-  return earliest ? earliest.hash : null
+  return newest ? newest.hash : null
 }
 
 /**
@@ -208,7 +214,7 @@ export function checkPrBodyFrozen(opts: {
     status: 'fail',
     reason: 'mismatch',
     errors: [
-      `pr-body-frozen: the PR body's authored region no longer matches the hash posted at open (recorded ${marker}, live ${live}). The body is frozen at open — a Developer answers review findings with commits and a round comment, never a body edit (except the AEG:EVIDENCE regeneration and one appended AEG:TOKENS row, both of which this check already tolerates).`
+      `pr-body-frozen: the PR body's authored region no longer matches the hash posted at open or the most recent \`vinaya pr refreeze\` (recorded ${marker}, live ${live}). The body is frozen — a Developer answers review findings with commits and a round comment, never a body edit (except the AEG:EVIDENCE regeneration and one appended AEG:TOKENS row, both of which this check already tolerates). Only the Principal can move the baseline, via \`vinaya pr refreeze\`.`
     ]
   }
 }

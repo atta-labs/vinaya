@@ -137,13 +137,19 @@ home for them: emitted by `vinaya pr report --write`, never hand-typed.>
 
 ## Test plan
 
-<every runtime-observable check, tagged `[agent]` or `[principal]`. Pure-logic
-tasks use the explicit `Test Plan: unit-tests-only` sentinel instead of an
-empty list.>
+<every runtime-observable check. Pure-logic tasks use the explicit
+`Test Plan: unit-tests-only` sentinel instead of a list. The `[agent]` half is
+a fenced list of commands (task 12; Principal ruling: an
+agent never ticks a box or edits a PR body) — one command per line, each with
+its expected observable after a literal `→`. `vinaya pr report` runs every
+line in that fence from the PR head and writes the command plus its actual
+output into the `AEG:EVIDENCE` block below; there is no `[agent]` checkbox
+left to tick.>
 
-- [ ] **[agent]** <scriptable / non-auth / no-vendor-key check — e.g. a unit
-      test, a typecheck, a curl against a booted route. The agent runs this
-      and pastes the actual command output as evidence.>
+```
+<scriptable / non-auth / no-vendor-key command> → <expected observable>
+```
+
 - [ ] **[principal]** <auth-gated / vendor-key-dependent / visual / browser
       check — e.g. signing in with Clerk and running a real BYOK audit. The
       Principal runs this in a browser and ticks the box.>
@@ -172,9 +178,9 @@ field on its own line:>
 |------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Summary          | One paragraph. Closes the Issue with `Closes #<N>` somewhere in the body. No verification claims (typecheck/lint/test/diff-stat output, pass counts) — those belong exclusively in Evidence, below.                    |
 | **Bare digits (whole body)** | `body-bare-digits` (CI) refuses any bare digit outside a fenced/indented/inline code span or `Closes`/`Project`/`Tier`/`Evidence`'s own anchor, correctly placed under its own documented section — nowhere else. `Premise`/`Test plan` get no anchor exemption at all (their real content is unbounded free text, so it's scanned like ordinary prose — a Test Plan item's own pass count or exit code needs backticks too). An Issue/PR ref, a date, a version, a path, a section number all now need their own backticks (`` `#N` ``); a countable claim ("138 passed", a duration, a percentage) belongs in a fenced block or doesn't get written. |
-| Test plan        | Every runtime check tagged `[agent]` or `[principal]`. The brief-authoring skill makes this a **required** field — empty plans use `Test Plan: unit-tests-only` as the sentinel.   |
-| `[agent]` items  | Items the Developer-agent can run end-to-end before opening the PR. Paste the **actual command output**, not a paraphrase. (This is the `[agent]` half of the Verification phase, see `state-machine.md` § Verification.) |
-| `[principal]` items | Items only the Principal can run (auth-gated, vendor-key-dependent, visual). The agent **does not tick these** — the Principal does, after running in a real browser.            |
+| Test plan        | Every runtime-observable check. The brief-authoring skill makes this a **required** field — empty plans use `Test Plan: unit-tests-only` as the sentinel.   |
+| `[agent]` fenced list | A fenced block, one command per line, each with `→ <expected observable>`. `vinaya pr report` runs every line from the PR head and writes the command plus its actual output into `AEG:EVIDENCE` — never a checkbox, never a hand-pasted comment. (This is the `[agent]` half of the Verification phase, see `state-machine.md` § Verification.) |
+| `[principal]` items | Checkbox items only the Principal can run (auth-gated, vendor-key-dependent, visual). The agent **does not tick these** — the Principal does, after running in a real browser.            |
 | Evidence         | The `AEG:EVIDENCE` block — emitted by `vinaya pr report --write`, never hand-typed. See [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed). `check-evidence-fresh` refuses a body whose block doesn't match the head it's attached to. |
 | Scope            | One paragraph + the Tier field. Ends with `**Tier:** 0 \| 1 \| 3` on its own line.                                                                                                |
 | **Tier syntax**  | Exactly `Tier: 0`, `Tier: 1`, `Tier: 3` (plain) — or `**Tier:** 0`, `**Tier:** 1`, `**Tier:** 3` (bold). `Tier 1` (no colon), `Tier-1`, `Tier:1` (no space) are **rejected** by CI. |
@@ -255,15 +261,14 @@ A spike is exploratory, not a permanent excuse to skip documentation. The pull r
 
 ## After you open the PR — the post-open sequence
 
-Opening the PR is not the end of your turn; it is the point at which the rest of your turn becomes runnable. Several `[agent]` Test Plan items cannot run before the PR exists at all — anything that takes the PR number as an argument, anything that reads the PR's own body or comments. Those run now, in this order, and the order is load-bearing:
+Opening the PR is not the end of your turn; it is the point at which the rest of your turn becomes runnable. The `[agent]` half of your Test Plan is no longer something you run by hand and paste — it is a fenced command list in §9 that `vinaya pr report` itself executes from the PR head and writes into the `AEG:EVIDENCE` block (task 12; Principal ruling: an agent never ticks a box or edits a PR body). What remains for you to do runs now, in this order, and the order is load-bearing:
 
-1. **Run every `[agent]` item that needed the PR number.** An item you skipped because the PR did not exist yet is an item you have not run.
-2. **Merge the main branch first if you are behind it.** A branch behind its base is judged against a base nobody will merge into. `vinaya review status <pr>` prints that distance as a second line reading `behind main by <n> — merge first`, and exits non-zero unless the loop is converging at a branch that is not behind. Merge, push, and only then continue — the head your evidence names must be the head your reviewer will read.
-3. **Regenerate the Evidence block** — one command, `vinaya pr report --push <n>`, never a hand edit. The body is frozen at open and this is the only sanctioned write into it.
-4. **Post one comment, headed `Head: <sha>`, carrying the round marker `<!-- aeg:developer:round-<n> -->` and the actual output of every `[agent]` item you ran.** One comment per round, never an edit to the one already there. The marker is what makes the round machine-readable: the Test Plan gate reads it at that fixed position to decide whether a ticked `[agent]` box has evidence behind it at all, and the round derivation counts rounds from it. A comment carrying the evidence but not the marker is, to every gate that reads it, no round comment at all.
-5. **Tick the `[agent]` boxes you actually ran** — the checkbox character alone, nothing else in the body changes. **Never tick a `[principal]` box.** You structurally cannot satisfy one, and the asymmetry is the point.
+1. **Merge the main branch first if you are behind it.** A branch behind its base is judged against a base nobody will merge into. `vinaya review status <pr>` prints that distance as a second line reading `behind main by <n> — merge first`, and exits non-zero unless the loop is converging at a branch that is not behind. Merge, push, and only then continue — the head your evidence names must be the head your reviewer will read.
+2. **Regenerate the Evidence block** — one command, `vinaya pr report --push <n>`, never a hand edit. This runs the real gates (Group B) AND every `[agent]` command in your §9 fenced list (Group C), writing each command's actual output into `AEG:EVIDENCE`. The body is frozen at open and this is the only sanctioned write into it.
+3. **Post one comment, headed `Head: <sha>`, carrying the round marker `<!-- aeg:developer:round-<n> -->` and your `Tokens:` line.** One comment per round, never an edit to the one already there. No Test Plan output belongs in this comment any more — it lives in the Evidence block `pr report` just wrote. The marker is what makes the round machine-readable for the round-derivation logic that still reads it.
+4. **Tick nothing.** There is no `[agent]` checkbox left to tick — the fenced command list has no box at all. **Never tick a `[principal]` box.** You structurally cannot satisfy one, and the asymmetry is the point.
 
-Step 2 is not optional and not reorderable: there is no path through this sequence that reaches a `Head:` comment while the branch is behind. The evidence in that comment is a claim about a head, and a head that is about to be superseded by a merge you have not done yet is the wrong head to make it about.
+Step 1 is not optional and not reorderable: there is no path through this sequence that reaches a `Head:` comment while the branch is behind. The evidence in that comment is a claim about a head, and a head that is about to be superseded by a merge you have not done yet is the wrong head to make it about.
 
 Then stop. Review is a separate invocation.
 
@@ -400,7 +405,7 @@ Items 1–4 are also composed into one command, `bun packages/aeg-core/bin/verif
 
 The checks above are **static**: they prove the change compiles, lints, types and matches its declared surface. They do not prove the feature works. Verification is the separate, mandatory phase that runs the brief's Test Plan against a booted app, after the review passes and before the Principal merges.
 
-**It is a phase, not an actor.** There is no Verifier to dispatch. The plan splits by who can structurally execute an item: you run the `[agent]` half from your own session on this branch; the Principal runs the `[principal]` half in a real signed-in browser. Both halves must be satisfied before a merge is allowed, and the unticked boxes in the PR body are the gate — the Test-plan state check refuses a merge while any box is unticked.
+**It is a phase, not an actor.** There is no Verifier to dispatch. The plan splits by who can structurally execute it: `vinaya pr report` runs the `[agent]` half's fenced command list from the PR head and writes it into `AEG:EVIDENCE`; the Principal runs the `[principal]` half in a real signed-in browser and ticks its boxes. Both halves must be satisfied before a merge is allowed — the `[agent]` half by the Evidence block existing and matching a fresh recompute (`evidence-fresh`), the `[principal]` half by every unticked `[principal]` box in the PR body, which `test-plan` refuses a merge while any remain unticked.
 
 **Why it exists:** four consecutive features once merged with green CI and were broken at runtime — a missing migration, a missing environment variable, a missing provider, an unexecuted test plan. The static gates ran and passed; the reviews read the diff; nobody booted the app. Verification is the phase that closes that gap.
 
@@ -415,12 +420,11 @@ If the brief declares `unit-tests-only` and the diff really is pure logic, the p
 
 ### The `[agent]` half — yours
 
-1. **Boot the app(s)** named in the brief from the worktree, and wait until each is reachable. If it does not boot, that is the failure — the plan never gets a chance to run.
-2. **Execute every `[agent]` item.** Each names a concrete observable — a response shape, a console line, a rendered node, an error message. Run the named command and **paste the actual output**. Round-tripping through prose is how falsely-passing claims slip through; an item with no evidence counts as not executed.
-3. **Report on the PR** — each item with its result and its evidence, posted as a PR comment, never written into the body. A re-run after fixes posts a new comment; it never edits the one already there. The body's `[agent]` Test Plan line carries the tick only, never pasted command output — the evidence lives solely in the comment, headed `Head: <sha>` and carrying the round marker `<!-- aeg:developer:round-<n> -->`. The `AEG:EVIDENCE` block, not this line, is what `evidence-fresh` binds to the PR's head.
-4. **Stop there.** Do not execute `[principal]` items; you structurally cannot. Mark them as awaiting the Principal.
+1. **Boot the app(s)** named in the brief from the worktree, and wait until each is reachable, if your §9 fenced commands need one running. If it does not boot, that is the failure — the plan never gets a chance to run.
+2. **Run `vinaya pr report --push <n>`.** It executes every line in your §9 fenced command list from the PR head and writes each command plus its actual output into `AEG:EVIDENCE` — never a hand-pasted comment, never a checkbox tick. Round-tripping through prose is how falsely-passing claims slip through; a command this tool did not run is not evidence.
+3. **Stop there.** Do not execute `[principal]` items; you structurally cannot. Mark them as awaiting the Principal.
 
-A failed `[agent]` item makes the PR unmergeable. Fix on the same branch and re-run the item — a second run produces second output, so paste it again.
+A failed `[agent]` command makes the PR unmergeable (`vinaya pr report`'s own exit code reflects it, and `evidence-fresh` binds the recorded output to the PR head). Fix on the same branch and re-run `vinaya pr report --push <n>` — it overwrites the block with fresh output, never appends a second copy.
 
 ### The `[principal]` half — not yours
 
@@ -443,7 +447,7 @@ The check is tool-agnostic — "reviewer approved" means any reviewer with `stat
 **Check items (all three must pass):**
 
 1. **Reviewer approved?** The JSON `reviews` array contains at least one entry with `state: APPROVED`.
-2. **Test Plan items ticked?** The PR body's Test Plan section contains no unchecked `- [ ] **[agent]**` lines.
+2. **`[agent]` evidence fresh?** The `AEG:EVIDENCE` block's third group (the §9 fenced command list, run by `vinaya pr report`) matches a fresh recompute at the PR head — there is no `[agent]` checkbox to tick any more.
 3. **Principal confirmation?** The PR body's Test Plan section contains no unchecked `- [ ] **[principal]**` lines.
 
 If any fails: post a comment listing the exact items missing, and STOP. The Principal decides what to do next.

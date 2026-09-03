@@ -6,6 +6,7 @@ import { anchoredRegion } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 import { compareEvidenceBlock } from '../../src/checks/evidence-fresh-logic'
 import { type ResolvedRegion, ScanContext, resolveAnchoredRegion } from '../../src/checks/scan-context'
+import { type GroupCCommandResult, renderGroupC } from '../../src/commands/pr-report'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../src/lib/numstat'
 
 const HEAD = 'a'.repeat(40)
@@ -99,6 +100,75 @@ describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)',
     const malformed = ['<!-- AEG:EVIDENCE:START -->', '```', NUMSTAT, '```', '<!-- AEG:EVIDENCE:END -->'].join('\n')
     const result = compareEvidenceBlock(regionOf(malformed), HEAD, NUMSTAT)
     expect(result.status).toBe('fail')
+  })
+})
+
+function groupCResult(command: string, output: string): GroupCCommandResult {
+  return { command, output, exitCode: 0, timedOut: false }
+}
+
+/** A block carrying a real `renderGroupC` render — appended after Group B, exactly as `pr-report.ts` emits it. */
+function evidenceBodyWithGroupC(head: string, numstat: string, commands: GroupCCommandResult[]): string {
+  const withoutEnd = evidenceBody(head, numstat).replace('<!-- AEG:EVIDENCE:END -->', '')
+  return [withoutEnd, '', renderGroupC({ commands }), '<!-- AEG:EVIDENCE:END -->'].join('\n')
+}
+
+describe('compareEvidenceBlock — Group C is attested, never re-run (task 12, Principal rulings PR open-1/open-2)', () => {
+  it('passes when the stored heading matches — the command output is never compared', () => {
+    const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, [
+      groupCResult('echo hi', 'whatever this printed, never compared')
+    ])
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, ['echo hi'])
+    expect(result.status).toBe('pass')
+  })
+
+  it("fails, naming Group C, when the stored command heading disagrees with the body's own §9 list", () => {
+    const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, [groupCResult('echo hi', 'hi')])
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, ['echo bye'])
+    expect(result.status).toBe('fail')
+    expect(result.status === 'fail' && result.errors.join('\n')).toContain("Group C's command headings")
+  })
+
+  it('fails on a stored command list shorter or longer than the expected §9 list, not just a content mismatch', () => {
+    const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, [groupCResult('echo hi', 'hi')])
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, ['echo hi', 'echo bye'])
+    expect(result.status).toBe('fail')
+  })
+
+  it('a body with no ### Group C heading is never faulted for lacking Group C, even when the caller supplies an expected list', () => {
+    const body = evidenceBody(HEAD, NUMSTAT)
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, ['echo hi'])
+    expect(result.status).toBe('pass')
+  })
+
+  it("an output line shaped like a command heading (or the old '$ ' delimiter) is never mistaken for a real command boundary — the Principal ruling PR open-2 fix", () => {
+    // `bun run test`'s own progress output can print a line that starts
+    // with `$ ` — the exact ambiguity `open-2` closed by moving the
+    // boundary off fence contents entirely. A decoy heading-shaped line in
+    // the output is equally inert: only the REAL rendered heading (one per
+    // `GroupCCommandResult`) is ever a boundary.
+    const decoyOutput = ['$ turbo test', '#### C99: `rm -rf /`', 'real output line'].join('\n')
+    const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, [groupCResult('bun run test', decoyOutput)])
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, ['bun run test'])
+    expect(result.status).toBe('pass')
+  })
+
+  it('a real second command is still detected as a distinct heading, never folded into the first', () => {
+    const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, [
+      groupCResult('echo one', 'one'),
+      groupCResult('echo two', 'two')
+    ])
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, ['echo one', 'echo three'])
+    expect(result.status).toBe('fail')
+    const message = result.status === 'fail' ? result.errors.join('\n') : ''
+    expect(message).toContain('"echo one"')
+    expect(message).toContain('"echo two"')
+  })
+
+  it('skips the Group C comparison entirely when the caller passes no expected list', () => {
+    const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, [groupCResult('echo hi', 'hi')])
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT)
+    expect(result.status).toBe('pass')
   })
 })
 

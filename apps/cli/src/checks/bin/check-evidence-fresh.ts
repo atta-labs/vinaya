@@ -4,13 +4,27 @@
  * Core check: evidence-fresh (fix/pr-report-emitter). Refuses a PR body whose
  * `AEG:EVIDENCE` block does not match the head it is attached to.
  *
- * Two asymmetric halves, on purpose — see `evidence-fresh-logic.ts`'s module
- * doc for the fabrication-vs-staleness boundary this closes:
+ * Three groups, two of them compared exactly — see `evidence-fresh-logic.ts`'s
+ * module doc for the fabrication-vs-staleness boundary this closes:
  *   - Group A (the `git diff --numstat` recompute) is compared exactly.
  *   - Group B (the attested `vinaya check --all --diff-only` run) is checked
  *     for freshness only, via the block's `Head:` line — re-running that
  *     suite here would be the recursion `vinaya pr report`'s own docstring
  *     rejects.
+ *   - Group C (task 12, Principal rulings PR `open-1`/`open-2`: the Test
+ *     Plan's `[agent]` command list) is attested, like Group B — the
+ *     stored block's `#### C<n>: \`<command>\`` HEADING lines must equal
+ *     the body's own §9 list, in order, never re-run here. Group C is
+ *     arbitrary commands, not a `git` recompute; an earlier version of this
+ *     check re-ran the whole §9 list (including a full `bun run test`)
+ *     inside its own timeout, deleting `dist` out from under the
+ *     twenty-six sibling checks the same CI job had just built it for
+ *     (`open-1`). A later version read command boundaries out of a shared
+ *     fence's `$ `-prefixed lines instead of re-running them, but a
+ *     command's own output can print a line shaped like that same
+ *     delimiter — `open-2` moved the boundary to a heading line no
+ *     command's OUTPUT can forge. Skipped for a region carrying no
+ *     `### Group C` heading at all, which predates this group.
  *
  * Head resolution deliberately does NOT use `HEAD`. `actions/checkout@v4` on
  * a `pull_request` event with no `ref:` checks out `refs/pull/N/merge`, so
@@ -39,6 +53,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
+import { agentCommandText, extractAgentCommandLines } from '../../commands/pr-report'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { compareEvidenceBlock } from '../evidence-fresh-logic'
 import { ScanContext, resolveAnchoredRegion } from '../scan-context'
@@ -197,7 +212,12 @@ function main(): void {
     process.exit(1)
   }
 
-  const result = compareEvidenceBlock(resolved, resolvedHead, actualNumstat)
+  // Attestation, not a re-run: the body's own §9 command list, arrow text
+  // stripped — never spawned. See `evidence-fresh-logic.ts`'s module doc for
+  // why re-running Group C here was the defect this ruling closes.
+  const expectedGroupCCommandLines = extractAgentCommandLines(body).map(agentCommandText)
+
+  const result = compareEvidenceBlock(resolved, resolvedHead, actualNumstat, expectedGroupCCommandLines)
   if (result.status === 'fail') {
     for (const message of result.errors) {
       emitCheckError({

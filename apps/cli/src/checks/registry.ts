@@ -295,19 +295,15 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // See `CheckSpec.requiresOpenPr`'s doc comment.
       requiresOpenPr: true,
       // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
-      // plain absence-tolerant fall-throughs. PR_NUMBER is the same shape:
-      // unset means "no PR to read comments from yet" and the bin keeps its
-      // body-only behaviour. The two tokens are forwarded for the same reason
-      // `review-gate`'s entry forwards them — the bin shells to `gh` directly,
-      // and on a CI runner `gh` authenticates ONLY from GH_TOKEN/GITHUB_TOKEN,
-      // so without them every `gh pr view` fails. Optional because a local run
-      // uses `gh`'s own keyring auth with no env var at all.
+      // plain absence-tolerant fall-throughs. Body and branch only again
+      // (task 12, #387): the bin no longer shells to `gh` at all — the
+      // `[agent]` half of a Test Plan is a fenced command list `vinaya pr
+      // report` grades against the AEG:EVIDENCE block, not a comment this
+      // bin used to count — so no PR_NUMBER/token declaration is needed here
+      // any more.
       env: {
         PR_BODY: { optional: true },
-        BRANCH: { optional: true },
-        PR_NUMBER: { optional: true },
-        GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
+        BRANCH: { optional: true }
       }
     },
     // requiresOpenPr — see `closes-n` above.
@@ -632,7 +628,16 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // need none — reads only local files (`vinaya.config.json`'s
       // `proseGates` key via `loadConfig()`, plus the doctrine/reader-facing
       // trees it names), no forge call, no PR content.
-      env: {}
+      env: {},
+      // task 12, #387: an `include` declaration on a `scope: 'full'` entry
+      // is currently pinning/documentation only (`runner.ts`'s `shouldSkip`
+      // returns early for any non-`'diff'` scope, before ever consulting
+      // `include`) — see this task's own PR body for that known gap and why
+      // `runner.ts` is out of this task's surface. Declared anyway so the
+      // sweep's real scope is legible here, and so a future `runner.ts`
+      // change that extends `--diff-only` skipping to `scope: 'full'` finds
+      // this already correct.
+      include: ['aeg-root/**/*.md']
     },
     0
   ],
@@ -643,7 +648,9 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       scope: 'full',
       timeoutMs: 30_000,
       // Same reasoning as `reader-resolvable-prose` above — local files only.
-      env: {}
+      env: {},
+      // See `reader-resolvable-prose`'s identical `include` comment above.
+      include: ['aeg-root/**/*.md']
     },
     0
   ],
@@ -657,7 +664,9 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // repository, never the network — no forge call, no PR content.
       // BASE_SHA overrides the `origin/main` baseline ref, same declaration
       // as `doc-coverage`/`no-disk-state`/`evidence-fresh` above.
-      env: { BASE_SHA: { optional: true } }
+      env: { BASE_SHA: { optional: true } },
+      // See `reader-resolvable-prose`'s identical `include` comment above.
+      include: ['aeg-root/**/*.md']
     },
     0
   ],
@@ -669,7 +678,9 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       timeoutMs: 30_000,
       // Local-only: walks `<doctrineRoot>` with `node:fs`, never the
       // network, `gh`, or a PR-scoped fact — no forge call, no PR content.
-      env: {}
+      env: {},
+      // See `reader-resolvable-prose`'s identical `include` comment above.
+      include: ['aeg-root/**/*.md']
     },
     0
   ],
@@ -694,7 +705,12 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       timeoutMs: 30_000,
       // Local-only: walks the working tree with `node:fs`, never the
       // network, `gh`, or a PR-scoped fact — no forge call, no PR content.
-      env: {}
+      env: {},
+      // See `reader-resolvable-prose`'s identical `include` comment above —
+      // named here per the Issue's own list even though this sweep's real
+      // domain is `apps`/`packages`, not `aeg-root`; harmless either way
+      // while `include` has no runtime effect on a `scope: 'full'` entry.
+      include: ['aeg-root/**/*.md']
     },
     0
   ],

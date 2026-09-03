@@ -83,6 +83,7 @@ export {
   checkDocUpdateList,
   checkForField,
   checkForgeTitle,
+  checkNoAgentBoxes,
   checkNoUnpinnedCodeClaims,
   checkPlanPrNoCloses,
   checkPremiseCoverage,
@@ -94,6 +95,7 @@ export {
   checkTestPlanExclusivity,
   checkTierField,
   checkWorktreeStep0,
+  AGENT_BOXES_REFUSED_SINCE_PR,
   BRIEF_RULES_SINCE_PR,
   COMMAND_WORDS,
   COMMIT_TYPE_STYLE,
@@ -275,7 +277,7 @@ export type { IssueAssignmentDecision, IssueAssignmentInput } from './issue-assi
 export { locateTestPlanSection } from './test-plan-section'
 export type { TestPlanSection } from './test-plan-section'
 export { evaluateTestPlanGate } from './test-plan-gate'
-export type { TestPlanEvidence, TestPlanGateResult, TestPlanGateVerdict } from './test-plan-gate'
+export type { TestPlanGateResult, TestPlanGateVerdict } from './test-plan-gate'
 export {
   authoredRegion,
   authoredRegionHash,
@@ -331,3 +333,5 @@ export type {
 } from './milestone-validation'
 export { findWorkspaceEscapes } from './workspace-escape'
 export type { WorkspaceEscapeFinding, WorkspaceEscapeReason, WorkspaceEscapeSourceFile } from './workspace-escape'
+export { parseRationaleFields, renderBrief } from './brief-render'
+export type { BriefFacts, RationaleFieldKey, RenderResult, SurfaceFileFact } from './brief-render'

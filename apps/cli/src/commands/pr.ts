@@ -16,6 +16,9 @@ import {
   validateForgeWrite
 } from '../lib/forge-write'
 import { checkBareDigits } from '../checks/body-bare-digits-logic'
+import { coreCheckRegistry } from '../checks/registry'
+import { defaultParallelism, runChecks } from '../checks/runner'
+import { loadConfigChecked } from '../lib/config'
 
 const RETRY_CREATE = 'vinaya pr create --validate-only …'
 const RETRY_EDIT = 'vinaya pr edit <n> --validate-only …'
@@ -213,7 +216,54 @@ function refuseOnBareDigits(body: string, retryCommand: string): void {
   )
 }
 
-export function prCreateCommand(args: string[]): void {
+/**
+ * Runs every registry check whose entry declares `PR_BODY` over the exact
+ * body about to be sent to the forge, with `PR_NUMBER` explicitly UNSET
+ * (`pr create` runs before any PR exists — an ambient/stale `PR_NUMBER`
+ * inherited from the caller's shell must never let a `requiresOpenPr` check
+ * fetch a foreign PR's state instead of taking its own documented "no PR
+ * yet" bypass). `localOnly: true` skips every `requiresOpenPr` check outright
+ * for the same reason (`closes-n`, `test-plan`, `evidence-fresh`,
+ * `body-bare-digits`, `token-report` all take that bypass on their own body-
+ * only path when actually run, but skipping them here is cheaper and matches
+ * the pre-commit/pre-push hooks' own `--local` posture). The same set CI's
+ * `vinaya-checks.yml` runs against the live body — so a body that opens
+ * through this command is a body that passes there too.
+ *
+ * Skipped entirely when `rings.ring1_forgeWriteInterception` is `true` —
+ * the same accelerator `resolveSections` already honors to skip
+ * `validateForgeWrite`'s config-driven sections. That flag's whole point is
+ * "skip brief-schema validation entirely"; running this registry-check pass
+ * unconditionally underneath it would silently reintroduce exactly the
+ * validation the accelerator was set to remove.
+ */
+async function refuseOnRedBody(body: string, branch: string, retryCommand: string): Promise<void> {
+  const config = loadConfigChecked()
+  if (config.ok && config.config?.rings?.ring1_forgeWriteInterception === true) return
+
+  const specs = coreCheckRegistry().filter((s) => s.env && Object.hasOwn(s.env, 'PR_BODY'))
+  const callerEnv: NodeJS.ProcessEnv = { ...process.env, PR_BODY: body, BRANCH: branch }
+  delete callerEnv.PR_NUMBER
+
+  const outcomes = await runChecks(specs, {
+    parallel: defaultParallelism(),
+    diffOnly: false,
+    changedFiles: null,
+    defaultTimeoutMs: 30_000,
+    callerEnv,
+    localOnly: true
+  })
+
+  const errors = outcomes.filter((o) => o.status === 'fail' || o.status === 'error').flatMap((o) => o.errors)
+  if (errors.length === 0) return
+  refuse(
+    errors.map((e) =>
+      makeCheckError(e.check, e.message, `${e.agent_recovery_prompt} Fix the body, then re-run \`${retryCommand}\`.`)
+    )
+  )
+}
+
+export async function prCreateCommand(args: string[]): Promise<void> {
   const json = args.includes('--json')
   const validateOnly = args.includes('--validate-only')
   const ghArgs = args.filter((a) => a !== '--json' && a !== '--validate-only')
@@ -268,6 +318,7 @@ export function prCreateCommand(args: string[]): void {
   })
   if (errors.length > 0) refuse(errors)
   refuseOnBareDigits(body, RETRY_CREATE)
+  await refuseOnRedBody(body, branch, RETRY_CREATE)
 
   if (validateOnly) {
     reportPass(json, 'pr create')

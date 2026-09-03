@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AGENT_BOXES_REFUSED_SINCE_PR,
   BRIEF_RULES_SINCE_PR,
   checkAutonomyClause,
   checkBriefSections,
@@ -10,6 +11,7 @@ import {
   checkDocUpdateList,
   checkForField,
   checkForgeTitle,
+  checkNoAgentBoxes,
   checkNoUnpinnedCodeClaims,
   checkPlanPrNoCloses,
   checkPremiseCoverage,
@@ -39,7 +41,9 @@ Ships the brief-validation gate. Closes #252
 
 ## Test plan
 
-- [ ] **[agent]** \`bun test\` passes.
+\`\`\`
+bun test → passes
+\`\`\`
 - [ ] **[principal]** Reviewed in browser.
 
 ## Scope
@@ -931,5 +935,55 @@ describe('partitionBriefErrorsByRollout', () => {
     const result = partitionBriefErrorsByRollout([CONSUMER_TESTS_ERROR], null)
     expect(result.blocking).toEqual([CONSUMER_TESTS_ERROR])
     expect(result.info).toEqual([])
+  })
+
+  const AGENT_BOXES_ERROR = 'brief-validation no agent boxes: the Test Plan carries a checkbox …'
+
+  it('grandfathers a no-agent-boxes finding on a PR below AGENT_BOXES_REFUSED_SINCE_PR, independent of BRIEF_RULES_SINCE_PR', () => {
+    const result = partitionBriefErrorsByRollout([AGENT_BOXES_ERROR], AGENT_BOXES_REFUSED_SINCE_PR - 1)
+    expect(result.blocking).toEqual([])
+    expect(result.info).toEqual([AGENT_BOXES_ERROR])
+  })
+
+  it('blocks a no-agent-boxes finding at or above AGENT_BOXES_REFUSED_SINCE_PR', () => {
+    const result = partitionBriefErrorsByRollout([AGENT_BOXES_ERROR], AGENT_BOXES_REFUSED_SINCE_PR)
+    expect(result.blocking).toEqual([AGENT_BOXES_ERROR])
+    expect(result.info).toEqual([])
+  })
+
+  it('the two thresholds are independent: a PR between them grandfathers only the newer rule', () => {
+    const between = AGENT_BOXES_REFUSED_SINCE_PR - 1
+    expect(between).toBeGreaterThanOrEqual(BRIEF_RULES_SINCE_PR)
+    const result = partitionBriefErrorsByRollout([CONSUMER_TESTS_ERROR, AGENT_BOXES_ERROR], between)
+    expect(result.blocking).toEqual([CONSUMER_TESTS_ERROR])
+    expect(result.info).toEqual([AGENT_BOXES_ERROR])
+  })
+})
+
+describe('checkNoAgentBoxes', () => {
+  it('fails on a checkbox [agent] item', () => {
+    const body = '## Test plan\n\n- [ ] **[agent]** `bun test` passes.\n\n## Scope\n'
+    const result = checkNoAgentBoxes(body)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toMatch(/no agent boxes/)
+  })
+
+  it('fails on an already-ticked checkbox [agent] item too', () => {
+    const body = '## Test plan\n\n- [x] **[agent]** `bun test` passes.\n\n## Scope\n'
+    expect(checkNoAgentBoxes(body).status).toBe('fail')
+  })
+
+  it('passes a fenced [agent] command list', () => {
+    const body = '## Test plan\n\n```\nbun test → 0 fail\n```\n\n## Scope\n'
+    expect(checkNoAgentBoxes(body).status).toBe('pass')
+  })
+
+  it('passes a checkbox [principal] item alongside a fenced [agent] list — only [agent] boxes are refused', () => {
+    const body = '## Test plan\n\n```\nbun test → 0 fail\n```\n- [ ] **[principal]** Reviewed in browser.\n\n## Scope\n'
+    expect(checkNoAgentBoxes(body).status).toBe('pass')
+  })
+
+  it('passes the unit-tests-only sentinel', () => {
+    expect(checkNoAgentBoxes('Test Plan: unit-tests-only').status).toBe('pass')
   })
 })
