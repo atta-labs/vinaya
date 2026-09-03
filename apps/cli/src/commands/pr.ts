@@ -188,12 +188,20 @@ function fetchPrForgeContext(prRef: string): { changedFiles: string[]; branch: s
  * marker. A body with no START marker (a brief with no `## Reference`
  * section at all, or a non-brief-shaped body) splits to `{ report: body,
  * brief: null }` — nothing to post, nothing lost.
+ *
+ * Uses the LAST START marker and the FIRST END marker after it, never the
+ * first START in the body: the template's own Decisions/Reference prose can
+ * legitimately mention the marker syntax by name (as this very docstring
+ * does), and the one real, intentional pair is always the final section in
+ * a well-formed body — an `indexOf` from the front collided with exactly
+ * such a mention live on this task's own dispatch (#397, PR `#398`),
+ * truncating the report and posting a near-empty brief comment.
  */
 const BRIEF_START = '<!-- aeg:brief:start -->'
 const BRIEF_END = '<!-- aeg:brief:end -->'
 
 function splitBriefSection(body: string): { report: string; brief: string | null } {
-  const startIdx = body.indexOf(BRIEF_START)
+  const startIdx = body.lastIndexOf(BRIEF_START)
   if (startIdx === -1) return { report: body, brief: null }
   const contentStart = startIdx + BRIEF_START.length
   const endIdx = body.indexOf(BRIEF_END, contentStart)

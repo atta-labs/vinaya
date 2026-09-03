@@ -178,6 +178,60 @@ describe('vinaya pr create — splits the brief into its own comment (task 4, #3
     expect(entries[1]).toContain(BRIEF_TEXT)
   })
 
+  it('a report that mentions the marker syntax by name does not truncate the split — the LAST pair wins (live incident, PR #398)', () => {
+    const repo = tempDir('pr-create-repo-selfmention-')
+    execFileSync('git', ['init', '-q'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
+    writeFileSync(
+      join(repo, 'vinaya.config.json'),
+      `${JSON.stringify({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } }, null, 2)}\n`
+    )
+    execFileSync('git', ['add', '.'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+
+    const decisionMentioningMarker =
+      'Implemented as a marker pair, `<!-- aeg:brief:start -->` / `<!-- aeg:brief:end -->`, wrapping the Reference section.'
+    const body = [
+      fixtureBody().split('---\n')[0],
+      '## Decisions',
+      '',
+      decisionMentioningMarker,
+      '',
+      '---',
+      '',
+      '<!-- aeg:brief:start -->',
+      '## Reference — the dispatched brief',
+      '',
+      BRIEF_TEXT,
+      '<!-- aeg:brief:end -->',
+      ''
+    ].join('\n')
+    const bodyPath = join(repo, 'pr-body.md')
+    writeFileSync(bodyPath, body)
+
+    const { path, createBodyLogPath, commentsLogPath } = stubGh('https://github.com/acme/widget/pull/44')
+
+    const r = runCli(
+      ['pr', 'create', '--body-file', bodyPath, '--title', 'Fix(cli): self-mentioning marker'],
+      repo,
+      path
+    )
+    expect(r.status).toBe(0)
+
+    const sentBody = readFileSync(createBodyLogPath, 'utf-8')
+    expect(sentBody).toContain(decisionMentioningMarker)
+    expect(sentBody).toContain('## Summary')
+    expect(sentBody).not.toContain('## Reference — the dispatched brief')
+    expect(sentBody).not.toContain(BRIEF_TEXT)
+
+    const comments = readFileSync(commentsLogPath, 'utf-8')
+    const entries = comments.split('---\n').filter((s) => s.trim().length > 0)
+    expect(entries.length).toBe(2)
+    expect(entries[1]).toContain('<!-- aeg:brief -->')
+    expect(entries[1]).toContain(BRIEF_TEXT)
+  })
+
   it('a body with no aeg:brief section posts no brief comment — one comment only', () => {
     const repo = tempDir('pr-create-repo-nobrief-')
     execFileSync('git', ['init', '-q'], { cwd: repo })
