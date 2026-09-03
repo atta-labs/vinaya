@@ -831,6 +831,17 @@ ${extra}
     const result = checkConsumerTests('no surface map here', consumersOfAegForgeState)
     expect(result.status).toBe('pass')
   })
+
+  it("does not treat the sentinel grammar QUOTED outside §4 as an opt-out (this task's own brief shape)", () => {
+    const body = `
+Some prose describing the rule, quoting its own grammar as an example:
+the sentinel line \`consumer-tests: none — <reason>\`.
+
+${surfaceMap('')}
+`
+    const result = checkConsumerTests(body, consumersOfAegForgeState)
+    expect(result.status).toBe('fail')
+  })
 })
 
 describe('checkDefeatCases', () => {

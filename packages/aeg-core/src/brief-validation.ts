@@ -647,22 +647,24 @@ function hasTestPathForConsumer(text: string, consumerDir: string): boolean {
  *
  * `consumersOf` is injected (never `fs`/`package.json` reads here) — the CLI
  * shim (`check-brief-shape.ts`) builds it once from the real workspace
- * dependency graph. The satisfying test path or the sentinel may appear
- * anywhere in the body, not only inside `§4` itself — a brief's blast-radius
- * reasoning conventionally lives in its Verification section (`§8`), and
- * this rule does not force it to move.
+ * dependency graph. Both the trigger and its satisfying test path/sentinel
+ * are read from `§4` alone, never the whole body — scanning the whole body
+ * let a brief's own §2 prose, quoting the sentinel grammar as an example of
+ * the rule (exactly this task's own dispatched brief), silently satisfy the
+ * rule it was merely describing. `§4` is where a surface map states its
+ * blast radius; that is also where this rule's own answer belongs.
  */
 export function checkConsumerTests(prBody: string, consumersOf: (pkg: string) => string[]): BriefSectionResult {
   const section4 = extractNumberedSection(prBody, 4)
   if (!section4) return { status: 'pass', errors: [] }
-  if (CONSUMER_TESTS_SENTINEL_RE.test(prBody)) return { status: 'pass', errors: [] }
+  if (CONSUMER_TESTS_SENTINEL_RE.test(section4)) return { status: 'pass', errors: [] }
 
   const errors: string[] = []
   for (const pkg of packagesNamedIn(section4)) {
     for (const consumerDir of consumersOf(pkg)) {
-      if (hasTestPathForConsumer(prBody, consumerDir)) continue
+      if (hasTestPathForConsumer(section4, consumerDir)) continue
       errors.push(
-        `brief-validation consumer tests: §4 names a path under packages/${pkg}/, and ${consumerDir} depends on @attalabs/${pkg}, but no test path under ${consumerDir} is named anywhere in the body — name one, or add \`consumer-tests: none — <reason>\`.`
+        `brief-validation consumer tests: §4 names a path under packages/${pkg}/, and ${consumerDir} depends on @attalabs/${pkg}, but no test path under ${consumerDir} is named in §4 — name one, or add \`consumer-tests: none — <reason>\`.`
       )
     }
   }
