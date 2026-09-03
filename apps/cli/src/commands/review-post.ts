@@ -182,6 +182,17 @@ const CODE_REVIEW_VERDICT_TEXT: Record<CodeReviewVerdict, string> = {
 }
 
 /**
+ * The command decides, not the caller. `REQUEST_CHANGES` iff a BLOCKER
+ * finding is present; the severity vocabulary is caller-asserted (unchanged
+ * from before), but once assigned, the verdict it forces is no longer typed
+ * by hand — this generalises the BLOCKER-vs-APPROVE contradiction check that
+ * used to live only as a post-hoc refusal.
+ */
+export function deriveCodeReviewVerdict(findings: readonly Finding[]): CodeReviewVerdict {
+  return findings.some((f) => f.severity === 'BLOCKER') ? 'REQUEST_CHANGES' : 'APPROVE'
+}
+
+/**
  * Renders `reviewer.md`'s exact bare template. `VERDICT:`/`Judged head:` are
  * built from `input.verdict`/`input.headSha` through this function's own
  * literal strings — there is no code path by which a caller-supplied string
@@ -224,6 +235,11 @@ export type SecurityInput = TokensInput & {
   secretsEvidence: string | null
 }
 
+/** Same derivation for the security shape: `FAIL` iff a CRITICAL or HIGH finding is present. */
+export function deriveSecurityVerdict(findings: readonly Finding[]): SecurityVerdict {
+  return findings.some((f) => f.severity === 'CRITICAL' || f.severity === 'HIGH') ? 'FAIL' : 'PASS'
+}
+
 /** `security.md`'s "none found" claim, tolerant of `none-found`/extra whitespace/case. */
 export function isNoneFoundClaim(value: string): boolean {
   return value.trim().toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ') === 'none found'
@@ -259,6 +275,45 @@ export function renderSecurityComment(input: SecurityInput): string {
     renderCastByLine('Security', input.sessionId)
   )
   return lines.join('\n')
+}
+
+// --- escalation ------------------------------------------------------------
+
+export type EscalationClass = 'authority' | 'strategy' | 'product'
+
+const ESCALATION_CLASSES: readonly EscalationClass[] = ['authority', 'strategy', 'product']
+
+export function isEscalationClass(value: string): value is EscalationClass {
+  return (ESCALATION_CLASSES as readonly string[]).includes(value)
+}
+
+export type EscalationInput = TokensInput & {
+  headSha: string
+  escalationClass: EscalationClass
+  summary: string
+  role: 'review' | 'security'
+  roleLabel: 'Reviewer' | 'Security'
+}
+
+/**
+ * An escalation is its own review outcome, never a finding stuffed inside a
+ * REQUEST CHANGES. Renders `ESCALATE: <class>` where a verdict comment
+ * renders `VERDICT: <value>` — the literal substring `VERDICT` never appears
+ * anywhere in this output, on purpose: the merge-verdict workflow fires on
+ * that substring alone (`.github/workflows/vinaya-review-verdict.yml`), and
+ * an escalation must never be mistaken for "a pass ran".
+ */
+export function renderEscalationComment(input: EscalationInput): string {
+  return [
+    `ESCALATE: ${input.escalationClass}`,
+    '',
+    `Judged head: ${input.headSha}`,
+    '',
+    input.summary,
+    '',
+    renderTokensLine(input.role, input.roleLabel, input),
+    renderCastByLine(input.roleLabel, input.sessionId)
+  ].join('\n')
 }
 
 // --- self-verification ---------------------------------------------------------
@@ -331,6 +386,145 @@ export function verifyPostedSecurity(
   principalAllowlist: readonly string[]
 ): SelfVerifyResult {
   return checkExtraction(extractSecurityReviewVerdict(principalBodies(comments, principalAllowlist)), verdict, headSha)
+}
+
+/**
+ * The escalation-side mirror of `verifyPostedCodeReview`/`verifyPostedSecurity`:
+ * proves the ABSENCE of a verdict rather than the presence of one. Finds the
+ * just-posted comment by exact body match (an escalation carries no
+ * `VERDICT:` line for `checkExtraction`'s head-binding check to key off), and
+ * asserts BOTH gate extractors read it as no verdict at all — the same
+ * functions `checkReviewGate` calls, so a drift that made an escalation
+ * accidentally parse as a real verdict would be caught here, not in CI.
+ */
+export function verifyPostedEscalation(comments: readonly ReviewGateComment[], postedBody: string): SelfVerifyResult {
+  const match = comments.find((c) => c.body === postedBody)
+  if (!match) {
+    return { ok: false, reason: 'the posted escalation comment could not be found on re-fetch.' }
+  }
+  const codeExtraction = extractCodeReviewVerdict([match.body])
+  const securityExtraction = extractSecurityReviewVerdict([match.body])
+  if (codeExtraction.danglingNote === null || securityExtraction.danglingNote === null) {
+    return {
+      ok: false,
+      reason:
+        'the posted escalation re-parses as a real VERDICT through the gate extractors — it must not, or the merge gate could mistake it for a pass.'
+    }
+  }
+  return { ok: true, reason: 'clean — no verdict extracted, as an escalation requires' }
+}
+
+// --- round-two (re-review) ---------------------------------------------------
+
+const FINDING_ID_LINE = /^\d+\.\s+\[[A-Z]+\]\s+\S+\s+—\s+F(\d+)\b/gm
+const JUDGED_HEAD_LINE = /^[ \t]*Judged head:\s*([0-9a-f]{7,40})\b/im
+const FINDING_DESCRIPTION_ID = /^F(\d+)\s+\S+(?:\s+(open|fix-claimed|reproduced|resolved))?:/
+
+/**
+ * Reads the prior round's finding ids and judged head straight out of a
+ * verdict comment's own rendered text — the same text `renderFindingsSection`
+ * and `renderCodeReviewComment`/`renderSecurityComment` produced, so this is
+ * reading the format this file itself writes, not a second grammar.
+ */
+export function parsePriorFindingIds(commentBody: string): { ids: string[]; judgedHead: string | null } {
+  const ids = [...commentBody.matchAll(FINDING_ID_LINE)].map((m) => `F${m[1]}`)
+  const headMatch = commentBody.match(JUDGED_HEAD_LINE)
+  return { ids: [...new Set(ids)], judgedHead: headMatch ? (headMatch[1] as string).toLowerCase() : null }
+}
+
+/** `null` when the description carries no `F<n>` id at all (an id-less new finding is never a re-review reference). */
+function findingIdState(description: string): { id: string; state: string | null } | null {
+  const m = description.match(FINDING_DESCRIPTION_ID)
+  if (!m) return null
+  return { id: `F${m[1]}`, state: m[2] ?? null }
+}
+
+/** Every prior id with no matching `F<n> <class> <state>:` description in the new findings file, in prior-list order. */
+export function missingPriorIds(priorIds: readonly string[], findings: readonly Finding[]): string[] {
+  const carried = new Set(
+    findings
+      .map((f) => findingIdState(f.description))
+      .filter((p): p is { id: string; state: string } => p !== null && p.state !== null)
+      .map((p) => p.id)
+  )
+  return priorIds.filter((id) => !carried.has(id))
+}
+
+/**
+ * `git diff <judgedHead>...HEAD -U0`'s own hunk headers bound the changed
+ * span exactly — `-U0` means zero context lines, so `@@ -a +c,d @@` already
+ * IS the delta, with no need to diff-parse context away.
+ */
+export function parseChangedLineRanges(diffOutput: string): Record<string, Array<[number, number]>> {
+  const result: Record<string, Array<[number, number]>> = {}
+  let currentFile: string | null = null
+  for (const line of diffOutput.split('\n')) {
+    if (line.startsWith('+++ ')) {
+      const path = line.slice(4).trim()
+      currentFile = path === '/dev/null' ? null : path.replace(/^b\//, '')
+      continue
+    }
+    if (line.startsWith('@@') && currentFile) {
+      const m = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/)
+      if (m) {
+        const start = Number(m[1])
+        const count = m[2] !== undefined ? Number(m[2]) : 1
+        if (count > 0) {
+          if (!result[currentFile]) result[currentFile] = []
+          ;(result[currentFile] as Array<[number, number]>).push([start, start + count - 1])
+        }
+      }
+    }
+  }
+  return result
+}
+
+/** `location` is `file:line` — the last `:` splits path from line, matching the grammar's own `file:line already contains a colon` rule. */
+function parseLocation(location: string): { file: string; line: number } | null {
+  const idx = location.lastIndexOf(':')
+  if (idx === -1) return null
+  const line = Number(location.slice(idx + 1))
+  if (!Number.isFinite(line)) return null
+  return { file: location.slice(0, idx), line }
+}
+
+/**
+ * Every finding whose `file:line` falls outside every changed range for that
+ * file. A location this cannot parse, or a file with no entry in
+ * `changedRanges` at all, is treated as outside the delta — surfaced rather
+ * than silently accepted, which is the safe direction for a check whose job
+ * is to catch scope creep on a non-blocking finding.
+ */
+export function findingsOutsideDelta(
+  findings: readonly Finding[],
+  changedRanges: Readonly<Record<string, ReadonlyArray<readonly [number, number]>>>
+): Finding[] {
+  return findings.filter((f) => {
+    const parsed = parseLocation(f.location)
+    if (!parsed) return true
+    const ranges = changedRanges[parsed.file]
+    if (!ranges) return true
+    return !ranges.some(([start, end]) => parsed.line >= start && parsed.line <= end)
+  })
+}
+
+/**
+ * The most recent principal-authored comment that parses clean through
+ * `extract` (`extractCodeReviewVerdict`/`extractSecurityReviewVerdict`) —
+ * same "latest clear hit wins" rule those extractors already apply, re-run
+ * here one body at a time so this function also learns WHICH body won, not
+ * just what value it carried. `null` when this is round one: no round-two
+ * checks apply.
+ */
+export function findPriorVerdictComment(
+  principalBodies: readonly string[],
+  extract: (comments: string[]) => VerdictExtraction
+): string | null {
+  for (let i = principalBodies.length - 1; i >= 0; i--) {
+    const body = principalBodies[i] as string
+    if (extract([body]).danglingNote === null) return body
+  }
+  return null
 }
 
 // --- CLI plumbing ----------------------------------------------------------
@@ -497,6 +691,30 @@ function fetchComments(pr: string): ReviewGateComment[] {
 }
 
 /**
+ * `git diff <judgedHead>...HEAD -U0` — the three-dot merge-base form
+ * `reviewer.md`'s own scope-violation check already prescribes, so a stale
+ * local `main` on the far side of `judgedHead` cannot skew what counts as
+ * "since the last round". A missing `judgedHead` (never fetched into this
+ * worktree) fails here, not with a bare git error — the refusal names the
+ * missing sha so the reviewer knows to fetch it.
+ */
+function computeChangedRanges(pr: string, judgedHead: string): Record<string, Array<[number, number]>> {
+  let out: string
+  try {
+    out = execFileSync('git', ['diff', `${judgedHead}...HEAD`, '-U0'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch (err) {
+    refuseCmd(
+      `Could not compute the round-two diff for PR ${pr}: \`git diff ${judgedHead}...HEAD -U0\` failed (${err instanceof Error ? err.message : String(err)}) — the previously judged head is likely not in this worktree's history.`,
+      `Fetch the missing commit (e.g. \`git fetch origin ${judgedHead}\`) into this worktree, then re-run.`
+    )
+  }
+  return parseChangedLineRanges(out)
+}
+
+/**
  * Every flag this command reads, plus the nullary ones stripped before the
  * pairwise scan. An argument starting with `--` that is not here is refused
  * (`rejectUnknownFlags`) rather than ignored.
@@ -520,6 +738,7 @@ const VALUE_FLAGS = [
   '--config-scan',
   '--cost',
   '--docs',
+  '--escalate',
   '--findings-file',
   '--model',
   '--pr',
@@ -528,6 +747,7 @@ const VALUE_FLAGS = [
   '--secrets',
   '--secrets-evidence-file',
   '--spec-conformance',
+  '--summary',
   '--task-id',
   '--tests',
   '--tokens-in',
@@ -605,6 +825,39 @@ export function rejectUnknownFlags(
   )
 }
 
+/** Every prior id named with a state, or the invocation is refused before either forge write below it runs. */
+function checkRoundTwo(
+  pr: string,
+  comments: readonly ReviewGateComment[],
+  principalAllowlist: readonly string[],
+  extract: (comments: string[]) => VerdictExtraction,
+  findings: readonly Finding[],
+  blockingSeverities: readonly string[]
+): void {
+  const priorBody = findPriorVerdictComment(principalBodies(comments, principalAllowlist), extract)
+  if (priorBody === null) return // round one: no round-two checks apply.
+
+  const { ids: priorIds, judgedHead } = parsePriorFindingIds(priorBody)
+  const missing = missingPriorIds(priorIds, findings)
+  if (missing.length > 0) {
+    refuseCmd(
+      `This findings file drops prior finding${missing.length > 1 ? 's' : ''} ${missing.join(', ')} without a state — a re-review reports the state of every prior id (open, fix-claimed, reproduced, resolved) before listing anything new.`,
+      `Add a line whose description begins \`${missing[0] as string} <class> <state>:\` for each id listed, then re-run.`
+    )
+  }
+
+  if (judgedHead === null) return // the prior comment carries no `Judged head:` line — cannot bound a delta.
+  const nonBlocking = findings.filter((f) => !blockingSeverities.includes(f.severity))
+  const changedRanges = computeChangedRanges(pr, judgedHead)
+  const outside = findingsOutsideDelta(nonBlocking, changedRanges)
+  if (outside.length > 0) {
+    refuseCmd(
+      `Non-blocking finding at ${(outside[0] as Finding).location} is outside the diff since the previously judged head ${judgedHead} — round two is delta-only for non-blocking severities.`,
+      'Drop it from this round, or wait for the Principal to move it into scope at the next round; a BLOCKER/CRITICAL/HIGH finding is always accepted regardless of delta.'
+    )
+  }
+}
+
 export async function reviewPostCommand(args: string[]): Promise<void> {
   // Before anything is rendered or resolved: an unknown flag here means the
   // caller asked for something this command does not do, and posting anyway
@@ -629,25 +882,106 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   const cost = requireFlag(flags, '--cost')
   const sessionId = resolveSessionId(process.env)
   const tokens: TokensInput = { taskId, model, tokensIn, tokensOut, cost, sessionId }
+  const roleLabel: 'Reviewer' | 'Security' = role === 'code-reviewer' ? 'Reviewer' : 'Security'
+  const tokensRole: 'review' | 'security' = role === 'code-reviewer' ? 'review' : 'security'
 
-  const headSha = resolveHeadSha(pr)
+  const escalateRaw = flags.get('--escalate')
+  const verdictRaw = flags.get('--verdict')
+
+  // --- escalation: its own outcome, refused together with a verdict, before
+  // any forge contact — never a finding stuffed inside a REQUEST CHANGES.
+  if (escalateRaw !== undefined) {
+    if (verdictRaw !== undefined) {
+      refuseCmd(
+        '`--escalate` was given together with `--verdict` — an escalation is its own review outcome, never posted alongside a verdict.',
+        'Pass either `--escalate <class> --summary <text>` or `--verdict ...`, not both.'
+      )
+    }
+    if (!isEscalationClass(escalateRaw)) {
+      refuseCmd(
+        `\`--escalate ${escalateRaw || '(empty)'}\` is not \`authority\`, \`strategy\`, or \`product\`.`,
+        'Pass `--escalate authority`, `--escalate strategy`, or `--escalate product`.'
+      )
+    }
+    const summary = requireFlag(flags, '--summary')
+    const allowedSeverities = role === 'code-reviewer' ? CODE_REVIEW_SEVERITIES : SECURITY_SEVERITIES
+    const blockingSeverities: readonly string[] = role === 'code-reviewer' ? ['BLOCKER'] : ['CRITICAL', 'HIGH']
+    const findings = readFindingsFile(flags.get('--findings-file'), allowedSeverities)
+    if (findings.some((f) => blockingSeverities.includes(f.severity))) {
+      refuseCmd(
+        `Findings include a ${blockingSeverities.join('/')} finding — that drives a verdict, not an escalation. An escalation carries no blocking finding.`,
+        'Post the verdict instead (`--verdict ...`), or drop the blocking finding from the escalation.'
+      )
+    }
+
+    const headSha = resolveHeadSha(pr)
+    const body = renderEscalationComment({
+      ...tokens,
+      headSha,
+      escalationClass: escalateRaw,
+      summary,
+      role: tokensRole,
+      roleLabel
+    })
+    const url = postComment(pr, body)
+
+    let comments: ReviewGateComment[]
+    try {
+      comments = fetchComments(pr)
+    } catch (err) {
+      refuseCmd(
+        `Posted the escalation (${url}) but could not re-fetch PR ${pr}'s comments to self-verify: ${err instanceof Error ? err.message : String(err)}`,
+        'Check `gh auth status`/network and manually confirm the posted comment carries no VERDICT line — this command could not verify it.'
+      )
+    }
+    const result = verifyPostedEscalation(comments, body)
+    if (!result.ok) {
+      refuseCmd(
+        `Posted escalation ${url}, but self-verification FAILED: ${result.reason}`,
+        'Do not treat the post as valid — inspect the comment and this command for drift, fix, and re-run.'
+      )
+    }
+
+    if (json) {
+      printJson({ posted: true, url, role, headSha, escalationClass: escalateRaw, selfVerified: true })
+    } else {
+      process.stdout.write(`${body}\n\nPosted: ${url}\nSelf-verification: clean — no verdict extracted.\n`)
+    }
+    return
+  }
+
   // Same trust anchor `checkReviewGate` itself uses — the repo's own
   // `principals` field on the default branch (never the PR's checkout),
   // falling back to the hardcoded `PRINCIPAL_ALLOWLIST` on any read failure.
   const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
 
-  let body: string
-  let verify: (comments: ReviewGateComment[]) => SelfVerifyResult
-
   if (role === 'code-reviewer') {
-    const verdict = normalizeCodeReviewVerdict(requireFlag(flags, '--verdict'))
     const findings = readFindingsFile(flags.get('--findings-file'), CODE_REVIEW_SEVERITIES)
-    if (findings.some((f) => f.severity === 'BLOCKER') && verdict === 'APPROVE') {
+    const derived = deriveCodeReviewVerdict(findings)
+    if (verdictRaw !== undefined) {
+      const explicit = normalizeCodeReviewVerdict(verdictRaw)
+      if (explicit !== derived) {
+        refuseCmd(
+          `\`--verdict ${verdictRaw}\` disagrees with the derived verdict \`${derived}\` — reviewer.md: the verdict is derived from the findings file, not hand-typed.`,
+          `Pass \`--verdict ${derived}\`, omit \`--verdict\` and let it derive, or fix a finding's severity if the derivation is wrong.`
+        )
+      }
+    }
+    const verdict = derived
+
+    const headSha = resolveHeadSha(pr)
+
+    let comments: ReviewGateComment[]
+    try {
+      comments = fetchComments(pr)
+    } catch (err) {
       refuseCmd(
-        'Findings include a BLOCKER but `--verdict APPROVE` — reviewer.md requires REQUEST CHANGES whenever any BLOCKER finding exists.',
-        'Pass `--verdict REQUEST_CHANGES`, or fix the finding severity if BLOCKER was a miscategorization.'
+        `Could not fetch PR ${pr}'s comments to check for a prior review round: ${err instanceof Error ? err.message : String(err)}`,
+        'Check `gh auth status`/network, then re-run.'
       )
     }
+    checkRoundTwo(pr, comments, principalAllowlist, extractCodeReviewVerdict, findings, ['BLOCKER'])
+
     const input: CodeReviewInput = {
       ...tokens,
       headSha,
@@ -659,59 +993,101 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       tests: requireFlag(flags, '--tests'),
       docs: requireFlag(flags, '--docs')
     }
-    body = renderCodeReviewComment(input)
-    verify = (comments) => verifyPostedCodeReview(comments, verdict, headSha, principalAllowlist)
-  } else {
-    const verdict = normalizeSecurityVerdict(requireFlag(flags, '--verdict'))
-    const findings = readFindingsFile(flags.get('--findings-file'), SECURITY_SEVERITIES)
-    if (findings.some((f) => f.severity === 'CRITICAL' || f.severity === 'HIGH') && verdict === 'PASS') {
+    const body = renderCodeReviewComment(input)
+    const url = postComment(pr, body)
+
+    let postComments: ReviewGateComment[]
+    try {
+      postComments = fetchComments(pr)
+    } catch (err) {
       refuseCmd(
-        'Findings include a CRITICAL/HIGH finding but `--verdict PASS` — security.md requires FAIL whenever any CRITICAL or HIGH finding exists.',
-        'Pass `--verdict FAIL`, or fix the finding severity if it was a miscategorization.'
+        `Posted the comment (${url}) but could not re-fetch PR ${pr}'s comments to self-verify: ${err instanceof Error ? err.message : String(err)}`,
+        'Check `gh auth status`/network and manually confirm the posted comment parses cleanly — this command could not verify it.'
       )
     }
-    const secrets = requireFlag(flags, '--secrets')
-    const secretsEvidenceFile = flags.get('--secrets-evidence-file')
-    if (isNoneFoundClaim(secrets) && !secretsEvidenceFile) {
+    const result = verifyPostedCodeReview(postComments, verdict, headSha, principalAllowlist)
+    if (!result.ok) {
       refuseCmd(
-        '`--secrets` normalizes to "none found" but no `--secrets-evidence-file` was given — security.md: "SECRETS: none found" with no scan output pasted is an unbacked self-attestation.',
-        'Pass `--secrets-evidence-file <path>` containing the actual scanner output, or change `--secrets` to describe what was found instead.'
+        `Posted comment ${url}, but self-verification FAILED on re-parse: ${result.reason}`,
+        'The posted comment does not re-parse clean through the same extractCodeReviewVerdict/extractSecurityReviewVerdict functions the merge gate calls. Do not treat the post as valid — inspect the comment and this command for drift, fix, and re-run.'
       )
     }
-    let secretsEvidence: string | null = null
-    if (secretsEvidenceFile) {
-      try {
-        secretsEvidence = readFileSync(secretsEvidenceFile, 'utf8')
-      } catch {
-        refuseCmd(`Could not read secrets evidence file at ${secretsEvidenceFile}.`, 'Check the path and re-run.')
-      }
+
+    if (json) {
+      printJson({ posted: true, url, role, headSha, selfVerified: true })
+    } else {
+      process.stdout.write(
+        `${body}\n\nPosted: ${url}\nSelf-verification: clean — re-parsed VERDICT is bound to head ${headSha}.\n`
+      )
     }
-    const input: SecurityInput = {
-      ...tokens,
-      headSha,
-      verdict,
-      findings,
-      configScan: requireFlag(flags, '--config-scan'),
-      secrets,
-      secretsEvidence
-    }
-    body = renderSecurityComment(input)
-    verify = (comments) => verifyPostedSecurity(comments, verdict, headSha, principalAllowlist)
+    return
   }
 
-  const url = postComment(pr, body)
+  // role === 'security'
+  const findings = readFindingsFile(flags.get('--findings-file'), SECURITY_SEVERITIES)
+  const derived = deriveSecurityVerdict(findings)
+  if (verdictRaw !== undefined) {
+    const explicit = normalizeSecurityVerdict(verdictRaw)
+    if (explicit !== derived) {
+      refuseCmd(
+        `\`--verdict ${verdictRaw}\` disagrees with the derived verdict \`${derived}\` — security.md: the verdict is derived from the findings file, not hand-typed.`,
+        `Pass \`--verdict ${derived}\`, omit \`--verdict\` and let it derive, or fix a finding's severity if the derivation is wrong.`
+      )
+    }
+  }
+  const verdict = derived
+
+  const headSha = resolveHeadSha(pr)
 
   let comments: ReviewGateComment[]
   try {
     comments = fetchComments(pr)
   } catch (err) {
     refuseCmd(
+      `Could not fetch PR ${pr}'s comments to check for a prior review round: ${err instanceof Error ? err.message : String(err)}`,
+      'Check `gh auth status`/network, then re-run.'
+    )
+  }
+  checkRoundTwo(pr, comments, principalAllowlist, extractSecurityReviewVerdict, findings, ['CRITICAL', 'HIGH'])
+
+  const secrets = requireFlag(flags, '--secrets')
+  const secretsEvidenceFile = flags.get('--secrets-evidence-file')
+  if (isNoneFoundClaim(secrets) && !secretsEvidenceFile) {
+    refuseCmd(
+      '`--secrets` normalizes to "none found" but no `--secrets-evidence-file` was given — security.md: "SECRETS: none found" with no scan output pasted is an unbacked self-attestation.',
+      'Pass `--secrets-evidence-file <path>` containing the actual scanner output, or change `--secrets` to describe what was found instead.'
+    )
+  }
+  let secretsEvidence: string | null = null
+  if (secretsEvidenceFile) {
+    try {
+      secretsEvidence = readFileSync(secretsEvidenceFile, 'utf8')
+    } catch {
+      refuseCmd(`Could not read secrets evidence file at ${secretsEvidenceFile}.`, 'Check the path and re-run.')
+    }
+  }
+  const input: SecurityInput = {
+    ...tokens,
+    headSha,
+    verdict,
+    findings,
+    configScan: requireFlag(flags, '--config-scan'),
+    secrets,
+    secretsEvidence
+  }
+  const body = renderSecurityComment(input)
+  const url = postComment(pr, body)
+
+  let postComments: ReviewGateComment[]
+  try {
+    postComments = fetchComments(pr)
+  } catch (err) {
+    refuseCmd(
       `Posted the comment (${url}) but could not re-fetch PR ${pr}'s comments to self-verify: ${err instanceof Error ? err.message : String(err)}`,
       'Check `gh auth status`/network and manually confirm the posted comment parses cleanly — this command could not verify it.'
     )
   }
-
-  const result = verify(comments)
+  const result = verifyPostedSecurity(postComments, verdict, headSha, principalAllowlist)
   if (!result.ok) {
     refuseCmd(
       `Posted comment ${url}, but self-verification FAILED on re-parse: ${result.reason}`,
