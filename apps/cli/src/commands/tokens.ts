@@ -1,7 +1,12 @@
 import { execFileSync } from 'node:child_process'
 import { resolve as resolvePath } from 'node:path'
 import { formatBreakdown, formatTokensLine, hardenedMeteringDeps, resolveMeteringCapability } from '@attalabs/aeg-core'
-import type { MeteringCapabilityDeps, TranscriptSummary, UsageComponents } from '@attalabs/aeg-core'
+import type {
+  MeteringCapabilityDeps,
+  MeteringIncapableReason,
+  TranscriptSummary,
+  UsageComponents
+} from '@attalabs/aeg-core'
 import {
   getTokensCollectTrust,
   gitBlobHash,
@@ -357,6 +362,21 @@ export function realDeps(): TokensDeps {
   }
 }
 
+/**
+ * The single wording for "the probe could not reach real usage figures",
+ * shared by `vinaya tokens` and by `pr report --write`'s `AEG:TOKENS` writer
+ * (`pr-report.ts`'s `collectTokensAddition`) so one fact never reaches an
+ * operator under two different names. The command prefix and whatever remedy
+ * text follows are the caller's — the remedies differ per command, the fact
+ * does not.
+ */
+export function meteringRefusalMessage(
+  command: string,
+  capability: { reason: MeteringIncapableReason; detail: string }
+): string {
+  return `${command}: refused — could not resolve real usage figures (${capability.reason}).\n${capability.detail}`
+}
+
 export type TokensResult = { line: string; breakdown: string | undefined }
 
 /** Deps-injected so the manual, declared, and transcript routes are all testable without touching real `fs`/`process.env`/a real child process. */
@@ -380,9 +400,7 @@ export function buildTokensResult(parsed: ParsedTokensArgs, deps: TokensDeps): T
 
   const capability = resolveMeteringCapability(deps, parsed.transcriptPath)
   if (!capability.capable) {
-    throw new Error(
-      `vinaya tokens: refused — could not resolve real usage figures (${capability.reason}).\n${capability.detail}\n\n${USAGE}`
-    )
+    throw new Error(`${meteringRefusalMessage('vinaya tokens', capability)}\n\n${USAGE}`)
   }
 
   return {

@@ -2,16 +2,18 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseTokenReportEntries, sumLedger } from '@attalabs/aeg-core'
+import { parseTokenReportEntries, resolveMeteringCapability, sumLedger } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 import {
   anyGateFailed,
   buildReport,
   collectTokensAddition,
+  composeWrittenBody,
   computeGroupA,
   type GateOutcome,
   type GateRunResult,
   GitCommandError,
+  prReportExitCode,
   replaceEvidenceBlock,
   UnresolvableMergeBaseError,
   writeTokensBlock
@@ -476,7 +478,10 @@ describe('collectTokensAddition', () => {
         date: '2026-08-29',
         transcriptPath
       })
-      expect(addition).toBe('| 3: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-08-29 |')
+      expect(addition).toEqual({
+        collected: true,
+        row: '| 3: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-08-29 |'
+      })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -489,9 +494,189 @@ describe('collectTokensAddition', () => {
       date: '2026-08-29',
       transcriptPath: '/nonexistent/path/does/not/exist.jsonl'
     })
-    expect(addition.split('\n')).toHaveLength(1)
-    expect(addition).toContain('transcript-unreadable')
-    expect(addition).toBe('| 3: develop | Developer | — (transcript-unreadable) | — | — | — | 2026-08-29 |')
-    expect(addition).not.toMatch(/\|\s*0\s*\|\s*0\s*\|/)
+    expect(addition.collected).toBe(true)
+    const row = addition.collected ? addition.row : ''
+    expect(row.split('\n')).toHaveLength(1)
+    expect(row).toContain('transcript-unreadable')
+    expect(row).toBe('| 3: develop | Developer | — (transcript-unreadable) | — | — | — | 2026-08-29 |')
+    expect(row).not.toMatch(/\|\s*0\s*\|\s*0\s*\|/)
+  })
+
+  it('still renders the inline-reason row for a corroborated but empty transcript — `transcript-empty` is unchanged', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-tokens-empty-'))
+    const transcriptPath = join(dir, 'transcript.jsonl')
+    try {
+      writeFileSync(transcriptPath, '')
+      const addition = collectTokensAddition({
+        phase: '3: develop',
+        role: 'Developer',
+        date: '2026-08-29',
+        transcriptPath
+      })
+      expect(addition).toEqual({
+        collected: true,
+        row: '| 3: develop | Developer | — (transcript-empty) | — | — | — | 2026-08-29 |'
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+/**
+ * Issue #365. `no-transcript-resolved` means this session resolved no
+ * transcript of its own — no pointer file, or one it cannot corroborate. It
+ * does NOT mean the host cannot meter, which is the only case
+ * `aeg-root/roles/developer.md` sanctions a blank token cell for. The
+ * emitter must therefore withhold the row rather than assert that fact, while
+ * still writing the Evidence block: `developer.md` makes this command's exit
+ * code the Developer's pre-open verification run, so an abort-before-write
+ * would leave every unwired host unable to populate Evidence at all.
+ *
+ * The unwired state is produced by pointing `TMPDIR`/`CLAUDE_PROJECT_DIR` at
+ * a fresh empty directory (no pointer file can exist there) and clearing
+ * `CLAUDE_CODE_SESSION_ID` — `hardenedMeteringDeps` reads `process.env` live,
+ * and `collectTokensAddition` builds its deps per call.
+ */
+describe('collectTokensAddition refuses rather than claiming the host cannot meter (#365)', () => {
+  function withUnwiredEnv<T>(fn: () => T): T {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-unwired-'))
+    const saved = {
+      TMPDIR: process.env.TMPDIR,
+      CLAUDE_PROJECT_DIR: process.env.CLAUDE_PROJECT_DIR,
+      CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID
+    }
+    process.env.TMPDIR = dir
+    process.env.CLAUDE_PROJECT_DIR = dir
+    delete process.env.CLAUDE_CODE_SESSION_ID
+    try {
+      return fn()
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  it('returns a refusal, not a row, when no transcript resolves', () => {
+    const addition = withUnwiredEnv(() =>
+      collectTokensAddition({ phase: '3: develop', role: 'Developer', date: '2026-08-29' })
+    )
+    expect(addition.collected).toBe(false)
+    const refusal = addition.collected ? '' : addition.refusal
+    expect(refusal).toContain('vinaya pr report: refused')
+    expect(refusal).toContain('no-transcript-resolved')
+    // Both ways out are named, so the refusal is actionable rather than terminal.
+    expect(refusal).toContain('--transcript')
+    expect(refusal).toContain('--in <tokens-in> --out <tokens-out>')
+    // The row it would have written is exactly what must not appear anywhere.
+    expect(refusal).not.toContain('| — | — | — |')
+    // The message claims nothing about a file being written: this function
+    // writes none, and only the caller knows whether Evidence landed or where
+    // (code review, PR #369).
+    expect(refusal).not.toContain('AEG:EVIDENCE')
+    // `vinaya tokens` prints a `Tokens:` line, never a `|`-delimited row, so
+    // the remedy must say transcribe — telling a reader to paste that output
+    // into the block puts a non-`|` line inside it, which truncates
+    // `parseTokenReportEntries` for every row appended after it.
+    expect(refusal).toContain('transcribe')
+    expect(refusal).not.toMatch(/paste it into\s+the `## Token report` table/)
+  })
+
+  // Template-shaped: an Evidence anchor pair under its own heading, the Token
+  // report heading last — the body `aeg-root/templates/pr-report-template.md`
+  // produces, and the shape `writeTokensBlock` sites a fresh block into.
+  const TEMPLATE_BODY = [
+    '## Summary',
+    '',
+    'why.',
+    '',
+    '## Evidence',
+    '',
+    '<!-- AEG:EVIDENCE:START -->',
+    '[populated by `vinaya pr report --write`]',
+    '<!-- AEG:EVIDENCE:END -->',
+    '',
+    '## Token report',
+    ''
+  ].join('\n')
+
+  it('still writes the Evidence block when the token row is refused', () => {
+    const written = composeWrittenBody(TEMPLATE_BODY, 'Head: abc', { collected: false, refusal: 'refused' })
+    expect(written).toContain('<!-- AEG:EVIDENCE:START -->')
+    expect(written).toContain('Head: abc')
+    expect(written).not.toContain('<!-- AEG:TOKENS:START -->')
+    expect(written).not.toContain('no-transcript-resolved')
+  })
+
+  it('writes both blocks when a row was collected', () => {
+    const row = '| 3: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-08-29 |'
+    const written = composeWrittenBody(TEMPLATE_BODY, 'Head: abc', { collected: true, row })
+    expect(written).toContain('<!-- AEG:EVIDENCE:START -->')
+    expect(written).toContain('Head: abc')
+    expect(written).toContain('<!-- AEG:TOKENS:START -->')
+    expect(written).toContain(row)
+  })
+
+  // The classification these docs ASSERT, pinned as behaviour.
+  //
+  // `apps/cli/README.md`, this module's doc comments and the changeset all
+  // state which incapable reason a given pointer state produces. Three review
+  // rounds were spent on those sentences being wrong in prose while the code
+  // was right, and prose has no gate: `quoted-command` sweeps only
+  // `${doctrineRoot}/**/*.md` (this repo: `aeg-root/`, `proseGates` unset), so
+  // a citation marker in a README, a `.ts` file or a changeset is never read,
+  // and its predicate wants a verbatim quote rather than a paraphrase anyway.
+  //
+  // What CAN be mechanised is the fact underneath: if the classification ever
+  // moves, these go red and name the docs that claim otherwise — no reviewer
+  // needs to suspect a particular word first.
+  describe('the incapable classification those docs describe', () => {
+    const deps = (over: Partial<Parameters<typeof resolveMeteringCapability>[0]>) => ({
+      env: { TMPDIR: '/tmp', CLAUDE_PROJECT_DIR: '/proj' } as Record<string, string | undefined>,
+      cwd: '/proj',
+      exists: () => true,
+      readFile: () => '',
+      ...over
+    })
+
+    it('classifies an owned-but-unreadable pointer as `pointer-unusable`', () => {
+      const cap = resolveMeteringCapability(
+        deps({
+          readFile: () => {
+            throw new Error('EACCES: permission denied')
+          }
+        })
+      )
+      expect(cap.capable).toBe(false)
+      expect(cap.capable === false && cap.reason).toBe('pointer-unusable')
+    })
+
+    it('classifies a STALE pointer as `no-transcript-resolved`, not `pointer-unusable`', () => {
+      const cap = resolveMeteringCapability(
+        deps({
+          env: { TMPDIR: '/tmp', CLAUDE_PROJECT_DIR: '/proj', CLAUDE_CODE_SESSION_ID: 'mine' },
+          readFile: () => 'theirs\t/somewhere/their-transcript.jsonl'
+        })
+      )
+      expect(cap.capable).toBe(false)
+      // The whole point: a stale pointer is another session's, so it is not
+      // this session's wiring, so it REFUSES rather than keeping a row.
+      expect(cap.capable === false && cap.reason).toBe('no-transcript-resolved')
+    })
+  })
+
+  // The exit half of the same fix. `prReportCommand` ends in `process.exit`,
+  // so without this the widened condition rested on a manual run alone —
+  // narrowing it back to `gatesFailed` would leave every other test green
+  // (code review, PR #369).
+  it('exits non-zero for a refused token row, a failing gate, or both — and zero for neither', () => {
+    expect(prReportExitCode({ gatesFailed: false, tokensRefused: false })).toBe(0)
+    expect(prReportExitCode({ gatesFailed: false, tokensRefused: true })).toBe(1)
+    expect(prReportExitCode({ gatesFailed: true, tokensRefused: false })).toBe(1)
+    // Both failing is still ONE non-zero exit, never a second reason lost.
+    expect(prReportExitCode({ gatesFailed: true, tokensRefused: true })).toBe(1)
   })
 })
