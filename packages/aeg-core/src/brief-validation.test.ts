@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BRIEF_RULES_SINCE_PR,
   checkAutonomyClause,
   checkBriefSections,
   checkClosesN,
@@ -22,7 +23,8 @@ import {
   checkWorktreeStep0,
   headerRegion,
   inferBranchFromBody,
-  isBriefShaped
+  isBriefShaped,
+  partitionBriefErrorsByRollout
 } from './brief-validation'
 import { EOLS, FENCE_DELIMS, fenceShapes } from '../tests/fixtures/fence-shapes'
 import { readTierFromPrBody } from './pr-tier'
@@ -900,5 +902,34 @@ Defeat cases: a fenced block with two commands inside the AEG:VENDOR-EXAMPLE anc
 `
     const result = checkDefeatCases(body)
     expect(result.status).toBe('pass')
+  })
+})
+
+describe('partitionBriefErrorsByRollout', () => {
+  const CONSUMER_TESTS_ERROR = 'brief-validation consumer tests: §4 names a path under packages/x/ …'
+  const UNRELATED_ERROR = 'brief-validation tier: no `Tier:` field found in the PR body …'
+
+  it('grandfathers a rule finding, never failing, on a PR below BRIEF_RULES_SINCE_PR', () => {
+    const result = partitionBriefErrorsByRollout([CONSUMER_TESTS_ERROR], BRIEF_RULES_SINCE_PR - 1)
+    expect(result.blocking).toEqual([])
+    expect(result.info).toEqual([CONSUMER_TESTS_ERROR])
+  })
+
+  it('blocks the same finding at or above BRIEF_RULES_SINCE_PR', () => {
+    const result = partitionBriefErrorsByRollout([CONSUMER_TESTS_ERROR], BRIEF_RULES_SINCE_PR)
+    expect(result.blocking).toEqual([CONSUMER_TESTS_ERROR])
+    expect(result.info).toEqual([])
+  })
+
+  it('never grandfathers an unrelated error, even below the cutoff', () => {
+    const result = partitionBriefErrorsByRollout([UNRELATED_ERROR], BRIEF_RULES_SINCE_PR - 1)
+    expect(result.blocking).toEqual([UNRELATED_ERROR])
+    expect(result.info).toEqual([])
+  })
+
+  it('is fail-closed on a null (missing/unparseable) PR number', () => {
+    const result = partitionBriefErrorsByRollout([CONSUMER_TESTS_ERROR], null)
+    expect(result.blocking).toEqual([CONSUMER_TESTS_ERROR])
+    expect(result.info).toEqual([])
   })
 })

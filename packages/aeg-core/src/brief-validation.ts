@@ -475,6 +475,60 @@ export function inferBranchFromBody(prBody: string): string {
 export const COMMAND_WORDS = ['export', 'bun', 'gh', 'git', 'grep', 'sed', 'cat', 'diff', 'vinaya'] as const
 
 /**
+ * Rollout PR number for the four brief-shape rules this task added
+ * (`checkNoUnpinnedCodeClaims`, `checkCommandsCarryOutput`,
+ * `checkConsumerTests`, `checkDefeatCases`) — same shape as
+ * `pr-body-frozen.ts`'s `FROZEN_BODY_SINCE_PR`. A PR numbered below this is
+ * grandfathered: the CI shim (`check-brief-shape.ts`) reports a finding from
+ * one of these four rules as informational, never a failure. A PR at or
+ * above it is held to the rule for real. `verify-brief.ts` (authoring time,
+ * pre-dispatch) has no PR number and applies all four unconditionally —
+ * grandfathering is a CI-only rollout concern, not a grammar relaxation
+ * (round-2 ruling addendum 1).
+ */
+export const BRIEF_RULES_SINCE_PR = 394
+
+/**
+ * True for an error message produced by one of the four grandfatherable
+ * rules above — classified by each rule's own distinct message prefix,
+ * since `checkBriefSections` aggregates every sub-check's errors into one
+ * flat `string[]` and this is the only reader that ever needs to tell them
+ * apart from the rest.
+ */
+export function isGrandfatherableBriefRuleError(message: string): boolean {
+  return (
+    message.startsWith('brief-validation unpinned code claim:') ||
+    message.startsWith('brief-validation commands carry output:') ||
+    message.startsWith('brief-validation consumer tests:') ||
+    message.startsWith('brief-validation defeat cases:')
+  )
+}
+
+/**
+ * Splits `checkBriefSections`'s flat error list into `blocking` (fails the
+ * check) and `info` (printed, never a failure) — the CI shim
+ * (`check-brief-shape.ts`) is the only caller, but the split is a pure
+ * function of `(errors, prNumber)` so it is unit-testable directly, same
+ * discipline as `pr-body-frozen.ts`'s `checkPrBodyFrozen`.
+ *
+ * `prNumber === null` (no `PR_NUMBER`, or an unparseable one) is NOT
+ * grandfathered — only a real, parsed number below `BRIEF_RULES_SINCE_PR`
+ * is. Fail-closed: a check that can't tell which PR it's grading must not
+ * quietly waive rules it has no number to check against.
+ */
+export function partitionBriefErrorsByRollout(
+  errors: string[],
+  prNumber: number | null
+): { blocking: string[]; info: string[] } {
+  const grandfathered = prNumber !== null && prNumber < BRIEF_RULES_SINCE_PR
+  if (!grandfathered) return { blocking: errors, info: [] }
+  return {
+    blocking: errors.filter((e) => !isGrandfatherableBriefRuleError(e)),
+    info: errors.filter((e) => isGrandfatherableBriefRuleError(e))
+  }
+}
+
+/**
  * One fenced block's raw span, content, and language tag — `start`/`end` are
  * char offsets into the original text. `lang` is the fence's info-string,
  * lowercased and trimmed to its first word (` ```ts ` → `'ts'`, ` ``` ` →

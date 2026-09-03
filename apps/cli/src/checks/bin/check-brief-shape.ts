@@ -18,11 +18,13 @@
 
 import { readdirSync, readFileSync } from 'node:fs'
 import {
+  BRIEF_RULES_SINCE_PR,
   buildConsumersOf as buildConsumersOfShared,
   checkBriefSections,
   isBriefShaped,
   isTaskBranch,
   type PackageManifest,
+  partitionBriefErrorsByRollout,
   readTierFromPrBody
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
@@ -88,8 +90,25 @@ function main(): void {
     consumersOf: buildConsumersOf()
   })
 
-  if (errors.length > 0) {
-    for (const message of errors) {
+  // Grandfathering (task 10 round-2 ruling addendum 1) — a PR opened before
+  // BRIEF_RULES_SINCE_PR predates the four rules `checkBriefSections` added
+  // this task; a finding from one of them is informational there, never a
+  // failure. `verify-brief.ts` (no PR number, authoring time) has no such
+  // exemption — grandfathering is a CI rollout concern, not a grammar
+  // relaxation. A missing/unparseable PR_NUMBER parses to `null`, which
+  // `partitionBriefErrorsByRollout` treats as NOT grandfathered (fail-closed).
+  const parsedPrNumber = Number.parseInt(process.env.PR_NUMBER ?? '', 10)
+  const prNumber = Number.isInteger(parsedPrNumber) ? parsedPrNumber : null
+  const { blocking, info } = partitionBriefErrorsByRollout(errors, prNumber)
+
+  if (info.length > 0) {
+    process.stdout.write(
+      `${CHECK_NAME}: PR #${prNumber} is below BRIEF_RULES_SINCE_PR #${BRIEF_RULES_SINCE_PR} — ${info.length} finding(s) grandfathered, not a failure:\n${info.join('\n')}\n`
+    )
+  }
+
+  if (blocking.length > 0) {
+    for (const message of blocking) {
       emitCheckError({
         schema: CHECK_SCHEMA_VERSION,
         check: CHECK_NAME,

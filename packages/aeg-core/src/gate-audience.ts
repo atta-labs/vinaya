@@ -140,6 +140,7 @@ export const CLI_CHECK_RING: Readonly<Record<string, 0 | 1 | 2>> = {
   'evidence-fresh': 1,
   'reader-resolvable-prose': 0,
   'retired-vocabulary': 0,
+  'doctrine-no-procedures': 0,
   'doctrine-portability': 0,
   'workspace-escape': 0,
   'changeset-coverage': 0,

@@ -92,6 +92,7 @@ export {
   checkTestPlanExclusivity,
   checkTierField,
   checkWorktreeStep0,
+  BRIEF_RULES_SINCE_PR,
   COMMAND_WORDS,
   COMMIT_TYPE_STYLE,
   COMMIT_TYPES,
@@ -99,7 +100,9 @@ export {
   headerRegion,
   inferBranchFromBody,
   isBriefShaped,
-  isTaskBranch
+  isGrandfatherableBriefRuleError,
+  isTaskBranch,
+  partitionBriefErrorsByRollout
 } from './brief-validation'
 export type { BriefSectionResult, BriefSectionsOptions, FencedBlock } from './brief-validation'
 export { checkDoctrineNoProcedures } from './doctrine-no-procedures'
