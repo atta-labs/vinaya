@@ -393,6 +393,23 @@ export function agentCommandText(line: string): string {
 }
 
 /**
+ * GitHub's PR-body size limit (`updatePullRequest`'s GraphQL mutation) is
+ * ~65536 characters for the whole body, not per command — a single §9 item
+ * that runs the repo's full test suite can emit output orders of magnitude
+ * past that alone. Each command's captured output is kept to its own last
+ * `AGENT_COMMAND_OUTPUT_MAX_CHARS`, since the observable a §9 item states
+ * (`→ summary line ends "0 fail"`) is conventionally the tail of the run,
+ * never the head — never silently dropped, marked when cut.
+ */
+const AGENT_COMMAND_OUTPUT_MAX_CHARS = 4_000
+
+function truncateAgentOutput(output: string): string {
+  if (output.length <= AGENT_COMMAND_OUTPUT_MAX_CHARS) return output
+  const cut = output.length - AGENT_COMMAND_OUTPUT_MAX_CHARS
+  return `[... ${cut} earlier characters truncated ...]\n${output.slice(-AGENT_COMMAND_OUTPUT_MAX_CHARS)}`
+}
+
+/**
  * Runs one command from the repo root via `bash -c`, capturing stdout+stderr
  * together (most of these commands are CLI invocations that report their
  * real result on either stream, and Group C's job is to show what actually
@@ -410,7 +427,7 @@ export function runAgentCommand(command: string): GroupCCommandResult {
   if (proc.error && (proc.error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
     return { command, output: 'timeout', exitCode: null, timedOut: true }
   }
-  const output = `${proc.stdout ?? ''}${proc.stderr ?? ''}`.trim()
+  const output = truncateAgentOutput(`${proc.stdout ?? ''}${proc.stderr ?? ''}`.trim())
   return { command, output, exitCode: proc.status, timedOut: false }
 }
 
