@@ -6,18 +6,23 @@ import { fileURLToPath } from 'node:url'
 import { parseTokenReportEntries, resolveMeteringCapability, sumLedger } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 import {
+  agentCommandText,
   anyGateFailed,
   bodiesAgreeOutsideRegions,
   buildReport,
   collectTokensAddition,
   composeWrittenBody,
   computeGroupA,
+  computeGroupC,
+  extractAgentCommandLines,
   type GateOutcome,
   type GateRunResult,
   GitCommandError,
+  groupCFailed,
   MissingEvidenceAnchorError,
   prReportExitCode,
   replaceEvidenceBlock,
+  runAgentCommand,
   spliceIntoLiveBody,
   UnresolvableMergeBaseError,
   writeTokensBlock
@@ -77,7 +82,7 @@ const FAILING_GATES: GateRunResult = {
 
 describe('buildReport', () => {
   it('emits Group A and Group B as distinguishable, anchor-wrapped sections', async () => {
-    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES })
+    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES, body: '' })
     expect(result.block).toStartWith('<!-- AEG:EVIDENCE:START -->')
     expect(result.block).toEndWith('<!-- AEG:EVIDENCE:END -->')
     expect(result.block).toContain('### Group A — recomputable')
@@ -89,38 +94,140 @@ describe('buildReport', () => {
   })
 
   it("Group A's command line names the REAL resolved base and head, not a hardcoded origin/main label", async () => {
-    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES })
+    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES, body: '' })
     expect(result.block).toContain(`git diff ${FIXED_GROUP_A.base}...${FIXED_GROUP_A.head} --numstat`)
     // The old hardcoded label would lie on the `main`/BASE_SHA fallback path — must be gone.
     expect(result.block).not.toContain('$(git merge-base origin/main HEAD)')
   })
 
   it('every line is transcribed command output — no summary/count/rewrite of the gate result', async () => {
-    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => FAILING_GATES })
+    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => FAILING_GATES, body: '' })
     // The exact error message string survives verbatim, not a paraphrase or count.
     expect(result.block).toContain('C5: apps/cli/src/foo.ts touches a bound doc')
     expect(result.block).not.toMatch(/\d+ (pass|fail)(ed|ing)?\b/i)
   })
 
   it('gatesFailed is true when any gate outcome is fail/error/timeout', async () => {
-    const passing = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES })
-    const failing = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => FAILING_GATES })
+    const passing = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES, body: '' })
+    const failing = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => FAILING_GATES, body: '' })
     expect(passing.gatesFailed).toBe(false)
     expect(failing.gatesFailed).toBe(true)
   })
 
   it('is byte-identical across two runs at the same inputs, regardless of outcome array order', async () => {
     const shuffled: GateRunResult = { outcomes: [...PASSING_GATES.outcomes].reverse(), failed: false }
-    const first = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES })
-    const second = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => shuffled })
+    const first = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES, body: '' })
+    const second = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => shuffled, body: '' })
     expect(first.block).toBe(second.block)
   })
 
   it('carries no free-text field — every emitted field traces to a group', async () => {
-    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES })
-    // Only the two labelled sections and the Head line — no Summary/Notes/etc.
+    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES, body: '' })
+    // Only the three labelled sections and the Head line — no Summary/Notes/etc.
     const headings = [...result.blockInner.matchAll(/^###.*$/gm)].map((m) => m[0])
-    expect(headings).toEqual(['### Group A — recomputable', '### Group B — attested'])
+    expect(headings).toEqual([
+      '### Group A — recomputable',
+      '### Group B — attested',
+      '### Group C — Test Plan commands'
+    ])
+  })
+})
+
+describe('extractAgentCommandLines / agentCommandText — task 12, #387', () => {
+  it('extracts each non-blank line of the first fenced block in the Test Plan section', () => {
+    const body = ['## Test Plan', '', '```', 'bun run test → 0 fail', 'bun run typecheck → clean', '```'].join('\n')
+    expect(extractAgentCommandLines(body)).toEqual(['bun run test → 0 fail', 'bun run typecheck → clean'])
+  })
+
+  it('is empty for the unit-tests-only sentinel', () => {
+    expect(extractAgentCommandLines('Test Plan: unit-tests-only')).toEqual([])
+  })
+
+  it('is empty when the body has no locatable Test Plan section at all', () => {
+    expect(extractAgentCommandLines('## Summary\n\nno test plan here')).toEqual([])
+  })
+
+  it('is empty for the pre-#387 checkbox shape — no fenced block to read', () => {
+    const body = ['## Test Plan', '', '- [ ] **[agent]** `bun run test` → green.'].join('\n')
+    expect(extractAgentCommandLines(body)).toEqual([])
+  })
+
+  it('agentCommandText strips the trailing "→ <observable>" half of a line', () => {
+    expect(agentCommandText('bun run test → summary line ends "0 fail"')).toBe('bun run test')
+  })
+
+  it('agentCommandText returns the whole line unchanged when there is no arrow', () => {
+    expect(agentCommandText('bun run test')).toBe('bun run test')
+  })
+})
+
+describe('runAgentCommand — real subprocess, no network', () => {
+  it('captures stdout, a zero exit code, and never times out for a fast command', () => {
+    const result = runAgentCommand('echo hello')
+    expect(result.output).toBe('hello')
+    expect(result.exitCode).toBe(0)
+    expect(result.timedOut).toBe(false)
+  })
+
+  it("captures a non-zero exit code and the command's own output", () => {
+    const result = runAgentCommand('echo oops >&2; exit 3')
+    expect(result.output).toBe('oops')
+    expect(result.exitCode).toBe(3)
+  })
+})
+
+describe('groupCFailed', () => {
+  it('false when every command exited 0', () => {
+    expect(groupCFailed({ commands: [{ command: 'x', output: '', exitCode: 0, timedOut: false }] })).toBe(false)
+  })
+
+  it('true when any command exited non-zero', () => {
+    expect(groupCFailed({ commands: [{ command: 'x', output: '', exitCode: 1, timedOut: false }] })).toBe(true)
+  })
+
+  it('true when any command timed out', () => {
+    expect(groupCFailed({ commands: [{ command: 'x', output: 'timeout', exitCode: null, timedOut: true }] })).toBe(true)
+  })
+
+  it('false for zero commands', () => {
+    expect(groupCFailed({ commands: [] })).toBe(false)
+  })
+})
+
+describe('computeGroupC — extracts and runs, end to end', () => {
+  it('runs every command in the fenced list and records its real output', () => {
+    const body = ['## Test Plan', '', '```', 'echo one → one', 'echo two → two', '```'].join('\n')
+    const groupC = computeGroupC(body)
+    expect(groupC.commands).toHaveLength(2)
+    expect(groupC.commands[0]).toEqual({ command: 'echo one', output: 'one', exitCode: 0, timedOut: false })
+    expect(groupC.commands[1]).toEqual({ command: 'echo two', output: 'two', exitCode: 0, timedOut: false })
+  })
+
+  it('is the empty commands list for a body with no Test Plan command list', () => {
+    expect(computeGroupC('Test Plan: unit-tests-only')).toEqual({ commands: [] })
+  })
+})
+
+describe('buildReport — Group C wiring', () => {
+  it('renders every command and its output inside the Group C fence, and folds a failing command into gatesFailed', async () => {
+    const body = ['## Test Plan', '', '```', 'echo hi → hi', 'exit 1 → never reached cleanly', '```'].join('\n')
+    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES, body })
+    expect(result.block).toContain('### Group C — Test Plan commands')
+    expect(result.block).toContain('$ echo hi')
+    expect(result.block).toContain('hi')
+    expect(result.block).toContain('$ exit 1')
+    expect(result.block).toContain('[exit 1]')
+    expect(result.gatesFailed).toBe(true)
+  })
+
+  it('renders the "no commands" placeholder, and does not fail the report, for a unit-tests-only body', async () => {
+    const result = await buildReport({
+      groupA: FIXED_GROUP_A,
+      gateRunner: () => PASSING_GATES,
+      body: 'Test Plan: unit-tests-only'
+    })
+    expect(result.block).toContain('(no [agent] commands in the Test Plan section)')
+    expect(result.gatesFailed).toBe(false)
   })
 })
 

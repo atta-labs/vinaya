@@ -295,19 +295,15 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // See `CheckSpec.requiresOpenPr`'s doc comment.
       requiresOpenPr: true,
       // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
-      // plain absence-tolerant fall-throughs. PR_NUMBER is the same shape:
-      // unset means "no PR to read comments from yet" and the bin keeps its
-      // body-only behaviour. The two tokens are forwarded for the same reason
-      // `review-gate`'s entry forwards them — the bin shells to `gh` directly,
-      // and on a CI runner `gh` authenticates ONLY from GH_TOKEN/GITHUB_TOKEN,
-      // so without them every `gh pr view` fails. Optional because a local run
-      // uses `gh`'s own keyring auth with no env var at all.
+      // plain absence-tolerant fall-throughs. Body and branch only again
+      // (task 12, #387): the bin no longer shells to `gh` at all — the
+      // `[agent]` half of a Test Plan is a fenced command list `vinaya pr
+      // report` grades against the AEG:EVIDENCE block, not a comment this
+      // bin used to count — so no PR_NUMBER/token declaration is needed here
+      // any more.
       env: {
         PR_BODY: { optional: true },
-        BRANCH: { optional: true },
-        PR_NUMBER: { optional: true },
-        GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
+        BRANCH: { optional: true }
       }
     },
     // requiresOpenPr — see `closes-n` above.

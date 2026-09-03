@@ -126,14 +126,37 @@ function testPlanRegion(prBody: string): string {
  * judge whether tags are correctly assigned or whether `unit-tests-only` is
  * justified by the surface map.
  */
+/**
+ * Presence-only Test Plan detector — three acceptable shapes since task 12
+ * (#387) rendered the `[agent]` half of a Test Plan as a fenced command list
+ * rather than a checkbox: the `unit-tests-only` sentinel; a
+ * `**[agent]**`/`**[principal]**`-tagged checkbox line (the pre-#387 shape,
+ * still valid on a PR below `AGENT_BOXES_REFUSED_SINCE_PR` and for
+ * `[principal]` items on every PR); or a fenced code block anywhere in the
+ * Test Plan region (the fenced-command-list shape). This gate does not judge
+ * WHICH shape a given PR number must use — `checkNoAgentBoxes`, below, is the
+ * rule that refuses a checkbox `[agent]` item on a PR at or above the rollout
+ * constant; this one only asks "is there a Test Plan at all."
+ */
 export function checkTestPlan(prBody: string): BriefSectionResult {
-  const region = testPlanRegion(prBody)
+  const located = locateTestPlanSection(prBody)
+  const region = located.found ? located.section : prBody
   if (TEST_PLAN_UNIT_TESTS_ONLY_RE.test(region)) return { status: 'pass', errors: [] }
   if (/\*\*\[(?:agent|principal)\]\*\*/.test(region)) return { status: 'pass', errors: [] }
+  // Fenced-block detection only counts when the section was genuinely
+  // LOCATED, never on the whole-body fallback: `testPlanRegion`'s fallback
+  // exists so the sentinel/tag checks above still work on a body with no
+  // recognizable heading, but a fence can appear anywhere in a brief (Step
+  // 0's own worktree command, a Part's own command block) — trusting ANY
+  // fence in the whole body would pass a brief whose Test Plan section was
+  // deleted outright, as long as it kept some unrelated fence elsewhere
+  // (found live, fixing this same rule: `checkBriefSections`'s own "missing
+  // Test Plan" regression fixture stopped failing until this guard landed).
+  if (located.found && extractFencedBlocks(region).length > 0) return { status: 'pass', errors: [] }
   return {
     status: 'fail',
     errors: [
-      'brief-validation Test Plan: no Test Plan section found — expected `Test Plan: unit-tests-only`, or at least one `**[agent]**`/`**[principal]**`-tagged checklist item.'
+      'brief-validation Test Plan: no Test Plan section found — expected `Test Plan: unit-tests-only`, a fenced `[agent]` command list, or at least one `**[agent]**`/`**[principal]**`-tagged checklist item.'
     ]
   }
 }
@@ -489,19 +512,70 @@ export const COMMAND_WORDS = ['export', 'bun', 'gh', 'git', 'grep', 'sed', 'cat'
 export const BRIEF_RULES_SINCE_PR = 394
 
 /**
- * True for an error message produced by one of the four grandfatherable
- * rules above — classified by each rule's own distinct message prefix,
- * since `checkBriefSections` aggregates every sub-check's errors into one
- * flat `string[]` and this is the only reader that ever needs to tell them
- * apart from the rest.
+ * Rollout PR number for `checkNoAgentBoxes`, below — a second, distinct
+ * cutover from `BRIEF_RULES_SINCE_PR` above, per the Principal's ruling
+ * (2026-09-03, after PR #395): an agent never ticks a box or edits a PR
+ * body, so the `[agent]` half of a Test Plan stops being checkboxes and
+ * becomes a fenced command list (task 12, #387). A PR numbered below this
+ * is grandfathered — its checkbox `[agent]` items were written before the
+ * ruling and are reported informationally, never a failure. `verify-brief.ts`
+ * (authoring time, pre-dispatch) has no PR number and applies the rule
+ * unconditionally, same grandfathering-is-CI-only posture as
+ * `BRIEF_RULES_SINCE_PR`.
+ */
+export const AGENT_BOXES_REFUSED_SINCE_PR = 396
+
+const AGENT_BOX_LINE_RE = /^-\s*\[[ xX]\]\s*\*{2}\[agent\]\*{2}/im
+
+/**
+ * Refuses a Test Plan whose `[agent]` half is still a checkbox item — the
+ * shape the fenced-command-list rule (task 12, #387) replaces. Presence-only
+ * within the Test Plan region (`testPlanRegion`), like every sibling check
+ * in this file: whether the fenced list a body carries instead is any GOOD
+ * is a Reviewer/Verification judgment, not this gate's.
+ */
+export function checkNoAgentBoxes(prBody: string): BriefSectionResult {
+  const region = testPlanRegion(prBody)
+  if (!AGENT_BOX_LINE_RE.test(region)) return { status: 'pass', errors: [] }
+  return {
+    status: 'fail',
+    errors: [
+      'brief-validation no agent boxes: the Test Plan carries a checkbox `[agent]` item — an agent never ticks a box or edits a PR body (Principal ruling, 2026-09-03, after PR #395). Render the `[agent]` half as a fenced command list instead; `vinaya pr report` runs each command from the PR head and writes its actual output into the AEG:EVIDENCE block. `[principal]` checkboxes are unaffected.'
+    ]
+  }
+}
+
+/**
+ * True for an error message produced by one of the five grandfatherable
+ * rules below (the original four, plus `checkNoAgentBoxes`) — classified by
+ * each rule's own distinct message prefix, since `checkBriefSections`
+ * aggregates every sub-check's errors into one flat `string[]` and this is
+ * the only reader that ever needs to tell them apart from the rest.
  */
 export function isGrandfatherableBriefRuleError(message: string): boolean {
-  return (
+  return rolloutThresholdFor(message) !== null
+}
+
+/**
+ * The rollout constant a given error message is grandfathered against, or
+ * `null` for a message this rollout scheme does not cover (always blocking,
+ * on every PR). Two thresholds exist today (`BRIEF_RULES_SINCE_PR`,
+ * `AGENT_BOXES_REFUSED_SINCE_PR`) — a message is matched to whichever rule
+ * produced it, never a single global cutover, so a later third threshold
+ * can be added here without touching either existing one's grandfather
+ * window.
+ */
+function rolloutThresholdFor(message: string): number | null {
+  if (
     message.startsWith('brief-validation unpinned code claim:') ||
     message.startsWith('brief-validation commands carry output:') ||
     message.startsWith('brief-validation consumer tests:') ||
     message.startsWith('brief-validation defeat cases:')
-  )
+  ) {
+    return BRIEF_RULES_SINCE_PR
+  }
+  if (message.startsWith('brief-validation no agent boxes:')) return AGENT_BOXES_REFUSED_SINCE_PR
+  return null
 }
 
 /**
@@ -512,20 +586,23 @@ export function isGrandfatherableBriefRuleError(message: string): boolean {
  * discipline as `pr-body-frozen.ts`'s `checkPrBodyFrozen`.
  *
  * `prNumber === null` (no `PR_NUMBER`, or an unparseable one) is NOT
- * grandfathered — only a real, parsed number below `BRIEF_RULES_SINCE_PR`
- * is. Fail-closed: a check that can't tell which PR it's grading must not
- * quietly waive rules it has no number to check against.
+ * grandfathered — only a real, parsed number below a message's own
+ * threshold (`rolloutThresholdFor`) is. Fail-closed: a check that can't tell
+ * which PR it's grading must not quietly waive rules it has no number to
+ * check against.
  */
 export function partitionBriefErrorsByRollout(
   errors: string[],
   prNumber: number | null
 ): { blocking: string[]; info: string[] } {
-  const grandfathered = prNumber !== null && prNumber < BRIEF_RULES_SINCE_PR
-  if (!grandfathered) return { blocking: errors, info: [] }
-  return {
-    blocking: errors.filter((e) => !isGrandfatherableBriefRuleError(e)),
-    info: errors.filter((e) => isGrandfatherableBriefRuleError(e))
+  const blocking: string[] = []
+  const info: string[] = []
+  for (const e of errors) {
+    const threshold = rolloutThresholdFor(e)
+    const grandfathered = threshold !== null && prNumber !== null && prNumber < threshold
+    ;(grandfathered ? info : blocking).push(e)
   }
+  return { blocking, info }
 }
 
 /**
@@ -827,6 +904,7 @@ export function checkBriefSections(
     checkProjectField(prBody),
     checkForField(prBody),
     checkNoUnpinnedCodeClaims(prBody),
+    checkNoAgentBoxes(prBody),
     checkCommandsCarryOutput(prBody),
     checkConsumerTests(prBody, consumersOf),
     checkDefeatCases(prBody),

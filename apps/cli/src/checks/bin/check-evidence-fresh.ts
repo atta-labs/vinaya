@@ -4,13 +4,17 @@
  * Core check: evidence-fresh (fix/pr-report-emitter). Refuses a PR body whose
  * `AEG:EVIDENCE` block does not match the head it is attached to.
  *
- * Two asymmetric halves, on purpose — see `evidence-fresh-logic.ts`'s module
- * doc for the fabrication-vs-staleness boundary this closes:
+ * Three groups, two of them compared exactly — see `evidence-fresh-logic.ts`'s
+ * module doc for the fabrication-vs-staleness boundary this closes:
  *   - Group A (the `git diff --numstat` recompute) is compared exactly.
  *   - Group B (the attested `vinaya check --all --diff-only` run) is checked
  *     for freshness only, via the block's `Head:` line — re-running that
  *     suite here would be the recursion `vinaya pr report`'s own docstring
  *     rejects.
+ *   - Group C (task 12, #387: the Test Plan's `[agent]` command list) is
+ *     re-run from this checkout's own tree and compared exactly, the same
+ *     way Group A is — skipped for a two-fence block that predates this
+ *     group.
  *
  * Head resolution deliberately does NOT use `HEAD`. `actions/checkout@v4` on
  * a `pull_request` event with no `ref:` checks out `refs/pull/N/merge`, so
@@ -39,6 +43,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
+import { extractFencedBlocks } from '@attalabs/aeg-core'
+import { computeGroupC, renderGroupC } from '../../commands/pr-report'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { compareEvidenceBlock } from '../evidence-fresh-logic'
 import { ScanContext, resolveAnchoredRegion } from '../scan-context'
@@ -197,7 +203,14 @@ function main(): void {
     process.exit(1)
   }
 
-  const result = compareEvidenceBlock(resolved, resolvedHead, actualNumstat)
+  // Re-runs every `[agent]` command from this checkout's own tree — already
+  // the PR's real content, the same tree Group A's `--numstat` recompute
+  // above trusts. `extractFencedBlocks` pulls just the fence's inner text
+  // back out of the full render, matching what `compareEvidenceBlock` reads
+  // off the stored block via the same fence scan.
+  const actualGroupCFenceInner = extractFencedBlocks(renderGroupC(computeGroupC(body)))[0]?.content
+
+  const result = compareEvidenceBlock(resolved, resolvedHead, actualNumstat, actualGroupCFenceInner)
   if (result.status === 'fail') {
     for (const message of result.errors) {
       emitCheckError({

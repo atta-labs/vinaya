@@ -102,6 +102,48 @@ describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)',
   })
 })
 
+/** A block carrying a THIRD fence (Group C, task 12, #387) — appended after Group B. */
+function evidenceBodyWithGroupC(head: string, numstat: string, groupCInner: string): string {
+  const withoutEnd = evidenceBody(head, numstat).replace('<!-- AEG:EVIDENCE:END -->', '')
+  return [
+    withoutEnd,
+    '',
+    '### Group C — Test Plan commands',
+    '',
+    '```',
+    groupCInner,
+    '```',
+    '<!-- AEG:EVIDENCE:END -->'
+  ].join('\n')
+}
+
+describe('compareEvidenceBlock — Group C (task 12, #387)', () => {
+  it('passes when the stored third fence matches the caller-supplied actual', () => {
+    const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, '$ echo hi\nhi')
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, '$ echo hi\nhi')
+    expect(result.status).toBe('pass')
+  })
+
+  it('fails, naming Group C, when the stored third fence disagrees with a fresh re-run', () => {
+    const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, '$ echo hi\nhi')
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, '$ echo hi\nsomething else')
+    expect(result.status).toBe('fail')
+    expect(result.status === 'fail' && result.errors.join('\n')).toContain('Group C does not match')
+  })
+
+  it('a two-fence (pre-#387) block is never faulted for lacking Group C, even when the caller supplies one', () => {
+    const body = evidenceBody(HEAD, NUMSTAT)
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, '$ echo hi\nhi')
+    expect(result.status).toBe('pass')
+  })
+
+  it('skips the Group C comparison entirely when the caller passes no actual to compare', () => {
+    const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, '$ echo hi\nhi')
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT)
+    expect(result.status).toBe('pass')
+  })
+})
+
 describe('the check refuses when the diff cannot be recomputed', () => {
   // A base that resolves and a diff that fails is reachable: a repo-local
   // `diff.orderFile` pointing at a missing path leaves `git merge-base` at

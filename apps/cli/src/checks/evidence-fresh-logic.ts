@@ -36,11 +36,21 @@ const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
  * `Summary:` inside the Group B fence or a `<details>` block is never the one
  * compared. Passing the pair whole is what keeps the located line and the
  * sliced text at the same offsets (Issue #189).
+ *
+ * `actualGroupCFenceInner` (task 12, #387) is the caller's own independently
+ * recomputed Group C fence content (`renderGroupC`'s inner text, re-run from
+ * the PR's own body's Test Plan command list) — compared exactly, the same
+ * way Group A is, WHEN the block carries a third fence at all. A body with
+ * only two fences predates this group (grandfathered — not every currently
+ * open PR was written after task 12 landed) and is not compared on this
+ * axis; `undefined` skips the comparison outright for a caller that has not
+ * computed one.
  */
 export function compareEvidenceBlock(
   resolved: ResolvedRegion,
   resolvedHead: string,
-  actualNumstat: string
+  actualNumstat: string,
+  actualGroupCFenceInner?: string
 ): EvidenceCompareResult {
   const region = resolved.region
   const headMatch = region.match(HEAD_LINE)
@@ -97,6 +107,24 @@ export function compareEvidenceBlock(
           'evidence-fresh: the Summary line does not match a fresh recompute of the diff it summarises.',
           `  block:  ${JSON.stringify(storedSummary)}`,
           `  actual: ${JSON.stringify(expectedSummary)}`
+        ].join('\n')
+      )
+    }
+  }
+
+  // Group C (task 12, #387) — compared exactly, like Group A, but only when
+  // BOTH sides can see it: the block carries a third fence, and the caller
+  // computed one to compare against. A two-fence block predates this group
+  // entirely and is never faulted for lacking it.
+  if (actualGroupCFenceInner !== undefined && fences.length >= 3) {
+    const storedGroupC = fences[2] as string
+    const actualGroupC = actualGroupCFenceInner.trim()
+    if (storedGroupC !== actualGroupC) {
+      errors.push(
+        [
+          'evidence-fresh: Group C does not match a fresh re-run of the Test Plan `[agent]` command list at the PR head.',
+          `  block:  ${JSON.stringify(storedGroupC)}`,
+          `  actual: ${JSON.stringify(actualGroupC)}`
         ].join('\n')
       )
     }

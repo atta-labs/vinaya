@@ -1,6 +1,6 @@
 /**
- * `vinaya brief render <tranche> <n> --surfaces <glob,...>` (review-convergence-v1
- * task 12, #387) — the forge/tree shim over `@attalabs/aeg-core`'s pure
+ * `vinaya brief render <tranche> <n> --surfaces <glob,...>` (task 12, #387)
+ * — the forge/tree shim over `@attalabs/aeg-core`'s pure
  * `renderBrief`. Never writes under `aeg-root/` or to the Issue: stdout, or
  * `--out <path>`, only — a brief is pasted to the Developer, never committed.
  *

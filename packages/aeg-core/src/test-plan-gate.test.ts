@@ -89,12 +89,12 @@ describe('evaluateTestPlanGate — section found but no checkbox items', () => {
     const body = '## Test Plan\n\nManual verification only, no checklist here.\n\n## Scope\n\nx'
     const result = evaluateTestPlanGate(body, TASK_BRANCH)
     expect(result.verdict).toBe('pass')
-    expect(result.messages.join('\n')).toContain('no checkbox items')
+    expect(result.messages.join('\n')).toContain('no `[principal]` checkbox items')
   })
 })
 
 describe('evaluateTestPlanGate — unticked boxes', () => {
-  it('FAILs and names every unticked line', () => {
+  it('FAILs and names every unticked [principal] line — [agent] lines are never tracked, ticked or not', () => {
     const body = [
       '## Test Plan',
       '',
@@ -105,65 +105,36 @@ describe('evaluateTestPlanGate — unticked boxes', () => {
     const result = evaluateTestPlanGate(body, TASK_BRANCH)
     expect(result.verdict).toBe('fail')
     const joined = result.messages.join('\n')
-    expect(joined).toContain('not done yet')
+    expect(joined).not.toContain('not done yet')
     expect(joined).toContain('also not done')
   })
 })
 
-describe('evaluateTestPlanGate — the evidence-comment gate', () => {
-  const ALL_TICKED = [
-    '## Test Plan',
-    '',
-    '- [x] **[agent]** `bun run test` → green.',
-    '- [x] **[agent]** `vinaya review status <n>` → CONTINUE.',
-    '- [x] **[principal]** Read the post-open sequence cold and answer.'
-  ].join('\n')
+describe('evaluateTestPlanGate — the [agent] half is never graded here (task 12, #387)', () => {
+  it('PASSes (advisory) a body whose Test Plan is a fenced [agent] command list with no [principal] item at all', () => {
+    const body = ['## Test Plan', '', '```', 'bun run test → 0 fail', '```'].join('\n')
+    const result = evaluateTestPlanGate(body, TASK_BRANCH)
+    expect(result.verdict).toBe('pass')
+    expect(result.messages.join('\n')).toContain('no `[principal]` checkbox items')
+  })
 
-  it('FAILs as `pending` when a ticked [agent] item has no Developer round comment behind it', () => {
-    const result = evaluateTestPlanGate(ALL_TICKED, TASK_BRANCH, { developerRoundComments: 0 })
+  it('PASSes a ticked or unticked [agent] checkbox alike — a pre-#387 body is never graded on that tag', () => {
+    const ticked = ['## Test Plan', '', '- [x] **[agent]** `bun run test` → green.'].join('\n')
+    const unticked = ['## Test Plan', '', '- [ ] **[agent]** `bun run test` → green.'].join('\n')
+    expect(evaluateTestPlanGate(ticked, TASK_BRANCH).verdict).toBe('pass')
+    expect(evaluateTestPlanGate(unticked, TASK_BRANCH).verdict).toBe('pass')
+  })
+
+  it('still grades a [principal] item alongside an unticked [agent] checkbox — only the [principal] tick matters', () => {
+    const body = [
+      '## Test Plan',
+      '',
+      '- [ ] **[agent]** `bun run test` → green.',
+      '- [ ] **[principal]** Read the post-open sequence cold and answer.'
+    ].join('\n')
+    const result = evaluateTestPlanGate(body, TASK_BRANCH)
     expect(result.verdict).toBe('fail')
-    expect(result.pending).toBe(true)
-    const joined = result.messages.join('\n')
-    expect(joined).toContain('no Developer round comment')
-    expect(joined).toContain('aeg:developer:round-')
-  })
-
-  it('names the round comment as the remedy, never a body edit', () => {
-    const joined = evaluateTestPlanGate(ALL_TICKED, TASK_BRANCH, { developerRoundComments: 0 }).messages.join('\n')
-    expect(joined).toContain('Post the round comment')
-    expect(joined).not.toContain('paste')
-  })
-
-  it('PASSes once one Developer round comment exists', () => {
-    const result = evaluateTestPlanGate(ALL_TICKED, TASK_BRANCH, { developerRoundComments: 1 })
-    expect(result.verdict).toBe('pass')
-    expect(result.pending).toBeUndefined()
-  })
-
-  it('says "not yet", not "wrong" — the failure is the missing comment, not the tick', () => {
-    const joined = evaluateTestPlanGate(ALL_TICKED, TASK_BRANCH, { developerRoundComments: 0 }).messages.join('\n')
-    expect(joined).toContain('not yet')
-    expect(joined).toContain('not a wrong tick')
-  })
-
-  it('keeps the pre-existing body-only behaviour exactly when no evidence is supplied', () => {
-    const result = evaluateTestPlanGate(ALL_TICKED, TASK_BRANCH)
-    expect(result.verdict).toBe('pass')
-    expect(result.pending).toBeUndefined()
-  })
-
-  it('does not fire for a ticked [principal] item — only [agent] ticks claim pasted evidence', () => {
-    const body = ['## Test Plan', '', '- [x] **[principal]** Answered in a browser.'].join('\n')
-    const result = evaluateTestPlanGate(body, TASK_BRANCH, { developerRoundComments: 0 })
-    expect(result.verdict).toBe('pass')
-  })
-
-  it('still reports unticked boxes normally when nothing [agent] is ticked yet', () => {
-    const body = ['## Test Plan', '', '- [ ] **[agent]** not run yet'].join('\n')
-    const result = evaluateTestPlanGate(body, TASK_BRANCH, { developerRoundComments: 0 })
-    expect(result.verdict).toBe('fail')
-    expect(result.pending).toBeUndefined()
-    expect(result.messages.join('\n')).toContain('not run yet')
+    expect(result.messages.join('\n')).toContain('Read the post-open sequence')
   })
 })
 
@@ -176,65 +147,44 @@ describe('evaluateTestPlanGate — the evidence-comment gate', () => {
  * author's mental model by construction, and the first real body it meets is
  * the one it was supposed to grade.
  *
- * `pr-body-381.md` is this PR's live body, captured verbatim from the forge
- * with `gh pr view --json body -q .body`. Not a reconstruction and not the
- * at-open text: it carries everything a real body carries by the time this
- * gate runs against it — the machine-emitted `AEG:EVIDENCE` and `AEG:TOKENS`
- * blocks, the Developer's own `[agent]` ticks, a `[principal]` tick the
- * Principal added, and the brief pasted below in its `<details>` block. That
- * last part is the load-bearing one: the pasted brief carries its own Test
- * Plan with the same items, so a gate reading anything but the anchored
- * section would grade the wrong list.
+ * `pr-body-393.md` is a real merged PR's live body, captured verbatim from
+ * the forge with `gh pr view --json body -q .body`. It carries everything a
+ * real body carries — the machine-emitted `AEG:EVIDENCE`/`AEG:TOKENS`
+ * blocks, three ticked `[agent]` items, a ticked `[principal]` item inside
+ * the real `AEG:TEST-PLAN` anchor, and the brief pasted below in its
+ * `<details>` block. That last part is the load-bearing one: the pasted
+ * brief carries its own Test Plan with an UNTICKED `[principal]` item of the
+ * same shape (line 357), so a gate reading anything but the anchored
+ * section would grade the wrong list and fail a body that should pass.
  */
-describe("evaluateTestPlanGate — this PR's own body", () => {
-  const LIVE = readFileSync(join(import.meta.dirname, '..', 'tests', 'fixtures', 'pr-body-381.md'), 'utf8')
-  const OWN_BRANCH = 'task/review-convergence-v1/8'
+describe("evaluateTestPlanGate — a real PR's own body (task 12, #387)", () => {
+  const LIVE = readFileSync(join(import.meta.dirname, '..', 'tests', 'fixtures', 'pr-body-393.md'), 'utf8')
+  const OWN_BRANCH = 'task/review-convergence-v1/10'
 
-  /**
-   * The same body once every remaining box is ticked — the state it is in
-   * when the merge gate's verdict actually matters. Derived here rather than
-   * committed as a second fixture, so the committed one stays a verbatim
-   * capture and cannot drift from the forge.
-   */
-  const ALL_TICKED_BODY = LIVE.split('\n')
-    .map((line) => line.replace(/^(\s*[-*]\s+)\[ \]/, '$1[x]'))
-    .join('\n')
+  /** The same body with its one real `[principal]` tick reverted — the state before the Principal ticked it. */
+  const UNTICKED_BODY = LIVE.replace(
+    '- [x] **[principal]** Read the `brief-shape` row',
+    '- [ ] **[principal]** Read the `brief-shape` row'
+  )
 
-  it('fails the verbatim live body as `pending` when no round comment backs its real ticks', () => {
-    // The captured body carries genuine ticks, so the evidence gate fires
-    // before the unticked-box report — the ordering that makes "not yet"
-    // beat "you missed a box" when both are true.
-    const result = evaluateTestPlanGate(LIVE, OWN_BRANCH, { developerRoundComments: 0 })
-    expect(result.verdict).toBe('fail')
-    expect(result.pending).toBe(true)
-  })
-
-  it('falls through to the ordinary unticked-box report once a round comment exists', () => {
-    const result = evaluateTestPlanGate(LIVE, OWN_BRANCH, { developerRoundComments: 1 })
-    expect(result.verdict).toBe('fail')
-    expect(result.pending).toBeUndefined()
-    // The one item deliberately left unticked: no verdict exists to bind.
-    expect(result.messages.join('\n')).toContain('check review-gate')
-  })
-
-  it('fails as `pending` once the boxes are ticked but no Developer round comment exists', () => {
-    const result = evaluateTestPlanGate(ALL_TICKED_BODY, OWN_BRANCH, { developerRoundComments: 0 })
-    expect(result.verdict).toBe('fail')
-    expect(result.pending).toBe(true)
-    expect(result.messages.join('\n')).toContain('no Developer round comment')
-  })
-
-  it('passes over the same ticked body once one Developer round comment exists', () => {
-    const result = evaluateTestPlanGate(ALL_TICKED_BODY, OWN_BRANCH, { developerRoundComments: 1 })
+  it('PASSes the verbatim live body — the [agent] ticks are never graded, and the one [principal] item is ticked', () => {
+    const result = evaluateTestPlanGate(LIVE, OWN_BRANCH)
     expect(result.verdict).toBe('pass')
-    expect(result.pending).toBeUndefined()
+  })
+
+  it('FAILs once the [principal] tick is reverted, naming that item', () => {
+    expect(UNTICKED_BODY).not.toBe(LIVE)
+    const result = evaluateTestPlanGate(UNTICKED_BODY, OWN_BRANCH)
+    expect(result.verdict).toBe('fail')
+    expect(result.messages.join('\n')).toContain('Read the `brief-shape` row')
   })
 
   it('reads the Test Plan from the anchored section, not the brief pasted below it', () => {
     // The reference copy of the brief in the `<details>` block carries its
-    // own Test Plan section with the identical items. If the gate read those
-    // too, no tick in the real section could ever satisfy it.
-    expect(LIVE).toContain('## 9. Test Plan')
-    expect(evaluateTestPlanGate(ALL_TICKED_BODY, OWN_BRANCH, { developerRoundComments: 1 }).verdict).toBe('pass')
+    // own Test Plan section with an UNTICKED `[principal]` item of the same
+    // shape. If the gate read those too, the real, ticked section could
+    // never satisfy it.
+    expect(LIVE).toContain('<!-- AEG:TEST-PLAN:START -->')
+    expect(evaluateTestPlanGate(LIVE, OWN_BRANCH).verdict).toBe('pass')
   })
 })

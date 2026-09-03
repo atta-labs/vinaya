@@ -5,7 +5,9 @@ import { join } from 'node:path'
 import {
   type AnchorField,
   anchoredRegionBounds,
+  extractFencedBlocks,
   formatTokenReportRow,
+  locateTestPlanSection,
   resolveMeteringCapability
 } from '@attalabs/aeg-core'
 import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
@@ -345,6 +347,105 @@ function renderGroupB(outcomes: GateOutcome[]): string {
 }
 
 /**
+ * Group C — the `[agent]` half of the Test Plan (task 12, #387; Principal
+ * ruling after PR #395: an agent never ticks a box or edits a PR body). The
+ * renderer emits §9 as a fenced list of commands, one per line, each with
+ * its expected observable after a literal `→`; this runs every command in
+ * that list from the PR head and records its actual output, so the
+ * `AEG:EVIDENCE` block IS the evidence — never a round comment, never a
+ * hand-typed paste.
+ *
+ * The runner's own per-check default (`apps/cli/src/commands/check.ts`'s
+ * `defaultTimeoutMs: 30_000`) is mirrored here, not imported — this is a
+ * command's own subprocess budget, not a registered check going through
+ * that runner.
+ */
+const AGENT_COMMAND_TIMEOUT_MS = 30_000
+
+export type GroupCCommandResult = { command: string; output: string; exitCode: number | null; timedOut: boolean }
+export type GroupC = { commands: GroupCCommandResult[] }
+
+/**
+ * The `[agent]` command lines out of the PR body's Test Plan section — the
+ * first fenced block found there, one command per non-blank line, with the
+ * `→ <observable>` half of each line stripped off. Empty (no commands) for
+ * the `unit-tests-only` sentinel, a body with no Test Plan section at all,
+ * or a Test Plan with no fenced block (the pre-#387 checkbox shape) — in
+ * every one of those cases there is nothing for this group to run.
+ */
+export function extractAgentCommandLines(prBody: string): string[] {
+  const located = locateTestPlanSection(prBody)
+  if (!located.found) return []
+  if (/unit-tests-only/i.test(located.section)) return []
+  const blocks = extractFencedBlocks(located.section)
+  const first = blocks[0]
+  if (!first) return []
+  return first.content
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+}
+
+/** Strips a line's trailing `→ <observable>` (if any), leaving the command alone. */
+export function agentCommandText(line: string): string {
+  const idx = line.indexOf('→')
+  return (idx === -1 ? line : line.slice(0, idx)).trim()
+}
+
+/**
+ * Runs one command from the repo root via `bash -c`, capturing stdout+stderr
+ * together (most of these commands are CLI invocations that report their
+ * real result on either stream, and Group C's job is to show what actually
+ * happened, not to pre-judge which stream mattered). A command that exceeds
+ * `AGENT_COMMAND_TIMEOUT_MS` is recorded with the literal output `timeout`,
+ * never silently dropped from the block.
+ */
+export function runAgentCommand(command: string): GroupCCommandResult {
+  const proc = spawnSync('bash', ['-c', command], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    timeout: AGENT_COMMAND_TIMEOUT_MS,
+    maxBuffer: 32 * 1024 * 1024
+  })
+  if (proc.error && (proc.error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
+    return { command, output: 'timeout', exitCode: null, timedOut: true }
+  }
+  const output = `${proc.stdout ?? ''}${proc.stderr ?? ''}`.trim()
+  return { command, output, exitCode: proc.status, timedOut: false }
+}
+
+/** Extracts the command list from `prBody` and runs each one — the one place this module actually executes PR-body content. */
+export function computeGroupC(prBody: string): GroupC {
+  return { commands: extractAgentCommandLines(prBody).map((line) => runAgentCommand(agentCommandText(line))) }
+}
+
+/** True when any Group C command timed out or exited non-zero — folded into this command's overall exit code exactly like a failing Group B gate. */
+export function groupCFailed(groupC: GroupC): boolean {
+  return groupC.commands.some((c) => c.timedOut || (c.exitCode !== null && c.exitCode !== 0))
+}
+
+/**
+ * Group C, rendered inside its own fenced block — always present (even with
+ * zero commands) so a byte-compare always finds three fences, never two.
+ * Exported so `check-evidence-fresh.ts` can reproduce the exact same
+ * rendering from an independently recomputed `GroupC` and byte-compare it
+ * against what the block already carries, the same way it already does for
+ * Group A.
+ */
+export function renderGroupC(groupC: GroupC): string {
+  const body =
+    groupC.commands.length === 0
+      ? '(no [agent] commands in the Test Plan section)'
+      : groupC.commands
+          .map((c) => {
+            const status = c.timedOut ? '[timeout]' : c.exitCode !== 0 ? `[exit ${c.exitCode}]` : null
+            return [`$ ${c.command}`, c.output, ...(status ? [status] : [])].join('\n')
+          })
+          .join('\n\n')
+  return ['### Group C — Test Plan commands', '', '```', body, '```'].join('\n')
+}
+
+/**
  * The `Summary:` line — column 0, one space, case-sensitive, immediately under
  * `Head:` (Issue #189).
  *
@@ -363,14 +464,16 @@ function renderGroupB(outcomes: GateOutcome[]): string {
  * `check-evidence-fresh` byte-compares the whole line, backticks included,
  * locating it through `summaryLineIndex` on the masked view.
  */
-function buildBlockInner(groupA: GroupA, gateOutcomes: GateOutcome[]): string {
+function buildBlockInner(groupA: GroupA, gateOutcomes: GateOutcome[], groupC: GroupC): string {
   return [
     `Head: ${groupA.head}`,
     `${EVIDENCE_SUMMARY_PREFIX}\`${summariseNumstat(groupA.numstat)}\``,
     '',
     renderGroupA(groupA),
     '',
-    renderGroupB(gateOutcomes)
+    renderGroupB(gateOutcomes),
+    '',
+    renderGroupC(groupC)
   ].join('\n')
 }
 
@@ -764,21 +867,40 @@ export function prReportExitCode(opts: { gatesFailed: boolean; tokensRefused: bo
   return opts.gatesFailed || opts.tokensRefused ? 1 : 0
 }
 
-export type ReportResult = { block: string; blockInner: string; gatesFailed: boolean; gateOutcomes: GateOutcome[] }
+export type ReportResult = {
+  block: string
+  blockInner: string
+  gatesFailed: boolean
+  gateOutcomes: GateOutcome[]
+  groupC: GroupC
+}
 
 /**
- * Builds the evidence block. Pure w.r.t. its inputs: `groupA` and
- * `gateRunner` are both overridable so this is testable without touching a
- * real git repo or spawning the real gate suite — see the module doc's
- * "Recursion" note.
+ * Builds the evidence block. Pure w.r.t. its inputs: `groupA`, `gateRunner`
+ * and `groupC` are all overridable so this is testable without touching a
+ * real git repo, spawning the real gate suite, or running real subprocess
+ * commands — see the module doc's "Recursion" note. `body` (default
+ * `process.env.PR_BODY ?? ''`) is what Group C's command list is extracted
+ * from; the caller (`prReportCommand`) always has a more specific body in
+ * hand (the `--write` draft file, or the `--push` live fetch) and passes it
+ * explicitly rather than relying on this default.
  */
-export async function buildReport(opts: { groupA?: GroupA; gateRunner?: GateRunner } = {}): Promise<ReportResult> {
+export async function buildReport(
+  opts: { groupA?: GroupA; gateRunner?: GateRunner; body?: string; groupC?: GroupC } = {}
+): Promise<ReportResult> {
   const groupA = opts.groupA ?? computeGroupA()
   const gateRunner = opts.gateRunner ?? runRealGates
   const gateResult = await gateRunner()
-  const blockInner = buildBlockInner(groupA, gateResult.outcomes)
+  const groupC = opts.groupC ?? computeGroupC(opts.body ?? process.env.PR_BODY ?? '')
+  const blockInner = buildBlockInner(groupA, gateResult.outcomes, groupC)
   const block = `${EVIDENCE_START}\n${blockInner}\n${EVIDENCE_END}`
-  return { block, blockInner, gatesFailed: gateResult.failed, gateOutcomes: gateResult.outcomes }
+  return {
+    block,
+    blockInner,
+    gatesFailed: gateResult.failed || groupCFailed(groupC),
+    gateOutcomes: gateResult.outcomes,
+    groupC
+  }
 }
 
 const USAGE =
@@ -853,9 +975,17 @@ export async function prReportCommand(args: string[]): Promise<void> {
     process.env.BRANCH = git(['rev-parse', '--abbrev-ref', 'HEAD'])
   }
 
+  // Read BEFORE `buildReport()`, not after: Group C extracts its command
+  // list from the body it is given, and the `--write` local draft is the
+  // one body this command can read for that purpose before its own write
+  // happens. `--push` already has `preEditBody`; the stdout-only path (no
+  // flag) falls back to `buildReport`'s own `PR_BODY` env default.
+  const existingForWrite =
+    writePath === undefined ? undefined : existsSync(writePath) ? readFileSync(writePath, 'utf8') : ''
+
   let result: ReportResult
   try {
-    result = await buildReport()
+    result = await buildReport({ body: preEditBody ?? existingForWrite })
   } catch (err) {
     if (err instanceof UnresolvableMergeBaseError || err instanceof GitCommandError) {
       // Refuse — write nothing, print nothing that looks like a block.
@@ -951,7 +1081,7 @@ export async function prReportCommand(args: string[]): Promise<void> {
       }
     }
   } else if (writePath) {
-    const existing = existsSync(writePath) ? readFileSync(writePath, 'utf8') : ''
+    const existing = existingForWrite ?? ''
     const tokens = collectTokensAddition({
       phase: phaseOverride ?? derivePhase(),
       role: roleOverride ?? 'Developer',

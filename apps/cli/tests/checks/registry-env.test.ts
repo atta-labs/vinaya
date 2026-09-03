@@ -162,10 +162,12 @@ describe('registry env declarations', () => {
       'check-review-gate.ts',
       'check-doc-coverage.ts',
       'check-doc-coverage-push.ts',
-      'check-body-bare-digits.ts',
-      // `test-plan` resolves principals too now: a Developer round comment
-      // only counts when an allowlisted author posted it.
-      'check-test-plan.ts'
+      'check-body-bare-digits.ts'
+      // `test-plan` (task 12, #387) no longer resolves principals at all: it
+      // grades `[principal]` boxes from the body alone, and the `[agent]`
+      // half it used to count a Developer round comment for is now a fenced
+      // command list `vinaya pr report` grades against AEG:EVIDENCE — no
+      // comment fetch, no allowlist, left in this bin at all.
     ]
     for (const name of bins) {
       const src = readCode(name)

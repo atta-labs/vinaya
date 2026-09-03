@@ -98,11 +98,12 @@ describe('no-privileged-api', () => {
       expect(passOutcome?.exitCode).toBe(0)
       expect(passOutcome?.status).toBe('pass')
 
-      // Fail path — an unticked `[agent]` box must produce a real `fail`
+      // Fail path — an unticked `[principal]` box must produce a real `fail`
       // CheckOutcome with a CheckError findable on `.errors`, proving the
       // JSON-lines-on-stderr contract round-trips through the SAME spawn
-      // path a config-registered check would use.
-      process.env.PR_BODY = '## Test plan\n- [ ] **[agent]** run tests'
+      // path a config-registered check would use. `[agent]` boxes are never
+      // graded here (task 12, #387) — an unticked one alone would advisory-PASS.
+      process.env.PR_BODY = '## Test plan\n- [ ] **[principal]** review in browser'
       process.env.BRANCH = 'task/vinaya-demo-readiness-v1/4'
       try {
         const [failOutcome] = await runChecks([testPlanSpec], {
