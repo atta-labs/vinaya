@@ -649,6 +649,18 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   ],
   [
     {
+      name: 'doctrine-no-procedures',
+      run: bin('check-doctrine-no-procedures'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Local-only: walks `<doctrineRoot>` with `node:fs`, never the
+      // network, `gh`, or a PR-scoped fact — no forge call, no PR content.
+      env: {}
+    },
+    0
+  ],
+  [
+    {
       name: 'workspace-escape',
       run: bin('check-workspace-escape'),
       scope: 'full',
