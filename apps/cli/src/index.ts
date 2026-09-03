@@ -139,7 +139,7 @@ try {
     case 'pr': {
       const [subcommand, ...rest] = args
       if (subcommand === 'create') {
-        prCreateCommand(rest)
+        await prCreateCommand(rest)
       } else if (subcommand === 'edit') {
         prEditCommand(rest)
       } else if (subcommand === 'report') {

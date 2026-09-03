@@ -18,7 +18,9 @@ Ships the validated forge-write path for the Vinaya CLI.
 
 ## Test Plan
 
-- [ ] **[agent]** Run the brief-schema validator against a fixture body.
+```
+bun test → passes
+```
 - [ ] **[principal]** Live-smoke a throwaway PR on the forge.
 
 ## Technical surface map
