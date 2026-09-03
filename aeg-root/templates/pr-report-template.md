@@ -29,7 +29,7 @@ Closes #[N]
 ## Test plan
 
 <!-- AEG:TEST-PLAN:START -->
-- [ ] **[agent]** [item carried from the brief's §9 — tick only after pasting the actual command output as evidence]
+- [ ] **[agent]** [item carried from the brief's §9 — tick only after running it; the tick is the only mark this line ever carries, never the pasted command output, which goes in the round comment headed `Head: <sha>` instead]
 - [ ] **[principal]** [item carried from the brief's §9 — the Principal ticks after verifying in a real browser/session]
 <!-- AEG:TEST-PLAN:END -->
 
@@ -78,3 +78,7 @@ The block opens with `Head:` and a `Summary:` line — a file and line count der
 [paste the entire dispatched brief here, verbatim]
 
 </details>
+
+---
+
+**This body is written once, at open.** After the PR is open the Developer changes nothing outside the `AEG:EVIDENCE` anchor and one appended `AEG:TOKENS` row. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. A round's response, its re-run evidence, and any disclosure the brief didn't anticipate are PR comments, never edits to this body.
