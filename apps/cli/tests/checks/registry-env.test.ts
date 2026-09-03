@@ -41,6 +41,7 @@ describe('registry env declarations', () => {
         'dispatch-readiness',
         'doc-coverage',
         'doc-coverage-push',
+        'doctrine-no-procedures',
         'doctrine-portability',
         'evidence-fresh',
         'first-push-dispatch',

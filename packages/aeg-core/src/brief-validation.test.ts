@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BRIEF_RULES_SINCE_PR,
   checkAutonomyClause,
   checkBriefSections,
   checkClosesN,
+  checkCommandsCarryOutput,
+  checkConsumerTests,
+  checkDefeatCases,
   checkDocUpdateList,
   checkForField,
   checkForgeTitle,
+  checkNoUnpinnedCodeClaims,
   checkPlanPrNoCloses,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
@@ -18,7 +23,8 @@ import {
   checkWorktreeStep0,
   headerRegion,
   inferBranchFromBody,
-  isBriefShaped
+  isBriefShaped,
+  partitionBriefErrorsByRollout
 } from './brief-validation'
 import { EOLS, FENCE_DELIMS, fenceShapes } from '../tests/fixtures/fence-shapes'
 import { readTierFromPrBody } from './pr-tier'
@@ -702,5 +708,228 @@ describe('checkPremiseCoverage', () => {
 `
     const result = checkPremiseCoverage(body, ['src/dispatch-gate.ts'])
     expect(result.status).toBe('fail')
+  })
+})
+
+describe('checkNoUnpinnedCodeClaims', () => {
+  it('fails on a bare file:line reference outside Premise and outside a fence (PR #382 shape)', () => {
+    const body =
+      'one intentional exception: `aeg-root/contracts/security-archivist.md:88` still says a merged finding "means a deviation was approved"'
+    const result = checkNoUnpinnedCodeClaims(body)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('security-archivist.md:88')
+  })
+
+  it('passes the same fact pinned in Premise instead of pointed at', () => {
+    const body = `one intentional exception, pinned below.
+
+**Premise:**
+- aeg-root/contracts/security-archivist.md contains: means a deviation was approved
+`
+    const result = checkNoUnpinnedCodeClaims(body)
+    expect(result.status).toBe('pass')
+  })
+
+  it('passes a file:line reference inside a fenced code block', () => {
+    const body = `See the composer body below; no bare reference appears in this prose.
+
+\`\`\`
+packages/aeg-core/src/brief-validation.ts:490
+\`\`\`
+`
+    const result = checkNoUnpinnedCodeClaims(body)
+    expect(result.status).toBe('pass')
+  })
+
+  it('passes a file:line reference inside the Premise: block', () => {
+    const body = `See below.
+
+**Premise:**
+- packages/aeg-core/src/brief-validation.ts:490 contains: export function checkBriefSections(
+`
+    const result = checkNoUnpinnedCodeClaims(body)
+    expect(result.status).toBe('pass')
+  })
+})
+
+describe('checkCommandsCarryOutput', () => {
+  it('fails when a §6 command block has no fenced output block after it', () => {
+    const body = `
+### 6. Numbered parts
+
+1. Run this:
+
+\`\`\`
+grep -n "foo" bar.ts
+\`\`\`
+`
+    const result = checkCommandsCarryOutput(body)
+    expect(result.status).toBe('fail')
+  })
+
+  it('passes when the same command block is followed by an output block', () => {
+    const body = `
+### 6. Numbered parts
+
+1. Run this:
+
+\`\`\`
+grep -n "foo" bar.ts
+\`\`\`
+
+Output:
+
+\`\`\`
+3:foo
+\`\`\`
+`
+    const result = checkCommandsCarryOutput(body)
+    expect(result.status).toBe('pass')
+  })
+
+  it('passes the Step 0 block alone, with nothing fenced after it', () => {
+    const body = `
+### 5. Pre-flight checks
+
+Step 0 (mandatory, verbatim):
+
+\`\`\`
+git worktree add .worktrees/task/x/1 -b task/x/1 origin/main
+\`\`\`
+`
+    const result = checkCommandsCarryOutput(body)
+    expect(result.status).toBe('pass')
+  })
+
+  it('fails three undocumented command blocks with only a trailing output fence (round-2 ruling item 1)', () => {
+    const body = `
+### 6. Numbered parts
+
+\`\`\`
+grep -n "a" one.ts
+\`\`\`
+
+\`\`\`
+grep -n "b" two.ts
+\`\`\`
+
+\`\`\`
+grep -n "c" three.ts
+\`\`\`
+
+\`\`\`
+3:c
+\`\`\`
+`
+    const result = checkCommandsCarryOutput(body)
+    expect(result.status).toBe('fail')
+    // The first two command blocks are each "followed" only by another
+    // command block — neither is satisfied by the trailing output fence.
+    expect(result.errors).toHaveLength(2)
+  })
+})
+
+describe('checkConsumerTests', () => {
+  const consumersOfAegForgeState = (pkg: string): string[] => (pkg === 'aeg-forge-state' ? ['packages/aeg-core'] : [])
+
+  const surfaceMap = (extra: string): string => `
+### 4. Technical surface map
+
+- Modify \`packages/aeg-forge-state/src/x.ts\`.
+${extra}
+`
+
+  it('fails when a named consumer has no test path and no sentinel', () => {
+    const result = checkConsumerTests(surfaceMap(''), consumersOfAegForgeState)
+    expect(result.status).toBe('fail')
+  })
+
+  it('passes when a consumer test path is named', () => {
+    const body = surfaceMap('- `packages/aeg-core/src/dispatch-gate.test.ts` already covers this.')
+    const result = checkConsumerTests(body, consumersOfAegForgeState)
+    expect(result.status).toBe('pass')
+  })
+
+  it('passes with the consumer-tests sentinel', () => {
+    const body = surfaceMap('\nconsumer-tests: none — no consumer-visible behavior changed.')
+    const result = checkConsumerTests(body, consumersOfAegForgeState)
+    expect(result.status).toBe('pass')
+  })
+
+  it('passes trivially when no §4 section exists', () => {
+    const result = checkConsumerTests('no surface map here', consumersOfAegForgeState)
+    expect(result.status).toBe('pass')
+  })
+
+  it("does not treat the sentinel grammar QUOTED outside §4 as an opt-out (this task's own brief shape)", () => {
+    const body = `
+Some prose describing the rule, quoting its own grammar as an example:
+the sentinel line \`consumer-tests: none — <reason>\`.
+
+${surfaceMap('')}
+`
+    const result = checkConsumerTests(body, consumersOfAegForgeState)
+    expect(result.status).toBe('fail')
+  })
+})
+
+describe('checkDefeatCases', () => {
+  it('fails when §4 names a check with no Defeat cases: line in §6', () => {
+    const body = `
+### 4. Technical surface map
+
+- Create \`apps/cli/src/checks/bin/check-doctrine-no-procedures.ts\`.
+
+### 6. Numbered parts
+
+1. Wire the registry entry.
+`
+    const result = checkDefeatCases(body)
+    expect(result.status).toBe('fail')
+  })
+
+  it('passes when §6 carries a Defeat cases: line', () => {
+    const body = `
+### 4. Technical surface map
+
+- Create \`apps/cli/src/checks/bin/check-doctrine-no-procedures.ts\`.
+
+### 6. Numbered parts
+
+1. Wire the registry entry.
+
+Defeat cases: a fenced block with two commands inside the AEG:VENDOR-EXAMPLE anchor must still pass.
+`
+    const result = checkDefeatCases(body)
+    expect(result.status).toBe('pass')
+  })
+})
+
+describe('partitionBriefErrorsByRollout', () => {
+  const CONSUMER_TESTS_ERROR = 'brief-validation consumer tests: §4 names a path under packages/x/ …'
+  const UNRELATED_ERROR = 'brief-validation tier: no `Tier:` field found in the PR body …'
+
+  it('grandfathers a rule finding, never failing, on a PR below BRIEF_RULES_SINCE_PR', () => {
+    const result = partitionBriefErrorsByRollout([CONSUMER_TESTS_ERROR], BRIEF_RULES_SINCE_PR - 1)
+    expect(result.blocking).toEqual([])
+    expect(result.info).toEqual([CONSUMER_TESTS_ERROR])
+  })
+
+  it('blocks the same finding at or above BRIEF_RULES_SINCE_PR', () => {
+    const result = partitionBriefErrorsByRollout([CONSUMER_TESTS_ERROR], BRIEF_RULES_SINCE_PR)
+    expect(result.blocking).toEqual([CONSUMER_TESTS_ERROR])
+    expect(result.info).toEqual([])
+  })
+
+  it('never grandfathers an unrelated error, even below the cutoff', () => {
+    const result = partitionBriefErrorsByRollout([UNRELATED_ERROR], BRIEF_RULES_SINCE_PR - 1)
+    expect(result.blocking).toEqual([UNRELATED_ERROR])
+    expect(result.info).toEqual([])
+  })
+
+  it('is fail-closed on a null (missing/unparseable) PR number', () => {
+    const result = partitionBriefErrorsByRollout([CONSUMER_TESTS_ERROR], null)
+    expect(result.blocking).toEqual([CONSUMER_TESTS_ERROR])
+    expect(result.info).toEqual([])
   })
 })

@@ -130,9 +130,14 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // plain absence-tolerant fall-throughs. Without BRANCH declared here
       // the runner strips it before the child spawns and the non-task/
       // non-brief bypass and requireClosesN gating never fire (#870).
+      // `PR_NUMBER` (task 10 round-2 ruling addendum 1) gates
+      // BRIEF_RULES_SINCE_PR grandfathering — without it declared here the
+      // runner strips it too, and every PR reads as "no PR number", which
+      // this check's own logic treats as NOT grandfathered (fail-closed).
       env: {
         PR_BODY: { optional: true },
-        BRANCH: { optional: true }
+        BRANCH: { optional: true },
+        PR_NUMBER: { optional: true }
       }
     },
     0
@@ -644,6 +649,18 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // BASE_SHA overrides the `origin/main` baseline ref, same declaration
       // as `doc-coverage`/`no-disk-state`/`evidence-fresh` above.
       env: { BASE_SHA: { optional: true } }
+    },
+    0
+  ],
+  [
+    {
+      name: 'doctrine-no-procedures',
+      run: bin('check-doctrine-no-procedures'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Local-only: walks `<doctrineRoot>` with `node:fs`, never the
+      // network, `gh`, or a PR-scoped fact — no forge call, no PR content.
+      env: {}
     },
     0
   ],

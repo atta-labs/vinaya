@@ -93,9 +93,11 @@ After this skill, load in order: **`aeg-roles`** (routes you to your role doc) �
 
 Execution state is **derived from the forge, never read from a file** — there is no state file, no status doc, no hand-maintained state Issue. (`coordination.md`, which once carried a session-start protocol plus a pinned per-project state-Issue layer, is retired: its queries cited label names that don't exist in any adopter, and the state-Issue layer duplicated what Milestones and tranche labels already derive — the one live instance drifted stale and was closed.) Substitute your repo's label namespace — the queries below use this repo's `vinaya/` prefix:
 
-**"What's active?"**
+**"What's active?"** — two independent queries, not a sequence:
 ```bash
 gh issue list --label "vinaya/tranche:<slug>" --state open
+```
+```bash
 gh pr list --state open
 ```
 
@@ -104,9 +106,11 @@ gh pr list --state open
 gh issue list --label "vinaya/blocked" --state open
 ```
 
-**"What needs the Principal?"**
+**"What needs the Principal?"** — two independent queries, not a sequence:
 ```bash
 gh issue list --label "vinaya/needs:principal-input" --state open
+```
+```bash
 gh pr list --label "vinaya/needs:principal-input" --state open
 ```
 

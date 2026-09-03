@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   authoredRegion,
@@ -6,6 +8,8 @@ import {
   FROZEN_BODY_SINCE_PR,
   renderBodyHashMarker
 } from './pr-body-frozen'
+
+const FIXTURES = join(__dirname, '..', 'tests', 'fixtures')
 
 const PRINCIPALS = ['daniboomerang']
 const BEFORE_ROLLOUT_PR = FROZEN_BODY_SINCE_PR - 1
@@ -72,6 +76,8 @@ describe('authoredRegion', () => {
 
   it('normalises a ticked checkbox outside any anchored field to unticked', () => {
     const unanchored = 'Notes:\n- [x] **[principal]** done outside the anchored Test Plan section.\n'
+    // Trimmed then exactly one trailing newline re-added (round-2 ruling
+    // addendum 4) — a no-op here since the input already ends in one `\n`.
     expect(authoredRegion(unanchored)).toBe(
       'Notes:\n- [ ] **[principal]** done outside the anchored Test Plan section.\n'
     )
@@ -83,6 +89,30 @@ describe('authoredRegion', () => {
       ''
     )
     expect(authoredRegionHash(BASE_BODY)).toBe(authoredRegionHash(withoutRow))
+  })
+
+  it('hashes identically with and without a trailing newline, and with CRLF (round-2 ruling addendum 3)', () => {
+    // `vinaya pr create --body-file` hashes the file as written (trailing
+    // newline included); the live PR body GitHub's webhook returns has no
+    // trailing newline. Same authored bytes, different hash — #393.
+    const withoutTrailingNewline = BASE_BODY.replace(/\n+$/, '')
+    const withCrlf = BASE_BODY.replace(/\n/g, '\r\n')
+    const hash = authoredRegionHash(BASE_BODY)
+    expect(authoredRegionHash(withoutTrailingNewline)).toBe(hash)
+    expect(authoredRegionHash(withCrlf)).toBe(hash)
+  })
+
+  it("matches this PR's own already-posted marker, with and without a trailing newline (round-2 ruling addendum 4)", () => {
+    // Addendum 3's first cut stripped trailing whitespace with no re-added
+    // newline — that normalises the webhook's newline-less payload but
+    // changes what `pr create`'s own file-based writer hashes to, so it can
+    // never match a marker already posted (this PR's own, #392, everything
+    // since #390). "Trimmed, then exactly one trailing newline" converges
+    // both forms on the SAME hash `pr create` already posted at open.
+    const RECORDED_MARKER = '99d2263a67ca1c44eaec67f0f21a8243275e0d5290e1c22a41cbd1a15c6c009c'
+    const liveBody = readFileSync(join(FIXTURES, 'pr-body-393.md'), 'utf8')
+    expect(authoredRegionHash(liveBody)).toBe(RECORDED_MARKER)
+    expect(authoredRegionHash(liveBody.replace(/\n+$/, ''))).toBe(RECORDED_MARKER)
   })
 })
 

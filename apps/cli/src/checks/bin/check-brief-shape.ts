@@ -10,13 +10,63 @@
  * wrapper around `bin/*` (`packages/aeg-core/bin/*` is out of this task's
  * boundary to edit).
  *
- * scope: diff — reads only the PR body, never the whole repo.
+ * scope: diff — the PR body is what's graded; the one filesystem read added
+ * here (task 10, Issue #385) is the workspace `package.json` manifests, read
+ * once to build `checkConsumerTests`'s consumer enumeration — not a diff of
+ * the repo's own content, so the "diff" scope is otherwise unchanged.
  */
 
-import { checkBriefSections, isBriefShaped, isTaskBranch, readTierFromPrBody } from '@attalabs/aeg-core'
+import { readdirSync, readFileSync } from 'node:fs'
+import {
+  BRIEF_RULES_SINCE_PR,
+  buildConsumersOf as buildConsumersOfShared,
+  checkBriefSections,
+  isBriefShaped,
+  isTaskBranch,
+  type PackageManifest,
+  partitionBriefErrorsByRollout,
+  readTierFromPrBody
+} from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'brief-shape'
+
+/** Immediate child directory names of `dir` — `deriveWorkspaceMemberDirs`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */
+function listDirs(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+  } catch {
+    return []
+  }
+}
+
+function readJson(path: string): Record<string, unknown> {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+function readManifest(dir: string): PackageManifest | null {
+  const manifest = readJson(`${dir}/package.json`)
+  return Object.keys(manifest).length === 0 ? null : (manifest as PackageManifest)
+}
+
+/**
+ * `checkConsumerTests`'s consumer enumeration (task 10, Issue #385; round-2
+ * ruling items 3/4) — `@attalabs/aeg-core`'s `buildConsumersOf`, the SAME
+ * enumeration `packages/aeg-core/bin/verify-brief.ts` wires for the
+ * authoring-time entry point, so CI and pre-dispatch can never disagree
+ * about which workspace members count as consumers.
+ */
+function buildConsumersOf(): (pkg: string) => string[] {
+  const root = readJson('package.json')
+  const workspaces = Array.isArray(root.workspaces) ? (root.workspaces as string[]) : []
+  return buildConsumersOfShared(workspaces, listDirs, readManifest)
+}
 
 function main(): void {
   const prBody = process.env.PR_BODY ?? ''
@@ -35,10 +85,30 @@ function main(): void {
     process.exit(0)
   }
 
-  const { errors } = checkBriefSections(prBody, readTierFromPrBody, { requireClosesN: taskBranch })
+  const { errors } = checkBriefSections(prBody, readTierFromPrBody, {
+    requireClosesN: taskBranch,
+    consumersOf: buildConsumersOf()
+  })
 
-  if (errors.length > 0) {
-    for (const message of errors) {
+  // Grandfathering (task 10 round-2 ruling addendum 1) — a PR opened before
+  // BRIEF_RULES_SINCE_PR predates the four rules `checkBriefSections` added
+  // this task; a finding from one of them is informational there, never a
+  // failure. `verify-brief.ts` (no PR number, authoring time) has no such
+  // exemption — grandfathering is a CI rollout concern, not a grammar
+  // relaxation. A missing/unparseable PR_NUMBER parses to `null`, which
+  // `partitionBriefErrorsByRollout` treats as NOT grandfathered (fail-closed).
+  const parsedPrNumber = Number.parseInt(process.env.PR_NUMBER ?? '', 10)
+  const prNumber = Number.isInteger(parsedPrNumber) ? parsedPrNumber : null
+  const { blocking, info } = partitionBriefErrorsByRollout(errors, prNumber)
+
+  if (info.length > 0) {
+    process.stdout.write(
+      `${CHECK_NAME}: PR #${prNumber} is below BRIEF_RULES_SINCE_PR #${BRIEF_RULES_SINCE_PR} — ${info.length} finding(s) grandfathered, not a failure:\n${info.join('\n')}\n`
+    )
+  }
+
+  if (blocking.length > 0) {
+    for (const message of blocking) {
       emitCheckError({
         schema: CHECK_SCHEMA_VERSION,
         check: CHECK_NAME,

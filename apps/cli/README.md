@@ -262,6 +262,12 @@ Both markers are HTML comments — invisible on render — and may sit inline wi
 
 Swept corpus: the same `ships`/`reader-facing` governed-doc classes `reader-resolvable-prose` sweeps (`<doctrineRoot>/**` by default, plus any configured reader-facing pages) — never `apps/*/specs/**` or a `CLAUDE.md`. The cited file itself can be anywhere in the repo. Report-only (`scope: diff`, ring 0): findings print at `warning` severity and the check's own exit code always stays `0`, so installing it cannot newly redden an existing repo's CI. Dormant everywhere no doc carries the marker.
 
+## Doctrine-no-procedures
+
+Doctrine explains what a command does and why; it is not a runbook a reader executes verbatim, and a copy-pasted sequence rots the moment the real command changes underneath it. The `doctrine-no-procedures` core check refuses a fenced code block anywhere under `<doctrineRoot>/**/*.md` that contains two or more lines each starting with a shell command word (`export`/`bun`/`gh`/`git`/`grep`/`sed`/`cat`/`diff`/`vinaya`) — that shape is a sequence to run, not an illustration.
+
+Two exemptions: a block sitting inside the `AEG:VENDOR-EXAMPLE` anchor pair (this repo's own one sanctioned fenced home for a real command sequence, `tranche-model.md` §12), and any file under a `templates/` directory (a worked-example template legitimately shows the full shape a real PR/Issue body carries). Unlike `doctrine-portability`/`reader-resolvable-prose`/`retired-vocabulary` above, this check is **blocking, not report-only** (`severity: error`, exit `1` on any finding) — it ships with an expected-zero corpus rather than an unfixed backlog, so day-one install does not need a baseline rollout.
+
 ## Brief-schema divergence
 
 `briefSchema` in `vinaya.config.json` is yours: `vinaya upgrade` preserves it wholesale and never rewrites it. On its own that ownership has a silent cost — nothing else reads it either, so a builtin deleted to work around a defect stays deleted, with no later upgrade to repair it and nothing to surface it.

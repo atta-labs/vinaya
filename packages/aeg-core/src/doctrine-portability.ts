@@ -153,8 +153,14 @@ export const NON_PATH_TOP_SEGMENTS: ReadonlySet<string> = new Set(['origin', 're
 const VENDOR_NAME_SOURCE =
   '\\bclaude code\\b|\\bclaude\\b|\\banthropic\\b|\\bchatgpt\\b|\\bopenai\\b|\\bgpt\\b|\\bgemini\\b|\\bcodex\\b|\\bgrok\\b|\\bdeepseek\\b|\\bopus\\b|\\bsonnet\\b|\\bhaiku\\b'
 
-const VENDOR_EXAMPLE_START = /<!--\s*AEG:VENDOR-EXAMPLE:START\s*-->/
-const VENDOR_EXAMPLE_END = /<!--\s*AEG:VENDOR-EXAMPLE:END\s*-->/
+/**
+ * Exported (alongside `VENDOR_EXAMPLE_END` below) so `doctrine-no-procedures.ts`
+ * can find the same fenced home's raw-text span — never a second copy of this
+ * pattern — to exempt a fenced block that sits inside it, the same way this
+ * file exempts the region from its own vendor-name word scan.
+ */
+export const VENDOR_EXAMPLE_START = /<!--\s*AEG:VENDOR-EXAMPLE:START\s*-->/
+export const VENDOR_EXAMPLE_END = /<!--\s*AEG:VENDOR-EXAMPLE:END\s*-->/
 
 /**
  * Blanks (same-length, index-preserving — same discipline as `maskCode`
