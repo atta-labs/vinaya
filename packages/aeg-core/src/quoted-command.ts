@@ -75,8 +75,8 @@ import { classifyProseFile, type ProseFileClass } from './reader-resolvable-pros
 // package's own barrel comment ("reachable through the `./strip-code`
 // subpath for the two callers that need them"). Not through
 // `anchored-region.ts`'s re-export: that file's own `anchoredRegionBounds`
-// is scoped to its closed six-field `AnchorField` grammar, which this
-// marker (a free-form cited-file path, not one of those six names) cannot
+// is scoped to its closed seven-field `AnchorField` grammar, which this
+// marker (a free-form cited-file path, not one of those seven names) cannot
 // use without widening a PR-body-specific type for a doc-authoring concern
 // outside this task's surface. Reusing `maskCode` itself — rather than
 // writing a second masker — is the actual "do not write a second anchor
@@ -164,7 +164,7 @@ function extractQuotedText(raw: string): string {
  * (index-preserving, same primitive `anchored-region.ts` uses) to find
  * marker positions code-blind, then slices the real inner text from the
  * original `content` at those same indices, exactly as `anchoredRegionBounds`
- * does for its own six fields.
+ * does for its own seven fields.
  */
 function findQuotesInFile(path: string, content: string): CitedQuote[] {
   const masked = maskCode(content)
