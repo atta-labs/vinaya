@@ -105,7 +105,7 @@ Items 3, 5, and 7 read live forge state. Item 6 checks the brief's own Step 0 te
 
 **Frequent commits.** Small, frequent commits on the feature branch. One logical change per commit. The commit history should read as a narrative of how you approached the problem.
 
-**Opening the PR with a complete description.** The PR description must (1) **carry the full brief** — paste it into the PR body; it is the brief's permanent, durable home, and the Reviewer and Archivist read it there; (2) follow the canonical form in [§ PR body — canonical form](#pr-body--canonical-form) below — that section holds the verbatim copy-pasteable template, including the **exact `Tier:` field syntax** the `verify-docs` gate requires; (3) reference the task's Issue (`Closes #N`) so the merge auto-closes it. The description is not optional — the reviews depend on it. Opening the PR is itself the `in-flight → in-review` transition; you write no status field.
+**Opening the PR with a complete description.** The PR description must (1) **carry the full brief** — paste it into the PR body; it is the brief's permanent, durable home, and the Reviewer and Archivist read it there; (2) follow the canonical form in [§ PR body — canonical form](#pr-body--canonical-form) below — that section holds the verbatim copy-pasteable template, including the **exact `Tier:` field syntax** the `verify-docs` gate requires; (3) reference the task's Issue (`Closes #N`) so the merge auto-closes it. The description is not optional — the reviews depend on it. Opening the PR is itself the `in-flight → in-review` transition; you write no status field. **The body is authored once, at open.** After the PR is open, you never hand-edit it again — not to append a response to a review round, not to record a decision, not for any reason. Two writes are sanctioned after open, both machine-regenerated, never typed: the Evidence block, and one appended row in the Token report for a re-entry turn (see [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed)). Everything else a review round produces — your response to findings, re-run `[agent]` evidence, any disclosure the brief didn't anticipate — is a PR comment.
 
 **Reporting exact tokens in the PR body at turn-end.** You do not append your own row to `aeg-root/tranches/<name>.tokens.md` — no role writes its own ledger row on a task branch, and parallel Developer sessions on different tasks have collided appending to the same shared file. Instead, before opening the PR (and again before each `changes-requested → in-review` re-push), report your exact tokens in the PR body under a **"Token report"** heading: `Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date` with `Phase: <task-id>: develop` and `Role: Developer`. **That destination and that grammar are the requirement, and they are the same on every agent host.**
 
@@ -113,7 +113,7 @@ Items 3, 5, and 7 read live forge state. Item 6 checks the brief's own Step 0 te
 
 > **On this repo's shipped reference host (`tranche-model.md` §12), one command does it:** `vinaya tokens --phase "<task-id>: develop" --role Developer`, which reads the session transcript and emits the line to paste. Pass `--transcript <path>` when you already know which transcript is yours. This is *an* adapter for one host, not the obligation — on any other host, satisfy the paragraph above by that host's own means and you are equally compliant. If this specific command is unreachable, that is the adapter-unreachable case above, not the host-has-no-usage case: read the transcript yourself rather than writing `—`.
 
-The per-task Archivist reads this report at close-out and appends the ledger row post-merge — see `roles/archivist.md`. Re-entry (a second turn after `CHANGES_REQUESTED`) adds a **new** "Token report" entry to the PR body — never edits the first.
+The per-task Archivist reads this report at close-out and appends the ledger row post-merge — see `roles/archivist.md`. Re-entry (a second turn after `CHANGES_REQUESTED`) adds one row, appended inside the `AEG:TOKENS` anchor, never editing a row already there — written in the same `pr edit` that regenerates the Evidence block (see [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed)).
 
 ---
 
@@ -187,6 +187,17 @@ The `AEG:EVIDENCE` block is populated by running `vinaya pr report --write <body
 
 `check-evidence-fresh` (CI) refuses a body whose block doesn't match the head it's attached to — recomputing Group A exactly and checking Group B for staleness. This closes fabrication for **Group A only** (a hand-typed diff stat cannot survive a byte-compare); Group B is checked for freshness, not re-run, so a stale-but-not-fabricated Group B slips past unless the block is also out of date. Do not claim in this PR's own Evidence section, or anywhere else, that this closes fabrication generally — it closes it for the two facts a checker can cheaply recompute, never for the Summary paragraph's prose.
 
+**Regeneration is the last step, after every other change.** The local body file is never hand-edited after open. When a push forces the Evidence block to go stale — or a re-entry turn needs its one appended Token report row — regenerate and re-apply it last, after every commit for that round is already pushed, from the repo root:
+
+```
+export PR_BODY="$(cat <body-file>)"
+export BRANCH=<branch>
+bun apps/cli/src/index.ts pr report --write <body-file>
+bun apps/cli/src/index.ts pr edit <n> --body-file <body-file>
+```
+
+That sequence is the only sanctioned post-open write. The only bytes that may differ on the forge between two pushes are inside the `AEG:EVIDENCE` anchor pair, plus, on a re-entry turn, one appended row inside the `AEG:TOKENS` anchor pair. Everything else a review round produces — the response to findings, re-run `[agent]` evidence, any disclosure the brief didn't anticipate — is a PR comment, never a body edit.
+
 ---
 
 ## Documentation is part of every task
@@ -205,7 +216,7 @@ All of the following must pass before the PR is opened:
 - [ ] Code passes lint/format (this repo: `bun run format-and-lint`)
 - [ ] Tests pass if applicable (this repo: `bun test`)
 - [ ] PR description follows the template, carries the brief, and declares `Tier: 0`
-- [ ] "Token report" section in the PR body carrying your turn's real token figures, collected by whatever means your host offers (see the token-reporting section above; on this repo's shipped reference host, `vinaya tokens`) — and again on each re-push after `CHANGES_REQUESTED`; the Archivist appends the ledger row post-merge, you do not
+- [ ] "Token report" section in the PR body carrying your turn's real token figures, collected by whatever means your host offers (see the token-reporting section above; on this repo's shipped reference host, `vinaya tokens`) — and, on each re-push after `CHANGES_REQUESTED`, one appended row inside the `AEG:TOKENS` anchor, written in the same `pr edit` that regenerates the Evidence block (see [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed)); the Archivist appends the ledger row post-merge, you do not
 
 ### Tier 1 checklist
 
@@ -251,7 +262,7 @@ code-reviewer pass → security pass → Principal code review → Brief Author 
 
 The code-reviewer and security passes are **separate, fresh-context invocations** — not you. You do not review your own work; the independence is the point. What you do:
 
-- **Address REQUEST CHANGES / FAIL findings.** A code-review BLOCKER or a security CRITICAL/HIGH comes back to you. Fix it on the **same branch** with new commits; the relevant pass re-runs. Do not open a new PR. (Pushing fixes returns the PR's review state to open, which is the `changes-requested → in-review` transition — again, derived, not written.)
+- **Address REQUEST CHANGES / FAIL findings.** A code-review BLOCKER or a security CRITICAL/HIGH comes back to you. Fix it on the **same branch** with new commits; the relevant pass re-runs. Do not open a new PR. (Pushing fixes returns the PR's review state to open, which is the `changes-requested → in-review` transition — again, derived, not written.) Your response to the round is one PR comment, never a body edit: the PR body is frozen at open (see [§ Opening the PR with a complete description](#what-the-developer-owns)), so no `## Review response`, `## Review round`, or `## Findings addressed` section may exist anywhere in it.
 - **Do not argue findings into submission.** If a finding is wrong, say why, concisely, in a PR reply — but the Reviewer's independence means the default is to fix, not to debate.
 - **Do not act on an `[ESCALATE]` finding yourself.** Those route to the Planner (strategy) or Principal (`severity: product`). Wait for direction.
 - **Do not merge.** Only the Principal merges.
@@ -389,7 +400,7 @@ If the brief declares `unit-tests-only` and the diff really is pure logic, the p
 
 1. **Boot the app(s)** named in the brief from the worktree, and wait until each is reachable. If it does not boot, that is the failure — the plan never gets a chance to run.
 2. **Execute every `[agent]` item.** Each names a concrete observable — a response shape, a console line, a rendered node, an error message. Run the named command and **paste the actual output**. Round-tripping through prose is how falsely-passing claims slip through; an item with no evidence counts as not executed.
-3. **Report on the PR** — each item with its result and its evidence.
+3. **Report on the PR** — each item with its result and its evidence, posted as a PR comment, never written into the body. A re-run after fixes posts a new comment; it never edits the one already there.
 4. **Stop there.** Do not execute `[principal]` items; you structurally cannot. Mark them as awaiting the Principal.
 
 A failed `[agent]` item makes the PR unmergeable. Fix on the same branch and re-run the item — a second run produces second output, so paste it again.
