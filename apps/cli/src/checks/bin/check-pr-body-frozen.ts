@@ -30,6 +30,14 @@
  * marker comment to read), same reasoning as `closes-n`/`evidence-fresh`.
  * scope: diff — a property of this PR's own body and its own marker.
  *
+ * Release-branch exemption: the Changesets release PR's body is authored and
+ * re-authored by the release action itself, so freezing it would redden every
+ * release for a write no human made. On `CHANGESET_RELEASE_BRANCH` this check
+ * reports `info` and exits `0` — never `fail`. Shaped exactly as
+ * `check-changeset-coverage.ts`'s exemption: the same `CHANGESET_RELEASE_BRANCH`
+ * constant, and the branch read from `gh`'s own `headRefName` for this PR
+ * rather than any caller-suppliable env var.
+ *
  * `recoveryPromptFor` (failure-reason → advice) lives in the sibling
  * `../pr-body-frozen-recovery-logic.ts` rather than here, so
  * `pr-body-frozen-recovery-prompt-coverage.test.ts` can import it without
@@ -38,28 +46,30 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkPrBodyFrozen, type PrBodyFrozenComment } from '@attalabs/aeg-core'
+import { CHANGESET_RELEASE_BRANCH, checkPrBodyFrozen, type PrBodyFrozenComment } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 import { recoveryPromptFor } from '../pr-body-frozen-recovery-logic'
 
 const CHECK_NAME = 'pr-body-frozen'
 
-type Fetched = { body: string; comments: PrBodyFrozenComment[] }
+type Fetched = { body: string; comments: PrBodyFrozenComment[]; headRefName: string }
 
 function fetchPr(prNumber: number): Fetched | null {
   try {
-    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'body,comments'], {
+    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'body,comments,headRefName'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     })
     const parsed = JSON.parse(out) as {
       body: string
       comments: { body: string; author?: { login?: string } | null; createdAt: string }[]
+      headRefName: string
     }
     return {
       body: parsed.body,
-      comments: parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null, createdAt: c.createdAt }))
+      comments: parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null, createdAt: c.createdAt })),
+      headRefName: parsed.headRefName
     }
   } catch {
     return null
@@ -85,6 +95,14 @@ function main(): void {
         'Confirm `gh auth status` passes and PR_NUMBER is correct, then re-run `vinaya check pr-body-frozen`.'
     })
     process.exit(1)
+  }
+
+  if (fetched.headRefName === CHANGESET_RELEASE_BRANCH) {
+    process.stdout.write(
+      `${CHECK_NAME}: PR #${prNumber} is the Changesets release PR (branch \`${CHANGESET_RELEASE_BRANCH}\`) — ` +
+        'its body is machine-authored and machine-updated by the release action, so the frozen-body rule does not apply. info, not fail.\n'
+    )
+    process.exit(0)
   }
 
   // Same trust anchor `checkReviewGate` uses — the repo's own `principals`

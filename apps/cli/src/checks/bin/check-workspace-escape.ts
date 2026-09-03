@@ -39,6 +39,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { findWorkspaceEscapes, type WorkspaceEscapeSourceFile } from '@attalabs/aeg-core'
+import { findingsInThisDiff } from '../../lib/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'workspace-escape'
@@ -86,16 +87,23 @@ function main(): void {
     .map((p) => ({ path: p, content: readFileSync(p, 'utf8') }))
 
   const findings = findWorkspaceEscapes(sourceFiles, knownPaths, WORKSPACE_DIRS)
+  // Line-scoped (task 8): a finding prints only when its own line falls
+  // inside a changed hunk of a file this diff touched. `findingsInThisDiff`
+  // owns both halves — one hunk parser for the whole repo, and the same
+  // "indeterminate reports everything" rule `resolveChangedFiles` already
+  // established. Full-sweep mode (no diff boundary resolvable at all) is
+  // unchanged, so a scheduled whole-tree run still reports the backlog.
+  const reportable = findingsInThisDiff(findings)
 
   // stdout only — this check's stderr is the CheckError JSON channel
   // (`contract.ts`'s `emitCheckError`); a plain-text line there would make
   // the runner treat this human-readable summary as malformed output and
   // report `status: 'error'` regardless of exit code.
   console.log(
-    `${CHECK_NAME}: ${sourceFiles.length} source file(s) scanned under ${WORKSPACE_DIRS.join('/')}; ${findings.length} finding(s)`
+    `${CHECK_NAME}: ${sourceFiles.length} source file(s) scanned under ${WORKSPACE_DIRS.join('/')}; ${findings.length} finding(s), ${reportable.length} in this diff`
   )
 
-  for (const finding of findings) {
+  for (const finding of reportable) {
     const what =
       finding.reason === 'escapes-workspace-package'
         ? `resolves to "${finding.resolved}", outside this file's own workspace package`

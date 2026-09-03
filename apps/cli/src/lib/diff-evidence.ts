@@ -12,7 +12,8 @@
  * reason unrelated to the declaration.
  */
 import { execFileSync } from 'node:child_process'
-import { join } from 'node:path'
+import { join, relative, resolve } from 'node:path'
+import { parseChangedLineRanges } from '../commands/review-post'
 
 /** `null` when the file has no diff against `ref`, or when git cannot answer. */
 export function fileDiffAgainst(ref: string, path: string): string | null {
@@ -136,6 +137,21 @@ function changedFiles(base: string): string[] | null {
  * a genuinely-empty real branch, never a silently dropped backlog.
  */
 export function resolveChangedFiles(base = process.env.BASE_SHA || 'origin/main'): string[] | null {
+  return resolveDiff(base)?.files ?? null
+}
+
+/**
+ * `resolveChangedFiles`'s answer plus the ref and repo root that produced it.
+ * A caller that goes on to ask a SECOND question of the same diff — which
+ * lines of a changed file moved — must ask it against the ref this
+ * resolution actually settled on, not re-derive a candidate of its own and
+ * risk answering about a different diff than the file list describes.
+ */
+export function resolveDiff(base = process.env.BASE_SHA || 'origin/main'): {
+  base: string
+  root: string
+  files: string[]
+} | null {
   const root = repoRoot()
   if (root === null) return null
 
@@ -145,7 +161,71 @@ export function resolveChangedFiles(base = process.env.BASE_SHA || 'origin/main'
     if (resolved === null || resolved === head) continue
     const relPaths = changedFiles(ref)
     if (relPaths === null) continue // this ref resolved, but its diff didn't — try the next candidate
-    return relPaths.map((p) => join(root, p))
+    return { base: ref, root, files: relPaths.map((p) => join(root, p)) }
   }
   return null
+}
+
+/**
+ * The line ranges `path` actually changed in, against `ref` — `null` when
+ * that file has no diff at all, or when git could not answer. A report-only
+ * sweep uses this to print only the findings THIS diff caused: a `null`
+ * result means "cannot answer", and a caller receiving it must report every
+ * finding unfiltered, exactly as `resolveChangedFiles` requires.
+ *
+ * There is deliberately no hunk regex here. `parseChangedLineRanges`
+ * (`commands/review-post.ts`) already parses git's own hunk headers and is
+ * imported rather than reimplemented — one parser for one fact, which is
+ * also why this function takes a ref and a path instead of raw diff text:
+ * the I/O is what these four sweeps were each about to duplicate, not the
+ * parsing. The ranges are slightly WIDER than the changed lines themselves,
+ * since `fileDiffAgainst` emits git's default three lines of context per
+ * hunk. That is the safe direction for a report-only gate: at worst a
+ * finding three lines from a real edit is still printed; a finding on a line
+ * this diff genuinely changed is never suppressed.
+ */
+export function changedLineRanges(ref: string, path: string): Array<[number, number]> | null {
+  const diff = fileDiffAgainst(ref, path)
+  if (diff === null) return null
+  return parseChangedLineRanges(diff)[path] ?? null
+}
+
+/** True when `line` falls inside any of `ranges`. */
+export function lineIsInRanges(line: number, ranges: Array<[number, number]>): boolean {
+  return ranges.some(([start, end]) => line >= start && line <= end)
+}
+
+/**
+ * The findings a report-only sweep should actually print: those whose own
+ * line falls inside a changed hunk of a file this diff touched.
+ *
+ * The two "cannot answer" cases both report EVERYTHING, never nothing —
+ * the same direction `resolveChangedFiles` already takes, for the same
+ * reason. No diff boundary at all (a bare fixture repo, a shallow clone, an
+ * orphan history) is the full-sweep mode and is unchanged by this function.
+ * A file whose per-file diff git cannot produce keeps every finding in that
+ * file rather than losing them to a git failure.
+ *
+ * Why line scope and not file scope: a diff that touched one line of a long
+ * doctrine page previously reported that page's entire standing backlog as
+ * this PR's output, so a genuinely new finding was indistinguishable from
+ * inherited noise, and the honest response — read them all — cost a review
+ * round on findings nobody in this PR caused.
+ */
+export function findingsInThisDiff<T extends { file: string; line: number }>(findings: readonly T[]): T[] {
+  const diff = resolveDiff()
+  if (diff === null) return [...findings]
+  const changed = new Set(diff.files)
+  const ranges = new Map<string, Array<[number, number]> | null>()
+  return findings.filter((f) => {
+    const abs = resolve(diff.root, f.file)
+    if (!changed.has(abs)) return false
+    const relPath = relative(diff.root, abs)
+    if (!ranges.has(relPath)) ranges.set(relPath, changedLineRanges(diff.base, relPath))
+    const fileRanges = ranges.get(relPath) ?? null
+    // `null` here is "git could not diff this file", not "nothing changed in
+    // it" — the file IS in the changed set, so a failed per-file diff must
+    // not silently swallow its findings.
+    return fileRanges === null ? true : lineIsInRanges(f.line, fileRanges)
+  })
 }

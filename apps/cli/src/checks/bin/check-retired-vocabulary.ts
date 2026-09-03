@@ -46,12 +46,12 @@
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { scanRetiredVocabulary, type VocabSourceFile } from '@attalabs/aeg-core'
 import { hasDoctrineEntry, resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { repoRoot, resolveChangedFiles } from '../../lib/diff-evidence'
+import { findingsInThisDiff, repoRoot } from '../../lib/diff-evidence'
 
 const CHECK_NAME = 'retired-vocabulary'
 
@@ -158,10 +158,13 @@ function main(): void {
   // shallow clone/orphan history with no merge base, review finding PR #290
   // BLOCKER), so that case reports every finding unfiltered instead of
   // silencing a real sweep.
-  const changedFilesList = resolveChangedFiles()
-  const changed = changedFilesList === null ? null : new Set(changedFilesList)
-  const pathBase = repoRoot() ?? process.cwd()
-  const reportable = changed === null ? findings : findings.filter((f) => changed.has(resolve(pathBase, f.file)))
+  // Line-scoped, not merely file-scoped (task 8): a finding prints only when
+  // its own line falls inside a changed hunk of a file this diff touched.
+  // `findingsInThisDiff` owns both halves — one hunk parser for the whole
+  // repo, and the same "indeterminate reports everything" rule
+  // `resolveChangedFiles` already established. Full-sweep mode (no diff
+  // boundary resolvable at all) is unchanged.
+  const reportable = findingsInThisDiff(findings)
 
   // stdout only — this check's stderr is the CheckError JSON channel
   // (`contract.ts`'s `emitCheckError`); a plain-text line there would make

@@ -18,33 +18,46 @@ import { packageRoot } from '../lib/package-root.js'
 export const ENTRY_SEGMENTS = ['skills', 'aeg', 'SKILL.md'] as const
 
 /**
- * Candidate doctrine roots, in resolution order:
+ * The doctrine root, resolved by WHERE THIS CLI IS RUNNING FROM — not by
+ * which candidate directory happens to exist first.
  *
- * 1. `<packageRoot>/aeg-root` — the published-tarball shape (`aeg-root` is in
- *    this package's `files` array), which is every ordinary install.
- * 2. `<packageRoot>/../../aeg-root` — the vendored dev shape. The bundled
- *    copy is a gitignored pack-time artifact (`scripts/bundle-doctrine.ts`),
- *    so in a monorepo that vendors the CLI the live doctrine is the monorepo
- *    root's own `aeg-root/` — the exact directory `bundle-doctrine` copies
- *    from, reached by the same `../..` relation that script encodes.
- *
- * The fallback is tried only when the CLI does NOT sit inside a
- * `node_modules` tree: an npm-installed copy always carries its own bundled
- * `aeg-root/`, so on such an install the fallback could only ever fire on a
- * broken artifact — and there it would walk into the adopter's dependency
+ * **Installed** (a `node_modules` segment in the package root): the only
+ * candidate is `<packageRoot>/aeg-root`, the published-tarball shape
+ * (`aeg-root` is in this package's `files` array). Nothing above it is
+ * tried: walking out of an npm install lands in the adopter's dependency
  * tree, where a package that happens to be named `aeg-root` would be served
  * as doctrine to agents told to read and follow it.
+ *
+ * **From source** (no `node_modules` segment): the only candidate is the
+ * repo root's own `aeg-root/` — `<packageRoot>/../../aeg-root`, the exact
+ * directory `scripts/bundle-doctrine.ts` copies FROM. The package-relative
+ * bundle is not merely second here; it is IGNORED. That bundle is a
+ * gitignored pack-time artifact, so in a checkout that has ever run a pack
+ * it is a stale copy of the live tree sitting at the higher-priority path —
+ * and the ordered-candidate form served it, silently, to every agent that
+ * asked this command where its doctrine lives. Two directories with the same
+ * name, one of them git-ignored and stale, is exactly the shape that already
+ * cost this tranche a review round through `apps/cli/dist`. A checkout is
+ * governed by the doctrine it has committed, and that is the repo root's.
  *
  * `pkg` is injectable for tests; every real caller takes the default.
  */
 export function resolveDoctrineRoot(pkg: string = packageRoot(import.meta.url)): string | null {
-  const candidates = [join(pkg, 'aeg-root')]
-  if (!pkg.split(sep).includes('node_modules')) candidates.push(join(dirname(dirname(pkg)), 'aeg-root'))
-  for (const root of candidates) {
-    if (hasDoctrineEntry(root)) return root
-  }
-  return null
+  const fromSource = !pkg.split(sep).includes('node_modules')
+  const root = fromSource ? join(dirname(dirname(pkg)), 'aeg-root') : join(pkg, 'aeg-root')
+  return hasDoctrineEntry(root) ? root : null
 }
+
+/**
+ * Role-name spellings that are not filenames under `roles/`. `code-reviewer`
+ * is the name the review commands, the agent definitions and the process
+ * doctrine all use for the role whose file is `reviewer.md`; asking for it by
+ * that name and being told it "is not a known role" is a papercut with a real
+ * cost — it is the exact string a dispatched reviewer is handed. Resolved as
+ * an alias rather than by renaming the file, so every existing `--role
+ * reviewer` caller is untouched.
+ */
+const ROLE_ALIASES: Readonly<Record<string, string>> = { 'code-reviewer': 'reviewer' }
 
 /**
  * Whether `root` is itself a real doctrine root — i.e. `<root>/skills/aeg/SKILL.md`
@@ -97,11 +110,12 @@ export function doctrineCommand(args: string[]): void {
 
   const roleFlagIndex = args.indexOf('--role')
   if (roleFlagIndex !== -1) {
-    const roleName = args[roleFlagIndex + 1]
+    const requested = args[roleFlagIndex + 1]
+    const roleName = requested !== undefined ? (ROLE_ALIASES[requested] ?? requested) : undefined
     const validRoleNames = listRoleNames(root)
     if (roleName === undefined || roleName.startsWith('--') || !validRoleNames.includes(roleName)) {
       process.stderr.write(
-        `vinaya doctrine --role: '${roleName ?? ''}' is not a known role. ` +
+        `vinaya doctrine --role: '${requested ?? ''}' is not a known role. ` +
           `Valid role names: ${validRoleNames.join(', ')}\n`
       )
       process.exit(1)
