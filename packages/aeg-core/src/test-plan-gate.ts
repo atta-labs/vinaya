@@ -12,6 +12,9 @@
  *     Test Plan is malformed, not exempt — the exact #377 live-fire gap).
  *   - No section found, non-task branch (or no BRANCH) → `pass` (advisory).
  *   - `Test Plan: unit-tests-only` sentinel → `pass`.
+ *   - A ticked `[agent]` item with `evidence.developerRoundComments === 0`
+ *     → `fail` carrying `pending: true` — the tick's evidence has not been
+ *     posted yet, which is a different fact from a wrong tick.
  *   - Any unticked `- [ ]` checkbox → `fail`, naming every unticked line.
  *   - All boxes ticked (or no checkbox items at all) → `pass`.
  */
@@ -19,11 +22,29 @@
 import { locateTestPlanSection } from './test-plan-section'
 
 export type TestPlanGateVerdict = 'pass' | 'fail'
-export type TestPlanGateResult = { verdict: TestPlanGateVerdict; messages: string[] }
+export type TestPlanGateResult = {
+  verdict: TestPlanGateVerdict
+  messages: string[]
+  /**
+   * `true` when the failure is "has not happened yet", not "is wrong" — the
+   * only such case here is a ticked `[agent]` item on a PR that carries no
+   * Developer round comment. The shim copies it onto the `CheckError` it
+   * emits (`pending?: true`) so a report can render `wait` without reading
+   * the message text back out.
+   */
+  pending?: true
+}
+
+/**
+ * What the caller knows about the PR that the body alone cannot say. Optional:
+ * a local run with no PR number has no comments to count and keeps the
+ * pre-existing body-only behaviour exactly.
+ */
+export type TestPlanEvidence = { developerRoundComments: number }
 
 const TASK_BRANCH_PATTERN = /^task\/[^/]+\/[^/]+$/
 
-export function evaluateTestPlanGate(body: string, branch: string): TestPlanGateResult {
+export function evaluateTestPlanGate(body: string, branch: string, evidence?: TestPlanEvidence): TestPlanGateResult {
   if (!body) {
     return {
       verdict: 'pass',
@@ -83,6 +104,27 @@ export function evaluateTestPlanGate(body: string, branch: string): TestPlanGate
 
   const unchecked = checkboxLines.filter((line) => /^[-*]\s+\[\s\]/.test(line))
   const checked = checkboxLines.filter((line) => /^[-*]\s+\[[xX]\]/.test(line))
+
+  // A ticked `[agent]` box asserts that a command was run and its output
+  // posted. The tick alone never proved that: the evidence lives in the
+  // Developer's round comment (`roles/developer.md`'s post-open sequence),
+  // and a body edit can tick a box with no comment behind it. When the caller
+  // can see the PR's comments and finds no Developer round comment from an
+  // allowlisted author, the tick has nothing standing behind it — which is
+  // "not yet", not "wrong", so the result is `pending`.
+  const tickedAgentItems = checked.filter((line) => /\[agent\]/i.test(line))
+  if (evidence !== undefined && tickedAgentItems.length > 0 && evidence.developerRoundComments === 0) {
+    return {
+      verdict: 'fail',
+      pending: true,
+      messages: [
+        `FAIL (not yet) — ${tickedAgentItems.length} \`[agent]\` Test Plan item(s) are ticked, but this PR carries no Developer round comment.`,
+        'A ticked `[agent]` box asserts a command was run; the evidence for it lives in the round comment, never in the body.',
+        'Post the round comment — headed `Head: <sha>`, carrying the `<!-- aeg:developer:round-<n> -->` marker and the actual command output for every item you ran — then re-run this check.',
+        'This is not a wrong tick: it is a tick whose evidence has not been posted yet.'
+      ]
+    }
+  }
 
   const messages = [`Test Plan items: ${checked.length} ticked, ${unchecked.length} unticked.`]
 

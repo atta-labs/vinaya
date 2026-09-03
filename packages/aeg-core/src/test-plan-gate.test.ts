@@ -107,3 +107,60 @@ describe('evaluateTestPlanGate — unticked boxes', () => {
     expect(joined).toContain('also not done')
   })
 })
+
+describe('evaluateTestPlanGate — the evidence-comment gate', () => {
+  const ALL_TICKED = [
+    '## Test Plan',
+    '',
+    '- [x] **[agent]** `bun run test` → green.',
+    '- [x] **[agent]** `vinaya review status <n>` → CONTINUE.',
+    '- [x] **[principal]** Read the post-open sequence cold and answer.'
+  ].join('\n')
+
+  it('FAILs as `pending` when a ticked [agent] item has no Developer round comment behind it', () => {
+    const result = evaluateTestPlanGate(ALL_TICKED, TASK_BRANCH, { developerRoundComments: 0 })
+    expect(result.verdict).toBe('fail')
+    expect(result.pending).toBe(true)
+    const joined = result.messages.join('\n')
+    expect(joined).toContain('no Developer round comment')
+    expect(joined).toContain('aeg:developer:round-')
+  })
+
+  it('names the round comment as the remedy, never a body edit', () => {
+    const joined = evaluateTestPlanGate(ALL_TICKED, TASK_BRANCH, { developerRoundComments: 0 }).messages.join('\n')
+    expect(joined).toContain('Post the round comment')
+    expect(joined).not.toContain('paste')
+  })
+
+  it('PASSes once one Developer round comment exists', () => {
+    const result = evaluateTestPlanGate(ALL_TICKED, TASK_BRANCH, { developerRoundComments: 1 })
+    expect(result.verdict).toBe('pass')
+    expect(result.pending).toBeUndefined()
+  })
+
+  it('says "not yet", not "wrong" — the failure is the missing comment, not the tick', () => {
+    const joined = evaluateTestPlanGate(ALL_TICKED, TASK_BRANCH, { developerRoundComments: 0 }).messages.join('\n')
+    expect(joined).toContain('not yet')
+    expect(joined).toContain('not a wrong tick')
+  })
+
+  it('keeps the pre-existing body-only behaviour exactly when no evidence is supplied', () => {
+    const result = evaluateTestPlanGate(ALL_TICKED, TASK_BRANCH)
+    expect(result.verdict).toBe('pass')
+    expect(result.pending).toBeUndefined()
+  })
+
+  it('does not fire for a ticked [principal] item — only [agent] ticks claim pasted evidence', () => {
+    const body = ['## Test Plan', '', '- [x] **[principal]** Answered in a browser.'].join('\n')
+    const result = evaluateTestPlanGate(body, TASK_BRANCH, { developerRoundComments: 0 })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('still reports unticked boxes normally when nothing [agent] is ticked yet', () => {
+    const body = ['## Test Plan', '', '- [ ] **[agent]** not run yet'].join('\n')
+    const result = evaluateTestPlanGate(body, TASK_BRANCH, { developerRoundComments: 0 })
+    expect(result.verdict).toBe('fail')
+    expect(result.pending).toBeUndefined()
+    expect(result.messages.join('\n')).toContain('not run yet')
+  })
+})

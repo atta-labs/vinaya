@@ -275,7 +275,7 @@ export type { IssueAssignmentDecision, IssueAssignmentInput } from './issue-assi
 export { locateTestPlanSection } from './test-plan-section'
 export type { TestPlanSection } from './test-plan-section'
 export { evaluateTestPlanGate } from './test-plan-gate'
-export type { TestPlanGateResult, TestPlanGateVerdict } from './test-plan-gate'
+export type { TestPlanEvidence, TestPlanGateResult, TestPlanGateVerdict } from './test-plan-gate'
 export {
   authoredRegion,
   authoredRegionHash,
