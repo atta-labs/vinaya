@@ -599,3 +599,82 @@ describe('isChangesetsReleasePr', () => {
     expect(isChangesetsReleasePr('changeset-release/main', '', 'github-actions[bot]')).toBe(false)
   })
 })
+
+describe('checkReviewGate — patch-identity binding', () => {
+  const JUDGED = `aaaaaaa${'1'.repeat(33)}`
+  const CURRENT = `bbbbbbb${'2'.repeat(33)}`
+
+  function comments(head: string) {
+    return [
+      { body: `VERDICT: APPROVE\n\nJudged head: ${head}`, author: 'daniboomerang' },
+      { body: `VERDICT: PASS\n\nJudged head: ${head}`, author: 'daniboomerang' }
+    ]
+  }
+
+  const BASE = {
+    labels: [] as string[],
+    waiverLabelActor: null,
+    principalAllowlist: ['daniboomerang'],
+    mechanicalChecks: [{ name: 'ci', bucket: 'pass' }]
+  }
+
+  it('counts a verdict bound to a superseded sha whose patch identity is unchanged', () => {
+    const result = checkReviewGate({
+      ...BASE,
+      comments: comments(JUDGED),
+      headSha: CURRENT,
+      patchIdOf: () => 'samepatchid'
+    })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('does NOT count it when the patch identity differs', () => {
+    const result = checkReviewGate({
+      ...BASE,
+      comments: comments(JUDGED),
+      headSha: CURRENT,
+      patchIdOf: (sha) => (sha === JUDGED ? 'oldpatchid' : 'newpatchid')
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain(JUDGED)
+  })
+
+  it('falls back to sha binding alone when patchIdOf returns null for the judged head', () => {
+    const result = checkReviewGate({
+      ...BASE,
+      comments: comments(JUDGED),
+      headSha: CURRENT,
+      patchIdOf: (sha) => (sha === JUDGED ? null : 'newpatchid')
+    })
+    expect(result.verdict).toBe('fail')
+  })
+
+  it('falls back to sha binding alone when patchIdOf returns null for the current head', () => {
+    const result = checkReviewGate({
+      ...BASE,
+      comments: comments(JUDGED),
+      headSha: CURRENT,
+      patchIdOf: (sha) => (sha === CURRENT ? null : 'oldpatchid')
+    })
+    expect(result.verdict).toBe('fail')
+  })
+
+  it('still passes on plain sha binding when patchIdOf is omitted entirely', () => {
+    const result = checkReviewGate({ ...BASE, comments: comments(CURRENT), headSha: CURRENT })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('never lets an equal patch identity rescue a verdict that is not clean', () => {
+    const result = checkReviewGate({
+      ...BASE,
+      comments: [
+        { body: `VERDICT: REQUEST CHANGES\n\nJudged head: ${JUDGED}`, author: 'daniboomerang' },
+        { body: `VERDICT: PASS\n\nJudged head: ${JUDGED}`, author: 'daniboomerang' }
+      ],
+      headSha: CURRENT,
+      patchIdOf: () => 'samepatchid'
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('not a clean APPROVE')
+  })
+})
