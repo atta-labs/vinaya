@@ -24,27 +24,39 @@
  * reported as `pending`: it exits `1` naming the fetch as the failure, so an
  * unreachable forge can never be mistaken for a missing comment.
  *
+ * `PR_NUMBER` and `PR_BODY` arrive as two independent env vars, and nothing
+ * upstream guarantees they describe the SAME pull request. An ambient or
+ * stale `PR_NUMBER` would otherwise let one PR's round comments satisfy a
+ * different PR's ticked boxes — the evidence would be real, just not
+ * evidence for this body. So the fetch also reads that PR's own body and
+ * compares it to `PR_BODY` through `authoredRegion`, the same normalisation
+ * `pr-body-frozen` hashes: anchored regions stripped and ticks normalised,
+ * so an `AEG:EVIDENCE` regeneration or a tick landing between the two reads
+ * is not mistaken for a different PR. On a mismatch the count is treated as
+ * `0` and the message says why — the conservative direction, since the
+ * alternative is crediting a tick with a comment posted somewhere else.
+ *
  * scope: diff — reads only the PR body and that PR's comments, never the
  * whole repo.
  */
 
 import { execFileSync } from 'node:child_process'
-import { evaluateTestPlanGate, isPrincipal, parseDeveloperRoundMarker } from '@attalabs/aeg-core'
+import { authoredRegion, evaluateTestPlanGate, isPrincipal, parseDeveloperRoundMarker } from '@attalabs/aeg-core'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'test-plan'
 
-type PrComments = { comments: { body: string; author?: { login?: string } | null }[] }
+type PrView = { body: string; comments: { body: string; author?: { login?: string } | null }[] }
 
-/** `null` — never `[]` — when `gh` could not answer; the two facts are not interchangeable. */
-function fetchComments(prNumber: string): PrComments['comments'] | null {
+/** `null` — never an empty result — when `gh` could not answer; the two facts are not interchangeable. */
+function fetchPr(prNumber: string): PrView | null {
   try {
-    const out = execFileSync('gh', ['pr', 'view', prNumber, '--json', 'comments'], {
+    const out = execFileSync('gh', ['pr', 'view', prNumber, '--json', 'body,comments'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     })
-    return (JSON.parse(out) as PrComments).comments
+    return JSON.parse(out) as PrView
   } catch {
     return null
   }
@@ -56,9 +68,10 @@ function main(): void {
   const prNumber = process.env.PR_NUMBER ?? ''
 
   let evidence: { developerRoundComments: number } | undefined
+  let identityMismatch = false
   if (prNumber) {
-    const comments = fetchComments(prNumber)
-    if (comments === null) {
+    const pr = fetchPr(prNumber)
+    if (pr === null) {
       emitCheckError({
         schema: CHECK_SCHEMA_VERSION,
         check: CHECK_NAME,
@@ -69,18 +82,27 @@ function main(): void {
       })
       process.exit(1)
     }
+    identityMismatch = body !== '' && authoredRegion(pr.body) !== authoredRegion(body)
     const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
     evidence = {
-      developerRoundComments: comments.filter(
-        (c) => isPrincipal(c.author?.login ?? null, allowlist) && parseDeveloperRoundMarker(c.body) !== null
-      ).length
+      developerRoundComments: identityMismatch
+        ? 0
+        : pr.comments.filter(
+            (c) => isPrincipal(c.author?.login ?? null, allowlist) && parseDeveloperRoundMarker(c.body) !== null
+          ).length
     }
   }
 
   const result = evaluateTestPlanGate(body, branch, evidence)
 
   if (result.verdict === 'fail') {
-    for (const message of result.messages) {
+    const messages = identityMismatch
+      ? [
+          ...result.messages,
+          `PR #${prNumber}'s own body does not match the PR_BODY this check was given, so its round comments were not counted for it — the two env vars describe different pull requests. Set PR_NUMBER to the PR this body belongs to.`
+        ]
+      : result.messages
+    for (const message of messages) {
       if (!message) continue
       emitCheckError({
         schema: CHECK_SCHEMA_VERSION,

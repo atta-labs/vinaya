@@ -97,6 +97,12 @@ describe('vinaya doctrine --role — both spellings of the reviewing role', () =
     expect(alias.stdout).toBe(canonical.stdout)
   })
 
+  it('refuses an inherited Object.prototype key like `constructor` the same way, never a crash', () => {
+    const result = run(['doctrine', '--role', 'constructor'])
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain("'constructor' is not a known role")
+  })
+
   it('still refuses an unknown role, naming what the caller actually asked for', () => {
     const result = run(['doctrine', '--role', 'not-a-role'])
     expect(result.status).toBe(1)

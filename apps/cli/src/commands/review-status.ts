@@ -11,7 +11,9 @@ import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config'
  * of those sentences. This command answers both by running something:
  *
  *   line 1  `CONTINUE`, or `PAUSE: <reason>[ <id>]`
- *   line 2  `behind main by <n> — merge first`, only when the branch is behind
+ *   line 2  `behind main by <n> — merge first` when the branch is behind, or
+ *           `behind main: unknown — fetch origin/<base> first` when git
+ *           cannot measure the distance at all
  *
  * The decision itself is `deriveReviewStatus` (`@attalabs/aeg-core`, pure) —
  * this shim does only the I/O: one `gh pr view` for the comments, head and
@@ -85,7 +87,13 @@ export async function reviewStatusCommand(args: string[]): Promise<void> {
   process.stdout.write(`${renderReviewStatus(status)}\n`)
 
   const behind = behindBy(pr.baseRefName)
-  if (behind !== null && behind > 0) {
+  if (behind === null) {
+    // Never silence: "I could not measure" and "you are not behind" are
+    // different facts, and printing nothing on this path made an unfetched
+    // base look like a clean branch while the command still exited 1 —
+    // a bare `CONTINUE` with no reason for the non-zero exit.
+    process.stdout.write(`behind main: unknown — fetch origin/${pr.baseRefName} first\n`)
+  } else if (behind > 0) {
     process.stdout.write(`behind main by ${behind} — merge first\n`)
   }
 

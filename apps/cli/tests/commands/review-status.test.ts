@@ -113,6 +113,25 @@ describe('vinaya review status', () => {
     expect(result.status).toBe(1)
   })
 
+  it('names the unknown distance rather than printing nothing, when git cannot measure it', () => {
+    const dir = tempDir('fake-forge-nogit-')
+    const gh = join(dir, 'gh')
+    const pr = { comments: [], headRefOid: HEAD, baseRefName: 'main' }
+    writeFileSync(
+      gh,
+      `#!/bin/sh\nif [ "$1" = "pr" ] && [ "$2" = "view" ]; then\n  cat <<'JSON'\n${JSON.stringify(pr)}\nJSON\n  exit 0\nfi\nexit 1\n`
+    )
+    chmodSync(gh, 0o755)
+    // `git rev-list` fails here — an unfetched base, a shallow clone. The
+    // distance is unknown, which is not the same fact as "not behind".
+    const git = join(dir, 'git')
+    writeFileSync(git, '#!/bin/sh\nexit 128\n')
+    chmodSync(git, 0o755)
+    const result = runCli(['review', 'status', '381'], { PATH: `${dir}:${process.env.PATH ?? ''}` })
+    expect(statusLines(result.stdout)).toEqual(['CONTINUE', 'behind main: unknown — fetch origin/main first'])
+    expect(result.status).toBe(1)
+  })
+
   it('prints PAUSE with the reason and the finding id, exit non-zero', () => {
     const env = stubPath(
       {

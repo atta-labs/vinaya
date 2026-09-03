@@ -111,7 +111,15 @@ export function doctrineCommand(args: string[]): void {
   const roleFlagIndex = args.indexOf('--role')
   if (roleFlagIndex !== -1) {
     const requested = args[roleFlagIndex + 1]
-    const roleName = requested !== undefined ? (ROLE_ALIASES[requested] ?? requested) : undefined
+    // `Object.hasOwn`, never a bare index: a bare lookup reaches
+    // `Object.prototype`, so `--role constructor` resolved to a function and
+    // crashed instead of producing the ordinary "not a known role" refusal.
+    const roleName =
+      requested !== undefined
+        ? Object.hasOwn(ROLE_ALIASES, requested)
+          ? (ROLE_ALIASES[requested] as string)
+          : requested
+        : undefined
     const validRoleNames = listRoleNames(root)
     if (roleName === undefined || roleName.startsWith('--') || !validRoleNames.includes(roleName)) {
       process.stderr.write(

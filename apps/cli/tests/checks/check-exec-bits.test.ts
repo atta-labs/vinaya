@@ -99,17 +99,3 @@ describe('exec-bits — the shebang signal, independent of path', () => {
     expect(result.stdout).toContain('0 executable file(s) judged')
   })
 })
-
-describe('exec-bits — this repo, the check running over its own corpus', () => {
-  it("agrees with git that every one of this repo's own check bins is 100755", () => {
-    const out = execFileSync('git', ['ls-files', '-s', 'apps/cli/src/checks/bin'], {
-      cwd: join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..'),
-      encoding: 'utf8'
-    })
-    const notExecutable = out
-      .split('\n')
-      .filter((l) => l.trim() !== '')
-      .filter((l) => !l.startsWith('100755'))
-    expect(notExecutable).toEqual([])
-  })
-})

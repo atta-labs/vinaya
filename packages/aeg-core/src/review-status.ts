@@ -166,9 +166,13 @@ export function deriveReviewStatus(input: ReviewStatusInput): ReviewStatus {
   const newest = rounds[rounds.length - 1] as Round
   const judged = newest.judgedHead
   const boundToHead = judged !== null && (input.headSha.startsWith(judged) || judged.startsWith(input.headSha))
+  // Allowlist-filtered, exactly as the verdict scan above is: a round marker
+  // is an HTML comment any commenter can paste, and an unfiltered read would
+  // let a stranger's comment clear a `stale` pause the Developer never
+  // answered.
   const developerAnswered = input.comments
     .slice(lastVerdictIndex + 1)
-    .some((c) => parseDeveloperRoundMarker(c.body) !== null)
+    .some((c) => isPrincipal(c.author, input.principalAllowlist) && parseDeveloperRoundMarker(c.body) !== null)
   if (!boundToHead && !developerAnswered) {
     return { state: 'PAUSE', reason: 'stale', round: rounds.length }
   }

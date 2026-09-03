@@ -132,11 +132,21 @@ export type ReviewGateInput = {
    * an identical patch is a round spent proving nothing. Patch identity is
    * what a reviewer actually judged; the head sha is only its address.
    *
-   * The known limit, stated rather than papered over: a base that moved
-   * under an identical patch can carry a semantic conflict the earlier
-   * review could not have seen, and this binding will still hold. That is
-   * the same limit GitHub's own stale-review rule has, and CI at the new
-   * head — which this gate already requires green — is the guard for it.
+   * Two known limits, stated rather than papered over.
+   *
+   * A base that moved under an identical patch can carry a semantic conflict
+   * the earlier review could not have seen, and this binding will still
+   * hold. That is the same limit GitHub's own stale-review rule has, and CI
+   * at the new head — which this gate already requires green — is the guard
+   * for it.
+   *
+   * `git patch-id --stable` ignores whitespace, so a push that changes only
+   * whitespace produces the same patch identity and KEEPS the verdict. That
+   * is deliberate for reformatting, but it is not free: whitespace is
+   * semantic in some languages and some string literals, so a push that is
+   * whitespace-only to git can still change behaviour. Any change to
+   * non-whitespace content produces a different identity and correctly drops
+   * the verdict; only the whitespace-only case survives unreviewed.
    */
   patchIdOf?: (sha: string) => string | null
 }

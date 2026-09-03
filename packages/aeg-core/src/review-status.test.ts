@@ -154,6 +154,19 @@ describe('deriveReviewStatus — PAUSE: stale', () => {
     expect(status).toEqual({ state: 'CONTINUE' })
   })
 
+  it("does NOT let a non-allowlisted commenter's round marker clear the stale pause", () => {
+    const status = deriveReviewStatus({
+      comments: [
+        principal(verdict(OLD_HEAD, [finding(1, null)])),
+        { body: `Head: ${HEAD}\n\n<!-- aeg:developer:round-2 -->`, author: 'drive-by-stranger' }
+      ],
+      headSha: HEAD,
+      principalAllowlist: ALLOWLIST,
+      maxRounds: 3
+    })
+    expect(status).toEqual({ state: 'PAUSE', reason: 'stale', round: 1 })
+  })
+
   it('accepts the abbreviated Judged head form as bound to the full head sha', () => {
     const status = deriveReviewStatus({
       comments: [principal(verdict(HEAD.slice(0, 7), [finding(1, null)]))],
