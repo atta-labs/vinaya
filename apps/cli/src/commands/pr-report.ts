@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -273,6 +273,12 @@ export function runRealGates(): GateRunResult {
   // before any write), so no false attestation could be published.
   const proc = spawnSync(process.execPath, [entry, 'check', '--all', '--diff-only', '--json'], {
     cwd: process.cwd(),
+    // Explicit, not the `spawnSync` default-to-`process.env` behaviour it
+    // would get by omitting this key: `--push` sets `PR_BODY`/`PR_NUMBER`/
+    // `BRANCH` on `process.env` via mutation just before this call, and this
+    // makes the fact that those exports reach the gate child a property of
+    // this line, not an implicit runtime default a reader has to look up.
+    env: { ...process.env },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
     maxBuffer: 32 * 1024 * 1024
@@ -454,6 +460,11 @@ function tokensBlockLineBounds(maskedLines: string[]): { startIdx: number; endId
     if ((maskedLines[i] as string).trim() === TOKENS_END) return { startIdx, endIdx: i }
   }
   return null
+}
+
+/** Whether `body` carries a real (non-fenced) `AEG:TOKENS` pair — `spliceIntoLiveBody`'s guard for whether appending a row is safe. */
+function hasTokensAnchor(body: string): boolean {
+  return tokensBlockLineBounds(maskCode(body).split('\n')) !== null
 }
 
 /**
@@ -657,6 +668,8 @@ export class MissingEvidenceAnchorError extends Error {
   }
 }
 
+export type SpliceResult = { body: string; tokensSpliced: boolean }
+
 /**
  * The `--push` counterpart to `composeWrittenBody`: splices the freshly-built
  * Evidence/Tokens content into a LIVE forge body rather than a local draft.
@@ -664,16 +677,29 @@ export class MissingEvidenceAnchorError extends Error {
  * unsafe: the raw/normalised anchor resolutions disagree (`replaceEvidenceBlock`'s
  * own `DivergentEvidenceAnchorError`, checked here up front so the caller
  * never proceeds to `gh pr edit` on a body it cannot correctly locate), or the
- * live body has no real pair at all (`MissingEvidenceAnchorError`, above —
- * checked separately because `replaceEvidenceBlock` would otherwise silently
- * append rather than refuse). Once both checks pass, the actual splice is
- * `composeWrittenBody` unchanged — reused, not reimplemented, so `--write` and
- * `--push` can never drift on what "replace the block" means.
+ * live body has no real `EVIDENCE` pair at all (`MissingEvidenceAnchorError`,
+ * above — checked separately because `replaceEvidenceBlock` would otherwise
+ * silently append rather than refuse).
+ *
+ * `AEG:TOKENS` gets the SAME no-pair guard as `AEG:EVIDENCE`, but a softer
+ * outcome: `composeWrittenBody`/`writeTokensBlock` would otherwise CREATE a
+ * fresh `AEG:TOKENS` pair (correct for `--write`'s local draft, which starts
+ * from the template and is expected to grow the pair on first adoption — see
+ * `MissingEvidenceAnchorError`'s doc comment for why that's wrong for a LIVE
+ * body). Creating one here would show up as "drift" outside the two regions
+ * `bodiesAgreeOutsideRegions` is supposed to police — false drift, since this
+ * command authored it, but drift a reviewer diffing the push could still
+ * mistake for an unrelated change. So when the live body carries no real
+ * `AEG:TOKENS` pair, the token splice is skipped entirely — `EVIDENCE` alone
+ * is spliced, and the caller learns this via `tokensSpliced: false` so its
+ * own success message never claims a write that didn't happen.
  */
-export function spliceIntoLiveBody(live: string, blockInner: string, tokens: TokensAddition): string {
+export function spliceIntoLiveBody(live: string, blockInner: string, tokens: TokensAddition): SpliceResult {
   if (!ScanContext.from(live).rawResolutionAgrees('EVIDENCE')) throw new DivergentEvidenceAnchorError()
   if (anchoredRegionBounds(live, 'EVIDENCE') === null) throw new MissingEvidenceAnchorError()
-  return composeWrittenBody(live, blockInner, tokens)
+  const withEvidence = replaceEvidenceBlock(live, blockInner)
+  if (!tokens.collected || !hasTokensAnchor(live)) return { body: withEvidence, tokensSpliced: false }
+  return { body: writeTokensBlock(withEvidence, tokens.row), tokensSpliced: true }
 }
 
 /** Removes the first real `AEG:<field>` anchored region (markers included) from `body`, or returns `body` unchanged when none is found — `anchoredRegionBounds` already does the masked, decoy-blind search. */
@@ -748,14 +774,15 @@ const USAGE =
   'Usage: vinaya pr report [--write <body-file> | --push <pr>] [--phase <phase>] [--role <role>] ' +
   '[--model <id>] [--transcript <path>]'
 
-/** `gh pr edit <pr> --body-file <path>` via a scratch file — no shell, no long argv body. */
+/** `gh pr edit <pr> --body-file <path>` via a scratch file — no shell, no long argv body. `mkdtempSync`, matching `forge-write.ts`'s own scratch-file discipline, rather than a pid/timestamp name in the shared tmp root. */
 function ghEditBody(pr: string, body: string): void {
-  const tmp = join(tmpdir(), `vinaya-pr-report-push-${process.pid}-${Date.now()}.md`)
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-'))
+  const tmp = join(dir, 'body.md')
   writeFileSync(tmp, body)
   try {
     gh(['pr', 'edit', pr, '--body-file', tmp])
   } finally {
-    rmSync(tmp, { force: true })
+    rmSync(dir, { recursive: true, force: true })
   }
 }
 
@@ -779,6 +806,14 @@ export async function prReportCommand(args: string[]): Promise<void> {
   }
   if (pushIdx !== -1 && !pushPr) {
     console.error(USAGE)
+    process.exit(2)
+  }
+  if (pushPr && !/^\d+$/.test(pushPr)) {
+    // Catches a flag value swallowed as the PR number (e.g. a stray
+    // `--transcript` with no path) before it ever reaches `gh pr view`,
+    // which would otherwise surface as an opaque forge error instead of a
+    // clean usage refusal.
+    console.error(`vinaya pr report: refused — \`--push ${pushPr}\` is not a PR number.\n${USAGE}`)
     process.exit(2)
   }
   if (writePath && pushPr) {
@@ -837,7 +872,7 @@ export async function prReportCommand(args: string[]): Promise<void> {
       transcriptPath,
       modelOverride
     })
-    let spliced: string
+    let spliced: SpliceResult
     try {
       spliced = spliceIntoLiveBody(preEditBody as string, result.blockInner, tokens)
     } catch (err) {
@@ -847,7 +882,7 @@ export async function prReportCommand(args: string[]): Promise<void> {
     }
 
     try {
-      ghEditBody(pushPr, spliced)
+      ghEditBody(pushPr, spliced.body)
     } catch (err) {
       console.error(
         `vinaya pr report: refused — \`gh pr edit ${pushPr}\` failed: ${err instanceof Error ? err.message : String(err)}. Nothing was pushed.`
@@ -869,8 +904,17 @@ export async function prReportCommand(args: string[]): Promise<void> {
       try {
         ghEditBody(pushPr, preEditBody as string)
       } catch (err) {
+        // The restore itself failed — the live PR body is now the SPLICED
+        // (bad) content, with no forge-side copy of the pre-edit body left to
+        // point at. Write the pre-edit body to a durable scratch file and
+        // name its path, rather than telling the reader to scroll up for "the
+        // pre-edit copy above" (which isn't a copy of anything they can feed
+        // back into `gh pr edit` without retyping it by hand).
+        const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-restore-failed-'))
+        const savePath = join(dir, 'pre-edit-body.md')
+        writeFileSync(savePath, preEditBody as string)
         console.error(
-          `vinaya pr report: self-verification FAILED on PR ${pushPr} AND the restore of its pre-edit body also failed: ${err instanceof Error ? err.message : String(err)}. PR ${pushPr}'s body may now be corrupted — restore it by hand from the pre-edit copy above.`
+          `vinaya pr report: self-verification FAILED on PR ${pushPr} AND the restore of its pre-edit body also failed: ${err instanceof Error ? err.message : String(err)}. PR ${pushPr}'s body may now be corrupted — the pre-edit body was saved to ${savePath}; restore it by hand with \`gh pr edit ${pushPr} --body-file ${savePath}\`.`
         )
         process.exit(1)
       }
@@ -880,12 +924,20 @@ export async function prReportCommand(args: string[]): Promise<void> {
       process.exit(1)
     }
 
-    if (tokens.collected) {
+    if (!spliced.tokensSpliced && tokens.collected) {
+      console.error(
+        `vinaya pr report: PR ${pushPr}'s live body carries no AEG:TOKENS anchor pair — the token row was withheld rather than creating one via --push (only --write's local draft creates a fresh pair; see aeg-root/templates/pr-report-template.md). The AEG:EVIDENCE block was still pushed to PR ${pushPr}.`
+      )
+    }
+
+    if (spliced.tokensSpliced) {
       process.stdout.write(`Pushed AEG:EVIDENCE and AEG:TOKENS blocks to PR ${pushPr}\n`)
     } else {
-      tokensRefused = true
+      if (!tokens.collected) tokensRefused = true
       process.stdout.write(`Pushed AEG:EVIDENCE block to PR ${pushPr}\n`)
-      console.error(`${tokens.refusal}\n\nThe AEG:EVIDENCE block was still pushed to PR ${pushPr}.`)
+      if (!tokens.collected) {
+        console.error(`${tokens.refusal}\n\nThe AEG:EVIDENCE block was still pushed to PR ${pushPr}.`)
+      }
     }
   } else if (writePath) {
     const existing = existsSync(writePath) ? readFileSync(writePath, 'utf8') : ''

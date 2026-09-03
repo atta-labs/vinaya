@@ -737,7 +737,7 @@ const LIVE_BODY = [
 
 describe('spliceIntoLiveBody', () => {
   it('keeps every byte outside the AEG:EVIDENCE/AEG:TOKENS regions, replacing only the block content', () => {
-    const updated = spliceIntoLiveBody(LIVE_BODY, 'Head: freshsha', { collected: false, refusal: 'refused' })
+    const { body: updated } = spliceIntoLiveBody(LIVE_BODY, 'Head: freshsha', { collected: false, refusal: 'refused' })
     expect(updated).toContain('## Summary')
     expect(updated).toContain('why this shipped, in the author’s own words.')
     expect(updated).toContain('## Scope')
@@ -771,12 +771,25 @@ describe('spliceIntoLiveBody', () => {
       MissingEvidenceAnchorError
     )
   })
+
+  it('skips the token splice (no false drift) when the live body carries no real AEG:TOKENS pair, even with a collected row', () => {
+    const noTokensPair =
+      '## Summary\n\nwhy.\n\n<!-- AEG:EVIDENCE:START -->\nstale\n<!-- AEG:EVIDENCE:END -->\n\n## Scope'
+    const { body: updated, tokensSpliced } = spliceIntoLiveBody(noTokensPair, 'Head: freshsha', {
+      collected: true,
+      row: '| 7: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-09-03 |'
+    })
+    expect(tokensSpliced).toBe(false)
+    expect(updated).not.toContain('AEG:TOKENS')
+    expect(updated).not.toContain('claude-sonnet-5')
+    expect(updated).toContain('Head: freshsha')
+  })
 })
 
 describe('bodiesAgreeOutsideRegions', () => {
   it('is true when only the AEG:EVIDENCE/AEG:TOKENS regions were regenerated', () => {
     const before = LIVE_BODY
-    const after = spliceIntoLiveBody(before, 'Head: freshsha', {
+    const { body: after } = spliceIntoLiveBody(before, 'Head: freshsha', {
       collected: true,
       row: '| 7: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-09-03 |'
     })
@@ -808,6 +821,17 @@ describe('vinaya pr report --push CLI surface', () => {
       const result = runCli(['pr', 'report', '--push'], dir)
       expect(result.status).toBe(2)
       expect(result.stderr).toContain('--push <pr>')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a non-numeric --push value before touching the forge', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-cli-'))
+    try {
+      const result = runCli(['pr', 'report', '--push', '--transcript'], dir)
+      expect(result.status).toBe(2)
+      expect(result.stderr).toMatch(/is not a PR number/)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

@@ -191,6 +191,8 @@ The `AEG:EVIDENCE` block is populated by running `vinaya pr report --write <body
 
 `vinaya pr report --push <n>`
 
+**On this repo's toolchain**, substitute `bun apps/cli/src/index.ts` for `vinaya` in that command.
+
 It fetches the PR's live body itself, splices the fresh `AEG:EVIDENCE`/`AEG:TOKENS` content into it through the same anchor resolver `--write` uses, pushes the result via the forge's own PR-edit, then re-reads the live body and refuses — restoring the pre-edit body — unless the two agree outside those two anchored regions. A `[principal]` tick, if one landed since this turn started, is a live-body write only this command's own fetch-then-splice sequence carries forward correctly; it refuses rather than appending when the live body carries no real `AEG:EVIDENCE` pair at all.
 
 After open the Developer changes nothing outside the `AEG:EVIDENCE` anchor and one appended `AEG:TOKENS` row. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. Everything else a review round produces — the response to findings, re-run `[agent]` evidence, any disclosure the brief didn't anticipate — is a PR comment, never a body edit.
