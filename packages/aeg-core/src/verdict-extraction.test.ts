@@ -374,3 +374,35 @@ describe('the VERDICT:/Judged head: markers are read from the first three lines 
     expect(result.danglingNote).not.toBeNull()
   })
 })
+
+// ---- round 5 (#392): candidacy is whole-body, value stays windowed ----
+// Round 4's window narrowed where the VALUE is read; it must not narrow which
+// comments even COUNT as candidates. A later comment whose VERDICT-shaped
+// line sits outside its own first three lines is still the most recent
+// candidate — it must shadow an earlier clean verdict into DANGLING, not
+// silently drop out and let the earlier comment win.
+
+describe('candidate selection stays whole-body — a later unclear candidate shadows an earlier clean one (round 5, #392)', () => {
+  const HEAD = '8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f'
+  const clean = `VERDICT: APPROVE\n\nJudged head: ${HEAD}`
+  const laterUnclear = `line one\nline two\nline three\nVERDICT: REQUEST CHANGES\n\nJudged head: ${HEAD}`
+
+  it('a later same-head comment with VERDICT on line 4 makes the result DANGLING, not the earlier clean APPROVE', () => {
+    const result = extractCodeReviewVerdict([clean, laterUnclear])
+    expect(result.value).not.toBe('APPROVE')
+    expect(result.danglingNote).not.toBeNull()
+    expect(result.headSha).toBeNull()
+  })
+
+  it('the earlier comment alone still extracts its clean head-bound APPROVE unchanged', () => {
+    const result = extractCodeReviewVerdict([clean])
+    expect(result).toEqual({ value: 'APPROVE', headSha: HEAD, danglingNote: null })
+  })
+
+  it('the later comment alone is DANGLING — its VERDICT-shaped line is a real candidate, just unreadable in its own window', () => {
+    const result = extractCodeReviewVerdict([laterUnclear])
+    expect(result.value).not.toBe('REQUEST CHANGES')
+    expect(result.danglingNote).not.toBeNull()
+    expect(result.headSha).toBeNull()
+  })
+})
