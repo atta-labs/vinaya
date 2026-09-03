@@ -75,11 +75,29 @@ export function authoredRegionHash(body: string): string {
   return createHash('sha256').update(authoredRegion(body), 'utf8').digest('hex')
 }
 
+/**
+ * Rollout date (ISO `YYYY-MM-DD`). A PR opened before this date is
+ * grandfathered when no marker comment exists — the whole corpus at rollout
+ * has none. A PR opened ON or AFTER this date is NOT: a missing marker there
+ * is a `fail`, not an `info`. This closes the bypass an absence-only
+ * grandfather rule leaves open — the marker comment is an ordinary PR
+ * comment, deletable by anyone with comment-delete permission, and deleting
+ * it must not degrade a real, post-rollout PR back into the grandfathered
+ * case.
+ */
+export const FROZEN_BODY_SINCE = '2026-09-03'
+
 export type PrBodyFrozenComment = { body: string; author: string | null }
 
 export type PrBodyFrozenStatus = 'pass' | 'fail' | 'info'
 
-export type PrBodyFrozenResult = { status: PrBodyFrozenStatus; errors: string[] }
+/** Which `fail` this is — the shim selects a different `agent_recovery_prompt` per reason (#355: a check's failure vocabulary must be bound to its recovery advice, never a single generic prompt reused across incompatible causes). */
+export type PrBodyFrozenFailReason = 'mismatch' | 'no-marker-not-grandfathered'
+
+export type PrBodyFrozenResult =
+  | { status: 'pass'; errors: [] }
+  | { status: 'info'; errors: string[] }
+  | { status: 'fail'; reason: PrBodyFrozenFailReason; errors: string[] }
 
 /**
  * Finds the FIRST marker comment authored by an allowlisted principal — a
@@ -99,24 +117,40 @@ function findMarker(comments: readonly PrBodyFrozenComment[], principalAllowlist
 }
 
 /**
- * `info`: no marker comment from an allowlisted author — this PR predates
- * `pr-body-frozen` (every PR open before this shipped has none) or was
- * opened by a non-principal flow. Never a failure; grandfathered.
+ * `info`: no marker comment from an allowlisted author, and `createdAt`
+ * (the PR's own creation date, an ISO string) falls before
+ * `FROZEN_BODY_SINCE` — this PR predates `pr-body-frozen`. Never a failure;
+ * grandfathered.
  *
- * `pass`/`fail`: a marker exists — recompute `authoredRegionHash` of the
- * live body and compare.
+ * `fail` (`no-marker-not-grandfathered`): no marker comment, but `createdAt`
+ * is on or after `FROZEN_BODY_SINCE` — this PR was opened after the check
+ * shipped and should carry a marker. Either it wasn't opened via
+ * `vinaya pr create`, or the comment was deleted.
+ *
+ * `pass`/`fail` (`mismatch`): a marker exists — recompute
+ * `authoredRegionHash` of the live body and compare.
  */
 export function checkPrBodyFrozen(opts: {
   body: string
   comments: readonly PrBodyFrozenComment[]
   principalAllowlist: readonly string[]
+  createdAt: string
 }): PrBodyFrozenResult {
   const marker = findMarker(opts.comments, opts.principalAllowlist)
   if (marker === null) {
+    if (opts.createdAt.slice(0, 10) < FROZEN_BODY_SINCE) {
+      return {
+        status: 'info',
+        errors: [
+          `pr-body-frozen: no \`aeg:body-hash\` marker comment from an allowlisted author — grandfathered (this PR was created ${opts.createdAt}, before FROZEN_BODY_SINCE ${FROZEN_BODY_SINCE}). Not a failure.`
+        ]
+      }
+    }
     return {
-      status: 'info',
+      status: 'fail',
+      reason: 'no-marker-not-grandfathered',
       errors: [
-        'pr-body-frozen: no `aeg:body-hash` marker comment from an allowlisted author — grandfathered (this PR predates the check, or was not opened via `vinaya pr create`). Not a failure.'
+        `pr-body-frozen: no \`aeg:body-hash\` marker comment from an allowlisted author, and this PR was created ${opts.createdAt} — on or after FROZEN_BODY_SINCE (${FROZEN_BODY_SINCE}), a missing marker is no longer grandfathered.`
       ]
     }
   }
@@ -128,6 +162,7 @@ export function checkPrBodyFrozen(opts: {
 
   return {
     status: 'fail',
+    reason: 'mismatch',
     errors: [
       `pr-body-frozen: the PR body's authored region no longer matches the hash posted at open (recorded ${marker}, live ${live}). The body is frozen at open — a Developer answers review findings with commits and a round comment, never a body edit (except the AEG:EVIDENCE regeneration and one appended AEG:TOKENS row, both of which this check already tolerates).`
     ]

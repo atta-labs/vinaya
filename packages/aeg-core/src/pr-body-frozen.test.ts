@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { authoredRegion, authoredRegionHash, checkPrBodyFrozen, renderBodyHashMarker } from './pr-body-frozen'
+import {
+  authoredRegion,
+  authoredRegionHash,
+  checkPrBodyFrozen,
+  FROZEN_BODY_SINCE,
+  renderBodyHashMarker
+} from './pr-body-frozen'
 
 const PRINCIPALS = ['daniboomerang']
+const BEFORE_ROLLOUT = '2026-01-01T00:00:00Z'
+const AFTER_ROLLOUT = `${FROZEN_BODY_SINCE}T12:00:00Z`
 
 const BASE_BODY = `<!-- AEG:CLOSES:START -->
 Closes #378
@@ -85,7 +93,8 @@ describe('checkPrBodyFrozen', () => {
     const result = checkPrBodyFrozen({
       body: regenerated,
       comments: withMarkerComment(hash),
-      principalAllowlist: PRINCIPALS
+      principalAllowlist: PRINCIPALS,
+      createdAt: AFTER_ROLLOUT
     })
     expect(result.status).toBe('pass')
   })
@@ -96,7 +105,8 @@ describe('checkPrBodyFrozen', () => {
     const result = checkPrBodyFrozen({
       body: ticked,
       comments: withMarkerComment(hash),
-      principalAllowlist: PRINCIPALS
+      principalAllowlist: PRINCIPALS,
+      createdAt: AFTER_ROLLOUT
     })
     expect(result.status).toBe('pass')
   })
@@ -110,7 +120,8 @@ describe('checkPrBodyFrozen', () => {
     const result = checkPrBodyFrozen({
       body: appended,
       comments: withMarkerComment(hash),
-      principalAllowlist: PRINCIPALS
+      principalAllowlist: PRINCIPALS,
+      createdAt: AFTER_ROLLOUT
     })
     expect(result.status).toBe('pass')
   })
@@ -121,30 +132,69 @@ describe('checkPrBodyFrozen', () => {
     const result = checkPrBodyFrozen({
       body: edited,
       comments: withMarkerComment(hash),
-      principalAllowlist: PRINCIPALS
+      principalAllowlist: PRINCIPALS,
+      createdAt: AFTER_ROLLOUT
     })
     expect(result.status).toBe('fail')
     expect(result.errors.join('\n')).toContain('authored region no longer matches')
   })
 
-  it('is info (grandfathered) when no marker comment exists', () => {
+  it('is info (grandfathered) when no marker comment exists on a pre-rollout PR', () => {
     const result = checkPrBodyFrozen({
       body: BASE_BODY,
       comments: [],
-      principalAllowlist: PRINCIPALS
+      principalAllowlist: PRINCIPALS,
+      createdAt: BEFORE_ROLLOUT
     })
     expect(result.status).toBe('info')
   })
 
-  it('ignores a marker comment from a non-allowlisted author', () => {
+  it('fails, not grandfathered, when no marker comment exists on a PR created on or after FROZEN_BODY_SINCE — the same shape a deleted marker comment presents (checkPrBodyFrozen cannot distinguish "never posted" from "posted then deleted"; both are zero matching comments, which is exactly why grandfathering is keyed to creation date, not marker absence)', () => {
+    const result = checkPrBodyFrozen({
+      body: BASE_BODY,
+      comments: [],
+      principalAllowlist: PRINCIPALS,
+      createdAt: AFTER_ROLLOUT
+    })
+    expect(result.status).toBe('fail')
+    if (result.status === 'fail') expect(result.reason).toBe('no-marker-not-grandfathered')
+  })
+
+  it('ignores a marker comment from a non-allowlisted author on a pre-rollout PR (falls back to grandfathered info)', () => {
     const hash = authoredRegionHash(BASE_BODY)
     const edited = BASE_BODY.replace('Touches aeg-core and cli.', 'Touches aeg-core and cli. Also touches sources.')
     const result = checkPrBodyFrozen({
       body: edited,
       comments: withMarkerComment(hash, 'attacker'),
-      principalAllowlist: PRINCIPALS
+      principalAllowlist: PRINCIPALS,
+      createdAt: BEFORE_ROLLOUT
     })
     expect(result.status).toBe('info')
+  })
+
+  it('a marker from a non-allowlisted author on a post-rollout PR fails rather than passing', () => {
+    const hash = authoredRegionHash(BASE_BODY)
+    const result = checkPrBodyFrozen({
+      body: BASE_BODY,
+      comments: withMarkerComment(hash, 'attacker'),
+      principalAllowlist: PRINCIPALS,
+      createdAt: AFTER_ROLLOUT
+    })
+    expect(result.status).toBe('fail')
+    if (result.status === 'fail') expect(result.reason).toBe('no-marker-not-grandfathered')
+  })
+
+  it('tags a body mismatch with reason "mismatch"', () => {
+    const hash = authoredRegionHash(BASE_BODY)
+    const edited = BASE_BODY.replace('Touches aeg-core and cli.', 'Touches aeg-core and cli. Also touches sources.')
+    const result = checkPrBodyFrozen({
+      body: edited,
+      comments: withMarkerComment(hash),
+      principalAllowlist: PRINCIPALS,
+      createdAt: AFTER_ROLLOUT
+    })
+    expect(result.status).toBe('fail')
+    if (result.status === 'fail') expect(result.reason).toBe('mismatch')
   })
 
   it('accepts a marker comment whose author case differs from the allowlist entry', () => {
@@ -152,7 +202,8 @@ describe('checkPrBodyFrozen', () => {
     const result = checkPrBodyFrozen({
       body: BASE_BODY,
       comments: withMarkerComment(hash, 'DaniBoomerang'),
-      principalAllowlist: PRINCIPALS
+      principalAllowlist: PRINCIPALS,
+      createdAt: AFTER_ROLLOUT
     })
     expect(result.status).toBe('pass')
   })
