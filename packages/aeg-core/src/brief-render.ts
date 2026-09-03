@@ -57,16 +57,26 @@ const RATIONALE_FIELD_NAMES: Record<RationaleFieldKey, string> = {
 
 /**
  * Slices one rationale field's prose out of an Issue body: from its label to
- * the next bold/heading field, or the end. Mirrors
- * `issue-validation.ts`'s private `rationaleFieldText` byte-for-byte (see
- * that function's doc comment for why the terminator is
- * `(?![\s\S])`, not `$`, and why the label pattern must stay grouped) —
- * duplicated rather than imported because that helper is not exported and
- * `issue-validation.ts` is out of this task's surface.
+ * the next bold/heading field, or the end. Adapted from `issue-validation.ts`'s
+ * private `rationaleFieldText` (see that function's doc comment for why the
+ * terminator is `(?![\s\S])`, not `$`, and why the label pattern must stay
+ * grouped) — duplicated rather than imported because that helper is not
+ * exported and `issue-validation.ts` is out of this task's surface.
+ *
+ * Anchors the label's own `**`/heading marker to the START of a line
+ * (`^\s*`), unlike the copied original — a presence-only check can tolerate
+ * matching a field name mentioned in passing mid-paragraph (the field is
+ * still present somewhere), but an EXTRACTION cannot: found live, self-
+ * rendering this very task's own Issue (#387), whose "Boundary" field
+ * prose contains the inline aside "`For:`/`Reason:` from
+ * **Suggested agent-class**" — the unanchored original matched that inline
+ * mention first (it is merely preceded by literal `**` characters
+ * somewhere in the text, never required to start a line) and returned the
+ * Boundary field's own tail as the "Suggested agent-class" field's content.
  */
 function sliceRationaleField(text: string, labelPattern: string): string {
   const re = new RegExp(
-    `(?:\\*\\*|^#{1,4}\\s+)\\s*(?:${labelPattern})[^\\n]*\\n?([\\s\\S]*?)(?=\\n\\s*(?:\\*\\*[A-Z]|#{1,4}\\s)|(?![\\s\\S]))`,
+    `^\\s*(?:\\*\\*|#{1,4}\\s+)\\s*(?:${labelPattern})[^\\n]*\\n?([\\s\\S]*?)(?=\\n\\s*(?:\\*\\*[A-Z]|#{1,4}\\s)|(?![\\s\\S]))`,
     'im'
   )
   const m = re.exec(text)

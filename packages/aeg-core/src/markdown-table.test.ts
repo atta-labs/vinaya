@@ -59,7 +59,7 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
 
   it('parses one record per gate row, matching the known row count per ring', async () => {
     const { ring0, ring1, ring2 } = await loadRingTables()
-    expect(ring0.rows).toHaveLength(19)
+    expect(ring0.rows).toHaveLength(20)
     // task 7 (Issue 56) added the `retired-vocabulary` row alongside the
     // existing `reader-resolvable-prose` one. task 8 (Issue 57) added the
     // G6 doctrine-registry-parity row. task 234 added the
@@ -72,7 +72,9 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
     // fix/pr-body-density-check (Issue #357) added the `PR-report density` row.
     // review-convergence-v1 task 5 (Issue #378) added the `pr-body-frozen` row.
     // review-convergence-v1 task 10 added the `doctrine-no-procedures` row.
+    // review-convergence-v1 task 12 (Issue #387) added the `pr refreeze` row.
     expect(ring1.rows).toHaveLength(27)
+
     // (2026-07-13) removed the "Daily drift check — stuck row-adjacent
     // blockers" ring-2 row (its subject matter, stale-blocker.ts, was retired).
     // vinaya-verification-v1 task 8 (Issue 36) added the "Published
