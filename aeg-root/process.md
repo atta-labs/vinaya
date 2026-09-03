@@ -227,7 +227,7 @@ A BLOCKER (code) or CRITICAL/HIGH (security) returns the PR to the Developer, wh
 
 **Spec review (Brief Author).** Do the specs describe what was built? Is the pull request's stated reasoning honest about what changed? Coherence, not technical correctness (that's the Principal's code review).
 
-If both pass (and agent verdicts are APPROVE and PASS, every BLOCKER resolved, and surfaced findings shown to the Principal at the go) → merge. If issues are found → back to the Developer with specific feedback. Loops, but three cycles signals a deeper issue.
+If both pass (and agent verdicts are APPROVE and PASS, and surfaced findings have been shown to the Principal at the go) → merge. If issues are found → back to the Developer with specific feedback. Loops, but three cycles signals a deeper issue.
 
 **Enforcement note:** the agent passes are **trusted discipline** today — Phase 10 requires them, but no CI bot dispatches them automatically yet. The mechanical CI gate is `verify-docs` (Phase 9). Automating review-agent dispatch is future work.
 
