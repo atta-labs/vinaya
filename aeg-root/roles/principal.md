@@ -92,7 +92,7 @@ Until a coordinator program exists, the Principal is the loop's coordinator, per
 - **Apply the three triggers.** Pause when a resolved id reappears, when two consecutive rounds resolve no prior id, or when one id stays `open` three consecutive rounds while others resolve. Round five is a backstop, not a trigger.
 - **Pause with the label.** Apply `vinaya/needs:principal-input`; never invent a new label or status field.
 - **Work the stall menu, cheapest first.** A different role in the seat, resume with the trigger overridden, reseed the Developer, abandon.
-- **Give the go on surfaced findings.** A finding outside round two's delta, any severity, waits on this decision rather than driving the verdict.
+- **Give the go on surfaced findings.** A finding outside round two's delta, any non-blocking severity, waits on this decision rather than driving the verdict.
 
 A coordinator program replaces this by-hand duty when one exists.
 
