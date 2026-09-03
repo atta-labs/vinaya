@@ -10,11 +10,16 @@
  * fix/pr-report-emitter, §6 Part 2): this closes fabrication for Group A (the
  * recomputed diff stat) by exact-comparing recomputed text against the
  * block's stored text. For Group B (the attested `vinaya check --all
- * --diff-only` run) it checks staleness only — that the block's `Head:` sha
- * still equals the PR's real head — because re-running that suite here would
- * be the recursion this same brief's Part 1 rejected. A block whose Group B
- * section was fabricated outright (never actually run) is NOT detected by
- * this function; only a STALE one is.
+ * --diff-only` run) and Group C (the attested §9 `[agent]` command list,
+ * task 12, Principal ruling PR `open-1`) it checks correspondence only —
+ * Group B's `Head:` sha still matches the PR's real head, Group C's stored
+ * `$ <command>` lines still equal the body's own §9 list — because
+ * re-running either suite here would be the recursion this same brief's
+ * Part 1 rejected (Group C's own first attempt at exact re-run did exactly
+ * that: deleted `dist` out from under CI's twenty-six sibling checks and
+ * ran the whole test suite inside a single check's timeout). A block whose
+ * Group B or Group C section was fabricated outright (never actually run)
+ * is NOT detected by this function; only a STALE or MISMATCHED one is.
  */
 
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../lib/numstat'
@@ -37,20 +42,26 @@ const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
  * compared. Passing the pair whole is what keeps the located line and the
  * sliced text at the same offsets (Issue #189).
  *
- * `actualGroupCFenceInner` (task 12, #387) is the caller's own independently
- * recomputed Group C fence content (`renderGroupC`'s inner text, re-run from
- * the PR's own body's Test Plan command list) — compared exactly, the same
- * way Group A is, WHEN the block carries a third fence at all. A body with
- * only two fences predates this group (grandfathered — not every currently
- * open PR was written after task 12 landed) and is not compared on this
- * axis; `undefined` skips the comparison outright for a caller that has not
+ * `expectedGroupCCommandLines` (task 12, Principal ruling PR `open-1`) is the
+ * caller's own command list read STRAIGHT OFF the body's §9 Test Plan
+ * section (`agentCommandText`-stripped, never executed by this check) —
+ * compared against the stored block's `$ <command>` lines, in order, WHEN
+ * the block carries a third fence at all. Group C is arbitrary §9 commands,
+ * not a `git` recompute: re-running it here is exactly the class of
+ * recursion Group B is already exempt from (a check re-executing a full
+ * test suite under sibling checks that just consumed the same `dist` — the
+ * defect this ruling fixes). This is attestation, the same treatment
+ * Group B gets, never a re-run and byte-compare. A body with only two
+ * fences predates this group (grandfathered — not every currently open PR
+ * was written after task 12 landed) and is not compared on this axis;
+ * `undefined` skips the comparison outright for a caller that has not
  * computed one.
  */
 export function compareEvidenceBlock(
   resolved: ResolvedRegion,
   resolvedHead: string,
   actualNumstat: string,
-  actualGroupCFenceInner?: string
+  expectedGroupCCommandLines?: string[]
 ): EvidenceCompareResult {
   const region = resolved.region
   const headMatch = region.match(HEAD_LINE)
@@ -112,19 +123,26 @@ export function compareEvidenceBlock(
     }
   }
 
-  // Group C (task 12, #387) — compared exactly, like Group A, but only when
-  // BOTH sides can see it: the block carries a third fence, and the caller
-  // computed one to compare against. A two-fence block predates this group
-  // entirely and is never faulted for lacking it.
-  if (actualGroupCFenceInner !== undefined && fences.length >= 3) {
-    const storedGroupC = fences[2] as string
-    const actualGroupC = actualGroupCFenceInner.trim()
-    if (storedGroupC !== actualGroupC) {
+  // Group C (task 12, Principal ruling PR `open-1`) — attested, like
+  // Group B: the stored fence's `$ <command>` lines must equal the body's
+  // own §9 command list, in order. Never re-run, never byte-compared
+  // against fresh output — only when BOTH sides can see it: the block
+  // carries a third fence, and the caller supplied an expected list. A
+  // two-fence block predates this group entirely and is never faulted for
+  // lacking it.
+  if (expectedGroupCCommandLines !== undefined && fences.length >= 3) {
+    const storedCommands = (fences[2] as string)
+      .split('\n')
+      .filter((l) => l.startsWith('$ '))
+      .map((l) => l.slice(2))
+    const expected = expectedGroupCCommandLines
+    const mismatch = storedCommands.length !== expected.length || storedCommands.some((c, i) => c !== expected[i])
+    if (mismatch) {
       errors.push(
         [
-          'evidence-fresh: Group C does not match a fresh re-run of the Test Plan `[agent]` command list at the PR head.',
-          `  block:  ${JSON.stringify(storedGroupC)}`,
-          `  actual: ${JSON.stringify(actualGroupC)}`
+          "evidence-fresh: Group C's command lines do not match the PR body's own §9 Test Plan list.",
+          `  block:    ${JSON.stringify(storedCommands)}`,
+          `  expected: ${JSON.stringify(expected)}`
         ].join('\n')
       )
     }

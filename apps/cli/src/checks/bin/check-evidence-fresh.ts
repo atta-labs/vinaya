@@ -11,10 +11,14 @@
  *     for freshness only, via the block's `Head:` line — re-running that
  *     suite here would be the recursion `vinaya pr report`'s own docstring
  *     rejects.
- *   - Group C (task 12, #387: the Test Plan's `[agent]` command list) is
- *     re-run from this checkout's own tree and compared exactly, the same
- *     way Group A is — skipped for a two-fence block that predates this
- *     group.
+ *   - Group C (task 12, Principal ruling PR `open-1`: the Test Plan's
+ *     `[agent]` command list) is attested, like Group B — the stored
+ *     block's `$ <command>` lines must equal the body's own §9 list, never
+ *     re-run here. Group C is arbitrary commands, not a `git` recompute; an
+ *     earlier version of this check re-ran the whole §9 list (including a
+ *     full `bun run test`) inside its own timeout, deleting `dist` out from
+ *     under the twenty-six sibling checks the same CI job had just built it
+ *     for. Skipped for a two-fence block that predates this group.
  *
  * Head resolution deliberately does NOT use `HEAD`. `actions/checkout@v4` on
  * a `pull_request` event with no `ref:` checks out `refs/pull/N/merge`, so
@@ -43,8 +47,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { extractFencedBlocks } from '@attalabs/aeg-core'
-import { computeGroupC, renderGroupC } from '../../commands/pr-report'
+import { agentCommandText, extractAgentCommandLines } from '../../commands/pr-report'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { compareEvidenceBlock } from '../evidence-fresh-logic'
 import { ScanContext, resolveAnchoredRegion } from '../scan-context'
@@ -203,14 +206,12 @@ function main(): void {
     process.exit(1)
   }
 
-  // Re-runs every `[agent]` command from this checkout's own tree — already
-  // the PR's real content, the same tree Group A's `--numstat` recompute
-  // above trusts. `extractFencedBlocks` pulls just the fence's inner text
-  // back out of the full render, matching what `compareEvidenceBlock` reads
-  // off the stored block via the same fence scan.
-  const actualGroupCFenceInner = extractFencedBlocks(renderGroupC(computeGroupC(body)))[0]?.content
+  // Attestation, not a re-run: the body's own §9 command list, arrow text
+  // stripped — never spawned. See `evidence-fresh-logic.ts`'s module doc for
+  // why re-running Group C here was the defect this ruling closes.
+  const expectedGroupCCommandLines = extractAgentCommandLines(body).map(agentCommandText)
 
-  const result = compareEvidenceBlock(resolved, resolvedHead, actualNumstat, actualGroupCFenceInner)
+  const result = compareEvidenceBlock(resolved, resolvedHead, actualNumstat, expectedGroupCCommandLines)
   if (result.status === 'fail') {
     for (const message of result.errors) {
       emitCheckError({

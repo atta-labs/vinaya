@@ -11,6 +11,7 @@ import {
   resolveMeteringCapability
 } from '@attalabs/aeg-core'
 import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
+import { buildCheckEnv } from '../checks/runner'
 import { ScanContext } from '../checks/scan-context'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../lib/numstat'
 import { packageRoot } from '../lib/package-root.js'
@@ -416,13 +417,22 @@ function truncateAgentOutput(output: string): string {
  * happened, not to pre-judge which stream mattered). A command that exceeds
  * `AGENT_COMMAND_TIMEOUT_MS` is recorded with the literal output `timeout`,
  * never silently dropped from the block.
+ *
+ * Spawned with `buildCheckEnv(undefined)` — the same baseline `runner.ts`
+ * gives every registered check (`PATH`/`LANG`/`HOME`/proxy vars/`TMPDIR`
+ * only) — never the bare `spawnSync` default of the full `process.env`
+ * (Principal ruling, PR `open-1` addendum). This command's text came from a
+ * PR body; nothing in `AEG:EVIDENCE`'s trust model lets a body author choose
+ * what secrets its own §9 line can read, so `GH_TOKEN`/`GITHUB_TOKEN` never
+ * reach it.
  */
 export function runAgentCommand(command: string): GroupCCommandResult {
   const proc = spawnSync('bash', ['-c', command], {
     cwd: process.cwd(),
     encoding: 'utf8',
     timeout: AGENT_COMMAND_TIMEOUT_MS,
-    maxBuffer: 32 * 1024 * 1024
+    maxBuffer: 32 * 1024 * 1024,
+    env: buildCheckEnv(undefined)
   })
   if (proc.error && (proc.error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
     return { command, output: 'timeout', exitCode: null, timedOut: true }

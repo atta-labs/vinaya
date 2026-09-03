@@ -316,7 +316,12 @@ function renderSection8(): string {
   return [
     '## 8. Verification before claiming done',
     '',
-    '- `rm -rf apps/cli/dist && bun run test` (one full run — already graded by `evidence-fresh` against the Evidence block).',
+    // Never `rm -rf apps/cli/dist &&`-prefixed (Principal ruling, PR
+    // `open-1`): that removal is a Developer pre-flight step in doctrine,
+    // never a command a check or `pr report` executes — `evidence-fresh`
+    // re-running it under the twenty-six sibling checks CI had just built
+    // deleted their own `dist` out from under them.
+    '- `bunx turbo test --affected --force` (one full run — the command and its output are attested in the Evidence block).',
     '- Every blast-radius consumer named in §4, re-verified by name.',
     '- `roles/developer.md`\'s tier checklist genuinely satisfied, and `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr` green.'
   ].join('\n')
@@ -339,7 +344,7 @@ function renderSection9(facts: BriefFacts): string {
   const commandLines =
     testFiles.length > 0
       ? testFiles.map((f) => `bun test ${f.path} → 0 fail`)
-      : ['bun run test → summary line ends "0 fail"']
+      : ['bunx turbo test --affected --force → summary line ends "0 fail"']
 
   const observationText = [
     facts.rationale.boundary ?? '',

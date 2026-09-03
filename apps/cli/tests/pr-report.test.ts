@@ -174,6 +174,31 @@ describe('runAgentCommand — real subprocess, no network', () => {
     expect(result.output).toBe('oops')
     expect(result.exitCode).toBe(3)
   })
+
+  it('never forwards GH_TOKEN/GITHUB_TOKEN to a §9 command (Principal ruling, PR open-1 addendum)', () => {
+    const previousGhToken = process.env.GH_TOKEN
+    const previousGithubToken = process.env.GITHUB_TOKEN
+    process.env.GH_TOKEN = 'secret-gh-token'
+    process.env.GITHUB_TOKEN = 'secret-github-token'
+    try {
+      const result = runAgentCommand('env')
+      expect(result.output).not.toContain('secret-gh-token')
+      expect(result.output).not.toContain('secret-github-token')
+      expect(result.output).not.toContain('GH_TOKEN')
+      expect(result.output).not.toContain('GITHUB_TOKEN')
+    } finally {
+      if (previousGhToken === undefined) {
+        delete process.env.GH_TOKEN
+      } else {
+        process.env.GH_TOKEN = previousGhToken
+      }
+      if (previousGithubToken === undefined) {
+        delete process.env.GITHUB_TOKEN
+      } else {
+        process.env.GITHUB_TOKEN = previousGithubToken
+      }
+    }
+  })
 })
 
 describe('groupCFailed', () => {

@@ -102,7 +102,7 @@ describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)',
   })
 })
 
-/** A block carrying a THIRD fence (Group C, task 12, #387) — appended after Group B. */
+/** A block carrying a THIRD fence (Group C, task 12) — appended after Group B. */
 function evidenceBodyWithGroupC(head: string, numstat: string, groupCInner: string): string {
   const withoutEnd = evidenceBody(head, numstat).replace('<!-- AEG:EVIDENCE:END -->', '')
   return [
@@ -117,27 +117,33 @@ function evidenceBodyWithGroupC(head: string, numstat: string, groupCInner: stri
   ].join('\n')
 }
 
-describe('compareEvidenceBlock — Group C (task 12, #387)', () => {
-  it('passes when the stored third fence matches the caller-supplied actual', () => {
-    const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, '$ echo hi\nhi')
-    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, '$ echo hi\nhi')
+describe('compareEvidenceBlock — Group C is attested, never re-run (task 12, Principal ruling PR open-1)', () => {
+  it('passes when the stored fence carries no process output at all — only the command line is checked', () => {
+    const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, '$ echo hi\nwhatever this printed, never compared')
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, ['echo hi'])
     expect(result.status).toBe('pass')
   })
 
-  it('fails, naming Group C, when the stored third fence disagrees with a fresh re-run', () => {
+  it("fails, naming Group C, when the stored command line disagrees with the body's own §9 list", () => {
     const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, '$ echo hi\nhi')
-    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, '$ echo hi\nsomething else')
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, ['echo bye'])
     expect(result.status).toBe('fail')
-    expect(result.status === 'fail' && result.errors.join('\n')).toContain('Group C does not match')
+    expect(result.status === 'fail' && result.errors.join('\n')).toContain("Group C's command lines")
   })
 
-  it('a two-fence (pre-#387) block is never faulted for lacking Group C, even when the caller supplies one', () => {
+  it('fails on a stored command list shorter or longer than the expected §9 list, not just a content mismatch', () => {
+    const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, '$ echo hi\nhi')
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, ['echo hi', 'echo bye'])
+    expect(result.status).toBe('fail')
+  })
+
+  it('a two-fence (pre-task-12) block is never faulted for lacking Group C, even when the caller supplies an expected list', () => {
     const body = evidenceBody(HEAD, NUMSTAT)
-    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, '$ echo hi\nhi')
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, ['echo hi'])
     expect(result.status).toBe('pass')
   })
 
-  it('skips the Group C comparison entirely when the caller passes no actual to compare', () => {
+  it('skips the Group C comparison entirely when the caller passes no expected list', () => {
     const body = evidenceBodyWithGroupC(HEAD, NUMSTAT, '$ echo hi\nhi')
     const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT)
     expect(result.status).toBe('pass')

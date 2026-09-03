@@ -133,6 +133,18 @@ describe('renderBrief', () => {
     expect(result.brief).toMatch(/Test Plan:\*\* unit-tests-only|Test Plan: unit-tests-only/)
   })
 
+  it('the §9 fallback command is `bunx turbo test --affected --force`, never `rm -rf apps/cli/dist`-prefixed (Principal ruling, PR open-1)', () => {
+    // A runtime, non-test surface file (baseFacts' default `fixture.ts`)
+    // takes the fenced-list branch with no per-test-file line, so it falls
+    // through to the one generic command — the line `evidence-fresh`
+    // attests against the body's own §9 list, never re-runs.
+    const result = renderBrief(baseFacts(), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).toContain('bunx turbo test --affected --force → summary line ends "0 fail"')
+    expect(result.brief).not.toContain('rm -rf apps/cli/dist')
+  })
+
   it('emits a consumer-tests sentinel when a touched package has an uncovered consumer', () => {
     const result = renderBrief(baseFacts({ consumersOf: () => ['apps/cli'] }), '')
     expect(result.ok).toBe(true)
