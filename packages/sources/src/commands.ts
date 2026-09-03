@@ -356,9 +356,14 @@ export const COMMANDS: readonly Command[] = [
       { flag: '--tokens-in', description: 'a non-negative integer, or `-` if unknown' },
       { flag: '--tokens-out', description: 'a non-negative integer, or `-` if unknown' },
       { flag: '--cost', description: 'free text, or `-` if unknown' },
+      {
+        flag: '--print-only',
+        description: 'Render and self-check the comment, print it, and exit — never calls `gh pr comment`'
+      },
       { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
     ],
     details: [
+      '`--print-only` runs the exact same render-then-self-check path as a real post, then returns before `gh pr comment` — closes atta-labs/vinaya#184, where the old command silently posted a verdict anyway after a reviewer guessed this flag existed.',
       "Every structural line (`VERDICT:`, `Judged head:`) is rendered from this command's own validated enum/sha inputs — never from a caller-supplied string — so a Reviewer's free-typed prose can no longer produce a shape the merge gate's line-anchored regex fails to see.",
       "The verdict is derived, not typed: a BLOCKER (or CRITICAL/HIGH) finding forces REQUEST_CHANGES/FAIL and its absence forces APPROVE/PASS, before posting anything — an explicit `--verdict` that disagrees is refused naming the derived value. When a same-role verdict comment already exists on the PR, a new findings file must carry every prior id with a state and no non-blocking finding outside the diff since that comment's judged head, or the post is refused.",
       "Before the post ever reaches the forge, runs the exact `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` functions `checkReviewGate` calls over its own rendered text and refuses (exit 2) unless exactly the intended verdict extracts and the other role extracts none — an escalation requires both to extract none. Both extractors read only a comment's first three lines, which are always this command's own structural lines, so no caller-supplied field can smuggle a line the gate would misread.",
@@ -420,6 +425,9 @@ export const COMMANDS: readonly Command[] = [
     flags: [
       { flag: '--dry-run', description: 'Print the full diff without regenerating anything' },
       { flag: '--yes', description: 'Skip the confirmation prompt' }
+    ],
+    details: [
+      'When `claude` is a selected agent vendor, also retrofits the Claude Code `Stop` hook (`.claude/hooks/track-transcript.sh`, `.claude/settings.json`) the same way `init` installs it on a fresh repo — for a repo that ran `init` before this hook existed, closing the gap that left token rows reading `—/—/—` with no operator ever told to re-run `init`. Never overwrites a foreign `.claude/settings.json` (refuse-if-foreign, same as `init`); appends to a foreign Stop-hook script rather than replacing it (managed-block, same discipline as the git hooks).'
     ],
     status: 'shipped'
   },
