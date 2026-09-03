@@ -81,4 +81,4 @@ The block opens with `Head:` and a `Summary:` line — a file and line count der
 
 ---
 
-**This body is written once, at open.** After the PR is open, only the Evidence block and one appended Token report row change — both through `pr edit`, never by hand. A round's response, its re-run evidence, and any disclosure the brief didn't anticipate are PR comments, never edits to this body.
+**This body is written once, at open.** After the PR is open the Developer changes nothing outside the `AEG:EVIDENCE` anchor and one appended `AEG:TOKENS` row. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. A round's response, its re-run evidence, and any disclosure the brief didn't anticipate are PR comments, never edits to this body.

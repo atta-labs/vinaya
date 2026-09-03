@@ -189,14 +189,21 @@ The `AEG:EVIDENCE` block is populated by running `vinaya pr report --write <body
 
 **Regeneration is the last step, after every other change.** The local body file is never hand-edited after open. When a push forces the Evidence block to go stale — or a re-entry turn needs its one appended Token report row — regenerate and re-apply it last, after every commit for that round is already pushed, from the repo root:
 
+`pr edit --body-file` replaces the whole body, so the local file must be refreshed from the forge first — a `[principal]` tick, if one landed, is a forge write only that pull carries forward:
+
 ```
+gh pr view <n> --json body -q .body > <body-file>
 export PR_BODY="$(cat <body-file>)"
 export BRANCH=<branch>
-bun apps/cli/src/index.ts pr report --write <body-file>
-bun apps/cli/src/index.ts pr edit <n> --body-file <body-file>
+vinaya pr report --write <body-file>
+vinaya pr edit <n> --body-file <body-file>
 ```
 
-That sequence is the only sanctioned post-open write. The only bytes that may differ on the forge between two pushes are inside the `AEG:EVIDENCE` anchor pair, plus, on a re-entry turn, one appended row inside the `AEG:TOKENS` anchor pair. Everything else a review round produces — the response to findings, re-run `[agent]` evidence, any disclosure the brief didn't anticipate — is a PR comment, never a body edit.
+**On this repo's toolchain**, substitute `bun apps/cli/src/index.ts` for `vinaya` in the sequence above.
+
+Then confirm: `diff <(gh pr view <n> --json body -q .body) <body-file>` shows only anchored regions changed.
+
+That sequence is the only sanctioned post-open write. After open the Developer changes nothing outside the `AEG:EVIDENCE` anchor and one appended `AEG:TOKENS` row. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. Everything else a review round produces — the response to findings, re-run `[agent]` evidence, any disclosure the brief didn't anticipate — is a PR comment, never a body edit.
 
 ---
 
