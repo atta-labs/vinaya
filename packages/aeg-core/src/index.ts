@@ -98,6 +98,8 @@ export {
   isTaskBranch
 } from './brief-validation'
 export type { BriefSectionResult, BriefSectionsOptions, FencedBlock } from './brief-validation'
+export { checkDoctrineNoProcedures } from './doctrine-no-procedures'
+export type { DoctrineFile, DoctrineProcedureFinding } from './doctrine-no-procedures'
 export { checkPrReportDensity, checkScopeDensity, checkSummaryDensity } from './pr-report-density'
 export type { DensityResult } from './pr-report-density'
 export {
