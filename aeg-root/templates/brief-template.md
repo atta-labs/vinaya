@@ -58,7 +58,7 @@ git worktree add .worktrees/task/[tranche-slug]/[n] -b task/[tranche-slug]/[n] o
 
 On any failure: STOP and report.
 
-## 6. Numbered parts — commit and push after EACH part (push-per-Part)
+## 6. Numbered parts — commit after EACH part; push once, before opening the PR
 
 1. **Part 1:** [exact files + exact function/type signatures + constraints — not prose. A Part that depends on a fact about current code opens with the fenced command that establishes it, followed by the executed output (skill §2's rule).]
 2. **Part 2:** [next bounded unit of work]
@@ -69,7 +69,7 @@ On any failure: STOP and report.
 
 ## 8. Verification before claiming done
 
-- [the repo's static gates, by command — this repo: `bun run typecheck`, `bun run test`, lint, build]
+- [the repo's static gates, by command — this repo: `bun run typecheck`, lint, build; `bunx turbo test --affected` per Part — the full `bun run test` suite is CI's to run, on the one push, never the Developer's to run locally]
 - [every blast-radius consumer named in §4 re-verified, by name]
 - `roles/developer.md`'s tier checklist genuinely satisfied, and `PR_BODY="$(cat <body-file>)" vinaya check doc-coverage` green. (On this repo's toolchain, `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr` runs both as one command.)
 

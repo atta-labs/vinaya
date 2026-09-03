@@ -344,8 +344,7 @@ This clause is what makes a dispatched agent run to completion unattended instea
 
 What the executor opens/commits/creates at the end:
 - PR title (exact format)
-- **The brief pasted into the PR body** — plus the `Tier:` declaration (`Tier: 0|1|3`) and the `Closes #N` reference to the task's Issue (so the merge auto-closes it). The `Ticket:`/`Project:` lines (if present) ride into the PR body too.
-- **The reference copy is wrapped in a collapsed `<details>` block — standing convention.** The PR body's *report half* (start from `aeg-root/templates/pr-report-template.md`) carries the real gate-read fields in their anchored homes; the brief rides below it inside `<details><summary>…</summary>…</details>`, collapsed by default, so the brief's own `Tier:` / Test Plan / `Closes` text can never be mistaken — visually or mechanically — for the PR's real fields. A `<details>` block hides nothing from the raw body, so provenance/archival tooling that greps the full PR body still finds the complete brief text.
+- **The brief is a PR comment, not a body block — standing convention.** The PR body (start from `aeg-root/templates/pr-report-template.md`) carries only the report half — the real gate-read fields in their anchored homes: `Tier:`, the `Closes #N` reference to the task's Issue (so the merge auto-closes it), and the `Ticket:`/`Project:` lines (if present). `vinaya pr create` posts the brief, verbatim, as its own comment marked `<!-- aeg:brief -->`, immediately after the body-hash marker, once, at open — never pasted or wrapped in a `<details>` block inside the body. This keeps the brief's own `Tier:` / Test Plan / `Closes` text out of the region any gate scans, and out of the body's byte count; provenance/archival tooling that once greped the full PR body for the brief now reads that comment.
 - Files modified (`git diff main --stat`)
 - PR description sections required
 - What to report back and in what format

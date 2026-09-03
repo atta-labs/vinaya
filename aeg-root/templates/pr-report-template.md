@@ -7,7 +7,7 @@ sidebar_title: "Template: PR report"
 
 **The anchor comments are load-bearing.** Each gate-read field — `Closes #N`, `Project:`, `Tier:`, the Test Plan section, the Premise block, the Evidence block — sits inside an AEG anchor pair (an HTML comment pair, invisible on the rendered PR). When an anchor pair for a field is present, every gate reads that field **exclusively from inside the pair**, ignoring identical-looking text anywhere else in the body — a pasted reference brief, a quoted example, a duplicate section can no longer be mistaken for the real field. Bodies without anchors remain fully recognized (prose recognition is the compatibility fallback) for every field **except Evidence**, which has no prose fallback — it is never hand-typed. Use at most one anchor pair per field. Keep the anchors when you fill this in.
 
-**The `AEG:PREMISE` anchor is not optional when the brief carried a `Premise:` block.** Without it, `premise-recheck` scans the *whole* body for anything premise-shaped — including the brief's own original pins, pasted verbatim into the `<details>` reference copy at the bottom — and re-asserts those against the code you just changed. A premise pinning the *pre-fix* state will correctly fail once your fix lands, because the pin describes what you just changed away from. Put a fresh, post-fix, currently-true assertion inside `<!-- AEG:PREMISE:START -->` / `<!-- AEG:PREMISE:END -->` so the re-check asserts something true of the shipped diff, not the brief's stale snapshot.
+**The `AEG:PREMISE` anchor is not optional when the brief carried a `Premise:` block.** Without it, `premise-recheck` scans the *whole* body for anything premise-shaped — and re-asserts those against the code you just changed. A premise pinning the *pre-fix* state will correctly fail once your fix lands, because the pin describes what you just changed away from. Put a fresh, post-fix, currently-true assertion inside `<!-- AEG:PREMISE:START -->` / `<!-- AEG:PREMISE:END -->` so the re-check asserts something true of the shipped diff, not the brief's stale snapshot — this holds even though the brief's own original pins no longer live in this body at all (they're in the separate `aeg:brief` PR comment, below).
 
 **No bare digit outside a fenced block.** `body-bare-digits` (CI) refuses a countable claim — a test count, a file count, a timing figure, "N passed" — written loose in a sentence anywhere in this body. A digit is exempt for exactly one reason: it sits inside an inline code span or a fenced/indented code block (`` `N` `` or a fenced block), or inside `Closes #N`/`Project:` (this header block) / `Tier:` (under `## Scope`) / `Evidence` (under `## Evidence`), correctly placed under its own documented section. **Nowhere else** — including inside `Premise`/`Test plan` (both scanned exactly like ordinary prose, no anchor exemption at all — evidence there, byte counts, exit codes all need their own backticks too), an Issue/PR reference, a date, a version, a file path, or a section number: any of those now needs its own backticks (`` `#N` ``, `` `2026-08-18` ``, `` `0.12.0` ``) the same as any other digit. Write the number inside a fenced block or backticks, or don't write it bare at all.
 
@@ -40,7 +40,7 @@ Closes #[N]
 - [path/inside/the/shipped/diff.ts] contains: [a literal substring that is TRUE of the code AFTER your fix — never the brief's original pre-fix pin]
 <!-- AEG:PREMISE:END -->
 
-[Omit this whole section — anchors and all — only when §4 of the brief had no real code surface (a Tier 0 doc-only or planning-only change). Any brief with a `Premise:` block gets a fresh one here; do not leave the brief's original block as the only copy in the body, since it lives inside the `<details>` reference copy below and unanchored will be picked up by the re-check instead of this one.]
+[Omit this whole section — anchors and all — only when §4 of the brief had no real code surface (a Tier 0 doc-only or planning-only change). Any brief with a `Premise:` block gets a fresh one here; do not rely on the brief's original block as a substitute — it lives in the separate `aeg:brief` PR comment, not in this body, and the re-check reads this anchored section, not that comment.]
 
 ## Evidence
 
@@ -70,15 +70,8 @@ The block opens with `Head:` and a `Summary:` line — a file and line count der
 | [task-id]: develop | Developer | [model] | [exact in] | [exact out] | [cost] | [YYYY-MM-DD] |
 <!-- AEG:TOKENS:END -->
 
-## Reference — the dispatched brief
-
-<details>
-<summary>Full brief (reference copy — the gates read the anchored fields above, never this block)</summary>
-
-[paste the entire dispatched brief here, verbatim]
-
-</details>
-
 ---
+
+**The brief is not part of this body.** `vinaya pr create` posts the entire dispatched brief, verbatim, as its own PR comment marked `<!-- aeg:brief -->`, immediately after the body-hash marker — once, at open. This body carries the report only: everything above this divider.
 
 **This body is written once, at open.** After the PR is open the Developer changes nothing outside the `AEG:EVIDENCE` anchor and one appended `AEG:TOKENS` row. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. A round's response, its re-run evidence, and any disclosure the brief didn't anticipate are PR comments, never edits to this body.
