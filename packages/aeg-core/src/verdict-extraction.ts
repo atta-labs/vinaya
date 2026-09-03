@@ -25,6 +25,23 @@
  * code-reviewer.md`/`security-reviewer.md` require verbatim) — tightening
  * to it closes the gap without inventing a new convention.
  *
+ * The VALUE is windowed to the comment's first THREE lines only
+ * (review-convergence-v1 task 2, round 4, `#392`) — never a line anywhere
+ * else in the body. Every shape this package's own callers render puts the
+ * `VERDICT:`/`ESCALATE:` line first and `Judged head:` third; a
+ * caller-supplied field (findings, conformance prose, a summary) never
+ * renders before line 5. Restricting the read window closes a
+ * caller-controlled-text injection route without narrowing what any real
+ * render needs matched.
+ *
+ * The CANDIDATE SET stays whole-body (review-convergence-v1 task 2, round 5,
+ * `#392`) — round 4 windowed where a verdict's value is read, not which
+ * comments count as a candidate at all. A comment whose only VERDICT-shaped
+ * line sits outside its first three lines is still the most recent
+ * candidate if it is the most recent comment; it reads as DANGLING rather
+ * than being skipped, so it correctly shadows an earlier clean verdict
+ * instead of silently letting the earlier one win.
+ *
  * The anchor tolerates a leading markdown EMPHASIS run — one to three `*` or
  * `_`, immediately abutting the token — so `**VERDICT: APPROVE**` and
  * `_VERDICT: APPROVE_` match (PR #636: the reviewer subagent emitted the
@@ -87,8 +104,27 @@
 
 const HEAD_SHA_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Judged head:\s*([0-9a-f]{7,40})(?![A-Za-z0-9])/im
 
+/**
+ * Round-4 ruling on `#392`: both markers are read from a comment's first
+ * THREE lines only, never anywhere else in the body. Every shape this
+ * package itself renders (`review-post.ts`'s `renderCodeReviewComment`/
+ * `renderSecurityComment`/`renderEscalationComment`) puts `VERDICT:`/
+ * `ESCALATE:` on line 1 and `Judged head:` on line 3 — every caller-supplied
+ * field (findings, conformance prose, scope, a summary) renders strictly
+ * after that, starting at line 5 at the earliest. Restricting the window to
+ * lines 1–3 costs no real render anything: it is a strictly narrower read
+ * than "anywhere in the body," and it closes the class of defect that
+ * motivated this ruling — a caller-supplied field that smuggled a raw
+ * newline followed by a `VERDICT:`- or `Judged head:`-shaped line could
+ * previously inject a structural line from outside the command's own
+ * three-line skeleton; that line can now never be read as one.
+ */
+function firstThreeLines(comment: string): string {
+  return comment.split('\n').slice(0, 3).join('\n')
+}
+
 function extractHeadSha(comment: string): string | null {
-  const m = comment.match(HEAD_SHA_PATTERN)
+  const m = firstThreeLines(comment).match(HEAD_SHA_PATTERN)
   return m ? (m[1] as string).toLowerCase() : null
 }
 
@@ -102,22 +138,45 @@ function extractHeadSha(comment: string): string | null {
  */
 export type VerdictExtraction = { value: string; headSha: string | null; danglingNote: string | null }
 
+/**
+ * Round 5 (`#392`): the candidate set — which comments even ATTEMPTED a
+ * verdict — is a whole-body test, the pre-round-4 pattern. Only the VALUE is
+ * read from the first three lines (round 4, kept). Round 4's own change
+ * built `clearHits` from the windowed text directly, which made a comment
+ * whose marker sits below line 3 vanish from consideration entirely rather
+ * than counting as present-but-unclear — "most recent clear hit wins" then
+ * silently fell through to an OLDER comment, so a later blocking verdict
+ * that happened to render past line 3 let an earlier clean pass win. Here,
+ * the most recent CANDIDATE is picked first; only then is its value read
+ * from its own first three lines. A candidate whose window carries no value
+ * is DANGLING — never skipped in favour of an earlier one — so a later
+ * unclear comment still shadows an earlier clean verdict, the fail-closed
+ * direction every other branch of this function already takes.
+ */
 function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: string): VerdictExtraction {
-  const clearHits = comments.filter((c) => valuePattern.test(c))
-  if (clearHits.length > 0) {
-    const latest = clearHits[clearHits.length - 1] as string
-    const m = latest.match(valuePattern) as RegExpMatchArray
+  const candidates = comments.filter((c) => valuePattern.test(c))
+  if (candidates.length === 0) {
     return {
-      value: (m[1] as string).toUpperCase().replace(/[_-]/g, ' '),
-      headSha: extractHeadSha(latest),
-      danglingNote: null
+      value: `no ${missingLabel} pass was run before merge — DANGLING, see below`,
+      headSha: null,
+      danglingNote: `no ${missingLabel} verdict comment found on this PR`
+    }
+  }
+
+  const latest = candidates[candidates.length - 1] as string
+  const m = firstThreeLines(latest).match(valuePattern)
+  if (!m) {
+    return {
+      value: `the most recent ${missingLabel} comment's VERDICT line is not within its first three lines — DANGLING, see below`,
+      headSha: null,
+      danglingNote: `the most recent ${missingLabel} verdict comment carries a VERDICT-shaped line outside the first-three-line read window`
     }
   }
 
   return {
-    value: `no ${missingLabel} pass was run before merge — DANGLING, see below`,
-    headSha: null,
-    danglingNote: `no ${missingLabel} verdict comment found on this PR`
+    value: (m[1] as string).toUpperCase().replace(/[_-]/g, ' '),
+    headSha: extractHeadSha(latest),
+    danglingNote: null
   }
 }
 

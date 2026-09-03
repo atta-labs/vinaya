@@ -263,7 +263,7 @@ The code-reviewer and security passes are **separate, fresh-context invocations*
 
 - **Address REQUEST CHANGES / FAIL findings.** A code-review BLOCKER or a security CRITICAL/HIGH comes back to you. Fix it on the **same branch** with new commits; the relevant pass re-runs. Do not open a new PR. (Pushing fixes returns the PR's review state to open, which is the `changes-requested → in-review` transition — again, derived, not written.) Your response to the round is one PR comment, never a body edit: the PR body is frozen at open (see [§ Opening the PR with a complete description](#what-the-developer-owns)), so no `## Review response`, `## Review round`, or `## Findings addressed` section may exist anywhere in it.
 - **Do not argue findings into submission.** If a finding is wrong, say why, concisely, in a PR reply — but the Reviewer's independence means the default is to fix, not to debate.
-- **Do not act on an `[ESCALATE]` finding yourself.** Those route to the Planner (strategy) or Principal (`severity: product`). Wait for direction.
+- **Do not act on an escalation yourself.** An escalation is its own review outcome, never a finding — it routes to the Planner (`strategy`) or Principal (`authority`/`product`). Wait for direction.
 - **Do not merge.** Only the Principal merges.
 
 ---

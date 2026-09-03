@@ -149,7 +149,7 @@ The Reviewer role has two specializations — code review (`roles/reviewer.md`) 
 - **Write:** PR review verdicts and review comments only (a Class 2 object) — **nothing to disk**. The verdict is the structured block in the role doc (`APPROVE | REQUEST CHANGES` for code, with a `SPEC CONFORMANCE` line; `PASS | FAIL` for security). A REQUEST CHANGES sets the PR's review decision, which is the derived `changes-requested` status — the Reviewer writes no status field. **Plus a one-line token report** in the same verdict comment — numeric cells `—` when the role is **operator-metered** — the host exposes no usage figure to the agent — which is the reviewing role's usual case and the one sanctioned reason for a blank token cell (`tranche-model.md` §12). The per-task Archivist reads this report and appends the ledger row (`tranches/<name>.tokens.md`) at close-out (§13 append-only artifacts; `tranche-model.md` §12).
 - **Cannot:** edit code, specs, skills, PM docs; mutate labels; or merge. The Reviewer reports; the Developer remediates; the Principal merges.
 - **Independence:** fresh context (a separate invocation), never reviewing work it authored. This is the whole point.
-- **Escalation:** a finding that exceeds review authority is marked `[ESCALATE] severity:strategy|product` and routed to the Planner or Principal.
+- **Escalation:** a concern that exceeds review authority is posted via `--escalate authority | strategy | product` — its own review outcome, never a finding — and routed to the Planner (`strategy`) or Principal (`authority`/`product`).
 
 Because the Reviewer never mutates a canonical artifact, it has no column. Its position is Phase 10 (`process.md`): code-reviewer pass → security pass → Principal code review → Brief Author spec review → **Phase 11 Verification (`roles/developer.md` § Verification)** → merge.
 
@@ -233,7 +233,7 @@ When a Developer reaches a decision not covered by the brief, it escalates throu
 
 **`severity: product`** — requires a Principal decision. Rare; reserved for Type 1 decisions discovered during execution. Adds `vinaya/needs:principal-input`. If the Principal is present, they decide and reply; if not, the item stays labeled `vinaya/needs:principal-input` and the Developer terminates, resuming via a follow-up dispatch after the window.
 
-While blocked, the task carries a `vinaya/blocked` label (the one status with no native forge fact). The Reviewer uses the same severity vocabulary for `[ESCALATE]` findings.
+While blocked, the task carries a `vinaya/blocked` label (the one status with no native forge fact). The Reviewer's own `--escalate authority | strategy | product` outcome uses this same class vocabulary.
 
 ### Type 1 decisions during execution
 

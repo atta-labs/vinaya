@@ -288,15 +288,27 @@ export const COMMANDS: readonly Command[] = [
       },
       {
         flag: '--verdict',
-        description: 'code-reviewer: `APPROVE` | `REQUEST_CHANGES`. security: `PASS` | `FAIL`'
+        description:
+          'Optional — derived from the findings file (code-reviewer: `APPROVE`/`REQUEST_CHANGES`; security: `PASS`/`FAIL`). Refused before posting if it disagrees with the derivation.'
       },
       {
+        flag: '--escalate',
+        description:
+          '`authority` | `strategy` | `product` — posts an `ESCALATE:` comment instead of a verdict. Refused together with `--verdict` or a blocking finding.'
+      },
+      { flag: '--summary', description: 'Required with `--escalate` — the escalation body text' },
+      {
         flag: '--findings-file',
-        description: 'One finding per line: `SEVERITY|file:line|description` (`|`-delimited). Omit for zero findings.'
+        description:
+          'One finding per line: `SEVERITY|file:line|description` (`|`-delimited). A re-review names a prior id in the description as `F<n> <class> <state>:`. Omit for zero findings.'
       },
       { flag: '--brief-conformance', description: 'code-reviewer only: the BRIEF CONFORMANCE line' },
       { flag: '--spec-conformance', description: 'code-reviewer only: the SPEC CONFORMANCE line' },
       { flag: '--scope', description: 'code-reviewer only: the SCOPE line' },
+      {
+        flag: '--scope-evidence-file',
+        description: 'code-reviewer only: pasted diff-stat output, rendered as a fence directly below the verdict block'
+      },
       { flag: '--tests', description: 'code-reviewer only: the TESTS line' },
       { flag: '--docs', description: 'code-reviewer only: the DOCS line' },
       { flag: '--config-scan', description: 'security only: the CONFIG SCAN line' },
@@ -315,8 +327,9 @@ export const COMMANDS: readonly Command[] = [
     ],
     details: [
       "Every structural line (`VERDICT:`, `Judged head:`) is rendered from this command's own validated enum/sha inputs — never from a caller-supplied string — so a Reviewer's free-typed prose can no longer produce a shape the merge gate's line-anchored regex fails to see.",
-      "Refuses a contradictory verdict before posting anything: a BLOCKER finding with `--verdict APPROVE`, or a CRITICAL/HIGH finding with `--verdict PASS`, is rejected outright, mirroring each role doc's own consistency rule.",
-      "After posting, re-fetches the PR's comments and runs them through the exact `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` functions `checkReviewGate` calls — the same functions, not a second implementation — and exits non-zero naming precisely what failed to re-parse if the post does not come back clean and bound to the resolved head. There is no `--skip-verify` escape."
+      "The verdict is derived, not typed: a BLOCKER (or CRITICAL/HIGH) finding forces REQUEST_CHANGES/FAIL and its absence forces APPROVE/PASS, before posting anything — an explicit `--verdict` that disagrees is refused naming the derived value. When a same-role verdict comment already exists on the PR, a new findings file must carry every prior id with a state and no non-blocking finding outside the diff since that comment's judged head, or the post is refused.",
+      "Before the post ever reaches the forge, runs the exact `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` functions `checkReviewGate` calls over its own rendered text and refuses (exit 2) unless exactly the intended verdict extracts and the other role extracts none — an escalation requires both to extract none. Both extractors read only a comment's first three lines, which are always this command's own structural lines, so no caller-supplied field can smuggle a line the gate would misread.",
+      "After posting, re-fetches the PR's comments and runs them through the same extractors `checkReviewGate` calls — the same functions, not a second implementation — and exits non-zero naming precisely what failed to re-parse if the post does not come back clean, bound to the resolved head, and free of the other role's verdict. There is no `--skip-verify` escape."
     ],
     status: 'shipped'
   },
