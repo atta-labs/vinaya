@@ -47,13 +47,21 @@ describe('pr-body-frozen — recovery-prompt coverage (#355)', () => {
     }
   })
 
-  it('the mismatch prompt tells the agent to revert, not to post a marker', () => {
-    expect(recoveryPromptFor('mismatch')).toContain('revert')
+  it('the mismatch prompt tells the agent to revert, not to escalate to the Principal', () => {
+    const prompt = recoveryPromptFor('mismatch')
+    expect(prompt).toContain('revert')
+    expect(prompt).not.toContain('Principal')
   })
 
-  it('the no-marker prompt tells the agent to post a marker, not to revert', () => {
+  it('the no-marker prompt tells the agent to stop and escalate to the Principal — never to recompute and repost a marker itself', () => {
+    // The open-time hash is unrecoverable once the original marker is gone;
+    // an agent computing a fresh hash from the CURRENT body and posting it
+    // would validate the body against itself, silently laundering an
+    // undetectable edit into a clean `pass`. This is the exact instruction
+    // #4 of the review round that added this reason forbids.
     const prompt = recoveryPromptFor('no-marker-not-grandfathered')
-    expect(prompt).toContain('post')
+    expect(prompt).toContain('Principal')
     expect(prompt).not.toContain('revert the body')
+    expect(prompt.toLowerCase()).not.toContain('post `<!--')
   })
 })

@@ -265,7 +265,7 @@ export {
   authoredRegionHash,
   BODY_HASH_MARKER_PATTERN,
   checkPrBodyFrozen,
-  FROZEN_BODY_SINCE,
+  FROZEN_BODY_SINCE_PR,
   renderBodyHashMarker
 } from './pr-body-frozen'
 export type {

@@ -12,15 +12,19 @@
  * comparing the LIVE forge body against a hash of what was posted at open,
  * so a caller-supplied `PR_BODY` (possibly stale, possibly a draft) is never
  * a substitute for the real thing. `PR_NUMBER` is the only env input this
- * bin reads for the body/comments/creation-date triple.
+ * bin reads for the body/comments/PR-number triple — `PR_NUMBER` itself
+ * doubles as the grandfather cutoff input, so no extra `gh` field is needed
+ * for it. Each comment's own `createdAt` (returned by `gh` without an extra
+ * field request) feeds `findMarker`'s earliest-wins selection.
  *
- * Grandfathering is by PR creation date (`FROZEN_BODY_SINCE`,
- * `pr-body-frozen.ts`), not by marker absence: a PR opened before that date
- * with no marker comment gets `info`; a PR opened on or after it gets
- * `fail` — deleting the marker comment (an ordinary PR comment) no longer
- * degrades a real, post-rollout PR back into the grandfathered case. An
- * empty PR body is not a bypass either: it goes through `checkPrBodyFrozen`
- * like any other body, which grandfathers or fails it by the same date rule.
+ * Grandfathering is by PR NUMBER (`FROZEN_BODY_SINCE_PR`,
+ * `pr-body-frozen.ts`), not by marker absence: a PR numbered below the
+ * cutoff with no marker comment gets `info`; a PR numbered at or above it
+ * gets `fail` — deleting the marker comment (an ordinary PR comment) no
+ * longer degrades a real, post-rollout PR back into the grandfathered case.
+ * An empty PR body is not a bypass either: it goes through
+ * `checkPrBodyFrozen` like any other body, which grandfathers or fails it
+ * by the same PR-number rule.
  *
  * requiresOpenPr: true — meaningless before a PR exists (there is no
  * marker comment to read), same reasoning as `closes-n`/`evidence-fresh`.
@@ -41,23 +45,21 @@ import { recoveryPromptFor } from '../pr-body-frozen-recovery-logic'
 
 const CHECK_NAME = 'pr-body-frozen'
 
-type Fetched = { body: string; comments: PrBodyFrozenComment[]; createdAt: string }
+type Fetched = { body: string; comments: PrBodyFrozenComment[] }
 
 function fetchPr(prNumber: number): Fetched | null {
   try {
-    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'body,comments,createdAt'], {
+    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'body,comments'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     })
     const parsed = JSON.parse(out) as {
       body: string
-      comments: { body: string; author?: { login?: string } | null }[]
-      createdAt: string
+      comments: { body: string; author?: { login?: string } | null; createdAt: string }[]
     }
     return {
       body: parsed.body,
-      comments: parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
-      createdAt: parsed.createdAt
+      comments: parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null, createdAt: c.createdAt }))
     }
   } catch {
     return null
@@ -78,7 +80,7 @@ function main(): void {
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
       severity: 'error',
-      message: `pr-body-frozen severity:infra — could not fetch PR #${prNumber}'s body/comments/createdAt via \`gh\`.`,
+      message: `pr-body-frozen severity:infra — could not fetch PR #${prNumber}'s body/comments via \`gh\`.`,
       agent_recovery_prompt:
         'Confirm `gh auth status` passes and PR_NUMBER is correct, then re-run `vinaya check pr-body-frozen`.'
     })
@@ -93,7 +95,7 @@ function main(): void {
     body: fetched.body,
     comments: fetched.comments,
     principalAllowlist,
-    createdAt: fetched.createdAt
+    prNumber
   })
 
   if (result.status === 'fail') {

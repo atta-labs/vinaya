@@ -76,18 +76,23 @@ export function authoredRegionHash(body: string): string {
 }
 
 /**
- * Rollout date (ISO `YYYY-MM-DD`). A PR opened before this date is
- * grandfathered when no marker comment exists — the whole corpus at rollout
- * has none. A PR opened ON or AFTER this date is NOT: a missing marker there
- * is a `fail`, not an `info`. This closes the bypass an absence-only
- * grandfather rule leaves open — the marker comment is an ordinary PR
- * comment, deletable by anyone with comment-delete permission, and deleting
- * it must not degrade a real, post-rollout PR back into the grandfathered
- * case.
+ * Rollout PR number. A PR numbered below this is grandfathered when no
+ * marker comment exists — the whole corpus at rollout has none. A PR
+ * numbered AT or ABOVE it is NOT: a missing marker there is a `fail`, not an
+ * `info`. This closes the bypass an absence-only grandfather rule leaves
+ * open — the marker comment is an ordinary PR comment, deletable by anyone
+ * with comment-delete permission, and deleting it must not degrade a real,
+ * post-rollout PR back into the grandfathered case.
+ *
+ * PR number, not creation date: numbers are assigned once, monotonically,
+ * by the forge itself — never re-derived, never subject to a timestamp's
+ * timezone/precision ambiguity. `392` is the first PR opened after this
+ * task's own round-3 review landed; `#391` (already open, pre-dating this
+ * rule) stays on the grandfathered side of the line without a collision.
  */
-export const FROZEN_BODY_SINCE = '2026-09-03'
+export const FROZEN_BODY_SINCE_PR = 392
 
-export type PrBodyFrozenComment = { body: string; author: string | null }
+export type PrBodyFrozenComment = { body: string; author: string | null; createdAt: string }
 
 export type PrBodyFrozenStatus = 'pass' | 'fail' | 'info'
 
@@ -100,32 +105,48 @@ export type PrBodyFrozenResult =
   | { status: 'fail'; reason: PrBodyFrozenFailReason; errors: string[] }
 
 /**
- * Finds the FIRST marker comment authored by an allowlisted principal — a
+ * Finds the EARLIEST (by `createdAt`) marker comment authored by an
+ * allowlisted principal — never the first one encountered in whatever order
+ * the caller's fetch happened to return, and never the most recent. A
  * marker from a non-allowlisted author is ignored (grandfathering an
- * attacker-posted decoy marker would let them pin an arbitrary hash and mask
- * a real edit). `pr create` posts this comment under the same login that
- * opened the PR, which the review-gate's own trust model already treats as
- * a principal-equivalent write path.
+ * attacker-posted decoy marker would let them pin an arbitrary hash and
+ * mask a real edit). `pr create` posts the original marker under the same
+ * login that opened the PR, which the review-gate's own trust model already
+ * treats as a principal-equivalent write path.
+ *
+ * The open-time hash is the baseline, permanently: a later repost —
+ * whether a second `vinaya pr create`-style post, an allowlisted account
+ * re-pinning a hash to match an edited body, or any other later marker
+ * comment — never wins over the original. Picking the earliest is what
+ * makes that true; picking "first in array order" or "most recent" both
+ * depend on an ordering this function does not control and must not trust.
  */
 function findMarker(comments: readonly PrBodyFrozenComment[], principalAllowlist: readonly string[]): string | null {
+  let earliest: { hash: string; createdAt: string } | null = null
   for (const comment of comments) {
     if (!isPrincipal(comment.author, principalAllowlist as string[])) continue
     const match = BODY_HASH_MARKER_PATTERN.exec(comment.body)
-    if (match) return (match[1] as string).toLowerCase()
+    if (!match) continue
+    const hash = (match[1] as string).toLowerCase()
+    if (earliest === null || comment.createdAt < earliest.createdAt) {
+      earliest = { hash, createdAt: comment.createdAt }
+    }
   }
-  return null
+  return earliest ? earliest.hash : null
 }
 
 /**
- * `info`: no marker comment from an allowlisted author, and `createdAt`
- * (the PR's own creation date, an ISO string) falls before
- * `FROZEN_BODY_SINCE` — this PR predates `pr-body-frozen`. Never a failure;
- * grandfathered.
+ * `info`: no marker comment from an allowlisted author, and `prNumber` is
+ * below `FROZEN_BODY_SINCE_PR` — this PR predates `pr-body-frozen`. Never a
+ * failure; grandfathered.
  *
- * `fail` (`no-marker-not-grandfathered`): no marker comment, but `createdAt`
- * is on or after `FROZEN_BODY_SINCE` — this PR was opened after the check
- * shipped and should carry a marker. Either it wasn't opened via
- * `vinaya pr create`, or the comment was deleted.
+ * `fail` (`no-marker-not-grandfathered`): no marker comment, and `prNumber`
+ * is at or above `FROZEN_BODY_SINCE_PR` — this PR was opened after the
+ * check shipped and should carry a marker. Either it wasn't opened via
+ * `vinaya pr create`, or the comment was deleted. There is no fix an agent
+ * can apply: the open-time hash is unrecoverable (recomputing now would
+ * hash whatever the body currently is, which is exactly the thing under
+ * question), so this is a Principal adjudication, not a re-run.
  *
  * `pass`/`fail` (`mismatch`): a marker exists — recompute
  * `authoredRegionHash` of the live body and compare.
@@ -134,15 +155,15 @@ export function checkPrBodyFrozen(opts: {
   body: string
   comments: readonly PrBodyFrozenComment[]
   principalAllowlist: readonly string[]
-  createdAt: string
+  prNumber: number
 }): PrBodyFrozenResult {
   const marker = findMarker(opts.comments, opts.principalAllowlist)
   if (marker === null) {
-    if (opts.createdAt.slice(0, 10) < FROZEN_BODY_SINCE) {
+    if (opts.prNumber < FROZEN_BODY_SINCE_PR) {
       return {
         status: 'info',
         errors: [
-          `pr-body-frozen: no \`aeg:body-hash\` marker comment from an allowlisted author — grandfathered (this PR was created ${opts.createdAt}, before FROZEN_BODY_SINCE ${FROZEN_BODY_SINCE}). Not a failure.`
+          `pr-body-frozen: no \`aeg:body-hash\` marker comment from an allowlisted author — grandfathered (PR #${opts.prNumber} is below FROZEN_BODY_SINCE_PR #${FROZEN_BODY_SINCE_PR}). Not a failure.`
         ]
       }
     }
@@ -150,7 +171,7 @@ export function checkPrBodyFrozen(opts: {
       status: 'fail',
       reason: 'no-marker-not-grandfathered',
       errors: [
-        `pr-body-frozen: no \`aeg:body-hash\` marker comment from an allowlisted author, and this PR was created ${opts.createdAt} — on or after FROZEN_BODY_SINCE (${FROZEN_BODY_SINCE}), a missing marker is no longer grandfathered.`
+        `pr-body-frozen: no \`aeg:body-hash\` marker comment from an allowlisted author, and PR #${opts.prNumber} is at or above FROZEN_BODY_SINCE_PR #${FROZEN_BODY_SINCE_PR} — a missing marker is no longer grandfathered. The open-time hash is unrecoverable; the Principal adjudicates before merge.`
       ]
     }
   }
