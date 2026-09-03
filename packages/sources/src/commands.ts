@@ -288,11 +288,19 @@ export const COMMANDS: readonly Command[] = [
       },
       {
         flag: '--verdict',
-        description: 'code-reviewer: `APPROVE` | `REQUEST_CHANGES`. security: `PASS` | `FAIL`'
+        description:
+          'Optional — derived from the findings file (code-reviewer: `APPROVE`/`REQUEST_CHANGES`; security: `PASS`/`FAIL`). Refused before posting if it disagrees with the derivation.'
       },
       {
+        flag: '--escalate',
+        description:
+          '`authority` | `strategy` | `product` — posts an `ESCALATE:` comment instead of a verdict. Refused together with `--verdict` or a blocking finding.'
+      },
+      { flag: '--summary', description: 'Required with `--escalate` — the escalation body text' },
+      {
         flag: '--findings-file',
-        description: 'One finding per line: `SEVERITY|file:line|description` (`|`-delimited). Omit for zero findings.'
+        description:
+          'One finding per line: `SEVERITY|file:line|description` (`|`-delimited). A re-review names a prior id in the description as `F<n> <class> <state>:`. Omit for zero findings.'
       },
       { flag: '--brief-conformance', description: 'code-reviewer only: the BRIEF CONFORMANCE line' },
       { flag: '--spec-conformance', description: 'code-reviewer only: the SPEC CONFORMANCE line' },
@@ -315,7 +323,7 @@ export const COMMANDS: readonly Command[] = [
     ],
     details: [
       "Every structural line (`VERDICT:`, `Judged head:`) is rendered from this command's own validated enum/sha inputs — never from a caller-supplied string — so a Reviewer's free-typed prose can no longer produce a shape the merge gate's line-anchored regex fails to see.",
-      "Refuses a contradictory verdict before posting anything: a BLOCKER finding with `--verdict APPROVE`, or a CRITICAL/HIGH finding with `--verdict PASS`, is rejected outright, mirroring each role doc's own consistency rule.",
+      "The verdict is derived, not typed: a BLOCKER (or CRITICAL/HIGH) finding forces REQUEST_CHANGES/FAIL and its absence forces APPROVE/PASS, before posting anything — an explicit `--verdict` that disagrees is refused naming the derived value. When a same-role verdict comment already exists on the PR, a new findings file must carry every prior id with a state and no non-blocking finding outside the diff since that comment's judged head, or the post is refused.",
       "After posting, re-fetches the PR's comments and runs them through the exact `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` functions `checkReviewGate` calls — the same functions, not a second implementation — and exits non-zero naming precisely what failed to re-parse if the post does not come back clean and bound to the resolved head. There is no `--skip-verify` escape."
     ],
     status: 'shipped'
