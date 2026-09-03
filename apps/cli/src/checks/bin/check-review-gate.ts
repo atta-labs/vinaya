@@ -65,15 +65,59 @@ type PrView = {
   comments: { body: string; author?: { login?: string } | null }[]
   labels: { name: string }[]
   headRefOid: string
+  baseRefName: string
 }
 
 function fetchPr(prNumber: number): PrView | null {
   try {
-    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'number,comments,labels,headRefOid'], {
+    const out = execFileSync(
+      'gh',
+      ['pr', 'view', String(prNumber), '--json', 'number,comments,labels,headRefOid,baseRefName'],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    )
+    return JSON.parse(out) as PrView
+  } catch {
+    return null
+  }
+}
+
+/**
+ * This PR's patch identity at `sha`: `git diff origin/<base>...<sha> | git
+ * patch-id --stable`. `--stable` is what makes the value comparable across
+ * two different commits carrying the same changes — the unstable default
+ * folds in context that a rebase or a merge from the base perturbs.
+ *
+ * The commit is FETCHED first: after a push, the judged head is no longer
+ * anything local git has, and diffing against a missing object throws. A
+ * throw anywhere here returns `null`, which `checkReviewGate` reads as
+ * "cannot answer" and never as "they match" — so a genuinely unreachable
+ * judged head (a force-push that discarded it) correctly stops counting
+ * rather than silently passing.
+ */
+function patchIdAt(base: string, sha: string): string | null {
+  try {
+    execFileSync('git', ['fetch', '--quiet', 'origin', sha], { stdio: ['ignore', 'ignore', 'ignore'] })
+  } catch {
+    // Non-fatal on its own: the object may already be local. The diff below
+    // is the real test of whether it is reachable.
+  }
+  try {
+    const diff = execFileSync('git', ['diff', `origin/${base}...${sha}`], {
       encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe']
     })
-    return JSON.parse(out) as PrView
+    if (diff === '') return null
+    const out = execFileSync('git', ['patch-id', '--stable'], {
+      input: diff,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    }).trim()
+    const id = out.split(/\s+/)[0] ?? ''
+    return id === '' ? null : id
   } catch {
     return null
   }
@@ -223,7 +267,11 @@ function main(): void {
     waiverLabelActor,
     principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig()),
     mechanicalChecks,
-    headSha: pr.headRefOid
+    headSha: pr.headRefOid,
+    // A verdict judged a PATCH; the head sha is only its address. A merge
+    // from `main` or a rebase that leaves the patch untouched must not void
+    // a review that already read exactly those changes.
+    patchIdOf: (sha: string) => patchIdAt(pr.baseRefName, sha)
   })
 
   if (result.verdict === 'fail') {

@@ -44,12 +44,24 @@ function shJson<T>(cmd: string): T {
 }
 
 type AssociatedPr = { number: number }
+/**
+ * `gh pr view --json comments` already returns each comment's `author`, so
+ * this shim's fetch carries it. It is carried NO FURTHER: nothing in this
+ * file calls `aggregateTaskTokenRows`, which is the one consumer the author
+ * exists for, so the provenance path below still reads comment bodies alone
+ * (`hasProvenance`, the verdict extractors) and drops the author on the
+ * floor. Typed here rather than discarded at the parse boundary because the
+ * author is what separates a role's own `Tokens:` report from a stranger's
+ * pasted table — every agent in this model posts under the Principal's own
+ * `gh` identity — and a future call site in this shim must not have to
+ * rediscover that the field was available all along.
+ */
 type PrView = {
   number: number
   headRefName: string
   body: string
   mergedAt: string
-  comments: { body: string }[]
+  comments: { body: string; author?: { login?: string } | null }[]
 }
 
 export function main(): void {

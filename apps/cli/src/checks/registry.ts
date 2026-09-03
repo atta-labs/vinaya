@@ -295,10 +295,19 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // See `CheckSpec.requiresOpenPr`'s doc comment.
       requiresOpenPr: true,
       // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
-      // plain absence-tolerant fall-throughs.
+      // plain absence-tolerant fall-throughs. PR_NUMBER is the same shape:
+      // unset means "no PR to read comments from yet" and the bin keeps its
+      // body-only behaviour. The two tokens are forwarded for the same reason
+      // `review-gate`'s entry forwards them — the bin shells to `gh` directly,
+      // and on a CI runner `gh` authenticates ONLY from GH_TOKEN/GITHUB_TOKEN,
+      // so without them every `gh pr view` fails. Optional because a local run
+      // uses `gh`'s own keyring auth with no env var at all.
       env: {
         PR_BODY: { optional: true },
-        BRANCH: { optional: true }
+        BRANCH: { optional: true },
+        PR_NUMBER: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true }
       }
     },
     // requiresOpenPr — see `closes-n` above.
@@ -660,6 +669,19 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       timeoutMs: 30_000,
       // Local-only: walks `<doctrineRoot>` with `node:fs`, never the
       // network, `gh`, or a PR-scoped fact — no forge call, no PR content.
+      env: {}
+    },
+    0
+  ],
+  [
+    {
+      name: 'exec-bits',
+      run: bin('check-exec-bits'),
+      scope: 'diff',
+      timeoutMs: 30_000,
+      // Local-only: `git ls-files -s` and a first-line read, never the
+      // network, `gh`, or a PR-scoped fact — same shape as
+      // `workspace-escape` below, and for the same reason.
       env: {}
     },
     0

@@ -273,11 +273,16 @@ export function runRealGates(): GateRunResult {
   // before any write), so no false attestation could be published.
   const proc = spawnSync(process.execPath, [entry, 'check', '--all', '--diff-only', '--json'], {
     cwd: process.cwd(),
-    // Explicit, not the `spawnSync` default-to-`process.env` behaviour it
-    // would get by omitting this key: `--push` sets `PR_BODY`/`PR_NUMBER`/
-    // `BRANCH` on `process.env` via mutation just before this call, and this
-    // makes the fact that those exports reach the gate child a property of
-    // this line, not an implicit runtime default a reader has to look up.
+    // Explicit, and load-bearing under Bun — not merely clearer than omitting
+    // the key. `--push` sets `PR_BODY`/`PR_NUMBER`/`BRANCH` by MUTATING
+    // `process.env` just before this call. Node propagates a runtime
+    // `process.env` mutation into a `spawnSync` child that inherits the
+    // parent environment; Bun does not — its child sees the environment the
+    // process started with, so under Bun the omitted-key form would hand the
+    // gate child a `PR_BODY` that is stale or absent, and every body-reading
+    // gate in Group B would grade the wrong text (or skip). Spreading
+    // `process.env` here reads the mutated values at call time and passes
+    // them explicitly, which is correct on both runtimes.
     env: { ...process.env },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
@@ -698,7 +703,13 @@ export function spliceIntoLiveBody(live: string, blockInner: string, tokens: Tok
   if (!ScanContext.from(live).rawResolutionAgrees('EVIDENCE')) throw new DivergentEvidenceAnchorError()
   if (anchoredRegionBounds(live, 'EVIDENCE') === null) throw new MissingEvidenceAnchorError()
   const withEvidence = replaceEvidenceBlock(live, blockInner)
-  if (!tokens.collected || !hasTokensAnchor(live)) return { body: withEvidence, tokensSpliced: false }
+  // `withEvidence`, not `live`: the Evidence splice is what this function has
+  // already produced, and it is the body the token splice will actually be
+  // applied to. Testing `live` asks whether the anchor existed in a body that
+  // is no longer the one being written — the two agree today only because
+  // `replaceEvidenceBlock` happens not to touch the `AEG:TOKENS` pair, which
+  // is an invariant of another function, not of this decision.
+  if (!tokens.collected || !hasTokensAnchor(withEvidence)) return { body: withEvidence, tokensSpliced: false }
   return { body: writeTokensBlock(withEvidence, tokens.row), tokensSpliced: true }
 }
 

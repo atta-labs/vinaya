@@ -223,6 +223,8 @@ Each pass is a **separate fresh-context invocation** with no memory of writing t
 
 A BLOCKER (code) or CRITICAL/HIGH (security) returns the PR to the Developer, who fixes on the **same branch**; the pass re-runs. (Pushing fixes returns the PR's review decision to open — the `changes-requested → in-review` transition, derived.) An escalation (`--escalate authority | strategy | product`) is its own review outcome, never a finding — it routes to Brief Author (`strategy`) or Principal (`authority`/`product`).
 
+**A fix commit adds no mechanism beyond what the finding names.** The finding bounds the fix: a flag, a gate, a window, a config knob or a second code path that the finding did not ask for is new design, arriving inside a round that exists to close a defect and reviewed by nobody as design. A finding that genuinely cannot be answered without new mechanism is not a fix at all — it is escalated (`--escalate strategy`) and waits, and the mechanism it needs enters the work the way every other design does: as a constraint amended into the next brief. This is the round-count rule's twin. Rounds multiply when each one both closes something and opens something; a round that only closes is a round the loop can converge out of.
+
 ### Stage B — Human reviews
 
 **Code review (Principal).** The Principal reviews the diff — does it match the brief, scope violations, honest tests, spot-check quality. The agent verdict is an input, not a substitute; the Principal can overrule either way.

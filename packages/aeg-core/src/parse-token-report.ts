@@ -1,6 +1,7 @@
 import { rowFromCells } from './parse-ledger'
 import { splitTableRow } from './parse-registry'
 import type { LedgerRow } from './types'
+import { isPrincipal } from './waiver-label'
 
 /**
  * Live-source token parsing (aeg-forge-state-v1 task 4b, #445). Where
@@ -138,28 +139,39 @@ function isDashOnly(s: string): boolean {
   return s === '—' || s === '-' || s === '–'
 }
 
-/** One merged PR's body + top-level comments — the caller's fetch result, no I/O here. */
+/**
+ * One merged PR's body + top-level comments — the caller's fetch result, no
+ * I/O here. Each comment carries its author's login (`null` when the forge
+ * reports none, e.g. a deleted account) because a comment's `Tokens:` line is
+ * only a ledger row when an allowlisted principal posted it — every agent in
+ * this model posts under the Principal's own `gh` identity, so an unfiltered
+ * read counts a stranger's pasted table as a real turn.
+ */
 export type TokenSourcePr = {
   number: number
   body: string
-  comments: string[]
+  comments: { body: string; author: string | null }[]
 }
 
 /**
  * Pure aggregation over every merged PR associated with a task (its own
  * branch's PR(s), plus any plan/cross-referenced PR carrying the Planner's
  * report) — Developer "Token report" entries and `Tokens: …` lines from
- * each PR body, and `Tokens: …` lines from each PR's comments. Missing or
+ * each PR body, and `Tokens: …` lines from each PR's comments — the latter
+ * only from a comment an allowlisted principal authored. Missing or
  * malformed reports simply produce no row for that report — never a
  * fabricated figure — matching `archivist.md`'s own "flag it under DANGLING
  * instead" discipline; the caller decides how to surface an empty result.
  */
-export function aggregateTaskTokenRows(prs: TokenSourcePr[]): LedgerRow[] {
+export function aggregateTaskTokenRows(prs: TokenSourcePr[], principalAllowlist: string[]): LedgerRow[] {
   const out: LedgerRow[] = []
   for (const pr of prs) {
     out.push(...parseTokenReportEntries(pr.body))
     out.push(...parseTokensLines(pr.body))
-    for (const comment of pr.comments) out.push(...parseTokensLines(comment))
+    for (const comment of pr.comments) {
+      if (!isPrincipal(comment.author, principalAllowlist)) continue
+      out.push(...parseTokensLines(comment.body))
+    }
   }
   return out
 }

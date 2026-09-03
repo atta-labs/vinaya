@@ -119,6 +119,36 @@ export type ReviewGateInput = {
    * already had counted for nobody.
    */
   principalAllowlist?: string[]
+  /**
+   * The PATCH IDENTITY of a commit — `git diff <base>...<sha> | git patch-id
+   * --stable`, truncated — or `null` when git cannot answer for that sha
+   * (an unreachable commit after a force-push, a shallow clone, no git at
+   * all). Supplied by the caller because this module is pure; omitted
+   * entirely, the gate behaves exactly as before.
+   *
+   * Why a second binding at all: a verdict was judged, the branch merged
+   * `origin/main` to clear a stale base, and the verdict died — for a merge
+   * commit that changed not one line of the PR's own patch. Re-reviewing
+   * an identical patch is a round spent proving nothing. Patch identity is
+   * what a reviewer actually judged; the head sha is only its address.
+   *
+   * Two known limits, stated rather than papered over.
+   *
+   * A base that moved under an identical patch can carry a semantic conflict
+   * the earlier review could not have seen, and this binding will still
+   * hold. That is the same limit GitHub's own stale-review rule has, and CI
+   * at the new head — which this gate already requires green — is the guard
+   * for it.
+   *
+   * `git patch-id --stable` ignores whitespace, so a push that changes only
+   * whitespace produces the same patch identity and KEEPS the verdict. That
+   * is deliberate for reformatting, but it is not free: whitespace is
+   * semantic in some languages and some string literals, so a push that is
+   * whitespace-only to git can still change behaviour. Any change to
+   * non-whitespace content produces a different identity and correctly drops
+   * the verdict; only the whitespace-only case survives unreviewed.
+   */
+  patchIdOf?: (sha: string) => string | null
 }
 
 /**
@@ -148,11 +178,43 @@ function isBoundToHead(extraction: { headSha: string | null }, headSha: string):
 }
 
 /**
+ * True when the judged head and the current head carry the SAME patch — the
+ * verdict was cast on this exact set of changes, whatever sha now addresses
+ * it. Composed BESIDE `isBoundToHead`, never in place of it: sha binding
+ * still counts on its own, and this only widens what else counts.
+ *
+ * Fails closed on every uncertainty. `null` on either side is "git could not
+ * answer", not "they match" — a force-push that makes the judged head
+ * unreachable resolves to `null` and the verdict correctly stops counting.
+ */
+function isBoundByPatchIdentity(
+  extraction: { headSha: string | null },
+  headSha: string,
+  patchIdOf?: (sha: string) => string | null
+): boolean {
+  if (patchIdOf === undefined || !extraction.headSha) return false
+  const judged = patchIdOf(extraction.headSha)
+  const current = patchIdOf(headSha)
+  if (judged === null || current === null) return false
+  return judged === current
+}
+
+/** A verdict covers the current head when its sha binds it, or its patch identity does. */
+function isBoundToPatch(
+  extraction: { headSha: string | null },
+  headSha: string,
+  patchIdOf?: (sha: string) => string | null
+): boolean {
+  return isBoundToHead(extraction, headSha) || isBoundByPatchIdentity(extraction, headSha, patchIdOf)
+}
+
+/**
  * `pass` when either (a) `vinaya/waiver:review` is present and actor-verified against
  * `PRINCIPAL_ALLOWLIST`, or (b) both verdicts are clean AND bound — code-reviewer
  * `APPROVE` (not `REQUEST_CHANGES`, not missing, not unclear) covering the PR's
- * current `headSha`, and security-review `PASS` (not `FAIL`, not missing, not
- * unclear) covering it too — AND every reported mechanical check-run for that
+ * current `headSha` — by that sha, or by an equal patch identity when
+ * `patchIdOf` is supplied — and security-review `PASS` (not `FAIL`, not
+ * missing, not unclear) covering it too — AND every reported mechanical check-run for that
  * same head is green (`mechanicalChecks` non-empty and every entry's `bucket`
  * is `"pass"`). `fail` otherwise, naming exactly which verdict(s) are not
  * clean, not bound to the current head, which mechanical check(s) are not
@@ -200,8 +262,8 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const security = extractSecurityReviewVerdict(verifiedBodies)
   const codeReviewClean = codeReview.value === 'APPROVE'
   const securityClean = security.value === 'PASS'
-  const codeReviewBound = isBoundToHead(codeReview, input.headSha)
-  const securityBound = isBoundToHead(security, input.headSha)
+  const codeReviewBound = isBoundToPatch(codeReview, input.headSha, input.patchIdOf)
+  const securityBound = isBoundToPatch(security, input.headSha, input.patchIdOf)
 
   if (codeReviewClean && codeReviewBound && securityClean && securityBound && mechanicalChecksClean) {
     return {

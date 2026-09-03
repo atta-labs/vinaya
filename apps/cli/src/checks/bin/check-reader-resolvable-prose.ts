@@ -54,12 +54,12 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { checkReaderResolvableProse, parseGlossaryTerms, type ProseSourceFile } from '@attalabs/aeg-core'
 import { hasDoctrineEntry, resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { repoRoot, resolveChangedFiles } from '../../lib/diff-evidence'
+import { findingsInThisDiff, repoRoot } from '../../lib/diff-evidence'
 
 const CHECK_NAME = 'reader-resolvable-prose'
 
@@ -263,10 +263,13 @@ function main(): void {
   // finding unfiltered, same as before diff-scoping existed — indeterminate
   // must never collapse into "confirmed clean." Only an ACTUAL
   // resolved-but-empty diff suppresses findings.
-  const changedFilesList = resolveChangedFiles()
-  const changed = changedFilesList === null ? null : new Set(changedFilesList)
-  const pathBase = repoRoot() ?? process.cwd()
-  const reportable = changed === null ? findings : findings.filter((f) => changed.has(resolve(pathBase, f.file)))
+  // Line-scoped, not merely file-scoped (task 8): a finding prints only when
+  // its own line falls inside a changed hunk of a file this diff touched.
+  // `findingsInThisDiff` owns both halves — one hunk parser for the whole
+  // repo, and the same "indeterminate reports everything" rule
+  // `resolveChangedFiles` already established. Full-sweep mode (no diff
+  // boundary resolvable at all) is unchanged.
+  const reportable = findingsInThisDiff(findings)
 
   // stdout only — this check's stderr is the CheckError JSON channel
   // (`contract.ts`'s `emitCheckError`); a plain-text line there would make

@@ -25,6 +25,16 @@ export type CheckError = {
   agent_recovery_prompt: string
   file?: string
   line?: number
+  /**
+   * Set when this error is "has not happened YET", never "is wrong". A gate
+   * that reads an artefact a later step of the same turn produces — the
+   * Developer's round comment, a verdict, a re-run — fails for a reason the
+   * author fixes by DOING the step, not by changing the diff. Reports render
+   * `wait` from this field rather than guessing it back out of the message
+   * text (Verdict Ledger spec §16 sets the same field for the same reason).
+   * Absent means the ordinary case: something is wrong.
+   */
+  pending?: true
 }
 
 /** every check declares its scope. `diff` checks may be skipped by the runner when no changed file matches `include`. */

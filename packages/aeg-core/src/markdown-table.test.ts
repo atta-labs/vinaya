@@ -59,7 +59,7 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
 
   it('parses one record per gate row, matching the known row count per ring', async () => {
     const { ring0, ring1, ring2 } = await loadRingTables()
-    expect(ring0.rows).toHaveLength(18)
+    expect(ring0.rows).toHaveLength(19)
     // task 7 (Issue 56) added the `retired-vocabulary` row alongside the
     // existing `reader-resolvable-prose` one. task 8 (Issue 57) added the
     // G6 doctrine-registry-parity row. task 234 added the

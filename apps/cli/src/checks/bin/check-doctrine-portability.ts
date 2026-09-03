@@ -50,6 +50,7 @@ import {
   type PortabilitySourceFile
 } from '@attalabs/aeg-core'
 import { loadConfig } from '../../lib/config'
+import { findingsInThisDiff } from '../../lib/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'doctrine-portability'
@@ -162,7 +163,13 @@ function main(): void {
   const baselineFiles = collectAtRef(base, DOCTRINE_ROOT)
   const baselineFindings = checkDoctrinePortability(baselineFiles, SHIPS_PREFIX)
 
-  const newFindings = newSince(baselineFindings, currentFindings)
+  const newFindings = findingsInThisDiff(newSince(baselineFindings, currentFindings))
+  // Line-scoped (task 8): a finding prints only when its own line falls
+  // inside a changed hunk of a file this diff touched. `findingsInThisDiff`
+  // owns both halves — one hunk parser for the whole repo, and the same
+  // "indeterminate reports everything" rule `resolveChangedFiles` already
+  // established. Full-sweep mode (no diff boundary resolvable at all) is
+  // unchanged, so a scheduled whole-tree run still reports the backlog.
 
   const baseline = captureBaseline(
     [{ tool: CHECK_NAME, findingCount: baselineFindings.length }],

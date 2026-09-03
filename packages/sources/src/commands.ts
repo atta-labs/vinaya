@@ -278,6 +278,16 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'review status',
+    description: "Print the review loop's own state for a PR, and its branch's distance from the base",
+    details: [
+      'Two lines at most. The first is `CONTINUE`, or `PAUSE: <reason>[ <id>]` where the reason is one of `reappearance`, `zero-deaths`, `stale` or `max-rounds`. The second reads `behind main by <n> — merge first` when the branch is behind its base, or `behind main: unknown — fetch origin/<base> first` when git cannot measure the distance; it is absent only when the branch is measurably not behind.',
+      "Rounds are derived from the PR's own verdict comments — one round per `Judged head:` value, read through the same extractors the merge gate blocks on, and only from comments an allowlisted principal authored. A Developer round comment is recognised by its `<!-- aeg:developer:round-<n> -->` marker, at that fixed position, never by scanning its prose.",
+      'Exit `0` only when the state is `CONTINUE` and the branch is not behind; `1` otherwise, so a script can gate on the exit code without parsing the text.'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'review post',
     description: 'Render, post, and self-verify a code-reviewer or security-review verdict comment on a PR',
     flags: [

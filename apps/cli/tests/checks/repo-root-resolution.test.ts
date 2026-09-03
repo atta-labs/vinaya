@@ -79,6 +79,7 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         'doctrine-no-procedures',
         'doctrine-portability',
         'evidence-fresh',
+        'exec-bits',
         'first-push-dispatch',
         'issue-assignment',
         'main-branch-refusal',

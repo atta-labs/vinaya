@@ -44,6 +44,7 @@ describe('registry env declarations', () => {
         'doctrine-no-procedures',
         'doctrine-portability',
         'evidence-fresh',
+        'exec-bits',
         'first-push-dispatch',
         'issue-assignment',
         'main-branch-refusal',
@@ -161,7 +162,10 @@ describe('registry env declarations', () => {
       'check-review-gate.ts',
       'check-doc-coverage.ts',
       'check-doc-coverage-push.ts',
-      'check-body-bare-digits.ts'
+      'check-body-bare-digits.ts',
+      // `test-plan` resolves principals too now: a Developer round comment
+      // only counts when an allowlisted author posted it.
+      'check-test-plan.ts'
     ]
     for (const name of bins) {
       const src = readCode(name)
