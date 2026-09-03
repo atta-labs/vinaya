@@ -22,7 +22,7 @@ You are the AEG Developer. Read `aeg-root/roles/developer.md` first[, then the h
 
 - **Tranche:** [`tranche-slug`], task [n], Issue #[N]. Branch `task/[tranche-slug]/[n]`. `Depends-on: [—|ids]`, `Conflicts-with: [—|ids]`. Confirm `READY TO DISPATCH` at your own Step 0.
 - **Read Issue #[N] in full** for the complete rationale — do not re-derive it.
-- [CONTEXT — the Planner's rationale carried forward (boundary, blast radius, traps), what was previously validated, what is settled and must not be re-litigated, and everything your own Dig confirmed about the current surface. If it isn't in the brief, it doesn't exist.]
+- [CONTEXT — the Planner's rationale carried forward (boundary, blast radius, traps), what was previously validated, what is settled and must not be re-litigated, and everything your own Dig confirmed about the current surface. If it isn't in the brief, it doesn't exist. No behavioural fact about code belongs here as prose — a `Premise:` pin or a fenced command with its executed output is the only form (skill §2's rule).]
 
 ## 3. Technical dependencies
 
@@ -60,7 +60,7 @@ On any failure: STOP and report.
 
 ## 6. Numbered parts — commit and push after EACH part (push-per-Part)
 
-1. **Part 1:** [exact files + exact function/type signatures + constraints — not prose]
+1. **Part 1:** [exact files + exact function/type signatures + constraints — not prose. A Part that depends on a fact about current code opens with the fenced command that establishes it, followed by the executed output (skill §2's rule).]
 2. **Part 2:** [next bounded unit of work]
 
 ## 7. Documentation-update list
@@ -90,7 +90,7 @@ STOP and report if: pre-flight fails; [the Planner's stop-and-escalate condition
 - [forbidden patterns for this task — deferred features, off-limits paths]
 - Never write status anywhere; never add execution metadata to the tranche file.
 
-> **Autonomy:** Do not stop to ask clarifying questions. For any ambiguity not covered by a Section 10 stop condition, choose the most reasonable option consistent with this brief, record the choice in the PR body, and continue. Halt only for the explicit Section 10 stop conditions — and when you halt, record the blocker in the PR body or an Issue comment rather than waiting interactively for input.
+> **Autonomy:** Do not stop to ask clarifying questions. For any ambiguity not covered by a Section 10 stop condition, choose the most reasonable option consistent with this brief, record the choice in the PR body at open, or in a PR comment after open, and continue. Halt only for the explicit Section 10 stop conditions — and when you halt, record the blocker in a PR comment or an Issue comment rather than waiting interactively for input.
 
 ## 12. Deliverable
 
