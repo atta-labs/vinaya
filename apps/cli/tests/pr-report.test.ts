@@ -1,11 +1,13 @@
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { parseTokenReportEntries, resolveMeteringCapability, sumLedger } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 import {
   anyGateFailed,
+  bodiesAgreeOutsideRegions,
   buildReport,
   collectTokensAddition,
   composeWrittenBody,
@@ -13,11 +15,33 @@ import {
   type GateOutcome,
   type GateRunResult,
   GitCommandError,
+  MissingEvidenceAnchorError,
   prReportExitCode,
   replaceEvidenceBlock,
+  spliceIntoLiveBody,
   UnresolvableMergeBaseError,
   writeTokensBlock
 } from '../src/commands/pr-report'
+
+const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+const INDEX = join(CLI_ROOT, 'src', 'index.ts')
+
+type CliResult = { status: number; stdout: string; stderr: string }
+
+function runCli(args: string[], cwd: string): CliResult {
+  try {
+    const stdout = execFileSync('bun', [INDEX, ...args], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: process.env
+    })
+    return { status: 0, stdout, stderr: '' }
+  } catch (e) {
+    const err = e as { status?: number; stdout?: string; stderr?: string }
+    return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
+  }
+}
 
 // Fixed inputs throughout — no real `git`/`gh` calls, no real gate suite. See
 // pr-report.ts's module doc, "Recursion, and why gate running is
@@ -678,5 +702,114 @@ describe('collectTokensAddition refuses rather than claiming the host cannot met
     expect(prReportExitCode({ gatesFailed: true, tokensRefused: false })).toBe(1)
     // Both failing is still ONE non-zero exit, never a second reason lost.
     expect(prReportExitCode({ gatesFailed: true, tokensRefused: true })).toBe(1)
+  })
+})
+
+// A template-shaped body with real (non-fenced) `AEG:EVIDENCE` and
+// `AEG:TOKENS` pairs already seeded — the shape
+// `aeg-root/templates/pr-report-template.md` produces and a live,
+// already-open PR body actually has (both pairs are pre-seeded at open, per
+// the template; `--push` only ever runs after that). `spliceIntoLiveBody`
+// must leave everything outside the two pairs byte-for-byte untouched.
+const LIVE_BODY = [
+  '## Summary',
+  '',
+  'why this shipped, in the author’s own words.',
+  '',
+  '## Evidence',
+  '',
+  '<!-- AEG:EVIDENCE:START -->',
+  'stale Head: deadbeef',
+  '<!-- AEG:EVIDENCE:END -->',
+  '',
+  '## Scope',
+  '',
+  '**Tier:** 1',
+  '',
+  '## Token report',
+  '',
+  '<!-- AEG:TOKENS:START -->',
+  '| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |',
+  '|---|---|---|---|---|---|---|',
+  '<!-- AEG:TOKENS:END -->',
+  ''
+].join('\n')
+
+describe('spliceIntoLiveBody', () => {
+  it('keeps every byte outside the AEG:EVIDENCE/AEG:TOKENS regions, replacing only the block content', () => {
+    const updated = spliceIntoLiveBody(LIVE_BODY, 'Head: freshsha', { collected: false, refusal: 'refused' })
+    expect(updated).toContain('## Summary')
+    expect(updated).toContain('why this shipped, in the author’s own words.')
+    expect(updated).toContain('## Scope')
+    expect(updated).toContain('**Tier:** 1')
+    expect(updated).not.toContain('stale Head: deadbeef')
+    expect(updated).toContain('Head: freshsha')
+  })
+
+  it('refuses (throws, writes nothing) on a live body with no real AEG:EVIDENCE pair — never appends one', () => {
+    const noPair = '## Summary\n\nwhy.\n\n## Scope\n\n**Tier:** 1'
+    expect(() => spliceIntoLiveBody(noPair, 'Head: freshsha', { collected: false, refusal: 'refused' })).toThrow(
+      MissingEvidenceAnchorError
+    )
+  })
+
+  it('refuses on a live body whose only AEG:EVIDENCE pair sits inside a fenced code block', () => {
+    const fencedOnly = [
+      '## Summary',
+      '',
+      'why.',
+      '',
+      '```',
+      '<!-- AEG:EVIDENCE:START -->',
+      'example only, never real',
+      '<!-- AEG:EVIDENCE:END -->',
+      '```',
+      '',
+      '## Scope'
+    ].join('\n')
+    expect(() =>
+      spliceIntoLiveBody(fencedOnly, 'Head: freshsha', { collected: false, refusal: 'refused' })
+    ).toThrow(MissingEvidenceAnchorError)
+  })
+})
+
+describe('bodiesAgreeOutsideRegions', () => {
+  it('is true when only the AEG:EVIDENCE/AEG:TOKENS regions were regenerated', () => {
+    const before = LIVE_BODY
+    const after = spliceIntoLiveBody(before, 'Head: freshsha', {
+      collected: true,
+      row: '| 7: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-09-03 |'
+    })
+    expect(bodiesAgreeOutsideRegions(before, after)).toBe(true)
+  })
+
+  it('is false when a single byte outside those regions changed', () => {
+    const before = LIVE_BODY
+    const after = LIVE_BODY.replace('## Scope', '## SCOPE')
+    expect(bodiesAgreeOutsideRegions(before, after)).toBe(false)
+  })
+})
+
+describe('vinaya pr report --push CLI surface', () => {
+  it('refuses --push together with --write, before touching the forge', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-cli-'))
+    try {
+      const result = runCli(['pr', 'report', '--write', 'body.md', '--push', '383'], dir)
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toMatch(/--write and --push are mutually exclusive/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('usage line mentions --push', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-cli-'))
+    try {
+      const result = runCli(['pr', 'report', '--push'], dir)
+      expect(result.status).toBe(2)
+      expect(result.stderr).toContain('--push <pr>')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
