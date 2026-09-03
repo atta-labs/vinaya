@@ -150,7 +150,7 @@ describe('vinaya review status', () => {
     expect(result.status).toBe(1)
   })
 
-  it('prints PAUSE: stale when the newest verdict judged a superseded head with no answer since', () => {
+  it('prints the push-after-verdict fact when the newest verdict judged a superseded head with no answer since', () => {
     const env = stubPath(
       {
         comments: [principalComment(verdict(OLD_HEAD, ['1. [MAJOR] a.ts:1 — F1 correctness: x']))],
@@ -160,7 +160,7 @@ describe('vinaya review status', () => {
       0
     )
     const result = runCli(['review', 'status', '381'], env)
-    expect(statusLines(result.stdout)).toEqual(['PAUSE: stale'])
+    expect(statusLines(result.stdout)).toEqual(['push after verdict — re-review or refreeze required'])
     expect(result.status).toBe(1)
   })
 

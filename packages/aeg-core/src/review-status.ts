@@ -184,8 +184,17 @@ export function deriveReviewStatus(input: ReviewStatusInput): ReviewStatus {
   return { state: 'CONTINUE' }
 }
 
-/** The one-line rendering the CLI prints: `CONTINUE`, or `PAUSE: <reason>[ <id>]`. */
+/**
+ * The one-line rendering the CLI prints: `CONTINUE`, or `PAUSE: <reason>[ <id>]`
+ * — except `stale`, whose condition (the newest verdict's judged head is no
+ * longer the PR's, and no Developer round comment has answered it since) is
+ * exactly "a commit landed after the newest verdict, unacknowledged". Verdicts
+ * are the last forge event before merge (`roles/developer.md`), so that
+ * condition is rendered as the actionable fact it names rather than the bare
+ * reason word: `push after verdict — re-review or refreeze required`.
+ */
 export function renderReviewStatus(status: ReviewStatus): string {
   if (status.state === 'CONTINUE') return 'CONTINUE'
+  if (status.reason === 'stale') return 'push after verdict — re-review or refreeze required'
   return status.id !== undefined ? `PAUSE: ${status.reason} ${status.id}` : `PAUSE: ${status.reason}`
 }

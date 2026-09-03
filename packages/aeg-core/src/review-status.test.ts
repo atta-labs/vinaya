@@ -220,4 +220,10 @@ describe('renderReviewStatus', () => {
       'PAUSE: reappearance F1'
     )
   })
+
+  it('renders `stale` as the actionable push-after-verdict fact, not the bare reason word', () => {
+    expect(renderReviewStatus({ state: 'PAUSE', reason: 'stale', round: 1 })).toBe(
+      'push after verdict — re-review or refreeze required'
+    )
+  })
 })
