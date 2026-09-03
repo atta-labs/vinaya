@@ -277,6 +277,55 @@ export function renderSecurityComment(input: SecurityInput): string {
   return lines.join('\n')
 }
 
+// --- injection guard ---------------------------------------------------------
+
+const VERDICT_SUBSTRING = 'VERDICT'
+
+/**
+ * Every caller-supplied free-text field (name, value) whose value contains
+ * the literal substring `VERDICT`, in the given order. Every field this
+ * command ever splices verbatim into a rendered comment — `--summary`, a
+ * findings-file description, `--brief-conformance`, `--spec-conformance`,
+ * `--scope`, `--tests`, `--docs`, `--config-scan`, `--secrets`, and the
+ * `--secrets-evidence-file` contents — is caller-controlled text this
+ * command does not otherwise constrain. A multi-line value containing
+ * `VERDICT: <anything>` would, once spliced in, start a new line the gate's
+ * line-anchored extractors read exactly like the real structural line this
+ * command renders — and "most recent clear hit wins" means an injected line
+ * AFTER the real one would win. Checked before any of these fields reaches a
+ * render, let alone a post.
+ */
+export function fieldsContainingVerdict(fields: readonly { name: string; value: string }[]): string[] {
+  return fields.filter((f) => f.value.includes(VERDICT_SUBSTRING)).map((f) => f.name)
+}
+
+/**
+ * A hard process guard, not a `CheckError` finding — same class as
+ * `pr-verify-evidence.ts`'s `assertNoBaseOverride`/dirty-worktree refusals:
+ * plain stderr, exit `2`, no forge contact yet possible at this point in
+ * every call site.
+ */
+function refuseInjection(fieldName: string): never {
+  process.stderr.write(
+    `review post: REFUSED — ${fieldName} contains the substring \`VERDICT\`.\n` +
+      'A caller-supplied field spliced verbatim into the rendered comment could start a line the merge\n' +
+      "gate's extractors read as a real VERDICT — the exact defect this command exists to close. Remove\n" +
+      'the literal word VERDICT from the field, then re-run.\n'
+  )
+  process.exit(2)
+}
+
+/** Runs the injection guard over `fields`, refusing (exit `2`) on the first offender. */
+function guardAgainstVerdictInjection(fields: readonly { name: string; value: string }[]): void {
+  const offending = fieldsContainingVerdict(fields)
+  if (offending.length > 0) refuseInjection(offending[0] as string)
+}
+
+/** `--findings-file` description fields, named by line for a precise refusal. */
+function findingDescriptionFields(findings: readonly Finding[]): { name: string; value: string }[] {
+  return findings.map((f, i) => ({ name: `\`--findings-file\` (finding ${i + 1} description)`, value: f.description }))
+}
+
 // --- escalation ------------------------------------------------------------
 
 export type EscalationClass = 'authority' | 'strategy' | 'product'
@@ -299,9 +348,13 @@ export type EscalationInput = TokensInput & {
  * An escalation is its own review outcome, never a finding stuffed inside a
  * REQUEST CHANGES. Renders `ESCALATE: <class>` where a verdict comment
  * renders `VERDICT: <value>` — the literal substring `VERDICT` never appears
- * anywhere in this output, on purpose: the merge-verdict workflow fires on
- * that substring alone (`.github/workflows/vinaya-review-verdict.yml`), and
- * an escalation must never be mistaken for "a pass ran".
+ * anywhere in this output: the merge-verdict workflow fires on that
+ * substring alone (`.github/workflows/vinaya-review-verdict.yml`), and an
+ * escalation must never be mistaken for "a pass ran". This is enforced, not
+ * merely assumed by construction — `reviewPostCommand` runs every
+ * caller-supplied field this function's inputs derive from (`--summary`
+ * chief among them) through `guardAgainstVerdictInjection` before render,
+ * refusing before posting anything if any of them contains the substring.
  */
 export function renderEscalationComment(input: EscalationInput): string {
   return [
@@ -913,6 +966,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
         'Post the verdict instead (`--verdict ...`), or drop the blocking finding from the escalation.'
       )
     }
+    guardAgainstVerdictInjection([{ name: '`--summary`', value: summary }, ...findingDescriptionFields(findings)])
 
     const headSha = resolveHeadSha(pr)
     const body = renderEscalationComment({
@@ -969,6 +1023,20 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     }
     const verdict = derived
 
+    const briefConformance = requireFlag(flags, '--brief-conformance')
+    const specConformance = requireFlag(flags, '--spec-conformance')
+    const scope = requireFlag(flags, '--scope')
+    const tests = requireFlag(flags, '--tests')
+    const docs = requireFlag(flags, '--docs')
+    guardAgainstVerdictInjection([
+      { name: '`--brief-conformance`', value: briefConformance },
+      { name: '`--spec-conformance`', value: specConformance },
+      { name: '`--scope`', value: scope },
+      { name: '`--tests`', value: tests },
+      { name: '`--docs`', value: docs },
+      ...findingDescriptionFields(findings)
+    ])
+
     const headSha = resolveHeadSha(pr)
 
     let comments: ReviewGateComment[]
@@ -986,12 +1054,12 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       ...tokens,
       headSha,
       verdict,
-      briefConformance: requireFlag(flags, '--brief-conformance'),
-      specConformance: requireFlag(flags, '--spec-conformance'),
+      briefConformance,
+      specConformance,
       findings,
-      scope: requireFlag(flags, '--scope'),
-      tests: requireFlag(flags, '--tests'),
-      docs: requireFlag(flags, '--docs')
+      scope,
+      tests,
+      docs
     }
     const body = renderCodeReviewComment(input)
     const url = postComment(pr, body)
@@ -1037,19 +1105,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   }
   const verdict = derived
 
-  const headSha = resolveHeadSha(pr)
-
-  let comments: ReviewGateComment[]
-  try {
-    comments = fetchComments(pr)
-  } catch (err) {
-    refuseCmd(
-      `Could not fetch PR ${pr}'s comments to check for a prior review round: ${err instanceof Error ? err.message : String(err)}`,
-      'Check `gh auth status`/network, then re-run.'
-    )
-  }
-  checkRoundTwo(pr, comments, principalAllowlist, extractSecurityReviewVerdict, findings, ['CRITICAL', 'HIGH'])
-
+  const configScan = requireFlag(flags, '--config-scan')
   const secrets = requireFlag(flags, '--secrets')
   const secretsEvidenceFile = flags.get('--secrets-evidence-file')
   if (isNoneFoundClaim(secrets) && !secretsEvidenceFile) {
@@ -1066,12 +1122,32 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       refuseCmd(`Could not read secrets evidence file at ${secretsEvidenceFile}.`, 'Check the path and re-run.')
     }
   }
+  guardAgainstVerdictInjection([
+    { name: '`--config-scan`', value: configScan },
+    { name: '`--secrets`', value: secrets },
+    ...(secretsEvidence !== null ? [{ name: '`--secrets-evidence-file`', value: secretsEvidence }] : []),
+    ...findingDescriptionFields(findings)
+  ])
+
+  const headSha = resolveHeadSha(pr)
+
+  let comments: ReviewGateComment[]
+  try {
+    comments = fetchComments(pr)
+  } catch (err) {
+    refuseCmd(
+      `Could not fetch PR ${pr}'s comments to check for a prior review round: ${err instanceof Error ? err.message : String(err)}`,
+      'Check `gh auth status`/network, then re-run.'
+    )
+  }
+  checkRoundTwo(pr, comments, principalAllowlist, extractSecurityReviewVerdict, findings, ['CRITICAL', 'HIGH'])
+
   const input: SecurityInput = {
     ...tokens,
     headSha,
     verdict,
     findings,
-    configScan: requireFlag(flags, '--config-scan'),
+    configScan,
     secrets,
     secretsEvidence
   }
