@@ -196,12 +196,13 @@ gh pr view <n> --json body -q .body > <body-file>
 export PR_BODY="$(cat <body-file>)"
 export BRANCH=<branch>
 vinaya pr report --write <body-file>
+diff <(gh pr view <n> --json body -q .body) <body-file>
 vinaya pr edit <n> --body-file <body-file>
 ```
 
 **On this repo's toolchain**, substitute `bun apps/cli/src/index.ts` for `vinaya` in the sequence above.
 
-Then confirm: `diff <(gh pr view <n> --json body -q .body) <body-file>` shows only anchored regions changed.
+The `diff` runs before `pr edit`, against the forge copy this turn started from — it shows exactly what the edit is about to change, and its output is what you paste into the round comment as proof only anchored regions changed. Run it after the edit and it is empty by construction (the forge now matches the local file), which proves nothing.
 
 That sequence is the only sanctioned post-open write. After open the Developer changes nothing outside the `AEG:EVIDENCE` anchor and one appended `AEG:TOKENS` row. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. Everything else a review round produces — the response to findings, re-run `[agent]` evidence, any disclosure the brief didn't anticipate — is a PR comment, never a body edit.
 
@@ -407,7 +408,7 @@ If the brief declares `unit-tests-only` and the diff really is pure logic, the p
 
 1. **Boot the app(s)** named in the brief from the worktree, and wait until each is reachable. If it does not boot, that is the failure — the plan never gets a chance to run.
 2. **Execute every `[agent]` item.** Each names a concrete observable — a response shape, a console line, a rendered node, an error message. Run the named command and **paste the actual output**. Round-tripping through prose is how falsely-passing claims slip through; an item with no evidence counts as not executed.
-3. **Report on the PR** — each item with its result and its evidence, posted as a PR comment, never written into the body. A re-run after fixes posts a new comment; it never edits the one already there.
+3. **Report on the PR** — each item with its result and its evidence, posted as a PR comment, never written into the body. A re-run after fixes posts a new comment; it never edits the one already there. The body's `[agent]` Test Plan line carries the tick only, never pasted command output — the evidence lives solely in the comment, headed `Head: <sha>`, which is what closes the stale-evidence path: the body has nothing that can go stale.
 4. **Stop there.** Do not execute `[principal]` items; you structurally cannot. Mark them as awaiting the Principal.
 
 A failed `[agent]` item makes the PR unmergeable. Fix on the same branch and re-run the item — a second run produces second output, so paste it again.

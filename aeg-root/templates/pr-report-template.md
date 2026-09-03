@@ -29,7 +29,7 @@ Closes #[N]
 ## Test plan
 
 <!-- AEG:TEST-PLAN:START -->
-- [ ] **[agent]** [item carried from the brief's §9 — tick only after pasting the actual command output as evidence]
+- [ ] **[agent]** [item carried from the brief's §9 — tick only after running it; the tick is the only mark this line ever carries, never the pasted command output, which goes in the round comment headed `Head: <sha>` instead]
 - [ ] **[principal]** [item carried from the brief's §9 — the Principal ticks after verifying in a real browser/session]
 <!-- AEG:TEST-PLAN:END -->
 
