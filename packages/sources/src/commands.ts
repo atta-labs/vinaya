@@ -162,11 +162,17 @@ export const COMMANDS: readonly Command[] = [
       {
         flag: '--write',
         description: 'Path to the PR body file; replaces the content between the AEG:EVIDENCE anchors in place'
+      },
+      {
+        flag: '--push',
+        description:
+          "PR number; splices the same content into that PR's LIVE body (fetched from the forge) and pushes it via `gh pr edit`, self-verifying nothing outside the AEG:EVIDENCE/AEG:TOKENS regions changed. Mutually exclusive with --write."
       }
     ],
     details: [
       "Two groups: Group A (recomputable) is the head sha and a width-invariant `git diff --numstat` against the merge-base with `BASE_SHA` (else `origin/main`, then `main`) — `check-evidence-fresh` recomputes and byte-compares this exactly. Group B (attested) is the result of `vinaya check --all --diff-only`, this CLI's own portable gate suite — `check-evidence-fresh` can only check it for staleness (the block's recorded head still matches the PR's real head), never re-run it.",
-      'With no `--write`, prints the block to stdout instead of writing a file. Exits non-zero whenever the gate run failed, whether or not `--write` was given — the block records a failing result rather than hiding one, and a non-zero exit stops a scripted `--write && open-pr` from carrying a failing suite onto the forge.'
+      'With no `--write`/`--push`, prints the block to stdout instead of writing a file. Exits non-zero whenever the gate run failed, whether or not `--write`/`--push` was given — the block records a failing result rather than hiding one, and a non-zero exit stops a scripted `--write && open-pr` (or `--push`) from carrying a failing suite onto the forge.',
+      "`--push` refuses before writing anything when the live body carries no real `AEG:EVIDENCE` pair (it never appends one, unlike `--write`), when the anchor resolves differently before and after normalisation, or when `<pr>` isn't a bare number. When the live body has no real `AEG:TOKENS` pair, the token splice is skipped (same reasoning, softer outcome) rather than creating one. After pushing, it re-reads the live body and restores the pre-edit body — exiting non-zero — if anything outside the two anchored regions changed."
     ],
     status: 'shipped'
   },

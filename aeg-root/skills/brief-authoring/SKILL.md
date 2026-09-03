@@ -132,6 +132,8 @@ Before a brief is dispatchable, confirm **every one of the seven Planner fields 
 - [ ] **Row-existence and Issue-existence preconditions** → does the task's row exist at all in the tranche topology file, read from a freshly-fetched `origin/main`? If not, the plan PR hasn't merged — **STOP** and do not author the brief. If the row exists, does its Issue column carry a real GitHub Issue number (not `#TBD`, not blank)? If not, the task is backlog — **STOP** and surface the need for the Planner to cut the Issue before proceeding. A brief cannot carry `Closes #N` without a real N. (Mirrors Developer entry gate items 3 and 7; catches it one stage earlier, during Dig.)
 - [ ] ~~**Task-status coherence precondition** → for every in-scope prior task, do all three predicates hold: Issue closed, PR merged to main, provenance block present?~~ **SUPERSEDED** — no longer a checklist item; the prior-task archival bar is removed as a hard-STOP. (Mirrors Developer entry gate item 5, prior-tranche-archival, which remains live; item 4 is the superseded one.)
 - [ ] **Read obligation + §7 populated from reading** → did you identify and read the relevant specs/skills/docs for this task's code surface during the Dig? Does §7 name every doc this task will make incoherent (or state "No doc updates required" if none)? A §7 populated from memory rather than from reading is malformed — the Brief Author's reading is what makes the DoD obligation trustworthy.
+- [ ] **No behavioural claim about code outside `Premise:` or a fenced command** → every sentence in the brief asserting what code does, checks, refuses, reads, or returns is either a `Premise:` pin or a fenced command with its executed output pasted beneath it (§2's rule).
+- [ ] **No multi-step command sequence described in prose** → any sequence of shell steps the brief prescribes is one named `vinaya` command, or, where that command doesn't exist yet, a statement of that fact plus the Issue that will build it.
 
 Plus the brief's own structural gates: worktree Step 0 present; `Tier:` declared; doc-update list non-empty for Tier 1+; **Test Plan (§9) present and tagged** — either `Test Plan: unit-tests-only` (and §4 has no runtime surface) or a checkbox list with at least one `[agent]` or `[principal]` item per reachable surface kind; the standing autonomy clause present in §11; no `[NEEDS CLARIFICATION]` left unresolved. When all boxes tick, announce it (protocol step 4/6) and the brief is dispatchable.
 
@@ -163,6 +165,10 @@ Full background the executor needs:
 - What's locked and should not be relitigated
 - Relevant decisions already made (link the pull request that made each)
 - **The Planner's rationale for this task** (inherited via the contract — boundary, blast radius, traps, stop conditions). Carry it forward; the executor must see the planner's reasoning, not just the goal.
+
+**A brief never asserts what code does, checks, refuses, reads, or returns — including here in §2.** A fact the brief's reasoning depends on takes exactly one of two forms: a `Premise:` pin (see the Premise pins section under §4), which `verify-dispatch --premise` re-asserts before Step 0; or a fenced command in §5 or §6 followed immediately by a fenced block holding the output the Brief Author obtained by running it before dispatch — the Developer re-runs the command and compares before writing anything that depends on it. A command with no executed output beneath it is a claim in disguise, not evidence. Naming a file, a symbol, or a location is allowed ("`review-post.ts` is in surface", "the refusal lives near line 645"); asserting its behavior is not ("`review-post.ts` refuses X"). The second becomes a command instead: "run `grep -n refuse apps/cli/src/commands/review-post.ts`, read every hit, and write doctrine from what the hits say." If a command's actual output contradicts a sentence already in the brief, that is a brief defect — the Developer stops (`severity: strategy`) rather than transcribing the sentence into doctrine.
+
+The same discipline covers a multi-step command sequence: a document never describes one in prose — it is one `vinaya` command, and the document names it. Where the command does not exist yet, the document says so and names the Issue that will build it, instead of spelling out the steps.
 
 Length: as long as needed. This section prevents the executor re-deriving architecture that's already decided.
 
@@ -213,6 +219,7 @@ Exactly three assertion kinds — `contains:<literal-substring>`, `absent:<liter
 - **A Tier 0 brief with zero runtime/code surface has nothing to pin** — omit the `Premise:` block entirely (mirrors the Test Plan's `unit-tests-only` exemption, §9).
 - **Do not pin more than a handful of facts** — this is a targeted stale-premise detector, not a full pre-flight snapshot of the surface.
 - **This is a Brief-Author-only field — the Planner does not emit a premise-candidate field in the rationale.** Premises are perishable, file-content-level detail (current signatures, current constants), squarely the Brief Author's half of the Planner/Brief Author division of labor (see "Start from the Planner's rationale" above) — not a durable conclusion the Planner should be pinning at plan time, when the file content is more likely to have moved by dispatch.
+- **A pin, or a fenced command with its executed output pasted beneath it, is the only form a behavioural fact about code may take anywhere in the brief — prose is not a third form.** See the rule in §2.
 
 ### 5. Pre-flight checks
 
@@ -238,7 +245,7 @@ After the worktree exists, verify: working dir clean (`git status`); branch corr
 
 ### 6. Numbered parts with numbered tasks
 
-Break work into Parts (major areas) and numbered tasks within each. Each task specifies: exact files to create/modify (from the Section 4 surface map); exact function/type signatures (not prose); constraints (no auto-remove, no extra tools, no UI in V0); verification steps. Do NOT leave implementation details to the executor's judgment unless you explicitly trust it and say so.
+Break work into Parts (major areas) and numbered tasks within each. Each task specifies: exact files to create/modify (from the Section 4 surface map); exact function/type signatures (not prose); constraints (no auto-remove, no extra tools, no UI in V0); verification steps. Do NOT leave implementation details to the executor's judgment unless you explicitly trust it and say so. A Part that depends on a fact about current code opens with the fenced command that establishes it, followed by the output the Brief Author obtained running it before dispatch — not a description of what the command should show (see §2's rule). A Part that prescribes a multi-step command sequence was executed once by the Brief Author before dispatch, on a scratch branch or PR, with what happened pasted beneath it.
 
 ### 7. Documentation-update list (explicit, tier-tied)
 
@@ -322,7 +329,7 @@ What the executor must NOT do: off-limits branches/paths (the out-of-surface set
 
 Every brief's Constraints section includes this clause, word for word:
 
-> **Autonomy:** Do not stop to ask clarifying questions. For any ambiguity not covered by a Section 10 stop condition, choose the most reasonable option consistent with this brief, record the choice in the PR body, and continue. Halt only for the explicit Section 10 stop conditions — and when you halt, record the blocker in the PR body or an Issue comment rather than waiting interactively for input.
+> **Autonomy:** Do not stop to ask clarifying questions. For any ambiguity not covered by a Section 10 stop condition, choose the most reasonable option consistent with this brief, record the choice in the PR body at open, or in a PR comment after open, and continue. Halt only for the explicit Section 10 stop conditions — and when you halt, record the blocker in a PR comment or an Issue comment rather than waiting interactively for input.
 
 This clause is what makes a dispatched agent run to completion unattended instead of pausing for input it can resolve itself. It removes the *low-value* check-ins; it does **not** suppress the §10 stop conditions, which remain the genuine escalations (a contradicted boundary, an under-specified format, a hit stop-and-escalate trap) and must still halt the agent. The line it draws: resolve-and-record for everything inside the brief's discretion; halt-and-record for the §10 conditions; never pause interactively for a question the brief already answers or the Developer is empowered to decide.
 
@@ -489,6 +496,7 @@ Source: GitHub Spec Kit evaluation, May 12, 2026. Adopted as inline convention o
 - ~~❌ **Authoring a brief for a task whose prior task doesn't pass the coherence gate**~~ — **SUPERSEDED .** This is no longer an anti-pattern; a prior task's archival state (Issue/PR/provenance) no longer blocks authoring or dispatching a brief. Preserved as historical record only.
 - ❌ **A brief with a real §4 code surface and no `Premise:` block, or a `Premise:` block whose assertions all pin unrelated paths** — `checkPremiseCoverage` rejects it; the whole point of the pin is that it covers the surface the brief's reasoning depends on
 - ❌ **Instructing the executor (or a §7 doc-update list) to commit a new file for a one-off report, audit finding, coverage summary, or working brief** — that content's permanent home is the PR body or an Issue/PR comment, never a new repo file (`tranche-model.md` §9 rule 4). A brief that tells the Developer "write your findings to `aeg-root/tranches/<name>-audit.md`" is malformed in exactly the way a brief that puts itself in the Issue instead of the PR body is malformed — it invents an unsanctioned new home for content the model already gave a home to (PR body, or an Issue/PR comment).
+- ❌ **Stating a behavioural fact about code as prose instead of a `Premise:` pin or a fenced command with executed output** — a live brief once instructed "State that `vinaya review post` enforces the BLOCKER-plus-APPROVE contradiction and nothing else," which the Developer transcribed faithfully into doctrine; the command enforced three things, not one, and a reviewer proved the sentence false against the code. Nothing had verified the sentence before it was written. The fix was always available: "run `grep -n refuse apps/cli/src/commands/review-post.ts`, read every hit, and write doctrine from what the hits say."
 
 ---
 

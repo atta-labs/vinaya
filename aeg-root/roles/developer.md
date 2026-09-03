@@ -187,24 +187,15 @@ The `AEG:EVIDENCE` block is populated by running `vinaya pr report --write <body
 
 `check-evidence-fresh` (CI) refuses a body whose block doesn't match the head it's attached to — recomputing Group A exactly and checking Group B for staleness. This closes fabrication for **Group A only** (a hand-typed diff stat cannot survive a byte-compare); Group B is checked for freshness, not re-run, so a stale-but-not-fabricated Group B slips past unless the block is also out of date. Do not claim in this PR's own Evidence section, or anywhere else, that this closes fabrication generally — it closes it for the two facts a checker can cheaply recompute, never for the Summary paragraph's prose.
 
-**Regeneration is the last step, after every other change.** The local body file is never hand-edited after open. When a push forces the Evidence block to go stale — or a re-entry turn needs its one appended Token report row — regenerate and re-apply it last, after every commit for that round is already pushed, from the repo root:
+**Regeneration is one command, run last, after every other change.** The Developer never hand-edits the live PR body after open — there is no local body file to keep in sync with the forge. When a push forces the Evidence block to go stale — or a re-entry turn needs its one appended Token report row — run, from the repo root, after every commit for that round is already pushed:
 
-`pr edit --body-file` replaces the whole body, so the local file must be refreshed from the forge first — a `[principal]` tick, if one landed, is a forge write only that pull carries forward:
+`vinaya pr report --push <n>`
 
-```
-gh pr view <n> --json body -q .body > <body-file>
-export PR_BODY="$(cat <body-file>)"
-export BRANCH=<branch>
-vinaya pr report --write <body-file>
-diff <(gh pr view <n> --json body -q .body) <body-file>
-vinaya pr edit <n> --body-file <body-file>
-```
+**On this repo's toolchain**, substitute `bun apps/cli/src/index.ts` for `vinaya` in that command.
 
-**On this repo's toolchain**, substitute `bun apps/cli/src/index.ts` for `vinaya` in the sequence above.
+It fetches the PR's live body itself, splices the fresh `AEG:EVIDENCE`/`AEG:TOKENS` content into it through the same anchor resolver `--write` uses, pushes the result via the forge's own PR-edit, then re-reads the live body and refuses — restoring the pre-edit body — unless the two agree outside those two anchored regions. A `[principal]` tick, if one landed since this turn started, is a live-body write only this command's own fetch-then-splice sequence carries forward correctly; it refuses rather than appending when the live body carries no real `AEG:EVIDENCE` pair at all.
 
-The `diff` runs before `pr edit`, against the forge copy this turn started from — it shows exactly what the edit is about to change, and its output is what you paste into the round comment as proof only anchored regions changed. Run it after the edit and it is empty by construction (the forge now matches the local file), which proves nothing.
-
-That sequence is the only sanctioned post-open write. After open the Developer changes nothing outside the `AEG:EVIDENCE` anchor and one appended `AEG:TOKENS` row. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. Everything else a review round produces — the response to findings, re-run `[agent]` evidence, any disclosure the brief didn't anticipate — is a PR comment, never a body edit.
+After open the Developer changes nothing outside the `AEG:EVIDENCE` anchor and one appended `AEG:TOKENS` row. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. Everything else a review round produces — the response to findings, re-run `[agent]` evidence, any disclosure the brief didn't anticipate — is a PR comment, never a body edit.
 
 ---
 
@@ -280,6 +271,8 @@ The code-reviewer and security passes are **separate, fresh-context invocations*
 ## Pushback when the brief is wrong
 
 A brief is not infallible. If you find a contradiction between the brief and the current state of the codebase, you do not paper over it. You surface it.
+
+A contradiction is not only the codebase-moved-since-the-brief case. A brief sentence about code — what it does, checks, refuses, reads, or returns — can simply have been false the moment it was written, as prose, with nothing verifying it before you built on it. Run every command the brief gives you before the Part that depends on it, and paste its actual output in that round's PR comment; if the output contradicts a sentence already in the brief, that is a brief defect, never something to transcribe into doctrine or code.
 
 Escalate with the appropriate severity — a manual escalation note, or, if you were dispatched by an automation layer, its request-input mechanism:
 
@@ -408,7 +401,7 @@ If the brief declares `unit-tests-only` and the diff really is pure logic, the p
 
 1. **Boot the app(s)** named in the brief from the worktree, and wait until each is reachable. If it does not boot, that is the failure — the plan never gets a chance to run.
 2. **Execute every `[agent]` item.** Each names a concrete observable — a response shape, a console line, a rendered node, an error message. Run the named command and **paste the actual output**. Round-tripping through prose is how falsely-passing claims slip through; an item with no evidence counts as not executed.
-3. **Report on the PR** — each item with its result and its evidence, posted as a PR comment, never written into the body. A re-run after fixes posts a new comment; it never edits the one already there. The body's `[agent]` Test Plan line carries the tick only, never pasted command output — the evidence lives solely in the comment, headed `Head: <sha>`, which is what closes the stale-evidence path: the body has nothing that can go stale.
+3. **Report on the PR** — each item with its result and its evidence, posted as a PR comment, never written into the body. A re-run after fixes posts a new comment; it never edits the one already there. The body's `[agent]` Test Plan line carries the tick only, never pasted command output — the evidence lives solely in the comment, headed `Head: <sha>`. The `AEG:EVIDENCE` block, not this line, is what `evidence-fresh` binds to the PR's head.
 4. **Stop there.** Do not execute `[principal]` items; you structurally cannot. Mark them as awaiting the Principal.
 
 A failed `[agent]` item makes the PR unmergeable. Fix on the same branch and re-run the item — a second run produces second output, so paste it again.
