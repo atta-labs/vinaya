@@ -223,7 +223,7 @@ function postBriefComment(url: string, brief: string): void {
       makeCheckError(
         'pr-body-frozen',
         `PR was created (${url || '(gh printed no URL)'}) but its number could not be parsed from the URL, so the aeg:brief comment was not posted.`,
-        'Manually post the dispatched brief, wrapped in `<!-- aeg:brief --> … <!-- /aeg:brief -->`, as a PR comment.'
+        'Manually post the dispatched brief as a PR comment, prefixed with `<!-- aeg:brief -->` on its own line.'
       )
     ])
   }
