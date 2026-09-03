@@ -828,6 +828,20 @@ function resolveHeadSha(pr: string): string {
   return out
 }
 
+/**
+ * `--print-only`'s exit (task 6, #397): the rendered, self-checked comment
+ * already passed `checkRenderedComment` — the same gate a real post runs —
+ * so there is nothing left to verify. Print it and return before
+ * `postComment` ever runs; no forge write, no re-fetch to self-verify one.
+ */
+function printOnlyResult(json: boolean, role: string, headSha: string, body: string): void {
+  if (json) {
+    printJson({ posted: false, printOnly: true, role, headSha })
+  } else {
+    process.stdout.write(`${body}\n`)
+  }
+}
+
 function postComment(pr: string, body: string): string {
   const tmp = join(tmpdir(), `vinaya-review-post-${process.pid}-${Date.now()}.md`)
   writeFileSync(tmp, body)
@@ -897,7 +911,11 @@ function computeChangedRanges(
  * reasonable guess here — intending a dry run, and this command posted the
  * verdict anyway (atta-labs/vinaya#184). The failure direction is the wrong
  * one: the caller's intent was "do not post", and the outcome was a governance
- * verdict on a real PR, consumed by a blocking merge gate.
+ * verdict on a real PR, consumed by a blocking merge gate. `--print-only`
+ * (task 6, #397) is now a real flag here too, closing that gap: it renders,
+ * runs the exact same `checkRenderedComment` self-check a real post would,
+ * prints the result, and returns — never calling `postComment`, never
+ * re-fetching the forge to self-verify a write that never happened.
  *
  * Declaring the VALUE-taking flags separately also retires the `--json`
  * special case rather than adding a second one beside it. The scan consumes
@@ -928,7 +946,7 @@ const VALUE_FLAGS = [
   '--tokens-out',
   '--verdict'
 ] as const
-const NULLARY_FLAGS = ['--json'] as const
+const NULLARY_FLAGS = ['--json', '--print-only'] as const
 
 /**
  * Exported so `review-post.test.ts` can re-derive this surface from the source
@@ -995,7 +1013,7 @@ export function rejectUnknownFlags(
   if (unknown.length === 0) return
   refuseCmd(
     `unrecognised flag${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}.`,
-    `\`vinaya review post\` accepts: ${[...known].sort().join(', ')}. If you meant to preview without posting, note that this command has no dry-run flag — see atta-labs/vinaya#184.`
+    `\`vinaya review post\` accepts: ${[...known].sort().join(', ')}. If you meant to preview without posting, pass \`--print-only\` — see atta-labs/vinaya#184.`
   )
 }
 
@@ -1047,6 +1065,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   // is the one outcome that cannot be taken back.
   rejectUnknownFlags(args)
   const json = args.includes('--json')
+  const printOnly = args.includes('--print-only')
   const flags = parseFlags(args.filter((a) => !NULLARY_FLAGS.includes(a as (typeof NULLARY_FLAGS)[number])))
 
   const role = flags.get('--role')
@@ -1106,6 +1125,10 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       roleLabel
     })
     checkRenderedCommentOrRefuse(body, { kind: 'escalation' })
+    if (printOnly) {
+      printOnlyResult(json, role, headSha, body)
+      return
+    }
     const url = postComment(pr, body)
 
     let comments: ReviewGateComment[]
@@ -1191,6 +1214,10 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     }
     const body = renderCodeReviewComment(input)
     checkRenderedCommentOrRefuse(body, { kind: 'code-review', verdict })
+    if (printOnly) {
+      printOnlyResult(json, role, headSha, body)
+      return
+    }
     const url = postComment(pr, body)
 
     let postComments: ReviewGateComment[]
@@ -1277,6 +1304,10 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   }
   const body = renderSecurityComment(input)
   checkRenderedCommentOrRefuse(body, { kind: 'security', verdict })
+  if (printOnly) {
+    printOnlyResult(json, role, headSha, body)
+    return
+  }
   const url = postComment(pr, body)
 
   let postComments: ReviewGateComment[]
