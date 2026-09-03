@@ -98,7 +98,9 @@ A brief is self-contained and executable without further conversation. If it nee
 
 **Artifacts:** the brief (a markdown block, not a committed file). The task's Issue already exists from tranche planning.
 
-**Exit:** the brief is well-formed and ready to dispatch.
+Before dispatch, a fresh-context Reviewer runs **Brief review mode** (`roles/reviewer.md`) on the brief itself — a separate, time-boxed pass from the post-dispatch code review, under five minutes, returning one line, `BRIEF: READY` or `BRIEF: NOT READY`, with findings limited to two classes: a contradiction between two of the brief's own sentences, or a design the brief specifies that the party it constrains can defeat or that fails on an input the brief never named. `BRIEF: NOT READY` returns the brief to its author rather than letting it reach dispatch.
+
+**Exit:** the brief is well-formed, has passed Brief review mode, and is ready to dispatch.
 
 ---
 

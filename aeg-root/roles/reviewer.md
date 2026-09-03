@@ -143,6 +143,15 @@ If you discover something that needs a decision above review authority, post it 
 
 Do not resolve it yourself; route it to the Planner or Principal.
 
+## Brief review mode
+
+Before dispatch — a separate, time-boxed pass, not the post-dispatch code review above — a fresh-context Reviewer reads the whole brief and returns one line: `BRIEF: READY` or `BRIEF: NOT READY`. Under five minutes. Findings come in exactly two classes, nothing else:
+
+- `contradiction` — two sentences in the brief that cannot both hold.
+- `design-hole` — the design the brief specifies can be defeated by the party it constrains, or fails on an input the brief never named.
+
+`BRIEF: NOT READY` returns the brief to its author (the Brief Author or Planner) rather than letting it proceed to dispatch — it is not a code review, and it carries no finding outside the two classes above.
+
 ## Where you sit in the process
 
 Phase 10 (Review) in `process.md`. The order is: **code-reviewer pass (you) → security pass (`roles/security.md`) → Principal code review → Brief Author spec review → merge.** Your verdict feeds the human reviews; it does not replace them.
