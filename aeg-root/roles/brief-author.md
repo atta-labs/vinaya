@@ -93,7 +93,7 @@ Item 1 governs every brief, whatever the branch: a real Issue is required either
 
 **Writing from memory instead of from the surfaces.** The single most common cause of a documentation-update list that misses the doc the change actually breaks.
 
-**A brief sentence asserting what code does instead of a `Premise:` pin or a fenced command with its output.** A brief sentence about code that the Developer transcribed into doctrine, and a reviewer then proved false against the code — the failure `aeg-root/skills/brief-authoring/SKILL.md`'s own anti-pattern names (PR `#382`). Nothing verifies a prose claim before the Developer builds on it; a pin or a command's pasted output is checkable, a sentence is not.
+**A brief sentence asserting what code does instead of a `Premise:` pin or a fenced command with its output.** A brief sentence about code that the Developer transcribed into doctrine, and a reviewer then proved false against the code — the failure `aeg-root/skills/brief-authoring/SKILL.md`'s own anti-pattern names. Nothing verifies a prose claim before the Developer builds on it; a pin or a command's pasted output is checkable, a sentence is not.
 
 **A file surface that says "and wherever else turns out to need it."** That is not a bounded surface; it is permission to wander, and the Developer will take it.
 
