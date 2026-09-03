@@ -27,6 +27,7 @@ import { prReportCommand } from './commands/pr-report.js'
 import { prVerifyEvidenceCommand } from './commands/pr-verify-evidence.js'
 import { quickstartCommand } from './commands/quickstart.js'
 import { reviewPostCommand } from './commands/review-post.js'
+import { reviewStatusCommand } from './commands/review-status.js'
 import { runStudio } from './commands/studio.js'
 import { tokensCommand } from './commands/tokens.js'
 import { upgradeCommand } from './commands/upgrade.js'
@@ -174,8 +175,10 @@ try {
       const [subcommand, ...rest] = args
       if (subcommand === 'post') {
         await reviewPostCommand(rest)
+      } else if (subcommand === 'status') {
+        await reviewStatusCommand(rest)
       } else {
-        console.error(`Unknown 'review' subcommand: ${subcommand ?? '(none)'} (expected 'post')`)
+        console.error(`Unknown 'review' subcommand: ${subcommand ?? '(none)'} (expected post/status)`)
         process.exit(2)
       }
       break
