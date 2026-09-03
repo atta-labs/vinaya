@@ -58,6 +58,17 @@ const CHECKBOX_TICK = /^([-*]\s+)\[[xX]\]/gm
  * unticked. Recomputes bounds fresh after each removal since prior removals
  * shift indices — cheap at PR-body scale, and it means field order in the
  * body never matters.
+ *
+ * **Line-ending and trailing-whitespace normalised before hashing** (round-2
+ * ruling addendum 3) — `vinaya pr create --body-file` hashes the body file
+ * as written to disk, trailing newline and all; `vinaya-checks.yml` re-reads
+ * the LIVE body via `${{ github.event.pull_request.body }}`, which GitHub
+ * returns with that trailing newline (and any CRLF) already gone. Same
+ * authored bytes, different hash, on every PR opened from a body file —
+ * found live on `#393` (`99d2263a…` at open vs `1547275f…` from CI). `\r\n`
+ * → `\n` first (order matters: collapsing CRLF before trimming trailing
+ * whitespace means a lone trailing `\r` left by a partial CRLF→LF pass can
+ * never survive as significant), then trailing whitespace stripped.
  */
 export function authoredRegion(body: string): string {
   let result = body
@@ -67,7 +78,7 @@ export function authoredRegion(body: string): string {
       result = result.slice(0, bounds.outerStart) + result.slice(bounds.outerEnd)
     }
   }
-  return result.replace(CHECKBOX_TICK, '$1[ ]')
+  return result.replace(CHECKBOX_TICK, '$1[ ]').replace(/\r\n/g, '\n').replace(/\s+$/, '')
 }
 
 /** sha256 hex digest of `authoredRegion(body)`. */

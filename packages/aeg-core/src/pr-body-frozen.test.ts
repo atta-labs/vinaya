@@ -72,8 +72,10 @@ describe('authoredRegion', () => {
 
   it('normalises a ticked checkbox outside any anchored field to unticked', () => {
     const unanchored = 'Notes:\n- [x] **[principal]** done outside the anchored Test Plan section.\n'
+    // Trailing newline stripped too — the trailing-whitespace normalisation
+    // this same function applies (round-2 ruling addendum 3).
     expect(authoredRegion(unanchored)).toBe(
-      'Notes:\n- [ ] **[principal]** done outside the anchored Test Plan section.\n'
+      'Notes:\n- [ ] **[principal]** done outside the anchored Test Plan section.'
     )
   })
 
@@ -83,6 +85,17 @@ describe('authoredRegion', () => {
       ''
     )
     expect(authoredRegionHash(BASE_BODY)).toBe(authoredRegionHash(withoutRow))
+  })
+
+  it('hashes identically with and without a trailing newline, and with CRLF (round-2 ruling addendum 3)', () => {
+    // `vinaya pr create --body-file` hashes the file as written (trailing
+    // newline included); the live PR body GitHub's webhook returns has no
+    // trailing newline. Same authored bytes, different hash — #393.
+    const withoutTrailingNewline = BASE_BODY.replace(/\n+$/, '')
+    const withCrlf = BASE_BODY.replace(/\n/g, '\r\n')
+    const hash = authoredRegionHash(BASE_BODY)
+    expect(authoredRegionHash(withoutTrailingNewline)).toBe(hash)
+    expect(authoredRegionHash(withCrlf)).toBe(hash)
   })
 })
 
