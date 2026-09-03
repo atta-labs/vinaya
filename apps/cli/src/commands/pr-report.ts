@@ -452,24 +452,28 @@ export function groupCFailed(groupC: GroupC): boolean {
 }
 
 /**
- * Group C, rendered inside its own fenced block — always present (even with
- * zero commands) so a byte-compare always finds three fences, never two.
- * Exported so `check-evidence-fresh.ts` can reproduce the exact same
- * rendering from an independently recomputed `GroupC` and byte-compare it
- * against what the block already carries, the same way it already does for
- * Group A.
+ * Group C, each command rendered as a `#### C<n>: \`<command>\`` heading
+ * followed by its OWN fenced output block — never one shared fence over
+ * every command's output (Principal ruling, PR `open-2`). A single fence
+ * with `$ <command>` lines between outputs was ambiguous: a command whose
+ * own output happens to start a line with `$ ` (`bun run test`'s own
+ * `$ turbo test` progress line, among others) was indistinguishable from a
+ * genuine next command — `evidence-fresh`'s attested comparison found FIVE
+ * commands in a four-command §9 list. A heading is a delimiter output
+ * cannot forge: `evidence-fresh` reads the `#### C<n>:` lines only, never a
+ * fence's contents, so what a command prints is no longer load-bearing for
+ * where one command ends and the next begins.
  */
 export function renderGroupC(groupC: GroupC): string {
-  const body =
-    groupC.commands.length === 0
-      ? '(no [agent] commands in the Test Plan section)'
-      : groupC.commands
-          .map((c) => {
-            const status = c.timedOut ? '[timeout]' : c.exitCode !== 0 ? `[exit ${c.exitCode}]` : null
-            return [`$ ${c.command}`, c.output, ...(status ? [status] : [])].join('\n')
-          })
-          .join('\n\n')
-  return ['### Group C — Test Plan commands', '', '```', body, '```'].join('\n')
+  if (groupC.commands.length === 0) {
+    return ['### Group C — Test Plan commands', '', '(no [agent] commands in the Test Plan section)'].join('\n')
+  }
+  const blocks = groupC.commands.map((c, i) => {
+    const status = c.timedOut ? '[timeout]' : c.exitCode !== 0 ? `[exit ${c.exitCode}]` : null
+    const output = [c.output, ...(status ? [status] : [])].join('\n')
+    return [`#### C${i + 1}: \`${c.command}\``, '', '```', output, '```'].join('\n')
+  })
+  return ['### Group C — Test Plan commands', '', blocks.join('\n\n')].join('\n')
 }
 
 /**

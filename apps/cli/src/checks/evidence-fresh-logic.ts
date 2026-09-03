@@ -11,15 +11,20 @@
  * recomputed diff stat) by exact-comparing recomputed text against the
  * block's stored text. For Group B (the attested `vinaya check --all
  * --diff-only` run) and Group C (the attested §9 `[agent]` command list,
- * task 12, Principal ruling PR `open-1`) it checks correspondence only —
- * Group B's `Head:` sha still matches the PR's real head, Group C's stored
- * `$ <command>` lines still equal the body's own §9 list — because
- * re-running either suite here would be the recursion this same brief's
- * Part 1 rejected (Group C's own first attempt at exact re-run did exactly
- * that: deleted `dist` out from under CI's twenty-six sibling checks and
- * ran the whole test suite inside a single check's timeout). A block whose
- * Group B or Group C section was fabricated outright (never actually run)
- * is NOT detected by this function; only a STALE or MISMATCHED one is.
+ * task 12, Principal rulings PR `open-1`/`open-2`) it checks correspondence
+ * only — Group B's `Head:` sha still matches the PR's real head, Group C's
+ * stored `#### C<n>: \`<command>\`` HEADING lines still equal the body's own
+ * §9 list, in order — because re-running either suite here would be the
+ * recursion this same brief's Part 1 rejected (Group C's own first attempt
+ * at exact re-run did exactly that: deleted `dist` out from under CI's
+ * twenty-six sibling checks and ran the whole test suite inside a single
+ * check's timeout). Headings, not fence contents: a command's own output can
+ * contain a line shaped like whatever delimiter a fence-content scan would
+ * use (`bun run test` prints its own `$ turbo test` progress line), so only
+ * a heading — which no command's OUTPUT can forge — is ever a command
+ * boundary. A block whose Group B or Group C section was fabricated
+ * outright (never actually run) is NOT detected by this function; only a
+ * STALE or MISMATCHED one is.
  */
 
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../lib/numstat'
@@ -42,17 +47,20 @@ const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
  * compared. Passing the pair whole is what keeps the located line and the
  * sliced text at the same offsets (Issue #189).
  *
- * `expectedGroupCCommandLines` (task 12, Principal ruling PR `open-1`) is the
- * caller's own command list read STRAIGHT OFF the body's §9 Test Plan
- * section (`agentCommandText`-stripped, never executed by this check) —
- * compared against the stored block's `$ <command>` lines, in order, WHEN
- * the block carries a third fence at all. Group C is arbitrary §9 commands,
- * not a `git` recompute: re-running it here is exactly the class of
- * recursion Group B is already exempt from (a check re-executing a full
- * test suite under sibling checks that just consumed the same `dist` — the
- * defect this ruling fixes). This is attestation, the same treatment
- * Group B gets, never a re-run and byte-compare. A body with only two
- * fences predates this group (grandfathered — not every currently open PR
+ * `expectedGroupCCommandLines` (task 12, Principal rulings PR
+ * `open-1`/`open-2`) is the caller's own command list read STRAIGHT OFF the
+ * body's §9 Test Plan section (`agentCommandText`-stripped, never executed
+ * by this check) — compared against the stored block's `#### C<n>:
+ * \`<command>\`` heading lines, in order, WHEN the region carries a
+ * `### Group C` heading at all. Group C is arbitrary §9 commands, not a
+ * `git` recompute: re-running it here is exactly the class of recursion
+ * Group B is already exempt from (a check re-executing a full test suite
+ * under sibling checks that just consumed the same `dist` — the defect
+ * `open-1` fixed). This is attestation, the same treatment Group B gets,
+ * never a re-run and byte-compare — and, since `open-2`, never a scan of a
+ * fence's own contents either, since a command's real output can itself
+ * contain a line shaped like a delimiter. A body with no `### Group C`
+ * heading predates this group (grandfathered — not every currently open PR
  * was written after task 12 landed) and is not compared on this axis;
  * `undefined` skips the comparison outright for a caller that has not
  * computed one.
@@ -123,24 +131,47 @@ export function compareEvidenceBlock(
     }
   }
 
-  // Group C (task 12, Principal ruling PR `open-1`) — attested, like
-  // Group B: the stored fence's `$ <command>` lines must equal the body's
-  // own §9 command list, in order. Never re-run, never byte-compared
-  // against fresh output — only when BOTH sides can see it: the block
-  // carries a third fence, and the caller supplied an expected list. A
-  // two-fence block predates this group entirely and is never faulted for
-  // lacking it.
-  if (expectedGroupCCommandLines !== undefined && fences.length >= 3) {
-    const storedCommands = (fences[2] as string)
-      .split('\n')
-      .filter((l) => l.startsWith('$ '))
-      .map((l) => l.slice(2))
+  // Group C (task 12, Principal ruling PR `open-1`/`open-2`) — attested,
+  // like Group B: the stored `#### C<n>: \`<command>\`` HEADING lines must
+  // equal the body's own §9 command list, in order. Never re-run, never
+  // byte-compared against fresh output, and — since `open-2` — never read
+  // out of a fence's own contents either: a command's real output can
+  // itself contain a line shaped like a delimiter (`bun run test` prints
+  // its own `$ turbo test` progress line — and, discovered while adding
+  // this fix's own mutation-proof test, even a line shaped exactly like a
+  // `#### C<n>:` heading is possible inside a command's OUTPUT, not just
+  // its actual next command).
+  //
+  // A heading-line-shaped decoy living INSIDE a fence is what this closes:
+  // `resolved.maskedRegion` — the same index-preserving `maskCode` view
+  // `summaryLineIndex` above already relies on — blanks every fenced span,
+  // so a decoy line loses its `#### C<n>:` PREFIX there (that prefix carries
+  // no backticks and survives masking untouched) exactly when it sits
+  // inside a fence; a genuine heading, which always sits between fences,
+  // keeps its prefix either way. Detection therefore reads the MASKED
+  // line's prefix, never the raw one — but the command name itself is
+  // backtick-wrapped, and `maskCode` ALSO blanks single-backtick inline
+  // spans, so the command text is extracted from the RAW line at that same
+  // index instead (masking is index-preserving line-for-line: splitting
+  // both views on `\n` gives arrays the same length, in step).
+  const hasGroupCSection = /^### Group C — Test Plan commands/m.test(resolved.maskedRegion)
+  if (expectedGroupCCommandLines !== undefined && hasGroupCSection) {
+    const HEADING_PREFIX = /^####\s+C\d+:/
+    const COMMAND_HEADING_LINE = /^####\s+C\d+:\s+`(.*)`\s*$/
+    const maskedLines = resolved.maskedRegion.split('\n')
+    const rawLines = region.split('\n')
+    const storedCommands: string[] = []
+    for (let i = 0; i < maskedLines.length; i++) {
+      if (!HEADING_PREFIX.test(maskedLines[i] as string)) continue
+      const match = COMMAND_HEADING_LINE.exec(rawLines[i] as string)
+      if (match) storedCommands.push(match[1] as string)
+    }
     const expected = expectedGroupCCommandLines
     const mismatch = storedCommands.length !== expected.length || storedCommands.some((c, i) => c !== expected[i])
     if (mismatch) {
       errors.push(
         [
-          "evidence-fresh: Group C's command lines do not match the PR body's own §9 Test Plan list.",
+          "evidence-fresh: Group C's command headings do not match the PR body's own §9 Test Plan list.",
           `  block:    ${JSON.stringify(storedCommands)}`,
           `  expected: ${JSON.stringify(expected)}`
         ].join('\n')

@@ -11,14 +11,20 @@
  *     for freshness only, via the block's `Head:` line — re-running that
  *     suite here would be the recursion `vinaya pr report`'s own docstring
  *     rejects.
- *   - Group C (task 12, Principal ruling PR `open-1`: the Test Plan's
- *     `[agent]` command list) is attested, like Group B — the stored
- *     block's `$ <command>` lines must equal the body's own §9 list, never
- *     re-run here. Group C is arbitrary commands, not a `git` recompute; an
- *     earlier version of this check re-ran the whole §9 list (including a
- *     full `bun run test`) inside its own timeout, deleting `dist` out from
- *     under the twenty-six sibling checks the same CI job had just built it
- *     for. Skipped for a two-fence block that predates this group.
+ *   - Group C (task 12, Principal rulings PR `open-1`/`open-2`: the Test
+ *     Plan's `[agent]` command list) is attested, like Group B — the
+ *     stored block's `#### C<n>: \`<command>\`` HEADING lines must equal
+ *     the body's own §9 list, in order, never re-run here. Group C is
+ *     arbitrary commands, not a `git` recompute; an earlier version of this
+ *     check re-ran the whole §9 list (including a full `bun run test`)
+ *     inside its own timeout, deleting `dist` out from under the
+ *     twenty-six sibling checks the same CI job had just built it for
+ *     (`open-1`). A later version read command boundaries out of a shared
+ *     fence's `$ `-prefixed lines instead of re-running them, but a
+ *     command's own output can print a line shaped like that same
+ *     delimiter — `open-2` moved the boundary to a heading line no
+ *     command's OUTPUT can forge. Skipped for a region carrying no
+ *     `### Group C` heading at all, which predates this group.
  *
  * Head resolution deliberately does NOT use `HEAD`. `actions/checkout@v4` on
  * a `pull_request` event with no `ref:` checks out `refs/pull/N/merge`, so
