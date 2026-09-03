@@ -78,3 +78,7 @@ The block opens with `Head:` and a `Summary:` line — a file and line count der
 [paste the entire dispatched brief here, verbatim]
 
 </details>
+
+---
+
+**This body is written once, at open.** After the PR is open, only the Evidence block and one appended Token report row change — both through `pr edit`, never by hand. A round's response, its re-run evidence, and any disclosure the brief didn't anticipate are PR comments, never edits to this body.
