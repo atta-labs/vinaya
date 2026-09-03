@@ -56,7 +56,7 @@ Every output the per-task Archivist produces (left) has exactly one obligation f
 | per-task Archivist produces (per task) | Tranche Archivist consumes at | What the consumption means |
 |---|---|---|
 | **Provenance block comment** on each merged PR | Entry gate verification | The Tranche Archivist verifies every task PR has a provenance block comment before starting close-out. A missing provenance block means that task's per-task Archivist close-out was incomplete — stop and flag: *"Task N's PR has no provenance block — per-task Archivist did not run for this task. Flag for Principal before proceeding."* |
-| **Lessons Issue comments** for any `BLOCKER`/`MAJOR` findings that merged | Retrospective assembly | The Tranche Archivist reads the pinned lessons Issue's comments since the tranche started and includes the patterns they identify in the retrospective's "What stalled or caused rework" and "Carry-forward lessons" sections. |
+| **Lessons Issue comments** for any `BLOCKER`/`MAJOR` findings that merged | Retrospective assembly | A merged `BLOCKER` means a deviation was approved; a merged `MAJOR` means the Principal accepted a surfaced finding at the go. The Tranche Archivist reads the pinned lessons Issue's comments since the tranche started and includes the patterns they identify in the retrospective's "What stalled or caused rework" and "Carry-forward lessons" sections. |
 | **Follow-up Issues** opened for `STALE-SPEC` findings | Close-out report | The Tranche Archivist lists open follow-up Issues in the output report as DANGLING items — the follow-up Issue itself IS the durable record, open until resolved. A `STALE-SPEC` finding with no follow-up Issue is a DANGLING item — flag it for the Principal. (`now.md` and the pinned state Issue are both retired.) |
 
 **Reading the table:** left is the producer obligation (per-task Archivist role doc and this contract enforce it), right is the consumer obligation (Tranche Archivist role doc and this contract enforce it). The two role docs must not contradict this table.
@@ -66,7 +66,7 @@ Every output the per-task Archivist produces (left) has exactly one obligation f
 ## Producer obligations (the per-task Archivist)
 
 - Post a provenance block comment on every merged task PR — no exceptions. This is the single most critical output: without it, the Tranche Archivist's entry gate fails and close-out cannot proceed.
-- Post a new comment on the pinned lessons Issue for every `BLOCKER` or `MAJOR` finding that was present in the Reviewer's verdict and merged anyway (a deviation). A deviation without a lessons entry is a missed learning.
+- Post a new comment on the pinned lessons Issue for every `BLOCKER` finding (a deviation was approved) or `MAJOR` finding (the Principal accepted a surfaced finding at the go) that was present in the Reviewer's verdict and merged anyway. Either case without a lessons entry is a missed learning.
 - Open a follow-up Issue for every `STALE-SPEC` finding identified by the Reviewer. If the Developer already opened one, confirm it exists; do not open a duplicate.
 - Append one row to the tranche's token ledger at close-out.
 

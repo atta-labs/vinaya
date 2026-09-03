@@ -56,7 +56,7 @@ Every item the Reviewer produces in the verdict (left) has exactly one obligatio
 | Reviewer produces | per-task Archivist consumes at | What the consumption means |
 |---|---|---|
 | **Verdict** (`APPROVE` or `REQUEST CHANGES`) | Entry gate | The Archivist only runs close-out on `APPROVE` + merged PRs. A `REQUEST CHANGES` verdict means the task is not done — close-out does not run until the Reviewer posts `APPROVE` and the PR is subsequently merged. |
-| **Finding list** with severity tags (`BLOCKER` / `MAJOR` / `MINOR` / `NIT`) | Provenance block assembly | The Archivist includes the verdict and finding count in the provenance block. A `MAJOR` or `BLOCKER` finding that merged despite being raised means a deviation was approved — the Archivist logs it in the provenance block under DANGLING. |
+| **Finding list** with severity tags (`BLOCKER` / `MAJOR` / `MINOR`) | Provenance block assembly | The Archivist includes the verdict and finding count in the provenance block. A `BLOCKER` finding that merged despite being raised means a deviation was approved; a `MAJOR` finding that merged means the Principal accepted a surfaced finding at the go. Both are logged in the provenance block under DANGLING. |
 | **Spec-conformance result** (`CONFORMS` / `DRIFTS` / `CONTRADICTS` / `STALE-SPEC`) | Provenance block + pinned lessons Issue | `CONTRADICTS` that merged is a `severity:strategy` flag in the provenance block. `STALE-SPEC` triggers a follow-up Issue (the Archivist opens it if the Developer did not) — it is not a reason to block merge, but it must not disappear. |
 
 **Reading the table:** left is the producer obligation (Reviewer role doc and this contract enforce it), right is the consumer obligation (Archivist role doc and this contract enforce it). The two role docs must not contradict this table.
@@ -65,7 +65,7 @@ Every item the Reviewer produces in the verdict (left) has exactly one obligatio
 
 ## Producer obligations (the Reviewer)
 
-- Every finding must carry a severity tag (`BLOCKER`, `MAJOR`, `MINOR`, or `NIT`). A finding without a tag is malformed — the Reviewer revises the comment before the verdict is considered valid.
+- Every finding must carry a severity tag (`BLOCKER`, `MAJOR`, or `MINOR`). A finding without a tag is malformed — the Reviewer revises the comment before the verdict is considered valid.
 - The verdict line must be the **first line** of the verdict comment, in the exact format specified by `roles/reviewer.md`: `VERDICT: APPROVE | REQUEST CHANGES`.
 - The spec-conformance result must be stated explicitly — `CONFORMS`, `DRIFTS`, `CONTRADICTS`, or `STALE-SPEC`. "Not checked" is not acceptable for Tier 1+ tasks with a named Project.
 - A verdict comment missing any of these three elements is malformed. The Reviewer does not post it.
@@ -77,7 +77,7 @@ Every item the Reviewer produces in the verdict (left) has exactly one obligatio
 - Assemble the provenance block from frozen PR facts (brief in PR body, verdict comment, merge metadata) — never fabricate a field whose source fact is absent. A missing source fact is a DANGLING item, not an opportunity to infer.
 - Post the provenance block as a comment on the merged PR (the PR is a frozen truth domain once merged; the provenance block is its permanent record).
 - **The provenance block comment is the forge-derived coherence signal that downstream roles depend on.** The next Developer to start a task in this tranche checks whether the most-recently-merged task PR carries a provenance block before executing step 0 — its absence is a hard STOP that blocks the next task from starting. Post it completely; a partial or absent block does not satisfy the Developer's entry gate (see `aeg-root/roles/developer.md` and `aeg-root/contracts/brief-developer.md`).
-- A `BLOCKER` or `MAJOR` finding present in the verdict of a merged PR means a deviation was approved. Log it in the provenance block under DANGLING and post a new comment on the pinned lessons Issue.
+- A `BLOCKER` finding present in the verdict of a merged PR means a deviation was approved. A `MAJOR` finding present in the verdict of a merged PR means the Principal accepted a surfaced finding at the go. Both are logged in the provenance block under DANGLING and both get a new comment on the pinned lessons Issue.
 - A `STALE-SPEC` finding in a merged PR must produce a follow-up Issue if the Developer did not already open one. This is the Archivist's responsibility to ensure it happens.
 - Append one row to the tranche's token ledger at close-out.
 
