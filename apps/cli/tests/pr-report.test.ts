@@ -642,7 +642,7 @@ describe('collectTokensAddition refuses rather than claiming the host cannot met
       ...over
     })
 
-    it('classifies an owned-but-unreadable pointer as `pointer-unusable` — never via `corroborated`', () => {
+    it('classifies an owned-but-unreadable pointer as `pointer-unusable`', () => {
       const cap = resolveMeteringCapability(
         deps({
           readFile: () => {

@@ -509,7 +509,7 @@ const TOKEN_ROW_REMEDY = [
   '',
   '  vinaya pr report --write <body-file> --transcript <path>',
   '',
-  'or, on a host whose usage arrives by some other means, read the figures with:',
+  'or, on a host whose usage arrives by some other means, format figures you already hold with:',
   '',
   '  vinaya tokens --phase "<task-id>: develop" --role Developer --in <tokens-in> --out <tokens-out>',
   '',
