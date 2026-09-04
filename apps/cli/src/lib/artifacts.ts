@@ -414,7 +414,7 @@ ${vinayaSetupSteps(selfHost, 'pull-request')}${adopterSetupStep(ciSetup)}      #
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
         run: |
-          DELIM="PR_BODY_$(date +%s%N)"
+          DELIM="PR_BODY_$(openssl rand -hex 16)"
           echo "PR_BODY<<$DELIM" >> "$GITHUB_ENV"
           gh pr view "$PR_NUMBER" --json body --jq .body >> "$GITHUB_ENV"
           echo "$DELIM" >> "$GITHUB_ENV"
@@ -670,7 +670,7 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes body-bare-
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
         run: |
-          DELIM="PR_BODY_$(date +%s%N)"
+          DELIM="PR_BODY_$(openssl rand -hex 16)"
           echo "PR_BODY<<$DELIM" >> "$GITHUB_ENV"
           gh pr view "$PR_NUMBER" --json body --jq .body >> "$GITHUB_ENV"
           echo "$DELIM" >> "$GITHUB_ENV"

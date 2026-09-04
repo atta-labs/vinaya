@@ -1998,3 +1998,28 @@ describe('onboarding notes: correct groups and per-vendor wording (PR #279 revie
     expect(pathSection).not.toContain('principals')
   })
 })
+
+// O5 (found live 2026-09-04): the PR-body heredoc delimiter in the generated
+// "Fetch PR body" step must be unguessable by construction, not merely
+// unlikely to collide — a nanosecond timestamp is neither.
+describe('generated workflows — PR-body heredoc delimiter is real randomness (O5)', () => {
+  it('vinaya-checks.yml and vinaya-body-checks.yml derive DELIM from openssl rand, never a timestamp', () => {
+    const ops = buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost: null,
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
+    })
+    const checks = ops.find((op) => op.kind === 'create-file' && op.path === CHECKS_WORKFLOW_PATH)
+    const bodyChecks = ops.find((op) => op.kind === 'create-file' && op.path === BODY_CHECKS_WORKFLOW_PATH)
+    expect(checks?.kind).toBe('create-file')
+    expect(bodyChecks?.kind).toBe('create-file')
+    for (const op of [checks, bodyChecks]) {
+      if (op?.kind !== 'create-file') continue
+      expect(op.content).toContain('DELIM="PR_BODY_$(openssl rand -hex 16)"')
+      expect(op.content).not.toContain('date +%s%N')
+    }
+  })
+})
