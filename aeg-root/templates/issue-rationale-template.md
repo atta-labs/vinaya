@@ -3,7 +3,7 @@ sidebar_title: "Template: Issue rationale"
 ---
 # Template — Issue rationale (the Planner's eight fields)
 
-**Copy the block below the divider into the task Issue's body and replace every `[…]` placeholder with real content.** This is the rationale grammar that the ring-0 creation gate (`vinaya issue create`/`vinaya issue edit`) and `vinaya check coherence`'s R1 check parse: all eight producer fields of the `aeg-root/contracts/planner-brief.md` contract, in bold-inline form (`**<Field>** — …`; the `### <Field>` heading form is equally valid). The contract and `aeg-root/roles/planner.md` § "The Planner's rationale" remain the source of truth for what each field must *contain* — this file packages the shape; it does not lower the reasoning bar. A field filled with boilerplate is still a malformed rationale, even though it parses.
+**Copy the block below the divider into the task Issue's body and replace every `[…]` placeholder with real content.** This is the rationale grammar that the ring-0 creation gate (`vinaya issue create`/`vinaya issue edit`) and `vinaya check coherence`'s R1 check parse: a `## Objectives` section above all eight producer fields of the `aeg-root/contracts/planner-brief.md` contract, in bold-inline form (`**<Field>** — …`; the `### <Field>` heading form is equally valid). The contract and `aeg-root/roles/planner.md` § "The Planner's rationale" remain the source of truth for what each field must *contain* — this file packages the shape; it does not lower the reasoning bar. A field filled with boilerplate is still a malformed rationale, even though it parses.
 
 ---
 
@@ -12,6 +12,11 @@ sidebar_title: "Template: Issue rationale"
 **Tier:** [0 | 1 | 3]
 **Project:** [project(s), comma-separated, matching the blast radius stated in the "Project(s) + blast radius" field below]
 **Type:** [build | chore | docs | feat | fix | perf | refactor | revert | style | test — the commit-type word this task belongs to; free-text metadata, not a forge label]
+
+## Objectives
+
+O1. [OBJECTIVE — one observable outcome this task makes true, as a sentence — never a file path; the Brief Author maps it to files.]
+O2. [OBJECTIVE — numbered contiguously from O1, one line per objective, as many as this task genuinely has.]
 
 ## Planner's rationale
 

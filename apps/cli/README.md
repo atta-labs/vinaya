@@ -272,6 +272,12 @@ Doctrine explains what a command does and why; it is not a runbook a reader exec
 
 Two exemptions: a block sitting inside the `AEG:VENDOR-EXAMPLE` anchor pair (this repo's own one sanctioned fenced home for a real command sequence, `tranche-model.md` §12), and any file under a `templates/` directory (a worked-example template legitimately shows the full shape a real PR/Issue body carries). Unlike `doctrine-portability`/`reader-resolvable-prose`/`retired-vocabulary` above, this check is **blocking, not report-only** (`severity: error`, exit `1` on any finding) — it ships with an expected-zero corpus rather than an unfixed backlog, so day-one install does not need a baseline rollout.
 
+## Objectives gate
+
+A task Issue must carry a `## Objectives` section — numbered `O<n>. <sentence>` lines, one observable outcome each, contiguous from `O1`, never a file path. `vinaya issue create`/`vinaya issue edit` refuse a task Issue without one via the `objectives` `briefSchema.issue` builtin, and `vinaya check coherence`'s R1 grades the same rule continuously against the live stock — both for Issues numbered `OBJECTIVES_SINCE_ISSUE` (404) and above; an Issue below that number passes unconditionally, so the pre-gate stock stays green.
+
+The brief side has two more gates, run at `verify-brief`/`brief-shape` time: the brief's own `## Objectives` section must match the Closes-linked Issue's (compared normalised — whitespace never fails it, one changed word does), and every numbered Part in §6 must cite at least one `O<n>` while every `O<n>` is cited by at least one Part. A standalone brief with no linked Issue is exempt unless it opts in with its own `## Objectives` section, in which case it is compared against itself.
+
 ## Brief-schema divergence
 
 `briefSchema` in `vinaya.config.json` is yours: `vinaya upgrade` preserves it wholesale and never rewrites it. On its own that ownership has a silent cost — nothing else reads it either, so a builtin deleted to work around a defect stays deleted, with no later upgrade to repair it and nothing to surface it.
