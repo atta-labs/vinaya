@@ -215,10 +215,13 @@ function isBoundToPatch(
  * current `headSha` — by that sha, or by an equal patch identity when
  * `patchIdOf` is supplied — and security-review `PASS` (not `FAIL`, not
  * missing, not unclear) covering it too — AND every reported mechanical check-run for that
- * same head is green (`mechanicalChecks` non-empty and every entry's `bucket`
- * is `"pass"`). `fail` otherwise, naming exactly which verdict(s) are not
- * clean, not bound to the current head, which mechanical check(s) are not
- * green, or that none have reported at all.
+ * same head is green, a `skipping`/`neutral` entry (a job whose own `if:`
+ * was false for this event) filtered out first as absent rather than
+ * counted either way (`mechanicalChecks`, after that filter, non-empty and
+ * every remaining entry's `bucket` is `"pass"`). `fail` otherwise, naming
+ * exactly which verdict(s) are not clean, not bound to the current head,
+ * which mechanical check(s) are not green, or that none have reported at
+ * all.
  */
 export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const principalAllowlist = input.principalAllowlist ?? PRINCIPAL_ALLOWLIST
@@ -236,8 +239,20 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
     }
   }
 
+  // A `skipping` (GitHub `conclusion: "skipped"` or `"neutral"`) check-run is
+  // ABSENT, never a failure (Issue #402 O4): a job whose own `if:` is false
+  // for this event still reports a check-run — `vinaya-review.yml`'s
+  // `retrigger-on-ci-green` job reports `skipped` on every ordinary
+  // `pull_request_target` run — and counting that as "not green" blocked
+  // every PR (first seen on PR #401: "vinaya review gate (retrigger on CI
+  // green) (skipping)"). Filtered out before both the emptiness check and
+  // the clean-check, so a head reporting only skipped/neutral runs reads as
+  // "nothing has reported yet", not as a false pass.
+  const reportedMechanicalChecks = input.mechanicalChecks.filter(
+    (c) => c.bucket !== 'skipping' && c.bucket !== 'neutral'
+  )
   const mechanicalChecksClean =
-    input.mechanicalChecks.length > 0 && input.mechanicalChecks.every((c) => c.bucket === 'pass')
+    reportedMechanicalChecks.length > 0 && reportedMechanicalChecks.every((c) => c.bucket === 'pass')
 
   // Verdict-AUTHOR verification (security finding on PR #806): on a public
   // repo any GitHub account can post a `VERDICT: APPROVE`-shaped comment, and
@@ -290,9 +305,9 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   }
   if (!mechanicalChecksClean) {
     problems.push(
-      input.mechanicalChecks.length === 0
+      reportedMechanicalChecks.length === 0
         ? 'no mechanical checks have reported for this head yet'
-        : `mechanical check(s) not green: ${input.mechanicalChecks
+        : `mechanical check(s) not green: ${reportedMechanicalChecks
             .filter((c) => c.bucket !== 'pass')
             .map((c) => `${c.name} (${c.bucket})`)
             .join(', ')}`

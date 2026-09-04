@@ -291,6 +291,38 @@ describe('checkReviewGate', () => {
       expect(result.verdict).toBe('pass')
       expect(result.waived).toBe(true)
     })
+
+    // Issue #402 O4: a job whose own `if:` is false for the current event
+    // still reports a `skipped` (bucket `skipping`, same as GitHub's
+    // `neutral` conclusion) check-run — `vinaya-review.yml`'s old
+    // `retrigger-on-ci-green` job did this on every ordinary
+    // `pull_request_target` run, and blocked every PR until this fix.
+    it('a skipping/neutral mechanical check is ignored, never treated as a failure', () => {
+      const result = checkReviewGate({
+        comments: [APPROVE_COMMENT, PASS_COMMENT],
+        labels: [],
+        waiverLabelActor: null,
+        mechanicalChecks: [
+          { name: 'Vinaya CI', bucket: 'pass' },
+          { name: 'vinaya review gate (retrigger on CI green)', bucket: 'skipping' },
+          { name: 'some other neutral job', bucket: 'neutral' }
+        ],
+        headSha: HEAD_SHA
+      })
+      expect(result.verdict).toBe('pass')
+    })
+
+    it('a head reporting only skipping/neutral checks reads as none reported, not as clean', () => {
+      const result = checkReviewGate({
+        comments: [APPROVE_COMMENT, PASS_COMMENT],
+        labels: [],
+        waiverLabelActor: null,
+        mechanicalChecks: [{ name: 'vinaya review gate (retrigger on CI green)', bucket: 'skipping' }],
+        headSha: HEAD_SHA
+      })
+      expect(result.verdict).toBe('fail')
+      expect(result.reason).toContain('no mechanical checks have reported for this head yet')
+    })
   })
 })
 
