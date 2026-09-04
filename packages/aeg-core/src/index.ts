@@ -156,13 +156,15 @@ export type { ReviewGateComment, ReviewGateInput, ReviewGateResult, ReviewGateVe
 export {
   checkBlastRadiusScope,
   checkConflictCompleteness,
+  checkIssueObjectives,
   checkIssueRationale,
   checkIssueType,
   checkNoBriefContent,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
   declaredProjects,
-  isTaskIssueLabelSet
+  isTaskIssueLabelSet,
+  OBJECTIVES_SINCE_ISSUE
 } from './issue-validation'
 export type { IssueSectionResult, ProjectPath, TaskIssueFacts } from './issue-validation'
 export { findHeadingLine, findTable, rowToRecord } from './markdown-table'
@@ -321,3 +323,5 @@ export { findWorkspaceEscapes } from './workspace-escape'
 export type { WorkspaceEscapeFinding, WorkspaceEscapeReason, WorkspaceEscapeSourceFile } from './workspace-escape'
 export { parseRationaleFields, renderBrief } from './brief-render'
 export type { BriefFacts, RationaleFieldKey, RenderResult, SurfaceFileFact } from './brief-render'
+export { objectivesVersion, parseObjectives, renderObjectives } from './objectives'
+export type { Objective, ParsedObjectives } from './objectives'

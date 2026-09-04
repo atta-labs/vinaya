@@ -87,8 +87,8 @@ export function parseObjectives(body: string): ParsedObjectives {
       errors.push(`"${line}" is not a well-formed objective line — expected \`O<n>. <sentence>\`, e.g. \`O1. …\`.`)
       continue
     }
-    const [, n, rawText] = m as [string, string, string]
-    const text = rawText.trim()
+    const n = m[1] as string
+    const text = (m[2] as string).trim()
     if (text.length === 0) {
       errors.push(`O${n} has no sentence — every objective is one observable sentence.`)
       continue

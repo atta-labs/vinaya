@@ -100,7 +100,13 @@ function runGhWrite(ghCmd: string[], ghArgs: string[], bodyResult: BodyResult | 
  * `checkBlastRadiusScope`; `sharedPackages`/`projectPaths` are resolved from
  * the adopter repo on disk, not threaded through from argv.
  */
-function validateTaskIssue(body: string | null, title: string | null, labels: string[], retryCommand: string): void {
+function validateTaskIssue(
+  body: string | null,
+  title: string | null,
+  labels: string[],
+  retryCommand: string,
+  issueNumber: number | null
+): void {
   if (body === null) {
     refuse([
       makeCheckError(
@@ -116,7 +122,8 @@ function validateTaskIssue(body: string | null, title: string | null, labels: st
     title,
     sections,
     changedFiles: [],
-    retryCommand
+    retryCommand,
+    issueNumber
   })
   if (schemaErrors.length > 0) refuse(schemaErrors)
 
@@ -143,7 +150,11 @@ export function issueCreateCommand(args: string[]): void {
   const labels = extractLabels(ghArgs)
 
   if (isTaskIssueLabelSet(labels)) {
-    validateTaskIssue(body, title, labels, RETRY_CREATE)
+    // No number exists until the write completes — `checkIssueObjectives`
+    // treats `null` as NOT exempted (fail-closed), never as "old enough to
+    // skip"; every Issue this repo can newly mint is already far past
+    // `OBJECTIVES_SINCE_ISSUE`, so this never blocks a legitimate create.
+    validateTaskIssue(body, title, labels, RETRY_CREATE, null)
   }
 
   if (validateOnly) {
@@ -183,7 +194,11 @@ export function issueEditCommand(args: string[]): void {
   const labels = [...new Set([...fetchForgeLabels(issueRef), ...extractLabels(ghArgs)])]
 
   if (isTaskIssueLabelSet(labels)) {
-    validateTaskIssue(body, title, labels, RETRY_EDIT)
+    // A bare number parses directly; a URL (`.../issues/123`) or anything
+    // else that doesn't parse is `null` — fail-closed, same as `create`'s
+    // not-yet-known number, never guessed as "old enough to skip".
+    const parsedIssueNumber = /^\d+$/.test(issueRef) ? Number.parseInt(issueRef, 10) : null
+    validateTaskIssue(body, title, labels, RETRY_EDIT, parsedIssueNumber)
   }
 
   if (validateOnly) {

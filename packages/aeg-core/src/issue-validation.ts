@@ -18,6 +18,7 @@
 
 import { hasLabel, LABELS, projectFieldFromBody, projectsFromBody, SECTION_HEADER } from '@attalabs/aeg-forge-state'
 import { stripCode } from './anchored-region'
+import { parseObjectives } from './objectives'
 
 export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }
 
@@ -87,6 +88,38 @@ export function checkIssueRationale(body: string): IssueSectionResult {
     }
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+/**
+ * The Issue number from which `## Objectives` becomes mandatory (dev-review-
+ * loop-v1 task 1, Issue #411's Origin: PR #398 merged with two brief Parts
+ * undelivered and nothing named what the work had to do in a form a machine
+ * could compare). The newest Issue at authoring time was #418; every task
+ * Issue from #404 up already carries the section by hand. Same shape as
+ * `BRIEF_RULES_SINCE_PR` (`brief-validation.ts`) — a cutover by Issue number,
+ * never a retroactive requirement on the pre-gate stock.
+ */
+export const OBJECTIVES_SINCE_ISSUE = 404
+
+/**
+ * **The Objectives gate.** A task Issue numbered at or above
+ * `OBJECTIVES_SINCE_ISSUE` must carry a well-formed `## Objectives` section
+ * (`objectives.ts`'s `parseObjectives`) — one numbered, observable-outcome
+ * sentence per line, contiguous from `O1`. Below the cutover, an Issue passes
+ * unconditionally — the stock of older Issues stays green.
+ *
+ * `issueNumber === null` (not yet known — an Issue being created has no
+ * number until the write completes) is NOT exempted: fail-closed, the same
+ * posture `partitionBriefErrorsByRollout` (`brief-validation.ts`) takes for
+ * an unparseable PR number. Every Issue this repo can newly mint is already
+ * far past the cutover, so this never blocks a legitimate create; what it
+ * refuses is guessing an unknown number is old enough to skip.
+ */
+export function checkIssueObjectives(body: string, issueNumber: number | null): IssueSectionResult {
+  if (issueNumber !== null && issueNumber < OBJECTIVES_SINCE_ISSUE) return { status: 'pass', errors: [] }
+  const result = parseObjectives(body)
+  if (result.ok) return { status: 'pass', errors: [] }
+  return { status: 'fail', errors: result.errors.map((e) => `issue-validation objectives: ${e}`) }
 }
 
 /** true when any label marks this as a task Issue (the rationale contract applies). */

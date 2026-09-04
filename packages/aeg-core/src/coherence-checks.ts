@@ -8,7 +8,7 @@
 
 import { trancheLabel, label } from '@attalabs/aeg-forge-state'
 import { anchoredRegion, stripCode } from './anchored-region'
-import { checkIssueRationale, checkProjectsRegistered, isTaskIssueLabelSet } from './issue-validation'
+import { checkIssueObjectives, checkIssueRationale, checkProjectsRegistered, isTaskIssueLabelSet } from './issue-validation'
 import { isPrincipal, PRINCIPAL_ALLOWLIST } from './waiver-label'
 import type { ForgeIssue, TaskIssueRef } from '@attalabs/aeg-types'
 import type { ForgeFacts, Tranche, Task } from './types'
@@ -467,7 +467,8 @@ export function checkR1(
       if (!isTaskIssueLabelSet(issue.labels)) continue
       const errors = [
         ...checkIssueRationale(issue.body).errors,
-        ...checkProjectsRegistered(issue.body, issue.labels, registeredNames).errors
+        ...checkProjectsRegistered(issue.body, issue.labels, registeredNames).errors,
+        ...checkIssueObjectives(issue.body, issue.number).errors
       ]
       if (errors.length === 0) continue
       failures.push({
