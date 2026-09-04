@@ -25,6 +25,19 @@ export type RunOptions = {
    * cannot exist yet at commit/push time. See `CheckSpec.requiresOpenPr`.
    */
   localOnly?: boolean
+  /**
+   * Post-tranche hygiene item 2, #397 round 2. Set by the generated
+   * `pre-commit` hook only — never pre-push, never CI, both of which need
+   * every `scope: 'full'` check to genuinely run. `--diff-only` cannot be
+   * that switch: CI passes it too (`vinaya check --all --diff-only`), and
+   * `shouldSkip` already runs every `scope: 'full'` check regardless of it
+   * (see that function's own doc comment) — a `scope: 'full'` check has no
+   * `changedFiles` list to test an `include` glob against in the first
+   * place. `skipFull` is the first flag scoped narrowly enough to
+   * distinguish "pre-commit, where a full-scope check is deferred to
+   * pre-push/CI" from every other caller.
+   */
+  skipFull?: boolean
 }
 
 /** A sane cpu-derived default — callers may override via `--parallel`. */
@@ -48,19 +61,27 @@ function isCheckError(value: unknown): value is CheckError {
  * A `scope: 'diff'` check is skipped when `--diff-only` is active, changed
  * files are known, the check declares `include` globs, and none match. A
  * check with no `include` globs declares no scoping preference and is never
- * skipped on that basis alone. `scope: 'full'` checks always run.
+ * skipped on that basis alone. `scope: 'full'` checks always run — UNLESS
+ * `opts.skipFull` is set (pre-commit only, #397 round 2), which skips every
+ * `scope: 'full'` check unconditionally, independent of `include`: a
+ * full-scope check's own `include` (where declared) stays exactly what it
+ * was before this flag existed — pinning/documentation only, never consulted
+ * here — because `skipFull` is a blanket "defer every full-scope check to
+ * pre-push/CI" switch, not a per-check scoping decision.
  *
  * Independently, a `requiresOpenPr` check is skipped whenever `opts.localOnly`
  * is set, regardless of scope/diff — see `RunOptions.localOnly`.
  */
-function shouldSkip(spec: CheckSpec, opts: RunOptions): boolean {
-  if (opts.localOnly && spec.requiresOpenPr) return true
-  if (spec.scope !== 'diff') return false
-  if (!opts.diffOnly) return false
-  if (opts.changedFiles === null) return false
-  if (!spec.include || spec.include.length === 0) return false
+function shouldSkip(spec: CheckSpec, opts: RunOptions): { skip: boolean; reason?: string } {
+  if (opts.localOnly && spec.requiresOpenPr) return { skip: true }
+  if (opts.skipFull && spec.scope === 'full') return { skip: true, reason: 'full-scope, pre-commit' }
+  if (spec.scope !== 'diff') return { skip: false }
+  if (!opts.diffOnly) return { skip: false }
+  if (opts.changedFiles === null) return { skip: false }
+  if (!spec.include || spec.include.length === 0) return { skip: false }
   const regexes = spec.include.map(globToRegex)
-  return !opts.changedFiles.some((f) => regexes.some((re) => re.test(f)))
+  const matched = opts.changedFiles.some((f) => regexes.some((re) => re.test(f)))
+  return { skip: !matched }
 }
 
 /** Grace period between SIGTERM and SIGKILL for a timed-out check. */
@@ -462,8 +483,16 @@ export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<C
 
   for (let i = 0; i < specs.length; i++) {
     const spec = specs[i] as CheckSpec
-    if (shouldSkip(spec, opts)) {
-      results[i] = { name: spec.name, status: 'skipped', exitCode: null, errors: [], durationMs: 0 }
+    const skip = shouldSkip(spec, opts)
+    if (skip.skip) {
+      results[i] = {
+        name: spec.name,
+        status: 'skipped',
+        exitCode: null,
+        errors: [],
+        durationMs: 0,
+        ...(skip.reason ? { skipReason: skip.reason } : {})
+      }
     } else {
       toRun.push(i)
     }

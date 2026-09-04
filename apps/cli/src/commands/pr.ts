@@ -177,6 +177,86 @@ function fetchPrForgeContext(prRef: string): { changedFiles: string[]; branch: s
   return { changedFiles, branch: parsed.headRefName ?? '' }
 }
 
+/**
+ * `pr create`'s brief/report split (task 4, #397): `aeg-root/templates/
+ * pr-report-template.md`'s `## Reference — the dispatched brief` section,
+ * wrapped in `<!-- aeg:brief:start -->` / `<!-- aeg:brief:end -->` markers,
+ * is never sent to the forge as body text — PR `#396`'s body was `47` KB,
+ * `37` KB of it the brief copy. `report` is everything before the START
+ * marker (what `gh pr create` actually receives); `brief` is the marked
+ * content, verbatim, posted as its own PR comment after the body-hash
+ * marker. A body with no START marker (a brief with no `## Reference`
+ * section at all, or a non-brief-shaped body) splits to `{ report: body,
+ * brief: null }` — nothing to post, nothing lost.
+ *
+ * Uses the LAST START marker and the FIRST END marker after it, never the
+ * first START in the body: the template's own Decisions/Reference prose can
+ * legitimately mention the marker syntax by name (as this very docstring
+ * does), and the one real, intentional pair is always the final section in
+ * a well-formed body — an `indexOf` from the front collided with exactly
+ * such a mention live on this task's own dispatch (#397, PR `#398`),
+ * truncating the report and posting a near-empty brief comment.
+ */
+const BRIEF_START = '<!-- aeg:brief:start -->'
+const BRIEF_END = '<!-- aeg:brief:end -->'
+
+function splitBriefSection(body: string): { report: string; brief: string | null } {
+  const startIdx = body.lastIndexOf(BRIEF_START)
+  if (startIdx === -1) return { report: body, brief: null }
+  const contentStart = startIdx + BRIEF_START.length
+  const endIdx = body.indexOf(BRIEF_END, contentStart)
+  if (endIdx === -1) return { report: body, brief: null }
+  return {
+    report: body.slice(0, startIdx).trimEnd(),
+    brief: body.slice(contentStart, endIdx).trim()
+  }
+}
+
+/**
+ * Posts the split-out brief as its own PR comment, marked `<!-- aeg:brief
+ * -->` so every reader that binds to a frozen marker (exactly like the
+ * `aeg:body-hash` marker above) recognizes it regardless of which identity
+ * posted it. Posted AFTER the body-hash marker (task 4's own ordering) —
+ * the marker freezes the report body first; the brief comment is reference
+ * material, not a gate-read field.
+ *
+ * A failed post is a HARD refusal, same reasoning as `postBodyHashMarker`:
+ * silently dropping the brief loses the PR's only durable record of intent,
+ * indistinguishable from a Developer who never pasted one.
+ */
+function postBriefComment(url: string, brief: string): void {
+  const match = /\/pull\/(\d+)/.exec(url)
+  if (!match) {
+    refuse([
+      makeCheckError(
+        'pr-body-frozen',
+        `PR was created (${url || '(gh printed no URL)'}) but its number could not be parsed from the URL, so the aeg:brief comment was not posted.`,
+        'Manually post the dispatched brief as a PR comment, prefixed with `<!-- aeg:brief -->` on its own line.'
+      )
+    ])
+  }
+  const prNumber = match[1] as string
+  const commentBody = `<!-- aeg:brief -->\n${brief}\n`
+  const tmp = join(tmpdir(), `vinaya-pr-create-brief-${process.pid}-${Date.now()}.md`)
+  writeFileSync(tmp, commentBody)
+  try {
+    execFileSync('gh', ['pr', 'comment', prNumber, '--body-file', tmp], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch (err) {
+    refuse([
+      makeCheckError(
+        'pr-body-frozen',
+        `PR ${url} was created but posting its aeg:brief comment failed: ${err instanceof Error ? err.message : String(err)}`,
+        `Post the comment manually: \`gh pr comment ${prNumber} --body-file <brief.md>\` (prefixed with \`<!-- aeg:brief -->\`).`
+      )
+    ])
+  } finally {
+    rmSync(tmp, { force: true })
+  }
+}
+
 // --- commands ----------------------------------------------------------------
 
 /**
@@ -269,10 +349,10 @@ export async function prCreateCommand(args: string[]): Promise<void> {
   const ghArgs = args.filter((a) => a !== '--json' && a !== '--validate-only')
 
   const bodyResult = locateBodyOrRefuse(ghArgs, RETRY_CREATE)
-  const body = bodyResult?.body ?? null
+  const rawBody = bodyResult?.body ?? null
   const title = extractTitle(ghArgs)
 
-  if (body === null) {
+  if (rawBody === null) {
     refuse([
       makeCheckError(
         'forge-args',
@@ -281,6 +361,14 @@ export async function prCreateCommand(args: string[]): Promise<void> {
       )
     ])
   }
+
+  // Split the brief out (task 4, #397) BEFORE any check runs: every gate
+  // below — `validateForgeWrite`, `body-bare-digits`, the registry's
+  // `PR_BODY` checks — grades what actually reaches the forge as the body,
+  // never the reference brief riding along beside it. `body` from here on
+  // IS the report half; `brief` (possibly null) is posted as its own
+  // comment once the PR exists.
+  const { report: body, brief } = splitBriefSection(rawBody)
 
   const sections = resolveSections('pr', RETRY_CREATE)
   const changedFiles = localChangedFiles()
@@ -324,8 +412,14 @@ export async function prCreateCommand(args: string[]): Promise<void> {
     reportPass(json, 'pr create')
     return
   }
-  const url = runGhWrite(['pr', 'create'], ghArgs, bodyResult, json)
+  // `resolveShippableArgs` materializes whatever `body` this BodyResult
+  // carries into the temp file `gh` actually reads — swapping in the report
+  // half here (never the raw combined body) is what makes `body` the file
+  // `gh pr create` receives, not merely the text these checks graded.
+  const shippedBodyResult: BodyResult | null = bodyResult ? { ...bodyResult, body } : null
+  const url = runGhWrite(['pr', 'create'], ghArgs, shippedBodyResult, json)
   postBodyHashMarker(url, body)
+  if (brief !== null) postBriefComment(url, brief)
 }
 
 export function prEditCommand(args: string[]): void {

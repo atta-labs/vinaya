@@ -14,11 +14,12 @@ import { coreCheckRegistry } from '../../src/checks/registry'
  * happens to exist, and a bundled file is not what this test means by
  * "the bin's source".
  *
- * `include`'s current effect on a `scope: 'full'` entry is documentation/
- * pinning only — `runner.ts`'s `shouldSkip` returns before ever consulting
- * `include` for a non-`'diff'` scope (`runner.ts` is out of this task's
- * surface; see the PR body for that known gap) — so this test asserts the
- * DECLARATION, not a runtime skip.
+ * `include`'s current effect on a `scope: 'full'` entry is still
+ * documentation/pinning only — `runner.ts`'s `shouldSkip` never consults it
+ * for a non-`'diff'` scope, `--skip-full` (#397 round 2) included: that flag
+ * is a blanket "defer every full-scope check" switch, orthogonal to any one
+ * check's own `include` globs — so this test asserts the DECLARATION, not a
+ * runtime skip.
  */
 const BIN_DIR = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin')
 

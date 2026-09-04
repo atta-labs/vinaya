@@ -284,7 +284,7 @@ function renderSection6(facts: BriefFacts): string {
         '   Files:',
         ...files.map((f) => `   - ${f.path}`),
         '',
-        `   Run \`bunx turbo test --filter=${pkg}\` before pushing.`
+        `   Run \`bunx turbo test --affected\` before committing this Part; touches ${pkg}.`
       ].join('\n')
     )
     n++
@@ -297,7 +297,7 @@ function renderSection6(facts: BriefFacts): string {
     )
   }
 
-  return ['## 6. Numbered parts — commit and push after EACH part (push-per-Part)', '', ...parts].join('\n')
+  return ['## 6. Numbered parts — commit after EACH part; push once, before opening the PR', '', ...parts].join('\n')
 }
 
 function renderSection7(section7Pointers: string[]): string {
@@ -321,7 +321,8 @@ function renderSection8(): string {
     // never a command a check or `pr report` executes — `evidence-fresh`
     // re-running it under the twenty-six sibling checks CI had just built
     // deleted their own `dist` out from under them.
-    '- `bunx turbo test --affected --force` (one full run — the command and its output are attested in the Evidence block).',
+    '- `bunx turbo test --affected --force` (the command and its output are attested in the Evidence block).',
+    "- The full `bun run test` suite is CI's to run, on the one push — never run it locally.",
     '- Every blast-radius consumer named in §4, re-verified by name.',
     '- `roles/developer.md`\'s tier checklist genuinely satisfied, and `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr` green.'
   ].join('\n')

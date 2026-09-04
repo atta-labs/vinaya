@@ -419,15 +419,23 @@ describe('(#190) the command actually calls rejectUnknownFlags — not just the 
   })
 
   it('refuses end-to-end on a genuinely unknown flag, before touching the forge', () => {
-    // `--print-only` is real on `vinaya waiver` but not here — the live
-    // incident `unknownFlags`'s own tests reference above. No `--pr`/`--role`
+    // `--print-only` (task 6, #397) is now real here too — closing the exact
+    // gap this test once asserted (atta-labs/vinaya#184: a reviewer guessed
+    // it existed and the command silently posted anyway). `--bogus-flag`
+    // stands in as a flag that is still genuinely unknown. No `--pr`/`--role`
     // is supplied: `rejectUnknownFlags` is the command's first statement, so
     // this must refuse on the unknown flag rather than a later missing-flag
     // check, and never reach a `gh` call (none is stubbed on PATH here).
-    const r = runCli(['review', 'post', '--print-only'], cwd)
+    const r = runCli(['review', 'post', '--bogus-flag'], cwd)
     expect(r.status).not.toBe(0)
     expect(r.stderr).toContain('unrecognised flag')
-    expect(r.stderr).toContain('--print-only')
+    expect(r.stderr).toContain('--bogus-flag')
+  })
+
+  it('--print-only is a recognized flag here too (task 6, #397) — reaches the missing-flag check, not the unrecognised-flag refusal', () => {
+    const r = runCli(['review', 'post', '--print-only'], cwd)
+    expect(r.status).not.toBe(0)
+    expect(r.stderr).not.toContain('unrecognised flag')
   })
 })
 

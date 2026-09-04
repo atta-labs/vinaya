@@ -122,6 +122,37 @@ describe('runChecks', () => {
     expect(outcome?.status).toBe('pass')
   })
 
+  it('skipFull skips every scope: full check and runs the scope: diff one (#397 round 2)', async () => {
+    const full = fullScope({ name: 'full-one', run: FAILING, scope: 'full' })
+    const diff = fullScope({ name: 'diff-one', run: PASSING, scope: 'diff' })
+    const [fullOutcome, diffOutcome] = await runChecks([full, diff], { ...BASE_OPTS, skipFull: true })
+    expect(fullOutcome?.status).toBe('skipped')
+    expect(fullOutcome?.exitCode).toBeNull()
+    expect(fullOutcome?.skipReason).toBe('full-scope, pre-commit')
+    expect(diffOutcome?.status).toBe('pass')
+    expect(diffOutcome?.skipReason).toBeUndefined()
+  })
+
+  it('skipFull: false (the default) runs both a scope: full and a scope: diff check', async () => {
+    const full = fullScope({ name: 'full-one', run: PASSING, scope: 'full' })
+    const diff = fullScope({ name: 'diff-one', run: PASSING, scope: 'diff' })
+    const [fullOutcome, diffOutcome] = await runChecks([full, diff], BASE_OPTS)
+    expect(fullOutcome?.status).toBe('pass')
+    expect(diffOutcome?.status).toBe('pass')
+  })
+
+  it('skipFull does not affect a scope: diff check already skipped by --diff-only/include', async () => {
+    const spec = fullScope({ name: 'scoped', run: PASSING, scope: 'diff', include: ['apps/other/**'] })
+    const [outcome] = await runChecks([spec], {
+      ...BASE_OPTS,
+      diffOnly: true,
+      changedFiles: ['apps/vinaya/cli/src/index.ts'],
+      skipFull: true
+    })
+    expect(outcome?.status).toBe('skipped')
+    expect(outcome?.skipReason).toBeUndefined()
+  })
+
   it('skips a requiresOpenPr check under localOnly, even though the fixture would fail', async () => {
     // Uses FAILING (which always exits 1) to prove this is a real skip, not a
     // pass that happens to coincide with a fixture that never runs a PR-only

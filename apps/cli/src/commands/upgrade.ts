@@ -34,6 +34,11 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
 import { buildInitOps, CONFIG_PATH, type HookDir, type InitContext, TRACKED_HOOK_DIR } from '../lib/artifacts.js'
+import {
+  CLAUDE_SETTINGS_PATH,
+  CLAUDE_STOP_HOOK_MARKER,
+  CLAUDE_STOP_HOOK_SCRIPT_PATH
+} from '../lib/claude-stop-hook-emitter.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import {
   isDefaultedAgentVendorPath,
@@ -127,10 +132,13 @@ function readManifest(repoRoot: string): ConfigRead {
   return { kind: 'ok', manifest: parsed.data.managed }
 }
 
-/** Rewrite ONLY the `managed.version` field, preserving every other
- * top-level key (rings/checks/briefSchema — adopter-owned) and the recorded
- * files/blocks/labels arrays (ownership doesn't change from a content
- * regeneration) exactly as they were. */
+/** Rewrite the `managed.version` field, preserving every other top-level key
+ * (rings/checks/briefSchema — adopter-owned) exactly as they were. The
+ * `files`/`blocks`/`labels` arrays are written verbatim from the `manifest`
+ * argument — ownership doesn't change from an ordinary content regeneration,
+ * so callers normally pass the manifest through unmodified, except the one
+ * caller merging in newly-retrofitted ownership via
+ * `withClaudeStopHookRecorded` below. */
 function writeManifestVersion(repoRoot: string, manifest: ManagedManifest): void {
   const configAbs = join(repoRoot, CONFIG_PATH)
   const seed = JSON.parse(readFileSync(configAbs, 'utf-8'))
@@ -352,6 +360,18 @@ export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManife
         // ownership manifest itself — and is deliberately out of this fix's
         // scope; the guard above is what keeps it out of reach.
         action = 'keep'
+      } else if (op.path === CLAUDE_SETTINGS_PATH && !owned && !exists) {
+        // Retrofit (task 3, #397): a repo that ran `init` before the Claude
+        // Stop hook existed never recorded this path, so the generic `!owned`
+        // branch below would skip it forever as `not-installed`. Strict JSON
+        // has no comment syntax, so — unlike the managed-block artifact
+        // below — this can never merge into foreign content: write it only
+        // when nothing exists yet. An adopter who already has a
+        // `.claude/settings.json` still falls through to the ordinary
+        // `!owned` branch just below and is refused/left untouched exactly
+        // like any other foreign file at a vinaya path.
+        action = 'recreate'
+        hasChanges = true
       } else if (!owned) {
         action = exists ? 'refuse-foreign' : 'not-installed'
       } else if (!exists) {
@@ -374,7 +394,12 @@ export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManife
       entries.push({ kind: 'create-file', op, action, ...(triggerChange ? { triggerChange } : {}) })
     } else if (op.kind === 'managed-block') {
       const abs = resolveManagedBlockPath(repoRoot, op.path)
-      const owned = ownedBlocks.has(blockKey(op.path, op.marker))
+      // Retrofit (task 3, #397): same reasoning as the settings.json branch
+      // above, but this artifact IS a managed block — the append/regenerate
+      // machinery just below already never clobbers foreign content, so
+      // there is no narrower `!exists` guard needed here.
+      const isRetrofitStopHookBlock = op.path === CLAUDE_STOP_HOOK_SCRIPT_PATH && op.marker === CLAUDE_STOP_HOOK_MARKER
+      const owned = ownedBlocks.has(blockKey(op.path, op.marker)) || isRetrofitStopHookBlock
       let action: BlockAction
       if (!owned) {
         action = 'not-installed'
@@ -403,6 +428,47 @@ export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManife
   const versionMigration =
     manifest.version === MANAGED_MANIFEST_VERSION ? null : { from: manifest.version, to: MANAGED_MANIFEST_VERSION }
   return { entries, routing, versionMigration, hasChanges: hasChanges || versionMigration !== null }
+}
+
+/**
+ * Merges the two Claude Stop-hook artifacts (task 3, #397) into the manifest
+ * actually written to disk, once this run genuinely took ownership of them —
+ * `.claude/settings.json` only on `recreate` (never on `refuse-foreign`,
+ * which means an adopter's own file was left untouched and must NOT be
+ * claimed), the managed block whenever its entry isn't `not-installed`. A
+ * second `upgrade` run — and `doctor`, which reads the same manifest — then
+ * see them as genuinely recorded rather than re-derived every time, exactly
+ * as `init` records them for a fresh install.
+ */
+function withClaudeStopHookRecorded(manifest: ManagedManifest, plan: UpgradePlan): ManagedManifest {
+  let files = manifest.files
+  let blocks = manifest.blocks
+
+  const settingsEntry = plan.entries.find((e) => e.kind === 'create-file' && e.op.path === CLAUDE_SETTINGS_PATH)
+  if (
+    settingsEntry &&
+    settingsEntry.kind === 'create-file' &&
+    settingsEntry.action === 'recreate' &&
+    !files.includes(CLAUDE_SETTINGS_PATH)
+  ) {
+    files = [...files, CLAUDE_SETTINGS_PATH]
+  }
+
+  const blockEntry = plan.entries.find(
+    (e) =>
+      e.kind === 'managed-block' &&
+      e.op.path === CLAUDE_STOP_HOOK_SCRIPT_PATH &&
+      e.op.marker === CLAUDE_STOP_HOOK_MARKER
+  )
+  const alreadyRecorded = blocks.some(
+    (b) => b.path === CLAUDE_STOP_HOOK_SCRIPT_PATH && b.marker === CLAUDE_STOP_HOOK_MARKER
+  )
+  if (blockEntry && blockEntry.kind === 'managed-block' && blockEntry.action !== 'not-installed' && !alreadyRecorded) {
+    blocks = [...blocks, { path: CLAUDE_STOP_HOOK_SCRIPT_PATH, marker: CLAUDE_STOP_HOOK_MARKER, comment: 'hash' }]
+  }
+
+  if (files === manifest.files && blocks === manifest.blocks) return manifest
+  return { ...manifest, files, blocks }
 }
 
 // ---------------------------------------------------------------------------
@@ -654,7 +720,7 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
   applyUpgrade(plan, repo.repoRoot)
   // Arm AFTER the tracked hooks are on disk — never route git at nothing.
   if (routing.arm) await deps.setHooksPath(repo.repoRoot, TRACKED_HOOK_DIR)
-  writeManifestVersion(repo.repoRoot, planManifest)
+  writeManifestVersion(repo.repoRoot, withClaudeStopHookRecorded(planManifest, plan))
 
   process.stdout.write('\nVinaya upgraded.\n')
   return 0
