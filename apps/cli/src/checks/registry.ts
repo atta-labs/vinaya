@@ -592,34 +592,6 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   ],
   [
     {
-      name: 'pr-body-frozen',
-      run: bin('check-pr-body-frozen'),
-      scope: 'diff',
-      timeoutMs: 15_000,
-      // Pre-merge-only: meaningless before a PR exists — there is no marker
-      // comment to read yet. Same reasoning as `closes-n`/`evidence-fresh`.
-      requiresOpenPr: true,
-      // The bin shells to `gh pr view --json body,comments,createdAt` and
-      // resolves the principal allowlist the same way `review-gate` does, so
-      // GITHUB_TOKEN/GH_TOKEN must reach it on a CI runner. No `PR_BODY`
-      // declared: this check reads the body it fetches itself, never a
-      // caller-supplied one — comparing the LIVE forge body against the
-      // hash posted at open is the whole point, and a stale/draft `PR_BODY`
-      // would defeat it. PR_NUMBER absence takes the documented no-PR
-      // bypass in the bin. GITHUB_REPOSITORY addresses the trust-anchor
-      // read (`loadTrustAnchorConfig`, lib/config.ts).
-      env: {
-        PR_NUMBER: { optional: true },
-        GITHUB_REPOSITORY: { optional: true },
-        GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
-      }
-    },
-    // requiresOpenPr — see `closes-n` above.
-    1
-  ],
-  [
-    {
       name: 'reader-resolvable-prose',
       run: bin('check-reader-resolvable-prose'),
       scope: 'full',

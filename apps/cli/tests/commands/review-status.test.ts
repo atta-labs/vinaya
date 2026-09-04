@@ -160,7 +160,7 @@ describe('vinaya review status', () => {
       0
     )
     const result = runCli(['review', 'status', '381'], env)
-    expect(statusLines(result.stdout)).toEqual(['push after verdict — re-review or refreeze required'])
+    expect(statusLines(result.stdout)).toEqual(['push after verdict — re-review required'])
     expect(result.status).toBe(1)
   })
 

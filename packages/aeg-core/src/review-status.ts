@@ -191,10 +191,10 @@ export function deriveReviewStatus(input: ReviewStatusInput): ReviewStatus {
  * exactly "a commit landed after the newest verdict, unacknowledged". Verdicts
  * are the last forge event before merge (`roles/developer.md`), so that
  * condition is rendered as the actionable fact it names rather than the bare
- * reason word: `push after verdict — re-review or refreeze required`.
+ * reason word: `push after verdict — re-review required`.
  */
 export function renderReviewStatus(status: ReviewStatus): string {
   if (status.state === 'CONTINUE') return 'CONTINUE'
-  if (status.reason === 'stale') return 'push after verdict — re-review or refreeze required'
+  if (status.reason === 'stale') return 'push after verdict — re-review required'
   return status.id !== undefined ? `PAUSE: ${status.reason} ${status.id}` : `PAUSE: ${status.reason}`
 }

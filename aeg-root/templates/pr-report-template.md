@@ -78,6 +78,6 @@ The block opens with `Head:` and a `Summary:` line — a file and line count der
 [paste the entire dispatched brief here, verbatim]
 <!-- aeg:brief:end -->
 
-**`pr create` splits this section out — never sends it to the forge as body text.** Everything from the `aeg:brief:start` marker to `aeg:brief:end` — this whole `## Reference` section — is extracted and posted as its own PR comment marked `<!-- aeg:brief -->`, immediately after the body-hash marker, once, at open. The body `gh pr create` actually receives ends at the divider above it; paste the brief here exactly as before, the split is mechanical, not a change to what you author.
+**`pr create` splits this section out — never sends it to the forge as body text.** Everything from the `aeg:brief:start` marker to `aeg:brief:end` — this whole `## Reference` section — is extracted and posted as its own PR comment marked `<!-- aeg:brief -->`, once, at open. The body `gh pr create` actually receives ends at the divider above it; paste the brief here exactly as before, the split is mechanical, not a change to what you author.
 
 **This body is written once, at open.** After the PR is open the Developer changes nothing outside the `AEG:EVIDENCE` anchor and one appended `AEG:TOKENS` row. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. A round's response, its re-run evidence, and any disclosure the brief didn't anticipate are PR comments, never edits to this body.

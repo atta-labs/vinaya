@@ -500,8 +500,7 @@ export const COMMAND_WORDS = ['export', 'bun', 'gh', 'git', 'grep', 'sed', 'cat'
 /**
  * Rollout PR number for the four brief-shape rules this task added
  * (`checkNoUnpinnedCodeClaims`, `checkCommandsCarryOutput`,
- * `checkConsumerTests`, `checkDefeatCases`) — same shape as
- * `pr-body-frozen.ts`'s `FROZEN_BODY_SINCE_PR`. A PR numbered below this is
+ * `checkConsumerTests`, `checkDefeatCases`). A PR numbered below this is
  * grandfathered: the CI shim (`check-brief-shape.ts`) reports a finding from
  * one of these four rules as informational, never a failure. A PR at or
  * above it is held to the rule for real. `verify-brief.ts` (authoring time,
@@ -582,8 +581,7 @@ function rolloutThresholdFor(message: string): number | null {
  * Splits `checkBriefSections`'s flat error list into `blocking` (fails the
  * check) and `info` (printed, never a failure) — the CI shim
  * (`check-brief-shape.ts`) is the only caller, but the split is a pure
- * function of `(errors, prNumber)` so it is unit-testable directly, same
- * discipline as `pr-body-frozen.ts`'s `checkPrBodyFrozen`.
+ * function of `(errors, prNumber)` so it is unit-testable directly.
  *
  * `prNumber === null` (no `PR_NUMBER`, or an unparseable one) is NOT
  * grandfathered — only a real, parsed number below a message's own

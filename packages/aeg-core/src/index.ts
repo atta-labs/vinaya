@@ -279,20 +279,6 @@ export type { TestPlanSection } from './test-plan-section'
 export { evaluateTestPlanGate } from './test-plan-gate'
 export type { TestPlanGateResult, TestPlanGateVerdict } from './test-plan-gate'
 export {
-  authoredRegion,
-  authoredRegionHash,
-  BODY_HASH_MARKER_PATTERN,
-  checkPrBodyFrozen,
-  FROZEN_BODY_SINCE_PR,
-  renderBodyHashMarker
-} from './pr-body-frozen'
-export type {
-  PrBodyFrozenComment,
-  PrBodyFrozenFailReason,
-  PrBodyFrozenResult,
-  PrBodyFrozenStatus
-} from './pr-body-frozen'
-export {
   AEG_BLOCKED_LABEL,
   buildBranchName,
   fetchForgeFacts,

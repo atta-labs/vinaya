@@ -2,7 +2,6 @@ import { execFileSync } from 'node:child_process'
 import { rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { authoredRegionHash, renderBodyHashMarker } from '@attalabs/aeg-core'
 import { printJson } from '../lib/envelope'
 import {
   type BodyResult,
@@ -66,7 +65,7 @@ function reportPass(json: boolean, command: string): void {
   }
 }
 
-/** Returns the URL `gh` printed (empty string if it printed none) — `prCreateCommand` needs it to resolve the PR number for the body-hash marker post. */
+/** Returns the URL `gh` printed (empty string if it printed none) — `prCreateCommand` needs it to resolve the PR number for the brief comment post. */
 function runGhWrite(ghCmd: string[], ghArgs: string[], bodyResult: BodyResult | null, json: boolean): string {
   const { finalArgs, cleanup } = resolveShippableArgs(ghArgs, bodyResult)
   try {
@@ -77,50 +76,6 @@ function runGhWrite(ghCmd: string[], ghArgs: string[], bodyResult: BodyResult | 
     return url
   } finally {
     cleanup()
-  }
-}
-
-/**
- * `pr create`'s frozen-body marker (task 5, #378): posts
- * `<!-- aeg:body-hash:<hex> -->` — the hash of `authoredRegion(body)`, the
- * exact body just sent to `gh pr create` — as a PR comment under the same
- * `gh` login that opened the PR. `pr-body-frozen` (the CI check) re-reads
- * this comment and refuses any later edit to the authored region.
- *
- * A failed post is a HARD refusal (never silent): without the marker this
- * PR is un-checkable and would silently take the `info`/grandfathered path
- * forever, which is indistinguishable from the check having never run.
- */
-function postBodyHashMarker(url: string, body: string): void {
-  const match = /\/pull\/(\d+)/.exec(url)
-  if (!match) {
-    refuse([
-      makeCheckError(
-        'pr-body-frozen',
-        `PR was created (${url || '(gh printed no URL)'}) but its number could not be parsed from the URL, so the aeg:body-hash marker comment was not posted.`,
-        'Manually post `<!-- aeg:body-hash:<hex> -->` (compute the hex via `authoredRegionHash` from `@attalabs/aeg-core` against the exact body just sent) as a PR comment, then re-run any `pr-body-frozen` check by hand.'
-      )
-    ])
-  }
-  const prNumber = match[1] as string
-  const marker = renderBodyHashMarker(authoredRegionHash(body))
-  const tmp = join(tmpdir(), `vinaya-pr-create-body-hash-${process.pid}-${Date.now()}.md`)
-  writeFileSync(tmp, marker)
-  try {
-    execFileSync('gh', ['pr', 'comment', prNumber, '--body-file', tmp], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-  } catch (err) {
-    refuse([
-      makeCheckError(
-        'pr-body-frozen',
-        `PR ${url} was created but posting its aeg:body-hash marker comment failed: ${err instanceof Error ? err.message : String(err)}`,
-        `Post the comment manually: \`gh pr comment ${prNumber} --body "${marker}"\`, then confirm with \`gh pr view ${prNumber} --json comments\`.`
-      )
-    ])
-  } finally {
-    rmSync(tmp, { force: true })
   }
 }
 
@@ -184,8 +139,7 @@ function fetchPrForgeContext(prRef: string): { changedFiles: string[]; branch: s
  * is never sent to the forge as body text — PR `#396`'s body was `47` KB,
  * `37` KB of it the brief copy. `report` is everything before the START
  * marker (what `gh pr create` actually receives); `brief` is the marked
- * content, verbatim, posted as its own PR comment after the body-hash
- * marker. A body with no START marker (a brief with no `## Reference`
+ * content, verbatim, posted as its own PR comment. A body with no START marker (a brief with no `## Reference`
  * section at all, or a non-brief-shaped body) splits to `{ report: body,
  * brief: null }` — nothing to post, nothing lost.
  *
@@ -214,22 +168,19 @@ function splitBriefSection(body: string): { report: string; brief: string | null
 
 /**
  * Posts the split-out brief as its own PR comment, marked `<!-- aeg:brief
- * -->` so every reader that binds to a frozen marker (exactly like the
- * `aeg:body-hash` marker above) recognizes it regardless of which identity
- * posted it. Posted AFTER the body-hash marker (task 4's own ordering) —
- * the marker freezes the report body first; the brief comment is reference
- * material, not a gate-read field.
+ * -->` so every reader that binds to that marker recognizes it regardless
+ * of which identity posted it.
  *
- * A failed post is a HARD refusal, same reasoning as `postBodyHashMarker`:
- * silently dropping the brief loses the PR's only durable record of intent,
- * indistinguishable from a Developer who never pasted one.
+ * A failed post is a HARD refusal: silently dropping the brief loses the
+ * PR's only durable record of intent, indistinguishable from a Developer
+ * who never pasted one.
  */
 function postBriefComment(url: string, brief: string): void {
   const match = /\/pull\/(\d+)/.exec(url)
   if (!match) {
     refuse([
       makeCheckError(
-        'pr-body-frozen',
+        'pr-brief-comment',
         `PR was created (${url || '(gh printed no URL)'}) but its number could not be parsed from the URL, so the aeg:brief comment was not posted.`,
         'Manually post the dispatched brief as a PR comment, prefixed with `<!-- aeg:brief -->` on its own line.'
       )
@@ -247,7 +198,7 @@ function postBriefComment(url: string, brief: string): void {
   } catch (err) {
     refuse([
       makeCheckError(
-        'pr-body-frozen',
+        'pr-brief-comment',
         `PR ${url} was created but posting its aeg:brief comment failed: ${err instanceof Error ? err.message : String(err)}`,
         `Post the comment manually: \`gh pr comment ${prNumber} --body-file <brief.md>\` (prefixed with \`<!-- aeg:brief -->\`).`
       )
@@ -418,7 +369,6 @@ export async function prCreateCommand(args: string[]): Promise<void> {
   // `gh pr create` receives, not merely the text these checks graded.
   const shippedBodyResult: BodyResult | null = bodyResult ? { ...bodyResult, body } : null
   const url = runGhWrite(['pr', 'create'], ghArgs, shippedBodyResult, json)
-  postBodyHashMarker(url, body)
   if (brief !== null) postBriefComment(url, brief)
 }
 

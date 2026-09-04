@@ -84,7 +84,6 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         'issue-assignment',
         'main-branch-refusal',
         'no-disk-state',
-        'pr-body-frozen',
         'pr-report-density',
         'quoted-command',
         'reader-resolvable-prose',

@@ -202,16 +202,6 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
-    name: 'pr refreeze',
-    description: 'Principal-only: post a fresh frozen-body marker over an edited PR body, with a reason',
-    flags: [{ flag: '--reason <text>', description: 'Why the frozen body needed a hand edit — required' }],
-    details: [
-      "The door the frozen-body rule otherwise lacks: refuses unless the running `gh` identity is on the principal allowlist (the same trust anchor `review-gate`/`pr-body-frozen` already use — never a local-git/env-derived source). Posts a new `aeg:body-hash` marker comment, computed from the PR's LIVE body (fetched fresh, never a local draft), with the reason in the same comment.",
-      "`pr-body-frozen`'s marker selection is newest-allowlisted-wins, not earliest — a Developer's own identity is never on the allowlist, so a later marker from one never displaces an earlier Principal marker; only a later, ALSO-allowlisted marker (this command's own write path) moves the baseline."
-    ],
-    status: 'shipped'
-  },
-  {
     name: 'issue create',
     description: 'Open an issue after full brief-schema validation',
     flags: [
@@ -304,7 +294,7 @@ export const COMMANDS: readonly Command[] = [
     name: 'review status',
     description: "Print the review loop's own state for a PR, and its branch's distance from the base",
     details: [
-      'Two lines at most. The first is `CONTINUE`, `PAUSE: <reason>[ <id>]` for `reappearance`, `zero-deaths` or `max-rounds` — or, for `stale`, the actionable fact itself: `push after verdict — re-review or refreeze required`. The second reads `behind main by <n> — merge first` when the branch is behind its base, or `behind main: unknown — fetch origin/<base> first` when git cannot measure the distance; it is absent only when the branch is measurably not behind.',
+      'Two lines at most. The first is `CONTINUE`, `PAUSE: <reason>[ <id>]` for `reappearance`, `zero-deaths` or `max-rounds` — or, for `stale`, the actionable fact itself: `push after verdict — re-review required`. The second reads `behind main by <n> — merge first` when the branch is behind its base, or `behind main: unknown — fetch origin/<base> first` when git cannot measure the distance; it is absent only when the branch is measurably not behind.',
       "Rounds are derived from the PR's own verdict comments — one round per `Judged head:` value, read through the same extractors the merge gate blocks on, and only from comments an allowlisted principal authored. A Developer round comment is recognised by its `<!-- aeg:developer:round-<n> -->` marker, at that fixed position, never by scanning its prose.",
       'Exit `0` only when the state is `CONTINUE` and the branch is not behind; `1` otherwise, so a script can gate on the exit code without parsing the text.'
     ],

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 /**
  * `vinaya pr create` splits the brief out of the body (task 4, #397) end to
  * end, against a `gh` stub on `PATH` — the same discipline
- * `pr-refreeze.test.ts`/`review-status.test.ts` use. `rings.
+ * `review-status.test.ts` uses. `rings.
  * ring1_forgeWriteInterception: true` keeps this test scoped to the split
  * itself: it empties `resolveSections` (nothing config-driven to satisfy)
  * and skips `refuseOnRedBody`'s registry `PR_BODY` pass, leaving only
@@ -52,9 +52,7 @@ function runCli(args: string[], cwd: string, env: Record<string, string | undefi
  * A `gh` stub answering `pr create` with a fake PR URL (copying the exact
  * body-file `gh` was handed to `createBodyLogPath`, for the test to inspect
  * afterward) and `pr comment <n> --body-file <path>` by appending its
- * content to `commentsLogPath` — one entry per call, in call order, so the
- * test can tell the body-hash marker comment from the brief comment by
- * which one landed first.
+ * content to `commentsLogPath` — one entry per call, in call order.
  */
 function stubGh(prUrl: string): { path: Record<string, string>; createBodyLogPath: string; commentsLogPath: string } {
   const dir = tempDir('pr-create-stub-')
@@ -172,10 +170,9 @@ describe('vinaya pr create — splits the brief into its own comment (task 4, #3
 
     const comments = readFileSync(commentsLogPath, 'utf-8')
     const entries = comments.split('---\n').filter((s) => s.trim().length > 0)
-    expect(entries.length).toBe(2)
-    expect(entries[0]).toContain('aeg:body-hash:')
-    expect(entries[1]).toContain('<!-- aeg:brief -->')
-    expect(entries[1]).toContain(BRIEF_TEXT)
+    expect(entries.length).toBe(1)
+    expect(entries[0]).toContain('<!-- aeg:brief -->')
+    expect(entries[0]).toContain(BRIEF_TEXT)
   })
 
   it('a report that mentions the marker syntax by name does not truncate the split — the LAST pair wins (live incident, PR #398)', () => {
@@ -227,12 +224,12 @@ describe('vinaya pr create — splits the brief into its own comment (task 4, #3
 
     const comments = readFileSync(commentsLogPath, 'utf-8')
     const entries = comments.split('---\n').filter((s) => s.trim().length > 0)
-    expect(entries.length).toBe(2)
-    expect(entries[1]).toContain('<!-- aeg:brief -->')
-    expect(entries[1]).toContain(BRIEF_TEXT)
+    expect(entries.length).toBe(1)
+    expect(entries[0]).toContain('<!-- aeg:brief -->')
+    expect(entries[0]).toContain(BRIEF_TEXT)
   })
 
-  it('a body with no aeg:brief section posts no brief comment — one comment only', () => {
+  it('a body with no aeg:brief section posts no comment at all', () => {
     const repo = tempDir('pr-create-repo-nobrief-')
     execFileSync('git', ['init', '-q'], { cwd: repo })
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
@@ -258,7 +255,6 @@ describe('vinaya pr create — splits the brief into its own comment (task 4, #3
 
     const comments = readFileSync(commentsLogPath, 'utf-8')
     const entries = comments.split('---\n').filter((s) => s.trim().length > 0)
-    expect(entries.length).toBe(1)
-    expect(entries[0]).toContain('aeg:body-hash:')
+    expect(entries.length).toBe(0)
   })
 })
