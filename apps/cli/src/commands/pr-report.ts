@@ -930,14 +930,24 @@ export async function buildReport(
   const groupA = opts.groupA ?? computeGroupA()
   const gateRunner = opts.gateRunner ?? runRealGates
   const gateResult = await gateRunner()
+  // O6 (found live 2026-09-04, misread on PR #409): this gate run happens
+  // while the OLD AEG:EVIDENCE block is still the live/on-disk body —
+  // `evidence-fresh` necessarily grades that stale block against a fresh
+  // recompute and reports `fail`, even though the block this very Group B is
+  // part of is about to replace it. Pasting that `fail` into Group B reads
+  // as a live red on the PR a reviewer is looking at, when it is actually a
+  // fact about the body BEFORE this write, not after. Excluded from both the
+  // rendered outcomes and `gatesFailed` — a self-referential staleness
+  // artifact must not itself redden a report that is otherwise clean.
+  const outcomes = gateResult.outcomes.filter((o) => o.name !== 'evidence-fresh')
   const groupC = opts.groupC ?? computeGroupC(opts.body ?? process.env.PR_BODY ?? '')
-  const blockInner = buildBlockInner(groupA, gateResult.outcomes, groupC)
+  const blockInner = buildBlockInner(groupA, outcomes, groupC)
   const block = `${EVIDENCE_START}\n${blockInner}\n${EVIDENCE_END}`
   return {
     block,
     blockInner,
-    gatesFailed: gateResult.failed || groupCFailed(groupC),
-    gateOutcomes: gateResult.outcomes,
+    gatesFailed: anyGateFailed(outcomes) || groupCFailed(groupC),
+    gateOutcomes: outcomes,
     groupC
   }
 }

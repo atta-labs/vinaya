@@ -794,6 +794,24 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(verdict.indexOf('if [ -z "$PR_NUMBER" ]')).toBeLessThan(verdict.indexOf('gh api --paginate'))
   })
 
+  it('the retrigger lookup never requires status == "completed" — a concurrent retrigger racing an in-flight rerun must still find it (O7, PRs #401/#409)', async () => {
+    // Runs 33841069791/33841065139 (found live 2026-09-04): two retriggers
+    // for the same head raced the same required run; the loser's query
+    // landed while the winner's `gh run rerun` had already flipped the run
+    // to `in_progress`, so requiring `status == "completed"` made it
+    // invisible to the loser entirely, which gave up rather than also
+    // trying (harmlessly no-op'ing on) the same run.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const verdict = generated().get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
+    const retrigger = generated().get(REVIEW_RETRIGGER_WORKFLOW_PATH) ?? ''
+    for (const workflow of [verdict, retrigger]) {
+      expect(workflow).not.toContain('| select(.status == "completed")')
+      expect(workflow).toContain('select(.display_title == $title)')
+      expect(workflow).toContain('select(.event == "pull_request_target")')
+      expect(workflow).toContain('select(.conclusion != "cancelled")')
+    }
+  })
+
   it('the verdict retrigger fires on BOTH verdicts — the gate must close, not only open', async () => {
     // The required check stores a conclusion, and that stored conclusion
     // guards the merge button. Gating the retrigger on a clean evaluation
@@ -1025,14 +1043,20 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     )
   }
 
-  it('runs `bunx turbo test --affected` after the check, and refuses the push on failure — vendored repo only', async () => {
+  it('runs `bunx turbo test --affected --concurrency=1` after the check, and refuses the push on failure — vendored repo only', async () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
-    expect(prePush).toContain('bunx turbo test --affected || exit 1')
+    expect(prePush).toContain('bunx turbo test --affected --concurrency=1 || exit 1')
     // Must run AFTER the check, not before — a failing check should refuse
     // before ever spending time on the test suite.
     expect(prePush.indexOf('check --all --local')).toBeLessThan(prePush.indexOf('bunx turbo test --affected'))
+  })
+
+  it('the concurrency=1 override is local to this hook — turbo.json carries no repo-wide concurrency setting CI would also inherit (O9)', () => {
+    const turboJson = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', '..', 'turbo.json'), 'utf-8'))
+    expect(turboJson).not.toHaveProperty('concurrency')
+    expect(turboJson.tasks?.test).not.toHaveProperty('concurrency')
   })
 
   it('an ordinary (non-vendored) adopter never gets the turbo step — no assumption they run Bun/Turborepo', async () => {
@@ -1996,5 +2020,30 @@ describe('onboarding notes: correct groups and per-vendor wording (PR #279 revie
     const pathSection = rendered.slice(pathHeaderIdx, reviewTrustHeaderIdx)
     expect(pathSection).toContain('resolvable on PATH')
     expect(pathSection).not.toContain('principals')
+  })
+})
+
+// O5 (found live 2026-09-04): the PR-body heredoc delimiter in the generated
+// "Fetch PR body" step must be unguessable by construction, not merely
+// unlikely to collide — a nanosecond timestamp is neither.
+describe('generated workflows — PR-body heredoc delimiter is real randomness (O5)', () => {
+  it('vinaya-checks.yml and vinaya-body-checks.yml derive DELIM from openssl rand, never a timestamp', () => {
+    const ops = buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost: null,
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
+    })
+    const checks = ops.find((op) => op.kind === 'create-file' && op.path === CHECKS_WORKFLOW_PATH)
+    const bodyChecks = ops.find((op) => op.kind === 'create-file' && op.path === BODY_CHECKS_WORKFLOW_PATH)
+    expect(checks?.kind).toBe('create-file')
+    expect(bodyChecks?.kind).toBe('create-file')
+    for (const op of [checks, bodyChecks]) {
+      if (op?.kind !== 'create-file') continue
+      expect(op.content).toContain('DELIM="PR_BODY_$(openssl rand -hex 16)"')
+      expect(op.content).not.toContain('date +%s%N')
+    }
   })
 })

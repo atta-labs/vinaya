@@ -414,7 +414,7 @@ ${vinayaSetupSteps(selfHost, 'pull-request')}${adopterSetupStep(ciSetup)}      #
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
         run: |
-          DELIM="PR_BODY_$(date +%s%N)"
+          DELIM="PR_BODY_$(openssl rand -hex 16)"
           echo "PR_BODY<<$DELIM" >> "$GITHUB_ENV"
           gh pr view "$PR_NUMBER" --json body --jq .body >> "$GITHUB_ENV"
           echo "$DELIM" >> "$GITHUB_ENV"
@@ -586,13 +586,26 @@ jobs:
           # lookup vinaya-review-verdict.yml's own retrigger step runs.
           set -o pipefail
           RUN_TITLE="Vinaya Review Gate PR #$PR_NUMBER @ $HEAD_SHA"
+          # O7 (found live 2026-09-04): dropped \`select(.status == "completed")\`
+          # — two retriggers for the same head race the SAME required run
+          # (PR #401, PR #409: runs 33841069791/33841065139), and the loser's
+          # query landed while the winner's \`gh run rerun\` had already
+          # flipped the run to \`in_progress\`. Requiring \`completed\` made
+          # that run invisible to the loser entirely — not "already handled,
+          # skip", but "nothing matched, give up" — so when that in-flight
+          # attempt itself later failed, nothing retried it again and the
+          # gate stayed red until a hand rerun. Matching on title+event alone
+          # (any status) lets the loser find the SAME run mid-run and try
+          # \`gh run rerun\` on it too; the existing "declined (already
+          # queued)" fallback below already handles that outcome harmlessly
+          # — it is not a new failure mode, only a query that used to see
+          # nothing at all now sees the run and takes the same safe no-op.
           RUN_ID=$(gh api --paginate \\
             "repos/\${{ github.repository }}/actions/workflows/vinaya-review.yml/runs?event=pull_request_target&per_page=100" \\
             | jq -sr --arg title "$RUN_TITLE" '
                 [.[].workflow_runs[]
                  | select(.display_title == $title)
                  | select(.event == "pull_request_target")
-                 | select(.status == "completed")
                  | select(.conclusion != "cancelled")
                  | .id][0] // empty')
           if [ -z "$RUN_ID" ]; then
@@ -670,7 +683,7 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes body-bare-
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
         run: |
-          DELIM="PR_BODY_$(date +%s%N)"
+          DELIM="PR_BODY_$(openssl rand -hex 16)"
           echo "PR_BODY<<$DELIM" >> "$GITHUB_ENV"
           gh pr view "$PR_NUMBER" --json body --jq .body >> "$GITHUB_ENV"
           echo "$DELIM" >> "$GITHUB_ENV"
@@ -792,13 +805,26 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate (verdict evalu
           # query matches that immutable display_title exactly.
           set -o pipefail
           RUN_TITLE="Vinaya Review Gate PR #$PR_NUMBER @ $HEAD_SHA"
+          # O7 (found live 2026-09-04): dropped \`select(.status == "completed")\`
+          # — two retriggers for the same head race the SAME required run
+          # (PR #401, PR #409: runs 33841069791/33841065139), and the loser's
+          # query landed while the winner's \`gh run rerun\` had already
+          # flipped the run to \`in_progress\`. Requiring \`completed\` made
+          # that run invisible to the loser entirely — not "already handled,
+          # skip", but "nothing matched, give up" — so when that in-flight
+          # attempt itself later failed, nothing retried it again and the
+          # gate stayed red until a hand rerun. Matching on title+event alone
+          # (any status) lets the loser find the SAME run mid-run and try
+          # \`gh run rerun\` on it too; the existing "declined (already
+          # queued)" fallback below already handles that outcome harmlessly
+          # — it is not a new failure mode, only a query that used to see
+          # nothing at all now sees the run and takes the same safe no-op.
           RUN_ID=$(gh api --paginate \\
             "repos/\${{ github.repository }}/actions/workflows/vinaya-review.yml/runs?event=pull_request_target&per_page=100" \\
             | jq -sr --arg title "$RUN_TITLE" '
                 [.[].workflow_runs[]
                  | select(.display_title == $title)
                  | select(.event == "pull_request_target")
-                 | select(.status == "completed")
                  | select(.conclusion != "cancelled")
                  | .id][0] // empty')
           if [ -z "$RUN_ID" ]; then
@@ -1003,8 +1029,13 @@ ${hookRun(selfHost, 'check --all --local')}`
   // ordinary adopter's push is not made to depend on `turbo` existing.
   return `${base}
 # Ring 0: the affected test suite. A failing test refuses the push with
-# its own output (#407, O4).
-bunx turbo test --affected || exit 1`
+# its own output (#407, O4). --concurrency=1 (O9, found live 2026-09-04):
+# a local machine already running other work (another worktree's own
+# build/test, an IDE indexer) alongside this hook's parallel package
+# suites was measured pushing a git-clone-heavy fixture test past its
+# timeout under real contention — CI's own runner is dedicated and keeps
+# turbo.json's default concurrency; only this hook invocation is serialized.
+bunx turbo test --affected --concurrency=1 || exit 1`
 }
 
 // `commit-msg` validates the MESSAGE — the file git hands the hook as `$1`,

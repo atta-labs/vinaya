@@ -131,6 +131,53 @@ describe('buildReport', () => {
       '### Group C — Test Plan commands'
     ])
   })
+
+  it('excludes evidence-fresh from Group B entirely — grading the block this run is about to replace reads as a live red it is not (O6, misread on PR #409)', async () => {
+    const staleEvidenceFresh: GateRunResult = {
+      outcomes: [
+        { name: 'brief-shape', status: 'pass', errors: [] },
+        {
+          name: 'evidence-fresh',
+          status: 'fail',
+          errors: [{ severity: 'error', message: 'the AEG:EVIDENCE block is malformed' }]
+        }
+      ],
+      failed: true
+    }
+    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => staleEvidenceFresh, body: '' })
+    expect(result.block).not.toContain('evidence-fresh')
+    expect(result.gateOutcomes.map((o) => o.name)).not.toContain('evidence-fresh')
+  })
+
+  it('a stale evidence-fresh: fail is never counted toward gatesFailed on its own — a genuinely clean run stays clean', async () => {
+    const onlyEvidenceFreshFails: GateRunResult = {
+      outcomes: [
+        { name: 'brief-shape', status: 'pass', errors: [] },
+        { name: 'evidence-fresh', status: 'fail', errors: [{ severity: 'error', message: 'stale block' }] }
+      ],
+      failed: true
+    }
+    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => onlyEvidenceFreshFails, body: '' })
+    expect(result.gatesFailed).toBe(false)
+  })
+
+  it('a REAL failure alongside a stale evidence-fresh still fails — exclusion is scoped to evidence-fresh only', async () => {
+    const both: GateRunResult = {
+      outcomes: [
+        {
+          name: 'doc-coverage',
+          status: 'fail',
+          errors: [{ severity: 'error', message: 'C5: apps/cli/src/foo.ts touches a bound doc' }]
+        },
+        { name: 'evidence-fresh', status: 'fail', errors: [{ severity: 'error', message: 'stale block' }] }
+      ],
+      failed: true
+    }
+    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => both, body: '' })
+    expect(result.gatesFailed).toBe(true)
+    expect(result.block).toContain('doc-coverage: fail')
+    expect(result.block).not.toContain('evidence-fresh')
+  })
 })
 
 describe('extractAgentCommandLines / agentCommandText — task 12, #387', () => {

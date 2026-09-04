@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import type { DoctorDeps, Finding } from '../src/commands/doctor.js'
@@ -1116,5 +1116,59 @@ describe('vinaya doctor — brief-schema divergence', () => {
     await runDoctorJson()
 
     expect(readFileSync(join(root, CONFIG_PATH), 'utf8')).toBe(before)
+  })
+})
+
+// O4 (PR #410 review, MAJOR and MINOR): the `doctrine: <root> (<source>)`
+// line had zero automated coverage — only a manually-pasted CLI transcript
+// in that PR's own evidence — and `--json` carried no doctrineInfo signal
+// at all, an inconsistency with text mode for the same command.
+describe('vinaya doctor — doctrine root/source line (PR #410 review)', () => {
+  async function runDoctorJsonFull(overrides: Partial<DoctorDeps> = {}): Promise<{
+    healthy: boolean
+    findings: Finding[]
+    doctrineInfo: { root: string; source: 'tree' | 'bundle' } | null
+  }> {
+    const original = process.stdout.write.bind(process.stdout)
+    let buf = ''
+    process.stdout.write = ((chunk: string) => {
+      buf += chunk
+      return true
+    }) as typeof process.stdout.write
+    try {
+      await runDoctor(['--json'], doctorDeps(overrides))
+    } finally {
+      process.stdout.write = original
+    }
+    return JSON.parse(buf).data
+  }
+
+  it('a repo carrying its own aeg-root/roles/ prints "(tree)", rooted at that repo\'s own aeg-root', async () => {
+    git(root, ['init', '-q'])
+    mkdirSync(join(root, 'aeg-root', 'roles'), { recursive: true })
+    writeFileSync(join(root, 'aeg-root', 'roles', 'developer.md'), '# Developer\n')
+    await runInit(['--yes'], initDeps())
+
+    const out = await captureStdout(async () => {
+      await runDoctor([], doctorDeps())
+    })
+    const realRoot = realpathSync(root)
+    expect(out).toContain(`doctrine: ${join(realRoot, 'aeg-root')} (tree)`)
+
+    const report = await runDoctorJsonFull()
+    expect(report.doctrineInfo).toEqual({ root: join(realRoot, 'aeg-root'), source: 'tree' })
+  })
+
+  it('a repo with no aeg-root/roles/ of its own prints "(bundle)"', async () => {
+    await runInit(['--yes'], initDeps())
+
+    const out = await captureStdout(async () => {
+      await runDoctor([], doctorDeps())
+    })
+    expect(out).toMatch(/doctrine: .*\(bundle\)/)
+    expect(out).not.toContain('(tree)')
+
+    const report = await runDoctorJsonFull()
+    expect(report.doctrineInfo?.source).toBe('bundle')
   })
 })

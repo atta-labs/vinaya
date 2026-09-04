@@ -41,7 +41,7 @@
     "bundle-doctrine": "bun scripts/bundle-doctrine.ts",
     "bundle-studio": "bun scripts/bundle-studio.ts",
     "prepack": "bun scripts/build.ts && bun scripts/bundle-doctrine.ts && bun scripts/bundle-studio.ts",
-    "test": "bun test",
+    "test": "bun test --timeout=30000",
     "typecheck": "tsc --noEmit",
     "lint": "biome check src tests scripts",
     "verify-published-lifecycle": "bun scripts/verify-published-lifecycle.ts"

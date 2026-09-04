@@ -1063,7 +1063,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
   const healthy = findings.every((f) => f.severity === 'ok' || f.severity === 'info')
 
   if (jsonOutput) {
-    printJson({ healthy, findings })
+    printJson({ healthy, findings, doctrineInfo })
   } else {
     printReport(findings, healthy, doctrineInfo)
   }

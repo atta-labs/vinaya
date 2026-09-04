@@ -60,6 +60,17 @@ function git(args: string[]): string {
   }
 }
 
+/** `git symbolic-ref --quiet --short HEAD` — `''` on detached HEAD, never a false name. */
+function currentBranch(): string {
+  return git(['symbolic-ref', '--quiet', '--short', 'HEAD'])
+}
+
+/** `refs/remotes/origin/HEAD` stripped of its `origin/` prefix — `''` when unresolvable (never fetched, or a remote other than `origin`). Same derivation as `check-main-branch-refusal.ts`'s own `defaultBranch()`. */
+function defaultBranch(): string {
+  const ref = git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'])
+  return ref.startsWith('origin/') ? ref.slice('origin/'.length) : ''
+}
+
 function toPosix(p: string): string {
   return p.split('\\').join('/')
 }
@@ -138,6 +149,17 @@ function fixedGroupNames(root: string): string[] {
 
 function main(): void {
   const root = repoRoot() ?? process.cwd()
+
+  // O3 (found live 2026-09-04): on the default branch itself there is no
+  // diff to grade against — this is not the ambiguous-history case below,
+  // it's the expected shape of every run from `main` (a managed local hook,
+  // a scheduled whole-tree audit). Exit silently rather than warning that a
+  // diff "could not be determined" when there was never a diff to find.
+  const current = currentBranch()
+  const base = defaultBranch()
+  if (current !== '' && current === base) {
+    process.exit(0)
+  }
 
   const changedAbs = resolveChangedFiles()
   // `null` (indeterminate — a shallow clone, no merge base, an orphan or

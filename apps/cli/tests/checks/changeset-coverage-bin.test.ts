@@ -175,3 +175,44 @@ describe('check-changeset-coverage (bin) — release-branch exemption is git-onl
     expect(parseFindings(stderr)).toHaveLength(1) // env spoof ignored — finding still fires
   })
 })
+
+/** Wires a real `origin` remote whose `refs/remotes/origin/HEAD` resolves to `defaultBranchName` — the same derivation `check-main-branch-refusal.ts`'s own `defaultBranch()` reads, so `root`'s current branch can genuinely equal it. */
+function wireOriginDefaultBranch(root: string, defaultBranchName: string): void {
+  const bare = newRoot('origin-bare')
+  git(bare, ['init', '-q', '--bare', '-b', defaultBranchName])
+  git(root, ['remote', 'add', 'origin', bare])
+  git(root, ['push', '-q', 'origin', `${defaultBranchName}:${defaultBranchName}`])
+  git(root, ['remote', 'set-head', 'origin', defaultBranchName])
+}
+
+describe('check-changeset-coverage (bin) — silent on the default branch itself (O3)', () => {
+  it('current branch IS the resolved default branch — prints nothing and passes, even with no real diff to grade', async () => {
+    const root = newRoot('on-default-branch')
+    initRepo(root)
+    scaffoldFixedGroup(root)
+    git(root, ['add', '.'])
+    git(root, ['commit', '-q', '-m', 'Chore: initial scaffold'])
+    wireOriginDefaultBranch(root, 'main')
+
+    const { exitCode, stdout, stderr } = await runBin(root)
+    expect(exitCode).toBe(0)
+    expect(stdout).toBe('')
+    expect(parseFindings(stderr)).toHaveLength(0)
+  })
+
+  it('a feature branch off that same default branch is UNAFFECTED — the bare/single-commit ambiguity still warns', async () => {
+    const root = newRoot('feature-branch-still-warns')
+    initRepo(root)
+    writeFileSync(join(root, 'README.md'), '# fixture\n')
+    git(root, ['add', 'README.md'])
+    git(root, ['commit', '-q', '-m', 'Chore: initial commit'])
+    wireOriginDefaultBranch(root, 'main')
+    git(root, ['checkout', '-q', '-b', 'feature/nothing-new'])
+
+    const { exitCode, stderr } = await runBin(root)
+    expect(exitCode).toBe(0)
+    const findings = parseFindings(stderr)
+    expect(findings).toHaveLength(1)
+    expect(findings[0]?.message).toContain('could not determine this diff')
+  })
+})
