@@ -22,6 +22,17 @@
  * fails OPEN with a `warning` finding naming why, never a false refusal: a
  * check whose job is refusing risky actions must not itself risk refusing
  * a legitimate one it cannot actually evaluate.
+ *
+ * `pushRefs` (Issue #407, O2) carries git's pre-push stdin — one line per
+ * ref being pushed, `<local ref> <local sha> <remote ref> <remote sha>` —
+ * newline-joined, exactly as `VINAYA_PUSH_REFS` carries it. `null` means no
+ * push is in flight at all (a commit, via `check --all --diff-only
+ * --local`): the default-branch refusal still applies, unchanged. A push
+ * whose ref list is present but names only `refs/tags/*` remote refs — a
+ * tag-only push, e.g. `git push origin --tags` after a release — is not the
+ * "committed directly on the default branch" case this predicate exists to
+ * catch, so it passes even from the default branch. Any `refs/heads/*`
+ * remote ref in the list still refuses, same as the no-`pushRefs` case.
  */
 
 export type MainBranchRefusalReason = 'on-default-branch' | 'default-branch-undetermined'
@@ -33,11 +44,20 @@ export type MainBranchRefusalFinding = {
   defaultBranch: string | null
 }
 
+function pushesAnyBranchRef(pushRefs: string): boolean {
+  return pushRefs
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .some((line) => line.split(/\s+/)[2]?.startsWith('refs/heads/') === true)
+}
+
 export function checkMainBranchRefusal(facts: {
   currentSymbolicBranch: string | null
   defaultBranch: string | null
+  pushRefs?: string | null
 }): MainBranchRefusalFinding | null {
-  const { currentSymbolicBranch, defaultBranch } = facts
+  const { currentSymbolicBranch, defaultBranch, pushRefs = null } = facts
 
   // Detached HEAD — no symbolic branch to compare. Never refuse.
   if (currentSymbolicBranch === null) return null
@@ -52,6 +72,11 @@ export function checkMainBranchRefusal(facts: {
   }
 
   if (currentSymbolicBranch === defaultBranch) {
+    // A tag-only push carries a ref list with no `refs/heads/*` remote ref —
+    // pass. No ref list at all means this isn't a push (a commit), or a
+    // push containing a branch ref — refuse either way.
+    if (pushRefs !== null && !pushesAnyBranchRef(pushRefs)) return null
+
     return {
       reason: 'on-default-branch',
       severity: 'error',

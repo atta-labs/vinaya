@@ -27,6 +27,7 @@ import { prCreateCommand, prEditCommand } from './commands/pr.js'
 import { prReportCommand } from './commands/pr-report.js'
 import { prVerifyEvidenceCommand } from './commands/pr-verify-evidence.js'
 import { quickstartCommand } from './commands/quickstart.js'
+import { releaseCommand } from './commands/release.js'
 import { reviewPostCommand } from './commands/review-post.js'
 import { reviewStatusCommand } from './commands/review-status.js'
 import { runStudio } from './commands/studio.js'
@@ -206,6 +207,10 @@ try {
     }
     case 'waiver': {
       await waiverCommand(args)
+      break
+    }
+    case 'release': {
+      await releaseCommand(args)
       break
     }
     case 'quickstart': {

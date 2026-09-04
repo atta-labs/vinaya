@@ -982,8 +982,29 @@ ${hookRun(selfHost, 'check --all --diff-only --local --skip-full')}`
 }
 
 function prePushBody(selfHost: VendoredVinaya | null): string {
-  return `# Vinaya pre-push gate. Runs branch/dispatch checks before the push leaves.
+  const base = `# Vinaya pre-push gate. Runs branch/dispatch checks before the push leaves.
+# Forward git's own pre-push stdin (one "<local ref> <local sha> <remote
+# ref> <remote sha>" line per ref being pushed) so main-branch-refusal can
+# tell a tag-only push apart from one that also carries a branch ref.
+VINAYA_PUSH_REFS="$(cat)"
+export VINAYA_PUSH_REFS
 ${hookRun(selfHost, 'check --all --local')}`
+
+  if (!selfHost) return base
+
+  // Ring 0 also runs the affected test suite before a push leaves the
+  // machine (#407, O4) — turbo derives the package set from the diff
+  // against the remote-tracking base, so this always covers every package
+  // a Part actually touched, never just the one a local run happened to be
+  // filtered to (PR #409 went red in CI on a `packages/sources` test the
+  // Developer's own filtered local run never exercised). Gated on
+  // `selfHost`: only a repo vendoring `@attalabs/vinaya` as a workspace
+  // member is assumed to run this repo's own Bun/Turborepo toolchain — an
+  // ordinary adopter's push is not made to depend on `turbo` existing.
+  return `${base}
+# Ring 0: the affected test suite. A failing test refuses the push with
+# its own output (#407, O4).
+bunx turbo test --affected || exit 1`
 }
 
 // `commit-msg` validates the MESSAGE — the file git hands the hook as `$1`,

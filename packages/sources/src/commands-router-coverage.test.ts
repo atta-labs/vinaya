@@ -85,7 +85,8 @@ describe('router -> COMMANDS coverage', () => {
         'waiver',
         'studio',
         'quickstart',
-        'tokens'
+        'tokens',
+        'release'
       ])
     )
   })

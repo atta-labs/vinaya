@@ -24,6 +24,15 @@
  * refusal, not a doctrine-parity report; warn-only would be the check
  * refusing to do its one job. It cannot redden existing CI: CI always runs
  * on a detached HEAD, which this predicate never refuses.
+ *
+ * `VINAYA_PUSH_REFS` (Issue #407, O2): the generated `pre-push` hook reads
+ * git's own pre-push stdin (`<local ref> <local sha> <remote ref> <remote
+ * sha>` per line) into this env var before running `check --all --local`
+ * — see `prePushBody` in `apps/cli/src/lib/artifacts.ts`. When set, it
+ * lets the predicate tell a tag-only push (`git push origin --tags`) apart
+ * from a push that also carries a branch ref; unset (a commit, via
+ * `--diff-only`, or a bare `check` invocation) it behaves exactly as
+ * before.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -56,14 +65,21 @@ function defaultBranch(): string | null {
 function main(): void {
   const currentSymbolicBranchName = currentSymbolicBranch()
   const defaultBranchName = defaultBranch()
+  const pushRefs = process.env.VINAYA_PUSH_REFS ?? null
 
   const finding = checkMainBranchRefusal({
     currentSymbolicBranch: currentSymbolicBranchName,
-    defaultBranch: defaultBranchName
+    defaultBranch: defaultBranchName,
+    pushRefs
   })
 
   if (finding === null) {
     console.log(`${CHECK_NAME}: pass (branch: ${currentSymbolicBranchName ?? '(detached)'})`)
+    if (pushRefs !== null && currentSymbolicBranchName !== null && currentSymbolicBranchName === defaultBranchName) {
+      console.log(
+        `${CHECK_NAME}: tag-only push — no refs/heads/* ref in this push, allowing it from the default branch`
+      )
+    }
     process.exit(0)
   }
 
