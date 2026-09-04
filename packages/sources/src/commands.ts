@@ -515,5 +515,26 @@ export const COMMANDS: readonly Command[] = [
       'Never reimplements or edits `init`/`init product`/`demo break`/`doctor` — it only calls their existing, unmodified entry points in sequence.'
     ],
     status: 'shipped'
+  },
+  {
+    name: 'release',
+    description:
+      "Run this repo's own publish sequence in one command, refusing to start unless every precondition holds",
+    flags: [
+      {
+        flag: '--dry-run',
+        description: 'Run the preconditions only and print the plan; publishes nothing'
+      },
+      {
+        flag: '--allow-any-commit',
+        description: "Skip the check that HEAD's commit is a Version Packages commit"
+      }
+    ],
+    details: [
+      "Refuses unless HEAD is the default branch, the working tree is clean, HEAD equals `origin/<default>` (after `git fetch origin`), HEAD's commit subject starts with `Chore(release): Version packages` (unless `--allow-any-commit`), and `npm whoami` exits `0` — each its own refusal naming the fix.",
+      "Then streams `bun install --frozen-lockfile`, `bun run build`, `bun run changeset:publish`, and `git push origin --tags` — a real push, so the repo's own generated pre-push hook sees it exactly as any other push would. After it, prints `npm view <pkg> version` for every tag now on HEAD, noting registry lag on `@attalabs/vinaya` (observed ~20 minutes) when it still shows the previous version.",
+      'This is the one procedure named in `apps/cli/specs/self-hosting.md`, "How the published version is produced" — publishing itself stays manual and human-triggered; this command only removes the hand-typed four-step recipe.'
+    ],
+    status: 'shipped'
   }
 ]

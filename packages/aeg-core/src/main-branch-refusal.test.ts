@@ -69,13 +69,11 @@ describe('main-branch refusal', () => {
   })
 
   it('refuses with no pushRefs at all, same as before (a commit, not a push)', () => {
-    expect(checkMainBranchRefusal({ currentSymbolicBranch: 'main', defaultBranch: 'main', pushRefs: null })).toEqual(
-      {
-        reason: 'on-default-branch',
-        severity: 'error',
-        currentBranch: 'main',
-        defaultBranch: 'main'
-      }
-    )
+    expect(checkMainBranchRefusal({ currentSymbolicBranch: 'main', defaultBranch: 'main', pushRefs: null })).toEqual({
+      reason: 'on-default-branch',
+      severity: 'error',
+      currentBranch: 'main',
+      defaultBranch: 'main'
+    })
   })
 })

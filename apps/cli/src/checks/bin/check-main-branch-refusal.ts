@@ -76,7 +76,9 @@ function main(): void {
   if (finding === null) {
     console.log(`${CHECK_NAME}: pass (branch: ${currentSymbolicBranchName ?? '(detached)'})`)
     if (pushRefs !== null && currentSymbolicBranchName !== null && currentSymbolicBranchName === defaultBranchName) {
-      console.log(`${CHECK_NAME}: tag-only push — no refs/heads/* ref in this push, allowing it from the default branch`)
+      console.log(
+        `${CHECK_NAME}: tag-only push — no refs/heads/* ref in this push, allowing it from the default branch`
+      )
     }
     process.exit(0)
   }
