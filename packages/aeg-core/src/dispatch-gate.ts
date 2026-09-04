@@ -149,12 +149,16 @@ export type DispatchResult = { ready: boolean; blockers: string[] }
  * True when a parsed `depends-on` edge points back at its own host task.
  *
  * A self-dependency is unsatisfiable by construction, so it is never a real
- * gate state — its presence is proof of a defect in the edge text or in
- * `parseRationaleDeps` (`@attalabs/aeg-forge-state`), which scavenges every
- * bare inline-code span in the "Dependency rationale" section as a further id
- * for the last-labeled field. A slug-then-number reference split across spans
- * therefore resolves its trailing bare number against the HOST tranche, and
- * on that tranche's own task `1` the task ends up depending on itself.
+ * gate state — its presence is proof of a defect in the edge text or in its
+ * resolution. `parseRationaleDeps` (`@attalabs/aeg-forge-state`) reads only
+ * a labeled `Depends-on:`/`Conflicts-with:` field's own comma-separated,
+ * id-shaped tokens; since Issue #347 an unlabeled/bare span elsewhere in the
+ * "Dependency rationale" section is never read as an edge, whatever its
+ * shape (`parse-rationale-deps.ts`'s own module comment states the rule). A
+ * slug-qualified token in that list (`aeg-governance-hardening #368`) still
+ * resolves its trailing bare number against the NAMED tranche, not the host
+ * — a resolver bug there is what would land a task depending on itself, on
+ * that tranche's own task `1`.
  *
  * Reported as an INTERNAL error rather than through the ordinary
  * "not merged yet" branch below, because that message reads as a legitimate
