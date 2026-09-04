@@ -147,7 +147,22 @@ export type PublishedVersion = {
 }
 
 export type ReleaseOutcome =
-  | { ok: false; message: string }
+  | {
+      ok: false
+      message: string
+      /**
+       * Set only when the loop failed AFTER `bun run changeset:publish` had
+       * already succeeded — packages are on the registry, so this is never
+       * a clean refusal. `ranSteps` is every plan step that completed,
+       * `failedStep` the one that didn't, `recoveryCommand` the exact
+       * remaining plan (joined with `&&`) to run by hand to finish the
+       * release. Absent for a pre-publish failure (`bun install`/`bun run
+       * build`) or a precondition refusal — those leave nothing to finish.
+       */
+      ranSteps?: readonly (readonly [string, ...string[]])[]
+      failedStep?: readonly [string, ...string[]]
+      recoveryCommand?: string
+    }
   | { ok: true; dryRun: true; plan: readonly (readonly [string, ...string[]])[] }
   | { ok: true; dryRun: false; published: PublishedVersion[] }
 
@@ -219,10 +234,33 @@ export function runRelease(opts: { dryRun: boolean; allowAnyCommit: boolean }, d
     return { ok: true, dryRun: true, plan: RELEASE_PLAN }
   }
 
-  for (const [cmd, ...args] of RELEASE_PLAN) {
-    deps.log(`vinaya release: running \`${[cmd, ...args].join(' ')}\``)
-    deps.runStreamed(cmd, args)
-    deps.log(`vinaya release: \`${[cmd, ...args].join(' ')}\` done`)
+  const ranSteps: (readonly [string, ...string[]])[] = []
+  let publishedAlready = false
+
+  for (const step of RELEASE_PLAN) {
+    const [cmd, ...args] = step
+    deps.log(`vinaya release: running \`${step.join(' ')}\``)
+    try {
+      deps.runStreamed(cmd, args)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      if (!publishedAlready) {
+        return { ok: false, message: `vinaya release: \`${step.join(' ')}\` failed — ${reason}` }
+      }
+      const recoveryCommand = RELEASE_PLAN.slice(ranSteps.length)
+        .map((s) => s.join(' '))
+        .join(' && ')
+      return {
+        ok: false,
+        message: `vinaya release: \`${step.join(' ')}\` failed after publish already succeeded — packages are on the registry, the release is not finished. Ran: ${ranSteps.map((s) => s.join(' ')).join(', ') || '(nothing)'}. Failed: \`${step.join(' ')}\` — ${reason}. Finish by hand: \`${recoveryCommand}\``,
+        ranSteps: [...ranSteps],
+        failedStep: step,
+        recoveryCommand
+      }
+    }
+    deps.log(`vinaya release: \`${step.join(' ')}\` done`)
+    ranSteps.push(step)
+    if (cmd === 'bun' && args.join(' ') === 'run changeset:publish') publishedAlready = true
   }
 
   const published: PublishedVersion[] = []

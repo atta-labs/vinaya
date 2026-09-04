@@ -144,3 +144,54 @@ describe('vinaya release — happy path', () => {
     expect(ran).toEqual([])
   })
 })
+
+describe('vinaya release — partial failure after publish', () => {
+  it('a failing `git push` (stubbed) reports ran steps, the failed step, and the exact hand-recovery command', () => {
+    const ran: string[][] = []
+    const deps = makeDeps({
+      runStreamed: (cmd, args) => {
+        ran.push([cmd, ...args])
+        if (cmd === 'git' && args[0] === 'push') throw new Error('stubbed git: push rejected (non-fast-forward)')
+      }
+    })
+    const result = runRelease({ dryRun: false, allowAnyCommit: false }, deps)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected a failure')
+
+    // Every step before the push ran; the push itself is what's left.
+    expect(ran).toEqual([
+      ['bun', 'install', '--frozen-lockfile'],
+      ['bun', 'run', 'build'],
+      ['bun', 'run', 'changeset:publish'],
+      ['git', 'push', 'origin', '--tags']
+    ])
+
+    expect(result.ranSteps).toEqual([
+      ['bun', 'install', '--frozen-lockfile'],
+      ['bun', 'run', 'build'],
+      ['bun', 'run', 'changeset:publish']
+    ])
+    expect(result.failedStep).toEqual(['git', 'push', 'origin', '--tags'])
+    expect(result.recoveryCommand).toBe('git push origin --tags')
+    expect(result.message).toContain('packages are on the registry')
+    expect(result.message).toContain('stubbed git: push rejected (non-fast-forward)')
+    expect(result.message).toContain('git push origin --tags')
+  })
+
+  it('a failing `bun run build` (before publish) carries no recovery command — nothing irreversible happened', () => {
+    const deps = makeDeps({
+      runStreamed: (cmd, args) => {
+        if (cmd === 'bun' && args[0] === 'run' && args[1] === 'build') throw new Error('stubbed bun: build failed')
+      }
+    })
+    const result = runRelease({ dryRun: false, allowAnyCommit: false }, deps)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected a failure')
+
+    expect(result.ranSteps).toBeUndefined()
+    expect(result.failedStep).toBeUndefined()
+    expect(result.recoveryCommand).toBeUndefined()
+    expect(result.message).toContain('stubbed bun: build failed')
+    expect(result.message).not.toContain('registry')
+  })
+})
