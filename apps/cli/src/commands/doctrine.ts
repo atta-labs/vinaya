@@ -8,6 +8,7 @@
 // physically sits, so the pointer's bytes stay machine-independent while the
 // answer stays machine-correct.
 
+import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
 import matter from 'gray-matter'
@@ -42,10 +43,54 @@ export const ENTRY_SEGMENTS = ['skills', 'aeg', 'SKILL.md'] as const
  *
  * `pkg` is injectable for tests; every real caller takes the default.
  */
-export function resolveDoctrineRoot(pkg: string = packageRoot(import.meta.url)): string | null {
+export function resolveDoctrineRoot(
+  pkg: string = packageRoot(import.meta.url),
+  cwd: string = process.cwd()
+): string | null {
+  return resolveDoctrineRootInfo(pkg, cwd)?.root ?? null
+}
+
+/** Where a resolved doctrine root came from — the calling repo's own tree, or a package-bundled copy. */
+export type DoctrineSource = 'tree' | 'bundle'
+
+/** `null` when `git -C cwd rev-parse --show-toplevel` fails — not a git worktree, or `git` itself missing. */
+function gitToplevel(cwd: string): string | null {
+  try {
+    return execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * `resolveDoctrineRoot`, with the source it resolved through attached. A
+ * repo whose root carries its own `aeg-root/roles/` — this repo, or any
+ * adopter who vendors the tree — is governed by that tree, never by
+ * whatever bundled copy happens to sit next to the CLI binary that's
+ * running: a globally-installed `vinaya` invoked from inside such a repo
+ * previously resolved the bundle it shipped with, silently serving doctrine
+ * up to two releases stale (atta-labs/vinaya#408). The `<packageRoot>`-based
+ * candidates above remain the fallback — the ONLY candidate for a repo (or
+ * subtree) with no `aeg-root/roles/` of its own, e.g. every ordinary
+ * adopter reading the published bundle.
+ *
+ * `cwd` is injectable for tests; every real caller takes the default.
+ */
+export function resolveDoctrineRootInfo(
+  pkg: string = packageRoot(import.meta.url),
+  cwd: string = process.cwd()
+): { root: string; source: DoctrineSource } | null {
+  const toplevel = gitToplevel(cwd)
+  if (toplevel !== null) {
+    const treeRoot = join(toplevel, 'aeg-root')
+    if (existsSync(join(treeRoot, 'roles'))) return { root: treeRoot, source: 'tree' }
+  }
   const fromSource = !pkg.split(sep).includes('node_modules')
-  const root = fromSource ? join(dirname(dirname(pkg)), 'aeg-root') : join(pkg, 'aeg-root')
-  return hasDoctrineEntry(root) ? root : null
+  const bundleRoot = fromSource ? join(dirname(dirname(pkg)), 'aeg-root') : join(pkg, 'aeg-root')
+  return hasDoctrineEntry(bundleRoot) ? { root: bundleRoot, source: 'bundle' } : null
 }
 
 /**

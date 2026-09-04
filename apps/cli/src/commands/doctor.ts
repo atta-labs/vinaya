@@ -42,6 +42,7 @@ import {
 import { CLAUDE_COMMAND_PATH } from '../lib/claude-command-emitter.js'
 import { CLAUDE_SETTINGS_PATH } from '../lib/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../lib/gemini-command-emitter.js'
+import { type DoctrineSource, resolveDoctrineRootInfo } from './doctrine.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import {
   type BriefSection,
@@ -985,8 +986,11 @@ function symbolFor(severity: Severity): string {
   }
 }
 
-function printReport(findings: Finding[], healthy: boolean): void {
+function printReport(findings: Finding[], healthy: boolean, doctrineInfo: { root: string; source: DoctrineSource } | null): void {
   process.stdout.write('vinaya doctor\n\n')
+  if (doctrineInfo) {
+    process.stdout.write(`doctrine: ${doctrineInfo.root} (${doctrineInfo.source})\n\n`)
+  }
   for (const f of findings) {
     process.stdout.write(`${symbolFor(f.severity)} [${f.check}] ${f.message}\n`)
   }
@@ -1006,6 +1010,8 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
     console.error('Error: not a git repository. Run `vinaya doctor` from inside your repo.')
     return 1
   }
+
+  const doctrineInfo = resolveDoctrineRootInfo(undefined, repo.repoRoot)
 
   const configRead = readConfig(repo.repoRoot)
   const findings: Finding[] = []
@@ -1055,7 +1061,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
   if (jsonOutput) {
     printJson({ healthy, findings })
   } else {
-    printReport(findings, healthy)
+    printReport(findings, healthy, doctrineInfo)
   }
 
   return healthy ? 0 : 1

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -42,14 +42,19 @@ function tempDir(prefix: string): string {
 }
 
 describe('resolveDoctrineRoot — a checkout carrying both roots', () => {
+  // `cwd` pins each case to its own fixture dir, never the real vinaya
+  // checkout the test process happens to run from — none of these fixtures
+  // is a git worktree, so `git -C <cwd> rev-parse --show-toplevel` fails and
+  // resolution falls through to the package-relative candidates exercised
+  // here, exactly as before the tree-first lookup (O1) was added.
   it("resolves the repo root's aeg-root, not the package-relative bundle, when running from source", () => {
     const { pkg, repoRoot } = checkoutWithBothRoots(tempDir('doctrine-both-'))
-    expect(resolveDoctrineRoot(pkg)).toBe(join(repoRoot, 'aeg-root'))
+    expect(resolveDoctrineRoot(pkg, repoRoot)).toBe(join(repoRoot, 'aeg-root'))
   })
 
   it('ignores the package-relative bundle entirely — it is never even a fallback from source', () => {
-    const { pkg, bundled } = checkoutWithBothRoots(tempDir('doctrine-both-'))
-    expect(resolveDoctrineRoot(pkg)).not.toBe(bundled)
+    const { pkg, bundled, repoRoot } = checkoutWithBothRoots(tempDir('doctrine-both-'))
+    expect(resolveDoctrineRoot(pkg, repoRoot)).not.toBe(bundled)
   })
 
   it('returns null from source when only the package-relative bundle exists', () => {
@@ -58,10 +63,10 @@ describe('resolveDoctrineRoot — a checkout carrying both roots', () => {
     const entry = join(pkg, 'aeg-root', ...ENTRY_SEGMENTS)
     mkdirSync(dirname(entry), { recursive: true })
     writeFileSync(entry, '# bundled only\n')
-    expect(resolveDoctrineRoot(pkg)).toBeNull()
+    expect(resolveDoctrineRoot(pkg, dir)).toBeNull()
   })
 
-  it('resolves the package-relative bundle for an installed copy, and never walks above it', () => {
+  it('resolves the package-relative bundle for an installed copy, and never walks above it — the published-tarball shape', () => {
     const dir = tempDir('doctrine-installed-')
     const pkg = join(dir, 'repo', 'node_modules', '@attalabs', 'vinaya')
     const bundled = join(pkg, 'aeg-root')
@@ -70,7 +75,37 @@ describe('resolveDoctrineRoot — a checkout carrying both roots', () => {
       mkdirSync(dirname(entry), { recursive: true })
       writeFileSync(entry, '# doctrine\n')
     }
-    expect(resolveDoctrineRoot(pkg)).toBe(bundled)
+    expect(resolveDoctrineRoot(pkg, dir)).toBe(bundled)
+  })
+})
+
+describe('resolveDoctrineRoot — tree-first resolution (atta-labs/vinaya#408)', () => {
+  it("resolves the current repository's own aeg-root/ from any subdirectory, whatever binary runs it", () => {
+    const dir = tempDir('doctrine-tree-')
+    execFileSync('git', ['init', '-q'], { cwd: dir })
+    const roleFile = join(dir, 'aeg-root', 'roles', 'x.md')
+    mkdirSync(dirname(roleFile), { recursive: true })
+    writeFileSync(roleFile, '# x\n')
+    const subdir = join(dir, 'nested', 'deeper')
+    mkdirSync(subdir, { recursive: true })
+
+    // `pkg` points at an installed-looking copy elsewhere — the tree still
+    // wins, because the repo under `cwd` carries its own aeg-root/roles/.
+    // `realpathSync` matches `git rev-parse --show-toplevel`, which resolves
+    // macOS's `/var` → `/private/var` tmpdir symlink.
+    const installedPkg = join(tempDir('doctrine-tree-pkg-'), 'node_modules', '@attalabs', 'vinaya')
+    expect(resolveDoctrineRoot(installedPkg, subdir)).toBe(join(realpathSync(dir), 'aeg-root'))
+  })
+
+  it('falls back to the installed bundle when the enclosing git repo has no aeg-root/roles/ of its own', () => {
+    const dir = tempDir('doctrine-no-tree-')
+    execFileSync('git', ['init', '-q'], { cwd: dir })
+    const pkg = join(dir, 'node_modules', '@attalabs', 'vinaya')
+    const bundled = join(pkg, 'aeg-root')
+    const entry = join(bundled, ...ENTRY_SEGMENTS)
+    mkdirSync(dirname(entry), { recursive: true })
+    writeFileSync(entry, '# bundled\n')
+    expect(resolveDoctrineRoot(pkg, dir)).toBe(bundled)
   })
 })
 
