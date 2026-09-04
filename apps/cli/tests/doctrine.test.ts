@@ -151,23 +151,29 @@ describe('resolveDoctrineRoot', () => {
     rmSync(base, { recursive: true, force: true })
   })
 
+  // `base` is a plain tmpdir fixture, never git-initialized — passed as
+  // `cwd` too so the new tree-first candidate (O1, atta-labs/vinaya#408)
+  // finds no git worktree here and falls through to the package-relative
+  // resolution these fixtures actually exercise, rather than silently
+  // picking up whatever real repo the test runner's own cwd happens to sit
+  // inside.
   it('resolves the published-tarball shape: the package root’s own bundled aeg-root', () => {
     const pkg = join(base, 'node_modules', '@attalabs', 'vinaya')
     seedDoctrine(join(pkg, 'aeg-root'))
-    expect(resolveDoctrineRoot(pkg)).toBe(join(pkg, 'aeg-root'))
+    expect(resolveDoctrineRoot(pkg, base)).toBe(join(pkg, 'aeg-root'))
   })
 
   it('resolves the vendored dev shape: the monorepo root’s aeg-root two levels up', () => {
     const pkg = join(base, 'apps', 'cli')
     mkdirSync(pkg, { recursive: true })
     seedDoctrine(join(base, 'aeg-root'))
-    expect(resolveDoctrineRoot(pkg)).toBe(join(base, 'aeg-root'))
+    expect(resolveDoctrineRoot(pkg, base)).toBe(join(base, 'aeg-root'))
   })
 
   it('returns null when no doctrine exists at either candidate', () => {
     const pkg = join(base, 'apps', 'cli')
     mkdirSync(pkg, { recursive: true })
-    expect(resolveDoctrineRoot(pkg)).toBeNull()
+    expect(resolveDoctrineRoot(pkg, base)).toBeNull()
   })
 
   it('never walks out of a node_modules install: a squatting sibling aeg-root package is not doctrine', () => {
@@ -177,7 +183,7 @@ describe('resolveDoctrineRoot', () => {
     const pkg = join(base, 'node_modules', '@attalabs', 'vinaya')
     mkdirSync(pkg, { recursive: true })
     seedDoctrine(join(base, 'node_modules', 'aeg-root'))
-    expect(resolveDoctrineRoot(pkg)).toBeNull()
+    expect(resolveDoctrineRoot(pkg, base)).toBeNull()
   })
 
   it('front-door constant matches what every resolver probe and the generated pointer name', () => {

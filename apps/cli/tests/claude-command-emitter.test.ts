@@ -57,6 +57,22 @@ allowed-tools: Bash(vinaya doctrine *)
     })
   })
 
+  describe('renderClaudeCommand — selfHost (atta-labs/vinaya#408)', () => {
+    it('invokes the source CLI and matches allowed-tools to the same prefix, when selfHost is set', () => {
+      const expected = `---
+description: Act as an AEG role for this repo.
+allowed-tools: Bash(bun apps/cli/src/index.ts doctrine *)
+---
+!\`bun apps/cli/src/index.ts doctrine --role "$ARGUMENTS"\`
+`
+      expect(renderClaudeCommand({ dir: 'apps/cli', bin: 'apps/cli/dist/index.js' })).toBe(expected)
+    })
+
+    it('is unchanged for the ordinary adopter when selfHost is explicitly null', () => {
+      expect(renderClaudeCommand(null)).toBe(renderClaudeCommand())
+    })
+  })
+
   describe('CLAUDE_COMMAND_PATH', () => {
     it('is the documented .claude/commands/vinaya.md path', () => {
       expect(CLAUDE_COMMAND_PATH).toBe('.claude/commands/vinaya.md')

@@ -49,6 +49,7 @@
 // behavior is confirmed.
 
 import type { CreateFileOp } from './ops.js'
+import type { VendoredVinaya } from './self-host.js'
 
 export const CLAUDE_COMMAND_GROUP = 'Claude Code command (.claude/commands/)'
 
@@ -56,30 +57,44 @@ export const CLAUDE_COMMAND_GROUP = 'Claude Code command (.claude/commands/)'
 export const CLAUDE_COMMAND_PATH = '.claude/commands/vinaya.md'
 
 /**
+ * The doctrine invocation this command shells out to — the source CLI
+ * (`bun <dir>/src/index.ts doctrine`) in a repo that vendors `vinaya` as a
+ * workspace member, the global binary otherwise. A self-hosting repo's own
+ * `/vinaya` command must invoke the CLI it is actually editing, never
+ * whatever release the global install happens to be at (atta-labs/vinaya#408).
+ * Also the literal prefix `allowed-tools` below matches — both must change
+ * together, or the permission matcher stops recognizing the emitted command.
+ */
+function doctrineInvocation(selfHost: VendoredVinaya | null): string {
+  return selfHost ? `bun ${selfHost.dir}/src/index.ts doctrine` : 'vinaya doctrine'
+}
+
+/**
  * Render the `/vinaya <role>` command file content. `allowed-tools` scopes
- * the command to `vinaya doctrine` invocations only, so it runs without a
+ * the command to its own doctrine invocation only, so it runs without a
  * permission prompt. Bare `$ARGUMENTS` (not `$ARGUMENTS[0]`/`$1`) is used
  * deliberately for maximum Claude Code version compatibility, since only one
  * value — the role — is ever needed. Double-quoted (`"$ARGUMENTS"`), not
  * bare — see the module doc above for exactly what that does and does not
  * close.
  */
-export function renderClaudeCommand(): string {
+export function renderClaudeCommand(selfHost: VendoredVinaya | null = null): string {
+  const invocation = doctrineInvocation(selfHost)
   return `---
 description: Act as an AEG role for this repo.
-allowed-tools: Bash(vinaya doctrine *)
+allowed-tools: Bash(${invocation} *)
 ---
-!\`vinaya doctrine --role "$ARGUMENTS"\`
+!\`${invocation} --role "$ARGUMENTS"\`
 `
 }
 
 /** Build the single `create-file` op for the generated command file. */
-export function buildClaudeCommandOps(): CreateFileOp[] {
+export function buildClaudeCommandOps(selfHost: VendoredVinaya | null = null): CreateFileOp[] {
   return [
     {
       kind: 'create-file',
       path: CLAUDE_COMMAND_PATH,
-      content: renderClaudeCommand(),
+      content: renderClaudeCommand(selfHost),
       group: CLAUDE_COMMAND_GROUP
     }
   ]

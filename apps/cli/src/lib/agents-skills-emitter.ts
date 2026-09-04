@@ -20,6 +20,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import matter from 'gray-matter'
 import type { CreateFileOp } from './ops.js'
+import type { VendoredVinaya } from './self-host.js'
 
 export const AGENTS_SKILLS_GROUP = 'Agent skills (.agents/skills/)'
 
@@ -59,24 +60,35 @@ export function agentSkillPath(roleName: string): string {
   return `.agents/skills/vinaya-${roleName}/SKILL.md`
 }
 
+/**
+ * The doctrine invocation this skill points at — the source CLI
+ * (`bun <dir>/src/index.ts doctrine`) in a repo that vendors `vinaya` as a
+ * workspace member, the global binary otherwise. A self-hosting repo's own
+ * `.agents/skills/` must invoke the CLI it is actually editing, never
+ * whatever release the global install happens to be at (atta-labs/vinaya#408).
+ */
+function doctrineInvocation(selfHost: VendoredVinaya | null): string {
+  return selfHost ? `bun ${selfHost.dir}/src/index.ts doctrine` : 'vinaya doctrine'
+}
+
 /** Render the 3-line pointer content for an agent skill. */
-export function renderAgentSkill(roleName: string): string {
+export function renderAgentSkill(roleName: string, selfHost: VendoredVinaya | null = null): string {
   const roleTitle = formatRoleTitle(roleName)
   return `---
 name: vinaya-${roleName}
 description: Act as the AEG ${roleTitle} for this repo.
 ---
-Run \`vinaya doctrine --role ${roleName}\` and follow its output as your operating instructions for this session.
+Run \`${doctrineInvocation(selfHost)} --role ${roleName}\` and follow its output as your operating instructions for this session.
 `
 }
 
 /** Build the list of `create-file` ops for discovered roles under `.agents/skills/`. */
-export function buildAgentsSkillsOps(doctrineRoot: string): CreateFileOp[] {
+export function buildAgentsSkillsOps(doctrineRoot: string, selfHost: VendoredVinaya | null = null): CreateFileOp[] {
   const roles = discoverRoleNames(doctrineRoot)
   return roles.map((role) => ({
     kind: 'create-file',
     path: agentSkillPath(role),
-    content: renderAgentSkill(role),
+    content: renderAgentSkill(role, selfHost),
     group: AGENTS_SKILLS_GROUP
   }))
 }

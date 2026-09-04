@@ -1,5 +1,5 @@
 ---
 description: Act as an AEG role for this repo.
-allowed-tools: Bash(vinaya doctrine *)
+allowed-tools: Bash(bun apps/cli/src/index.ts doctrine *)
 ---
-!`vinaya doctrine --role "$ARGUMENTS"`
+!`bun apps/cli/src/index.ts doctrine --role "$ARGUMENTS"`
