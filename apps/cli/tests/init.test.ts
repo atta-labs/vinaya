@@ -1012,6 +1012,70 @@ describe('generated pre-push hook: stdin forwarded as VINAYA_PUSH_REFS (#407 O2)
   })
 })
 
+describe('generated pre-push hook: affected tests (#407 O4)', () => {
+  function vendorVinaya(): void {
+    writeFileSync(
+      join(root, 'package.json'),
+      `${JSON.stringify({ name: 'vinaya', private: true, workspaces: ['apps/*', 'packages/*'] }, null, 2)}\n`
+    )
+    mkdirSync(join(root, 'apps/cli'), { recursive: true })
+    writeFileSync(
+      join(root, 'apps/cli/package.json'),
+      `${JSON.stringify({ name: '@attalabs/vinaya', version: '0.4.6', bin: { vinaya: './dist/index.js' } }, null, 2)}\n`
+    )
+  }
+
+  it('runs `bunx turbo test --affected` after the check, and refuses the push on failure — vendored repo only', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+    expect(prePush).toContain('bunx turbo test --affected || exit 1')
+    // Must run AFTER the check, not before — a failing check should refuse
+    // before ever spending time on the test suite.
+    expect(prePush.indexOf('check --all --local')).toBeLessThan(prePush.indexOf('bunx turbo test --affected'))
+  })
+
+  it('an ordinary (non-vendored) adopter never gets the turbo step — no assumption they run Bun/Turborepo', async () => {
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+    expect(prePush).not.toContain('bunx turbo')
+  })
+
+  it('refuses the push (non-zero exit) when the affected test run fails — real end-to-end execution', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+
+    // Stand in for the built CLI (`node <bin> check --all --local`) so the
+    // check half of the hook passes cleanly and execution reaches the
+    // turbo step this test is actually about.
+    mkdirSync(join(root, 'apps/cli/dist'), { recursive: true })
+    writeFileSync(join(root, 'apps/cli/dist/index.js'), 'process.exit(0)\n')
+
+    // A fake `bunx` on PATH that fails, exactly as a real red test run
+    // would — this is the mechanism under test, not the real turbo binary.
+    const fakeBinDir = join(root, 'fake-bin')
+    mkdirSync(fakeBinDir, { recursive: true })
+    writeFileSync(join(fakeBinDir, 'bunx'), '#!/bin/sh\necho "fake turbo: affected test run failed" >&2\nexit 1\n', {
+      mode: 0o755
+    })
+
+    let error: unknown
+    try {
+      execFileSync('sh', [join(root, '.husky/pre-push')], {
+        cwd: root,
+        input: 'refs/heads/main abc123 refs/heads/main def456\n',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}` }
+      })
+    } catch (e) {
+      error = e
+    }
+    expect(error).toBeDefined()
+    const stderr = String((error as { stderr?: Buffer })?.stderr ?? '')
+    expect(stderr).toContain('fake turbo: affected test run failed')
+  })
+})
+
 describe('detectVendoredVinaya', () => {
   it('is null for a repo with no package.json, no workspaces, or no such member', () => {
     expect(detectVendoredVinaya(root)).toBeNull() // bare fixture: README.md only
