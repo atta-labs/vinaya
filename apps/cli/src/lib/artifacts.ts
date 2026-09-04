@@ -1029,8 +1029,13 @@ ${hookRun(selfHost, 'check --all --local')}`
   // ordinary adopter's push is not made to depend on `turbo` existing.
   return `${base}
 # Ring 0: the affected test suite. A failing test refuses the push with
-# its own output (#407, O4).
-bunx turbo test --affected || exit 1`
+# its own output (#407, O4). --concurrency=1 (O9, found live 2026-09-04):
+# a local machine already running other work (another worktree's own
+# build/test, an IDE indexer) alongside this hook's parallel package
+# suites was measured pushing a git-clone-heavy fixture test past its
+# timeout under real contention — CI's own runner is dedicated and keeps
+# turbo.json's default concurrency; only this hook invocation is serialized.
+bunx turbo test --affected --concurrency=1 || exit 1`
 }
 
 // `commit-msg` validates the MESSAGE — the file git hands the hook as `$1`,

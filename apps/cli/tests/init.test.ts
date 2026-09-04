@@ -1043,14 +1043,20 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     )
   }
 
-  it('runs `bunx turbo test --affected` after the check, and refuses the push on failure — vendored repo only', async () => {
+  it('runs `bunx turbo test --affected --concurrency=1` after the check, and refuses the push on failure — vendored repo only', async () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
-    expect(prePush).toContain('bunx turbo test --affected || exit 1')
+    expect(prePush).toContain('bunx turbo test --affected --concurrency=1 || exit 1')
     // Must run AFTER the check, not before — a failing check should refuse
     // before ever spending time on the test suite.
     expect(prePush.indexOf('check --all --local')).toBeLessThan(prePush.indexOf('bunx turbo test --affected'))
+  })
+
+  it('the concurrency=1 override is local to this hook — turbo.json carries no repo-wide concurrency setting CI would also inherit (O9)', () => {
+    const turboJson = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', '..', 'turbo.json'), 'utf-8'))
+    expect(turboJson).not.toHaveProperty('concurrency')
+    expect(turboJson.tasks?.test).not.toHaveProperty('concurrency')
   })
 
   it('an ordinary (non-vendored) adopter never gets the turbo step — no assumption they run Bun/Turborepo', async () => {
