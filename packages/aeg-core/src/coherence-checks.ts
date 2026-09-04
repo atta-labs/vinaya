@@ -8,7 +8,12 @@
 
 import { trancheLabel, label } from '@attalabs/aeg-forge-state'
 import { anchoredRegion, stripCode } from './anchored-region'
-import { checkIssueObjectives, checkIssueRationale, checkProjectsRegistered, isTaskIssueLabelSet } from './issue-validation'
+import {
+  checkIssueObjectives,
+  checkIssueRationale,
+  checkProjectsRegistered,
+  isTaskIssueLabelSet
+} from './issue-validation'
 import { isPrincipal, PRINCIPAL_ALLOWLIST } from './waiver-label'
 import type { ForgeIssue, TaskIssueRef } from '@attalabs/aeg-types'
 import type { ForgeFacts, Tranche, Task } from './types'
