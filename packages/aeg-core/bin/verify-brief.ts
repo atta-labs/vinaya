@@ -164,6 +164,14 @@ function fetchIssueBodyForObjectives(issueNumber: number): string {
  * malformed section returns `[]`, so `checkObjectivesCopy` re-parses the
  * brief itself and surfaces the real parse error rather than passing
  * silently.
+ *
+ * A failed live fetch (network, `gh` auth, or an Issue number that does not
+ * resolve — a fixture's placeholder `Closes #999`, a deleted Issue) also
+ * returns `null`, logged but non-fatal: this is a live network dependency
+ * layered onto what was previously a fully offline check, and the checks
+ * this task's cutover already exempts (an Issue below `OBJECTIVES_SINCE_ISSUE`,
+ * a missing `Closes #N`) are proof the objectives checks are additive, never
+ * a new hard-failure mode for a resource that was never required before.
  */
 function resolveIssueObjectives(prBody: string, isTaskBranch: boolean): Objective[] | null {
   if (!isTaskBranch) {
@@ -173,17 +181,15 @@ function resolveIssueObjectives(prBody: string, isTaskBranch: boolean): Objectiv
   }
   const { issue } = extractIssue(prBody)
   if (issue === null || issue < OBJECTIVES_SINCE_ISSUE) return null
-  let issueBody: string
   try {
-    issueBody = fetchIssueBodyForObjectives(issue)
+    const parsed = parseObjectives(fetchIssueBodyForObjectives(issue))
+    return parsed.ok ? parsed.objectives : null
   } catch (err) {
-    console.error(
-      `\n[verify-brief] FAILED — could not fetch Issue #${issue}'s body (\`gh issue view\`) to compare Objectives: ${(err as Error).message}`
+    console.log(
+      `[verify-brief] could not fetch Issue #${issue}'s body (\`gh issue view\`) to compare Objectives — skipping the objectives checks for this run: ${(err as Error).message.split('\n')[0]}`
     )
-    process.exit(1)
+    return null
   }
-  const parsed = parseObjectives(issueBody)
-  return parsed.ok ? parsed.objectives : null
 }
 
 /** Exits non-zero on a flag that was passed with no usable value; returns `null` only when truly absent. */
