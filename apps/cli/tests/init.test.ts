@@ -794,6 +794,24 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(verdict.indexOf('if [ -z "$PR_NUMBER" ]')).toBeLessThan(verdict.indexOf('gh api --paginate'))
   })
 
+  it('the retrigger lookup never requires status == "completed" — a concurrent retrigger racing an in-flight rerun must still find it (O7, PRs #401/#409)', async () => {
+    // Runs 33841069791/33841065139 (found live 2026-09-04): two retriggers
+    // for the same head raced the same required run; the loser's query
+    // landed while the winner's `gh run rerun` had already flipped the run
+    // to `in_progress`, so requiring `status == "completed"` made it
+    // invisible to the loser entirely, which gave up rather than also
+    // trying (harmlessly no-op'ing on) the same run.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const verdict = generated().get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
+    const retrigger = generated().get(REVIEW_RETRIGGER_WORKFLOW_PATH) ?? ''
+    for (const workflow of [verdict, retrigger]) {
+      expect(workflow).not.toContain('| select(.status == "completed")')
+      expect(workflow).toContain('select(.display_title == $title)')
+      expect(workflow).toContain('select(.event == "pull_request_target")')
+      expect(workflow).toContain('select(.conclusion != "cancelled")')
+    }
+  })
+
   it('the verdict retrigger fires on BOTH verdicts — the gate must close, not only open', async () => {
     // The required check stores a conclusion, and that stored conclusion
     // guards the merge button. Gating the retrigger on a clean evaluation
