@@ -593,6 +593,27 @@ describe('workflows', () => {
     // same dodge as the vendored describe's SIGIL helper.
     expect(checks).toContain(`if: ${'$'}{{ !cancelled() }}`)
   })
+
+  it('the review gate re-runs itself when CI turns green (#399) — no hand rerun', async () => {
+    await runInit(['--yes'], makeDeps())
+    const review = readFileSync(join(root, REVIEW_WORKFLOW_PATH), 'utf-8')
+    const verdict = readFileSync(join(root, REVIEW_VERDICT_WORKFLOW_PATH), 'utf-8')
+    expect(review).toContain('workflow_run:')
+    expect(review).toContain('workflows: [CI]')
+    expect(review).toContain('types: [completed]')
+    expect(review).toContain("github.event.workflow_run.conclusion == 'success'")
+    // The required job only evaluates on the authority trigger — a
+    // workflow_run event carries no `pull_request` payload for it to read.
+    expect(review).toContain("if: github.event_name == 'pull_request_target'")
+    // Reuses the exact rerun mechanism the verdict-comment retrigger uses:
+    // the same display-title lookup against vinaya-review.yml's own runs,
+    // then `gh run rerun`, tolerant of an already-queued/too-old run.
+    expect(review).toContain('gh run rerun')
+    expect(review).toContain('vinaya-review.yml')
+    expect(review).toContain('display_title == $title')
+    expect(review).toContain('rerun declined')
+    expect(verdict).toContain('gh run rerun')
+  })
 })
 
 // atta-labs/attalabs#929. In a repo whose workspaces glob reaches a member named
@@ -882,9 +903,9 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       expect(verdict).not.toContain('BRANCH:')
       expect(verdict).not.toContain('headRefName')
       // GH_TOKEN on every step that talks to the forge: checks 2 (fetch PR
-      // body, run checks), review 1, verdict 3 (resolve-head, evaluate,
-      // retrigger), archivist 3.
-      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(9)
+      // body, run checks), review 2 (review gate, retrigger on CI green),
+      // verdict 3 (resolve-head, evaluate, retrigger), archivist 3.
+      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(10)
     }
   })
 

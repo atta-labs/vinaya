@@ -469,6 +469,14 @@ run-name: "Vinaya Review Gate PR #\${{ github.event.pull_request.number }} @ \${
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  # Re-run this gate for a head whose CI (\`ci.yml\`, name \`CI\`) just turned
+  # green, so a pull request that passed every check locally but raced a red
+  # CI run (found live on PR #398 at 4c59d4dd: gate ran with CI red, CI
+  # passed on rerun, gate held red until a hand \`gh run rerun\`) goes green
+  # on its own — no manual rerun.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 
 # One run per pull request COMMIT, always. Several \`types:\` above can fire in the
 # same instant — \`vinaya pr create\` opens the PR and applies its tranche
@@ -493,12 +501,13 @@ on:
 # pure re-evaluation of forge state that takes seconds, so a cancelled run had
 # nothing to lose and the survivor reads strictly fresher state.
 concurrency:
-  group: vinaya-review-\${{ github.event.pull_request.number || github.ref }}-\${{ github.event.pull_request.head.sha || github.sha }}
+  group: vinaya-review-\${{ github.event_name }}-\${{ github.event.pull_request.number || github.ref }}-\${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
   vinaya-review:
     name: vinaya review gate
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -523,6 +532,54 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate
           # the gate is green regardless of review state.
           PR_NUMBER: \${{ github.event.pull_request.number }}
         run: ${vinayaRun(selfHost, 'check review-gate')}
+
+  # Executes nothing; only re-runs the required workflow's own prior run for
+  # this head, exactly as \`vinaya-review-verdict.yml\`'s \`retrigger\` job
+  # does for a verdict comment. \`github.event.workflow_run.pull_requests\`
+  # resolves for a same-repo branch (this repo's own model — task branches
+  # push to origin, never a fork), so PR_NUMBER needs no separate \`gh\`
+  # lookup here.
+  retrigger-on-ci-green:
+    name: vinaya review gate (retrigger on CI green)
+    if: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.pull_requests[0] != null }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Re-run the required review gate for this head
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: \${{ github.event.workflow_run.pull_requests[0].number }}
+          HEAD_SHA: \${{ github.event.workflow_run.head_sha }}
+        run: |
+          # pull_request_target runs execute at the DEFAULT branch SHA, so a
+          # run's head_sha cannot identify the PR commit. GitHub's nested
+          # pull_requests snapshot is also not immutable: an old rerun can
+          # expose the PR's current head. The required workflow therefore
+          # records PR number + head SHA in run-name at creation, and this
+          # query matches that immutable display_title exactly — same
+          # lookup \`vinaya-review-verdict.yml\`'s own retrigger step runs.
+          set -o pipefail
+          RUN_TITLE="Vinaya Review Gate PR #$PR_NUMBER @ $HEAD_SHA"
+          RUN_ID=$(gh api --paginate \\
+            "repos/\${{ github.repository }}/actions/workflows/vinaya-review.yml/runs?event=pull_request_target&per_page=100" \\
+            | jq -sr --arg title "$RUN_TITLE" '
+                [.[].workflow_runs[]
+                 | select(.display_title == $title)
+                 | select(.event == "pull_request_target")
+                 | select(.status == "completed")
+                 | select(.conclusion != "cancelled")
+                 | .id][0] // empty')
+          if [ -z "$RUN_ID" ]; then
+            echo "No completed, non-cancelled pull_request_target run of vinaya-review.yml for PR #$PR_NUMBER at $HEAD_SHA - nothing to re-run."
+            exit 0
+          fi
+          echo "Re-running vinaya-review.yml run $RUN_ID for PR #$PR_NUMBER at $HEAD_SHA"
+          # Two green CI completions for one head (e.g. a re-triggered CI
+          # run) run two retriggers in parallel. Both can select the same
+          # run, and the loser gets "already queued" — the mechanism
+          # working, not a failure worth reddening the step over.
+          gh run rerun "$RUN_ID" --repo "\${{ github.repository }}" || echo "rerun declined (already queued, or run too old) - the other retrigger covers it"
 `
 }
 
