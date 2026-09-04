@@ -401,16 +401,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-${vinayaSetupSteps(selfHost, 'pull-request')}${adopterSetupStep(ciSetup)}      - name: Run checks
+${vinayaSetupSteps(selfHost, 'pull-request')}${adopterSetupStep(ciSetup)}      # PR_BODY is what makes test-plan/closes-n/pr-report-density EVALUATE:
+      # none of the three fetches the body itself (all read
+      # \`process.env.PR_BODY\` only) — without it they read "no body —
+      # nothing to check" and pass vacuously regardless of the PR's real
+      # content, on every run. Fetched live from the forge, never the
+      # event payload — a rerun of an old run must read the body as it
+      # stands NOW, not as it stood when the triggering event fired.
+      - name: Fetch PR body
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
-          # PR_BODY is what makes test-plan/closes-n/pr-report-density
-          # EVALUATE: none of the three fetches the body itself (all read
-          # \`process.env.PR_BODY\` only) — without it they read "no body —
-          # nothing to check" and pass vacuously regardless of the PR's real
-          # content, on every run.
-          PR_BODY: \${{ github.event.pull_request.body }}
+        run: |
+          DELIM="PR_BODY_$(date +%s%N)"
+          echo "PR_BODY<<$DELIM" >> "$GITHUB_ENV"
+          gh pr view "$PR_NUMBER" --json body --jq .body >> "$GITHUB_ENV"
+          echo "$DELIM" >> "$GITHUB_ENV"
+      - name: Run checks
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: \${{ github.event.pull_request.number }}
           BRANCH: \${{ github.head_ref }}
         # pipefail is load-bearing: this job's default shell is \`bash -e\`
         # WITHOUT pipefail, so an unguarded pipe through tee would mask the
@@ -569,7 +579,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-${vinayaSetupSteps(selfHost, 'trusted')}      - name: Body checks
+${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes body-bare-digits EVALUATE at all — the bin
+      # reads \`process.env.PR_BODY\` only, never fetches it itself. Fetched
+      # live from the forge, never the event payload — same reasoning as
+      # \`vinaya-checks.yml\`'s own PR_BODY step.
+      - name: Fetch PR body
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: \${{ github.event.pull_request.number }}
+        run: |
+          DELIM="PR_BODY_$(date +%s%N)"
+          echo "PR_BODY<<$DELIM" >> "$GITHUB_ENV"
+          gh pr view "$PR_NUMBER" --json body --jq .body >> "$GITHUB_ENV"
+          echo "$DELIM" >> "$GITHUB_ENV"
+      - name: Body checks
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           # PR_NUMBER is what makes the Changesets-release exemption
@@ -577,9 +600,6 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Body checks
           # "no PR yet — local dev" and falls through to the ordinary
           # bare-digit scan.
           PR_NUMBER: \${{ github.event.pull_request.number }}
-          # PR_BODY is what makes body-bare-digits EVALUATE at all — the bin
-          # reads \`process.env.PR_BODY\` only, never fetches it itself.
-          PR_BODY: \${{ github.event.pull_request.body }}
         run: ${vinayaRun(selfHost, 'check body-bare-digits')}
 `
 }

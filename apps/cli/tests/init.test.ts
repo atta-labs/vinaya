@@ -565,10 +565,13 @@ describe('workflows', () => {
     // unwired job passes them vacuously regardless of the PR's real content
     // (found live: reproduced against a real adopter repo's real CI run).
     // The checks job runs `check --all --diff-only` (test-plan/closes-n
-    // included) and needs it; the review job runs only `check review-gate`
-    // now (#870), which never reads PR_BODY, so it must NOT carry this wiring
-    // — re-adding it would regress to the exact bug this fix closes.
-    expect(checks).toContain('github.event.pull_request.body')
+    // included) and needs it, fetched live via `gh pr view` rather than the
+    // event payload (a rerun of an old run must read the CURRENT body); the
+    // review job runs only `check review-gate` now (#870), which never
+    // reads PR_BODY, so it must NOT carry this wiring — re-adding it would
+    // regress to the exact bug this fix closes.
+    expect(checks).toContain('gh pr view "$PR_NUMBER" --json body --jq .body')
+    expect(checks).not.toContain('github.event.pull_request.body')
     expect(review).not.toContain('github.event.pull_request.body')
     // review-gate is the review job's sole check (#870) — decoupled from the
     // PR_BODY-driven check --all it used to run.
@@ -867,7 +870,9 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
       const verdict = files.get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
 
-      expect(checks).toContain(expr('PR_BODY', 'github.event.pull_request.body'))
+      // PR_BODY is fetched live via `gh pr view`, never the event payload.
+      expect(checks).not.toContain('github.event.pull_request.body')
+      expect(checks).toContain('gh pr view "$PR_NUMBER" --json body --jq .body')
       expect(checks).toContain(expr('PR_NUMBER', 'github.event.pull_request.number'))
       expect(checks).toContain(expr('BRANCH', 'github.head_ref'))
       expect(review).toContain(expr('PR_NUMBER', 'github.event.pull_request.number'))
@@ -876,9 +881,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       expect(review).not.toContain('BRANCH:')
       expect(verdict).not.toContain('BRANCH:')
       expect(verdict).not.toContain('headRefName')
-      // GH_TOKEN on every step that talks to the forge: checks 1, review 1,
-      // verdict 3 (resolve-head, evaluate, retrigger), archivist 3.
-      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(8)
+      // GH_TOKEN on every step that talks to the forge: checks 2 (fetch PR
+      // body, run checks), review 1, verdict 3 (resolve-head, evaluate,
+      // retrigger), archivist 3.
+      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(9)
     }
   })
 
