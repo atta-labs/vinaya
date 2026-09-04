@@ -1,5 +1,13 @@
 # @attalabs/vinaya
 
+## 0.24.1
+
+### Patch Changes
+
+- dfbaa8e: Six small fixes found live during the `0.24.0` release and its follow-up review, each with its own test: `workspace-escape` no longer scans `*.test.ts`/`*.test.tsx` files, silencing both a known fixture false positive and a real cross-package reference accepted as a normal test-authoring pattern; `changeset-coverage` is silent on the repository's own default branch instead of warning that a diff "could not be determined"; `vinaya doctor --json` now carries the same `doctrineInfo` the text report prints, with test coverage for both the `(tree)` and `(bundle)` cases; the generated PR-body heredoc delimiter in `vinaya-checks.yml`/`vinaya-body-checks.yml` derives from `openssl rand -hex 16` instead of a nanosecond timestamp; `vinaya pr report`'s Group B no longer grades the stale `AEG:EVIDENCE` block it is itself about to replace, which previously pasted a misleading `evidence-fresh: fail` into an otherwise-clean report; and the on-verdict/CI-green review-gate retrigger lookup no longer requires `status == "completed"`, closing a race where a concurrent retrigger racing an in-flight rerun found nothing to act on and the gate stayed red until a hand rerun.
+- dfbaa8e: `main-branch-refusal` now declares `VINAYA_PUSH_REFS` in its check env allowlist. Without it, `buildCheckEnv` stripped the variable before the check subprocess ever saw it, so a tag-only `git push origin --tags` from the default branch (e.g. `vinaya release`'s last step) still refused as if it were a plain commit — the fix in #409 (Issue #407, O2) wired the hook and the check's own logic to handle a tag-only push, but never added the env var to this check's registry entry.
+- dfbaa8e: Three more fixes found live fixing PR `#417`'s own test flakiness: `apps/cli`'s `test` script now passes `--timeout=30000` (a root `bunfig.toml` `[test]` timeout alone does not work on this bun version — verified, not assumed); the generated pre-push hook runs the affected test suite at `--concurrency=1` so a machine already busy with other work doesn't push a git-clone-heavy fixture test past its timeout, while CI's dedicated runner keeps turbo's default concurrency; and `aeg-root/roles/developer.md` plus the rendered brief's §6/§8 no longer tell the Developer to manually run the affected suite per Part now that the pre-push hook enforces it on the one push.
+
 ## 0.24.0
 
 ### Minor Changes
