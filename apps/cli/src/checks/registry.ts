@@ -728,8 +728,15 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // Local-only: both facts (`symbolic-ref --short HEAD`,
       // `symbolic-ref --short refs/remotes/origin/HEAD`) read already-local
       // git state — no forge call, no PR content, same `env: {}` shape as
-      // `workspace-escape` above.
-      env: {}
+      // `workspace-escape` above. `VINAYA_PUSH_REFS` (Issue #407, O2) is the
+      // one exception: the generated pre-push hook sets it from git's own
+      // pre-push stdin before spawning `check --all --local`, and without
+      // it in this allowlist `buildCheckEnv` strips it before the check
+      // subprocess ever sees it — every tag-only push then reads as a plain
+      // commit-on-main and refuses. Optional: absent on every non-push
+      // invocation (a commit, or a bare `check` run), which the check
+      // already treats as "not a push in flight."
+      env: { VINAYA_PUSH_REFS: { optional: true } }
     },
     0
   ],

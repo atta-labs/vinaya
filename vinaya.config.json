@@ -55,7 +55,8 @@
       ".github/workflows/vinaya-body-checks.yml",
       "vinaya.config.json",
       "VINAYA.md",
-      ".vinaya/doc-owners"
+      ".vinaya/doc-owners",
+      ".claude/settings.json"
     ],
     "blocks": [
       {
@@ -66,6 +67,11 @@
       {
         "path": ".vinaya/hooks/pre-push",
         "marker": "pre-push",
+        "comment": "hash"
+      },
+      {
+        "path": ".claude/hooks/track-transcript.sh",
+        "marker": "track-transcript",
         "comment": "hash"
       }
     ],

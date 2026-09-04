@@ -1,6 +1,12 @@
 #!/usr/bin/env sh
+
 # >>> vinaya:managed:pre-push >>>
 # Vinaya pre-push gate. Runs branch/dispatch checks before the push leaves.
+# Forward git's own pre-push stdin (one "<local ref> <local sha> <remote
+# ref> <remote sha>" line per ref being pushed) so main-branch-refusal can
+# tell a tag-only push apart from one that also carries a branch ref.
+VINAYA_PUSH_REFS="$(cat)"
+export VINAYA_PUSH_REFS
 # This repo vendors the CLI, so `npx @attalabs/vinaya` resolves to its own
 # unbuilt workspace member. Run the built file instead.
 if [ ! -f apps/cli/dist/index.js ]; then
@@ -8,4 +14,7 @@ if [ ! -f apps/cli/dist/index.js ]; then
   exit 1
 fi
 node apps/cli/dist/index.js check --all --local || exit 1
+# Ring 0: the affected test suite. A failing test refuses the push with
+# its own output (#407, O4).
+bunx turbo test --affected || exit 1
 # <<< vinaya:managed:pre-push <<<
