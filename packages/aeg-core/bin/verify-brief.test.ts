@@ -142,6 +142,34 @@ describe('verify-brief — brief-shaped bodies are validated on any branch', () 
   })
 })
 
+describe('verify-brief — Objectives quick lane on a non-task branch (dev-review-loop-v1 task 1)', () => {
+  it('does not force `## Objectives` onto a standalone brief that never had one', () => {
+    // Regression guard: FIX_BRIEF predates this task and carries no
+    // `## Objectives` section — it must keep passing exactly as before.
+    const { code } = runCli([], { BRANCH: 'fix/x', PR_BODY: FIX_BRIEF })
+    expect(code).toBe(0)
+  })
+
+  it('is refused when a brief opts into `## Objectives` with a malformed section (self-compare catches the parse error)', () => {
+    const withBadObjectives = FIX_BRIEF.replace(
+      '## Summary',
+      '## Objectives\n\n1. wrong grammar — missing the `O` prefix.\n\n## Summary'
+    )
+    const { code, output } = runCli([], { BRANCH: 'fix/x', PR_BODY: withBadObjectives })
+    expect(code).toBe(1)
+    expect(output).toMatch(/objectives copy/)
+  })
+
+  it('passes when a brief carries a well-formed, self-consistent `## Objectives` section citing itself in §6', () => {
+    const withObjectives = FIX_BRIEF.replace(
+      '## Summary',
+      '## Objectives\n\nO1. The fix does the thing described in Summary.\n\n## Summary'
+    ).replace('## Pre-flight', '## 6. Numbered parts\n\nPart 1 (O1) — the fix.\n\n## Pre-flight')
+    const { code } = runCli([], { BRANCH: 'fix/x', PR_BODY: withObjectives })
+    expect(code).toBe(0)
+  })
+})
+
 describe('verify-brief --body-file (authoring-time gate)', () => {
   it('PASSES a complete brief file', () => {
     const { code, output } = runCli(['--body-file', briefFile('complete.md', FIX_BRIEF)])

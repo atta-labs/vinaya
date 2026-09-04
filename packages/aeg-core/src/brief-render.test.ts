@@ -41,6 +41,7 @@ function baseFacts(overrides: Partial<BriefFacts> = {}): BriefFacts {
     dependsOn: [],
     conflictsWith: [],
     rationale: parseRationaleFields(ISSUE_BODY),
+    objectives: [{ id: 'O1', text: 'A fixture objective for the renderer.' }],
     dispatchReady: true,
     dispatchBlockers: [],
     surfaceFiles: [
@@ -107,6 +108,30 @@ describe('renderBrief', () => {
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.missing).toContain('dispatch-gate depends-on: blocked')
+  })
+
+  it('refuses when the Issue has no `## Objectives` section', () => {
+    const result = renderBrief(baseFacts({ objectives: [] }), '')
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.missing.join(' ')).toMatch(/Objectives/)
+  })
+
+  it('emits the `## Objectives` section between the header and §2, copied from the Issue verbatim', () => {
+    const facts = baseFacts({
+      objectives: [
+        { id: 'O1', text: 'First outcome.' },
+        { id: 'O2', text: 'Second outcome.' }
+      ]
+    })
+    const result = renderBrief(facts, TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).toContain('## Objectives\n\nO1. First outcome.\nO2. Second outcome.')
+    const objectivesIndex = result.brief.indexOf('## Objectives')
+    const section2Index = result.brief.indexOf('## 2. Context')
+    expect(objectivesIndex).toBeGreaterThan(-1)
+    expect(section2Index).toBeGreaterThan(objectivesIndex)
   })
 
   it('refuses when the task has no Project(s) declared', () => {

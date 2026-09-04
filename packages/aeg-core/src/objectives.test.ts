@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { objectivesVersion, parseObjectives, renderObjectives } from './objectives'
+import { hasObjectivesHeading, objectivesVersion, parseObjectives, renderObjectives } from './objectives'
 
 const WELL_FORMED = `## Objectives
 
@@ -82,6 +82,17 @@ describe('parseObjectives', () => {
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.errors.join(' ')).toMatch(/numbering is not contiguous/)
+  })
+})
+
+describe('hasObjectivesHeading', () => {
+  it('is true whenever a `## Objectives` heading exists, even if the section under it is malformed', () => {
+    expect(hasObjectivesHeading('## Objectives\n\n1. wrong grammar\n')).toBe(true)
+    expect(hasObjectivesHeading(WELL_FORMED)).toBe(true)
+  })
+
+  it('is false for a body with no heading at all', () => {
+    expect(hasObjectivesHeading('## Summary\n\nNo objectives here.\n')).toBe(false)
   })
 })
 

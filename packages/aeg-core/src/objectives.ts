@@ -57,6 +57,19 @@ function objectivesSectionText(body: string): string | null {
 }
 
 /**
+ * True when `body` carries a `## Objectives` heading at all, regardless of
+ * whether the section under it parses. Callers that decide WHETHER the
+ * objectives checks apply at all (a standalone brief with no task Issue to
+ * compare against, `verify-brief.ts`/`check-brief-shape.ts`) use this to
+ * distinguish "no section attempted — not required" from "a section exists
+ * and must parse" — `parseObjectives` alone conflates the two into one
+ * `ok: false`.
+ */
+export function hasObjectivesHeading(body: string): boolean {
+  return HEADING_RE.test(body)
+}
+
+/**
  * Parses a `## Objectives` section into its numbered lines. Refuses — never
  * silently drops — a missing heading, a line that isn't `O<n>. <sentence>`
  * shaped (an `O1:` or `1.` line), an objective with no sentence, a sentence

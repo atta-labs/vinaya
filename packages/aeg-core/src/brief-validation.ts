@@ -13,6 +13,7 @@
  */
 
 import { type AnchorField, anchoredRegion, stripCode } from './anchored-region'
+import { type Objective, objectivesVersion, parseObjectives } from './objectives'
 import { parsePremiseBlock, premiseBlockText } from './premise-check'
 import { locateTestPlanSection } from './test-plan-section'
 
@@ -853,6 +854,86 @@ export function checkDefeatCases(prBody: string): BriefSectionResult {
   }
 }
 
+/**
+ * Every `Part <n> (<refs>)` citation's `O<n>` ids, across every match in
+ * `section6`. A Part with no parenthetical group after its number cites
+ * nothing and is not scrutinized either way by `checkObjectivesCoverage` —
+ * an administrative Part (a changeset commit, the final push) legitimately
+ * maps to no single objective; this brief's own §6 Part 5 ("changeset. Then
+ * the one push.") is exactly that shape.
+ */
+const PART_CITATION_RE = /Part\s+\d+\s*\(([^)]*)\)/gi
+const OBJECTIVE_REF_RE = /O(\d+)/g
+
+function citedObjectiveIds(section6: string): Set<number> {
+  const ids = new Set<number>()
+  for (const m of section6.matchAll(PART_CITATION_RE)) {
+    for (const r of (m[1] as string).matchAll(OBJECTIVE_REF_RE)) ids.add(Number.parseInt(r[1] as string, 10))
+  }
+  return ids
+}
+
+/**
+ * Objectives copy (dev-review-loop-v1 task 1, Issue #411, O3) — the brief's
+ * own `## Objectives` section must match the Issue's, compared via
+ * `objectivesVersion` (normalised — an editor's whitespace must not fail
+ * this gate; one changed word must). `issueObjectives` is injected: the
+ * caller resolves it live from the forge (`Closes #N`'s Issue) on a task
+ * branch, or from the body's own section on a standalone brief with no
+ * Issue to compare against (verify-brief.ts/check-brief-shape.ts).
+ */
+export function checkObjectivesCopy(prBody: string, issueObjectives: Objective[]): BriefSectionResult {
+  const parsed = parseObjectives(prBody)
+  if (!parsed.ok) {
+    return { status: 'fail', errors: parsed.errors.map((e) => `brief-validation objectives copy: ${e}`) }
+  }
+  if (objectivesVersion(parsed.objectives) !== objectivesVersion(issueObjectives)) {
+    return {
+      status: 'fail',
+      errors: [
+        "brief-validation objectives copy: the brief's `## Objectives` section does not match the Issue's — copy the Issue's `## Objectives` section (aeg-root/roles/developer.md)."
+      ]
+    }
+  }
+  return { status: 'pass', errors: [] }
+}
+
+/**
+ * Objectives coverage (dev-review-loop-v1 task 1, Issue #411, O3) — every
+ * `O<n>` the brief's own `## Objectives` section declares must be cited by
+ * at least one `Part <n> (O<k>[, O<j>...])` line in §6, and a Part that DOES
+ * cite one must cite an objective that actually exists. Self-contained
+ * (needs only `prBody`) — unlike `checkObjectivesCopy`, this rule never
+ * depends on a live Issue read.
+ */
+export function checkObjectivesCoverage(prBody: string): BriefSectionResult {
+  const parsed = parseObjectives(prBody)
+  if (!parsed.ok) {
+    return { status: 'fail', errors: parsed.errors.map((e) => `brief-validation objectives coverage: ${e}`) }
+  }
+  const declaredIds = new Set(parsed.objectives.map((o) => Number.parseInt(o.id.slice(1), 10)))
+  const section6 = extractNumberedSection(prBody, 6) ?? ''
+  const cited = citedObjectiveIds(section6)
+  const maxDeclared = Math.max(...declaredIds, 0)
+
+  const errors: string[] = []
+  for (const id of declaredIds) {
+    if (!cited.has(id)) {
+      errors.push(
+        `brief-validation objectives coverage: O${id} is not cited by any Part in §6 — every objective must be cited by at least one Part.`
+      )
+    }
+  }
+  for (const id of cited) {
+    if (!declaredIds.has(id)) {
+      errors.push(
+        `brief-validation objectives coverage: a Part in §6 cites O${id}, but the Objectives section ends at O${maxDeclared}.`
+      )
+    }
+  }
+  return errors.length === 0 ? { status: 'pass', errors: [] } : { status: 'fail', errors }
+}
+
 /** Composition knobs for `checkBriefSections` — see each field. */
 export type BriefSectionsOptions = {
   /**
@@ -876,6 +957,15 @@ export type BriefSectionsOptions = {
    * on an empty consumer list.
    */
   consumersOf?: (pkg: string) => string[]
+  /**
+   * The Issue's `## Objectives` list, for `checkObjectivesCopy`'s
+   * comparison — injected because resolving it is a live forge read
+   * (`gh issue view`), which this module stays pure of. `undefined` (the
+   * default) skips BOTH objectives checks entirely — the same no-op-when-
+   * unwired default `consumersOf` uses, so an existing caller that hasn't
+   * been taught to fetch the Issue keeps today's behavior.
+   */
+  issueObjectives?: Objective[]
 }
 
 /**
@@ -888,7 +978,7 @@ export function checkBriefSections(
   readTier: (body: string) => 0 | 1 | 3 | null,
   options: BriefSectionsOptions = {}
 ): { errors: string[] } {
-  const { requireClosesN = true, consumersOf = () => [] } = options
+  const { requireClosesN = true, consumersOf = () => [], issueObjectives } = options
   const results = [
     checkTierField(prBody, readTier),
     checkTestPlan(prBody),
@@ -906,6 +996,9 @@ export function checkBriefSections(
     checkCommandsCarryOutput(prBody),
     checkConsumerTests(prBody, consumersOf),
     checkDefeatCases(prBody),
+    ...(issueObjectives !== undefined
+      ? [checkObjectivesCopy(prBody, issueObjectives), checkObjectivesCoverage(prBody)]
+      : []),
     ...(requireClosesN ? [checkClosesN(prBody)] : [])
   ]
   return { errors: results.flatMap((r) => r.errors) }

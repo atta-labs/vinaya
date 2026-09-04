@@ -134,10 +134,17 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // BRIEF_RULES_SINCE_PR grandfathering — without it declared here the
       // runner strips it too, and every PR reads as "no PR number", which
       // this check's own logic treats as NOT grandfathered (fail-closed).
+      // `GITHUB_TOKEN`/`GH_TOKEN` (dev-review-loop-v1 task 1) are what let a
+      // task branch's objectives checks `gh issue view` the linked Issue's
+      // live `## Objectives` section — without them declared here the
+      // runner strips them, and the fetch fails every time regardless of
+      // the real token the CI job holds.
       env: {
         PR_BODY: { optional: true },
         BRANCH: { optional: true },
-        PR_NUMBER: { optional: true }
+        PR_NUMBER: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true }
       }
     },
     0

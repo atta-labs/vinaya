@@ -21,6 +21,7 @@
 
 import { deriveSection7 } from './derive-section7'
 import { isDocFile } from './file-classify'
+import { type Objective, renderObjectives } from './objectives'
 import { deriveTierFromDiff } from './pr-tier'
 
 export type RationaleFieldKey =
@@ -118,6 +119,8 @@ export type BriefFacts = {
   dependsOn: string[]
   conflictsWith: string[]
   rationale: Partial<Record<RationaleFieldKey, string>>
+  /** The Issue's `## Objectives` list (`objectives.ts`'s `parseObjectives`), copied into the brief verbatim between the header and §2. */
+  objectives: Objective[]
   dispatchReady: boolean
   dispatchBlockers: string[]
   surfaceFiles: SurfaceFileFact[]
@@ -412,6 +415,7 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   const missing: string[] = []
 
   if (facts.projects.length === 0) missing.push('Project (task has no Project(s) declared)')
+  if (facts.objectives.length === 0) missing.push('Objectives (Issue has no `## Objectives` section)')
   if (!facts.dispatchReady) missing.push(...facts.dispatchBlockers)
 
   for (const key of Object.keys(RATIONALE_FIELD_PATTERNS) as RationaleFieldKey[]) {
@@ -429,6 +433,8 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
 
   const brief = [
     renderHeader(facts, template),
+    '',
+    renderObjectives(facts.objectives),
     '',
     renderSection2(facts),
     '',

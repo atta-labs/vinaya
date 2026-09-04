@@ -85,6 +85,8 @@ export {
   checkForgeTitle,
   checkNoAgentBoxes,
   checkNoUnpinnedCodeClaims,
+  checkObjectivesCopy,
+  checkObjectivesCoverage,
   checkPlanPrNoCloses,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
@@ -323,5 +325,5 @@ export { findWorkspaceEscapes } from './workspace-escape'
 export type { WorkspaceEscapeFinding, WorkspaceEscapeReason, WorkspaceEscapeSourceFile } from './workspace-escape'
 export { parseRationaleFields, renderBrief } from './brief-render'
 export type { BriefFacts, RationaleFieldKey, RenderResult, SurfaceFileFact } from './brief-render'
-export { objectivesVersion, parseObjectives, renderObjectives } from './objectives'
+export { hasObjectivesHeading, objectivesVersion, parseObjectives, renderObjectives } from './objectives'
 export type { Objective, ParsedObjectives } from './objectives'

@@ -57,4 +57,34 @@ describe('core-parity: brief-shape vs bin/verify-brief.ts', () => {
     expect(checkExit).toBe(0)
     expect(binExit).toBe(0)
   })
+
+  // dev-review-loop-v1 task 1: on a non-task branch, the objectives checks
+  // are the quick-lane rule — applying only when the body opts in with its
+  // own `## Objectives` section. Neither entry point calls `gh` for this
+  // case (no Issue to fetch), so this stays a pure, network-free agreement.
+  it('agree (both fail) on a non-task branch whose opted-in `## Objectives` section is malformed', async () => {
+    // Brief-shaped (>= 2 of the four markers `isBriefShaped` requires) so
+    // neither entry point takes the non-brief bypass before reaching the
+    // objectives quick lane.
+    const badObjectivesBody = [
+      '## Objectives',
+      '',
+      '1. wrong grammar — missing the `O` prefix.',
+      '',
+      '## Technical surface map',
+      '',
+      '- `packages/aeg-core/src/brief-validation.ts`',
+      '',
+      '## Stop conditions',
+      '',
+      '- Pre-flight failure.'
+    ].join('\n')
+    const env = { PR_BODY: badObjectivesBody, BRANCH: 'fix/x' }
+    const [checkExit, binExit] = await Promise.all([
+      runExit(['bun', CHECK_BIN], env),
+      runExit(['bun', VERIFY_BRIEF], env)
+    ])
+    expect(checkExit).toBe(1)
+    expect(binExit).toBe(1)
+  })
 })
