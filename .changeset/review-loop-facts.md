@@ -15,4 +15,4 @@ New: `deriveReviewStatus`/`parseDeveloperRoundMarker` (`@attalabs/aeg-core`) and
 
 New check `exec-bits` (ring `0`): a changed file under a `checks/bin/` directory, or beginning with a shebang, must be staged `100755` — read from git's index, never the working tree.
 
-Also: the four report-only doctrine sweeps are line-scoped under a resolvable diff, so they report only findings this diff caused; `pr-body-frozen` reports `info` on the Changesets release branch instead of failing; `vinaya doctrine` run from source resolves the repo root's own `aeg-root/` and ignores the git-ignored package-relative bundle, and accepts `--role code-reviewer` as an alias for `reviewer`.
+Also: the four report-only doctrine sweeps are line-scoped under a resolvable diff, so they report only findings this diff caused; `vinaya doctrine` run from source resolves the repo root's own `aeg-root/` and ignores the git-ignored package-relative bundle, and accepts `--role code-reviewer` as an alias for `reviewer`.

@@ -9,6 +9,6 @@ The Test Plan's `[agent]` half stops being a checkbox: `brief render` emits it a
 
 `vinaya pr create` now runs every registry check declaring `PR_BODY` over the body before it reaches the forge, so a body that opens is a body CI's own checks would pass too — skipped when `rings.ring1_forgeWriteInterception` is on.
 
-`vinaya pr refreeze <n> --reason <text>` gives the frozen-body rule a Principal-only door: `pr-body-frozen`'s marker selection is now newest-allowlisted-wins rather than earliest, so a Principal-authored refreeze marker can move the baseline; a Developer's own identity is never on the allowlist, so it never wins regardless of timing.
+The brief/report split and `vinaya brief render` are unchanged; the refreeze and frozen-body behaviour this changeset described was removed before release by PR #400 and never shipped.
 
 The five doctrine sweeps (`reader-resolvable-prose`, `retired-vocabulary`, `doctrine-portability`, `doctrine-no-procedures`, `workspace-escape`) now declare `include: ['aeg-root/**/*.md']`.
