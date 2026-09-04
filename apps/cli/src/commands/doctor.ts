@@ -986,7 +986,11 @@ function symbolFor(severity: Severity): string {
   }
 }
 
-function printReport(findings: Finding[], healthy: boolean, doctrineInfo: { root: string; source: DoctrineSource } | null): void {
+function printReport(
+  findings: Finding[],
+  healthy: boolean,
+  doctrineInfo: { root: string; source: DoctrineSource } | null
+): void {
   process.stdout.write('vinaya doctor\n\n')
   if (doctrineInfo) {
     process.stdout.write(`doctrine: ${doctrineInfo.root} (${doctrineInfo.source})\n\n`)
