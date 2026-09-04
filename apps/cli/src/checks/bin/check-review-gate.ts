@@ -6,11 +6,18 @@
  * input assembly (PR comments/labels/waiver-label-actor/head sha via `gh`)
  * exactly, emitting the check contract instead of human text.
  *
- * `headRefOid` (#73) is resolved from this same `gh pr view` call, never
- * from local git or an env var — see `checkReviewGate`'s own module comment
- * for why an env-sourced head would reopen the self-approval hole a
- * `BASE_SHA` env var already tried and was reverted for (registry.ts's own
- * comment on this check's entry states the same prohibition).
+ * The head sha (#73, `#402` O1) is the branch's TRUE head: `gh pr view`
+ * resolves only the branch NAME (`headRefName`), and the sha itself comes
+ * from `git ls-remote origin refs/heads/<branch>` (this gate runs in CI
+ * with a checkout, so `git` is available) — never from a caller-suppliable
+ * env var, and never from `gh pr view`'s own `headRefOid` field, which can
+ * lag a push (`#371`: after a push, `gh pr view` still reported the prior
+ * sha). `headRefOid` is read only as a cross-check, logged when it
+ * disagrees — see `checkReviewGate`'s own module comment for why an
+ * env-sourced head would reopen the self-approval hole a `BASE_SHA` env var
+ * already tried and was reverted for (registry.ts's own comment on this
+ * check's entry states the same prohibition; `git ls-remote` queries the
+ * remote live and is not that env var).
  *
  * Documented divergence from the reference script: `verify-review-gate.ts`
  * fails CLOSED when `PR_NUMBER` is unset, because its only real caller
@@ -64,6 +71,7 @@ type PrView = {
   number: number
   comments: { body: string; author?: { login?: string } | null }[]
   labels: { name: string }[]
+  headRefName: string
   headRefOid: string
   baseRefName: string
 }
@@ -72,7 +80,7 @@ function fetchPr(prNumber: number): PrView | null {
   try {
     const out = execFileSync(
       'gh',
-      ['pr', 'view', String(prNumber), '--json', 'number,comments,labels,headRefOid,baseRefName'],
+      ['pr', 'view', String(prNumber), '--json', 'number,comments,labels,headRefName,headRefOid,baseRefName'],
       {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe']
@@ -82,6 +90,48 @@ function fetchPr(prNumber: number): PrView | null {
   } catch {
     return null
   }
+}
+
+function shaFromLsRemote(branch: string): string | null {
+  try {
+    const out = execFileSync('git', ['ls-remote', 'origin', `refs/heads/${branch}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+    const sha = out.split(/\s+/)[0] ?? ''
+    return sha === '' ? null : sha
+  } catch {
+    return null
+  }
+}
+
+function shaFromGhApi(branch: string): string | null {
+  try {
+    const out = execFileSync('gh', ['api', `repos/{owner}/{repo}/git/ref/heads/${branch}`, '--jq', '.object.sha'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+    return out === '' ? null : out
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The branch's true head — `git ls-remote`, falling back to the forge's own
+ * ref API when git is unavailable. `null` on a genuine resolution failure
+ * (never a fallback to `pr.headRefOid`, which can lag a push). Logs to
+ * stderr, never fails the check on its own, when `pr.headRefOid` disagrees
+ * with the resolved true head.
+ */
+function resolveTrueHeadSha(pr: PrView): string | null {
+  const trueSha = shaFromLsRemote(pr.headRefName) ?? shaFromGhApi(pr.headRefName)
+  if (trueSha && pr.headRefOid && trueSha !== pr.headRefOid) {
+    process.stderr.write(
+      `Warning: PR #${pr.number}'s headRefOid (${pr.headRefOid}) disagrees with the true head ${trueSha} resolved from \`${pr.headRefName}\` — using the true head.\n`
+    )
+  }
+  return trueSha
 }
 
 /**
@@ -242,7 +292,20 @@ function main(): void {
     ? fetchWaiverLabelActor(prNumber, WAIVER_LABEL_REVIEW)
     : null
 
-  const mechanicalChecks = fetchMechanicalChecks(pr.headRefOid)
+  const headSha = resolveTrueHeadSha(pr)
+  if (!headSha) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `review-gate severity:infra — could not resolve PR #${prNumber}'s true head via \`git ls-remote\` or the forge's \`git/ref/heads\` API.`,
+      agent_recovery_prompt:
+        'Confirm the branch still exists on origin and `gh auth status` passes, then re-run `vinaya check review-gate`.'
+    })
+    process.exit(1)
+  }
+
+  const mechanicalChecks = fetchMechanicalChecks(headSha)
   if (mechanicalChecks === null) {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
@@ -267,7 +330,7 @@ function main(): void {
     waiverLabelActor,
     principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig()),
     mechanicalChecks,
-    headSha: pr.headRefOid,
+    headSha,
     // A verdict judged a PATCH; the head sha is only its address. A merge
     // from `main` or a rebase that leaves the patch untouched must not void
     // a review that already read exactly those changes.

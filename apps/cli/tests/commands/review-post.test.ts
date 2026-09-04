@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -69,11 +69,21 @@ function brokenGhPath(): { dir: string; env: Record<string, string> } {
 }
 
 /**
- * A working `gh` stub that serves `pr view --json headRefOid`, `pr view
- * --json comments`, and `pr comment --body-file` against a small JSON state
- * file in `stateDir` — round-tripping a posted comment back into the next
- * `--json comments` fetch, the way the real forge does. Writing it as a Bun
- * script (not `/bin/sh`) is what makes the JSON read-modify-write tractable.
+ * A working `gh` stub that serves `pr view --json headRefName`, `pr view
+ * --json headRefOid`, `pr view --json comments`, `api .../git/ref/heads/<branch>`
+ * and `pr comment --body-file` against a small JSON state file in `stateDir`
+ * — round-tripping a posted comment back into the next `--json comments`
+ * fetch, the way the real forge does. Writing it as a Bun script (not
+ * `/bin/sh`) is what makes the JSON read-modify-write tractable.
+ *
+ * `headRefName` resolves to a branch name no real repo under test ever
+ * literally has (`stub-branch`), so `git ls-remote origin refs/heads/<name>`
+ * always comes back empty and `resolveHeadSha` falls through to the
+ * `git/ref/heads` API stub below, which answers with the same `headSha` the
+ * caller passed — preserving every existing test's semantics (the value
+ * that used to come straight from `headRefOid`) without asserting anything
+ * about a real branch's true head. The stale-vs-true disagreement itself is
+ * covered by its own dedicated test, below, against a real throwaway repo.
  */
 function workingGhPath(
   stateDir: string,
@@ -98,7 +108,15 @@ const commentsPath = ${JSON.stringify(join(stateDir, 'comments.json'))}
 function readComments() {
   try { return JSON.parse(readFileSync(commentsPath, 'utf8')) } catch { return [] }
 }
+if (args[0] === 'pr' && args[1] === 'view' && args.includes('headRefName')) {
+  process.stdout.write('stub-branch')
+  process.exit(0)
+}
 if (args[0] === 'pr' && args[1] === 'view' && args.includes('headRefOid')) {
+  process.stdout.write(${JSON.stringify(headSha)})
+  process.exit(0)
+}
+if (args[0] === 'api' && args[1] === 'repos/{owner}/{repo}/git/ref/heads/stub-branch') {
   process.stdout.write(${JSON.stringify(headSha)})
   process.exit(0)
 }
@@ -577,6 +595,123 @@ describe('review post — escalation refusals (brief Part 2)', () => {
       expect(r.stdout).not.toContain('VERDICT')
     } finally {
       rmSync(dir, { recursive: true, force: true })
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('review post — verdict binds to the true branch head, not a stale headRefOid (Issue #402 O1)', () => {
+  it('resolves the head via git ls-remote over gh pr view headRefOid, warning on disagreement', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'vinaya-review-post-truehead-'))
+    const identityEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'x',
+      GIT_AUTHOR_EMAIL: 'x@x.com',
+      GIT_COMMITTER_NAME: 'x',
+      GIT_COMMITTER_EMAIL: 'x@x.com'
+    }
+    execFileSync('git', ['init', '-q'], { cwd: repo })
+    writeFileSync(join(repo, 'a.txt'), 'one\n')
+    execFileSync('git', ['add', '.'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'old'], { cwd: repo, env: identityEnv })
+    const oldSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+
+    // The push `gh pr view` hasn't caught up with yet.
+    writeFileSync(join(repo, 'a.txt'), 'one\ntwo\n')
+    execFileSync('git', ['add', '.'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'new'], { cwd: repo, env: identityEnv })
+    const newSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+
+    execFileSync('git', ['remote', 'add', 'origin', repo], { cwd: repo })
+    const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+
+    const stateDir = mkdtempSync(join(tmpdir(), 'gh-state-truehead-'))
+    writeFileSync(join(stateDir, 'comments.json'), '[]')
+    const dir = mkdtempSync(join(tmpdir(), 'fake-gh-truehead-'))
+    const gh = join(dir, 'gh')
+    writeFileSync(
+      gh,
+      `#!/usr/bin/env bun
+import { readFileSync, writeFileSync } from 'node:fs'
+const args = process.argv.slice(2)
+const commentsPath = ${JSON.stringify(join(stateDir, 'comments.json'))}
+function readComments() {
+  try { return JSON.parse(readFileSync(commentsPath, 'utf8')) } catch { return [] }
+}
+if (args[0] === 'pr' && args[1] === 'view' && args.includes('headRefName')) {
+  process.stdout.write(${JSON.stringify(branch)})
+  process.exit(0)
+}
+if (args[0] === 'pr' && args[1] === 'view' && args.includes('headRefOid')) {
+  process.stdout.write(${JSON.stringify(oldSha)})
+  process.exit(0)
+}
+if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments')) {
+  const list = readComments()
+  process.stdout.write(JSON.stringify({ comments: list.map((c) => ({ body: c.body, author: { login: c.author } })) }))
+  process.exit(0)
+}
+if (args[0] === 'pr' && args[1] === 'comment') {
+  const bodyFile = args[args.indexOf('--body-file') + 1]
+  const body = readFileSync(bodyFile, 'utf8')
+  const list = readComments()
+  list.push({ body, author: 'daniboomerang' })
+  writeFileSync(commentsPath, JSON.stringify(list))
+  process.stdout.write('https://github.com/atta-labs/vinaya/pull/1#issuecomment-1')
+  process.exit(0)
+}
+process.stderr.write('gh stub: unhandled invocation: ' + args.join(' ') + '\\n')
+process.exit(1)
+`
+    )
+    chmodSync(gh, 0o755)
+    const env = { PATH: `${dir}:${process.env.PATH ?? ''}` }
+    try {
+      // `spawnSync`, not `runCli`: `runCli` discards stderr on a successful
+      // (exit 0) run, and the headRefOid-disagreement warning below is
+      // logged on the success path, not a failure path.
+      const r = spawnSync(
+        'bun',
+        [
+          INDEX,
+          'review',
+          'post',
+          '--role',
+          'code-reviewer',
+          '--pr',
+          '1',
+          '--brief-conformance',
+          'x',
+          '--spec-conformance',
+          'x',
+          '--scope',
+          'x',
+          '--tests',
+          'x',
+          '--docs',
+          'x',
+          '--task-id',
+          't',
+          '--model',
+          'm',
+          '--tokens-in',
+          '-',
+          '--tokens-out',
+          '-',
+          '--cost',
+          '-'
+        ],
+        { cwd: repo, encoding: 'utf8', env: { ...process.env, ...env } }
+      )
+      expect(r.status).toBe(0)
+      expect(r.stdout).toContain(`Judged head: ${newSha}`)
+      expect(r.stdout).not.toContain(oldSha)
+      expect(r.stderr).toContain('disagrees with the true head')
+      expect(r.stderr).toContain(oldSha)
+      expect(r.stderr).toContain(newSha)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+      rmSync(repo, { recursive: true, force: true })
       rmSync(stateDir, { recursive: true, force: true })
     }
   })

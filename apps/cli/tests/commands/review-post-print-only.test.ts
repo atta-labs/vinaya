@@ -35,10 +35,15 @@ function runCli(args: string[], cwd: string, env: Record<string, string | undefi
 }
 
 /**
- * Answers `pr view --json headRefOid` and `pr view --json comments` (empty —
- * round one, no prior verdict to reconcile against); `pr comment` exits
- * non-zero with a distinctive stderr line, so a stray real post is loud,
- * never silent.
+ * Answers `pr view --json headRefName`, `pr view --json headRefOid` and
+ * `pr view --json comments` (empty — round one, no prior verdict to
+ * reconcile against); `pr comment` exits non-zero with a distinctive
+ * stderr line, so a stray real post is loud, never silent.
+ *
+ * `resolveHeadSha` resolves the branch name first, then its true head via
+ * `git ls-remote` — which fails outright here (`cwd` is a plain tempdir,
+ * not a git repo) — falling back to `gh api .../git/ref/heads/<branch>`,
+ * answered below with the same `headSha`.
  */
 function stubGhNoPost(headSha: string): { dir: string; env: Record<string, string> } {
   const dir = mkdtempSync(join(tmpdir(), 'fake-gh-print-only-'))
@@ -48,8 +53,14 @@ function stubGhNoPost(headSha: string): { dir: string; env: Record<string, strin
     `#!/bin/sh
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   case "$*" in
+    *headRefName*) echo "stub-branch"; exit 0 ;;
     *headRefOid*) echo "${headSha}"; exit 0 ;;
     *comments*) echo '{"comments": []}'; exit 0 ;;
+  esac
+fi
+if [ "$1" = "api" ]; then
+  case "$*" in
+    *git/ref/heads/stub-branch*) echo "${headSha}"; exit 0 ;;
   esac
 fi
 if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then

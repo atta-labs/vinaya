@@ -9,7 +9,9 @@
  * Every case below is a shape that actually occurred:
  *   - `#192` merged via PR `195` — the live edge on atta-labs/vinaya#197
  *   - `vinaya-milestone-model-v1 #192` — the slug-qualified form the grammar
- *     sanctions and `resolveIds` synthesizes from a bare continuation span
+ *     sanctions as a single literal token inside a labeled `Depends-on:`/
+ *     `Conflicts-with:` field's own comma list (never synthesized from a
+ *     separate span — Issue #347 removed that mechanism)
  *   - `#110` closed NOT_PLANNED — a real abandoned task Issue in this repo
  */
 

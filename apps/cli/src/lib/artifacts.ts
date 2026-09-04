@@ -87,6 +87,7 @@ export const CONFIG_PATH = 'vinaya.config.json'
 export const DOCTRINE_POINTER_PATH = 'VINAYA.md'
 export const CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-checks.yml'
 export const REVIEW_WORKFLOW_PATH = '.github/workflows/vinaya-review.yml'
+export const REVIEW_RETRIGGER_WORKFLOW_PATH = '.github/workflows/vinaya-review-retrigger.yml'
 export const REVIEW_VERDICT_WORKFLOW_PATH = '.github/workflows/vinaya-review-verdict.yml'
 export const ARCHIVIST_WORKFLOW_PATH = '.github/workflows/vinaya-archivist.yml'
 export const BODY_CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-body-checks.yml'
@@ -460,23 +461,19 @@ function reviewWorkflow(selfHost: VendoredVinaya | null): string {
 # comment fires a different GitHub event that this
 # workflow structurally cannot receive — and keeping the comment path in a
 # separate FILE means this workflow's runs never list permanently-skipped
-# comment jobs on the PR's checks panel. When a clean final verdict lands,
-# the verdict workflow re-runs this one, so the required check below goes
-# green natively with no manual rerun.
+# comment jobs on the PR's checks panel. The CI-green retrigger half lives
+# in its own workflow too (vinaya-review-retrigger.yml, Issue #402 O4): it
+# only ever fires on \`workflow_run\`, so it never appears as a check-run —
+# skipped or otherwise — against this workflow's own \`pull_request_target\`
+# runs. When a clean final verdict lands, or CI turns green, one of those
+# two workflows re-runs this one, so the required check below goes green
+# natively with no manual rerun.
 name: Vinaya Review Gate
 run-name: "Vinaya Review Gate PR #\${{ github.event.pull_request.number }} @ \${{ github.event.pull_request.head.sha }}"
 
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, labeled, unlabeled]
-  # Re-run this gate for a head whose CI (\`ci.yml\`, name \`CI\`) just turned
-  # green, so a pull request that passed every check locally but raced a red
-  # CI run (found live on PR #398 at 4c59d4dd: gate ran with CI red, CI
-  # passed on rerun, gate held red until a hand \`gh run rerun\`) goes green
-  # on its own — no manual rerun.
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
 
 # One run per pull request COMMIT, always. Several \`types:\` above can fire in the
 # same instant — \`vinaya pr create\` opens the PR and applies its tranche
@@ -490,24 +487,23 @@ on:
 #
 # The key carries the head SHA as well as the PR number, and that second half
 # is load-bearing. Keyed on the PR alone, every run for that PR shares one
-# group — including a rerun of an EARLIER commit's run, which the verdict
-# retrigger performs. Measured on PR #22: re-running the old commit's run
-# (attempt 4) cancelled the current commit's run after one second, so a push
-# appeared to produce a cancelled gate. Runs for different commits must not be
-# able to cancel each other; runs for the SAME commit still collapse, which is
-# the duplicate this group exists to remove.
+# group — including a rerun of an EARLIER commit's run, which a retrigger
+# performs. Measured on PR #22: re-running the old commit's run (attempt 4)
+# cancelled the current commit's run after one second, so a push appeared to
+# produce a cancelled gate. Runs for different commits must not be able to
+# cancel each other; runs for the SAME commit still collapse, which is the
+# duplicate this group exists to remove.
 #
 # \`cancel-in-progress\` is safe here and not merely tolerable: the job is a
 # pure re-evaluation of forge state that takes seconds, so a cancelled run had
 # nothing to lose and the survivor reads strictly fresher state.
 concurrency:
-  group: vinaya-review-\${{ github.event_name }}-\${{ github.event.pull_request.number || github.ref }}-\${{ github.event.pull_request.head.sha || github.sha }}
+  group: vinaya-review-\${{ github.event.pull_request.number || github.ref }}-\${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
   vinaya-review:
     name: vinaya review gate
-    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -532,16 +528,45 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate
           # the gate is green regardless of review state.
           PR_NUMBER: \${{ github.event.pull_request.number }}
         run: ${vinayaRun(selfHost, 'check review-gate')}
+`
+}
 
-  # Executes nothing; only re-runs the required workflow's own prior run for
-  # this head, exactly as \`vinaya-review-verdict.yml\`'s \`retrigger\` job
-  # does for a verdict comment. \`github.event.workflow_run.pull_requests\`
-  # resolves for a same-repo branch (this repo's own model — task branches
-  # push to origin, never a fork), so PR_NUMBER needs no separate \`gh\`
-  # lookup here.
+function reviewRetriggerWorkflow(): string {
+  return `# ${MANAGED_NOTE}
+#
+# The CI-green retrigger half of the review gate (Issue #402 O4, split out
+# of vinaya-review.yml). Its own FILE, not a second job there, on purpose:
+# a job's \`if:\` evaluating false still reports a \`skipped\` check-run for
+# THAT workflow's head — \`retrigger-on-ci-green\` reported \`skipped\` on
+# every ordinary \`pull_request_target\` run of vinaya-review.yml, and
+# \`check-review-gate.ts\`'s mechanical-checks read counted that as "not
+# green," blocking every PR (first seen on PR #401 at 01efd54c). This
+# workflow triggers ONLY on \`workflow_run\`, so it never runs — and so
+# never reports a check-run at all — against a \`pull_request_target\` event;
+# there is no skipped entry left for the gate to misread.
+#
+# Executes nothing itself; only re-runs vinaya-review.yml's own prior run
+# for this head, exactly as vinaya-review-verdict.yml's \`retrigger\` job
+# does for a verdict comment.
+name: Vinaya Review Gate (retrigger on CI green)
+
+on:
+  # Re-run the required gate for a head whose CI (\`ci.yml\`, name \`CI\`) just
+  # turned green, so a pull request that passed every check locally but
+  # raced a red CI run (found live on PR #398 at 4c59d4dd: gate ran with CI
+  # red, CI passed on rerun, gate held red until a hand \`gh run rerun\`)
+  # goes green on its own — no manual rerun.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+jobs:
   retrigger-on-ci-green:
     name: vinaya review gate (retrigger on CI green)
-    if: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.pull_requests[0] != null }}
+    # \`github.event.workflow_run.pull_requests\` resolves for a same-repo
+    # branch (this repo's own model — task branches push to origin, never a
+    # fork), so PR_NUMBER needs no separate \`gh\` lookup here.
+    if: \${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.pull_requests[0] != null }}
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -558,7 +583,7 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate
           # expose the PR's current head. The required workflow therefore
           # records PR number + head SHA in run-name at creation, and this
           # query matches that immutable display_title exactly — same
-          # lookup \`vinaya-review-verdict.yml\`'s own retrigger step runs.
+          # lookup vinaya-review-verdict.yml's own retrigger step runs.
           set -o pipefail
           RUN_TITLE="Vinaya Review Gate PR #$PR_NUMBER @ $HEAD_SHA"
           RUN_ID=$(gh api --paginate \\
@@ -1307,6 +1332,12 @@ export function buildInitOps(ctx: InitContext): Op[] {
     kind: 'create-file',
     path: REVIEW_WORKFLOW_PATH,
     content: reviewWorkflow(ctx.selfHost),
+    group: 'CI workflows'
+  })
+  ops.push({
+    kind: 'create-file',
+    path: REVIEW_RETRIGGER_WORKFLOW_PATH,
+    content: reviewRetriggerWorkflow(),
     group: 'CI workflows'
   })
   ops.push({

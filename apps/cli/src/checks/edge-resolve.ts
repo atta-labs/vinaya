@@ -55,10 +55,13 @@ export type EdgeRepo = { owner: string; repo: string }
  * `#NNN`". An anchored `^#(\d+)$` looks equivalent and is not — it misses the
  * slug-qualified form `<slug> #NNN`, which the edge grammar sanctions
  * (`SLUG_QUALIFIED_ID` in `@attalabs/aeg-forge-state`, whose own example is
- * `aeg-governance-hardening #368`) and which `resolveIds` SYNTHESIZES: a bare
- * `#372` continuation span inherits the preceding slug and is rewritten to
- * `<slug> #372` before any resolver sees it. Anchoring here reintroduced the
- * exact divergence this module exists to remove, in the more common form.
+ * `aeg-governance-hardening #368`) and which a labeled `Depends-on:`/
+ * `Conflicts-with:` field's own comma list carries as a single literal
+ * token — `parseRationaleDeps` never synthesizes it from a separate span
+ * (Issue #347 removed that mechanism; only a labeled field's own
+ * comma-separated, id-shaped tokens are read at all). Anchoring here
+ * reintroduced the exact divergence this module exists to remove, in the
+ * more common form.
  */
 const DIRECT_ISSUE_REF = /#(\d+)/
 

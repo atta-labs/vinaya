@@ -16,6 +16,7 @@ import {
   labelOps,
   ROLES_FOLDER_PLACEHOLDER_PATH,
   REVIEW_WORKFLOW_PATH,
+  REVIEW_RETRIGGER_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
   SETUP_BUN_SHA,
   starterConfig
@@ -137,10 +138,15 @@ describe('vinaya init', () => {
     // workflows item grew to three with the archivist workflow #761, to four
     // with the review-verdict workflow — the comment half of the review gate
     // split into its own file so verdict comments can re-trigger the
-    // required run — and to five with vinaya-body-checks.yml, the same
+    // required run — to five with vinaya-body-checks.yml, the same
     // pull_request_target trust boundary carrying body-bare-digits'
     // Changesets-release exemption, which a plain pull_request job cannot
-    // safely resolve): config + root VINAYA.md + five workflows (tracked) +
+    // safely resolve, and to six with vinaya-review-retrigger.yml (Issue
+    // #402 O4) — the CI-green retrigger half of the review gate, split into
+    // its own file for the same reason the verdict-comment half already
+    // was: a `workflow_run`-only trigger there means it never reports a
+    // `skipped` check-run against vinaya-review.yml's own head):
+    // config + root VINAYA.md + six workflows (tracked) +
     // three hook stubs (pre-commit/pre-push/commit-msg, the last added by
     // Issue #63) + the .vinaya/doc-owners starter, PLUS — as of task 5
     // (#152) — the three agent-vendor emitters (tasks 2/3/4), installed by
@@ -156,6 +162,7 @@ describe('vinaya init', () => {
       DOCTRINE_POINTER_PATH,
       CHECKS_WORKFLOW_PATH,
       REVIEW_WORKFLOW_PATH,
+      REVIEW_RETRIGGER_WORKFLOW_PATH,
       REVIEW_VERDICT_WORKFLOW_PATH,
       ARCHIVIST_WORKFLOW_PATH,
       BODY_CHECKS_WORKFLOW_PATH,
@@ -184,6 +191,7 @@ describe('vinaya init', () => {
       DOCTRINE_POINTER_PATH,
       CHECKS_WORKFLOW_PATH,
       REVIEW_WORKFLOW_PATH,
+      REVIEW_RETRIGGER_WORKFLOW_PATH,
       REVIEW_VERDICT_WORKFLOW_PATH,
       ARCHIVIST_WORKFLOW_PATH,
       BODY_CHECKS_WORKFLOW_PATH,
@@ -597,21 +605,28 @@ describe('workflows', () => {
   it('the review gate re-runs itself when CI turns green (#399) — no hand rerun', async () => {
     await runInit(['--yes'], makeDeps())
     const review = readFileSync(join(root, REVIEW_WORKFLOW_PATH), 'utf-8')
+    // The CI-green retrigger lives in its own workflow file (Issue #402 O4)
+    // — never a second job inside vinaya-review.yml — so it never reports a
+    // `skipped` check-run against that workflow's own `pull_request_target`
+    // runs (see that check's own test for why: a `skipped` mechanical check
+    // used to block every PR).
+    const retrigger = readFileSync(join(root, REVIEW_RETRIGGER_WORKFLOW_PATH), 'utf-8')
     const verdict = readFileSync(join(root, REVIEW_VERDICT_WORKFLOW_PATH), 'utf-8')
-    expect(review).toContain('workflow_run:')
-    expect(review).toContain('workflows: [CI]')
-    expect(review).toContain('types: [completed]')
-    expect(review).toContain("github.event.workflow_run.conclusion == 'success'")
-    // The required job only evaluates on the authority trigger — a
-    // workflow_run event carries no `pull_request` payload for it to read.
-    expect(review).toContain("if: github.event_name == 'pull_request_target'")
+    expect(review).not.toContain('workflow_run:')
+    expect(retrigger).toContain('workflow_run:')
+    expect(retrigger).toContain('workflows: [CI]')
+    expect(retrigger).toContain('types: [completed]')
+    expect(retrigger).toContain("github.event.workflow_run.conclusion == 'success'")
+    // vinaya-review.yml triggers only on pull_request_target now — no
+    // second event to guard the required job against.
+    expect(review).not.toContain("if: github.event_name == 'pull_request_target'")
     // Reuses the exact rerun mechanism the verdict-comment retrigger uses:
     // the same display-title lookup against vinaya-review.yml's own runs,
     // then `gh run rerun`, tolerant of an already-queued/too-old run.
-    expect(review).toContain('gh run rerun')
-    expect(review).toContain('vinaya-review.yml')
-    expect(review).toContain('display_title == $title')
-    expect(review).toContain('rerun declined')
+    expect(retrigger).toContain('gh run rerun')
+    expect(retrigger).toContain('vinaya-review.yml')
+    expect(retrigger).toContain('display_title == $title')
+    expect(retrigger).toContain('rerun declined')
     expect(verdict).toContain('gh run rerun')
   })
 })
@@ -623,7 +638,13 @@ describe('workflows', () => {
 // vinaya: command not found`. Both shapes are asserted here: a test that only
 // asserted the old string was asserting the defect.
 describe('generated workflows: published vs vendored invocation (atta-labs/attalabs#929)', () => {
-  const WORKFLOWS = [CHECKS_WORKFLOW_PATH, REVIEW_WORKFLOW_PATH, REVIEW_VERDICT_WORKFLOW_PATH, ARCHIVIST_WORKFLOW_PATH]
+  const WORKFLOWS = [
+    CHECKS_WORKFLOW_PATH,
+    REVIEW_WORKFLOW_PATH,
+    REVIEW_RETRIGGER_WORKFLOW_PATH,
+    REVIEW_VERDICT_WORKFLOW_PATH,
+    ARCHIVIST_WORKFLOW_PATH
+  ]
   const VENDORED_BIN = 'node apps/cli/dist/index.js'
 
   /** Make the fixture a repo that vendors the CLI as a workspace member. */
@@ -903,8 +924,9 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       expect(verdict).not.toContain('BRANCH:')
       expect(verdict).not.toContain('headRefName')
       // GH_TOKEN on every step that talks to the forge: checks 2 (fetch PR
-      // body, run checks), review 2 (review gate, retrigger on CI green),
-      // verdict 3 (resolve-head, evaluate, retrigger), archivist 3.
+      // body, run checks), review 1 (review gate), retrigger 1 (its own
+      // workflow file, Issue #402 O4), verdict 3 (resolve-head, evaluate,
+      // retrigger), archivist 3.
       expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(10)
     }
   })
@@ -1568,6 +1590,7 @@ describe('adopter-declared CI setup (ci.setup)', () => {
     for (const path of [
       ...CUSTOM_CHECK_EXECUTING,
       REVIEW_WORKFLOW_PATH,
+      REVIEW_RETRIGGER_WORKFLOW_PATH,
       REVIEW_VERDICT_WORKFLOW_PATH,
       ARCHIVIST_WORKFLOW_PATH
     ]) {

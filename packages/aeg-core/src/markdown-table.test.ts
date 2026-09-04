@@ -59,7 +59,10 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
 
   it('parses one record per gate row, matching the known row count per ring', async () => {
     const { ring0, ring1, ring2 } = await loadRingTables()
-    expect(ring0.rows).toHaveLength(19)
+    // fix/true-head-and-stale-sites (Issue #402) moved the "Writing to pull
+    // requests or Issues through the raw API" row from ring 0 to ring 1 —
+    // its real enforcement is the ring-1 CI re-run, not anything at ring 0.
+    expect(ring0.rows).toHaveLength(18)
     // task 7 (Issue 56) added the `retired-vocabulary` row alongside the
     // existing `reader-resolvable-prose` one. task 8 (Issue 57) added the
     // G6 doctrine-registry-parity row. task 234 added the
@@ -73,7 +76,9 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
     // review-convergence-v1 task 10 added the `doctrine-no-procedures` row.
     // fix/unfreeze-and-rerun (Issue #399) removed the `pr-body-frozen` row
     // (ring 1) and the `pr refreeze` row (ring 0).
-    expect(ring1.rows).toHaveLength(26)
+    // fix/true-head-and-stale-sites (Issue #402) moved the raw-API row in
+    // from ring 0.
+    expect(ring1.rows).toHaveLength(27)
 
     // (2026-07-13) removed the "Daily drift check — stuck row-adjacent
     // blockers" ring-2 row (its subject matter, stale-blocker.ts, was retired).

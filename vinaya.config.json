@@ -49,6 +49,7 @@
     "files": [
       ".github/workflows/vinaya-checks.yml",
       ".github/workflows/vinaya-review.yml",
+      ".github/workflows/vinaya-review-retrigger.yml",
       ".github/workflows/vinaya-review-verdict.yml",
       ".github/workflows/vinaya-archivist.yml",
       ".github/workflows/vinaya-body-checks.yml",

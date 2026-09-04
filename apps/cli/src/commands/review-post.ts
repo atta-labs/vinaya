@@ -811,21 +811,73 @@ function gh(args: string[]): string {
   }
 }
 
-/** `gh pr view <n> --json headRefOid` — never an agent-supplied sha (`aeg-root/roles/developer.md`'s head-resolution rule every gate in this repo already follows). */
-function resolveHeadSha(pr: string): string {
+function resolveHeadRefName(pr: string): string {
   let out: string
   try {
-    out = gh(['pr', 'view', pr, '--json', 'headRefOid', '-q', '.headRefOid'])
+    out = gh(['pr', 'view', pr, '--json', 'headRefName', '-q', '.headRefName'])
   } catch (err) {
     refuseCmd(
-      `Could not resolve PR ${pr}'s head via \`gh pr view --json headRefOid\`: ${err instanceof Error ? err.message : String(err)}`,
+      `Could not resolve PR ${pr}'s branch name via \`gh pr view --json headRefName\`: ${err instanceof Error ? err.message : String(err)}`,
       'Confirm `gh auth status` passes and the PR number is correct, then re-run.'
     )
   }
   if (!out) {
-    refuseCmd(`\`gh pr view ${pr} --json headRefOid\` returned no head sha.`, 'Confirm PR exists, then re-run.')
+    refuseCmd(`\`gh pr view ${pr} --json headRefName\` returned no branch name.`, 'Confirm PR exists, then re-run.')
   }
   return out
+}
+
+function shaFromLsRemote(branch: string): string | null {
+  try {
+    const out = execFileSync('git', ['ls-remote', 'origin', `refs/heads/${branch}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+    const sha = out.split(/\s+/)[0] ?? ''
+    return sha === '' ? null : sha
+  } catch {
+    return null
+  }
+}
+
+function shaFromGhApi(branch: string): string | null {
+  try {
+    const out = gh(['api', `repos/{owner}/{repo}/git/ref/heads/${branch}`, '--jq', '.object.sha'])
+    return out === '' ? null : out
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The branch's true head — `git ls-remote origin refs/heads/<branch>`,
+ * falling back to the forge's own ref API when git is unavailable — never
+ * `gh pr view`'s `headRefOid`, which can lag a push (`#371`: after a push
+ * was pushed, `gh pr view` still reported the prior sha). `headRefOid` is
+ * read only as a cross-check, logged when it disagrees with the resolved
+ * true head — never used as the resolved value itself.
+ */
+function resolveHeadSha(pr: string): string {
+  const branch = resolveHeadRefName(pr)
+  const trueSha = shaFromLsRemote(branch) ?? shaFromGhApi(branch)
+  if (!trueSha) {
+    refuseCmd(
+      `Could not resolve branch \`${branch}\`'s true head via \`git ls-remote\` or the forge's \`git/ref/heads\` API.`,
+      'Confirm the branch exists on origin and `gh auth status` passes, then re-run.'
+    )
+  }
+  let staleOid: string | null = null
+  try {
+    staleOid = gh(['pr', 'view', pr, '--json', 'headRefOid', '-q', '.headRefOid']) || null
+  } catch {
+    staleOid = null
+  }
+  if (staleOid && staleOid !== trueSha) {
+    process.stderr.write(
+      `Warning: \`gh pr view ${pr}\`'s headRefOid (${staleOid}) disagrees with the true head ${trueSha} resolved from \`${branch}\` — using the true head.\n`
+    )
+  }
+  return trueSha
 }
 
 /**
