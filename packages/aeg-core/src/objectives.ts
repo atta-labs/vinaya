@@ -39,7 +39,7 @@ const BACKTICKED_PATH_RE = /`[^`\n]*\/[^`\n]*`/
 const MIN_WORDS_OUTSIDE_BACKTICKS = 3
 
 /** `text` with every backticked span removed — what remains is the sentence, if any, that isn't the path itself. */
-function stripBackticks(text: string): string {
+function stripObjectiveBackticks(text: string): string {
   return text.replace(/`[^`\n]*`/g, ' ')
 }
 
@@ -106,7 +106,7 @@ export function parseObjectives(body: string): ParsedObjectives {
       errors.push(`O${n} has no sentence — every objective is one observable sentence.`)
       continue
     }
-    if (BACKTICKED_PATH_RE.test(text) && wordCount(stripBackticks(text)) < MIN_WORDS_OUTSIDE_BACKTICKS) {
+    if (BACKTICKED_PATH_RE.test(text) && wordCount(stripObjectiveBackticks(text)) < MIN_WORDS_OUTSIDE_BACKTICKS) {
       errors.push(
         `O${n} is little more than a file path — an objective states an observable outcome, never a bare path (the Brief Author maps it to files).`
       )

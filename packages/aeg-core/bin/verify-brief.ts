@@ -133,7 +133,7 @@ function readFlag(argv: string[], name: string): FlagRead {
 }
 
 /** `gh issue view <n> --json body --jq .body` — the one live read `resolveIssueObjectives` needs. */
-function fetchIssueBody(issueNumber: number): string {
+function fetchIssueBodyForObjectives(issueNumber: number): string {
   return execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'body', '--jq', '.body'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
@@ -175,7 +175,7 @@ function resolveIssueObjectives(prBody: string, isTaskBranch: boolean): Objectiv
   if (issue === null || issue < OBJECTIVES_SINCE_ISSUE) return null
   let issueBody: string
   try {
-    issueBody = fetchIssueBody(issue)
+    issueBody = fetchIssueBodyForObjectives(issue)
   } catch (err) {
     console.error(
       `\n[verify-brief] FAILED — could not fetch Issue #${issue}'s body (\`gh issue view\`) to compare Objectives: ${(err as Error).message}`
