@@ -151,4 +151,17 @@ describe('renderBrief', () => {
     if (!result.ok) return
     expect(result.brief).toMatch(/consumer-tests: none —/)
   })
+
+  it('§6/§8 no longer instruct running the affected suite per Part — the pre-push hook already does (O10)', () => {
+    const result = renderBrief(baseFacts(), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).not.toContain('Run `bunx turbo test --affected` before committing this Part')
+    expect(result.brief).toContain(
+      'The pre-push hook runs the affected suite on your one push and refuses it on failure'
+    )
+    expect(result.brief).toContain(
+      'The pre-push hook already ran the affected suite on your one push and refused it on failure'
+    )
+  })
 })
