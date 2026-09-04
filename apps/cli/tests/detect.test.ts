@@ -3,13 +3,17 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { InitDeps } from '../src/commands/init.js'
+import { runInit } from '../src/commands/init.js'
 import {
   branchProtectionConfigured,
   checkGhAuth,
   classifyBranchProtectionError,
+  customHooksPath,
   detectGitRepo,
   ghAuthStatus
 } from '../src/lib/detect.js'
+import type { LabelGateway } from '../src/lib/ops.js'
 
 // `gh api repos/<owner>/<repo>/branches/main/protection` exits non-zero for
 // three genuinely different reasons — only two of them are KNOWN, real
@@ -215,5 +219,84 @@ describe('branchProtectionConfigured', () => {
     await withFakeBin('gh', 'echo "gh: authentication required" 1>&2\nexit 1', async () => {
       expect(await branchProtectionConfigured('acme', 'widget')).toBeNull()
     })
+  })
+})
+
+// #397 round 2 (F1): `.vinaya/hooks` is `upgrade`'s own tracked-hooks value
+// (`TRACKED_HOOK_DIR`) — `init` must not refuse a repo that already carries
+// it as `core.hooksPath`, or a repo `upgrade` has already migrated could
+// never re-run `init`. Never covered by a real git repo before this test:
+// `init.test.ts`'s own custom-hooksPath coverage injects `customHooksPath`
+// as a mock and never exercises this function's real git-backed logic.
+describe('customHooksPath — .vinaya/hooks is not a custom path (#397 round 2)', () => {
+  function realRepo(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-customhookspath-'))
+    execFileSync('git', ['init', '-q'], { cwd: dir })
+    return dir
+  }
+
+  it('returns null for .vinaya/hooks — the value `upgrade` itself sets', async () => {
+    const dir = realRepo()
+    try {
+      execFileSync('git', ['config', 'core.hooksPath', '.vinaya/hooks'], { cwd: dir })
+      expect(await customHooksPath(dir)).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('still returns null for .husky and .husky/_ (unchanged)', async () => {
+    const dir = realRepo()
+    try {
+      execFileSync('git', ['config', 'core.hooksPath', '.husky'], { cwd: dir })
+      expect(await customHooksPath(dir)).toBeNull()
+      execFileSync('git', ['config', 'core.hooksPath', '.husky/_'], { cwd: dir })
+      expect(await customHooksPath(dir)).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('still refuses a genuinely non-standard core.hooksPath', async () => {
+    const dir = realRepo()
+    try {
+      execFileSync('git', ['config', 'core.hooksPath', '.config/hooks'], { cwd: dir })
+      expect(await customHooksPath(dir)).toBe('.config/hooks')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a repo with core.hooksPath=.vinaya/hooks runs `init` without the refusal', async () => {
+    const dir = realRepo()
+    try {
+      execFileSync('git', ['config', 'core.hooksPath', '.vinaya/hooks'], { cwd: dir })
+      const labels: LabelGateway = {
+        async exists() {
+          return false
+        },
+        async create() {}
+      }
+      const deps: InitDeps = {
+        detectRepo: async () => ({ repoRoot: dir, owner: '', repo: '' }),
+        checkGhAuth: async () => true,
+        labelGateway: () => labels,
+        hookDirFor: () => '.husky',
+        customHooksPath,
+        setHooksPath: async () => {},
+        confirm: async () => true
+      }
+      const original = process.stdout.write.bind(process.stdout)
+      process.stdout.write = (() => true) as typeof process.stdout.write
+      let rc: number
+      try {
+        rc = await runInit(['--yes'], deps)
+      } finally {
+        process.stdout.write = original
+      }
+      expect(rc).toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
