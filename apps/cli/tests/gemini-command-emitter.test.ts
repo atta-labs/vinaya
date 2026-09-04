@@ -30,6 +30,19 @@ prompt = "!{vinaya doctrine --role {{args}}}"
     })
   })
 
+  describe('renderGeminiCommand — selfHost (atta-labs/vinaya#408)', () => {
+    it('invokes the source CLI when selfHost is set', () => {
+      const expected = `description = "Act as an AEG role for this repo."
+prompt = "!{bun apps/cli/src/index.ts doctrine --role {{args}}}"
+`
+      expect(renderGeminiCommand({ dir: 'apps/cli', bin: 'apps/cli/dist/index.js' })).toBe(expected)
+    })
+
+    it('is unchanged for the ordinary adopter when selfHost is explicitly null', () => {
+      expect(renderGeminiCommand(null)).toBe(renderGeminiCommand())
+    })
+  })
+
   describe('buildGeminiCommandOp & idempotence', () => {
     it('produces a single create-file op targeting .gemini/commands/vinaya.toml', () => {
       const op1 = buildGeminiCommandOp()

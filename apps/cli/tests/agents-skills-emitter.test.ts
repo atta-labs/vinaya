@@ -92,6 +92,22 @@ Run \`vinaya doctrine --role brief-author\` and follow its output as your operat
     })
   })
 
+  describe('renderAgentSkill — selfHost (atta-labs/vinaya#408)', () => {
+    it('invokes the source CLI when selfHost is set', () => {
+      const expected = `---
+name: vinaya-developer
+description: Act as the AEG Developer for this repo.
+---
+Run \`bun apps/cli/src/index.ts doctrine --role developer\` and follow its output as your operating instructions for this session.
+`
+      expect(renderAgentSkill('developer', { dir: 'apps/cli', bin: 'apps/cli/dist/index.js' })).toBe(expected)
+    })
+
+    it('is unchanged for the ordinary adopter when selfHost is explicitly null', () => {
+      expect(renderAgentSkill('developer', null)).toBe(renderAgentSkill('developer'))
+    })
+  })
+
   describe('buildAgentsSkillsOps & idempotence', () => {
     it('produces create-file ops and guarantees byte-for-byte idempotence', () => {
       const rolesDir = join(tempDir, 'roles')

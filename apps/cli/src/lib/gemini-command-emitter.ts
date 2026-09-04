@@ -21,25 +21,35 @@
 // silent or automatic.
 
 import type { CreateFileOp } from './ops.js'
+import type { VendoredVinaya } from './self-host.js'
 
 export const GEMINI_COMMAND_GROUP = 'Gemini CLI command (.gemini/commands/)'
 
 /** The repo-root-relative path of the generated Gemini CLI custom command. */
 export const GEMINI_COMMAND_PATH = '.gemini/commands/vinaya.toml'
 
+/**
+ * The doctrine invocation this command shells out to — the source CLI
+ * (`bun <dir>/src/index.ts doctrine`) in a repo that vendors `vinaya` as a
+ * workspace member, the global binary otherwise (atta-labs/vinaya#408).
+ */
+function doctrineInvocation(selfHost: VendoredVinaya | null): string {
+  return selfHost ? `bun ${selfHost.dir}/src/index.ts doctrine` : 'vinaya doctrine'
+}
+
 /** Render the parameterized `.gemini/commands/vinaya.toml` content. */
-export function renderGeminiCommand(): string {
+export function renderGeminiCommand(selfHost: VendoredVinaya | null = null): string {
   return `description = "Act as an AEG role for this repo."
-prompt = "!{vinaya doctrine --role {{args}}}"
+prompt = "!{${doctrineInvocation(selfHost)} --role {{args}}}"
 `
 }
 
 /** Build the `create-file` op for the Gemini CLI custom command. */
-export function buildGeminiCommandOp(): CreateFileOp {
+export function buildGeminiCommandOp(selfHost: VendoredVinaya | null = null): CreateFileOp {
   return {
     kind: 'create-file',
     path: GEMINI_COMMAND_PATH,
-    content: renderGeminiCommand(),
+    content: renderGeminiCommand(selfHost),
     group: GEMINI_COMMAND_GROUP
   }
 }

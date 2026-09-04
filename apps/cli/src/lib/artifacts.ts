@@ -1454,14 +1454,14 @@ export function buildInitOps(ctx: InitContext): Op[] {
           'that vendors the CLI.'
       )
     }
-    ops.push(...buildAgentsSkillsOps(doctrineRoot))
+    ops.push(...buildAgentsSkillsOps(doctrineRoot, ctx.selfHost))
   }
   if (ctx.agents.has('claude')) {
-    ops.push(...buildClaudeCommandOps())
+    ops.push(...buildClaudeCommandOps(ctx.selfHost))
     ops.push(...buildClaudeStopHookOps())
   }
   if (ctx.agents.has('gemini')) {
-    ops.push(buildGeminiCommandOp())
+    ops.push(buildGeminiCommandOp(ctx.selfHost))
   }
 
   // The agent-native entry points above all invoke a bare `vinaya doctrine`
