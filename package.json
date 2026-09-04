@@ -18,7 +18,9 @@
     "dev:vinaya-studio": "bun apps/cli/src/index.ts studio --port 3208",
     "changeset": "changeset",
     "changeset:version": "changeset version",
-    "changeset:publish": "changeset publish"
+    "changeset:publish": "changeset publish",
+    "upgrade": "bun apps/cli/src/index.ts upgrade",
+    "release": "bun apps/cli/src/index.ts release"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
