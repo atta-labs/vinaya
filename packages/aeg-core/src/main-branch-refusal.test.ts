@@ -42,4 +42,40 @@ describe('main-branch refusal', () => {
       defaultBranch: 'trunk'
     })
   })
+
+  it('passes a tag-only push from the default branch (#407 O2)', () => {
+    expect(
+      checkMainBranchRefusal({
+        currentSymbolicBranch: 'main',
+        defaultBranch: 'main',
+        pushRefs: 'refs/tags/x abc refs/tags/x 000'
+      })
+    ).toBeNull()
+  })
+
+  it('refuses a push carrying a refs/heads/* remote ref from the default branch', () => {
+    expect(
+      checkMainBranchRefusal({
+        currentSymbolicBranch: 'main',
+        defaultBranch: 'main',
+        pushRefs: 'refs/heads/main abc refs/heads/main def'
+      })
+    ).toEqual({
+      reason: 'on-default-branch',
+      severity: 'error',
+      currentBranch: 'main',
+      defaultBranch: 'main'
+    })
+  })
+
+  it('refuses with no pushRefs at all, same as before (a commit, not a push)', () => {
+    expect(checkMainBranchRefusal({ currentSymbolicBranch: 'main', defaultBranch: 'main', pushRefs: null })).toEqual(
+      {
+        reason: 'on-default-branch',
+        severity: 'error',
+        currentBranch: 'main',
+        defaultBranch: 'main'
+      }
+    )
+  })
 })

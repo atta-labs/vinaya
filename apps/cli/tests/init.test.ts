@@ -995,6 +995,23 @@ describe('generated pre-commit hook: --skip-full (#397 round 2)', () => {
   })
 })
 
+describe('generated pre-push hook: stdin forwarded as VINAYA_PUSH_REFS (#407 O2)', () => {
+  it('reads its own stdin and exports it before running the check', async () => {
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+    expect(prePush).toContain('VINAYA_PUSH_REFS="$(cat)"')
+    expect(prePush).toContain('export VINAYA_PUSH_REFS')
+    // The read/export must precede the check invocation, not follow it.
+    expect(prePush.indexOf('VINAYA_PUSH_REFS="$(cat)"')).toBeLessThan(prePush.indexOf('check --all --local'))
+  })
+
+  it('pre-commit does not forward stdin — it never runs on a push', async () => {
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const preCommit = readFileSync(join(root, '.husky/pre-commit'), 'utf-8')
+    expect(preCommit).not.toContain('VINAYA_PUSH_REFS')
+  })
+})
+
 describe('detectVendoredVinaya', () => {
   it('is null for a repo with no package.json, no workspaces, or no such member', () => {
     expect(detectVendoredVinaya(root)).toBeNull() // bare fixture: README.md only

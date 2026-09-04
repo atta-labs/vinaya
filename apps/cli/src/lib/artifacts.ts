@@ -983,6 +983,11 @@ ${hookRun(selfHost, 'check --all --diff-only --local --skip-full')}`
 
 function prePushBody(selfHost: VendoredVinaya | null): string {
   return `# Vinaya pre-push gate. Runs branch/dispatch checks before the push leaves.
+# Forward git's own pre-push stdin (one "<local ref> <local sha> <remote
+# ref> <remote sha>" line per ref being pushed) so main-branch-refusal can
+# tell a tag-only push apart from one that also carries a branch ref.
+VINAYA_PUSH_REFS="$(cat)"
+export VINAYA_PUSH_REFS
 ${hookRun(selfHost, 'check --all --local')}`
 }
 
