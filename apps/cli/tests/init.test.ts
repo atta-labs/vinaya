@@ -936,6 +936,16 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
   })
 })
 
+describe('generated pre-commit hook: --skip-full (#397 round 2)', () => {
+  it('pre-commit carries --skip-full; pre-push does not', async () => {
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const preCommit = readFileSync(join(root, '.husky/pre-commit'), 'utf-8')
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+    expect(preCommit).toContain('check --all --diff-only --local --skip-full')
+    expect(prePush).not.toContain('--skip-full')
+  })
+})
+
 describe('detectVendoredVinaya', () => {
   it('is null for a repo with no package.json, no workspaces, or no such member', () => {
     expect(detectVendoredVinaya(root)).toBeNull() // bare fixture: README.md only

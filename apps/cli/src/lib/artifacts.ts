@@ -876,7 +876,7 @@ node ${selfHost.bin} ${args} || exit 1`
 function preCommitBody(selfHost: VendoredVinaya | null): string {
   return `# Vinaya commit-time gate. Runs the deterministic checks over your staged
 # diff before the commit lands.
-${hookRun(selfHost, 'check --all --diff-only --local')}`
+${hookRun(selfHost, 'check --all --diff-only --local --skip-full')}`
 }
 
 function prePushBody(selfHost: VendoredVinaya | null): string {

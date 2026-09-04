@@ -288,6 +288,7 @@ export async function checkCommand(args: string[]): Promise<void> {
   const jsonOutput = args.includes('--json')
   const diffOnly = args.includes('--diff-only')
   const localOnly = args.includes('--local')
+  const skipFull = args.includes('--skip-full')
   const requestedParallel = parseParallel(args)
   const allRequested = args.includes('--all')
   const planRequested = args.includes('--plan')
@@ -314,7 +315,9 @@ export async function checkCommand(args: string[]): Promise<void> {
   }
 
   if (!allRequested && !requestedName) {
-    console.error('Usage: vinaya check <name> | --all | --plan [--json] [--diff-only] [--local] [--parallel[=n]]')
+    console.error(
+      'Usage: vinaya check <name> | --all | --plan [--json] [--diff-only] [--local] [--skip-full] [--parallel[=n]]'
+    )
     process.exitCode = 2
     return
   }
@@ -376,7 +379,8 @@ export async function checkCommand(args: string[]): Promise<void> {
           diffOnly,
           changedFiles: changed,
           defaultTimeoutMs: 30_000,
-          localOnly
+          localOnly,
+          skipFull
         })
       : []
 
@@ -391,7 +395,8 @@ export async function checkCommand(args: string[]): Promise<void> {
   } else {
     for (const o of outcomes) {
       const symbol = o.status === 'pass' ? '✓' : o.status === 'skipped' ? '·' : '✗'
-      process.stdout.write(`${symbol} ${o.name}: ${o.status} (${Math.round(o.durationMs)}ms)\n`)
+      const statusText = o.skipReason ? `${o.status} (${o.skipReason})` : o.status
+      process.stdout.write(`${symbol} ${o.name}: ${statusText} (${Math.round(o.durationMs)}ms)\n`)
       for (const e of o.errors) process.stdout.write(`    ${e.severity}: ${e.message}\n`)
     }
   }

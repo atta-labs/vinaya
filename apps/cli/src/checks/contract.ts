@@ -121,6 +121,14 @@ export type CheckOutcome = {
   exitCode: number | null
   errors: CheckError[]
   durationMs: number
+  /**
+   * Present only for `status: 'skipped'` when the skip reason is worth
+   * naming beyond the bare status — today, only `runner.ts`'s `--skip-full`
+   * (#397 round 2): `'full-scope, pre-commit'`. Absent for the pre-existing
+   * `scope: 'diff'`/`include`-mismatch skip, whose reason is already
+   * self-evident from `--diff-only` + the changed-files list.
+   */
+  skipReason?: string
 }
 
 /**
