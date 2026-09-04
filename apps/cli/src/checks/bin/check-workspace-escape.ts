@@ -34,6 +34,27 @@
  * scope: full — the swept surface is every `.ts`/`.tsx` file under the
  * workspace packages, not just the PR's own changed-file list; a file left
  * untouched by a diff can still be the one that escapes.
+ *
+ * **`*.test.ts`/`*.test.tsx` are excluded from the swept surface entirely**
+ * (O2, found live during the `0.24.0` release) — `findWorkspaceEscapes`'s own
+ * "KNOWN BLIND SPOT" (`workspace-escape.ts`) is a text scan reading a
+ * string-literal test fixture as if it were a real call site, and this
+ * repo's own `workspace-escape.test.ts` warns on itself every run for
+ * exactly that reason (lines `11`, `51`, `102`, `125` — each one a fixture
+ * `content:` string, never executing code). Excluding test files at the
+ * source rather than teaching the scanner to parse strings-vs-code also
+ * silences `packages/sources/src/commands-router-coverage.test.ts`'s real,
+ * intentional cross-package `readFileSync` — this bin's own prior comment
+ * called that one a genuine finding worth keeping, "structurally the same
+ * incident this check exists to catch." Both are now report-only-silenced
+ * the same way: this repo accepts test code reaching into a sibling
+ * package's source as a normal test authoring pattern the dependency graph
+ * (not this check) is the right tool to police, rather than special-casing
+ * "fixture" vs "real" inside a scanner that cannot parse the difference
+ * reliably by construction. `findWorkspaceEscapes` itself (and its own
+ * dedicated regression test, which still asserts a `.test.ts` PATH is
+ * flagged when passed directly) is unchanged — the exclusion lives here, in
+ * which files this bin ever hands the scanner, not in the scanner itself.
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
@@ -46,6 +67,11 @@ const CHECK_NAME = 'workspace-escape'
 const WORKSPACE_DIRS = ['apps', 'packages']
 const SOURCE_EXTENSIONS = ['.ts', '.tsx']
 const EXCLUDED_DIRS = new Set(['node_modules', 'dist', '.turbo', '.next', '.git'])
+
+/** `foo.test.ts`/`foo.test.tsx` — excluded from the swept surface; see this file's own module doc (O2). */
+export function isTestFile(path: string): boolean {
+  return /\.test\.tsx?$/.test(path)
+}
 
 /**
  * Every repo-relative path under `dir` — files AND directories, so a
@@ -84,6 +110,7 @@ function main(): void {
 
   const sourceFiles: WorkspaceEscapeSourceFile[] = allPaths
     .filter((p) => SOURCE_EXTENSIONS.some((ext) => p.endsWith(ext)))
+    .filter((p) => !isTestFile(p))
     .map((p) => ({ path: p, content: readFileSync(p, 'utf8') }))
 
   const findings = findWorkspaceEscapes(sourceFiles, knownPaths, WORKSPACE_DIRS)
@@ -126,4 +153,9 @@ function main(): void {
   process.exit(0)
 }
 
-main()
+// Guarded so this module can be imported by unit tests (for `isTestFile`)
+// without executing the check. Spawned as a bin (the only way it runs for
+// real) this is still true.
+if (import.meta.main) {
+  main()
+}
