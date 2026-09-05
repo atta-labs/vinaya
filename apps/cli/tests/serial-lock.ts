@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, statSync, utimesSync } from 'node:fs'
+import { lstatSync, mkdirSync, rmSync, utimesSync } from 'node:fs'
 
 /**
  * A cross-process mutex for test files that spawn the same real CLI entry
@@ -14,6 +14,10 @@ import { mkdirSync, rmSync, statSync, utimesSync } from 'node:fs'
  * - A slow but alive holder must not be mistaken for an abandoned one, so the
  *   holder refreshes the directory's mtime every `staleMs / 4` while it runs.
  *   A waiter therefore only ever reclaims a lock nobody is heartbeating.
+ *
+ * The lock path is inspected with `lstat`, never `stat`: a symlink planted at
+ * the path is judged by its own mtime and removed as the link entry only,
+ * so the target is neither followed nor touched.
  *
  * The staleness check and the reclaim are not atomic with each other, but
  * that gap is benign: the reclaim is followed by another `mkdir`, which stays
@@ -43,7 +47,7 @@ export async function withSerialLock<T>(
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
       let stale = false
       try {
-        stale = Date.now() - statSync(lockDir).mtimeMs > staleMs
+        stale = Date.now() - lstatSync(lockDir).mtimeMs > staleMs
       } catch {
         continue // vanished between mkdir and stat — retry immediately
       }
