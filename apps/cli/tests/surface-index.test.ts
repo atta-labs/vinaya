@@ -235,7 +235,7 @@ function unbacktick(cell: string): string {
 }
 
 const commandsTable = tableRows(
-  "## Commands — `apps/cli/src/commands` (35 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)"
+  "## Commands — `apps/cli/src/commands` (37 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)"
 ).map(([name, file, entry, calls, status, oneFn]) => ({
   name: unbacktick(name ?? ''),
   file: unbacktick(file ?? ''),

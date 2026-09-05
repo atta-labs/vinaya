@@ -51,6 +51,7 @@ import {
   deriveWorkspacePackageDomains,
   findTrancheSlug,
   isBriefShaped,
+  isPrincipal,
   isTaskBranch,
   isTaskIssueLabelSet,
   parsePnpmWorkspaceYaml,
@@ -61,7 +62,15 @@ import {
 } from '@attalabs/aeg-core'
 import { findMilestoneAttachTargetForSlug, hasExplicitMilestoneFlag } from '@attalabs/aeg-forge-state'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks/contract'
-import { type BriefBuiltin, type BriefSection, VinayaConfigSchema, loadConfigChecked } from './config'
+import {
+  type BriefBuiltin,
+  type BriefSection,
+  VinayaConfigSchema,
+  loadConfigChecked,
+  loadTrustAnchorConfig,
+  resolvePrincipalAllowlist
+} from './config'
+import { printJson } from './envelope'
 
 // ---------------------------------------------------------------------------
 // Arg errors — a malformed `--body-file` is a refusal in the CheckError shape,
@@ -665,4 +674,263 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     for (const message of messages) errors.push(makeCheckError(CHECK_ISSUE_CONTENT, message, recovery))
   }
   return errors
+}
+
+// ---------------------------------------------------------------------------
+// The validated `issue edit` write path (task 3, #413) — extracted verbatim
+// out of `commands/issue.ts` so a second command (`issue objectives edit`)
+// can drive the same validated write without importing another command file
+// (`commands/*.ts` never imports `commands/*.ts` — shared logic lives here).
+// `issueEditCommand` itself now calls `writeValidatedIssueEdit`; behaviour is
+// unchanged, its tests stay green.
+// ---------------------------------------------------------------------------
+
+/**
+ * Runs the `gh` write. `quiet` (default `false`) skips the stdout/JSON print
+ * of the URL `gh` returns — for a caller that goes on to print its OWN,
+ * more specific URL (`issue objectives edit` prints its comment's url, never
+ * the plain issue-edit url the underlying write also produces).
+ */
+export function runGhWrite(
+  ghCmd: string[],
+  ghArgs: string[],
+  bodyResult: BodyResult | null,
+  json: boolean,
+  quiet = false
+): void {
+  const { finalArgs, cleanup } = resolveShippableArgs(ghArgs, bodyResult)
+  try {
+    const out = execFileSync('gh', [...ghCmd, ...finalArgs], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
+    if (quiet) return
+    const url = out.trim()
+    if (json) printJson({ validated: true, written: true, url })
+    else if (url) process.stdout.write(`${url}\n`)
+  } finally {
+    cleanup()
+  }
+}
+
+/**
+ * Fetches the target Issue's actual current labels from the forge. `edit`
+ * invocations don't re-pass `--label`, so argv says nothing about whether the
+ * target is a task Issue — the forge is the only truthful source (#417). A
+ * failed fetch is a HARD refusal, never treated as "no tranche label".
+ */
+export function fetchForgeLabels(issueRef: string, retryCommand: string): string[] {
+  let out: string
+  try {
+    out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'labels'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `Could not fetch Issue ${issueRef}'s labels from the forge (\`gh issue view\`) — the rationale gate cannot decide whether it applies.`,
+        `Check \`gh auth status\` and network, then re-run \`${retryCommand}\`. The edit is refused rather than passed through unvalidated.`
+      )
+    ])
+  }
+  try {
+    return (JSON.parse(out) as { labels: Array<{ name: string }> }).labels.map((l) => l.name)
+  } catch {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `Could not parse \`gh issue view ${issueRef} --json labels\` output.`,
+        `Re-run \`${retryCommand}\`; the edit is refused rather than passed through unvalidated.`
+      )
+    ])
+  }
+}
+
+/**
+ * The Issue number `issue edit`'s target ref names, for `checkIssueObjectives`'s
+ * `OBJECTIVES_SINCE_ISSUE` cutover. `edit` targets a REAL, already-existing
+ * Issue, so unlike `create`'s genuinely-unknown-until-write number, `null`
+ * here means only "this ref's shape carried no digits" — the Issue itself
+ * has a number regardless of how the caller spelled the ref. Parses the
+ * TRAILING digits so both a bare `123` and a URL (`.../issues/123`) resolve
+ * to the real number; only a ref with no digits at all (should never happen
+ * in practice — `fetchForgeLabels` already resolved this same ref against
+ * the forge before this is called) falls through to `null`, and even then
+ * `checkIssueObjectives` treats that fail-closed, never as license to skip.
+ */
+export function parseIssueNumberFromRef(ref: string): number | null {
+  const m = /(\d+)\s*$/.exec(ref.trim())
+  return m ? Number.parseInt(m[1] as string, 10) : null
+}
+
+/**
+ * Runs the task-Issue brief-schema gate for a body whose applicability was
+ * already decided from the labels. Non-task Issues never reach here — they
+ * pass through unvalidated, exactly like `open-issue.ts`.
+ *
+ * Two stages, same order as `open-issue.ts`: the config-driven presence gate
+ * (rationale fields exist, etc.) refuses first with its own findings; only
+ * once it passes does the unconditional content gate (blast-radius scope,
+ * no-brief-content, rationale-names-docs) run. `labels` feeds
+ * `checkBlastRadiusScope`; `sharedPackages`/`projectPaths` are resolved from
+ * the adopter repo on disk, not threaded through from argv.
+ */
+export function validateTaskIssue(
+  body: string | null,
+  title: string | null,
+  labels: string[],
+  retryCommand: string,
+  issueNumber: number | null
+): void {
+  if (body === null) {
+    refuse([
+      makeCheckError(
+        'forge-args',
+        'A task Issue (a `vinaya/tranche:*` label) requires a `--body-file <path>` so the rationale gate can validate it.',
+        `Add \`--body-file <path>\`, then re-run \`${retryCommand}\`.`
+      )
+    ])
+  }
+  const sections = resolveSections('issue', retryCommand)
+  const schemaErrors = validateForgeWrite({
+    body,
+    title,
+    sections,
+    changedFiles: [],
+    retryCommand,
+    issueNumber
+  })
+  if (schemaErrors.length > 0) refuse(schemaErrors)
+
+  const contentErrors = validateIssueContent({
+    body,
+    labels,
+    sharedPackages: readSharedPackages(),
+    projectPaths: readProjectPaths(),
+    retryCommand
+  })
+  if (contentErrors.length > 0) refuse(contentErrors)
+}
+
+/**
+ * The validate-then-write core `issueEditCommand` runs for every non-
+ * `--validate-only` edit: union the forge's real labels with argv, run
+ * `validateTaskIssue` when the target is a task Issue, ensure the tranche
+ * label exists, then write. `issue objectives edit` (task 3) drives this
+ * same path with a temp `--body-file` it wrote itself — one validated write
+ * path for every Issue-edit caller, never a second hand-rolled one.
+ */
+export function writeValidatedIssueEdit(input: {
+  issueRef: string
+  ghArgs: string[]
+  bodyResult: BodyResult | null
+  json: boolean
+  retryCommand: string
+  quiet?: boolean
+}): void {
+  const { issueRef, ghArgs, bodyResult, json, retryCommand, quiet } = input
+  const body = bodyResult?.body ?? null
+  const title = extractTitle(ghArgs)
+
+  // Union the forge's real labels with any passed on argv — argv is normally
+  // silent on edit, so the forge is what decides task-Issue applicability.
+  const labels = [...new Set([...fetchForgeLabels(issueRef, retryCommand), ...extractLabels(ghArgs)])]
+
+  if (isTaskIssueLabelSet(labels)) {
+    validateTaskIssue(body, title, labels, retryCommand, parseIssueNumberFromRef(issueRef))
+  }
+
+  const slugToEnsure = findTrancheSlug(labels)
+  if (slugToEnsure) ensureTrancheLabelExists(slugToEnsure)
+
+  runGhWrite(['issue', 'edit', issueRef], ghArgs, bodyResult, json, quiet ?? false)
+}
+
+// ---------------------------------------------------------------------------
+// Principal-only gate — `issue objectives edit` and `pr rule` (task 3) are
+// Principal-only actions per `aeg-root/roles/principal.md`, but `gh`
+// authenticates as "whoever is logged in": without this, any collaborator's
+// (or co-resident agent session's) token can post a comment indistinguishable
+// from a genuine Principal ruling, or silently rewrite a task's Objectives —
+// zero gate (security review, PR #430, CRITICAL). `isPrincipal` itself is
+// pre-existing (`review-status.ts`/`review-gate.ts` etc. already use it to
+// classify the AUTHOR of an existing comment); what was missing is checking
+// it against the CURRENT actor before a Principal-only write, which is what
+// this gate adds. Reads `principals` from the DEFAULT branch
+// (`loadTrustAnchorConfig`) — never a task branch's own `vinaya.config.json`,
+// which the actor being checked could otherwise edit to add themselves.
+// ---------------------------------------------------------------------------
+
+/** The login `gh` is currently authenticated as, or `null` if it cannot be resolved. */
+export function currentGhLogin(): string | null {
+  try {
+    const out = execFileSync('gh', ['api', 'user', '-q', '.login'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+    return out || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Refuses unless the identity `gh` is authenticated as resolves to an
+ * allowlisted principal. An unresolvable identity refuses the same as a
+ * disallowed one — fail-closed, never "no identity found, so let it through".
+ */
+export function refuseUnlessPrincipal(retryCommand: string): void {
+  const login = currentGhLogin()
+  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  if (login !== null && isPrincipal(login, allowlist)) return
+  refuse([
+    makeCheckError(
+      'principal-only',
+      login === null
+        ? 'Could not resolve the identity `gh` is authenticated as — this command is Principal-only and refuses rather than proceeding with an unverified actor.'
+        : `\`${login}\` is not on the Principal allowlist — this command is Principal-only.`,
+      `Authenticate \`gh\` as an allowlisted principal, then re-run \`${retryCommand}\`.`
+    )
+  ])
+}
+
+// ---------------------------------------------------------------------------
+// Marked comments — the `<!-- aeg:… -->`-prefixed comment shape `pr.ts`'s
+// `postBriefComment` established for the brief comment, generalised so
+// `issue objectives edit` and `pr rule` (task 3) can post their own marked
+// comments without duplicating the temp-file-then-`gh comment` dance.
+// ---------------------------------------------------------------------------
+
+/** How many of `bodies` open with `prefix` — the marker-numbering scheme every marked-comment poster uses (`k = count + 1`). Counted on the forge at post time, never derived from a local file. */
+export function countMarkerComments(bodies: string[], prefix: string): number {
+  return bodies.filter((b) => b.startsWith(prefix)).length
+}
+
+/**
+ * Posts `body`, prefixed with `marker` on its own first line, as a comment on
+ * an Issue or PR — the same buffered-temp-file shape `pr.ts`'s
+ * `postBriefComment` uses, generalised over `kind`. Returns the URL `gh`
+ * printed. A failed post is a hard refusal: nothing durable was recorded.
+ */
+export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: string, body: string): string {
+  const commentBody = `${marker}\n${body}\n`
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-marked-comment-'))
+  const tmp = join(dir, 'comment.md')
+  writeFileSync(tmp, commentBody, 'utf8')
+  try {
+    const out = execFileSync('gh', [kind, 'comment', ref, '--body-file', tmp], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    return out.trim()
+  } catch (err) {
+    refuse([
+      makeCheckError(
+        'forge-comment',
+        `Could not post comment on ${kind} ${ref} (\`gh ${kind} comment\`): ${err instanceof Error ? err.message : String(err)}`,
+        'Check `gh auth status` and network, then retry.'
+      )
+    ])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 }
