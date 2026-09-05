@@ -355,20 +355,29 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `ENVELOPE_SCHEMA_VERSION` | const | `apps/cli/src/lib/envelope.ts` |
 | `printJson` | function | `apps/cli/src/lib/envelope.ts` |
 | `toEnvelope` | function | `apps/cli/src/lib/envelope.ts` |
+| `countMarkerComments` | function | `apps/cli/src/lib/forge-write.ts` |
+| `currentGhLogin` | function | `apps/cli/src/lib/forge-write.ts` |
 | `ensureTrancheLabelExists` | function | `apps/cli/src/lib/forge-write.ts` |
 | `extractLabels` | function | `apps/cli/src/lib/forge-write.ts` |
 | `extractTitle` | function | `apps/cli/src/lib/forge-write.ts` |
+| `fetchForgeLabels` | function | `apps/cli/src/lib/forge-write.ts` |
 | `ForgeArgError` | class | `apps/cli/src/lib/forge-write.ts` |
 | `locateBody` | function | `apps/cli/src/lib/forge-write.ts` |
 | `makeCheckError` | function | `apps/cli/src/lib/forge-write.ts` |
+| `parseIssueNumberFromRef` | function | `apps/cli/src/lib/forge-write.ts` |
+| `postMarkedComment` | function | `apps/cli/src/lib/forge-write.ts` |
 | `readProjectPaths` | function | `apps/cli/src/lib/forge-write.ts` |
 | `readSharedPackages` | function | `apps/cli/src/lib/forge-write.ts` |
 | `refuse` | function | `apps/cli/src/lib/forge-write.ts` |
+| `refuseUnlessPrincipal` | function | `apps/cli/src/lib/forge-write.ts` |
 | `resolveMilestoneAttachArgs` | function | `apps/cli/src/lib/forge-write.ts` |
 | `resolveSections` | function | `apps/cli/src/lib/forge-write.ts` |
 | `resolveShippableArgs` | function | `apps/cli/src/lib/forge-write.ts` |
+| `runGhWrite` | function | `apps/cli/src/lib/forge-write.ts` |
 | `validateForgeWrite` | function | `apps/cli/src/lib/forge-write.ts` |
 | `validateIssueContent` | function | `apps/cli/src/lib/forge-write.ts` |
+| `validateTaskIssue` | function | `apps/cli/src/lib/forge-write.ts` |
+| `writeValidatedIssueEdit` | function | `apps/cli/src/lib/forge-write.ts` |
 | `buildGeminiCommandOp` | function | `apps/cli/src/lib/gemini-command-emitter.ts` |
 | `GEMINI_COMMAND_GROUP` | const | `apps/cli/src/lib/gemini-command-emitter.ts` |
 | `GEMINI_COMMAND_PATH` | const | `apps/cli/src/lib/gemini-command-emitter.ts` |
@@ -408,9 +417,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `STUDIO_ARTIFACT_REPO` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_NODE_MODULES_PACKED_DIRNAME` | const | `apps/cli/src/lib/studio-bundle.ts` |
 
-(147 exports.)
+(156 exports.)
 
-## Commands — `apps/cli/src/commands` (35 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
+## Commands — `apps/cli/src/commands` (37 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
 | Command | File | Entry function | In-scope calls today | Status | One lib function (compliant) / retirement target (exempt) |
 |---|---|---|---|---|---|
@@ -428,8 +437,10 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `pr edit` | `pr.ts` | `prEditCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `pr report` | `pr-report.ts` | `prReportCommand` | 3 | exempt — see below | collectTokens (target) |
 | `pr verify-evidence` | `pr-verify-evidence.ts` | `prVerifyEvidenceCommand` | 3 | exempt — see below | collectTokens (target) |
-| `issue create` | `issue.ts` | `issueCreateCommand` | 14 | exempt — see below | forgeWrite (target) |
-| `issue edit` | `issue.ts` | `issueEditCommand` | 13 | exempt — see below | forgeWrite (target) |
+| `pr rule` | `pr-rule.ts` | `prRuleCommand` | 6 | exempt — see below | forgeWrite (target) |
+| `issue create` | `issue.ts` | `issueCreateCommand` | 10 | exempt — see below | forgeWrite (target) |
+| `issue edit` | `issue.ts` | `issueEditCommand` | 10 | exempt — see below | forgeWrite (target) |
+| `issue objectives edit` | `issue-objectives.ts` | `issueObjectivesEditCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `milestone create` | `milestone.ts` | `milestoneCreateCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `milestone adopt` | `milestone.ts` | `milestoneAdoptCommand` | 4 | exempt — see below | forgeWrite (target) |
 | `milestone edit` | `milestone.ts` | `milestoneEditCommand` | 7 | exempt — see below | forgeWrite (target) |
@@ -450,7 +461,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `quickstart` | `quickstart.ts` | `quickstartCommand` | 9 | exempt — see below | sharedCommandShell (target) |
 | `release` | `release.ts` | `releaseCommand` | 0 | compliant | — (self-contained) |
 
-(35 rows — all 35 shipped `COMMANDS` entries. Compliant: 9. Exempt: 26.)
+(37 rows — all 37 shipped `COMMANDS` entries. Compliant: 9. Exempt: 28.)
 
 ## Exemptions
 
@@ -466,8 +477,10 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `pr edit` | 2026-09-05 | 8 — lib (8): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
 | `pr report` | 2026-09-05 | 3 — lib: `summariseNumstat`; commands/\*.ts (refused outright): `realDeps`, `meteringRefusalMessage` (`tokens.ts`) | `collectTokens` |
 | `pr verify-evidence` | 2026-09-05 | 3 — lib: none; commands/\*.ts (refused outright): `buildReport` (`pr-report.ts`), `compareEvidence`, `renderVerdict` (`pr-verify-evidence-logic.ts`) | `collectTokens` |
-| `issue create` | 2026-09-05 | 14 — lib (14): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `extractLabels`, `resolveSections`, `validateForgeWrite`, `validateIssueContent`, `readSharedPackages`, `readProjectPaths`, `printJson`, `ensureTrancheLabelExists`, `resolveShippableArgs`, `resolveMilestoneAttachArgs` | `forgeWrite` |
-| `issue edit` | 2026-09-05 | 13 — lib (13): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `extractLabels`, `resolveSections`, `validateForgeWrite`, `validateIssueContent`, `readSharedPackages`, `readProjectPaths`, `printJson`, `ensureTrancheLabelExists`, `resolveShippableArgs` | `forgeWrite` |
+| `pr rule` | 2026-09-05 | 6 — lib (6): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `countMarkerComments`, `postMarkedComment`, `printJson` | `forgeWrite` |
+| `issue create` | 2026-09-05 | 10 — lib (10): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `extractLabels`, `validateTaskIssue`, `printJson`, `ensureTrancheLabelExists`, `runGhWrite`, `resolveMilestoneAttachArgs` | `forgeWrite` |
+| `issue edit` | 2026-09-05 | 10 — lib (10): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `fetchForgeLabels`, `extractLabels`, `validateTaskIssue`, `parseIssueNumberFromRef`, `printJson`, `writeValidatedIssueEdit` | `forgeWrite` |
+| `issue objectives edit` | 2026-09-05 | 8 — lib (8): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `writeValidatedIssueEdit`, `locateBody`, `countMarkerComments`, `postMarkedComment`, `printJson` | `forgeWrite` |
 | `milestone create` | 2026-09-05 | 8 — lib (8): `extractTitle`, `refuse`, `makeCheckError`, `locateBody`, `resolveSections`, `validateForgeWrite`, `printJson`, `detectGitRepo` | `forgeWrite` |
 | `milestone adopt` | 2026-09-05 | 4 — lib (4): `refuse`, `makeCheckError`, `detectGitRepo`, `printJson` | `forgeWrite` |
 | `milestone edit` | 2026-09-05 | 7 — lib (7): `refuse`, `makeCheckError`, `locateBody`, `resolveSections`, `validateForgeWrite`, `printJson`, `detectGitRepo` | `forgeWrite` |
