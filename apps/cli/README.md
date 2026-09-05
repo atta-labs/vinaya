@@ -37,6 +37,8 @@ npx @attalabs/vinaya init        # or: pnpm dlx / yarn dlx / bunx
 
 Which one lib function backs each command, and today's dated exemptions where it calls more than that one: `apps/cli/specs/surface.md`, enforced by `apps/cli/tests/surface-index.test.ts`.
 
+The typed event log's header, families and outbox: `apps/cli/specs/log.md`.
+
 ## Config
 
 Hierarchical, file-level precedence:
