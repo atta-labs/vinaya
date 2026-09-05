@@ -1178,6 +1178,19 @@ function resolveObjectiveResultsForCommand(
   return { objectivesVersion: resolution.version, objectiveResults }
 }
 
+/**
+ * True for the clean half of either verdict enum. `CodeReviewVerdict` and
+ * `SecurityVerdict` share no member, so one predicate can read either
+ * without a caller having to say which enum it is holding — the single
+ * "is this clean" check both call sites below share, instead of each
+ * re-typing its own `verdict === 'APPROVE'` / `verdict === 'PASS'` literal
+ * comparison (code review MINOR — a third clean-verdict label would have
+ * needed updating in two places instead of one).
+ */
+function isCleanVerdict(verdict: CodeReviewVerdict | SecurityVerdict): boolean {
+  return verdict === 'APPROVE' || verdict === 'PASS'
+}
+
 /** O1: `APPROVE`/`PASS` — a clean verdict — is refused together with any `NOT MET` objective. */
 function refuseIfCleanVerdictHasNotMetObjective(
   isCleanVerdict: boolean,
@@ -1583,7 +1596,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       objectivesResolution,
       flags.get('--objectives-file')
     )
-    refuseIfCleanVerdictHasNotMetObjective(verdict === 'APPROVE', 'APPROVE', objectiveResults)
+    refuseIfCleanVerdictHasNotMetObjective(isCleanVerdict(verdict), 'APPROVE', objectiveResults)
 
     let comments: ReviewGateComment[]
     try {
@@ -1701,7 +1714,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     objectivesResolution,
     flags.get('--objectives-file')
   )
-  refuseIfCleanVerdictHasNotMetObjective(verdict === 'PASS', 'PASS', objectiveResults)
+  refuseIfCleanVerdictHasNotMetObjective(isCleanVerdict(verdict), 'PASS', objectiveResults)
 
   let comments: ReviewGateComment[]
   try {
