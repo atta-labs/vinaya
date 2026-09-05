@@ -21,6 +21,7 @@
 
 import { deriveSection7 } from './derive-section7'
 import { isDocFile } from './file-classify'
+import { OBJECTIVES_SINCE_ISSUE } from './issue-validation'
 import { type Objective, renderObjectives } from './objectives'
 import { deriveTierFromDiff } from './pr-tier'
 
@@ -119,7 +120,7 @@ export type BriefFacts = {
   dependsOn: string[]
   conflictsWith: string[]
   rationale: Partial<Record<RationaleFieldKey, string>>
-  /** The Issue's `## Objectives` list (`objectives.ts`'s `parseObjectives`), copied into the brief verbatim between the header and §2. */
+  /** The Issue's `## Objectives` list (`objectives.ts`'s `objectivesOf`), copied into the brief verbatim between the header and §2. */
   objectives: Objective[]
   dispatchReady: boolean
   dispatchBlockers: string[]
@@ -415,7 +416,13 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   const missing: string[] = []
 
   if (facts.projects.length === 0) missing.push('Project (task has no Project(s) declared)')
-  if (facts.objectives.length === 0) missing.push('Objectives (Issue has no `## Objectives` section)')
+  // Grandfathered the same as the Issue gate itself (`checkIssueObjectives`):
+  // an Issue below `OBJECTIVES_SINCE_ISSUE` legitimately has no `## Objectives`
+  // section, and the renderer must not newly refuse a class of Issue every
+  // other consumer in this task already exempts.
+  if (facts.objectives.length === 0 && facts.issue >= OBJECTIVES_SINCE_ISSUE) {
+    missing.push('Objectives (Issue has no `## Objectives` section)')
+  }
   if (!facts.dispatchReady) missing.push(...facts.dispatchBlockers)
 
   for (const key of Object.keys(RATIONALE_FIELD_PATTERNS) as RationaleFieldKey[]) {
@@ -434,8 +441,7 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   const brief = [
     renderHeader(facts, template),
     '',
-    renderObjectives(facts.objectives),
-    '',
+    ...(facts.objectives.length > 0 ? [renderObjectives(facts.objectives), ''] : []),
     renderSection2(facts),
     '',
     renderSection3(facts),

@@ -110,11 +110,18 @@ describe('renderBrief', () => {
     expect(result.missing).toContain('dispatch-gate depends-on: blocked')
   })
 
-  it('refuses when the Issue has no `## Objectives` section', () => {
-    const result = renderBrief(baseFacts({ objectives: [] }), '')
+  it('refuses when an at/above-cutover Issue has no `## Objectives` section', () => {
+    const result = renderBrief(baseFacts({ objectives: [], issue: 404 }), '')
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.missing.join(' ')).toMatch(/Objectives/)
+  })
+
+  it('does NOT refuse a below-cutover Issue with no `## Objectives` section — grandfathered, same as checkIssueObjectives', () => {
+    const result = renderBrief(baseFacts({ objectives: [], issue: 403 }), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).not.toContain('## Objectives')
   })
 
   it('emits the `## Objectives` section between the header and §2, copied from the Issue verbatim', () => {
