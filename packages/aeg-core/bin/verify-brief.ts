@@ -52,6 +52,7 @@ import {
   hasObjectivesHeading,
   inferBranchFromBody,
   isBriefShaped,
+  isIssueNotFoundError,
   type Objective,
   OBJECTIVES_SINCE_ISSUE,
   type PackageManifest,
@@ -138,27 +139,6 @@ function fetchIssueBodyForObjectives(issueNumber: number): string {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   })
-}
-
-/**
- * Is this failure just "the Issue number doesn't resolve" — a fixture's
- * placeholder `Closes #999`, a deleted Issue — as opposed to a real
- * network/auth/rate-limit failure? Only the first is safe to treat as
- * "nothing to compare"; the second means the objectives comparison was
- * SKIPPED, not that it passed, and skipping it silently on exactly the
- * failure mode most likely in CI (a flaky network, an expiring token)
- * would quietly stop enforcing O3 whenever enforcement is hardest to
- * verify. Mirrors `apps/cli/src/lib/config.ts`'s `isMissingFileError` —
- * inspect the WHOLE error (message + stderr), since `execFileSync` puts
- * `gh`'s actual GraphQL text on a line that is rarely the first.
- */
-function isIssueNotFoundError(err: unknown): boolean {
-  const stderr = (err as { stderr?: Buffer | string })?.stderr
-  const haystack = [
-    (err as Error)?.message ?? '',
-    typeof stderr === 'string' ? stderr : (stderr?.toString() ?? '')
-  ].join('\n')
-  return /could not resolve to an (?:issue|pull request)|\b404\b|not found/i.test(haystack)
 }
 
 /**

@@ -16,18 +16,27 @@ const ISSUE_CONFIG = {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
-function runCli(args: string[], cwd: string): CliResult {
+function runCli(args: string[], cwd: string, env?: Record<string, string>): CliResult {
   try {
     const stdout = execFileSync('bun', [INDEX, ...args], {
       cwd,
       encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: env ? { ...process.env, ...env } : process.env
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {
     const err = e as { status?: number; stdout?: string; stderr?: string }
     return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
   }
+}
+
+/** A fake `gh` on PATH whose `issue view <ref> --json labels` answers with a single task-tranche label — enough for `fetchForgeLabels` to treat the target as a task Issue, without a real network call. */
+function fakeGhLabelsPath(dir: string): string {
+  const gh = join(dir, 'gh')
+  writeFileSync(gh, `#!/bin/sh\necho '{"labels":[{"name":"vinaya/tranche:demo"}]}'\n`)
+  execFileSync('chmod', ['+x', gh])
+  return `${dir}:${process.env.PATH}`
 }
 
 describe('vinaya issue create --validate-only', () => {
@@ -242,5 +251,61 @@ describe('parseIssueNumberFromRef', () => {
 
   it('returns null for a ref with no digits at all', () => {
     expect(parseIssueNumberFromRef('not-a-ref')).toBeNull()
+  })
+})
+
+describe('vinaya issue edit --validate-only — URL-form ref reaches the Objectives cutover end-to-end (review round 2, MINOR)', () => {
+  // issue-valid.md carries the full eight-field rationale but no
+  // `## Objectives` section — exactly the fixture needed to prove
+  // `parseIssueNumberFromRef`'s number, not just `null`, decides the
+  // cutover through the real command, not only at the unit level.
+  const OBJECTIVES_CONFIG = {
+    briefSchema: { issue: { sections: [{ builtin: 'issueRationale' }, { builtin: 'objectives' }] } }
+  }
+  let cwd: string
+  let ghDir: string
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-issue-edit-test-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify(OBJECTIVES_CONFIG), 'utf8')
+    ghDir = mkdtempSync(join(tmpdir(), 'vinaya-issue-edit-fake-gh-'))
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+    rmSync(ghDir, { recursive: true, force: true })
+  })
+
+  it('refuses a URL-form ref at/above the cutover for an Issue missing Objectives', () => {
+    const r = runCli(
+      [
+        'issue',
+        'edit',
+        'https://github.com/atta-labs/vinaya/issues/404',
+        '--validate-only',
+        '--body-file',
+        join(FORGE_FIXTURES, 'issue-valid.md')
+      ],
+      cwd,
+      { PATH: fakeGhLabelsPath(ghDir) }
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('## Objectives')
+  })
+
+  it('passes the same URL-form ref below the cutover — grandfathered, not guessed as unknown', () => {
+    const r = runCli(
+      [
+        'issue',
+        'edit',
+        'https://github.com/atta-labs/vinaya/issues/403',
+        '--validate-only',
+        '--body-file',
+        join(FORGE_FIXTURES, 'issue-valid.md')
+      ],
+      cwd,
+      { PATH: fakeGhLabelsPath(ghDir) }
+    )
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('PASS')
   })
 })
