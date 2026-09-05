@@ -18,7 +18,7 @@
 
 import { hasLabel, LABELS, projectFieldFromBody, projectsFromBody, SECTION_HEADER } from '@attalabs/aeg-forge-state'
 import { stripCode } from './anchored-region'
-import { parseObjectives } from './objectives'
+import { objectivesOf } from './objectives'
 
 export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }
 
@@ -104,7 +104,7 @@ export const OBJECTIVES_SINCE_ISSUE = 404
 /**
  * **The Objectives gate.** A task Issue numbered at or above
  * `OBJECTIVES_SINCE_ISSUE` must carry a well-formed `## Objectives` section
- * (`objectives.ts`'s `parseObjectives`) — one numbered, observable-outcome
+ * (`objectives.ts`'s `objectivesOf`) — one numbered, observable-outcome
  * sentence per line, contiguous from `O1`. Below the cutover, an Issue passes
  * unconditionally — the stock of older Issues stays green.
  *
@@ -117,7 +117,7 @@ export const OBJECTIVES_SINCE_ISSUE = 404
  */
 export function checkIssueObjectives(body: string, issueNumber: number | null): IssueSectionResult {
   if (issueNumber !== null && issueNumber < OBJECTIVES_SINCE_ISSUE) return { status: 'pass', errors: [] }
-  const result = parseObjectives(body)
+  const result = objectivesOf(body)
   if (result.ok) return { status: 'pass', errors: [] }
   return { status: 'fail', errors: result.errors.map((e) => `issue-validation objectives: ${e}`) }
 }

@@ -62,7 +62,7 @@ function objectivesSectionText(body: string): string | null {
  * objectives checks apply at all (a standalone brief with no task Issue to
  * compare against, `verify-brief.ts`/`check-brief-shape.ts`) use this to
  * distinguish "no section attempted — not required" from "a section exists
- * and must parse" — `parseObjectives` alone conflates the two into one
+ * and must parse" — `objectivesOf` alone conflates the two into one
  * `ok: false`.
  */
 export function hasObjectivesHeading(body: string): boolean {
@@ -76,7 +76,7 @@ export function hasObjectivesHeading(body: string): boolean {
  * naming a file path in backticks, or numbering that isn't contiguous from
  * `O1`.
  */
-export function parseObjectives(body: string): ParsedObjectives {
+export function objectivesOf(body: string): ParsedObjectives {
   const section = objectivesSectionText(body)
   if (section === null) {
     return { ok: false, errors: ['no `## Objectives` heading found in the body.'] }
@@ -148,7 +148,7 @@ export function objectivesVersion(objectives: Objective[]): string {
 
 /**
  * Renders a `## Objectives` section from a parsed list — the inverse of
- * `parseObjectives`, used by `brief-render.ts` to copy the Issue's list into
+ * `objectivesOf`, used by `brief-render.ts` to copy the Issue's list into
  * a brief verbatim.
  */
 export function renderObjectives(objectives: Objective[]): string {

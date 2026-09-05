@@ -30,7 +30,7 @@ import {
   isBriefShaped,
   partitionBriefErrorsByRollout
 } from './brief-validation'
-import { type Objective, parseObjectives } from './objectives'
+import { type Objective, objectivesOf } from './objectives'
 import { EOLS, FENCE_DELIMS, fenceShapes } from '../tests/fixtures/fence-shapes'
 import { readTierFromPrBody } from './pr-tier'
 
@@ -1014,9 +1014,9 @@ Part 5 — changeset. Then the one push.
 
 const SELF_CONSISTENT_BRIEF = `${ISSUE_411_OBJECTIVES}\n${SECTION_6}`
 
-/** `parseObjectives` for a body known (by test construction) to be well-formed — throws loudly otherwise, never silently degrading a test fixture into an empty list. */
+/** `objectivesOf` for a body known (by test construction) to be well-formed — throws loudly otherwise, never silently degrading a test fixture into an empty list. */
 function objectivesOfOrThrow(body: string): Objective[] {
-  const result = parseObjectives(body)
+  const result = objectivesOf(body)
   if (!result.ok) throw new Error(`test fixture's own \`## Objectives\` failed to parse: ${result.errors.join('; ')}`)
   return result.objectives
 }

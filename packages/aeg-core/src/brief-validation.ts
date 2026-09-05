@@ -13,7 +13,7 @@
  */
 
 import { type AnchorField, anchoredRegion, stripCode } from './anchored-region'
-import { type Objective, objectivesVersion, parseObjectives } from './objectives'
+import { type Objective, objectivesVersion, objectivesOf } from './objectives'
 import { parsePremiseBlock, premiseBlockText } from './premise-check'
 import { locateTestPlanSection } from './test-plan-section'
 
@@ -883,7 +883,7 @@ function citedObjectiveIds(section6: string): Set<number> {
  * Issue to compare against (verify-brief.ts/check-brief-shape.ts).
  */
 export function checkObjectivesCopy(prBody: string, issueObjectives: Objective[]): BriefSectionResult {
-  const parsed = parseObjectives(prBody)
+  const parsed = objectivesOf(prBody)
   if (!parsed.ok) {
     return { status: 'fail', errors: parsed.errors.map((e) => `brief-validation objectives copy: ${e}`) }
   }
@@ -907,7 +907,7 @@ export function checkObjectivesCopy(prBody: string, issueObjectives: Objective[]
  * depends on a live Issue read.
  */
 export function checkObjectivesCoverage(prBody: string): BriefSectionResult {
-  const parsed = parseObjectives(prBody)
+  const parsed = objectivesOf(prBody)
   if (!parsed.ok) {
     return { status: 'fail', errors: parsed.errors.map((e) => `brief-validation objectives coverage: ${e}`) }
   }
