@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runDemoBreak } from '../src/commands/demo.js'
+import { withSerialLock } from './serial-lock.js'
 
 // The real CLI source, invoked directly by `bun` rather than through a
 // published `npx vinaya` — there is nothing to `npx` resolve from a disposable
@@ -68,26 +70,15 @@ async function captureStdout(fn: () => Promise<unknown>): Promise<string> {
  * concurrent invocation of the identical CLI entry point — without changing
  * either test's own behavior.
  */
-const SERIAL_LOCK_DIR = join(tmpdir(), 'vinaya-demo-break-serial.lock')
-
-async function withSerialLock<T>(fn: () => Promise<T>): Promise<T> {
-  const deadline = Date.now() + 60_000
-  for (;;) {
-    try {
-      mkdirSync(SERIAL_LOCK_DIR)
-      break
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
-      if (Date.now() > deadline) throw new Error('timed out waiting for the demo-break serial lock')
-      await new Promise((r) => setTimeout(r, 50))
-    }
-  }
-  try {
-    return await fn()
-  } finally {
-    rmSync(SERIAL_LOCK_DIR, { recursive: true, force: true })
-  }
-}
+// Scoped to THIS checkout: the lock exists to serialize the two test files of
+// one run, not every checkout/worktree/session on the machine. A fixed path
+// coupled every concurrent suite on a shared box (waiters died at the 30s test
+// timeout, reading as "load"). Keyed on INDEX_TS, which both files share.
+// Staleness, heartbeat and release live in `./serial-lock.ts`, tested on its own.
+const SERIAL_LOCK_DIR = join(
+  tmpdir(),
+  `vinaya-demo-break-serial-${createHash('sha1').update(INDEX_TS).digest('hex').slice(0, 12)}.lock`
+)
 
 let root: string
 
@@ -101,7 +92,7 @@ afterEach(() => {
 
 describe('vinaya demo break', () => {
   it('refuses the malformed commit with the real check error, fixes, passes, and cleans up — twice, without touching the original branch or leaving stray branches', async () => {
-    await withSerialLock(async () => {
+    await withSerialLock(SERIAL_LOCK_DIR, async () => {
       for (let run = 1; run <= 2; run++) {
         const beforeBranch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])
         const beforeHead = git(root, ['rev-parse', 'HEAD'])
