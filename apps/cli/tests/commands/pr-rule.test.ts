@@ -42,7 +42,11 @@ function runCli(args: string[], cwd: string, env: Record<string, string | undefi
  * `pr comment <n> --body-file <path>` by appending the posted body to a log,
  * one entry per call, then printing `commentUrl`.
  */
-function stubGh(commentsJson: unknown, commentUrl: string): { path: Record<string, string>; commentsLogPath: string } {
+function stubGh(
+  commentsJson: unknown,
+  commentUrl: string,
+  login = 'daniboomerang'
+): { path: Record<string, string>; commentsLogPath: string } {
   const dir = tempDir('pr-rule-stub-')
   const commentsJsonPath = join(dir, 'comments.json')
   const commentsLogPath = join(dir, 'posted.log')
@@ -52,6 +56,10 @@ function stubGh(commentsJson: unknown, commentUrl: string): { path: Record<strin
   writeFileSync(
     gh,
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "$2" = "user" ]; then
+  echo "${login}"
+  exit 0
+fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   cat "${commentsJsonPath}"
   exit 0
@@ -130,7 +138,9 @@ describe('vinaya pr rule', () => {
 
     const r = runCli(['pr', 'rule', '1', '--file', filePath], repo, path)
     expect(r.status).toBe(0)
-    expect(r.stdout.trim()).toBe('https://github.com/acme/widget/pull/1#issuecomment-1')
+    // `.trim()` alone isn't enough: an unresolvable trust-anchor repo (no git
+    // remote in this tempDir) prints its own warning line to stdout first.
+    expect(r.stdout.trim().split('\n').pop()).toBe('https://github.com/acme/widget/pull/1#issuecomment-1')
     const posted = readFileSync(commentsLogPath, 'utf-8')
     expect(posted).toContain('<!-- aeg:principal:ruling:1-1 -->')
     expect(posted).toContain('> VERDICT: PASS')
@@ -158,5 +168,30 @@ describe('vinaya pr rule', () => {
     expect(r.status).toBe(0)
     const posted = readFileSync(commentsLogPath, 'utf-8')
     expect(posted).toContain('<!-- aeg:principal:ruling:1-2 -->')
+  })
+
+  it('refuses a non-numeric PR ref before ever checking who is authenticated', () => {
+    const repo = tempDir('pr-rule-repo-')
+    const filePath = writeFixture(repo, 'ruling.md', 'Scope clarified.\n')
+    // No gh on PATH at all — a working `gh` should never be reached for a
+    // malformed ref; format is validated purely from argv first.
+    const r = runCli(['pr', 'rule', 'https://github.com/acme/widget/pull/1', '--file', filePath], repo, {})
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('bare PR number')
+  })
+
+  it('refuses when the authenticated actor is not an allowlisted principal — nothing posted', () => {
+    const repo = tempDir('pr-rule-repo-')
+    const filePath = writeFixture(repo, 'ruling.md', 'Scope clarified.\n')
+    const { path, commentsLogPath } = stubGh(
+      { comments: [] },
+      'https://github.com/acme/widget/pull/1#issuecomment-1',
+      'some-random-collaborator'
+    )
+
+    const r = runCli(['pr', 'rule', '1', '--file', filePath], repo, path)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('Principal-only')
+    expect(readFileSync(commentsLogPath, 'utf-8')).toBe('')
   })
 })

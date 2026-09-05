@@ -2,7 +2,13 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '@attalabs/aeg-core'
 import { printJson } from '../lib/envelope'
-import { countMarkerComments, makeCheckError, postMarkedComment, refuse } from '../lib/forge-write'
+import {
+  countMarkerComments,
+  makeCheckError,
+  postMarkedComment,
+  refuse,
+  refuseUnlessPrincipal
+} from '../lib/forge-write'
 
 const RETRY = 'vinaya pr rule <pr> --file <ruling.md>'
 
@@ -90,6 +96,19 @@ export function prRuleCommand(args: string[]): void {
       )
     ])
   }
+  // Bare digits only: `prRef` is spliced verbatim into the marker's HTML
+  // comment (`<!-- aeg:principal:ruling:<pr>-<k> -->`) and into `gh`'s own
+  // argv — a URL or crafted ref could otherwise terminate the comment early
+  // or forge a differently-shaped marker (security review, PR #430, MEDIUM).
+  if (!/^\d+$/.test(prRef)) {
+    refuse([
+      makeCheckError(
+        'forge-args',
+        '`pr rule` requires a bare PR number (e.g. `123`), not a URL or other ref — it is spliced into the marker comment.',
+        'Pass the bare PR number, e.g. `vinaya pr rule 123 --file ruling.md`.'
+      )
+    ])
+  }
 
   const fileIdx = rest.indexOf('--file')
   const filePath = fileIdx !== -1 ? rest[fileIdx + 1] : undefined
@@ -102,6 +121,8 @@ export function prRuleCommand(args: string[]): void {
       )
     ])
   }
+
+  refuseUnlessPrincipal(RETRY)
 
   let body: string
   try {

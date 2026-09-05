@@ -51,6 +51,7 @@ import {
   deriveWorkspacePackageDomains,
   findTrancheSlug,
   isBriefShaped,
+  isPrincipal,
   isTaskBranch,
   isTaskIssueLabelSet,
   parsePnpmWorkspaceYaml,
@@ -61,7 +62,14 @@ import {
 } from '@attalabs/aeg-core'
 import { findMilestoneAttachTargetForSlug, hasExplicitMilestoneFlag } from '@attalabs/aeg-forge-state'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks/contract'
-import { type BriefBuiltin, type BriefSection, VinayaConfigSchema, loadConfigChecked } from './config'
+import {
+  type BriefBuiltin,
+  type BriefSection,
+  VinayaConfigSchema,
+  loadConfigChecked,
+  loadTrustAnchorConfig,
+  resolvePrincipalAllowlist
+} from './config'
 import { printJson } from './envelope'
 
 // ---------------------------------------------------------------------------
@@ -835,6 +843,54 @@ export function writeValidatedIssueEdit(input: {
   if (slugToEnsure) ensureTrancheLabelExists(slugToEnsure)
 
   runGhWrite(['issue', 'edit', issueRef], ghArgs, bodyResult, json, quiet ?? false)
+}
+
+// ---------------------------------------------------------------------------
+// Principal-only gate — `issue objectives edit` and `pr rule` (task 3) are
+// Principal-only actions per `aeg-root/roles/principal.md`, but `gh`
+// authenticates as "whoever is logged in": without this, any collaborator's
+// (or co-resident agent session's) token can post a comment indistinguishable
+// from a genuine Principal ruling, or silently rewrite a task's Objectives —
+// zero gate (security review, PR #430, CRITICAL). `isPrincipal` itself is
+// pre-existing (`review-status.ts`/`review-gate.ts` etc. already use it to
+// classify the AUTHOR of an existing comment); what was missing is checking
+// it against the CURRENT actor before a Principal-only write, which is what
+// this gate adds. Reads `principals` from the DEFAULT branch
+// (`loadTrustAnchorConfig`) — never a task branch's own `vinaya.config.json`,
+// which the actor being checked could otherwise edit to add themselves.
+// ---------------------------------------------------------------------------
+
+/** The login `gh` is currently authenticated as, or `null` if it cannot be resolved. */
+export function currentGhLogin(): string | null {
+  try {
+    const out = execFileSync('gh', ['api', 'user', '-q', '.login'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+    return out || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Refuses unless the identity `gh` is authenticated as resolves to an
+ * allowlisted principal. An unresolvable identity refuses the same as a
+ * disallowed one — fail-closed, never "no identity found, so let it through".
+ */
+export function refuseUnlessPrincipal(retryCommand: string): void {
+  const login = currentGhLogin()
+  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  if (login !== null && isPrincipal(login, allowlist)) return
+  refuse([
+    makeCheckError(
+      'principal-only',
+      login === null
+        ? 'Could not resolve the identity `gh` is authenticated as — this command is Principal-only and refuses rather than proceeding with an unverified actor.'
+        : `\`${login}\` is not on the Principal allowlist — this command is Principal-only.`,
+      `Authenticate \`gh\` as an allowlisted principal, then re-run \`${retryCommand}\`.`
+    )
+  ])
 }
 
 // ---------------------------------------------------------------------------

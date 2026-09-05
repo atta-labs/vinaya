@@ -71,7 +71,13 @@ const THREE_OBJECTIVES = [
  * --body-file <path>` (captured to a log, never a real write), and `issue
  * comment <n> --body-file <path>` (captured to a log, printing `commentUrl`).
  */
-function stubGh(opts: { body: string; comments: Array<{ body: string }>; issueUrl: string; commentUrl: string }): {
+function stubGh(opts: {
+  body: string
+  comments: Array<{ body: string }>
+  issueUrl: string
+  commentUrl: string
+  login?: string
+}): {
   path: Record<string, string>
   editedBodyLogPath: string
   commentsLogPath: string
@@ -85,10 +91,15 @@ function stubGh(opts: { body: string; comments: Array<{ body: string }>; issueUr
   writeFileSync(labelsJsonPath, JSON.stringify({ labels: [] }))
   writeFileSync(editedBodyLogPath, '')
   writeFileSync(commentsLogPath, '')
+  const login = opts.login ?? 'daniboomerang'
   const gh = join(dir, 'gh')
   writeFileSync(
     gh,
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "$2" = "user" ]; then
+  echo "${login}"
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
   case "$*" in
     *labels*) cat "${labelsJsonPath}" ;;
@@ -181,7 +192,9 @@ describe('vinaya issue objectives edit', () => {
     )
     expect(r.status).toBe(0)
     // Prints the COMMENT's url, never the plain issue-edit url (quiet mode).
-    expect(r.stdout.trim()).toBe('https://github.com/acme/widget/issues/413#issuecomment-5')
+    // `.split('\n').pop()`: an unresolvable trust-anchor repo (no git remote
+    // in this tempDir) prints its own warning line to stdout first.
+    expect(r.stdout.trim().split('\n').pop()).toBe('https://github.com/acme/widget/issues/413#issuecomment-5')
 
     const editedBody = readFileSync(editedBodyLogPath, 'utf-8')
     expect(editedBody).toContain('O4. Fourth objective sentence here.')
@@ -261,5 +274,25 @@ describe('vinaya issue objectives edit', () => {
     expect(r.status).toBe(0)
     const posted = readFileSync(commentsLogPath, 'utf-8')
     expect(posted).toContain('<!-- aeg:objectives:v2 -->')
+  })
+
+  it('refuses when the authenticated actor is not an allowlisted principal — nothing written or posted', () => {
+    const repo = tempDir('issue-objectives-repo-')
+    const { path, editedBodyLogPath, commentsLogPath } = stubGh({
+      body: issueBody(THREE_OBJECTIVES),
+      comments: [],
+      issueUrl: 'https://github.com/acme/widget/issues/413',
+      commentUrl: 'https://github.com/acme/widget/issues/413#issuecomment-5',
+      login: 'some-random-collaborator'
+    })
+    const r = runCli(
+      ['issue', 'objectives', 'edit', '413', '--add', 'Fourth objective sentence here.', '--reason', 'scope grew'],
+      repo,
+      path
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('Principal-only')
+    expect(readFileSync(editedBodyLogPath, 'utf-8')).toBe('')
+    expect(readFileSync(commentsLogPath, 'utf-8')).toBe('')
   })
 })

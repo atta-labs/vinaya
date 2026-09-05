@@ -10,6 +10,7 @@ import {
   makeCheckError,
   postMarkedComment,
   refuse,
+  refuseUnlessPrincipal,
   writeValidatedIssueEdit
 } from '../lib/forge-write'
 
@@ -215,6 +216,7 @@ function applyOp(previous: Objective[], op: EditOp): Objective[] {
 
 export function issueObjectivesEditCommand(args: string[]): void {
   const { json, issueRef, op, reason } = parseArgs(args)
+  refuseUnlessPrincipal(RETRY)
 
   const { body, comments } = fetchIssueBodyAndComments(issueRef)
   const parsed = objectivesOf(body)
