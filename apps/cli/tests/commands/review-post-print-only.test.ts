@@ -35,10 +35,13 @@ function runCli(args: string[], cwd: string, env: Record<string, string | undefi
 }
 
 /**
- * Answers `pr view --json headRefName`, `pr view --json headRefOid` and
+ * Answers `pr view --json headRefName`, `pr view --json headRefOid`,
  * `pr view --json comments` (empty — round one, no prior verdict to
- * reconcile against); `pr comment` exits non-zero with a distinctive
- * stderr line, so a stray real post is loud, never silent.
+ * reconcile against) and `pr view --json body` (`Closes #1` — below
+ * `OBJECTIVES_SINCE_ISSUE`, so `resolveObjectivesForPr` resolves `skip` and
+ * neither an `Objectives version:` line nor an `OBJECTIVES:` block renders);
+ * `pr comment` exits non-zero with a distinctive stderr line, so a stray
+ * real post is loud, never silent.
  *
  * `resolveHeadSha` resolves the branch name first, then its true head via
  * `git ls-remote` — which fails outright here (`cwd` is a plain tempdir,
@@ -56,6 +59,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
     *headRefName*) echo "stub-branch"; exit 0 ;;
     *headRefOid*) echo "${headSha}"; exit 0 ;;
     *comments*) echo '{"comments": []}'; exit 0 ;;
+    *body*) echo "Closes #1"; exit 0 ;;
   esac
 fi
 if [ "$1" = "api" ]; then
