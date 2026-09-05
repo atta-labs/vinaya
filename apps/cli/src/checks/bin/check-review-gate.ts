@@ -111,47 +111,99 @@ function fetchIssueBodyForObjectives(issueNumber: number): string {
 }
 
 /**
- * The current `objectivesVersion` this PR is judged against (`#412`, O3) —
- * mirrors `verify-brief.ts`'s `resolveIssueObjectives`
- * resolution, built to a version string instead of a raw objectives list.
- * `Closes #N`'s Issue wins when it resolves and is at/above
- * `OBJECTIVES_SINCE_ISSUE`; the PR body's own `## Objectives` section is the
- * fallback (no Issue, an Issue below the cutover, or an Issue that does not
- * resolve as "not found"); `null` when neither source has anything to
- * version — the pre-cutover PR stock, and `checkReviewGate` reads `null` as
- * "skip the objectives binding entirely".
+ * The current `objectivesVersion` this PR is judged against (`#412`, O3).
+ * `null` is returned in exactly ONE case: this PR was never subject to the
+ * objectives obligation at all — an Issue genuinely below
+ * `OBJECTIVES_SINCE_ISSUE` (checked first, unconditionally, before any fetch
+ * — see below), or no Issue at all with no `## Objectives` section in the
+ * body either. `checkReviewGate` reads that `null` as "skip the objectives
+ * binding entirely", which is only safe when nothing was ever there to bind.
  *
- * An Issue fetch failure that is NOT "not found" (network, auth, rate-limit)
- * means the comparison could not be run, not that it passed — `severity:infra`,
- * exit 1, never a silent `null` that would make the gate quietly stop
- * enforcing exactly when enforcement is hardest to verify.
+ * Every OTHER case — an Issue at/above the cutover that no longer resolves,
+ * a fetch failure, or objectives text that exists but no longer PARSES
+ * (Issue's or body's) — fails this check outright (`severity:infra`, exit
+ * `1`). A security review on this task (`#433`) found the prior version
+ * returning a silent `null` for the first two of those: falling through to
+ * the body's own section (or straight to `null`) whenever the linked Issue
+ * came back "not found", and swallowing a parse failure into `null` in both
+ * the Issue and body branches. Since `isBoundToObjectives` treats a `null`
+ * current version as an unconditional match, that silent `null` let anyone
+ * who can edit or delete the LINKED ISSUE (not necessarily anyone with PR
+ * push access) disarm the objectives-version binding for an
+ * already-cast verdict after the fact — exactly the staleness this task
+ * exists to catch. `vinaya review post`'s `resolveObjectivesForPr` already
+ * refuses to POST a new verdict in every one of these identical cases
+ * (`no objectives to judge against`); this resolver now refuses to COUNT an
+ * existing one clean for the same cases, closing the gap rather than
+ * mirroring it. The two resolvers' Issue-vs-cutover branch order is now
+ * identical too — the prior version's missing early pre-cutover return let
+ * it fall through to the body's own section for a pre-cutover Issue, which
+ * could resolve a non-null version `review post` never rendered a matching
+ * line for, permanently failing the gate on an otherwise-legitimate PR (the
+ * same review's MEDIUM finding).
  */
 function resolveObjectivesVersion(pr: PrView): string | null {
   const { issue } = extractIssue(pr.body)
-  if (issue !== null && issue >= OBJECTIVES_SINCE_ISSUE) {
+
+  // Checked first and unconditionally, exactly where `resolveObjectivesForPr`
+  // checks it: a pre-cutover Issue skips before ever considering the body.
+  if (issue !== null && issue < OBJECTIVES_SINCE_ISSUE) return null
+
+  if (issue !== null) {
+    let issueBody: string
     try {
-      const parsed = objectivesOf(fetchIssueBodyForObjectives(issue))
-      return parsed.ok ? objectivesVersion(parsed.objectives) : null
+      issueBody = fetchIssueBodyForObjectives(issue)
     } catch (err) {
-      if (!isIssueNotFoundError(err)) {
+      if (isIssueNotFoundError(err)) {
         emitCheckError({
           schema: CHECK_SCHEMA_VERSION,
           check: CHECK_NAME,
           severity: 'error',
-          message: `review-gate severity:infra — could not fetch Issue #${issue}'s body via \`gh issue view\` to resolve its objectives version: ${(err as Error).message}`,
-          agent_recovery_prompt:
-            'Confirm `gh auth status` passes and the Issue number is correct, then re-run `vinaya check review-gate`.'
+          message: `review-gate severity:infra — Issue #${issue} does not resolve via \`gh issue view\` — cannot verify the objectives-version binding for a PR whose linked Issue is at/above the objectives cutover.`,
+          agent_recovery_prompt: `Restore Issue #${issue}, fix \`Closes #N\` to name a real Issue, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya check review-gate\`.`
         })
         process.exit(1)
       }
-      // Issue does not resolve (deleted, or a fixture's placeholder number) —
-      // fall through to the body's own section below, same as verify-brief.ts.
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'error',
+        message: `review-gate severity:infra — could not fetch Issue #${issue}'s body via \`gh issue view\` to resolve its objectives version: ${(err as Error).message}`,
+        agent_recovery_prompt:
+          'Confirm `gh auth status` passes and the Issue number is correct, then re-run `vinaya check review-gate`.'
+      })
+      process.exit(1)
     }
+    const parsed = objectivesOf(issueBody)
+    if (!parsed.ok) {
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'error',
+        message: `review-gate severity:infra — Issue #${issue}'s \`## Objectives\` section does not parse (${parsed.errors.join('; ')}) — cannot verify the objectives-version binding.`,
+        agent_recovery_prompt: `Fix Issue #${issue}'s \`## Objectives\` section, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya check review-gate\`.`
+      })
+      process.exit(1)
+    }
+    return objectivesVersion(parsed.objectives)
   }
+
   if (hasObjectivesHeading(pr.body)) {
     const own = objectivesOf(pr.body)
-    return own.ok ? objectivesVersion(own.objectives) : null
+    if (!own.ok) {
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'error',
+        message: `review-gate severity:infra — this PR body's own \`## Objectives\` section does not parse (${own.errors.join('; ')}) — cannot verify the objectives-version binding.`,
+        agent_recovery_prompt:
+          "Fix the PR body's `## Objectives` section, or have a principal apply the `vinaya/waiver:review` label, then re-run `vinaya check review-gate`."
+      })
+      process.exit(1)
+    }
+    return objectivesVersion(own.objectives)
   }
+
   return null
 }
 

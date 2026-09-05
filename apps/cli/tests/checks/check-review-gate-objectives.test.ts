@@ -252,7 +252,7 @@ process.exit(1)
     expect(stderr).toContain('could not fetch Issue')
   })
 
-  it('does not fail closed when the Issue does not resolve (not-found) — falls back to the body instead', async () => {
+  it('fails closed (severity:infra) when an at/above-cutover Issue does not resolve — never falls back to the body (security review, #433, CRITICAL)', async () => {
     const { dir: d, sha } = setupRepo()
     dir = d
     const ghDir = writeGhStub(d)
@@ -276,9 +276,72 @@ process.exit(1)
       STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
     })
 
-    // No Objectives section in the body either, so the binding is skipped
-    // (null), and the verdicts pass on head/mechanical-check grounds alone.
+    // A deleted/renamed Issue at/above the cutover must never silently
+    // disarm the binding — falling back to the body (which has no section
+    // here either) would have let anyone who can delete the linked Issue
+    // make an already-cast verdict read as bound-to-nothing-in-particular.
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain('severity:infra')
+    expect(stderr).toContain('does not resolve')
+  })
+
+  it('fails closed when an at/above-cutover Issue resolves but its Objectives section no longer parses (security review, #433, CRITICAL)', async () => {
+    const { dir: d, sha } = setupRepo()
+    dir = d
+    const ghDir = writeGhStub(d)
+
+    const prView = {
+      number: 1,
+      comments: [
+        { body: `VERDICT: APPROVE\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } },
+        { body: `VERDICT: PASS\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } }
+      ],
+      labels: [],
+      headRefName: 'work',
+      headRefOid: sha,
+      baseRefName: 'main',
+      body: 'Closes #500'
+    }
+
+    const { exitCode, stderr } = await run(d, ghDir, {
+      STUB_PR_VIEW_JSON: JSON.stringify(prView),
+      STUB_ISSUE_VIEW_BODY: 'not a real Objectives section',
+      STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
+    })
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain('severity:infra')
+    expect(stderr).toContain('does not parse')
+  })
+
+  it('a pre-cutover Issue skips the binding even when the PR body itself happens to carry an unrelated Objectives-shaped section (resolution-order parity, security review MEDIUM)', async () => {
+    const { dir: d, sha } = setupRepo()
+    dir = d
+    const ghDir = writeGhStub(d)
+
+    const prView = {
+      number: 1,
+      comments: [
+        { body: `VERDICT: APPROVE\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } },
+        { body: `VERDICT: PASS\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } }
+      ],
+      labels: [],
+      headRefName: 'work',
+      headRefOid: sha,
+      baseRefName: 'main',
+      // Closes #1 is pre-cutover, but the body ALSO carries its own
+      // Objectives section — `review post` never considers the body for a
+      // pre-cutover Issue (it skips immediately), so this gate must not
+      // either, or a verdict `review post` rendered with no version line at
+      // all would permanently mismatch a version resolved from here.
+      body: 'Closes #1\n\n## Objectives\n\nO1. Unrelated leftover text.\n'
+    }
+
+    const { exitCode } = await run(d, ghDir, {
+      STUB_PR_VIEW_JSON: JSON.stringify(prView),
+      STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
+    })
+
     expect(exitCode).toBe(0)
-    expect(stderr).not.toContain('severity:infra')
   })
 })
