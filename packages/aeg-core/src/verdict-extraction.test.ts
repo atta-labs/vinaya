@@ -112,12 +112,14 @@ describe('extractCodeReviewVerdict', () => {
     expect(extractCodeReviewVerdict(['_VERDICT: APPROVE_'])).toEqual({
       value: 'APPROVE',
       headSha: null,
-      objectivesVersion: null, danglingNote: null
+      objectivesVersion: null,
+      danglingNote: null
     })
     expect(extractCodeReviewVerdict(['__VERDICT: APPROVE__'])).toEqual({
       value: 'APPROVE',
       headSha: null,
-      objectivesVersion: null, danglingNote: null
+      objectivesVersion: null,
+      danglingNote: null
     })
   })
 
@@ -220,7 +222,8 @@ describe('extractSecurityReviewVerdict', () => {
     expect(extractSecurityReviewVerdict(['_VERDICT: PASS_'])).toEqual({
       value: 'PASS',
       headSha: null,
-      objectivesVersion: null, danglingNote: null
+      objectivesVersion: null,
+      danglingNote: null
     })
   })
 
@@ -381,7 +384,7 @@ describe('the VERDICT:/Judged head:/Objectives version: markers are read from th
     expect(result.objectivesVersion).toBeNull()
   })
 
-  it('an Objectives version: line present only in a different comment is not this verdict\'s binding', () => {
+  it("an Objectives version: line present only in a different comment is not this verdict's binding", () => {
     const result = extractCodeReviewVerdict([
       `Objectives version: ${OBJ_VERSION}`,
       `VERDICT: APPROVE\n\nJudged head: ${FULL_SHA}`
