@@ -55,7 +55,7 @@ import {
   type Objective,
   OBJECTIVES_SINCE_ISSUE,
   type PackageManifest,
-  parseObjectives,
+  objectivesOf,
   readTierFromPrBody
 } from '../src/index'
 
@@ -141,6 +141,27 @@ function fetchIssueBodyForObjectives(issueNumber: number): string {
 }
 
 /**
+ * Is this failure just "the Issue number doesn't resolve" — a fixture's
+ * placeholder `Closes #999`, a deleted Issue — as opposed to a real
+ * network/auth/rate-limit failure? Only the first is safe to treat as
+ * "nothing to compare"; the second means the objectives comparison was
+ * SKIPPED, not that it passed, and skipping it silently on exactly the
+ * failure mode most likely in CI (a flaky network, an expiring token)
+ * would quietly stop enforcing O3 whenever enforcement is hardest to
+ * verify. Mirrors `apps/cli/src/lib/config.ts`'s `isMissingFileError` —
+ * inspect the WHOLE error (message + stderr), since `execFileSync` puts
+ * `gh`'s actual GraphQL text on a line that is rarely the first.
+ */
+function isIssueNotFoundError(err: unknown): boolean {
+  const stderr = (err as { stderr?: Buffer | string })?.stderr
+  const haystack = [
+    (err as Error)?.message ?? '',
+    typeof stderr === 'string' ? stderr : (stderr?.toString() ?? '')
+  ].join('\n')
+  return /could not resolve to an (?:issue|pull request)|\b404\b|not found/i.test(haystack)
+}
+
+/**
  * The Issue's `## Objectives` list `checkObjectivesCopy`/`checkObjectivesCoverage`
  * compare the brief's own section against — read live from the forge on a
  * task branch (`Closes #N`'s Issue), or the body's own section on a
@@ -165,30 +186,38 @@ function fetchIssueBodyForObjectives(issueNumber: number): string {
  * brief itself and surfaces the real parse error rather than passing
  * silently.
  *
- * A failed live fetch (network, `gh` auth, or an Issue number that does not
- * resolve — a fixture's placeholder `Closes #999`, a deleted Issue) also
- * returns `null`, logged but non-fatal: this is a live network dependency
- * layered onto what was previously a fully offline check, and the checks
- * this task's cutover already exempts (an Issue below `OBJECTIVES_SINCE_ISSUE`,
- * a missing `Closes #N`) are proof the objectives checks are additive, never
- * a new hard-failure mode for a resource that was never required before.
+ * An Issue number that does not resolve (a fixture's placeholder
+ * `Closes #999`, a deleted Issue) returns `null`, logged but non-fatal —
+ * the checks this task's cutover already exempts (an Issue below
+ * `OBJECTIVES_SINCE_ISSUE`, a missing `Closes #N`) are proof the objectives
+ * checks are additive, never a new hard-failure mode for a resource that
+ * was never required before. A DIFFERENT fetch failure — network, `gh`
+ * auth, rate-limit — is not that case: it means the comparison could not
+ * be run, not that it passed, so it exits non-zero rather than silently
+ * skipping (`isIssueNotFoundError`).
  */
 function resolveIssueObjectives(prBody: string, isTaskBranch: boolean): Objective[] | null {
   if (!isTaskBranch) {
     if (!hasObjectivesHeading(prBody)) return null
-    const own = parseObjectives(prBody)
+    const own = objectivesOf(prBody)
     return own.ok ? own.objectives : []
   }
   const { issue } = extractIssue(prBody)
   if (issue === null || issue < OBJECTIVES_SINCE_ISSUE) return null
   try {
-    const parsed = parseObjectives(fetchIssueBodyForObjectives(issue))
+    const parsed = objectivesOf(fetchIssueBodyForObjectives(issue))
     return parsed.ok ? parsed.objectives : null
   } catch (err) {
-    console.log(
-      `[verify-brief] could not fetch Issue #${issue}'s body (\`gh issue view\`) to compare Objectives — skipping the objectives checks for this run: ${(err as Error).message.split('\n')[0]}`
+    if (isIssueNotFoundError(err)) {
+      console.log(
+        `[verify-brief] Issue #${issue} does not resolve (\`gh issue view\`) — skipping the objectives checks for this run.`
+      )
+      return null
+    }
+    console.error(
+      `\n[verify-brief] FAILED — could not fetch Issue #${issue}'s body (\`gh issue view\`) to compare Objectives: ${(err as Error).message}`
     )
-    return null
+    process.exit(1)
   }
 }
 
