@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -110,6 +110,21 @@ function briefFile(name: string, contents: string): string {
   return path
 }
 
+/** A fake `gh` on PATH whose `issue view` subcommand exits 1 printing `stderrText` — for exercising the fetch-failure branch of the Objectives comparison without a real network call. */
+function fakeGhPath(stderrText: string): string {
+  const dir = mkdtempSync(join(tmp, 'fake-gh-'))
+  const gh = join(dir, 'gh')
+  writeFileSync(gh, `#!/bin/sh\necho '${stderrText}' 1>&2\nexit 1\n`)
+  chmodSync(gh, 0o755)
+  return `${dir}:${process.env.PATH}`
+}
+
+/** A minimal task-branch, brief-shaped body closing a real-numbered (post-cutover) Issue — enough to reach the live Objectives fetch. */
+const TASK_BRIEF_CLOSING_500 = FIX_BRIEF.replace(
+  'git worktree add .worktrees/fix/x -b fix/x origin/main',
+  'git worktree add .worktrees/task/iter/3 -b task/iter/3 origin/main'
+).replace('## Summary', 'Closes #500\n\n## Summary')
+
 describe('verify-brief — brief-shaped bodies are validated on any branch', () => {
   it('FAILS a brief-shaped body missing its doc-update list on a fix/* branch (was silently bypassed)', () => {
     const { code, output } = runCli([], { BRANCH: 'fix/x', PR_BODY: FIX_BRIEF_NO_DOC_LIST })
@@ -139,6 +154,52 @@ describe('verify-brief — brief-shaped bodies are validated on any branch', () 
     const { code, output } = runCli([], { BRANCH: 'plan/x', PR_BODY: `${DEPENDENCY_BUMP}\n\nCloses #12\n` })
     expect(code).toBe(1)
     expect(output).toMatch(/plan-PR Closes guard/)
+  })
+})
+
+describe('verify-brief — Objectives quick lane on a non-task branch (dev-review-loop-v1 task 1)', () => {
+  it('does not force `## Objectives` onto a standalone brief that never had one', () => {
+    // Regression guard: FIX_BRIEF predates this task and carries no
+    // `## Objectives` section — it must keep passing exactly as before.
+    const { code } = runCli([], { BRANCH: 'fix/x', PR_BODY: FIX_BRIEF })
+    expect(code).toBe(0)
+  })
+
+  it('is refused when a brief opts into `## Objectives` with a malformed section (self-compare catches the parse error)', () => {
+    const withBadObjectives = FIX_BRIEF.replace(
+      '## Summary',
+      '## Objectives\n\n1. wrong grammar — missing the `O` prefix.\n\n## Summary'
+    )
+    const { code, output } = runCli([], { BRANCH: 'fix/x', PR_BODY: withBadObjectives })
+    expect(code).toBe(1)
+    expect(output).toMatch(/objectives copy/)
+  })
+
+  it('passes when a brief carries a well-formed, self-consistent `## Objectives` section citing itself in §6', () => {
+    const withObjectives = FIX_BRIEF.replace(
+      '## Summary',
+      '## Objectives\n\nO1. The fix does the thing described in Summary.\n\n## Summary'
+    ).replace('## Pre-flight', '## 6. Numbered parts\n\nPart 1 (O1) — the fix.\n\n## Pre-flight')
+    const { code } = runCli([], { BRANCH: 'fix/x', PR_BODY: withObjectives })
+    expect(code).toBe(0)
+  })
+})
+
+describe('verify-brief — Objectives fetch failure on a task branch (review round 1, finding 4)', () => {
+  it('skips the objectives comparison — never a hard failure — when the Issue genuinely does not resolve', () => {
+    const path = fakeGhPath(
+      'GraphQL: Could not resolve to an issue or pull request with the number of 500. (repository.issue)'
+    )
+    const { code, output } = runCli([], { BRANCH: 'task/iter/3', PR_BODY: TASK_BRIEF_CLOSING_500, PATH: path })
+    expect(code).toBe(0)
+    expect(output).toMatch(/does not resolve.*skipping/)
+  })
+
+  it('hard-fails — never silently skips — on a genuine fetch failure (network, auth, rate-limit)', () => {
+    const path = fakeGhPath('gh: authentication failed')
+    const { code, output } = runCli([], { BRANCH: 'task/iter/3', PR_BODY: TASK_BRIEF_CLOSING_500, PATH: path })
+    expect(code).toBe(1)
+    expect(output).toMatch(/FAILED.*could not fetch Issue #500/)
   })
 })
 

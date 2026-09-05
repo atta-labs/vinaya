@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
-import { existsSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /**
@@ -25,6 +26,56 @@ const VERIFY_BRIEF = join(REPO_ROOT, 'packages/aeg-core/bin/verify-brief.ts')
 for (const target of [CHECK_BIN, VERIFY_BRIEF]) {
   if (!existsSync(target)) throw new Error(`core-parity: target does not exist: ${target}`)
 }
+
+/** A fake `gh` on PATH whose `issue view` subcommand exits 1 printing `stderrText` — for exercising the fetch-failure branch of the Objectives comparison without a real network call. */
+function fakeGhPath(stderrText: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'core-parity-fake-gh-'))
+  const gh = join(dir, 'gh')
+  writeFileSync(gh, `#!/bin/sh\necho '${stderrText}' 1>&2\nexit 1\n`)
+  chmodSync(gh, 0o755)
+  return `${dir}:${process.env.PATH}`
+}
+
+const TASK_BRIEF_CLOSING_500 = [
+  'Closes #500',
+  '',
+  '**For:** Sonnet (test)',
+  '**Project:** aeg-core',
+  '',
+  '## Summary',
+  '',
+  'x',
+  '',
+  '## Pre-flight',
+  '',
+  'git worktree add .worktrees/task/iter/3 -b task/iter/3 origin/main',
+  '',
+  '## Technical surface map',
+  '',
+  '- `packages/aeg-core/src/foo.ts`',
+  '',
+  '## Test plan',
+  '',
+  'Test Plan: unit-tests-only',
+  '',
+  '## Documentation-update list',
+  '',
+  '- none',
+  '',
+  '## Stop conditions',
+  '',
+  '- Pre-flight failure.',
+  '',
+  '## Constraints',
+  '',
+  '**Autonomy:** Do not stop to ask clarifying questions.',
+  '',
+  '## Scope',
+  '',
+  'x',
+  '',
+  '**Tier:** 0'
+].join('\n')
 
 async function runExit(cmd: string[], env: Record<string, string>): Promise<number> {
   const proc = Bun.spawn(cmd, {
@@ -56,5 +107,63 @@ describe('core-parity: brief-shape vs bin/verify-brief.ts', () => {
     ])
     expect(checkExit).toBe(0)
     expect(binExit).toBe(0)
+  })
+
+  // dev-review-loop-v1 task 1: on a non-task branch, the objectives checks
+  // are the quick-lane rule — applying only when the body opts in with its
+  // own `## Objectives` section. Neither entry point calls `gh` for this
+  // case (no Issue to fetch), so this stays a pure, network-free agreement.
+  it('agree (both fail) on a non-task branch whose opted-in `## Objectives` section is malformed', async () => {
+    // Brief-shaped (>= 2 of the four markers `isBriefShaped` requires) so
+    // neither entry point takes the non-brief bypass before reaching the
+    // objectives quick lane.
+    const badObjectivesBody = [
+      '## Objectives',
+      '',
+      '1. wrong grammar — missing the `O` prefix.',
+      '',
+      '## Technical surface map',
+      '',
+      '- `packages/aeg-core/src/brief-validation.ts`',
+      '',
+      '## Stop conditions',
+      '',
+      '- Pre-flight failure.'
+    ].join('\n')
+    const env = { PR_BODY: badObjectivesBody, BRANCH: 'fix/x' }
+    const [checkExit, binExit] = await Promise.all([
+      runExit(['bun', CHECK_BIN], env),
+      runExit(['bun', VERIFY_BRIEF], env)
+    ])
+    expect(checkExit).toBe(1)
+    expect(binExit).toBe(1)
+  })
+
+  // review round 1, finding 4: a failed `gh issue view` must not be treated
+  // uniformly — an Issue that genuinely doesn't resolve skips the comparison,
+  // but any OTHER failure (network, auth, rate-limit) must hard-fail rather
+  // than silently pass. Both entry points agree on both.
+  it('agree (both pass) when the linked Issue genuinely does not resolve — skip, not a failure', async () => {
+    const path = fakeGhPath(
+      'GraphQL: Could not resolve to an issue or pull request with the number of 500. (repository.issue)'
+    )
+    const env = { PR_BODY: TASK_BRIEF_CLOSING_500, BRANCH: 'task/iter/3', PATH: path }
+    const [checkExit, binExit] = await Promise.all([
+      runExit(['bun', CHECK_BIN], env),
+      runExit(['bun', VERIFY_BRIEF], env)
+    ])
+    expect(checkExit).toBe(0)
+    expect(binExit).toBe(0)
+  })
+
+  it('agree (both fail) on a genuine fetch failure — never silently skipped', async () => {
+    const path = fakeGhPath('gh: authentication failed')
+    const env = { PR_BODY: TASK_BRIEF_CLOSING_500, BRANCH: 'task/iter/3', PATH: path }
+    const [checkExit, binExit] = await Promise.all([
+      runExit(['bun', CHECK_BIN], env),
+      runExit(['bun', VERIFY_BRIEF], env)
+    ])
+    expect(checkExit).toBe(1)
+    expect(binExit).toBe(1)
   })
 })

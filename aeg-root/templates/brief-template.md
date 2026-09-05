@@ -18,6 +18,10 @@ The brief itself carries no anchor comments: it rides into the PR body as the *r
 
 You are the AEG Developer. Read `aeg-root/roles/developer.md` first[, then the host repo's own execution-discipline skill, e.g. `.claude/skills/executor-protocol/SKILL.md`]. Both mandatory.
 
+## Objectives
+
+[Copy the Issue's `## Objectives` section here byte-for-byte — `checkObjectivesCopy` refuses a brief whose section does not match the Issue's, compared normalised (whitespace never fails it; a changed word does). Every numbered Part in §6 must cite at least one `O<n>` from this list, and every `O<n>` here must be cited by at least one Part — `checkObjectivesCoverage` refuses either gap.]
+
 ## 2. Context — read before doing anything
 
 - **Tranche:** [`tranche-slug`], task [n], Issue #[N]. Branch `task/[tranche-slug]/[n]`. `Depends-on: [—|ids]`, `Conflicts-with: [—|ids]`. Confirm `READY TO DISPATCH` at your own Step 0.
@@ -60,8 +64,8 @@ On any failure: STOP and report.
 
 ## 6. Numbered parts — commit after EACH part; push once, before opening the PR
 
-1. **Part 1:** [exact files + exact function/type signatures + constraints — not prose. A Part that depends on a fact about current code opens with the fenced command that establishes it, followed by the executed output (skill §2's rule).]
-2. **Part 2:** [next bounded unit of work]
+1. **Part 1** (O[n]) — [exact files + exact function/type signatures + constraints — not prose. A Part that depends on a fact about current code opens with the fenced command that establishes it, followed by the executed output (skill §2's rule). Cite at least one `O<n>` from the Objectives section above; an administrative Part with no objective of its own (a changeset commit, the final push) may omit the citation.]
+2. **Part 2** (O[n]) — [next bounded unit of work]
 
 ## 7. Documentation-update list
 

@@ -100,7 +100,13 @@ function runGhWrite(ghCmd: string[], ghArgs: string[], bodyResult: BodyResult | 
  * `checkBlastRadiusScope`; `sharedPackages`/`projectPaths` are resolved from
  * the adopter repo on disk, not threaded through from argv.
  */
-function validateTaskIssue(body: string | null, title: string | null, labels: string[], retryCommand: string): void {
+function validateTaskIssue(
+  body: string | null,
+  title: string | null,
+  labels: string[],
+  retryCommand: string,
+  issueNumber: number | null
+): void {
   if (body === null) {
     refuse([
       makeCheckError(
@@ -116,7 +122,8 @@ function validateTaskIssue(body: string | null, title: string | null, labels: st
     title,
     sections,
     changedFiles: [],
-    retryCommand
+    retryCommand,
+    issueNumber
   })
   if (schemaErrors.length > 0) refuse(schemaErrors)
 
@@ -143,7 +150,11 @@ export function issueCreateCommand(args: string[]): void {
   const labels = extractLabels(ghArgs)
 
   if (isTaskIssueLabelSet(labels)) {
-    validateTaskIssue(body, title, labels, RETRY_CREATE)
+    // No number exists until the write completes — `checkIssueObjectives`
+    // treats `null` as NOT exempted (fail-closed), never as "old enough to
+    // skip"; every Issue this repo can newly mint is already far past
+    // `OBJECTIVES_SINCE_ISSUE`, so this never blocks a legitimate create.
+    validateTaskIssue(body, title, labels, RETRY_CREATE, null)
   }
 
   if (validateOnly) {
@@ -155,6 +166,24 @@ export function issueCreateCommand(args: string[]): void {
   if (slugToEnsure) ensureTrancheLabelExists(slugToEnsure)
 
   runGhWrite(['issue', 'create'], resolveMilestoneAttachArgs(ghArgs, labels), bodyResult, json)
+}
+
+/**
+ * The Issue number `issue edit`'s target ref names, for `checkIssueObjectives`'s
+ * `OBJECTIVES_SINCE_ISSUE` cutover. `edit` targets a REAL, already-existing
+ * Issue, so unlike `create`'s genuinely-unknown-until-write number, `null`
+ * here means only "this ref's shape carried no digits" — the Issue itself
+ * has a number regardless of how the caller spelled the ref. Parses the
+ * TRAILING digits so both a bare `123` and a URL (`.../issues/123`) resolve
+ * to the real number; only a ref with no digits at all (should never
+ * happen in practice — `fetchForgeLabels` already resolved this same ref
+ * against the forge before this is called) falls through to `null`, and
+ * even then `checkIssueObjectives` treats that fail-closed, never as
+ * license to skip.
+ */
+export function parseIssueNumberFromRef(ref: string): number | null {
+  const m = /(\d+)\s*$/.exec(ref.trim())
+  return m ? Number.parseInt(m[1] as string, 10) : null
 }
 
 export function issueEditCommand(args: string[]): void {
@@ -183,7 +212,7 @@ export function issueEditCommand(args: string[]): void {
   const labels = [...new Set([...fetchForgeLabels(issueRef), ...extractLabels(ghArgs)])]
 
   if (isTaskIssueLabelSet(labels)) {
-    validateTaskIssue(body, title, labels, RETRY_EDIT)
+    validateTaskIssue(body, title, labels, RETRY_EDIT, parseIssueNumberFromRef(issueRef))
   }
 
   if (validateOnly) {

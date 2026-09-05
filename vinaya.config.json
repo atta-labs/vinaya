@@ -39,6 +39,9 @@
           "builtin": "issueRationale"
         },
         {
+          "builtin": "objectives"
+        },
+        {
           "builtin": "project"
         }
       ]

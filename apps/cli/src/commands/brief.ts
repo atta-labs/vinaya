@@ -20,6 +20,7 @@ import {
   checkIssueRationale,
   fetchForgeFacts,
   fetchOpenIssuesByLabel,
+  objectivesOf,
   parseRationaleFields,
   type PackageManifest,
   renderBrief,
@@ -232,6 +233,10 @@ export async function briefRenderCommand(args: string[]): Promise<void> {
     dependsOn: task.dependsOn,
     conflictsWith: task.conflictsWith,
     rationale: parseRationaleFields(issueBody),
+    objectives: (() => {
+      const parsed = objectivesOf(issueBody)
+      return parsed.ok ? parsed.objectives : []
+    })(),
     dispatchReady: gate.ready,
     dispatchBlockers: gate.blockers,
     surfaceFiles,

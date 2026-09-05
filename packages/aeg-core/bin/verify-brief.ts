@@ -40,6 +40,7 @@
  * a brief-shape check at all. See `checkPlanPrNoCloses` in `src/brief-validation.ts`.
  */
 
+import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import {
@@ -47,9 +48,15 @@ import {
   checkBriefSections,
   checkForgeTitle,
   checkPlanPrNoCloses,
+  extractIssue,
+  hasObjectivesHeading,
   inferBranchFromBody,
   isBriefShaped,
+  isIssueNotFoundError,
+  type Objective,
+  OBJECTIVES_SINCE_ISSUE,
   type PackageManifest,
+  objectivesOf,
   readTierFromPrBody
 } from '../src/index'
 
@@ -126,6 +133,74 @@ function readFlag(argv: string[], name: string): FlagRead {
   return { state: 'absent' }
 }
 
+/** `gh issue view <n> --json body --jq .body` — the one live read `resolveIssueObjectives` needs. */
+function fetchIssueBodyForObjectives(issueNumber: number): string {
+  return execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'body', '--jq', '.body'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+}
+
+/**
+ * The Issue's `## Objectives` list `checkObjectivesCopy`/`checkObjectivesCoverage`
+ * compare the brief's own section against — read live from the forge on a
+ * task branch (`Closes #N`'s Issue), or the body's own section on a
+ * standalone brief with no Issue to compare against (Traps: "the body's own
+ * section when there is no Closes" is the one branch-dependent rule in this
+ * task).
+ *
+ * `null` means the objectives checks do not apply at all, and `main()`
+ * skips wiring `issueObjectives` in that case — never forced onto a body
+ * with nothing to compare:
+ *   - a task branch whose `Closes #N` is missing/malformed (`checkClosesN`,
+ *     wired separately in `checkBriefSections`, already refuses that);
+ *   - a task branch whose linked Issue is below `OBJECTIVES_SINCE_ISSUE` —
+ *     the cutover that keeps the pre-gate stock green flows down to the
+ *     brief that closes it, the same as it does to the Issue itself;
+ *   - a standalone (non-task) brief carrying no `## Objectives` section at
+ *     all — the quick lane never had this obligation before this task, and
+ *     nothing forces it to grow one now.
+ * A body that DOES carry a section (a task branch's linked Issue at/above
+ * the cutover, or a standalone brief that opted in) is held to it: a
+ * malformed section returns `[]`, so `checkObjectivesCopy` re-parses the
+ * brief itself and surfaces the real parse error rather than passing
+ * silently.
+ *
+ * An Issue number that does not resolve (a fixture's placeholder
+ * `Closes #999`, a deleted Issue) returns `null`, logged but non-fatal —
+ * the checks this task's cutover already exempts (an Issue below
+ * `OBJECTIVES_SINCE_ISSUE`, a missing `Closes #N`) are proof the objectives
+ * checks are additive, never a new hard-failure mode for a resource that
+ * was never required before. A DIFFERENT fetch failure — network, `gh`
+ * auth, rate-limit — is not that case: it means the comparison could not
+ * be run, not that it passed, so it exits non-zero rather than silently
+ * skipping (`isIssueNotFoundError`).
+ */
+function resolveIssueObjectives(prBody: string, isTaskBranch: boolean): Objective[] | null {
+  if (!isTaskBranch) {
+    if (!hasObjectivesHeading(prBody)) return null
+    const own = objectivesOf(prBody)
+    return own.ok ? own.objectives : []
+  }
+  const { issue } = extractIssue(prBody)
+  if (issue === null || issue < OBJECTIVES_SINCE_ISSUE) return null
+  try {
+    const parsed = objectivesOf(fetchIssueBodyForObjectives(issue))
+    return parsed.ok ? parsed.objectives : null
+  } catch (err) {
+    if (isIssueNotFoundError(err)) {
+      console.log(
+        `[verify-brief] Issue #${issue} does not resolve (\`gh issue view\`) — skipping the objectives checks for this run.`
+      )
+      return null
+    }
+    console.error(
+      `\n[verify-brief] FAILED — could not fetch Issue #${issue}'s body (\`gh issue view\`) to compare Objectives: ${(err as Error).message}`
+    )
+    process.exit(1)
+  }
+}
+
 /** Exits non-zero on a flag that was passed with no usable value; returns `null` only when truly absent. */
 function requireFlagValue(argv: string[], name: string): string | null {
   const read = readFlag(argv, name)
@@ -191,9 +266,12 @@ export function main(): void {
     process.exit(0)
   }
 
+  const issueObjectives = resolveIssueObjectives(prBody, isTaskBranch)
+
   const { errors } = checkBriefSections(prBody, readTierFromPrBody, {
     requireClosesN: isTaskBranch,
-    consumersOf: buildConsumersOfLocal()
+    consumersOf: buildConsumersOfLocal(),
+    issueObjectives: issueObjectives ?? undefined
   })
 
   if (!isTaskBranch) {

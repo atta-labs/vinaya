@@ -6,6 +6,7 @@ import { fenceShapes } from '../tests/fixtures/fence-shapes'
 import {
   checkBlastRadiusScope,
   checkConflictCompleteness,
+  checkIssueObjectives,
   checkIssueRationale,
   checkIssueType,
   checkNoBriefContent,
@@ -13,8 +14,28 @@ import {
   checkRationaleNamesDocs,
   declaredProjects,
   isTaskIssueLabelSet,
+  OBJECTIVES_SINCE_ISSUE,
   type TaskIssueFacts
 } from './issue-validation'
+
+// Issue #404's real live body, verbatim (`gh issue view 404 --json body`, dev-review-loop-v1
+// task 1 authoring time) — the cutover's own first Issue, already carrying the section by hand.
+const ISSUE_404_BODY = `vinaya-log-v1 1 — log() with the typed header, two families, and the outbox sink
+
+**Tier:** 1
+**Project:** aeg-core, cli, sources
+**Type:** feat
+
+## Objectives
+
+O1. A call to \`log()\` with a valid \`dispatch\` or \`dev_review_loop\` line appends one ndjson line to \`~/.vinaya/outbox/<owner>-<repo>/<issue-or-none>.ndjson\` whose \`meta\` and \`subject\` fields are filled from the environment, the remote, the package and the tree, and an invalid payload is refused by the schema without writing.
+O2. No file other than \`apps/cli/src/lib/log-sink.ts\` performs the append, and no file other than the two named chokepoints calls \`log()\`; a test proves both.
+O3. \`apps/cli/specs/log.md\` exists, describes the header, the two families and the outbox, and is bound in \`.vinaya/doc-owners\` to the sink.
+
+## Planner's rationale
+
+**Boundary** — One function \`log(e: LogEvent)\` and the one place its lines land.
+`
 
 // Bold-inline style, as on Issue #309.
 const BOLD_STYLE = `
@@ -98,6 +119,31 @@ describe('checkIssueRationale', () => {
   it('does not accept a field name mentioned in plain prose (needs bold or heading form)', () => {
     const body = 'The boundary of this task is unclear and the sizing was never done.'
     expect(checkIssueRationale(body).status).toBe('fail')
+  })
+})
+
+describe('checkIssueObjectives', () => {
+  // #403-shaped: below OBJECTIVES_SINCE_ISSUE (404), no `## Objectives` section at all.
+  const PRE_CUTOVER_BODY = BOLD_STYLE
+
+  it('passes a body below the cutover with no `## Objectives` section (#403 shape)', () => {
+    expect(OBJECTIVES_SINCE_ISSUE).toBe(404)
+    expect(checkIssueObjectives(PRE_CUTOVER_BODY, 403).status).toBe('pass')
+  })
+
+  it('refuses a body AT the cutover with no `## Objectives` section, naming the section', () => {
+    const r = checkIssueObjectives(PRE_CUTOVER_BODY, OBJECTIVES_SINCE_ISSUE)
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/## Objectives/)
+  })
+
+  it('passes Issue #404’s real live body', () => {
+    expect(checkIssueObjectives(ISSUE_404_BODY, 404).status).toBe('pass')
+  })
+
+  it('fail-closes on an unknown issue number (not exempted)', () => {
+    const r = checkIssueObjectives(PRE_CUTOVER_BODY, null)
+    expect(r.status).toBe('fail')
   })
 })
 

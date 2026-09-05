@@ -166,6 +166,12 @@ This is not optional politeness to the backlog — a backlog hint that survives 
 
 ---
 
+## Objectives (mandatory, above the rationale)
+
+**Every task Issue you cut MUST carry a `## Objectives` section, above the eight-field rationale.** Numbered `O<n>. <sentence>` lines, contiguous from `O1`, one observable outcome each — never a file path (that's the Brief Author's mapping, not yours). `checkIssueObjectives`/`vinaya issue create`/`vinaya issue edit` (`@attalabs/aeg-core`) refuse a task Issue without one, and `vinaya check coherence`'s R1 grades the same rule continuously against the live stock — both for Issues numbered `OBJECTIVES_SINCE_ISSUE` (404) and above; below that number an Issue passes unconditionally, so the pre-gate stock stays green.
+
+The Brief Author copies this section into the brief byte-for-byte and cites each `O<n>` from at least one numbered Part — see `aeg-root/contracts/planner-brief.md`'s Objectives row.
+
 ## The Planner's rationale (mandatory, one block per task)
 
 **Every task you emit MUST carry a `Planner's rationale` block** — in both the tranche file (under the task) and the forge Issue body. This is the durable record of the conclusions your deep dig produced. It exists because the architectural reasoning that decided a task's boundary, size, dependencies, and agent-class does **not** decay — and throwing it away forces the Brief Author to re-derive it cold, and lets the executing agent walk into traps you already saw.

@@ -33,6 +33,7 @@ import {
   checkDocUpdateList,
   checkForField,
   checkForgeTitle,
+  checkIssueObjectives,
   checkIssueRationale,
   checkMilestoneShape,
   checkNoBriefContent,
@@ -325,6 +326,15 @@ export type ForgeValidationInput = {
    * argument rests on.
    */
   branch?: string
+  /**
+   * The target Issue's number, for the `objectives` builtin's
+   * `OBJECTIVES_SINCE_ISSUE` cutover — `null` for `issue create` (no number
+   * exists until the write completes) and unused by a `pr` write (the
+   * builtin never appears in a `pr` section list). `checkIssueObjectives`
+   * treats `null` as NOT exempted (fail-closed), the same posture
+   * `partitionBriefErrorsByRollout` takes for an unparseable PR number.
+   */
+  issueNumber?: number | null
 }
 
 const CHECK_BRIEF_SCHEMA = 'brief-schema'
@@ -352,6 +362,7 @@ function runBuiltin(name: BriefBuiltin, input: ForgeValidationInput): string[] {
     closesN: () => checkBriefClosesN(body),
     premiseCoverage: () => checkPremiseCoverage(body, changedFiles),
     issueRationale: () => checkIssueRationale(body),
+    objectives: () => checkIssueObjectives(body, input.issueNumber ?? null),
     milestoneShape: () => {
       const result = checkMilestoneShape(body)
       return { errors: result.status === 'fail' ? result.errors : [] }
@@ -382,6 +393,8 @@ const BUILTIN_RECOVERY: Record<BriefBuiltin, string> = {
   premiseCoverage: 'Add a `Premise:` assertion whose path matches a file this change touches, then re-run `{cmd}`.',
   issueRationale:
     'Add the missing Planner-rationale field named above (every task Issue carries all eight fields), then re-run `{cmd}`.',
+  objectives:
+    'Add a `## Objectives` section of numbered `O<n>. <sentence>` lines (one observable outcome each), then re-run `{cmd}`.',
   milestoneShape:
     'Fix the Milestone description as named above — a goal, an optional well-formed `Release:` field, and an optional parseable `### Tranche intents` section — then re-run `{cmd}`.'
 }

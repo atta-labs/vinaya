@@ -16,14 +16,21 @@
  * the repo's own content, so the "diff" scope is otherwise unchanged.
  */
 
+import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import {
   BRIEF_RULES_SINCE_PR,
   buildConsumersOf as buildConsumersOfShared,
   checkBriefSections,
+  extractIssue,
+  hasObjectivesHeading,
   isBriefShaped,
+  isIssueNotFoundError,
   isTaskBranch,
+  type Objective,
+  OBJECTIVES_SINCE_ISSUE,
   type PackageManifest,
+  objectivesOf,
   partitionBriefErrorsByRollout,
   readTierFromPrBody
 } from '@attalabs/aeg-core'
@@ -68,6 +75,59 @@ function buildConsumersOf(): (pkg: string) => string[] {
   return buildConsumersOfShared(workspaces, listDirs, readManifest)
 }
 
+function fetchIssueBody(issueNumber: number): string {
+  return execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'body', '--jq', '.body'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+}
+
+type ObjectivesResolution =
+  | { applies: false }
+  | { applies: true; objectives: Objective[] }
+  | { applies: true; fetchError: string }
+
+/**
+ * Same applicability rule `verify-brief.ts`'s `resolveIssueObjectives`
+ * uses — `applies: false` skips the objectives checks entirely: a task
+ * branch whose `Closes #N` is missing/malformed, an Issue below
+ * `OBJECTIVES_SINCE_ISSUE`, a standalone brief with no `## Objectives`
+ * section at all, or an Issue number that does not resolve (a fixture's
+ * placeholder `Closes #999`, a deleted Issue) — additive exemptions, never
+ * a new hard-failure mode for a resource nothing required before this
+ * task. A DIFFERENT fetch failure (network, `gh` auth, rate-limit) is its
+ * own named finding (`fetchError`) instead: it means the comparison could
+ * not be run, not that it passed, and CI must report that rather than
+ * silently passing on exactly the failure mode most likely in practice.
+ */
+function resolveObjectivesApplicability(prBody: string, taskBranch: boolean): ObjectivesResolution {
+  if (!taskBranch) {
+    if (!hasObjectivesHeading(prBody)) return { applies: false }
+    const own = objectivesOf(prBody)
+    return { applies: true, objectives: own.ok ? own.objectives : [] }
+  }
+  const { issue } = extractIssue(prBody)
+  if (issue === null || issue < OBJECTIVES_SINCE_ISSUE) return { applies: false }
+  try {
+    const parsed = objectivesOf(fetchIssueBody(issue))
+    // A malformed section on an at/above-cutover Issue is `checkIssueObjectives`'s
+    // own failure to diagnose, not this gate's — skip rather than comparing
+    // the brief against an Issue the Issue gate should already have refused.
+    return parsed.ok ? { applies: true, objectives: parsed.objectives } : { applies: false }
+  } catch (err) {
+    if (isIssueNotFoundError(err)) {
+      process.stdout.write(
+        `brief-shape: Issue #${issue} does not resolve (\`gh issue view\`) — skipping the objectives checks for this run.\n`
+      )
+      return { applies: false }
+    }
+    return {
+      applies: true,
+      fetchError: `could not fetch Issue #${issue}'s body (\`gh issue view\`) to compare Objectives: ${(err as Error).message}`
+    }
+  }
+}
+
 function main(): void {
   const prBody = process.env.PR_BODY ?? ''
   if (!prBody) {
@@ -85,9 +145,22 @@ function main(): void {
     process.exit(0)
   }
 
+  const objectivesResolution = resolveObjectivesApplicability(prBody, taskBranch)
+  if (objectivesResolution.applies && 'fetchError' in objectivesResolution) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `brief-validation objectives copy: ${objectivesResolution.fetchError}`,
+      agent_recovery_prompt: 'Check `gh auth status` and network, then re-run `vinaya check brief-shape`.'
+    })
+    process.exit(1)
+  }
+
   const { errors } = checkBriefSections(prBody, readTierFromPrBody, {
     requireClosesN: taskBranch,
-    consumersOf: buildConsumersOf()
+    consumersOf: buildConsumersOf(),
+    issueObjectives: objectivesResolution.applies ? objectivesResolution.objectives : undefined
   })
 
   // Grandfathering (task 10 round-2 ruling addendum 1) — a PR opened before

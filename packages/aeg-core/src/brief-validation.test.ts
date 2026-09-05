@@ -13,6 +13,8 @@ import {
   checkForgeTitle,
   checkNoAgentBoxes,
   checkNoUnpinnedCodeClaims,
+  checkObjectivesCopy,
+  checkObjectivesCoverage,
   checkPlanPrNoCloses,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
@@ -28,6 +30,7 @@ import {
   isBriefShaped,
   partitionBriefErrorsByRollout
 } from './brief-validation'
+import { type Objective, objectivesOf } from './objectives'
 import { EOLS, FENCE_DELIMS, fenceShapes } from '../tests/fixtures/fence-shapes'
 import { readTierFromPrBody } from './pr-tier'
 
@@ -985,5 +988,78 @@ describe('checkNoAgentBoxes', () => {
 
   it('passes the unit-tests-only sentinel', () => {
     expect(checkNoAgentBoxes('Test Plan: unit-tests-only').status).toBe('pass')
+  })
+})
+
+// Issue #411's real live `## Objectives` section, verbatim (`gh issue view 411`,
+// dev-review-loop-v1 task 1 authoring time) — the same Issue this brief itself
+// closes, so these tests prove the gates accept the brief that dispatched them.
+const ISSUE_411_OBJECTIVES = `## Objectives
+
+O1. A task Issue carries a \`## Objectives\` section of numbered \`O<n>.\` lines, one observable sentence each; \`vinaya issue create\` and \`vinaya issue edit\` refuse a task Issue without it, for Issues numbered from this tranche's first Issue onward; \`checkIssueRationale\` and \`vinaya check coherence\` grade the same rule.
+O2. \`objectivesOf(body)\` in \`@attalabs/aeg-core\` parses the list and \`objectivesVersion(list)\` returns a stable hash of its text; both are the only readers every later consumer uses.
+O3. A brief carries the Issue's \`## Objectives\` byte-for-byte; every numbered Part cites at least one \`O<n>\` and every \`O<n>\` is cited by at least one Part; \`verify-brief\` and \`brief-shape\` refuse otherwise, and \`vinaya brief render\` emits the section from the Issue.
+O4. \`aeg-root/roles/planner.md\`, \`aeg-root/roles/brief-author.md\`, \`aeg-root/templates/issue-rationale-template.md\` and \`aeg-root/templates/brief-template.md\` state the rule in the same words the gates enforce.
+`
+
+/** A minimal §6 shape matching this task's own dispatched brief: Parts 1-4 each cite one objective, Part 5 (an administrative changeset/push step) cites none. */
+const SECTION_6 = `## 6. Numbered parts — commit after EACH part; push once, before opening the PR
+
+Part 1 (O2) — the parser.
+Part 2 (O1) — the Issue gate.
+Part 3 (O3) — the brief side.
+Part 4 (O4) — doctrine.
+Part 5 — changeset. Then the one push.
+`
+
+const SELF_CONSISTENT_BRIEF = `${ISSUE_411_OBJECTIVES}\n${SECTION_6}`
+
+/** `objectivesOf` for a body known (by test construction) to be well-formed — throws loudly otherwise, never silently degrading a test fixture into an empty list. */
+function objectivesOfOrThrow(body: string): Objective[] {
+  const result = objectivesOf(body)
+  if (!result.ok) throw new Error(`test fixture's own \`## Objectives\` failed to parse: ${result.errors.join('; ')}`)
+  return result.objectives
+}
+
+describe('checkObjectivesCopy', () => {
+  it("passes this brief's own body against Issue #411", () => {
+    const objectives = objectivesOfOrThrow(ISSUE_411_OBJECTIVES)
+    expect(checkObjectivesCopy(SELF_CONSISTENT_BRIEF, objectives).status).toBe('pass')
+  })
+
+  it('is insensitive to trailing whitespace (normalised-line comparison)', () => {
+    const objectives = objectivesOfOrThrow(ISSUE_411_OBJECTIVES)
+    const reflowed = SELF_CONSISTENT_BRIEF.replace('O1.', 'O1.  ').replace(/\n$/, '   \n')
+    expect(checkObjectivesCopy(reflowed, objectives).status).toBe('pass')
+  })
+
+  it('is refused when one objective line is removed', () => {
+    const objectives = objectivesOfOrThrow(ISSUE_411_OBJECTIVES)
+    const withoutO4 = SELF_CONSISTENT_BRIEF.replace(/O4\.[^\n]*\n/, '')
+    const result = checkObjectivesCopy(withoutO4, objectives)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toMatch(/objectives copy/)
+  })
+})
+
+describe('checkObjectivesCoverage', () => {
+  it("passes this brief's own §6 — Part 5 (administrative, no citation) does not break coverage", () => {
+    expect(checkObjectivesCoverage(SELF_CONSISTENT_BRIEF).status).toBe('pass')
+  })
+
+  it('is refused when Part 3 is stripped of its (O3) citation — O3 becomes uncited', () => {
+    const stripped = SELF_CONSISTENT_BRIEF.replace('Part 3 (O3) — the brief side.', 'Part 3 — the brief side.')
+    const result = checkObjectivesCoverage(stripped)
+    expect(result.status).toBe('fail')
+    expect(result.errors.join(' ')).toMatch(/O3 is not cited/)
+  })
+
+  it('is refused when a Part cites an objective past the end of the list', () => {
+    const overCited = SELF_CONSISTENT_BRIEF.replace('Part 4 (O4)', 'Part 4 (O9)')
+    const result = checkObjectivesCoverage(overCited)
+    expect(result.status).toBe('fail')
+    expect(result.errors.join(' ')).toMatch(/cites O9, but the Objectives section ends at O4/)
+    // O4 itself is now uncited too — both halves of coverage fire independently.
+    expect(result.errors.join(' ')).toMatch(/O4 is not cited/)
   })
 })
