@@ -325,6 +325,11 @@ export const COMMANDS: readonly Command[] = [
         description:
           'One finding per line: `SEVERITY|file:line|description` (`|`-delimited). A re-review names a prior id in the description as `F<n> <class> <state>:`. Omit for zero findings.'
       },
+      {
+        flag: '--objectives-file',
+        description:
+          "One line per objective: `O<n>|MET|<evidence>` or `O<n>|NOT MET|<evidence>` (`|`-delimited; evidence is the rest of the line). Required whenever the closed Issue (or the PR body's own `## Objectives`) has an objectives list to judge; its ids must cover that list exactly, and a re-review must restate every prior objective. Never together with `--escalate`."
+      },
       { flag: '--brief-conformance', description: 'code-reviewer only: the BRIEF CONFORMANCE line' },
       { flag: '--spec-conformance', description: 'code-reviewer only: the SPEC CONFORMANCE line' },
       { flag: '--scope', description: 'code-reviewer only: the SCOPE line' },
@@ -356,8 +361,9 @@ export const COMMANDS: readonly Command[] = [
       '`--print-only` runs the exact same render-then-self-check path as a real post, then returns before `gh pr comment` — closes atta-labs/vinaya#184, where the old command silently posted a verdict anyway after a reviewer guessed this flag existed.',
       "Every structural line (`VERDICT:`, `Judged head:`) is rendered from this command's own validated enum/sha inputs — never from a caller-supplied string — so a Reviewer's free-typed prose can no longer produce a shape the merge gate's line-anchored regex fails to see.",
       "The verdict is derived, not typed: a BLOCKER (or CRITICAL/HIGH) finding forces REQUEST_CHANGES/FAIL and its absence forces APPROVE/PASS, before posting anything — an explicit `--verdict` that disagrees is refused naming the derived value. When a same-role verdict comment already exists on the PR, a new findings file must carry every prior id with a state and no non-blocking finding outside the diff since that comment's judged head, or the post is refused.",
-      "Before the post ever reaches the forge, runs the exact `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` functions `checkReviewGate` calls over its own rendered text and refuses (exit 2) unless exactly the intended verdict extracts and the other role extracts none — an escalation requires both to extract none. Both extractors read only a comment's first three lines, which are always this command's own structural lines, so no caller-supplied field can smuggle a line the gate would misread.",
-      "After posting, re-fetches the PR's comments and runs them through the same extractors `checkReviewGate` calls — the same functions, not a second implementation — and exits non-zero naming precisely what failed to re-parse if the post does not come back clean, bound to the resolved head, and free of the other role's verdict. There is no `--skip-verify` escape."
+      "Renders an `OBJECTIVES:` block (one `O<n>: MET | NOT MET — <evidence>` line per objective) after `SPEC CONFORMANCE:`/before `CONFIG SCAN:`, and an `Objectives version:` line at line 5 — resolved from the closed Issue's `## Objectives` list, or the PR body's own section when it closes none. A clean verdict (`APPROVE`/`PASS`) is refused alongside any `NOT MET`; an Issue below the objectives cutover renders neither line at all, matching the merge gate's own skip.",
+      "Before the post ever reaches the forge, runs the exact `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` functions `checkReviewGate` calls over its own rendered text and refuses (exit 2) unless exactly the intended verdict extracts and the other role extracts none — an escalation requires both to extract none. Both extractors read only a comment's first five lines, which are always this command's own structural lines, so no caller-supplied field can smuggle a line the gate would misread.",
+      "After posting, re-fetches the PR's comments and runs them through the same extractors `checkReviewGate` calls — the same functions, not a second implementation — and exits non-zero naming precisely what failed to re-parse if the post does not come back clean, bound to the resolved head and objectives version, and free of the other role's verdict. There is no `--skip-verify` escape."
     ],
     status: 'shipped'
   },

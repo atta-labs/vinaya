@@ -87,31 +87,39 @@ When the PR touches agent/skill/hook definitions, MCP configs, or anything under
 
 ## Output format
 
-**Run `vinaya review post --role security` with this data; do not hand-type a verdict comment.** The `VERDICT:` line is bare — no bold, no heading, no blockquote — it is machine-read by the pre-merge review gate. So is the `Judged head:` line immediately below it: the gate binds your verdict to the exact commit you reviewed, and a verdict that does not cover the PR's current head does not count as clean, however clean its `VERDICT:` value is (`review-gate.ts`). A verdict also holds for a later head whose patch identity equals the judged head's: the gate compares `git diff <base>...<sha> | git patch-id --stable` on both sides, so a merge from the main branch or a rebase that leaves the PR's own patch untouched keeps your verdict alive rather than costing a round to re-cast it over changes you already read. That comparison ignores whitespace, so a whitespace-only push also keeps your verdict; any change to non-whitespace content does not, and comes back to you. Free-typing this shape into `gh pr comment` is no longer the sanctioned path — a decorated heading or a bolded/blockquoted line the gate's line-anchored parser cannot see reaches the forge looking correct to a human reader and is invisible to `verify-review-gate.ts`, with no pointer back to what was wrong until CI goes red. `vinaya review post` resolves the PR's real head itself (`gh pr view --json headRefOid` — never a self-reported sha), renders every structural line from your validated inputs, posts the comment, and refuses to exit 0 unless its own post re-parses clean through the exact same `extractSecurityReviewVerdict` function the gate calls:
+**Run `vinaya review post --role security` with this data; do not hand-type a verdict comment.** The `VERDICT:` line is bare — no bold, no heading, no blockquote — it is machine-read by the pre-merge review gate. So is the `Judged head:` line immediately below it: the gate binds your verdict to the exact commit you reviewed, and a verdict that does not cover the PR's current head does not count as clean, however clean its `VERDICT:` value is (`review-gate.ts`). A third head line, `Objectives version:`, binds your verdict the same way to the objectives list you judged it against — a hash the command computes from the Issue's (or the PR body's) `## Objectives` list; if the Issue's objectives change after you cast a verdict, the gate treats it exactly like a stale head. A verdict also holds for a later head whose patch identity equals the judged head's: the gate compares `git diff <base>...<sha> | git patch-id --stable` on both sides, so a merge from the main branch or a rebase that leaves the PR's own patch untouched keeps your verdict alive rather than costing a round to re-cast it over changes you already read. That comparison ignores whitespace, so a whitespace-only push also keeps your verdict; any change to non-whitespace content does not, and comes back to you. Free-typing this shape into `gh pr comment` is no longer the sanctioned path — a decorated heading or a bolded/blockquoted line the gate's line-anchored parser cannot see reaches the forge looking correct to a human reader and is invisible to `verify-review-gate.ts`, with no pointer back to what was wrong until CI goes red. `vinaya review post` resolves the PR's real head itself (`gh pr view --json headRefOid` — never a self-reported sha), renders every structural line from your validated inputs, posts the comment, and refuses to exit 0 unless its own post re-parses clean through the exact same `extractSecurityReviewVerdict` function the gate calls:
 
 ```
 vinaya review post --role security --pr <n> --verdict PASS|FAIL \
-  --findings-file <path> --config-scan <text> \
+  --findings-file <path> --objectives-file <path> --config-scan <text> \
   --secrets <text> --secrets-evidence-file <path> \
   --task-id <task-id> --model <model> --tokens-in <n|-> --tokens-out <n|-> --cost <text|->
 ```
 
-The findings file is one finding per line, `SEVERITY|file:line|description` (`|`-delimited: `file:line` already contains a colon), severity one of `CRITICAL|HIGH|MEDIUM|LOW`. Omit `--findings-file` for zero findings. The command renders this exact shape (kept here so a human or a debugging agent can still read what it produces — this is documentation, not something to write by hand):
+The findings file is one finding per line, `SEVERITY|file:line|description` (`|`-delimited: `file:line` already contains a colon), severity one of `CRITICAL|HIGH|MEDIUM|LOW`. Omit `--findings-file` for zero findings.
+
+The objectives file is one line per objective, `O<n>|MET|<evidence>` or `O<n>|NOT MET|<evidence>` — the same `|`-delimited shape, evidence being the rest of the line. **Judge MET/NOT MET from the diff, never from the Developer's own report.** `--objectives-file` is required whenever the closed Issue (or the PR body's own `## Objectives` section) has a list to judge; its ids must cover that list exactly. An Issue that predates the objectives cutover renders no `Objectives version:` line and no block at all. The command renders this exact shape (kept here so a human or a debugging agent can still read what it produces — this is documentation, not something to write by hand):
 
 ```
 VERDICT: PASS | FAIL
 
 Judged head: <sha>
 
+Objectives version: <hash>
+
 FINDINGS (ordered by severity):
 1. [CRITICAL|HIGH|MEDIUM|LOW] <file:line> — <what and why>
 2. ...
+
+OBJECTIVES:
+O1: MET | NOT MET — <evidence>
+O2: ...
 
 CONFIG SCAN: [not applicable | clean | findings folded in above]
 SECRETS: [none found | listed above, redacted]
 ```
 
-Before its own post reaches the forge, `vinaya review post` refuses to post anything the gate would misread: it runs the exact same `VERDICT:`/`Judged head:` extraction the merge gate uses over the rendered comment, and requires exactly the intended verdict to come back. Free text in a finding, `--config-scan`, or `--secrets` can say `VERDICT` or span multiple lines without risk — the extraction reads only a comment's first three lines, which are always this command's own structural lines, never a caller field.
+Before its own post reaches the forge, `vinaya review post` refuses to post anything the gate would misread: it runs the exact same `VERDICT:`/`Judged head:`/`Objectives version:` extraction the merge gate uses over the rendered comment, and requires exactly the intended verdict to come back — and refuses outright if you pass a `--verdict PASS` together with any `NOT MET` objective, the same contradiction check `--verdict APPROVE` gets. Free text in a finding, `--config-scan`, `--secrets`, or an objective's evidence can say `VERDICT` or span multiple lines without risk — the extraction reads only a comment's first five lines, which are always this command's own structural lines, never a caller field.
 
 - **CRITICAL** — leaked live credential, auth bypass, key sent to client. Any CRITICAL → FAIL.
 - **HIGH** — likely exploitable misconfig or injection surface.
@@ -119,7 +127,7 @@ Before its own post reaches the forge, `vinaya review post` refuses to post anyt
 
 Any CRITICAL or HIGH → VERDICT FAIL. Only MEDIUM/LOW → PASS with notes. You do not type that decision by hand: `vinaya review post` derives it from the findings file you pass it — FAIL iff a CRITICAL or HIGH is present, PASS otherwise — and refuses before posting anything if `--verdict` disagrees with the derivation, naming the derived value.
 
-A re-pass after the Developer's fixes follows the same re-review rule as the code role: report the state of every prior id (`open`, `fix-claimed`, `reproduced`, `resolved`) in the finding's own description, `F<n> <class> <state>: <text>`, before listing anything new — `vinaya review post` refuses a findings file that drops a prior id with no state token. Round two is delta-only for MEDIUM and LOW: a MEDIUM/LOW finding whose `file:line` falls outside the diff since the previously judged head is refused. A CRITICAL or HIGH outside the delta still drives the verdict on any round and is always accepted. A prior CRITICAL/HIGH you mark `resolved` keeps its severity in the record but no longer drives the verdict — `vinaya review post` derives the verdict only from findings not marked `resolved`; mark `fix-claimed` or `reproduced` instead if it is not actually fixed.
+A re-pass after the Developer's fixes follows the same re-review rule as the code role: report the state of every prior id (`open`, `fix-claimed`, `reproduced`, `resolved`) in the finding's own description, `F<n> <class> <state>: <text>`, before listing anything new — `vinaya review post` refuses a findings file that drops a prior id with no state token. Every prior objective reappears too — a re-pass's `--objectives-file` that drops a prior `O<n>` is refused before posting, the id read from the prior comment's own `OBJECTIVES:` block. Round two is delta-only for MEDIUM and LOW: a MEDIUM/LOW finding whose `file:line` falls outside the diff since the previously judged head is refused. A CRITICAL or HIGH outside the delta still drives the verdict on any round and is always accepted. A prior CRITICAL/HIGH you mark `resolved` keeps its severity in the record but no longer drives the verdict — `vinaya review post` derives the verdict only from findings not marked `resolved`; mark `fix-claimed` or `reproduced` instead if it is not actually fixed.
 
 The `SECRETS:` line is evidence-backed, not asserted: the secret scanner's pasted output (check 1) must appear in the verdict comment above it — necessary evidence that the scan ran, never sufficient on its own, since the judgment half of check 1 still stands behind the claim. `SECRETS: none found` with no scan output pasted is an unbacked self-attestation — the exact claim this check exists to catch in others' work, not to commit in your own. `vinaya review post` mechanizes this: passing `--secrets "none found"` without `--secrets-evidence-file <path>` (the actual pasted scanner output) is refused outright.
 
@@ -137,7 +145,7 @@ Do not design the fix yourself; route it to the Planner or Principal.
 
 Phase 10 (Review) in `process.md`: code-reviewer pass → **security pass (you)** → Principal code review → Brief Author spec review → merge.
 
-**Your verdict is also a mechanical merge gate (the review-gate tranche, task 1).** A required, blocking CI check (the `review-gate` check — `vinaya check review-gate`, wired into every adopter's generated CI) reads every PR comment from a **principal-allowlisted author** (verdict-author verification, 2026-08-09 — bot and unknown-author comments are ignored) for a clean `PASS` verdict that also covers the PR's current head commit (reviewed-commit binding) — `FAIL`, a missing verdict, an unclear one, or one bound to a superseded commit all fail the check and block merge, same as the code-reviewer pass. This is not advisory: it is the same enforcement class as typecheck or lint. A principal can waive it for one PR with an actor-verified `vinaya/waiver:review` label (`aeg-root/enforcement.md`) — label presence alone is never sufficient.
+**Your verdict is also a mechanical merge gate (the review-gate tranche, task 1).** A required, blocking CI check (the `review-gate` check — `vinaya check review-gate`, wired into every adopter's generated CI) reads every PR comment from a **principal-allowlisted author** (verdict-author verification, 2026-08-09 — bot and unknown-author comments are ignored) for a clean `PASS` verdict that also covers the PR's current head commit (reviewed-commit binding) and the current objectives list (objectives-version binding) — `FAIL`, a missing verdict, an unclear one, or one bound to a superseded commit or a superseded objectives list all fail the check and block merge, same as the code-reviewer pass. This is not advisory: it is the same enforcement class as typecheck or lint. A principal can waive it for one PR with an actor-verified `vinaya/waiver:review` label (`aeg-root/enforcement.md`) — label presence alone is never sufficient.
 
 ## Turn-end: report your tokens in the verdict comment
 
