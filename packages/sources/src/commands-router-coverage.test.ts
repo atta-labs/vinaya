@@ -16,10 +16,13 @@ const INDEX_SOURCE = readFileSync(INDEX_PATH, 'utf-8')
  * Every command name the router actually reaches: `help` (special-cased
  * pre-switch, see index.ts's own comment), each single-word `case` label,
  * and `"<label> <sub>"` for each `subcommand === '<sub>'` check inside that
- * case's block. A case WITH subcommand branches (`init`, e.g.) still also
- * dispatches its bare label when the `else` branch is a real command call
- * rather than an "Unknown subcommand" refusal (`new`/`pr`/`issue`/`demo`,
- * which have no bare form) — detected by the absence of that refusal's
+ * case's block — `<sub>` itself may be multiple words (`issue objectives
+ * edit`, task 3, #413, joins its second argv token into one literal,
+ * `'objectives edit'`, rather than nesting a second dispatch level). A case
+ * WITH subcommand branches (`init`, e.g.) still also dispatches its bare
+ * label when the `else` branch is a real command call rather than an
+ * "Unknown subcommand" refusal (`new`/`pr`/`issue`/`demo`, which have no
+ * bare form) — detected by the absence of that refusal's
  * `console.error('Unknown ...')` text in the block.
  */
 function routedCommandNames(source: string): string[] {
@@ -28,7 +31,7 @@ function routedCommandNames(source: string): string[] {
   for (const match of source.matchAll(caseRegex)) {
     const label = match[1] as string
     const block = match[2] as string
-    const subcommands = [...block.matchAll(/subcommand === '([a-z-]+)'/g)].map((m) => m[1] as string)
+    const subcommands = [...block.matchAll(/subcommand === '([a-z][a-z -]*)'/g)].map((m) => m[1] as string)
     // `\s*` matters: biome wraps a long `Unknown '<x>' subcommand` message onto
     // its own line, which silently defeated an adjacency-only regex and made the
     // parser report a bare `pr` form that has no registry row.
@@ -75,6 +78,7 @@ describe('router -> COMMANDS coverage', () => {
         'pr verify-evidence',
         'issue create',
         'issue edit',
+        'issue objectives edit',
         'milestone create',
         'milestone adopt',
         'milestone edit',

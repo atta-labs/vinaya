@@ -231,6 +231,26 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'issue objectives edit',
+    description: "Rewrite a task Issue's `## Objectives` section by command — versioned, findable on the forge",
+    flags: [
+      { flag: '--add', description: 'Append a new objective as `O<max+1>` with the given sentence' },
+      { flag: '--drop', description: 'Remove an objective by id (`O<k>`) — never renumbers the survivors' },
+      {
+        flag: '--replace',
+        description: 'Replace an objective\'s sentence in place, keeping its id (`O<k>` "<sentence>")'
+      },
+      { flag: '--reason', description: 'Required, non-empty: why this change is being made' },
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
+    ],
+    details: [
+      'Exactly one of `--add`/`--drop`/`--replace` is required. Every edit goes through the same validated `issue edit` write path (`writeValidatedIssueEdit`) as `vinaya issue edit` itself — no second, unvalidated write path.',
+      "A `--drop` that leaves the surviving objectives non-contiguous from `O1` is refused with `objectivesOf`'s own parser message: dropping never renumbers survivors, and task 1's contiguous-from-O1 grammar is the one parser everything else reads, so a live contradiction between the two stops here for a Principal ruling rather than silently renumbering.",
+      'Splices the rendered section back in place (`## Objectives` heading through the next `##` heading, or end of body) — every other byte of the Issue body is untouched. Posts one comment marked `<!-- aeg:objectives:v<k> -->` carrying the previous list, the new list, the reason, and the new `objectivesVersion`; `k` is counted on the forge at post time, never derived from a local file.'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'milestone create',
     description: 'Create a GitHub Milestone from a validated body',
     flags: [

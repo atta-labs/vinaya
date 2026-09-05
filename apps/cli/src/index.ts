@@ -14,6 +14,7 @@ import { doctrineCommand } from './commands/doctrine.js'
 import { ejectCommand } from './commands/eject.js'
 import { initCommand, initProductCommand } from './commands/init.js'
 import { issueCreateCommand, issueEditCommand } from './commands/issue.js'
+import { issueObjectivesEditCommand } from './commands/issue-objectives.js'
 import {
   milestoneAdoptCommand,
   milestoneCloseCommand,
@@ -156,13 +157,24 @@ try {
       break
     }
     case 'issue': {
-      const [subcommand, ...rest] = args
+      const [rawSubcommand, ...rest] = args
+      // `objectives edit` is one two-word subcommand, not a nested dispatch
+      // level: the router folds the second argv token into one literal so
+      // `issue objectives edit` reads as a single `subcommand === '<value>'`
+      // branch, the same shape every other multi-word command already uses
+      // (`new noop-check`, `pr verify-evidence`) — never a second switch.
+      const subcommand = rawSubcommand === 'objectives' && rest[0] === 'edit' ? 'objectives edit' : rawSubcommand
+      const passthrough = subcommand === 'objectives edit' ? rest.slice(1) : rest
       if (subcommand === 'create') {
-        issueCreateCommand(rest)
+        issueCreateCommand(passthrough)
       } else if (subcommand === 'edit') {
-        issueEditCommand(rest)
+        issueEditCommand(passthrough)
+      } else if (subcommand === 'objectives edit') {
+        issueObjectivesEditCommand(passthrough)
       } else {
-        console.error(`Unknown 'issue' subcommand: ${subcommand ?? '(none)'} (expected 'create' or 'edit')`)
+        console.error(
+          `Unknown 'issue' subcommand: ${rawSubcommand ?? '(none)'} (expected 'create', 'edit', or 'objectives edit')`
+        )
         process.exit(2)
       }
       break
