@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { parseIssueNumberFromRef } from '../../src/commands/issue'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -223,5 +224,23 @@ describe('vinaya issue create --validate-only — content gate', () => {
     )
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
+  })
+})
+
+describe('parseIssueNumberFromRef', () => {
+  it('parses a bare number', () => {
+    expect(parseIssueNumberFromRef('411')).toBe(411)
+  })
+
+  it('parses the trailing number off a full Issue URL', () => {
+    expect(parseIssueNumberFromRef('https://github.com/atta-labs/vinaya/issues/411')).toBe(411)
+  })
+
+  it('parses the trailing number off a URL with a trailing slash trimmed', () => {
+    expect(parseIssueNumberFromRef('  411  ')).toBe(411)
+  })
+
+  it('returns null for a ref with no digits at all', () => {
+    expect(parseIssueNumberFromRef('not-a-ref')).toBeNull()
   })
 })

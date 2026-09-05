@@ -168,6 +168,24 @@ export function issueCreateCommand(args: string[]): void {
   runGhWrite(['issue', 'create'], resolveMilestoneAttachArgs(ghArgs, labels), bodyResult, json)
 }
 
+/**
+ * The Issue number `issue edit`'s target ref names, for `checkIssueObjectives`'s
+ * `OBJECTIVES_SINCE_ISSUE` cutover. `edit` targets a REAL, already-existing
+ * Issue, so unlike `create`'s genuinely-unknown-until-write number, `null`
+ * here means only "this ref's shape carried no digits" — the Issue itself
+ * has a number regardless of how the caller spelled the ref. Parses the
+ * TRAILING digits so both a bare `123` and a URL (`.../issues/123`) resolve
+ * to the real number; only a ref with no digits at all (should never
+ * happen in practice — `fetchForgeLabels` already resolved this same ref
+ * against the forge before this is called) falls through to `null`, and
+ * even then `checkIssueObjectives` treats that fail-closed, never as
+ * license to skip.
+ */
+export function parseIssueNumberFromRef(ref: string): number | null {
+  const m = /(\d+)\s*$/.exec(ref.trim())
+  return m ? Number.parseInt(m[1] as string, 10) : null
+}
+
 export function issueEditCommand(args: string[]): void {
   const json = args.includes('--json')
   const validateOnly = args.includes('--validate-only')
@@ -194,11 +212,7 @@ export function issueEditCommand(args: string[]): void {
   const labels = [...new Set([...fetchForgeLabels(issueRef), ...extractLabels(ghArgs)])]
 
   if (isTaskIssueLabelSet(labels)) {
-    // A bare number parses directly; a URL (`.../issues/123`) or anything
-    // else that doesn't parse is `null` — fail-closed, same as `create`'s
-    // not-yet-known number, never guessed as "old enough to skip".
-    const parsedIssueNumber = /^\d+$/.test(issueRef) ? Number.parseInt(issueRef, 10) : null
-    validateTaskIssue(body, title, labels, RETRY_EDIT, parsedIssueNumber)
+    validateTaskIssue(body, title, labels, RETRY_EDIT, parseIssueNumberFromRef(issueRef))
   }
 
   if (validateOnly) {
