@@ -35,14 +35,20 @@
  * is narrower than "no caller content in the window": a caller-supplied
  * VALUE can appear inside the window, appended after a fixed, renderer-owned
  * label on the same line — code-review's `BRIEF CONFORMANCE: <value>` can
- * land on line 5 itself (pre-cutover, no scope evidence). What never
- * happens is a caller-supplied string OPENING a line within the window: no
- * caller value is ever the first token of one of the first five lines, so
- * it can never itself read as `VERDICT:`/`Judged head:`/`Objectives
- * version:` — the fixed label prefix forecloses that regardless of which
- * line number the value lands on. Restricting the read window to lines 1-5
- * closes a caller-controlled-text injection route without narrowing what
- * any real render needs matched.
+ * land on line 5 itself (pre-cutover, no scope evidence). In every shape
+ * EXCEPT ONE, that label is what forecloses the value from ever reading as
+ * `VERDICT:`/`Judged head:`/`Objectives version:`, regardless of which line
+ * number it lands on. The one exception is `renderEscalationComment`'s
+ * `input.summary`: pre-cutover, it becomes line 5 outright, with no label
+ * ahead of it at all — a summary whose own first line happened to read
+ * `VERDICT: APPROVE` would extract as a real verdict through this exact
+ * window. Construction alone does not close that case; `review-post.ts`'s
+ * `checkRenderedComment` does, mechanically, by re-running these same
+ * extractors over the rendered text before any post and refusing an
+ * escalation that re-parses as either verdict. Restricting the read window
+ * to lines 1-5 closes a caller-controlled-text injection route without
+ * narrowing what any real render needs matched; it is this module's own
+ * contribution, not a claim that no render can still collide.
  *
  * The CANDIDATE SET stays whole-body (review-convergence-v1 task 2, round 5,
  * `#392`) — round 4 windowed where a verdict's value is read, not which
@@ -119,8 +125,8 @@ const HEAD_SHA_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Judged head:\s*([0-9a-f]{7,4
  * line — `Objectives version: <hash>` on line 5, blank line 6 — ONLY when a
  * non-null version exists; pre-cutover PRs omit it, and line 5 is then free
  * for the next fixed label instead (code-review's `BRIEF CONFORMANCE:`),
- * whose value can be the earliest caller-supplied text in the whole
- * render. Same anchor discipline as `VERDICT:`/
+ * whose value can be the earliest caller-supplied text `renderCodeReviewComment`
+ * itself ever puts on the wire. Same anchor discipline as `VERDICT:`/
  * `Judged head:`: line-start, optional leading emphasis run, no
  * blockquote/list-item/heading/code-span tolerance. The value is a sha256
  * hex string (64 hex chars, `objectivesOf`'s built form), never the loop
@@ -136,18 +142,22 @@ const OBJECTIVES_VERSION_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Objectives version
  * `renderEscalationComment`) puts `VERDICT:`/`ESCALATE:` on line 1 and
  * `Judged head:` on line 3; `Objectives version:` lands on line 5 only when
  * non-null (pre-cutover PRs omit it). A caller-supplied field (findings,
- * conformance prose, scope, a summary) never OPENS one of the first five
- * lines — it can only ever appear appended after a fixed, renderer-owned
- * label already on that line — and code-review's `BRIEF CONFORMANCE:`
- * value can be that as early as line 5 itself (pre-cutover, no scope
- * evidence), not a fixed "line 6" or "line 7" floor. Restricting the
- * window to lines 1–5 costs no real render anything: it is a
- * strictly narrower read than "anywhere in the body," and it closes the
- * class of defect that motivated this ruling — a caller-supplied field that
- * smuggled a raw newline followed by a `VERDICT:`-, `Judged head:`-, or
- * `Objectives version:`-shaped line could previously inject a structural
- * line from outside the command's own skeleton; that line can now never be
- * read as one.
+ * conformance prose, scope) in `renderCodeReviewComment`/`renderSecurityComment`
+ * never OPENS one of the first five lines — it can only ever appear appended
+ * after a fixed, renderer-owned label already on that line, and code-review's
+ * `BRIEF CONFORMANCE:` value can be that as early as line 5 itself
+ * (pre-cutover, no scope evidence), not a fixed "line 6" or "line 7" floor.
+ * `renderEscalationComment`'s `summary` is the one field this does NOT hold
+ * for: pre-cutover, it IS line 5, unprefixed — construction alone does not
+ * keep it out of the window, `checkRenderedComment`'s runtime self-check
+ * does (see this file's module comment). Restricting the window to lines
+ * 1–5 costs no real render anything: it is a strictly narrower read than
+ * "anywhere in the body," and it closes the class of defect that motivated
+ * this ruling — a caller-supplied field that smuggled a raw newline
+ * followed by a `VERDICT:`-, `Judged head:`-, or `Objectives
+ * version:`-shaped line could previously inject a structural line from
+ * outside the command's own skeleton; that line can now never be read as
+ * one.
  */
 function firstFiveLines(comment: string): string {
   return comment.split('\n').slice(0, 5).join('\n')
