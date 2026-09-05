@@ -333,3 +333,26 @@ export {
   renderObjectives
 } from './objectives'
 export type { Objective, ParsedObjectives } from './objectives'
+export {
+  buildHeader,
+  DispatchEventSchema,
+  DevReviewLoopEventSchema,
+  HeaderSchema,
+  HostSchema,
+  HOST_VALUES,
+  LogEventSchema,
+  redact,
+  RoleSchema,
+  ROLE_VALUES
+} from './log'
+export type {
+  DispatchEvent,
+  DispatchOutcome,
+  DevReviewLoopEvent,
+  Header,
+  HeaderInput,
+  Host,
+  LogEvent,
+  Role,
+  Subject
+} from './log'
