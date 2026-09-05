@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -173,7 +174,17 @@ function makeDeps(
  * cross-file race — concurrent invocation of the identical CLI entry point
  * — without changing either test's own behavior.
  */
-const SERIAL_LOCK_DIR = join(tmpdir(), 'vinaya-demo-break-serial.lock')
+// Scoped to THIS checkout: the lock exists to serialize the two test files of
+// one run, not every checkout/worktree/session on the machine. A fixed path
+// coupled every concurrent suite on a shared box (waiters died at the 30s test
+// timeout, reading as "load"). Keyed on INDEX_TS, which both files share.
+const SERIAL_LOCK_DIR = join(
+  tmpdir(),
+  `vinaya-demo-break-serial-${createHash('sha1').update(INDEX_TS).digest('hex').slice(0, 12)}.lock`
+)
+// A holder killed mid-test (SIGKILL, runner timeout) never reaches `finally`;
+// treat a lock older than this as abandoned rather than waiting forever.
+const STALE_LOCK_MS = 5 * 60_000
 
 async function withSerialLock<T>(fn: () => Promise<T>): Promise<T> {
   const deadline = Date.now() + 60_000
@@ -183,6 +194,14 @@ async function withSerialLock<T>(fn: () => Promise<T>): Promise<T> {
       break
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+      try {
+        if (Date.now() - statSync(SERIAL_LOCK_DIR).mtimeMs > STALE_LOCK_MS) {
+          rmSync(SERIAL_LOCK_DIR, { recursive: true, force: true })
+          continue
+        }
+      } catch {
+        continue // vanished between mkdir and stat — retry immediately
+      }
       if (Date.now() > deadline) throw new Error('timed out waiting for the demo-break serial lock')
       await new Promise((r) => setTimeout(r, 50))
     }
