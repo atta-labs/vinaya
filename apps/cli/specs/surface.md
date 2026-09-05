@@ -146,6 +146,16 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `isTaskIssueLabelSet` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `classifyLeftover` | function | `packages/aeg-core/src/leftover-detection.ts` |
 | `checkLocalAnchorCoverage` | function | `packages/aeg-core/src/local-anchor-coverage.ts` |
+| `buildHeader` | function | `packages/aeg-core/src/log/envelope.ts` |
+| `redact` | function | `packages/aeg-core/src/log/redact.ts` |
+| `ROLE_VALUES` | const | `packages/aeg-core/src/log/schema.ts` |
+| `RoleSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `HOST_VALUES` | const | `packages/aeg-core/src/log/schema.ts` |
+| `HostSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `HeaderSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `DispatchEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `DevReviewLoopEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `LogEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `checkMainBranchRefusal` | function | `packages/aeg-core/src/main-branch-refusal.ts` |
 | `checkManifestValidity` | function | `packages/aeg-core/src/manifest-validity.ts` |
 | `parseNoDocRules` | function | `packages/aeg-core/src/manifest-validity.ts` |
@@ -252,7 +262,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `projectsFromBody` | function | `packages/aeg-forge-state/src/list-tasks.ts` |
 | `mapForgeFacts` | function | `packages/aeg-forge-state/src/map-forge-facts.ts` |
 
-(227 exports.)
+(237 exports.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
@@ -382,6 +392,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `GEMINI_COMMAND_GROUP` | const | `apps/cli/src/lib/gemini-command-emitter.ts` |
 | `GEMINI_COMMAND_PATH` | const | `apps/cli/src/lib/gemini-command-emitter.ts` |
 | `renderGeminiCommand` | function | `apps/cli/src/lib/gemini-command-emitter.ts` |
+| `OUTBOX_MAX_BYTES` | const | `apps/cli/src/lib/log-sink.ts` |
+| `createLogSink` | function | `apps/cli/src/lib/log-sink.ts` |
+| `log` | function | `apps/cli/src/lib/log-sink.ts` |
 | `EVIDENCE_SUMMARY_PREFIX` | const | `apps/cli/src/lib/numstat.ts` |
 | `summariseNumstat` | function | `apps/cli/src/lib/numstat.ts` |
 | `applyEject` | function | `apps/cli/src/lib/ops.ts` |
@@ -417,7 +430,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `STUDIO_ARTIFACT_REPO` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_NODE_MODULES_PACKED_DIRNAME` | const | `apps/cli/src/lib/studio-bundle.ts` |
 
-(156 exports.)
+(159 exports.)
 
 ## Commands — `apps/cli/src/commands` (37 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 

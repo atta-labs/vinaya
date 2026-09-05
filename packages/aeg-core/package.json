@@ -29,7 +29,8 @@
   "dependencies": {
     "@attalabs/aeg-forge-state": "0.24.1",
     "@attalabs/aeg-types": "0.24.1",
-    "gray-matter": "^4.0.3"
+    "gray-matter": "^4.0.3",
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@atta/typescript-config": "workspace:*",
