@@ -42,13 +42,27 @@ const FINDING_LINE =
 
 export type ReviewStatus =
   | { state: 'CONTINUE' }
-  | { state: 'PAUSE'; reason: 'reappearance' | 'zero-deaths' | 'stale' | 'max-rounds'; id?: string; round: number }
+  | {
+      state: 'PAUSE'
+      reason: 'reappearance' | 'zero-deaths' | 'stale' | 'objectives-moved' | 'max-rounds'
+      id?: string
+      round: number
+    }
 
 export type ReviewStatusInput = {
   comments: { body: string; author: string | null }[]
   headSha: string
   principalAllowlist: string[]
   maxRounds: number
+  /**
+   * The current `objectivesVersion` this PR is judged against (`#412`, O3) —
+   * same resolution `checkReviewGate`'s caller supplies. `null` (or the field
+   * omitted entirely — the CLI command wiring is a separate task's surface,
+   * so an existing caller that does not supply it yet must keep compiling
+   * and behaving exactly as before) skips the `objectives-moved` pause
+   * entirely — the same fail-open-on-`null` rule the gate itself uses.
+   */
+  objectivesVersion?: string | null
 }
 
 /**
@@ -64,7 +78,7 @@ export function parseDeveloperRoundMarker(body: string): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-type VerdictComment = { judgedHead: string | null; ids: Map<string, string | null> }
+type VerdictComment = { judgedHead: string | null; objectivesVersion: string | null; ids: Map<string, string | null> }
 
 function findingStates(body: string): Map<string, string | null> {
   const out = new Map<string, string | null>()
@@ -87,10 +101,14 @@ function asVerdictComment(body: string): VerdictComment | null {
   const code = extractCodeReviewVerdict([body])
   const security = extractSecurityReviewVerdict([body])
   if (code.danglingNote !== null && security.danglingNote !== null) return null
-  return { judgedHead: code.headSha ?? security.headSha, ids: findingStates(body) }
+  return {
+    judgedHead: code.headSha ?? security.headSha,
+    objectivesVersion: code.objectivesVersion ?? security.objectivesVersion,
+    ids: findingStates(body)
+  }
 }
 
-type Round = { judgedHead: string | null; ids: Map<string, string | null> }
+type Round = { judgedHead: string | null; objectivesVersion: string | null; ids: Map<string, string | null> }
 
 /**
  * One round per `Judged head:` value, in the order that head was first
@@ -102,7 +120,11 @@ function groupRounds(verdicts: VerdictComment[]): Round[] {
   const rounds: Round[] = []
   for (const v of verdicts) {
     const existing = rounds.find((r) => r.judgedHead === v.judgedHead)
-    const target = existing ?? { judgedHead: v.judgedHead, ids: new Map<string, string | null>() }
+    const target = existing ?? {
+      judgedHead: v.judgedHead,
+      objectivesVersion: v.objectivesVersion,
+      ids: new Map<string, string | null>()
+    }
     if (!existing) rounds.push(target)
     for (const [id, state] of v.ids) {
       if (!target.ids.has(id) || target.ids.get(id) === null) target.ids.set(id, state)
@@ -113,12 +135,13 @@ function groupRounds(verdicts: VerdictComment[]): Round[] {
 
 /**
  * `CONTINUE` means the loop is still converging; a `PAUSE` names the one
- * reason it is not and the round that produced it. The four reasons are
+ * reason it is not and the round that produced it. The five reasons are
  * evaluated in the order they are declared on `ReviewStatus`, most specific
  * first: a reappearance names an individual finding, zero-deaths names a
- * round, staleness names the loop's own inactivity, and max-rounds is the
- * count alone. The first that holds is reported — a paused loop needs one
- * actionable reason, not a list.
+ * round, staleness names the loop's own inactivity, objectives-moved names
+ * an edit to the objectives list since the newest verdict, and max-rounds is
+ * the count alone. The first that holds is reported — a paused loop needs
+ * one actionable reason, not a list.
  */
 export function deriveReviewStatus(input: ReviewStatusInput): ReviewStatus {
   const verdicts: VerdictComment[] = []
@@ -177,6 +200,18 @@ export function deriveReviewStatus(input: ReviewStatusInput): ReviewStatus {
     return { state: 'PAUSE', reason: 'stale', round: rounds.length }
   }
 
+  // objectives-moved (`#412`, O3) — the head is unchanged (the `stale` check
+  // above already passed), but the objectives list the PR is judged against
+  // has moved since the newest verdict. `input.objectivesVersion === null`
+  // skips this entirely (the same fail-open-on-`null` rule `checkReviewGate`
+  // uses); `newest.objectivesVersion === null` (a verdict cast before the
+  // block existed at all, or with no version line) counts as "differs" too —
+  // it cannot be the current version by definition.
+  const currentObjectivesVersion = input.objectivesVersion ?? null
+  if (currentObjectivesVersion !== null && newest.objectivesVersion !== currentObjectivesVersion) {
+    return { state: 'PAUSE', reason: 'objectives-moved', round: rounds.length }
+  }
+
   // max-rounds — the count alone. The loop may still be converging; it has
   // simply run long enough that the Principal decides whether it continues.
   if (rounds.length >= input.maxRounds) return { state: 'PAUSE', reason: 'max-rounds', round: rounds.length }
@@ -186,15 +221,18 @@ export function deriveReviewStatus(input: ReviewStatusInput): ReviewStatus {
 
 /**
  * The one-line rendering the CLI prints: `CONTINUE`, or `PAUSE: <reason>[ <id>]`
- * — except `stale`, whose condition (the newest verdict's judged head is no
- * longer the PR's, and no Developer round comment has answered it since) is
- * exactly "a commit landed after the newest verdict, unacknowledged". Verdicts
- * are the last forge event before merge (`roles/developer.md`), so that
- * condition is rendered as the actionable fact it names rather than the bare
- * reason word: `push after verdict — re-review required`.
+ * — except `stale` and `objectives-moved`, each rendered as the actionable
+ * fact it names rather than the bare reason word. `stale`'s condition (the
+ * newest verdict's judged head is no longer the PR's, and no Developer round
+ * comment has answered it since) is exactly "a commit landed after the
+ * newest verdict, unacknowledged": `push after verdict — re-review required`.
+ * `objectives-moved`'s condition (`#412`, O3) is the same shape for the
+ * objectives list instead of the head: `objectives moved — re-review
+ * required`.
  */
 export function renderReviewStatus(status: ReviewStatus): string {
   if (status.state === 'CONTINUE') return 'CONTINUE'
   if (status.reason === 'stale') return 'push after verdict — re-review required'
+  if (status.reason === 'objectives-moved') return 'objectives moved — re-review required'
   return status.id !== undefined ? `PAUSE: ${status.reason} ${status.id}` : `PAUSE: ${status.reason}`
 }

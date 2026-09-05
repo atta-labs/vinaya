@@ -11,8 +11,11 @@ const OLD_HEAD = '9999999888888887777777766666665555555544'
  * fixture here is that shape, so these tests exercise the same text the
  * merge gate reads, not a paraphrase of it.
  */
-function verdict(head: string, findings: string[] = [], value = 'REQUEST CHANGES'): string {
-  return [`VERDICT: ${value}`, '', `Judged head: ${head}`, '', 'FINDINGS:', ...findings].join('\n')
+function verdict(head: string, findings: string[] = [], value = 'REQUEST CHANGES', objectivesVersion?: string): string {
+  const lines = [`VERDICT: ${value}`, '', `Judged head: ${head}`, '']
+  if (objectivesVersion !== undefined) lines.push(`Objectives version: ${objectivesVersion}`, '')
+  lines.push('FINDINGS:', ...findings)
+  return lines.join('\n')
 }
 
 function finding(n: number, state: string | null, severity = 'MAJOR'): string {
@@ -178,6 +181,76 @@ describe('deriveReviewStatus — PAUSE: stale', () => {
   })
 })
 
+describe('deriveReviewStatus — PAUSE: objectives-moved (#412, O3)', () => {
+  const VERSION_A = 'a'.repeat(64)
+  const VERSION_B = 'b'.repeat(64)
+
+  it('PAUSEs when the head is unchanged but the objectives version has moved since the newest verdict', () => {
+    const status = deriveReviewStatus({
+      comments: [principal(verdict(HEAD, [finding(1, null)], 'REQUEST CHANGES', VERSION_A))],
+      headSha: HEAD,
+      principalAllowlist: ALLOWLIST,
+      maxRounds: 3,
+      objectivesVersion: VERSION_B
+    })
+    expect(status).toEqual({ state: 'PAUSE', reason: 'objectives-moved', round: 1 })
+  })
+
+  it('CONTINUEs when the newest verdict already carries the current objectives version', () => {
+    const status = deriveReviewStatus({
+      comments: [principal(verdict(HEAD, [finding(1, null)], 'REQUEST CHANGES', VERSION_A))],
+      headSha: HEAD,
+      principalAllowlist: ALLOWLIST,
+      maxRounds: 3,
+      objectivesVersion: VERSION_A
+    })
+    expect(status).toEqual({ state: 'CONTINUE' })
+  })
+
+  it('a verdict cast with no Objectives version: line at all counts as moved once a current version exists', () => {
+    const status = deriveReviewStatus({
+      comments: [principal(verdict(HEAD, [finding(1, null)]))],
+      headSha: HEAD,
+      principalAllowlist: ALLOWLIST,
+      maxRounds: 3,
+      objectivesVersion: VERSION_A
+    })
+    expect(status).toEqual({ state: 'PAUSE', reason: 'objectives-moved', round: 1 })
+  })
+
+  it('is skipped entirely when objectivesVersion is null (pre-cutover PR, or none resolvable)', () => {
+    const status = deriveReviewStatus({
+      comments: [principal(verdict(HEAD, [finding(1, null)], 'REQUEST CHANGES', VERSION_A))],
+      headSha: HEAD,
+      principalAllowlist: ALLOWLIST,
+      maxRounds: 3,
+      objectivesVersion: null
+    })
+    expect(status).toEqual({ state: 'CONTINUE' })
+  })
+
+  it('is skipped entirely when objectivesVersion is omitted (an existing caller that has not wired it yet)', () => {
+    const status = deriveReviewStatus({
+      comments: [principal(verdict(HEAD, [finding(1, null)], 'REQUEST CHANGES', VERSION_A))],
+      headSha: HEAD,
+      principalAllowlist: ALLOWLIST,
+      maxRounds: 3
+    })
+    expect(status).toEqual({ state: 'CONTINUE' })
+  })
+
+  it('the stale check still wins when the head itself is superseded, even with a matching objectives version', () => {
+    const status = deriveReviewStatus({
+      comments: [principal(verdict(OLD_HEAD, [finding(1, null)], 'REQUEST CHANGES', VERSION_A))],
+      headSha: HEAD,
+      principalAllowlist: ALLOWLIST,
+      maxRounds: 3,
+      objectivesVersion: VERSION_A
+    })
+    expect(status).toEqual({ state: 'PAUSE', reason: 'stale', round: 1 })
+  })
+})
+
 describe('deriveReviewStatus — PAUSE: max-rounds', () => {
   it('PAUSEs once the round count reaches maxRounds', () => {
     const status = deriveReviewStatus({
@@ -224,6 +297,12 @@ describe('renderReviewStatus', () => {
   it('renders `stale` as the actionable push-after-verdict fact, not the bare reason word', () => {
     expect(renderReviewStatus({ state: 'PAUSE', reason: 'stale', round: 1 })).toBe(
       'push after verdict — re-review required'
+    )
+  })
+
+  it('renders `objectives-moved` as the actionable re-review fact, not the bare reason word (#412, O3)', () => {
+    expect(renderReviewStatus({ state: 'PAUSE', reason: 'objectives-moved', round: 1 })).toBe(
+      'objectives moved — re-review required'
     )
   })
 })
