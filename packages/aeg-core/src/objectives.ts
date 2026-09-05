@@ -24,8 +24,29 @@ const HEADING_RE = /^##[ \t]*Objectives[ \t]*$/im
 const NEXT_HEADING_RE = /^##[ \t]/m
 const OBJECTIVE_LINE_RE = /^O(\d+)\.[ \t]*(.*)$/
 
-/** A path-shaped token inside backticks — one signal an objective may be little more than a bare path. */
-const BACKTICKED_PATH_RE = /`[^`\n]*\/[^`\n]*`/
+/**
+ * True iff `text` contains a backticked span with a `/` inside it — one
+ * signal an objective may be little more than a bare path. A manual
+ * single-pass scan, not a regex: the natural regex shape for this,
+ * `` /`[^`\n]*\/[^`\n]*`/ ``, is two unanchored wildcards separated by a
+ * literal — quadratic on a line dense with backticks and no closing pair,
+ * since the engine restarts the inner scan from every backtick position
+ * (security review, PR #423, MEDIUM). This scan advances past each
+ * checked span exactly once, so it stays linear in `text`'s length
+ * regardless of how many backtick-shaped characters an attacker packs in.
+ */
+function hasBacktickedPath(text: string): boolean {
+  let i = 0
+  while (i < text.length) {
+    const start = text.indexOf('`', i)
+    if (start === -1) return false
+    const end = text.indexOf('`', start + 1)
+    if (end === -1) return false
+    if (text.slice(start + 1, end).includes('/')) return true
+    i = end + 1
+  }
+  return false
+}
 
 /**
  * How many non-path words an objective needs to count as a real sentence
@@ -106,7 +127,7 @@ export function objectivesOf(body: string): ParsedObjectives {
       errors.push(`O${n} has no sentence — every objective is one observable sentence.`)
       continue
     }
-    if (BACKTICKED_PATH_RE.test(text) && wordCount(stripObjectiveBackticks(text)) < MIN_WORDS_OUTSIDE_BACKTICKS) {
+    if (hasBacktickedPath(text) && wordCount(stripObjectiveBackticks(text)) < MIN_WORDS_OUTSIDE_BACKTICKS) {
       errors.push(
         `O${n} is little more than a file path — an objective states an observable outcome, never a bare path (the Brief Author maps it to files).`
       )
@@ -153,4 +174,36 @@ export function objectivesVersion(objectives: Objective[]): string {
  */
 export function renderObjectives(objectives: Objective[]): string {
   return ['## Objectives', '', ...objectives.map((o) => `${o.id}. ${o.text}`)].join('\n')
+}
+
+/**
+ * Is a `gh issue view` failure just "the Issue number doesn't resolve" — a
+ * fixture's placeholder `Closes #999`, a deleted Issue — as opposed to a
+ * real network/auth/rate-limit failure? Only the first is safe for a
+ * caller to treat as "nothing to compare"; the second means the comparison
+ * was SKIPPED, not that it passed, and a caller that conflates the two
+ * silently stops enforcing whenever enforcement is hardest to verify (a
+ * flaky network, an expiring token) — exactly the gap review round 1
+ * found independently in both `verify-brief.ts` and `check-brief-shape.ts`
+ * (review finding 4). One shared, tested classifier — not a second
+ * hand-written copy per caller — is what keeps the two from silently
+ * drifting apart on which error strings mean which case (review round 2,
+ * MINOR).
+ *
+ * Pure: takes the already-caught error, never runs `gh` itself — each
+ * caller keeps its own tiny `execFileSync` invocation (this module stays
+ * `fs`/`fetch`/`process.env`-free, same as every other function here), and
+ * passes the resulting error into this one shared decision.
+ *
+ * Inspects the WHOLE error (message + stderr), since `execFileSync` puts
+ * `gh`'s actual GraphQL text on a line that is rarely the first — the same
+ * discipline `apps/cli/src/lib/config.ts`'s `isMissingFileError` uses.
+ */
+export function isIssueNotFoundError(err: unknown): boolean {
+  const stderr = (err as { stderr?: Buffer | string })?.stderr
+  const haystack = [
+    (err as Error)?.message ?? '',
+    typeof stderr === 'string' ? stderr : (stderr?.toString() ?? '')
+  ].join('\n')
+  return /could not resolve to an (?:issue|pull request)|\b404\b|not found/i.test(haystack)
 }

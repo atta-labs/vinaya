@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { hasObjectivesHeading, objectivesVersion, objectivesOf, renderObjectives } from './objectives'
+import {
+  hasObjectivesHeading,
+  isIssueNotFoundError,
+  objectivesVersion,
+  objectivesOf,
+  renderObjectives
+} from './objectives'
 
 const WELL_FORMED = `## Objectives
 
@@ -62,6 +68,18 @@ describe('objectivesOf', () => {
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.errors.join(' ')).toMatch(/little more than a file path/)
+  })
+
+  it('stays fast on a line dense with unmatched backticks and no path (security review, PR #423, MEDIUM)', () => {
+    // The old regex (`` /`[^`\n]*\/[^`\n]*`/ `` ) restarted its inner scan
+    // from every backtick position on a line like this, going quadratic.
+    // A generous wall-clock ceiling proves the replacement stays linear
+    // without pinning an exact, environment-sensitive duration.
+    const adversarial = `O1. ${'`'.repeat(50_000)}real sentence with enough words to pass.`
+    const start = performance.now()
+    const result = objectivesOf(`## Objectives\n\n${adversarial}\n`)
+    expect(performance.now() - start).toBeLessThan(500)
+    expect(result.ok).toBe(true)
   })
 
   it('tolerates a backticked token with no path separator', () => {
@@ -130,5 +148,26 @@ describe('renderObjectives', () => {
     const reparsed = objectivesOf(rendered)
     expect(reparsed.ok).toBe(true)
     if (reparsed.ok) expect(reparsed.objectives).toEqual(objectives)
+  })
+})
+
+describe('isIssueNotFoundError', () => {
+  it('recognises the real gh GraphQL not-found text', () => {
+    const err = new Error(
+      'Command failed: gh issue view 999 --json body\nGraphQL: Could not resolve to an issue or pull request with the number of 999. (repository.issue)'
+    )
+    expect(isIssueNotFoundError(err)).toBe(true)
+  })
+
+  it('reads stderr too, not just message, since execFileSync rarely puts the real text first', () => {
+    const err = Object.assign(new Error('Command failed'), {
+      stderr: 'GraphQL: Could not resolve to an issue or pull request with the number of 999. (repository.issue)'
+    })
+    expect(isIssueNotFoundError(err)).toBe(true)
+  })
+
+  it('does NOT treat a real failure (auth, network) as not-found', () => {
+    expect(isIssueNotFoundError(new Error('gh: authentication failed'))).toBe(false)
+    expect(isIssueNotFoundError(new Error('connect ETIMEDOUT'))).toBe(false)
   })
 })
