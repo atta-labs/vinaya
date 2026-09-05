@@ -10,7 +10,17 @@
 
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
+import {
+  closeSync,
+  constants as fsConstants,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  writeSync
+} from 'node:fs'
 import { hostname as osHostname, homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { resolveRepo as resolveRepoDefault } from '@attalabs/aeg-forge-state'
@@ -78,6 +88,19 @@ function readVinayaVersion(): string {
   }
 }
 
+// `owner`/`repo` reach here from `AEG_REPO` or a parsed git remote URL —
+// neither is re-validated upstream (`@attalabs/aeg-forge-state`'s parser
+// permits `/` and `..`) before landing in a path this sink joins straight
+// into `mkdirSync`/`openSync`. A crafted `AEG_REPO=owner/../../../../tmp/evil`
+// must not steer the outbox outside itself, so a segment failing this check
+// is treated exactly like a null `resolveRepo()` — the same "unresolved"
+// fallback, never a value spliced unchecked into a filesystem path.
+const SAFE_PATH_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
+
+function isSafeRepoSegment(segment: string): boolean {
+  return SAFE_PATH_SEGMENT.test(segment) && !segment.includes('..')
+}
+
 function hostFromEnv(env: NodeJS.ProcessEnv): Host {
   if (env.GITHUB_ACTIONS) return 'ci'
   if (env.VINAYA_HOST === 'hook') return 'hook'
@@ -101,37 +124,63 @@ function defaultDeps(): LogSinkDeps {
   }
 }
 
+// `O_NOFOLLOW` makes the kernel refuse an open through a symlink outright
+// (`ELOOP`) instead of trusting a separate `lstatSync` taken a moment
+// earlier — the same TOCTOU class `metering-io-guard.ts` closes on the read
+// side (open-then-`fstat`, never stat-then-open). `O_NONBLOCK` is defensive
+// against a planted FIFO: opening one for writing in blocking mode waits for
+// a reader that may never come.
+const APPEND_OPEN_FLAGS =
+  fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_CREAT | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK
+
+function guardedAppendOpen(path: string): number | undefined {
+  try {
+    return openSync(path, APPEND_OPEN_FLAGS, 0o600)
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Appends `line` to `path`, hardened: `mkdirSync(dir, { recursive: true,
- * mode: 0o700 })`; `lstatSync` refuses (fails open, writes nothing) a
- * symlink or anything not a regular file; rotates to `<name>.1.ndjson`
- * (overwriting an older one) when the live file is already at the cap;
- * `openSync(path, 'a', 0o600)` + one `writeSync` + close. Never throws —
+ * mode: 0o700 })`; opens with `O_NOFOLLOW` (refuses a symlink target
+ * atomically, no separate stat-then-open race) and `fstat`s the already-open
+ * descriptor — never re-resolves the path — to confirm a regular file and
+ * read its live size for rotation. Rotates to `<name>.1.ndjson` (overwriting
+ * an older one) when the live file is already at the cap, then reopens
+ * fresh, still `O_NOFOLLOW`-guarded. One `writeSync` + close. Never throws —
  * every failure funnels into `warn`.
  */
 function appendLine(path: string, line: string, warn: (message: string) => void): void {
   try {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-    let stat: ReturnType<typeof lstatSync> | undefined
-    try {
-      stat = lstatSync(path)
-    } catch {
-      stat = undefined
+    let fd = guardedAppendOpen(path)
+    if (fd === undefined) {
+      warn(`vinaya: log outbox target could not be opened (symlink, FIFO, or unwritable) — refusing: ${path}\n`)
+      return
     }
-    if (stat !== undefined) {
-      if (stat.isSymbolicLink() || !stat.isFile()) {
-        warn(`vinaya: log outbox target is a symlink or not a regular file — refusing to write: ${path}\n`)
+    let closed = false
+    try {
+      const stat = fstatSync(fd)
+      if (!stat.isFile()) {
+        warn(`vinaya: log outbox target is not a regular file — refusing to write: ${path}\n`)
         return
       }
       if (stat.size > OUTBOX_MAX_BYTES) {
+        closeSync(fd)
+        closed = true
         renameSync(path, path.replace(/\.ndjson$/, '.1.ndjson'))
+        const rotated = guardedAppendOpen(path)
+        if (rotated === undefined) {
+          warn(`vinaya: log outbox target could not be reopened after rotation — refusing: ${path}\n`)
+          return
+        }
+        fd = rotated
+        closed = false
       }
-    }
-    const fd = openSync(path, 'a', 0o600)
-    try {
       writeSync(fd, line)
     } finally {
-      closeSync(fd)
+      if (!closed) closeSync(fd)
     }
   } catch (err) {
     warn(`vinaya: log outbox write failed — ${err instanceof Error ? err.message : String(err)}\n`)
@@ -167,7 +216,9 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): { log: (e: 
       const mySeq = seq++
       deps
         .resolveRepo()
-        .then((repo) => {
+        .then((resolved) => {
+          const repo =
+            resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
           const header = buildHeader({
             now,
             runId,
@@ -179,7 +230,14 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): { log: (e: 
             hostname: deps.hostname(),
             env: { role: env.VINAYA_ROLE, task: env.VINAYA_TASK, round: env.VINAYA_ROUND }
           })
-          const full = { ...header, ...e }
+          // `header` spreads LAST: it carries the only trusted `meta`/`subject`
+          // values (environment/remote/package/tree-derived), and `e`'s type
+          // excludes those keys but a caller passing a wider-typed or `as any`
+          // value could still smuggle a `meta`/`subject` property through —
+          // TS's excess-property check only fires on a fresh object literal,
+          // never on a variable. Spreading `header` second means a forged
+          // field in `e` is always overwritten, never honored.
+          const full = { ...e, ...header }
           const parsed = LogEventSchema.safeParse(full)
           if (!parsed.success) {
             warnOnce(

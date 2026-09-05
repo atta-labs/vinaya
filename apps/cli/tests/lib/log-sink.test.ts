@@ -150,4 +150,51 @@ describe('log-sink — defeat cases', () => {
     expect(line.subject.role).toBe('unattributed')
     expect(line.subject.issue).toBeNull()
   })
+
+  it('a forged meta/subject field on the caller-supplied event never overrides the trusted header (review BLOCKER)', async () => {
+    // `LogEventInput`'s type strips `meta`/`subject`, but TS's excess-property
+    // check only fires on a fresh object literal — a value coming through a
+    // wider type or `as never` can still carry them at runtime. The header
+    // must win regardless of spread order.
+    const { dir, deps } = testDeps()
+    const forged = {
+      ...DISPATCHED,
+      subject: { issue: 999, role: 'principal' },
+      meta: { repo: 'attacker/owned' }
+    }
+    const { log } = createLogSink(deps)
+    log(forged as never)
+    await flush()
+    const path = join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson')
+    const line = JSON.parse(readFileSync(path, 'utf8').trim())
+    expect(line.subject.role).toBe('developer')
+    expect(line.subject.issue).toBe(404)
+    expect(line.meta.repo).toBe('atta-labs/vinaya')
+  })
+
+  it('an unsafe owner/repo (path traversal) falls back to unresolved rather than escaping the outbox root (review HIGH)', async () => {
+    const { dir, deps } = testDeps({
+      resolveRepo: () => Promise.resolve({ owner: 'evil', repo: '../../../../../../tmp/evil' })
+    })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const path = join(dir, 'outbox', 'unresolved', '404.ndjson')
+    const line = JSON.parse(readFileSync(path, 'utf8').trim())
+    expect(line.meta.repo).toBeNull()
+    // Nothing was created outside the sandboxed outbox root.
+    expect(() => statSync('/tmp/evil')).toThrow()
+  })
+
+  it('an owner/repo containing a path separator also falls back to unresolved', async () => {
+    const { dir, deps } = testDeps({
+      resolveRepo: () => Promise.resolve({ owner: 'a/b', repo: 'c' })
+    })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const path = join(dir, 'outbox', 'unresolved', '404.ndjson')
+    const line = JSON.parse(readFileSync(path, 'utf8').trim())
+    expect(line.meta.repo).toBeNull()
+  })
 })

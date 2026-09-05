@@ -5,15 +5,15 @@ function isRole(value: string | undefined): value is Role {
   return value !== undefined && (ROLE_VALUES as readonly string[]).includes(value)
 }
 
-/** `VINAYA_TASK` parses to `subject.issue`; anything not a plain integer is `null` — never invented. */
+/** `VINAYA_TASK` parses to `subject.issue`; anything not a plain integer is `null` — never invented. `Number('')` is `0`, not `NaN`, so an empty string needs its own guard or it would parse as issue `0`. */
 function issueFromTask(task: string | undefined): number | null {
-  if (task === undefined) return null
+  if (task === undefined || task === '') return null
   const n = Number(task)
   return Number.isInteger(n) ? n : null
 }
 
 function roundFromEnv(round: string | undefined): number | undefined {
-  if (round === undefined) return undefined
+  if (round === undefined || round === '') return undefined
   const n = Number(round)
   return Number.isInteger(n) ? n : undefined
 }
