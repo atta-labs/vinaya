@@ -54,6 +54,8 @@ The Principal holds final authority over:
 - **Right to reject.** The Principal can reject a direction at any phase — idea, brief, PR, or post-merge — and the system accepts that without pushback. Agents can surface concerns but not override.
 - **Ratification.** Type 1 decisions are not ratified until the Principal explicitly says so. PENDING decisions wait; they do not auto-promote.
 - **Editing an already-declared Milestone.** `vinaya milestone edit <n> --body-file <path>` corrects a Milestone's goal or `Release:` field after the Architect's one-time write — the same product call declaring it was (`milestone-model.md` §5), never the Architect's or Planner's (`roles/architect.md` "What you do NOT do").
+- **Changing a task's scope mid-flight.** `vinaya issue objectives edit <n> --add "<sentence>" | --drop O<k> | --replace O<k> "<sentence>" --reason "<text>"` rewrites the task Issue's `## Objectives` section through the validated forge-write path and posts one versioned, findable comment recording the previous list, the new list, and the reason. This voids the standing review verdict on that task's open PR — `vinaya review status` names it `objectives moved — re-review required` (once task 2, #412, merges).
+- **Ruling on a contested finding.** `vinaya pr rule <pr> --file <ruling.md>` posts the Principal's decision as its own marked, versioned PR comment — never mistaken for a code-review or security verdict, since it refuses a file carrying verdict grammar.
 
 ---
 
@@ -93,6 +95,7 @@ Until a coordinator program exists, the Principal is the loop's coordinator, per
 - **Pause with the label.** Apply `vinaya/needs:principal-input`; never invent a new label or status field.
 - **Work the stall menu, cheapest first.** A different role in the seat, resume with the trigger overridden, reseed the Developer, abandon.
 - **Give the go on surfaced findings.** A finding outside round two's delta, any non-blocking severity, waits on this decision rather than driving the verdict.
+- **Rule with `vinaya pr rule`, never a raw PR comment.** A ruling on a contested finding posted this way carries the `<!-- aeg:principal:ruling:<pr>-<k> -->` marker and a version, so it is findable on the forge and never confused with a code-review or security verdict comment.
 
 A coordinator program replaces this by-hand duty when one exists.
 
