@@ -330,10 +330,12 @@ describe('reviewed-commit binding (Judged head:)', () => {
 // #392; widened by dev-review-loop-v1 task 2, #412, O2) ----
 // All three markers are read from a comment's first FIVE lines only. Every
 // real render (`review-post.ts`) puts VERDICT/ESCALATE on line 1, Judged
-// head on line 3, and Objectives version on line 5; a caller-supplied field
-// never renders before line 7 — so this window costs no legitimate render
-// anything (every fixture above keeps its markers inside the first five
-// lines already) while closing off any line injected later in the body.
+// head on line 3, and Objectives version on line 5; a caller-supplied VALUE
+// never OPENS one of those five lines (it can only trail a fixed label
+// already on the line — code-review's `BRIEF CONFORMANCE:` can put one
+// there as early as line 5 itself) — so this window costs no legitimate
+// render anything (every fixture above keeps its markers inside the first
+// five lines already) while closing off any line injected later in the body.
 
 describe('the VERDICT:/Judged head:/Objectives version: markers are read from the first five lines only', () => {
   const FULL_SHA = '8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f'

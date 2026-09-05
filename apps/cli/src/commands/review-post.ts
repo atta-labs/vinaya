@@ -554,14 +554,19 @@ export type EscalationInput = TokensInput & {
  * REQUEST CHANGES. Renders `ESCALATE: <class>` where a verdict comment
  * renders `VERDICT: <value>` — the merge-verdict workflow fires on the
  * substring `VERDICT` alone (`.github/workflows/vinaya-review-verdict.yml`),
- * and an escalation must never be mistaken for "a pass ran". Two structural
- * facts make this safe even though `input.summary` is free caller text:
- * `verdict-extraction.ts`'s extractors read only a comment's first three
- * lines, and `input.summary` never renders before line 5 here — so it
- * cannot reach either marker's read window at all. `reviewPostCommand` still
- * confirms this mechanically, not by construction alone: `checkRenderedComment`
- * runs both extractors over this exact rendered text before any `gh` call,
- * refusing to post unless both return no verdict.
+ * and an escalation must never be mistaken for "a pass ran". `input.summary`
+ * is free caller text, and it is NOT reliably kept out of the extractors'
+ * five-line read window by construction: pre-cutover (no `Objectives
+ * version:` line), `input.summary` becomes line 5 itself — no fixed label
+ * precedes it here, unlike `renderCodeReviewComment`'s `BRIEF CONFORMANCE:`
+ * — so a summary whose own first line happened to read `VERDICT: APPROVE`
+ * would extract as a real code-review verdict through this exact render.
+ * What actually makes this safe is `reviewPostCommand`'s mechanical
+ * self-check, not line position: `checkRenderedComment` runs both
+ * extractors over this exact rendered text before any `gh` call and refuses
+ * to post an escalation that re-parses as either verdict — the refusal
+ * path this collision would hit, not a silent false verdict reaching the
+ * forge.
  */
 export function renderEscalationComment(input: EscalationInput): string {
   const lines = [`ESCALATE: ${input.escalationClass}`, '', `Judged head: ${input.headSha}`, '']

@@ -31,12 +31,18 @@
  * never a line anywhere else in the body. Every shape this package's own
  * callers render puts the `VERDICT:`/`ESCALATE:` line first and `Judged
  * head:` third; `Objectives version:` fifth WHEN it renders at all (it is
- * omitted pre-cutover — a `null` objectives version), so a caller-supplied
- * field (findings, conformance prose, a summary) never renders within the
- * first five lines, but can start as early as line 6 (no version line,
- * scope evidence present) rather than universally "line 7". Restricting the
- * read window to lines 1-5 closes a caller-controlled-text injection route
- * without narrowing what any real render needs matched.
+ * omitted pre-cutover — a `null` objectives version). The precise guarantee
+ * is narrower than "no caller content in the window": a caller-supplied
+ * VALUE can appear inside the window, appended after a fixed, renderer-owned
+ * label on the same line — code-review's `BRIEF CONFORMANCE: <value>` can
+ * land on line 5 itself (pre-cutover, no scope evidence). What never
+ * happens is a caller-supplied string OPENING a line within the window: no
+ * caller value is ever the first token of one of the first five lines, so
+ * it can never itself read as `VERDICT:`/`Judged head:`/`Objectives
+ * version:` — the fixed label prefix forecloses that regardless of which
+ * line number the value lands on. Restricting the read window to lines 1-5
+ * closes a caller-controlled-text injection route without narrowing what
+ * any real render needs matched.
  *
  * The CANDIDATE SET stays whole-body (review-convergence-v1 task 2, round 5,
  * `#392`) — round 4 windowed where a verdict's value is read, not which
@@ -111,8 +117,10 @@ const HEAD_SHA_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Judged head:\s*([0-9a-f]{7,4
 /**
  * dev-review-loop-v1 task 2 (`#412`, O2): the render grows a third head
  * line — `Objectives version: <hash>` on line 5, blank line 6 — ONLY when a
- * non-null version exists (pre-cutover PRs omit it, and caller content can
- * then start as early as line 6). Same anchor discipline as `VERDICT:`/
+ * non-null version exists; pre-cutover PRs omit it, and line 5 is then free
+ * for the next fixed label instead (code-review's `BRIEF CONFORMANCE:`),
+ * whose value can be the earliest caller-supplied text in the whole
+ * render. Same anchor discipline as `VERDICT:`/
  * `Judged head:`: line-start, optional leading emphasis run, no
  * blockquote/list-item/heading/code-span tolerance. The value is a sha256
  * hex string (64 hex chars, `objectivesOf`'s built form), never the loop
@@ -127,9 +135,12 @@ const OBJECTIVES_VERSION_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Objectives version
  * (`review-post.ts`'s `renderCodeReviewComment`/`renderSecurityComment`/
  * `renderEscalationComment`) puts `VERDICT:`/`ESCALATE:` on line 1 and
  * `Judged head:` on line 3; `Objectives version:` lands on line 5 only when
- * non-null (pre-cutover PRs omit it) — every caller-supplied field
- * (findings, conformance prose, scope, a summary) is kept out of lines 1-5,
- * but can start as early as line 6, not universally line 7. Restricting the
+ * non-null (pre-cutover PRs omit it). A caller-supplied field (findings,
+ * conformance prose, scope, a summary) never OPENS one of the first five
+ * lines — it can only ever appear appended after a fixed, renderer-owned
+ * label already on that line — and code-review's `BRIEF CONFORMANCE:`
+ * value can be that as early as line 5 itself (pre-cutover, no scope
+ * evidence), not a fixed "line 6" or "line 7" floor. Restricting the
  * window to lines 1–5 costs no real render anything: it is a
  * strictly narrower read than "anywhere in the body," and it closes the
  * class of defect that motivated this ruling — a caller-supplied field that
