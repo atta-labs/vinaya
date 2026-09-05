@@ -19,6 +19,16 @@
  * check's entry states the same prohibition; `git ls-remote` queries the
  * remote live and is not that env var).
  *
+ * Second documented divergence (`#412`, O3, `#433` security review): this
+ * adapter resolves a real `objectivesVersion` (Issue-then-body, fail-closed
+ * on every unresolvable case) via `resolveObjectivesVersion` below.
+ * `verify-review-gate.ts` does not — it always passes `objectivesVersion:
+ * null`, unconditionally skipping the objectives-version half of the
+ * binding, because it has no equivalent Issue-body-fetch machinery and is
+ * not this repo's live review-gate path (see the divergence above). Any doc
+ * describing which file resolves the objectives-version binding must name
+ * THIS file, not the reference script.
+ *
  * Documented divergence from the reference script: `verify-review-gate.ts`
  * fails CLOSED when `PR_NUMBER` is unset, because its only real caller
  * (`forge-lifecycle.yml`) is triggered exclusively on an existing PR. This
@@ -57,6 +67,7 @@ import {
   extractIssue,
   hasObjectivesHeading,
   isIssueNotFoundError,
+  isWaiverLabelActorVerified,
   OBJECTIVES_SINCE_ISSUE,
   objectivesOf,
   objectivesVersion,
@@ -141,6 +152,15 @@ function fetchIssueBodyForObjectives(issueNumber: number): string {
  * could resolve a non-null version `review post` never rendered a matching
  * line for, permanently failing the gate on an otherwise-legitimate PR (the
  * same review's MEDIUM finding).
+ *
+ * This function's own `process.exit(1)` calls run BEFORE `checkReviewGate`
+ * — the call site passes its return value as an inline argument expression,
+ * so it is evaluated first. `main()` never calls this function at all when
+ * an actor-verified `vinaya/waiver:review` label is present, precisely so
+ * that fail-closed path cannot make the waiver's own escape hatch
+ * unreachable (`#433`, security review MAJOR). Do not inline a call to this
+ * function directly into `checkReviewGate({...})` again without keeping
+ * that waiver pre-check in front of it.
  */
 function resolveObjectivesVersion(pr: PrView): string | null {
   const { issue } = extractIssue(pr.body)
@@ -439,18 +459,37 @@ function main(): void {
   // PR metadata is input data, never the source of the gate implementation or
   // its trust anchors. See `loadTrustAnchorConfig` in lib/config.ts for the
   // three failed attempts that established the config half of this boundary.
+  const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+
+  // A verified waiver skips objectives resolution entirely (#433, security
+  // review MAJOR) — `resolveObjectivesVersion` fails closed (`process.exit(1)`)
+  // on an unresolvable Issue, which runs BEFORE `checkReviewGate` is ever
+  // called (it is an inline argument expression) and would make `checkReviewGate`'s
+  // own waiver short-circuit unreachable for exactly the case the waiver
+  // exists to rescue: a linked Issue that got deleted or renumbered. Checking
+  // the waiver here first, with the identical `isWaiverLabelActorVerified`
+  // predicate `checkReviewGate` uses internally, restores that escape hatch
+  // without weakening it — an unverified/missing label still falls through
+  // to the real resolution and its fail-closed behavior, unchanged.
+  const waived = isWaiverLabelActorVerified({
+    label: WAIVER_LABEL_REVIEW,
+    labels,
+    labelActor: waiverLabelActor,
+    principalAllowlist
+  })
+
   const result = checkReviewGate({
     comments: pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
     labels,
     waiverLabelActor,
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig()),
+    principalAllowlist,
     mechanicalChecks,
     headSha,
     // A verdict judged a PATCH; the head sha is only its address. A merge
     // from `main` or a rebase that leaves the patch untouched must not void
     // a review that already read exactly those changes.
     patchIdOf: (sha: string) => patchIdAt(pr.baseRefName, sha),
-    objectivesVersion: resolveObjectivesVersion(pr)
+    objectivesVersion: waived ? null : resolveObjectivesVersion(pr)
   })
 
   if (result.verdict === 'fail') {

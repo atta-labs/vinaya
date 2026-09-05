@@ -65,6 +65,10 @@ if (args[0] === 'api' && String(args[1]).includes('/check-runs')) {
   process.stdout.write(process.env.STUB_CHECK_RUNS_NDJSON ?? '')
   process.exit(0)
 }
+if (args[0] === 'api' && String(args[1]).includes('/timeline')) {
+  process.stdout.write(process.env.STUB_TIMELINE_JSON ?? '[]')
+  process.exit(0)
+}
 process.stderr.write('gh stub: unhandled invocation: ' + args.join(' ') + '\\n')
 process.exit(1)
 `
@@ -339,6 +343,36 @@ process.exit(1)
 
     const { exitCode } = await run(d, ghDir, {
       STUB_PR_VIEW_JSON: JSON.stringify(prView),
+      STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
+    })
+
+    expect(exitCode).toBe(0)
+  })
+
+  it('an actor-verified vinaya/waiver:review label passes even when the linked Issue cannot resolve at all (security review, #433, MAJOR — waiver must stay reachable)', async () => {
+    const { dir: d, sha } = setupRepo()
+    dir = d
+    const ghDir = writeGhStub(d)
+
+    const prView = {
+      number: 1,
+      comments: [],
+      labels: [{ name: 'vinaya/waiver:review' }],
+      headRefName: 'work',
+      headRefOid: sha,
+      baseRefName: 'main',
+      // An at/above-cutover Issue that will never resolve — without the
+      // waiver pre-check, `resolveObjectivesVersion` would `process.exit(1)`
+      // before `checkReviewGate` (and its own waiver short-circuit) ever runs.
+      body: 'Closes #500'
+    }
+
+    const { exitCode } = await run(d, ghDir, {
+      STUB_PR_VIEW_JSON: JSON.stringify(prView),
+      STUB_ISSUE_VIEW_FAIL: 'GraphQL: Could not resolve to an Issue',
+      STUB_TIMELINE_JSON: JSON.stringify([
+        { event: 'labeled', label: { name: 'vinaya/waiver:review' }, actor: { login: 'daniboomerang' } }
+      ]),
       STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
     })
 
