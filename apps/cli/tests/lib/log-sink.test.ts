@@ -1,0 +1,153 @@
+import { describe, expect, it } from 'bun:test'
+import { mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createLogSink, OUTBOX_MAX_BYTES, type LogSinkDeps } from '../../src/lib/log-sink.js'
+
+// `resolveDoctrine`'s `git` calls run inside `log()`'s `.then()` chain; in a
+// non-repo temp dir the first call fails (fast, but not instant), and a
+// `setImmediate` racing that isn't reliable — a longer real delay is.
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 100))
+
+const DISPATCHED = {
+  kind: 'dispatch' as const,
+  event: 'dispatched' as const,
+  payload: {},
+  target_role: 'developer' as const,
+  model: 'sonnet',
+  effect_id: 'e1',
+  prompt_hash: 'sha256:abc'
+}
+
+function testDeps(overrides: Partial<LogSinkDeps> = {}): { dir: string; deps: Partial<LogSinkDeps> } {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-log-sink-'))
+  return {
+    dir,
+    deps: {
+      outboxRoot: () => join(dir, 'outbox'),
+      home: () => dir,
+      hostname: () => 'test-host',
+      cwd: () => dir,
+      now: () => new Date('2026-09-05T00:00:00.000Z'),
+      env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404' }),
+      resolveRepo: () => Promise.resolve({ owner: 'atta-labs', repo: 'vinaya' }),
+      vinayaVersion: () => '0.24.1',
+      stderr: () => {},
+      ...overrides
+    }
+  }
+}
+
+describe('log-sink — a valid line', () => {
+  it('appends one ndjson line whose meta/subject are filled from the injected environment', async () => {
+    const { dir, deps } = testDeps()
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const path = join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson')
+    const lines = readFileSync(path, 'utf8').trim().split('\n')
+    expect(lines).toHaveLength(1)
+    const parsed = JSON.parse(lines[0]!)
+    expect(parsed.subject.role).toBe('developer')
+    expect(parsed.subject.issue).toBe(404)
+    expect(parsed.meta.repo).toBe('atta-labs/vinaya')
+    expect(parsed.meta.host).toBe('cli')
+  })
+
+  it('two calls in the same millisecond each carry a distinct, correctly-assigned seq', async () => {
+    // `seq` is assigned synchronously at call time (call order), not at
+    // write time — two overlapping async appends are not guaranteed to
+    // land in that order, which is exactly why a reader sorts by `seq`
+    // instead of trusting file position (spec §19's `(run_id, seq)` key).
+    const { dir, deps } = testDeps()
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    log(DISPATCHED)
+    await flush()
+    const path = join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson')
+    const lines = readFileSync(path, 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+    const seqs = lines.map((l) => l.meta.seq).sort((a, b) => a - b)
+    expect(seqs).toEqual([0, 1])
+  })
+})
+
+describe('log-sink — defeat cases', () => {
+  it('refuses an invalid payload without writing anything', async () => {
+    const { dir, deps } = testDeps()
+    const { log } = createLogSink(deps)
+    log({ ...DISPATCHED, extraKey: 'not allowed' } as never)
+    await flush()
+    expect(() => statSync(join(dir, 'outbox'))).toThrow()
+  })
+
+  it('refuses a symlinked outbox target — writes nothing', async () => {
+    const { dir, deps } = testDeps()
+    const outboxDir = join(dir, 'outbox', 'atta-labs-vinaya')
+    const elsewhere = join(dir, 'elsewhere.ndjson')
+    writeFileSync(elsewhere, 'pre-existing\n')
+    mkdirSync(outboxDir, { recursive: true })
+    symlinkSync(elsewhere, join(outboxDir, '404.ndjson'))
+
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    expect(readFileSync(elsewhere, 'utf8')).toBe('pre-existing\n')
+  })
+
+  it('rotates the file to .1.ndjson once it is at the cap, then appends fresh', async () => {
+    const { dir, deps } = testDeps()
+    const outboxDir = join(dir, 'outbox', 'atta-labs-vinaya')
+    mkdirSync(outboxDir, { recursive: true })
+    const target = join(outboxDir, '404.ndjson')
+    writeFileSync(target, 'x'.repeat(OUTBOX_MAX_BYTES + 1))
+
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const rotated = readFileSync(join(outboxDir, '404.1.ndjson'), 'utf8')
+    expect(rotated.length).toBe(OUTBOX_MAX_BYTES + 1)
+    const fresh = readFileSync(target, 'utf8').trim().split('\n')
+    expect(fresh).toHaveLength(1)
+  })
+
+  it('never throws when the outbox directory cannot be created — one stderr line, no exception', async () => {
+    const { dir, deps } = testDeps()
+    // A file where a directory needs to go: mkdirSync will fail with ENOTDIR.
+    const blocker = join(dir, 'outbox')
+    writeFileSync(blocker, 'not a directory')
+    let stderrCalls = 0
+    const { log } = createLogSink({
+      ...deps,
+      stderr: () => {
+        stderrCalls++
+      }
+    })
+    expect(() => log(DISPATCHED)).not.toThrow()
+    await flush()
+    expect(stderrCalls).toBe(1)
+  })
+
+  it('resolveRepo() returning null writes under outbox/unresolved with meta.repo: null', async () => {
+    const { dir, deps } = testDeps({ resolveRepo: () => Promise.resolve(null) })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const path = join(dir, 'outbox', 'unresolved', '404.ndjson')
+    const line = JSON.parse(readFileSync(path, 'utf8').trim())
+    expect(line.meta.repo).toBeNull()
+  })
+
+  it('an unattributed session (no VINAYA_TASK) files under none.ndjson', async () => {
+    const { dir, deps } = testDeps({ env: () => ({}) })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const path = join(dir, 'outbox', 'atta-labs-vinaya', 'none.ndjson')
+    const line = JSON.parse(readFileSync(path, 'utf8').trim())
+    expect(line.subject.role).toBe('unattributed')
+    expect(line.subject.issue).toBeNull()
+  })
+})
