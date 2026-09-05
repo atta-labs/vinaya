@@ -149,6 +149,19 @@ export type ReviewGateInput = {
    * the verdict; only the whitespace-only case survives unreviewed.
    */
   patchIdOf?: (sha: string) => string | null
+  /**
+   * The current `objectivesVersion` of the list the PR is judged against
+   * (dev-review-loop-v1 task 2, `#412`, O3) — the Issue's `objectivesOf`
+   * build, or the PR body's own `## Objectives` section below the cutover,
+   * resolved by the caller (never here; this stays pure). `null` means the
+   * objectives binding is SKIPPED entirely — a pre-cutover Issue, no Issue at
+   * all, or no objectives section resolvable — so the pre-cutover PR stock
+   * keeps passing exactly as it did before this field existed. A non-null
+   * value requires every clean verdict's own `extraction.objectivesVersion`
+   * to equal it; a mismatch (including a verdict with no version line at
+   * all) reads as unbound, the same fail-closed shape as a stale head.
+   */
+  objectivesVersion: string | null
 }
 
 /**
@@ -206,6 +219,22 @@ function isBoundToPatch(
   patchIdOf?: (sha: string) => string | null
 ): boolean {
   return isBoundToHead(extraction, headSha) || isBoundByPatchIdentity(extraction, headSha, patchIdOf)
+}
+
+/**
+ * True when the verdict's objectives version covers the PR's current one
+ * (dev-review-loop-v1 task 2, `#412`, O3). `currentVersion === null` means
+ * the binding is skipped entirely (pre-cutover Issue, no Issue, or no
+ * resolvable objectives section) — every verdict passes this check
+ * unconditionally, preserving the pre-cutover stock. Otherwise a verdict
+ * binds only when its own `objectivesVersion` is the identical string; a
+ * verdict with no version line at all (`null`) never matches a non-null
+ * current version, the same fail-closed default `isBoundToHead` uses for a
+ * missing `Judged head:` line.
+ */
+function isBoundToObjectives(extraction: { objectivesVersion: string | null }, currentVersion: string | null): boolean {
+  if (currentVersion === null) return true
+  return extraction.objectivesVersion === currentVersion
 }
 
 /**
@@ -279,8 +308,18 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const securityClean = security.value === 'PASS'
   const codeReviewBound = isBoundToPatch(codeReview, input.headSha, input.patchIdOf)
   const securityBound = isBoundToPatch(security, input.headSha, input.patchIdOf)
+  const codeReviewObjectivesBound = isBoundToObjectives(codeReview, input.objectivesVersion)
+  const securityObjectivesBound = isBoundToObjectives(security, input.objectivesVersion)
 
-  if (codeReviewClean && codeReviewBound && securityClean && securityBound && mechanicalChecksClean) {
+  if (
+    codeReviewClean &&
+    codeReviewBound &&
+    codeReviewObjectivesBound &&
+    securityClean &&
+    securityBound &&
+    securityObjectivesBound &&
+    mechanicalChecksClean
+  ) {
     return {
       verdict: 'pass',
       reason: `code-reviewer verdict is a clean APPROVE and security-review verdict is a clean PASS, both covering head ${input.headSha}, and every reported mechanical check is green.`,
@@ -295,12 +334,20 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
     problems.push(
       `the newest code-review verdict covers ${codeReview.headSha ?? 'no recorded commit'}, head is ${input.headSha}`
     )
+  } else if (!codeReviewObjectivesBound) {
+    problems.push(
+      `the newest code-review verdict was cast against objectives version ${codeReview.objectivesVersion ?? 'none'}, the Issue's list is now ${input.objectivesVersion}`
+    )
   }
   if (!securityClean) {
     problems.push(`security-review verdict is not a clean PASS (found: ${security.value})`)
   } else if (!securityBound) {
     problems.push(
       `the newest security-review verdict covers ${security.headSha ?? 'no recorded commit'}, head is ${input.headSha}`
+    )
+  } else if (!securityObjectivesBound) {
+    problems.push(
+      `the newest security-review verdict was cast against objectives version ${security.objectivesVersion ?? 'none'}, the Issue's list is now ${input.objectivesVersion}`
     )
   }
   if (!mechanicalChecksClean) {

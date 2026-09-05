@@ -52,7 +52,16 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkReviewGate, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
+import {
+  checkReviewGate,
+  extractIssue,
+  hasObjectivesHeading,
+  isIssueNotFoundError,
+  OBJECTIVES_SINCE_ISSUE,
+  objectivesOf,
+  objectivesVersion,
+  WAIVER_LABEL_REVIEW
+} from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 
@@ -74,13 +83,14 @@ type PrView = {
   headRefName: string
   headRefOid: string
   baseRefName: string
+  body: string
 }
 
 function fetchPr(prNumber: number): PrView | null {
   try {
     const out = execFileSync(
       'gh',
-      ['pr', 'view', String(prNumber), '--json', 'number,comments,labels,headRefName,headRefOid,baseRefName'],
+      ['pr', 'view', String(prNumber), '--json', 'number,comments,labels,headRefName,headRefOid,baseRefName,body'],
       {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe']
@@ -90,6 +100,59 @@ function fetchPr(prNumber: number): PrView | null {
   } catch {
     return null
   }
+}
+
+/** `gh issue view <n> --json body --jq .body` — mirrors `verify-brief.ts`'s `fetchIssueBodyForObjectives`. */
+function fetchIssueBodyForObjectives(issueNumber: number): string {
+  return execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'body', '--jq', '.body'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+}
+
+/**
+ * The current `objectivesVersion` this PR is judged against (`#412`, O3) —
+ * mirrors `verify-brief.ts`'s `resolveIssueObjectives`
+ * resolution, built to a version string instead of a raw objectives list.
+ * `Closes #N`'s Issue wins when it resolves and is at/above
+ * `OBJECTIVES_SINCE_ISSUE`; the PR body's own `## Objectives` section is the
+ * fallback (no Issue, an Issue below the cutover, or an Issue that does not
+ * resolve as "not found"); `null` when neither source has anything to
+ * version — the pre-cutover PR stock, and `checkReviewGate` reads `null` as
+ * "skip the objectives binding entirely".
+ *
+ * An Issue fetch failure that is NOT "not found" (network, auth, rate-limit)
+ * means the comparison could not be run, not that it passed — `severity:infra`,
+ * exit 1, never a silent `null` that would make the gate quietly stop
+ * enforcing exactly when enforcement is hardest to verify.
+ */
+function resolveObjectivesVersion(pr: PrView): string | null {
+  const { issue } = extractIssue(pr.body)
+  if (issue !== null && issue >= OBJECTIVES_SINCE_ISSUE) {
+    try {
+      const parsed = objectivesOf(fetchIssueBodyForObjectives(issue))
+      return parsed.ok ? objectivesVersion(parsed.objectives) : null
+    } catch (err) {
+      if (!isIssueNotFoundError(err)) {
+        emitCheckError({
+          schema: CHECK_SCHEMA_VERSION,
+          check: CHECK_NAME,
+          severity: 'error',
+          message: `review-gate severity:infra — could not fetch Issue #${issue}'s body via \`gh issue view\` to resolve its objectives version: ${(err as Error).message}`,
+          agent_recovery_prompt:
+            'Confirm `gh auth status` passes and the Issue number is correct, then re-run `vinaya check review-gate`.'
+        })
+        process.exit(1)
+      }
+      // Issue does not resolve (deleted, or a fixture's placeholder number) —
+      // fall through to the body's own section below, same as verify-brief.ts.
+    }
+  }
+  if (hasObjectivesHeading(pr.body)) {
+    const own = objectivesOf(pr.body)
+    return own.ok ? objectivesVersion(own.objectives) : null
+  }
+  return null
 }
 
 function shaFromLsRemote(branch: string): string | null {
@@ -334,7 +397,8 @@ function main(): void {
     // A verdict judged a PATCH; the head sha is only its address. A merge
     // from `main` or a rebase that leaves the patch untouched must not void
     // a review that already read exactly those changes.
-    patchIdOf: (sha: string) => patchIdAt(pr.baseRefName, sha)
+    patchIdOf: (sha: string) => patchIdAt(pr.baseRefName, sha),
+    objectivesVersion: resolveObjectivesVersion(pr)
   })
 
   if (result.verdict === 'fail') {

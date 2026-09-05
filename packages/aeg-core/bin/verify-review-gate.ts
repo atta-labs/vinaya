@@ -119,7 +119,11 @@ export function main(prNumber: number): void {
     labels,
     waiverLabelActor,
     mechanicalChecks,
-    headSha: pr.headRefOid
+    headSha: pr.headRefOid,
+    // This shim does not resolve an Issue's objectives list (dev-review-loop-v1
+    // task 2, #412, out of this bin's brief-scoped surface) — `null` skips the
+    // objectives binding entirely, the same as a pre-cutover PR.
+    objectivesVersion: null
   })
 
   if (result.verdict === 'fail') {

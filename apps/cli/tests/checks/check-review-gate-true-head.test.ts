@@ -56,7 +56,8 @@ if (args[0] === 'pr' && args[1] === 'view') {
     labels: [],
     headRefName: 'work',
     headRefOid: ${JSON.stringify(oldSha)},
-    baseRefName: 'main'
+    baseRefName: 'main',
+    body: ''
   }))
   process.exit(0)
 }
