@@ -190,6 +190,19 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'pr rule',
+    description: 'Post a Principal ruling on a PR, marked and versioned — never mistaken for a review verdict',
+    flags: [
+      { flag: '--file', description: 'Path to the ruling file to post as a PR comment' },
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
+    ],
+    details: [
+      "Refuses before posting when the file's first line reads as an escalation (`ESCALATE:`), or when the file carries verdict grammar anywhere `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` would treat as a candidate — a `VERDICT:` line past the extractor's own first-three-line window still counts, since the whole-body candidate test is what disqualifies the file, not merely a clean read.",
+      'Marker numbers (`<!-- aeg:principal:ruling:<pr>-<k> -->`) are counted on the forge at post time from `gh pr view --json comments`, never derived from a local file — two rulings racing to the same number are a known, undocumented-lock case.'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'pr verify-evidence',
     description: "Prove a pull request's AEG:EVIDENCE region was machine-generated — regenerate it and compare",
     flags: [],

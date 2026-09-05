@@ -417,7 +417,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 
 (154 exports.)
 
-## Commands — `apps/cli/src/commands` (36 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
+## Commands — `apps/cli/src/commands` (37 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
 | Command | File | Entry function | In-scope calls today | Status | One lib function (compliant) / retirement target (exempt) |
 |---|---|---|---|---|---|
@@ -435,6 +435,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `pr edit` | `pr.ts` | `prEditCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `pr report` | `pr-report.ts` | `prReportCommand` | 3 | exempt — see below | collectTokens (target) |
 | `pr verify-evidence` | `pr-verify-evidence.ts` | `prVerifyEvidenceCommand` | 3 | exempt — see below | collectTokens (target) |
+| `pr rule` | `pr-rule.ts` | `prRuleCommand` | 5 | exempt — see below | forgeWrite (target) |
 | `issue create` | `issue.ts` | `issueCreateCommand` | 10 | exempt — see below | forgeWrite (target) |
 | `issue edit` | `issue.ts` | `issueEditCommand` | 10 | exempt — see below | forgeWrite (target) |
 | `issue objectives edit` | `issue-objectives.ts` | `issueObjectivesEditCommand` | 7 | exempt — see below | forgeWrite (target) |
@@ -458,7 +459,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `quickstart` | `quickstart.ts` | `quickstartCommand` | 9 | exempt — see below | sharedCommandShell (target) |
 | `release` | `release.ts` | `releaseCommand` | 0 | compliant | — (self-contained) |
 
-(36 rows — all 36 shipped `COMMANDS` entries. Compliant: 9. Exempt: 27.)
+(37 rows — all 37 shipped `COMMANDS` entries. Compliant: 9. Exempt: 28.)
 
 ## Exemptions
 
@@ -474,6 +475,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `pr edit` | 2026-09-05 | 8 — lib (8): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
 | `pr report` | 2026-09-05 | 3 — lib: `summariseNumstat`; commands/\*.ts (refused outright): `realDeps`, `meteringRefusalMessage` (`tokens.ts`) | `collectTokens` |
 | `pr verify-evidence` | 2026-09-05 | 3 — lib: none; commands/\*.ts (refused outright): `buildReport` (`pr-report.ts`), `compareEvidence`, `renderVerdict` (`pr-verify-evidence-logic.ts`) | `collectTokens` |
+| `pr rule` | 2026-09-05 | 5 — lib (5): `refuse`, `makeCheckError`, `countMarkerComments`, `postMarkedComment`, `printJson` | `forgeWrite` |
 | `issue create` | 2026-09-05 | 10 — lib (10): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `extractLabels`, `validateTaskIssue`, `printJson`, `ensureTrancheLabelExists`, `runGhWrite`, `resolveMilestoneAttachArgs` | `forgeWrite` |
 | `issue edit` | 2026-09-05 | 10 — lib (10): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `fetchForgeLabels`, `extractLabels`, `validateTaskIssue`, `parseIssueNumberFromRef`, `printJson`, `writeValidatedIssueEdit` | `forgeWrite` |
 | `issue objectives edit` | 2026-09-05 | 7 — lib (7): `refuse`, `makeCheckError`, `writeValidatedIssueEdit`, `locateBody`, `countMarkerComments`, `postMarkedComment`, `printJson` | `forgeWrite` |
