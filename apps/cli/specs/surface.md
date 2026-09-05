@@ -1,5 +1,7 @@
 # Surface — the public function index
 
+Status: draft
+
 One command is one function, published and tested. `apps/cli/tests/surface-index.test.ts` enforces every table below against the real source tree; this file is its source of truth, not the reverse.
 
 ## The rule
