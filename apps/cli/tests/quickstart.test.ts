@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,6 +12,7 @@ import type { QuickstartDeps } from '../src/commands/quickstart.js'
 import { runQuickstart } from '../src/commands/quickstart.js'
 import { PROJECTS_REGISTRY_PATH } from '../src/lib/registry-write.js'
 import type { LabelGateway } from '../src/lib/ops.js'
+import { withSerialLock } from './serial-lock.js'
 
 // The real CLI source, invoked directly by `bun` — same technique
 // `demo.test.ts` uses, needed here because `demo break` (reached when the
@@ -178,40 +179,11 @@ function makeDeps(
 // one run, not every checkout/worktree/session on the machine. A fixed path
 // coupled every concurrent suite on a shared box (waiters died at the 30s test
 // timeout, reading as "load"). Keyed on INDEX_TS, which both files share.
+// Staleness, heartbeat and release live in `./serial-lock.ts`, tested on its own.
 const SERIAL_LOCK_DIR = join(
   tmpdir(),
   `vinaya-demo-break-serial-${createHash('sha1').update(INDEX_TS).digest('hex').slice(0, 12)}.lock`
 )
-// A holder killed mid-test (SIGKILL, runner timeout) never reaches `finally`;
-// treat a lock older than this as abandoned rather than waiting forever.
-const STALE_LOCK_MS = 5 * 60_000
-
-async function withSerialLock<T>(fn: () => Promise<T>): Promise<T> {
-  const deadline = Date.now() + 60_000
-  for (;;) {
-    try {
-      mkdirSync(SERIAL_LOCK_DIR)
-      break
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
-      try {
-        if (Date.now() - statSync(SERIAL_LOCK_DIR).mtimeMs > STALE_LOCK_MS) {
-          rmSync(SERIAL_LOCK_DIR, { recursive: true, force: true })
-          continue
-        }
-      } catch {
-        continue // vanished between mkdir and stat — retry immediately
-      }
-      if (Date.now() > deadline) throw new Error('timed out waiting for the demo-break serial lock')
-      await new Promise((r) => setTimeout(r, 50))
-    }
-  }
-  try {
-    return await fn()
-  } finally {
-    rmSync(SERIAL_LOCK_DIR, { recursive: true, force: true })
-  }
-}
 
 let root: string
 
@@ -225,7 +197,7 @@ afterEach(() => {
 
 describe('vinaya quickstart', () => {
   it('accept-everything: installs, binds a doc-owner, registers a project, commits, proves the install, and gracefully reports a failed push (no remote)', async () => {
-    await withSerialLock(async () => {
+    await withSerialLock(SERIAL_LOCK_DIR, async () => {
       const { deps, closeStdinCalls } = makeDeps(root, [
         '', // press-enter pause before the diff
         'y', // vinaya init's own confirm
