@@ -108,7 +108,8 @@ export {
   isBriefShaped,
   isGrandfatherableBriefRuleError,
   isTaskBranch,
-  partitionBriefErrorsByRollout
+  partitionBriefErrorsByRollout,
+  PART_CITATION_RE
 } from './brief-validation'
 export type { BriefSectionResult, BriefSectionsOptions, FencedBlock } from './brief-validation'
 export { checkDoctrineNoProcedures } from './doctrine-no-procedures'
@@ -158,6 +159,7 @@ export type { ReviewGateComment, ReviewGateInput, ReviewGateResult, ReviewGateVe
 export {
   checkBlastRadiusScope,
   checkConflictCompleteness,
+  checkIssueBriefSections,
   checkIssueObjectives,
   checkIssueRationale,
   checkIssueType,
@@ -166,9 +168,21 @@ export {
   checkRationaleNamesDocs,
   declaredProjects,
   isTaskIssueLabelSet,
-  OBJECTIVES_SINCE_ISSUE
+  BRIEF_SECTIONS_SINCE_ISSUE,
+  OBJECTIVES_SINCE_ISSUE,
+  parseIssueParts,
+  parseIssueStopConditions,
+  parseIssueSurface,
+  parseIssueTestPlan
 } from './issue-validation'
-export type { IssueSectionResult, ProjectPath, TaskIssueFacts } from './issue-validation'
+export type {
+  IssuePart,
+  IssueSectionResult,
+  IssueSurface,
+  IssueTestPlan,
+  ProjectPath,
+  TaskIssueFacts
+} from './issue-validation'
 export { findHeadingLine, findTable, rowToRecord } from './markdown-table'
 export type { ParsedTable, TableRow } from './markdown-table'
 export { deriveDiagramModel } from './diagram-model'

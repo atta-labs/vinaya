@@ -21,6 +21,10 @@ import {
   fetchForgeFacts,
   fetchOpenIssuesByLabel,
   objectivesOf,
+  parseIssueParts,
+  parseIssueStopConditions,
+  parseIssueSurface,
+  parseIssueTestPlan,
   parseRationaleFields,
   type PackageManifest,
   renderBrief,
@@ -29,6 +33,9 @@ import {
   type DispatchDependsOnFact,
   type DispatchGateInput,
   type DispatchPriorTrancheFact,
+  type IssuePart,
+  type IssueSurface,
+  type IssueTestPlan,
   type SurfaceFileFact
 } from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
@@ -224,6 +231,23 @@ export async function briefRenderCommand(args: string[]): Promise<void> {
   const workspaces = workspaceGlobs()
   const consumersOf = buildConsumersOf(workspaces, listDirs, readManifest)
 
+  const surfaceResult = parseIssueSurface(issueBody)
+  const partsResult = parseIssueParts(issueBody)
+  const testPlanResult = parseIssueTestPlan(issueBody)
+  const stopConditionsResult = parseIssueStopConditions(issueBody)
+  // Absent-section sentinels (empty list / zero-content `commands`) —
+  // `renderBrief`'s own missing-fact check reads these exact shapes and
+  // refuses, naming the section, rather than rendering a placeholder. A
+  // parse FAILURE (malformed, not merely absent) collapses to the same
+  // sentinel: the section still cannot be derived, and the render's own
+  // refusal message is the one the Developer sees either way.
+  const surface: IssueSurface = surfaceResult.ok ? surfaceResult.value : { in: [], out: [] }
+  const parts: IssuePart[] = partsResult.ok ? partsResult.value : []
+  const testPlan: IssueTestPlan = testPlanResult.ok
+    ? testPlanResult.value
+    : { kind: 'commands', lines: [], principal: [] }
+  const stopConditions: string[] = stopConditionsResult.ok ? stopConditionsResult.value : []
+
   const facts: BriefFacts = {
     trancheSlug,
     taskId,
@@ -237,6 +261,10 @@ export async function briefRenderCommand(args: string[]): Promise<void> {
       const parsed = objectivesOf(issueBody)
       return parsed.ok ? parsed.objectives : []
     })(),
+    surface,
+    parts,
+    testPlan,
+    stopConditions,
     dispatchReady: gate.ready,
     dispatchBlockers: gate.blockers,
     surfaceFiles,

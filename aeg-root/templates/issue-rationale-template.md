@@ -36,6 +36,34 @@ O2. [OBJECTIVE — numbered contiguously from O1, one line per objective, as man
 
 **Docs to keep coherent** — [DOCS — which specs/skills/docs this task will make incoherent and must update, derived from reading them, not from memory — or state "No docs touched." explicitly.]
 
+## Surface
+
+in: [directory-level glob list, comma-separated, e.g. `packages/aeg-core/src`, `apps/cli/src/commands` — never a file path]
+out: [directory-level glob list explicitly excluded from this task's surface — comma-separated, or empty]
+
+## Parts
+
+Part 1 (O1) — [OUTCOME — one observable outcome this Part makes true, naming outcomes and symbols, never a file path.]
+Part 2 (O2) — [OUTCOME — numbered contiguously from 1, one line per Part, as many as this task genuinely has.]
+
+## Test plan
+
+[Either the sentinel below, for a pure-logic task with no runtime-observable surface —]
+
+Test plan: unit-tests-only
+
+[— or a fenced command list, one command per line, each with its expected observable after a literal `→`, plus any auth-gated/visual `[principal]` items:]
+
+```
+[command] → [expected observable]
+```
+
+- [ ] **[principal]** [auth-gated / vendor-key-dependent / visual check, if any]
+
+## Stop conditions
+
+- [the condition under which the executing agent must stop and escalate rather than improvise]
+
 ## Origin
 
 [ORIGIN — where this task came from: Principal-directed, backlog item, incident follow-up — with dates and the Issue/PR references that motivated it.]

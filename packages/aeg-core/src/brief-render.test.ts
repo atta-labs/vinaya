@@ -1,7 +1,15 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { checkBriefSections, readTierFromPrBody } from './index'
+import {
+  checkBriefSections,
+  objectivesOf,
+  parseIssueParts,
+  parseIssueStopConditions,
+  parseIssueSurface,
+  parseIssueTestPlan,
+  readTierFromPrBody
+} from './index'
 import { type BriefFacts, parseRationaleFields, renderBrief } from './brief-render'
 
 const TEMPLATE = readFileSync(join(import.meta.dirname, '../../../aeg-root/templates/brief-template.md'), 'utf8')
@@ -42,6 +50,14 @@ function baseFacts(overrides: Partial<BriefFacts> = {}): BriefFacts {
     conflictsWith: [],
     rationale: parseRationaleFields(ISSUE_BODY),
     objectives: [{ id: 'O1', text: 'A fixture objective for the renderer.' }],
+    surface: { in: ['packages/aeg-core/src'], out: [] },
+    parts: [{ n: 1, objectiveIds: [1], text: 'Do the thing in the fixture package.' }],
+    testPlan: {
+      kind: 'commands',
+      lines: ['bunx turbo test --affected --force → summary line ends "0 fail"'],
+      principal: []
+    },
+    stopConditions: ['If the fixture ever needs a second file, STOP and escalate severity: execution.'],
     dispatchReady: true,
     dispatchBlockers: [],
     surfaceFiles: [
@@ -155,26 +171,112 @@ describe('renderBrief', () => {
     expect(readTierFromPrBody(result.brief)).toBe(0)
   })
 
-  it('declares Test Plan: unit-tests-only when every surface file is a doc file', () => {
-    const result = renderBrief(
-      baseFacts({ surfaceFiles: [{ path: 'aeg-root/roles/developer.md', sha256: 'b'.repeat(64), packageName: null }] }),
-      ''
-    )
+  it('declares Test Plan: unit-tests-only when the Issue Test plan section is the sentinel', () => {
+    const result = renderBrief(baseFacts({ testPlan: { kind: 'unit-tests-only' } }), '')
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.brief).toMatch(/Test Plan:\*\* unit-tests-only|Test Plan: unit-tests-only/)
   })
 
-  it('the §9 fallback command is `bunx turbo test --affected --force`, never `rm -rf apps/cli/dist`-prefixed (Principal ruling, PR open-1)', () => {
-    // A runtime, non-test surface file (baseFacts' default `fixture.ts`)
-    // takes the fenced-list branch with no per-test-file line, so it falls
-    // through to the one generic command — the line `evidence-fresh`
-    // attests against the body's own §9 list, never re-runs.
+  it('§9 is copied verbatim from the Issue Test plan section, never re-derived from the surface file list', () => {
     const result = renderBrief(baseFacts(), TEMPLATE)
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.brief).toContain('bunx turbo test --affected --force → summary line ends "0 fail"')
     expect(result.brief).not.toContain('rm -rf apps/cli/dist')
+  })
+
+  it('§9 emits a `[principal]` box when the Issue Test plan names one', () => {
+    const result = renderBrief(
+      baseFacts({
+        testPlan: { kind: 'commands', lines: ['bun test → 0 fail'], principal: ['Verify in a real browser.'] }
+      }),
+      TEMPLATE
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).toContain('- [ ] **[principal]** Verify in a real browser.')
+  })
+
+  it('§9 widens its fence rather than let embedded backticks in Issue-sourced lines break out of it (security review finding)', () => {
+    // The Issue's own `## Test plan` can be fenced with MORE than three
+    // backticks, so a literal triple-backtick line survives inside
+    // `extractFencedBlocks`'s content as ordinary text — splicing it
+    // between a *fixed* three-backtick fence here would close the section
+    // early and spill the rest as unfenced prose.
+    const result = renderBrief(
+      baseFacts({
+        testPlan: {
+          kind: 'commands',
+          lines: ['bun test → 0 fail', '```', 'echo injected, now unfenced', '```'],
+          principal: []
+        }
+      }),
+      ''
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const section9 = result.brief.slice(result.brief.indexOf('## 9. Test Plan'))
+    const lines = section9.split('\n')
+    // Exactly two lines at the WIDENED four-backtick length (the real
+    // open/close fence) — the Issue's own embedded three-backtick lines
+    // must survive as plain content, never mistaken for the closer.
+    const widenedFenceLines = lines.filter((l) => l === '````')
+    const embeddedTripleBacktickLines = lines.filter((l) => l === '```')
+    expect(widenedFenceLines).toHaveLength(2)
+    expect(embeddedTripleBacktickLines).toHaveLength(2)
+    expect(section9).toContain('echo injected, now unfenced')
+  })
+
+  it('refuses and names Test plan when the Issue Test plan section is unparseable', () => {
+    const result = renderBrief(baseFacts({ testPlan: { kind: 'commands', lines: [], principal: [] } }), '')
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.missing.join(' ')).toMatch(/Test plan/)
+  })
+
+  it('refuses and names Surface/Parts/Stop conditions when each is the absent-section sentinel', () => {
+    const result = renderBrief(baseFacts({ surface: { in: [], out: [] }, parts: [], stopConditions: [] }), '')
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.missing.some((m) => m.startsWith('Surface'))).toBe(true)
+    expect(result.missing.some((m) => m.startsWith('Parts'))).toBe(true)
+    expect(result.missing.some((m) => m.startsWith('Stop conditions'))).toBe(true)
+  })
+
+  it('§4 Out of surface is rendered from the Issue Surface out: list, never a placeholder', () => {
+    const result = renderBrief(
+      baseFacts({ surface: { in: ['packages/aeg-core/src'], out: ['packages/aeg-core/tests'] } }),
+      ''
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).toContain('**Out of surface:** packages/aeg-core/tests')
+    expect(result.brief).not.toContain('named explicitly by the Brief Author')
+  })
+
+  it('§6 renders one numbered Part per IssuePart, its citation reconstructed verbatim', () => {
+    const result = renderBrief(
+      baseFacts({
+        parts: [
+          { n: 1, objectiveIds: [1], text: 'the parsers.' },
+          { n: 2, objectiveIds: [1, 2], text: 'the render.' }
+        ]
+      }),
+      ''
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).toContain('1. **Part 1 (O1):** the parsers.')
+    expect(result.brief).toContain('2. **Part 2 (O1, O2):** the render.')
+  })
+
+  it('§10 renders the Issue Stop conditions bullets plus the rationale Stop-and-escalate field', () => {
+    const result = renderBrief(baseFacts({ stopConditions: ['A premise pin mismatches.'] }), '')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).toContain('- A premise pin mismatches.')
+    expect(result.brief).toContain('If the fixture ever needs a second file, STOP and escalate severity: execution.')
   })
 
   it('emits a consumer-tests sentinel when a touched package has an uncovered consumer', () => {
@@ -195,5 +297,69 @@ describe('renderBrief', () => {
     expect(result.brief).toContain(
       'The pre-push hook already ran the affected suite on your one push and refused it on failure'
     )
+  })
+})
+
+// plan-brief-v1 task 1, Issue #426, O2/O3: the real fixture Issue, run
+// through the four parsers exactly as `apps/cli/src/commands/brief.ts`
+// does, must render with zero bracketed placeholders and pass every check
+// `verify-brief`/`brief-shape` run — no hand edit needed to be dispatchable.
+describe('renderBrief — end-to-end from a real Issue body (#426 fixture)', () => {
+  const ISSUE_426_BODY = readFileSync(join(import.meta.dirname, '../tests/fixtures/issue-426-body.md'), 'utf8')
+
+  function factsFromIssue426(): BriefFacts {
+    const surface = parseIssueSurface(ISSUE_426_BODY)
+    const parts = parseIssueParts(ISSUE_426_BODY)
+    const testPlan = parseIssueTestPlan(ISSUE_426_BODY)
+    const stopConditions = parseIssueStopConditions(ISSUE_426_BODY)
+    if (!surface.ok || !parts.ok || !testPlan.ok || !stopConditions.ok) {
+      throw new Error('fixture issue-426-body.md must parse cleanly under every one of the four parsers')
+    }
+    return baseFacts({
+      trancheSlug: 'plan-brief-v1',
+      taskId: '1',
+      title: 'The Issue carries every judgment section of the brief; brief render refuses on a gap',
+      issue: 426,
+      projects: ['aeg-core', 'cli', 'sources'],
+      rationale: parseRationaleFields(ISSUE_426_BODY),
+      objectives: (() => {
+        const parsed = objectivesOf(ISSUE_426_BODY)
+        return parsed.ok ? parsed.objectives : []
+      })(),
+      surface: surface.value,
+      parts: parts.value,
+      testPlan: testPlan.value,
+      stopConditions: stopConditions.value
+    })
+  }
+
+  it('renders with zero `[named explicitly`/`[NEEDS CLARIFICATION` bracketed placeholders', () => {
+    const result = renderBrief(factsFromIssue426(), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).not.toContain('[named explicitly')
+    expect(result.brief).not.toContain('[NEEDS CLARIFICATION')
+  })
+
+  it('the rendered brief passes every check `checkBriefSections` runs', () => {
+    const result = renderBrief(factsFromIssue426(), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const { errors } = checkBriefSections(result.brief, readTierFromPrBody, {
+      requireClosesN: true,
+      consumersOf: () => []
+    })
+    expect(errors).toEqual([])
+  })
+
+  it('removing `## Parts` from the fixture makes renderBrief refuse, naming Parts', () => {
+    const withoutParts = ISSUE_426_BODY.replace(/## Parts[\s\S]*?(?=\n## Test plan)/, '')
+    const parts = parseIssueParts(withoutParts)
+    expect(parts.ok).toBe(false)
+    const facts = factsFromIssue426()
+    const result = renderBrief({ ...facts, parts: [] }, TEMPLATE)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.missing.some((m) => m.startsWith('Parts'))).toBe(true)
   })
 })

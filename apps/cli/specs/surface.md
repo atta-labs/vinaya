@@ -520,3 +520,5 @@ Every non-compliant command from the table above, dated, with the count of disti
 
 `dispatchRole` and `runTask` retire no row today — neither chokepoint has a shipped command yet; both are forward-looking per the Tech Spec.
 
+`issue create`/`issue edit` re-verified after `BRIEF_BUILTINS` (`apps/cli/src/lib/config.ts`) and its `runBuiltin` table (`apps/cli/src/lib/forge-write.ts`) gained a `briefSections` entry: both rows' own in-scope call count is unchanged — `validateTaskIssue` was already the one call either row lists, and a new entry inside that function's internal table is not a new call site in either command's own body.
+

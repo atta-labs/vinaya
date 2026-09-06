@@ -42,6 +42,9 @@
           "builtin": "objectives"
         },
         {
+          "builtin": "briefSections"
+        },
+        {
           "builtin": "project"
         }
       ]

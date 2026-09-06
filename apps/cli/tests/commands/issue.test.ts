@@ -309,3 +309,95 @@ describe('vinaya issue edit --validate-only — URL-form ref reaches the Objecti
     expect(r.stdout).toContain('PASS')
   })
 })
+
+// plan-brief-v1 task 1, Issue #426 — the `briefSections` builtin's own gate
+// (`## Surface`/`## Parts`/`## Test plan`/`## Stop conditions`), wired
+// through the real `issue create`/`issue edit` command paths.
+describe('vinaya issue create --validate-only — briefSections builtin', () => {
+  const BRIEF_SECTIONS_CONFIG = {
+    briefSchema: { issue: { sections: [{ builtin: 'issueRationale' }, { builtin: 'briefSections' }] } }
+  }
+  let cwd: string
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-issue-brief-sections-test-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify(BRIEF_SECTIONS_CONFIG), 'utf8')
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it('passes a task Issue carrying all four sections', () => {
+    const r = runCli(
+      [
+        'issue',
+        'create',
+        '--validate-only',
+        '--body-file',
+        join(FORGE_FIXTURES, 'issue-brief-sections-valid.md'),
+        '--label',
+        'vinaya/tranche:demo'
+      ],
+      cwd
+    )
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('PASS')
+  })
+
+  it('refuses, naming Parts, when `## Parts` is missing — `issue create` has no number yet, so the cutover never exempts it', () => {
+    const r = runCli(
+      [
+        'issue',
+        'create',
+        '--validate-only',
+        '--body-file',
+        join(FORGE_FIXTURES, 'issue-brief-sections-missing-parts.md'),
+        '--label',
+        'vinaya/tranche:demo'
+      ],
+      cwd
+    )
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('brief-schema')
+    expect(finding.message).toMatch(/Parts/)
+  })
+})
+
+describe('vinaya issue edit --validate-only — briefSections builtin reaches the cutover end-to-end', () => {
+  const BRIEF_SECTIONS_CONFIG = {
+    briefSchema: { issue: { sections: [{ builtin: 'issueRationale' }, { builtin: 'briefSections' }] } }
+  }
+  let cwd: string
+  let ghDir: string
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-issue-edit-brief-sections-test-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify(BRIEF_SECTIONS_CONFIG), 'utf8')
+    ghDir = mkdtempSync(join(tmpdir(), 'vinaya-issue-edit-brief-sections-fake-gh-'))
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+    rmSync(ghDir, { recursive: true, force: true })
+  })
+
+  it('passes an Issue numbered below the cutover (425) carrying none of the four sections', () => {
+    const r = runCli(
+      ['issue', 'edit', '425', '--validate-only', '--body-file', join(FORGE_FIXTURES, 'issue-valid.md')],
+      cwd,
+      { PATH: fakeGhLabelsPath(ghDir) }
+    )
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('PASS')
+  })
+
+  it('refuses, naming Surface, an Issue numbered at the cutover (426) carrying none of the four sections', () => {
+    const r = runCli(
+      ['issue', 'edit', '426', '--validate-only', '--body-file', join(FORGE_FIXTURES, 'issue-valid.md')],
+      cwd,
+      { PATH: fakeGhLabelsPath(ghDir) }
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/Surface/)
+  })
+})
