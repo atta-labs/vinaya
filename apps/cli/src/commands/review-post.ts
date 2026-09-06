@@ -27,7 +27,7 @@
  * construction, is what actually makes free caller text (a finding,
  * `--scope`, `--summary`) safe: `verdict-extraction.ts` reads only a
  * comment's first FIVE lines (round-4 ruling on `#392`, widened from three
- * by dev-review-loop-v1 task 2, `#412`), and `renderCodeReviewComment`/
+ * by a later task, `#412`), and `renderCodeReviewComment`/
  * `renderSecurityComment`'s caller fields never OPEN one of those lines —
  * they only trail a fixed, renderer-owned label already on the line. The
  * one field this does NOT hold for is `renderEscalationComment`'s
@@ -455,7 +455,7 @@ export function renderSecurityComment(input: SecurityInput): string {
 
 /**
  * Round-4 ruling on `#392`, window later widened from three to five lines
- * by dev-review-loop-v1 task 2 (`#412`): `renderCodeReviewComment`/
+ * by a later task (`#412`): `renderCodeReviewComment`/
  * `renderSecurityComment`'s caller-supplied fields never OPEN one of the
  * first five lines — they only ever trail a fixed, renderer-owned label
  * already on that line. `renderEscalationComment`'s `summary` is the one
