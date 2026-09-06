@@ -265,6 +265,24 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'log flush',
+    description: "Post a target Issue or PR's outbox as one or more marked comments, then truncate what the forge confirmed",
+    flags: [
+      { flag: '--issue', description: 'Flush this Issue\'s outbox (`~/.vinaya/outbox/<owner>-<repo>/<n>.ndjson`)' },
+      {
+        flag: '--pr',
+        description: "Flush the Issue named by this PR's `Closes #N` line, posting the comments on the PR"
+      },
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
+    ],
+    details: [
+      'Exactly one of `--issue`/`--pr` is required. `--pr` resolves the Issue from the PR body\'s `Closes #N` line — the same anchor every gate reads — and refuses with a check error naming the missing line when the body carries none.',
+      'Splits the outbox first at `run_id` boundaries (a maximal run of consecutive lines sharing one `run_id`, never a global group-by, so an interleaved outbox never produces a range spanning a gap), then at `FORGE_COMMENT_MAX_CHARS` (65536) within each run. Each comment opens with `<!-- aeg:log:<run_id>:<seq_from>-<seq_to> -->` on its own line, then one fenced `ndjson` block, one outbox line per line, verbatim. A single line too large to fit alone is refused by name, never split across two comments.',
+      "Logs its own `forge_write` line — `validated` before posting, `written` (with every returned comment id) after the last post succeeds, or `refused` (with gh's error) on any failure — through the same `log()` every other family uses, into the same outbox, before truncating. The outbox is truncated only to the lines confirmed posted; a failed chunk's lines, and anything appended to the outbox during the flush (including the flush's own `validated`/`written`/`refused` line), always survive to ride the next flush."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'milestone create',
     description: 'Create a GitHub Milestone from a validated body',
     flags: [

@@ -433,7 +433,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 
 (160 exports.)
 
-## Commands — `apps/cli/src/commands` (37 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
+## Commands — `apps/cli/src/commands` (38 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
 | Command | File | Entry function | In-scope calls today | Status | One lib function (compliant) / retirement target (exempt) |
 |---|---|---|---|---|---|
@@ -455,6 +455,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `issue create` | `issue.ts` | `issueCreateCommand` | 10 | exempt — see below | forgeWrite (target) |
 | `issue edit` | `issue.ts` | `issueEditCommand` | 10 | exempt — see below | forgeWrite (target) |
 | `issue objectives edit` | `issue-objectives.ts` | `issueObjectivesEditCommand` | 8 | exempt — see below | forgeWrite (target) |
+| `log flush` | `log.ts` | `logFlushCommand` | 3 | exempt — see below | sharedCommandShell (target) |
 | `milestone create` | `milestone.ts` | `milestoneCreateCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `milestone adopt` | `milestone.ts` | `milestoneAdoptCommand` | 4 | exempt — see below | forgeWrite (target) |
 | `milestone edit` | `milestone.ts` | `milestoneEditCommand` | 7 | exempt — see below | forgeWrite (target) |
@@ -475,7 +476,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `quickstart` | `quickstart.ts` | `quickstartCommand` | 9 | exempt — see below | sharedCommandShell (target) |
 | `release` | `release.ts` | `releaseCommand` | 0 | compliant | — (self-contained) |
 
-(37 rows — all 37 shipped `COMMANDS` entries. Compliant: 9. Exempt: 28.)
+(38 rows — all 38 shipped `COMMANDS` entries. Compliant: 9. Exempt: 29.)
 
 `review post` refuses a `doc-correctness` finding whose description carries no `Search:` pattern, or whose pattern carries a path filter — a content rule on the existing description field, not a change to the `|`-delimited grammar. The `review post` and `pr rule` source comments describe the verdict-extraction read window, so they carry `AEG:CLAIM` markers pinning the code that proves each claim; `verify-docs` C8 verifies them, and a change to that window fails the check in every file stating it rather than only where a reviewer happened to look. See `aeg-root/documentation-coherence.md`.
 
@@ -497,6 +498,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `issue create` | 2026-09-05 | 10 — lib (10): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `extractLabels`, `validateTaskIssue`, `printJson`, `ensureTrancheLabelExists`, `runGhWrite`, `resolveMilestoneAttachArgs` | `forgeWrite` |
 | `issue edit` | 2026-09-05 | 10 — lib (10): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `fetchForgeLabels`, `extractLabels`, `validateTaskIssue`, `parseIssueNumberFromRef`, `printJson`, `writeValidatedIssueEdit` | `forgeWrite` |
 | `issue objectives edit` | 2026-09-05 | 8 — lib (8): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `writeValidatedIssueEdit`, `locateBody`, `countMarkerComments`, `postMarkedComment`, `printJson` | `forgeWrite` |
+| `log flush` | 2026-09-06 | 3 — lib (3): `outboxPathFor`, `log`, `printJson` | `sharedCommandShell` |
 | `milestone create` | 2026-09-05 | 8 — lib (8): `extractTitle`, `refuse`, `makeCheckError`, `locateBody`, `resolveSections`, `validateForgeWrite`, `printJson`, `detectGitRepo` | `forgeWrite` |
 | `milestone adopt` | 2026-09-05 | 4 — lib (4): `refuse`, `makeCheckError`, `detectGitRepo`, `printJson` | `forgeWrite` |
 | `milestone edit` | 2026-09-05 | 7 — lib (7): `refuse`, `makeCheckError`, `locateBody`, `resolveSections`, `validateForgeWrite`, `printJson`, `detectGitRepo` | `forgeWrite` |
