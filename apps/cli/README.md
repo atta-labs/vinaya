@@ -15,6 +15,8 @@ npx @attalabs/vinaya init        # or: pnpm dlx / yarn dlx / bunx
 <!-- AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string { -->
 <!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string { -->
 <!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult { -->
+<!-- AEG:CLAIM: packages/aeg-core/src/brief-render.ts contains:export function renderBrief(facts: BriefFacts, template: string): RenderResult { -->
+<!-- AEG:CLAIM: apps/cli/src/commands/brief.ts contains:refuse(`cannot render — missing fact(s): -->
 
 | Command | Description |
 |---------|-------------|
