@@ -14,13 +14,21 @@ import { fileURLToPath } from 'node:url'
  * through `log()`, and it is the one file besides the sink allowed to touch
  * the outbox path directly, since truncation is a lifecycle half `log()`
  * itself never performs.
+ *
+ * Amended by task 3 (#406): `dispatchRole` (`apps/cli/src/lib/dispatch.ts`) —
+ * NOT `dispatch-role.ts`, the earlier forward-looking guess this file's own
+ * `FUTURE_CALLER_ALLOWLIST` once carried; the real Surface Map named
+ * `dispatch.ts` — is the second real caller. It only reads the outbox (to
+ * poll for its own lines actually landing before returning), never appends
+ * or truncates, so it is not added to `OUTBOX_TRUNCATE_ALLOWLIST`.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
 const SINK_PATH = 'apps/cli/src/lib/log-sink.ts'
 const FLUSH_PATH = 'apps/cli/src/commands/log.ts'
-const FUTURE_CALLER_ALLOWLIST = new Set(['apps/cli/src/lib/dispatch-role.ts', 'apps/cli/src/lib/dev-review-loop.ts'])
-const CALLER_ALLOWLIST = new Set([...FUTURE_CALLER_ALLOWLIST, FLUSH_PATH])
+const DISPATCH_PATH = 'apps/cli/src/lib/dispatch.ts'
+const FUTURE_CALLER_ALLOWLIST = new Set(['apps/cli/src/lib/dev-review-loop.ts'])
+const CALLER_ALLOWLIST = new Set([...FUTURE_CALLER_ALLOWLIST, FLUSH_PATH, DISPATCH_PATH])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([FLUSH_PATH])
 
 function sourceFiles(dir: string, prefix: string): [string, string][] {
@@ -97,5 +105,10 @@ describe('log-callers — O2', () => {
   it('the flush allowlist entry does exist — task 2 is the landed caller, not a future one', () => {
     const existing = files.map(([rel]) => rel)
     expect(existing).toContain(FLUSH_PATH)
+  })
+
+  it('the dispatch allowlist entry does exist — task 3 is the landed caller, not a future one', () => {
+    const existing = files.map(([rel]) => rel)
+    expect(existing).toContain(DISPATCH_PATH)
   })
 })
