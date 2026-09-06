@@ -1,8 +1,8 @@
 /**
  * The Vinaya Log's typed event schema (Linear "Tech spec — The Vinaya Log",
- * rev 4, §5). Two families ship in this task — `dispatch` and
- * `dev_review_loop` — the other four (`gate`, `forge_write`, `command`,
- * `tokens`) are out of scope; `kind` is a closed union of only these two.
+ * rev 4, §5). Three families ship so far — `dispatch`, `dev_review_loop`,
+ * and `forge_write` — the other three (`gate`, `command`, `tokens`) are out
+ * of scope; `kind` is a closed union of only these three.
  *
  * One deviation from the spec, decided in this task's brief: the spec's
  * `subject.objectives_version` is `number`; the built form
@@ -260,7 +260,52 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
 export type DevReviewLoopEvent = z.infer<typeof DevReviewLoopEventSchema>
 
 // ---------------------------------------------------------------------------
+// `forge_write` family — every op `vinaya log flush` (and future forge-write
+// call sites) can perform, spelled exactly as the Issue lists them.
 
-/** Both families this task ships. `kind: 'gate' | 'forge_write' | 'command' | 'tokens'` is refused — out of scope. */
-export const LogEventSchema = z.union([DispatchEventSchema, DevReviewLoopEventSchema])
+export const ForgeOpSchema = z.enum([
+  'pr.create',
+  'pr.comment',
+  'pr.body.replace',
+  'pr.refreeze',
+  'issue.create',
+  'issue.edit',
+  'issue.comment',
+  'milestone.create',
+  'milestone.edit',
+  'milestone.close',
+  'label.add',
+  'label.remove'
+])
+export type ForgeOp = z.infer<typeof ForgeOpSchema>
+
+const ForgeWriteTargetSchema = z
+  .object({
+    issue: z.number().int().optional(),
+    pr: z.number().int().optional()
+  })
+  .strict()
+
+const forgeWriteShared = {
+  meta: HeaderMetaSchema,
+  subject: SubjectSchema,
+  kind: z.literal('forge_write'),
+  ...envelopeTail,
+  op: ForgeOpSchema,
+  target: ForgeWriteTargetSchema
+}
+
+export const ForgeWriteEventSchema = z.discriminatedUnion('event', [
+  z.object({ ...forgeWriteShared, event: z.literal('validated') }).strict(),
+  z.object({ ...forgeWriteShared, event: z.literal('refused'), reason: z.string() }).strict(),
+  z
+    .object({ ...forgeWriteShared, event: z.literal('written'), comment_ids: z.array(z.string()) })
+    .strict()
+])
+export type ForgeWriteEvent = z.infer<typeof ForgeWriteEventSchema>
+
+// ---------------------------------------------------------------------------
+
+/** The three families shipped so far. `kind: 'gate' | 'command' | 'tokens'` is refused — out of scope. */
+export const LogEventSchema = z.union([DispatchEventSchema, DevReviewLoopEventSchema, ForgeWriteEventSchema])
 export type LogEvent = z.infer<typeof LogEventSchema>
