@@ -23,13 +23,21 @@
  * same extractors over the rendered text and refuses (exit `2`) unless
  * exactly the intended verdict comes back and the other role's extractor
  * finds nothing — a zero-network dry run of the same shape check
- * self-verification performs after posting. This is what actually makes free
- * caller text (a finding, `--scope`, `--summary`) safe: `verdict-extraction.ts`
- * reads only a comment's first three lines, which this command's own
- * templates always occupy with `VERDICT:`/`ESCALATE:` and `Judged head:` —
- * no caller field ever renders there (round-4 ruling on `#392`; the
+ * self-verification performs after posting. This check, not the render's
+ * construction, is what actually makes free caller text (a finding,
+ * `--scope`, `--summary`) safe: `verdict-extraction.ts` reads only a
+ * comment's first FIVE lines (round-4 ruling on `#392`, widened from three
+ * by a later task, `#412`), and `renderCodeReviewComment`/
+ * `renderSecurityComment`'s caller fields never OPEN one of those lines —
+ * they only trail a fixed, renderer-owned label already on the line. The
+ * one field this does NOT hold for is `renderEscalationComment`'s
+ * `--summary`: pre-cutover, it becomes line 5 outright, unprefixed, so a
+ * summary whose own first line happened to read `VERDICT: APPROVE` would
+ * extract as a real verdict through construction alone. That is exactly
+ * the case this check exists to catch, mechanically, before any post — the
  * per-field guard layer that used to sit here is gone, replaced by this one
- * check at the shared boundary).
+ * check at the shared boundary, not by a blanket "caller text never reaches
+ * the window" guarantee that does not actually hold for every field.
  *
  * `--role code-reviewer` and `--role security` are the only two shapes —
  * mirroring `reviewer.md`/`security.md`'s templates exactly, including each
@@ -71,8 +79,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   extractCodeReviewVerdict,
+  extractIssue,
   extractSecurityReviewVerdict,
+  hasObjectivesHeading,
+  isIssueNotFoundError,
   isPrincipal,
+  OBJECTIVES_SINCE_ISSUE,
+  type Objective,
+  objectivesOf,
+  objectivesVersion,
   type ReviewGateComment,
   type VerdictExtraction
 } from '@attalabs/aeg-core'
@@ -137,6 +152,108 @@ export function renderFindingsSection(findings: readonly Finding[]): string {
   return findings.map((f, i) => `${i + 1}. [${f.severity}] ${f.location} — ${f.description}`).join('\n')
 }
 
+// --- objectives grammar (`#412`, O1/O2) ---------------------------------------
+
+export type ObjectiveStatus = 'MET' | 'NOT MET'
+export type ObjectiveResult = { id: string; status: ObjectiveStatus; evidence: string }
+
+export class ObjectivesParseError extends Error {}
+
+const OBJECTIVE_ID_ONLY = /^O\d+$/
+const STRUCTURAL_MARKER_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?(?:VERDICT|Judged head|Objectives version):/i
+
+/**
+ * `null` when `evidence` is safe to render as one objective's evidence field;
+ * otherwise the refusal reason. A raw newline would break the "exactly one
+ * line per objective" contract `renderObjectivesBlock` promises even without
+ * producing a marker-shaped line; a leading `VERDICT:`/`Judged head:`/
+ * `Objectives version:`-shaped prefix is refused too, on its own, as
+ * confusing/dangerous content for an evidence field regardless of whether it
+ * could actually inject a structural line (this file's `refuse anything that
+ * looks structurally dangerous, don't just prove it's safe` discipline).
+ */
+export function invalidObjectiveEvidenceReason(evidence: string): string | null {
+  if (evidence.includes('\n')) {
+    return 'evidence contains a newline — each objective renders as exactly one line'
+  }
+  if (STRUCTURAL_MARKER_PATTERN.test(evidence)) {
+    return "evidence looks like a VERDICT:/Judged head:/Objectives version: line, which would corrupt the rendered comment's structural markers"
+  }
+  return null
+}
+
+/**
+ * Parses the `O<n>|MET|<evidence>` / `O<n>|NOT MET|<evidence>` objectives-file
+ * grammar — `|`-delimited like the findings file, but evidence is the REST of
+ * the line after the second `|` (an evidence sentence may itself contain a
+ * `|`; only the id and status fields are rigid). Throws `ObjectivesParseError`
+ * naming the exact line and what was wrong with it — never silently drops or
+ * reinterprets a malformed line.
+ */
+export function parseObjectivesFile(content: string): ObjectiveResult[] {
+  const lines = content
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+
+  return lines.map((line, idx) => {
+    const first = line.indexOf('|')
+    const second = first === -1 ? -1 : line.indexOf('|', first + 1)
+    if (first === -1 || second === -1) {
+      throw new ObjectivesParseError(
+        `objectives file line ${idx + 1}: expected \`O<n>|MET|<evidence>\` or \`O<n>|NOT MET|<evidence>\` (at least 2 \`|\` delimiters): ${line}`
+      )
+    }
+    const id = line.slice(0, first).trim()
+    const statusRaw = line
+      .slice(first + 1, second)
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, ' ')
+    const evidence = line.slice(second + 1).trim()
+    if (!OBJECTIVE_ID_ONLY.test(id)) {
+      throw new ObjectivesParseError(
+        `objectives file line ${idx + 1}: "${id}" is not a well-formed objective id — expected \`O<n>\`: ${line}`
+      )
+    }
+    if (statusRaw !== 'MET' && statusRaw !== 'NOT MET') {
+      throw new ObjectivesParseError(
+        `objectives file line ${idx + 1}: status "${statusRaw}" is not MET or NOT MET: ${line}`
+      )
+    }
+    if (!evidence) {
+      throw new ObjectivesParseError(`objectives file line ${idx + 1}: evidence must be non-empty for ${id}: ${line}`)
+    }
+    const invalidReason = invalidObjectiveEvidenceReason(evidence)
+    if (invalidReason) {
+      throw new ObjectivesParseError(`objectives file line ${idx + 1}: ${invalidReason} (${id}): ${line}`)
+    }
+    return { id, status: statusRaw as ObjectiveStatus, evidence }
+  })
+}
+
+/** Every id in `resolved` not covered by `results`, and every id in `results` not on `resolved` — `null` when the sets match exactly. */
+export function checkObjectiveIdCoverage(
+  resolved: readonly Objective[],
+  results: readonly ObjectiveResult[]
+): string | null {
+  const resolvedIds = resolved.map((o) => o.id)
+  const resultIds = results.map((r) => r.id)
+  const missing = resolvedIds.filter((id) => !resultIds.includes(id))
+  const extra = resultIds.filter((id) => !resolvedIds.includes(id))
+  if (missing.length === 0 && extra.length === 0) return null
+  const parts: string[] = []
+  if (missing.length > 0) parts.push(`missing ${missing.join(', ')}`)
+  if (extra.length > 0) parts.push(`extra ${extra.join(', ')}`)
+  return parts.join('; ')
+}
+
+/** Renders the `OBJECTIVES:` block — one `O<n>: MET | NOT MET — <evidence>` line per result, in canonical `O1, O2, …` order regardless of file order. */
+export function renderObjectivesBlock(results: readonly ObjectiveResult[]): string {
+  const sorted = [...results].sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))
+  return ['OBJECTIVES:', ...sorted.map((r) => `${r.id}: ${r.status} — ${r.evidence}`)].join('\n')
+}
+
 function renderTokensLine(role: 'review' | 'security', roleLabel: 'Reviewer' | 'Security', input: TokensInput): string {
   return `Tokens: ${input.taskId}: ${role} — ${roleLabel} — ${input.model} — ${input.tokensIn}/${input.tokensOut}/${input.cost}`
 }
@@ -188,6 +305,10 @@ export type CodeReviewInput = TokensInput & {
   scopeEvidence: string | null
   tests: string
   docs: string
+  /** `null` when this PR's Issue predates `OBJECTIVES_SINCE_ISSUE` — no `Objectives version:` line renders at all (`#412`, O2). */
+  objectivesVersion: string | null
+  /** `null` alongside `objectivesVersion === null` — no `OBJECTIVES:` block renders. Non-null is always non-empty by construction (`objectivesOf` refuses an empty list). */
+  objectiveResults: readonly ObjectiveResult[] | null
 }
 
 const CODE_REVIEW_VERDICT_TEXT: Record<CodeReviewVerdict, string> = {
@@ -223,23 +344,34 @@ export function deriveCodeReviewVerdict(findings: readonly Finding[]): CodeRevie
 }
 
 /**
- * Renders `reviewer.md`'s exact bare template. `VERDICT:`/`Judged head:` are
- * built from `input.verdict`/`input.headSha` through this function's own
- * literal strings — there is no code path by which a caller-supplied string
- * can land in either position.
+ * Renders `reviewer.md`'s exact bare template. `VERDICT:`/`Judged head:`/
+ * `Objectives version:` are built from `input.verdict`/`input.headSha`/
+ * `input.objectivesVersion` through this function's own literal strings —
+ * there is no code path by which a caller-supplied string can land in any of
+ * the three positions. `Objectives version:` renders as line 5 (blank line 6)
+ * only when `input.objectivesVersion` is non-null (`#412`, O2) — a pre-cutover
+ * PR renders exactly as before this task. The `OBJECTIVES:` block
+ * (`renderObjectivesBlock`) renders after `SPEC CONFORMANCE:` (O1), only when
+ * `input.objectiveResults` is non-null.
  */
 export function renderCodeReviewComment(input: CodeReviewInput): string {
   const sorted = sortBySeverity(input.findings, CODE_REVIEW_SEVERITIES)
   const lines = [`VERDICT: ${CODE_REVIEW_VERDICT_TEXT[input.verdict]}`, '', `Judged head: ${input.headSha}`, '']
+  if (input.objectivesVersion !== null) {
+    lines.push(`Objectives version: ${input.objectivesVersion}`, '')
+  }
   if (input.scopeEvidence !== null) {
     // Directly below the verdict block, per `reviewer.md`'s own evidence
     // rule — safe as free multi-line text now that the gate's extractors
-    // read only a comment's first three lines (round-4 ruling, `#392`).
+    // read only a comment's first five lines (round-4 ruling, `#392`,
+    // widened by `#412`).
     lines.push('```', input.scopeEvidence, '```', '')
   }
+  lines.push(`BRIEF CONFORMANCE: ${input.briefConformance}`, `SPEC CONFORMANCE: ${input.specConformance}`)
+  if (input.objectiveResults !== null) {
+    lines.push('', renderObjectivesBlock(input.objectiveResults))
+  }
   lines.push(
-    `BRIEF CONFORMANCE: ${input.briefConformance}`,
-    `SPEC CONFORMANCE: ${input.specConformance}`,
     '',
     'FINDINGS (ordered by severity):',
     renderFindingsSection(sorted),
@@ -267,6 +399,10 @@ export type SecurityInput = TokensInput & {
   secrets: string
   /** Raw scanner output backing a `none found` claim; null when not supplied. */
   secretsEvidence: string | null
+  /** `null` when this PR's Issue predates `OBJECTIVES_SINCE_ISSUE` — no `Objectives version:` line renders at all (`#412`, O2). */
+  objectivesVersion: string | null
+  /** `null` alongside `objectivesVersion === null` — no `OBJECTIVES:` block renders. */
+  objectiveResults: readonly ObjectiveResult[] | null
 }
 
 /**
@@ -285,24 +421,24 @@ export function isNoneFoundClaim(value: string): boolean {
 
 /**
  * Renders `security.md`'s exact bare template. Same no-caller-injection
- * guarantee as `renderCodeReviewComment` for `VERDICT:`/`Judged head:`. When
+ * guarantee as `renderCodeReviewComment` for `VERDICT:`/`Judged head:`/
+ * `Objectives version:`. The `OBJECTIVES:` block renders BEFORE
+ * `CONFIG SCAN:` (O1), only when `input.objectiveResults` is non-null. When
  * `secretsEvidence` is supplied, the scanner's raw output is pasted in a
  * fenced block ABOVE the `SECRETS:` line, per `security.md`'s own rule that
  * the pasted evidence must appear there to back the claim.
  */
 export function renderSecurityComment(input: SecurityInput): string {
   const sorted = sortBySeverity(input.findings, SECURITY_SEVERITIES)
-  const lines = [
-    `VERDICT: ${input.verdict}`,
-    '',
-    `Judged head: ${input.headSha}`,
-    '',
-    'FINDINGS (ordered by severity):',
-    renderFindingsSection(sorted),
-    '',
-    `CONFIG SCAN: ${input.configScan}`,
-    ''
-  ]
+  const lines = [`VERDICT: ${input.verdict}`, '', `Judged head: ${input.headSha}`, '']
+  if (input.objectivesVersion !== null) {
+    lines.push(`Objectives version: ${input.objectivesVersion}`, '')
+  }
+  lines.push('FINDINGS (ordered by severity):', renderFindingsSection(sorted), '')
+  if (input.objectiveResults !== null) {
+    lines.push(renderObjectivesBlock(input.objectiveResults), '')
+  }
+  lines.push(`CONFIG SCAN: ${input.configScan}`, '')
   if (input.secretsEvidence !== null) {
     lines.push('```', input.secretsEvidence, '```', '')
   }
@@ -318,17 +454,21 @@ export function renderSecurityComment(input: SecurityInput): string {
 // --- pre-render check ---------------------------------------------------------
 
 /**
- * Round-4 ruling on `#392`: with `verdict-extraction.ts`'s extractors now
- * windowed to a comment's first three lines (never any caller-supplied field,
- * which always renders at line 5 or later), no per-field injection guard is
- * needed any more — one check at the render boundary replaces the whole
- * layer. Before any `gh` call, this runs the SAME two extractors the merge
- * gate calls over the text this command is about to post, and refuses unless
- * exactly the intended one returns the intended value and the other returns
- * none (an escalation: both return none). A caller-supplied field that
- * somehow still produced a stray structural-looking line would be caught
- * here, mechanically, before it ever reaches the forge — not assumed safe
- * because the render function "shouldn't" do that.
+ * Round-4 ruling on `#392`, window later widened from three to five lines
+ * by a later task (`#412`): `renderCodeReviewComment`/
+ * `renderSecurityComment`'s caller-supplied fields never OPEN one of the
+ * first five lines — they only ever trail a fixed, renderer-owned label
+ * already on that line. `renderEscalationComment`'s `summary` is the one
+ * exception: pre-cutover, it IS line 5 outright, unprefixed. Construction
+ * alone does not make every caller field safe, so no per-field injection
+ * guard was rebuilt to cover that gap — one check at the render boundary
+ * replaces the whole layer instead. Before any `gh` call, this runs the
+ * SAME two extractors the merge gate calls over the text this command is
+ * about to post, and refuses unless exactly the intended one returns the
+ * intended value and the other returns none (an escalation: both return
+ * none). A caller-supplied field that somehow still produced a stray
+ * structural-looking line — including exactly the escalation-summary case
+ * above — is caught here, mechanically, before it ever reaches the forge.
  */
 export type RenderCheckResult = { ok: true } | { ok: false; reason: string }
 
@@ -417,6 +557,8 @@ export type EscalationInput = TokensInput & {
   summary: string
   role: 'review' | 'security'
   roleLabel: 'Reviewer' | 'Security'
+  /** Same resolution as the verdict shapes (`#412`, O2) — an escalation carries the version line but never an `OBJECTIVES:` block. */
+  objectivesVersion: string | null
 }
 
 /**
@@ -424,26 +566,32 @@ export type EscalationInput = TokensInput & {
  * REQUEST CHANGES. Renders `ESCALATE: <class>` where a verdict comment
  * renders `VERDICT: <value>` — the merge-verdict workflow fires on the
  * substring `VERDICT` alone (`.github/workflows/vinaya-review-verdict.yml`),
- * and an escalation must never be mistaken for "a pass ran". Two structural
- * facts make this safe even though `input.summary` is free caller text:
- * `verdict-extraction.ts`'s extractors read only a comment's first three
- * lines, and `input.summary` never renders before line 5 here — so it
- * cannot reach either marker's read window at all. `reviewPostCommand` still
- * confirms this mechanically, not by construction alone: `checkRenderedComment`
- * runs both extractors over this exact rendered text before any `gh` call,
- * refusing to post unless both return no verdict.
+ * and an escalation must never be mistaken for "a pass ran". `input.summary`
+ * is free caller text, and it is NOT reliably kept out of the extractors'
+ * five-line read window by construction: pre-cutover (no `Objectives
+ * version:` line), `input.summary` becomes line 5 itself — no fixed label
+ * precedes it here, unlike `renderCodeReviewComment`'s `BRIEF CONFORMANCE:`
+ * — so a summary whose own first line happened to read `VERDICT: APPROVE`
+ * would extract as a real code-review verdict through this exact render.
+ * What actually makes this safe is `reviewPostCommand`'s mechanical
+ * self-check, not line position: `checkRenderedComment` runs both
+ * extractors over this exact rendered text before any `gh` call and refuses
+ * to post an escalation that re-parses as either verdict — the refusal
+ * path this collision would hit, not a silent false verdict reaching the
+ * forge.
  */
 export function renderEscalationComment(input: EscalationInput): string {
-  return [
-    `ESCALATE: ${input.escalationClass}`,
-    '',
-    `Judged head: ${input.headSha}`,
-    '',
+  const lines = [`ESCALATE: ${input.escalationClass}`, '', `Judged head: ${input.headSha}`, '']
+  if (input.objectivesVersion !== null) {
+    lines.push(`Objectives version: ${input.objectivesVersion}`, '')
+  }
+  lines.push(
     input.summary,
     '',
     renderTokensLine(input.role, input.roleLabel, input),
     renderCastByLine(input.roleLabel, input.sessionId)
-  ].join('\n')
+  )
+  return lines.join('\n')
 }
 
 // --- self-verification ---------------------------------------------------------
@@ -460,7 +608,12 @@ function isBoundToHead(extraction: { headSha: string | null }, headSha: string):
   return headSha.toLowerCase().startsWith(extraction.headSha.toLowerCase())
 }
 
-function checkExtraction(extraction: VerdictExtraction, expectedValue: string, headSha: string): SelfVerifyResult {
+function checkExtraction(
+  extraction: VerdictExtraction,
+  expectedValue: string,
+  headSha: string,
+  expectedObjectivesVersion: string | null
+): SelfVerifyResult {
   if (extraction.danglingNote) {
     return {
       ok: false,
@@ -480,6 +633,12 @@ function checkExtraction(extraction: VerdictExtraction, expectedValue: string, h
     return {
       ok: false,
       reason: `re-extraction found \`Judged head: ${extraction.headSha}\`, which does not cover the resolved head ${headSha}.`
+    }
+  }
+  if (extraction.objectivesVersion !== expectedObjectivesVersion) {
+    return {
+      ok: false,
+      reason: `re-extraction found objectives version ${extraction.objectivesVersion ?? 'none'}, expected ${expectedObjectivesVersion ?? 'none'} — the posted comment's Objectives version: line does not match what this command rendered.`
     }
   }
   return { ok: true, reason: 'clean' }
@@ -527,12 +686,14 @@ export function verifyPostedCodeReview(
   verdict: CodeReviewVerdict,
   headSha: string,
   principalAllowlist: readonly string[],
-  postedBody: string
+  postedBody: string,
+  objectivesVersion: string | null
 ): SelfVerifyResult {
   const own = checkExtraction(
     extractCodeReviewVerdict(principalBodies(comments, principalAllowlist)),
     CODE_REVIEW_VERDICT_TEXT[verdict],
-    headSha
+    headSha,
+    objectivesVersion
   )
   if (!own.ok) return own
   return checkNoCrossRoleVerdict(postedBody, extractSecurityReviewVerdict, 'security') ?? own
@@ -543,12 +704,14 @@ export function verifyPostedSecurity(
   verdict: SecurityVerdict,
   headSha: string,
   principalAllowlist: readonly string[],
-  postedBody: string
+  postedBody: string,
+  objectivesVersion: string | null
 ): SelfVerifyResult {
   const own = checkExtraction(
     extractSecurityReviewVerdict(principalBodies(comments, principalAllowlist)),
     verdict,
-    headSha
+    headSha,
+    objectivesVersion
   )
   if (!own.ok) return own
   return checkNoCrossRoleVerdict(postedBody, extractCodeReviewVerdict, 'code-review') ?? own
@@ -584,17 +747,28 @@ export function verifyPostedEscalation(comments: readonly ReviewGateComment[], p
 
 const FINDING_ID_LINE = /^\d+\.\s+\[[A-Z]+\]\s+\S+\s+—\s+F(\d+)\b/gm
 const JUDGED_HEAD_LINE = /^[ \t]*Judged head:\s*([0-9a-f]{7,40})\b/im
+const OBJECTIVE_ID_LINE = /^O(\d+):\s*(?:MET|NOT MET)\b/gm
 
 /**
- * Reads the prior round's finding ids and judged head straight out of a
- * verdict comment's own rendered text — the same text `renderFindingsSection`
- * and `renderCodeReviewComment`/`renderSecurityComment` produced, so this is
+ * Reads the prior round's finding ids, objective ids (`#412`, O1), and judged
+ * head straight out of a verdict comment's own rendered text — the same text
+ * `renderFindingsSection`/`renderObjectivesBlock` and
+ * `renderCodeReviewComment`/`renderSecurityComment` produced, so this is
  * reading the format this file itself writes, not a second grammar.
  */
-export function parsePriorFindingIds(commentBody: string): { ids: string[]; judgedHead: string | null } {
+export function parsePriorFindingIds(commentBody: string): {
+  ids: string[]
+  objectiveIds: string[]
+  judgedHead: string | null
+} {
   const ids = [...commentBody.matchAll(FINDING_ID_LINE)].map((m) => `F${m[1]}`)
+  const objectiveIds = [...commentBody.matchAll(OBJECTIVE_ID_LINE)].map((m) => `O${m[1]}`)
   const headMatch = commentBody.match(JUDGED_HEAD_LINE)
-  return { ids: [...new Set(ids)], judgedHead: headMatch ? (headMatch[1] as string).toLowerCase() : null }
+  return {
+    ids: [...new Set(ids)],
+    objectiveIds: [...new Set(objectiveIds)],
+    judgedHead: headMatch ? (headMatch[1] as string).toLowerCase() : null
+  }
 }
 
 /** Every prior id with no matching `F<n> <class> <state>:` description in the new findings file, in prior-list order. */
@@ -880,6 +1054,176 @@ function resolveHeadSha(pr: string): string {
   return trueSha
 }
 
+// --- objectives resolution (`#412`, O1/O2) ------------------------------------
+
+function fetchPrBody(pr: string): string {
+  try {
+    return gh(['pr', 'view', pr, '--json', 'body', '-q', '.body'])
+  } catch (err) {
+    refuseCmd(
+      `Could not resolve PR ${pr}'s body via \`gh pr view --json body\`: ${err instanceof Error ? err.message : String(err)}`,
+      'Confirm `gh auth status` passes and the PR number is correct, then re-run.'
+    )
+  }
+}
+
+function fetchIssueBodyForObjectives(issue: number): string {
+  return gh(['issue', 'view', String(issue), '--json', 'body', '--jq', '.body'])
+}
+
+export type ObjectivesResolution =
+  | { kind: 'list'; objectives: readonly Objective[]; version: string }
+  | { kind: 'skip' }
+
+/**
+ * Mirrors `verify-brief.ts`'s `resolveIssueObjectives`/`check-review-gate.ts`'s
+ * `resolveObjectivesVersion`: `Closes #N`'s Issue wins when it resolves and is
+ * at/above `OBJECTIVES_SINCE_ISSUE`; the PR body's own `## Objectives` section
+ * is the fallback when the PR closes no Issue at all. `{ kind: 'skip' }` is
+ * the ONE non-refusing "nothing to judge against" case — an Issue below the
+ * cutover — matching the gate's own null-skip rule exactly (a pre-cutover PR
+ * must keep passing unchanged). Every OTHER "nothing resolvable" case refuses
+ * here, never returns a silently empty list — an Issue that does not resolve,
+ * an Issue whose `## Objectives` section does not parse, or a PR closing no
+ * Issue with no `## Objectives` section of its own.
+ */
+function resolveObjectivesForPr(pr: string): ObjectivesResolution {
+  const prBody = fetchPrBody(pr)
+  const { issue } = extractIssue(prBody)
+
+  if (issue !== null && issue < OBJECTIVES_SINCE_ISSUE) return { kind: 'skip' }
+
+  if (issue !== null) {
+    let issueBody: string
+    try {
+      issueBody = fetchIssueBodyForObjectives(issue)
+    } catch (err) {
+      if (isIssueNotFoundError(err)) {
+        refuseCmd(
+          `Issue #${issue} does not resolve via \`gh issue view\` — no objectives to judge against.`,
+          'Confirm the Issue exists, or fix `Closes #N` in the PR body, then re-run.'
+        )
+      }
+      refuseCmd(
+        `Could not fetch Issue #${issue}'s body via \`gh issue view\` to resolve its objectives — no objectives to judge against: ${err instanceof Error ? err.message : String(err)}`,
+        'Confirm `gh auth status` passes, then re-run.'
+      )
+    }
+    const parsed = objectivesOf(issueBody)
+    if (!parsed.ok) {
+      refuseCmd(
+        `Issue #${issue}'s \`## Objectives\` section does not parse (${parsed.errors.join('; ')}) — no objectives to judge against.`,
+        'Fix the Issue body, then re-run.'
+      )
+    }
+    return { kind: 'list', objectives: parsed.objectives, version: objectivesVersion(parsed.objectives) }
+  }
+
+  if (hasObjectivesHeading(prBody)) {
+    const parsed = objectivesOf(prBody)
+    if (!parsed.ok) {
+      refuseCmd(
+        `This PR body's own \`## Objectives\` section does not parse (${parsed.errors.join('; ')}) — no objectives to judge against.`,
+        "Fix the PR body's Objectives section, then re-run."
+      )
+    }
+    return { kind: 'list', objectives: parsed.objectives, version: objectivesVersion(parsed.objectives) }
+  }
+
+  refuseCmd(
+    'no objectives to judge against — this PR closes no Issue and its body carries no `## Objectives` section.',
+    'Add `Closes #N` pointing at an Issue with an `## Objectives` list, or add a `## Objectives` section to the PR body, then re-run.'
+  )
+}
+
+function readObjectivesFile(path: string): ObjectiveResult[] {
+  if (path.trim() === '') {
+    refuseCmd('`--objectives-file` was given with no path.', 'Pass the path to the objectives file, then re-run.')
+  }
+  let content: string
+  try {
+    content = readFileSync(path, 'utf8')
+  } catch {
+    refuseCmd(`Could not read objectives file at ${path}.`, 'Check the path and re-run.')
+  }
+  try {
+    return parseObjectivesFile(content)
+  } catch (err) {
+    if (err instanceof ObjectivesParseError) {
+      refuseCmd(err.message, 'Fix the malformed line in the objectives file, then re-run.')
+    }
+    throw err
+  }
+}
+
+/**
+ * Resolves `--objectives-file` against `resolveObjectivesForPr`'s result and
+ * runs every O1 refusal: the file required whenever objectives exist, its ids
+ * covering the resolved list exactly, and (via the caller, once `verdict` is
+ * known) an APPROVE/PASS never coexisting with a NOT MET. Returns the
+ * `Objectives version:` string and the parsed results to render — both `null`
+ * together on `{ kind: 'skip' }`.
+ */
+function resolveObjectiveResultsForCommand(
+  resolution: ObjectivesResolution,
+  objectivesFileRaw: string | undefined
+): { objectivesVersion: string | null; objectiveResults: ObjectiveResult[] | null } {
+  if (resolution.kind === 'skip') {
+    if (objectivesFileRaw !== undefined) {
+      refuseCmd(
+        '`--objectives-file` was given, but no objectives to judge against exist for this PR (its Issue predates the objectives cutover).',
+        'Drop `--objectives-file` for this PR, or judge against a post-cutover Issue.'
+      )
+    }
+    return { objectivesVersion: null, objectiveResults: null }
+  }
+
+  if (objectivesFileRaw === undefined) {
+    refuseCmd(
+      'This PR has an objectives list to judge against, but no `--objectives-file` was given.',
+      'Pass `--objectives-file <path>` with one `O<n>|MET|<evidence>` or `O<n>|NOT MET|<evidence>` line per objective, then re-run.'
+    )
+  }
+  const objectiveResults = readObjectivesFile(objectivesFileRaw)
+  const coverageProblem = checkObjectiveIdCoverage(resolution.objectives, objectiveResults)
+  if (coverageProblem !== null) {
+    refuseCmd(
+      `\`--objectives-file\` does not cover the resolved objectives list exactly: ${coverageProblem}.`,
+      'Add a line for every missing objective, drop any not on the list, then re-run.'
+    )
+  }
+  return { objectivesVersion: resolution.version, objectiveResults }
+}
+
+/**
+ * True for the clean half of either verdict enum. `CodeReviewVerdict` and
+ * `SecurityVerdict` share no member, so one predicate can read either
+ * without a caller having to say which enum it is holding — the single
+ * "is this clean" check both call sites below share, instead of each
+ * re-typing its own `verdict === 'APPROVE'` / `verdict === 'PASS'` literal
+ * comparison (code review MINOR — a third clean-verdict label would have
+ * needed updating in two places instead of one).
+ */
+function isCleanVerdict(verdict: CodeReviewVerdict | SecurityVerdict): boolean {
+  return verdict === 'APPROVE' || verdict === 'PASS'
+}
+
+/** O1: `APPROVE`/`PASS` — a clean verdict — is refused together with any `NOT MET` objective. */
+function refuseIfCleanVerdictHasNotMetObjective(
+  isCleanVerdict: boolean,
+  cleanLabel: string,
+  objectiveResults: readonly ObjectiveResult[] | null
+): void {
+  if (!isCleanVerdict || objectiveResults === null) return
+  const notMet = objectiveResults.filter((r) => r.status === 'NOT MET')
+  if (notMet.length > 0) {
+    refuseCmd(
+      `Verdict resolves to ${cleanLabel} but the objectives file lists ${notMet.length > 1 ? 'NOT MET objectives' : 'a NOT MET objective'} (${notMet.map((r) => r.id).join(', ')}) — a clean verdict requires every objective MET.`,
+      'Change the verdict to reflect the gap, or fix the objective and mark it MET, then re-run.'
+    )
+  }
+}
+
 /**
  * `--print-only`'s exit (task 6, #397): the rendered, self-checked comment
  * already passed `checkRenderedComment` — the same gate a real post runs —
@@ -984,6 +1328,7 @@ const VALUE_FLAGS = [
   '--escalate',
   '--findings-file',
   '--model',
+  '--objectives-file',
   '--pr',
   '--role',
   '--scope',
@@ -1077,17 +1422,29 @@ function checkRoundTwo(
   principalAllowlist: readonly string[],
   extract: (comments: string[]) => VerdictExtraction,
   findings: readonly Finding[],
-  blockingSeverities: readonly string[]
+  blockingSeverities: readonly string[],
+  objectiveResults: readonly ObjectiveResult[] | null
 ): void {
   const priorBody = findPriorVerdictComment(principalBodies(comments, principalAllowlist), extract)
   if (priorBody === null) return // round one: no round-two checks apply.
 
-  const { ids: priorIds, judgedHead } = parsePriorFindingIds(priorBody)
+  const { ids: priorIds, objectiveIds: priorObjectiveIds, judgedHead } = parsePriorFindingIds(priorBody)
   const missing = missingPriorIds(priorIds, findings)
   if (missing.length > 0) {
     refuseCmd(
       `This findings file drops prior finding${missing.length > 1 ? 's' : ''} ${missing.join(', ')} without a state — a re-review reports the state of every prior id (open, fix-claimed, reproduced, resolved) before listing anything new.`,
       `Add a line whose description begins \`${missing[0] as string} <class> <state>:\` for each id listed, then re-run.`
+    )
+  }
+
+  // `#412`, O1: every prior objective reappears in a re-review, the same rule
+  // `missingPriorIds` already applies to findings — never dropped silently.
+  const newObjectiveIds = new Set((objectiveResults ?? []).map((r) => r.id))
+  const missingObjectives = priorObjectiveIds.filter((id) => !newObjectiveIds.has(id))
+  if (missingObjectives.length > 0) {
+    refuseCmd(
+      `This objectives file drops prior objective${missingObjectives.length > 1 ? 's' : ''} ${missingObjectives.join(', ')} — a re-review restates every prior objective's MET/NOT MET status.`,
+      `Add a line for ${missingObjectives[0] as string} to the objectives file, then re-run.`
     )
   }
 
@@ -1157,6 +1514,12 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
         'Pass `--escalate authority`, `--escalate strategy`, or `--escalate product`.'
       )
     }
+    if (flags.get('--objectives-file') !== undefined) {
+      refuseCmd(
+        '`--escalate` was given together with `--objectives-file` — an escalation carries no OBJECTIVES: block, only the version line.',
+        'Drop `--objectives-file` from an escalation, or post a verdict instead if there are objectives to judge.'
+      )
+    }
     const summary = requireFlag(flags, '--summary')
     const allowedSeverities = role === 'code-reviewer' ? CODE_REVIEW_SEVERITIES : SECURITY_SEVERITIES
     const blockingSeverities: readonly string[] = role === 'code-reviewer' ? ['BLOCKER'] : ['CRITICAL', 'HIGH']
@@ -1168,13 +1531,17 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       )
     }
     const headSha = resolveHeadSha(pr)
+    const escalationObjectivesResolution = resolveObjectivesForPr(pr)
+    const escalationObjectivesVersion =
+      escalationObjectivesResolution.kind === 'list' ? escalationObjectivesResolution.version : null
     const body = renderEscalationComment({
       ...tokens,
       headSha,
       escalationClass: escalateRaw,
       summary,
       role: tokensRole,
-      roleLabel
+      roleLabel,
+      objectivesVersion: escalationObjectivesVersion
     })
     checkRenderedCommentOrRefuse(body, { kind: 'escalation' })
     if (printOnly) {
@@ -1241,6 +1608,13 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
 
     const headSha = resolveHeadSha(pr)
 
+    const objectivesResolution = resolveObjectivesForPr(pr)
+    const { objectivesVersion: resolvedObjectivesVersion, objectiveResults } = resolveObjectiveResultsForCommand(
+      objectivesResolution,
+      flags.get('--objectives-file')
+    )
+    refuseIfCleanVerdictHasNotMetObjective(isCleanVerdict(verdict), 'APPROVE', objectiveResults)
+
     let comments: ReviewGateComment[]
     try {
       comments = fetchComments(pr)
@@ -1250,7 +1624,16 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
         'Check `gh auth status`/network, then re-run.'
       )
     }
-    checkRoundTwo(pr, headSha, comments, principalAllowlist, extractCodeReviewVerdict, findings, ['BLOCKER'])
+    checkRoundTwo(
+      pr,
+      headSha,
+      comments,
+      principalAllowlist,
+      extractCodeReviewVerdict,
+      findings,
+      ['BLOCKER'],
+      objectiveResults
+    )
 
     const input: CodeReviewInput = {
       ...tokens,
@@ -1262,7 +1645,9 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       scope,
       scopeEvidence,
       tests,
-      docs
+      docs,
+      objectivesVersion: resolvedObjectivesVersion,
+      objectiveResults
     }
     const body = renderCodeReviewComment(input)
     checkRenderedCommentOrRefuse(body, { kind: 'code-review', verdict })
@@ -1281,7 +1666,14 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
         'Check `gh auth status`/network and manually confirm the posted comment parses cleanly — this command could not verify it.'
       )
     }
-    const result = verifyPostedCodeReview(postComments, verdict, headSha, principalAllowlist, body)
+    const result = verifyPostedCodeReview(
+      postComments,
+      verdict,
+      headSha,
+      principalAllowlist,
+      body,
+      resolvedObjectivesVersion
+    )
     if (!result.ok) {
       refuseCmd(
         `Posted comment ${url}, but self-verification FAILED on re-parse: ${result.reason}`,
@@ -1334,6 +1726,13 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
 
   const headSha = resolveHeadSha(pr)
 
+  const objectivesResolution = resolveObjectivesForPr(pr)
+  const { objectivesVersion: resolvedObjectivesVersion, objectiveResults } = resolveObjectiveResultsForCommand(
+    objectivesResolution,
+    flags.get('--objectives-file')
+  )
+  refuseIfCleanVerdictHasNotMetObjective(isCleanVerdict(verdict), 'PASS', objectiveResults)
+
   let comments: ReviewGateComment[]
   try {
     comments = fetchComments(pr)
@@ -1343,7 +1742,16 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       'Check `gh auth status`/network, then re-run.'
     )
   }
-  checkRoundTwo(pr, headSha, comments, principalAllowlist, extractSecurityReviewVerdict, findings, ['CRITICAL', 'HIGH'])
+  checkRoundTwo(
+    pr,
+    headSha,
+    comments,
+    principalAllowlist,
+    extractSecurityReviewVerdict,
+    findings,
+    ['CRITICAL', 'HIGH'],
+    objectiveResults
+  )
 
   const input: SecurityInput = {
     ...tokens,
@@ -1352,7 +1760,9 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     findings,
     configScan,
     secrets,
-    secretsEvidence
+    secretsEvidence,
+    objectivesVersion: resolvedObjectivesVersion,
+    objectiveResults
   }
   const body = renderSecurityComment(input)
   checkRenderedCommentOrRefuse(body, { kind: 'security', verdict })
@@ -1371,7 +1781,14 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       'Check `gh auth status`/network and manually confirm the posted comment parses cleanly — this command could not verify it.'
     )
   }
-  const result = verifyPostedSecurity(postComments, verdict, headSha, principalAllowlist, body)
+  const result = verifyPostedSecurity(
+    postComments,
+    verdict,
+    headSha,
+    principalAllowlist,
+    body,
+    resolvedObjectivesVersion
+  )
   if (!result.ok) {
     refuseCmd(
       `Posted comment ${url}, but self-verification FAILED on re-parse: ${result.reason}`,

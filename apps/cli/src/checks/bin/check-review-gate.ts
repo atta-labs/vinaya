@@ -19,6 +19,16 @@
  * check's entry states the same prohibition; `git ls-remote` queries the
  * remote live and is not that env var).
  *
+ * Second documented divergence (`#412`, O3, `#433` security review): this
+ * adapter resolves a real `objectivesVersion` (Issue-then-body, fail-closed
+ * on every unresolvable case) via `resolveObjectivesVersion` below.
+ * `verify-review-gate.ts` does not — it always passes `objectivesVersion:
+ * null`, unconditionally skipping the objectives-version half of the
+ * binding, because it has no equivalent Issue-body-fetch machinery and is
+ * not this repo's live review-gate path (see the divergence above). Any doc
+ * describing which file resolves the objectives-version binding must name
+ * THIS file, not the reference script.
+ *
  * Documented divergence from the reference script: `verify-review-gate.ts`
  * fails CLOSED when `PR_NUMBER` is unset, because its only real caller
  * (`forge-lifecycle.yml`) is triggered exclusively on an existing PR. This
@@ -52,7 +62,17 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkReviewGate, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
+import {
+  checkReviewGate,
+  extractIssue,
+  hasObjectivesHeading,
+  isIssueNotFoundError,
+  isWaiverLabelActorVerified,
+  OBJECTIVES_SINCE_ISSUE,
+  objectivesOf,
+  objectivesVersion,
+  WAIVER_LABEL_REVIEW
+} from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 
@@ -74,13 +94,14 @@ type PrView = {
   headRefName: string
   headRefOid: string
   baseRefName: string
+  body: string
 }
 
 function fetchPr(prNumber: number): PrView | null {
   try {
     const out = execFileSync(
       'gh',
-      ['pr', 'view', String(prNumber), '--json', 'number,comments,labels,headRefName,headRefOid,baseRefName'],
+      ['pr', 'view', String(prNumber), '--json', 'number,comments,labels,headRefName,headRefOid,baseRefName,body'],
       {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe']
@@ -90,6 +111,120 @@ function fetchPr(prNumber: number): PrView | null {
   } catch {
     return null
   }
+}
+
+/** `gh issue view <n> --json body --jq .body` — mirrors `verify-brief.ts`'s `fetchIssueBodyForObjectives`. */
+function fetchIssueBodyForObjectives(issueNumber: number): string {
+  return execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'body', '--jq', '.body'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+}
+
+/**
+ * The current `objectivesVersion` this PR is judged against (`#412`, O3).
+ * `null` is returned in exactly ONE case: this PR was never subject to the
+ * objectives obligation at all — an Issue genuinely below
+ * `OBJECTIVES_SINCE_ISSUE` (checked first, unconditionally, before any fetch
+ * — see below), or no Issue at all with no `## Objectives` section in the
+ * body either. `checkReviewGate` reads that `null` as "skip the objectives
+ * binding entirely", which is only safe when nothing was ever there to bind.
+ *
+ * Every OTHER case — an Issue at/above the cutover that no longer resolves,
+ * a fetch failure, or objectives text that exists but no longer PARSES
+ * (Issue's or body's) — fails this check outright (`severity:infra`, exit
+ * `1`). A security review on this task (`#433`) found the prior version
+ * returning a silent `null` for the first two of those: falling through to
+ * the body's own section (or straight to `null`) whenever the linked Issue
+ * came back "not found", and swallowing a parse failure into `null` in both
+ * the Issue and body branches. Since `isBoundToObjectives` treats a `null`
+ * current version as an unconditional match, that silent `null` let anyone
+ * who can edit or delete the LINKED ISSUE (not necessarily anyone with PR
+ * push access) disarm the objectives-version binding for an
+ * already-cast verdict after the fact — exactly the staleness this task
+ * exists to catch. `vinaya review post`'s `resolveObjectivesForPr` already
+ * refuses to POST a new verdict in every one of these identical cases
+ * (`no objectives to judge against`); this resolver now refuses to COUNT an
+ * existing one clean for the same cases, closing the gap rather than
+ * mirroring it. The two resolvers' Issue-vs-cutover branch order is now
+ * identical too — the prior version's missing early pre-cutover return let
+ * it fall through to the body's own section for a pre-cutover Issue, which
+ * could resolve a non-null version `review post` never rendered a matching
+ * line for, permanently failing the gate on an otherwise-legitimate PR (the
+ * same review's MEDIUM finding).
+ *
+ * This function's own `process.exit(1)` calls run BEFORE `checkReviewGate`
+ * — the call site passes its return value as an inline argument expression,
+ * so it is evaluated first. `main()` never calls this function at all when
+ * an actor-verified `vinaya/waiver:review` label is present, precisely so
+ * that fail-closed path cannot make the waiver's own escape hatch
+ * unreachable (`#433`, security review MAJOR). Do not inline a call to this
+ * function directly into `checkReviewGate({...})` again without keeping
+ * that waiver pre-check in front of it.
+ */
+function resolveObjectivesVersion(pr: PrView): string | null {
+  const { issue } = extractIssue(pr.body)
+
+  // Checked first and unconditionally, exactly where `resolveObjectivesForPr`
+  // checks it: a pre-cutover Issue skips before ever considering the body.
+  if (issue !== null && issue < OBJECTIVES_SINCE_ISSUE) return null
+
+  if (issue !== null) {
+    let issueBody: string
+    try {
+      issueBody = fetchIssueBodyForObjectives(issue)
+    } catch (err) {
+      if (isIssueNotFoundError(err)) {
+        emitCheckError({
+          schema: CHECK_SCHEMA_VERSION,
+          check: CHECK_NAME,
+          severity: 'error',
+          message: `review-gate severity:infra — Issue #${issue} does not resolve via \`gh issue view\` — cannot verify the objectives-version binding for a PR whose linked Issue is at/above the objectives cutover.`,
+          agent_recovery_prompt: `Restore Issue #${issue}, fix \`Closes #N\` to name a real Issue, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya check review-gate\`.`
+        })
+        process.exit(1)
+      }
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'error',
+        message: `review-gate severity:infra — could not fetch Issue #${issue}'s body via \`gh issue view\` to resolve its objectives version: ${(err as Error).message}`,
+        agent_recovery_prompt:
+          'Confirm `gh auth status` passes and the Issue number is correct, then re-run `vinaya check review-gate`.'
+      })
+      process.exit(1)
+    }
+    const parsed = objectivesOf(issueBody)
+    if (!parsed.ok) {
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'error',
+        message: `review-gate severity:infra — Issue #${issue}'s \`## Objectives\` section does not parse (${parsed.errors.join('; ')}) — cannot verify the objectives-version binding.`,
+        agent_recovery_prompt: `Fix Issue #${issue}'s \`## Objectives\` section, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya check review-gate\`.`
+      })
+      process.exit(1)
+    }
+    return objectivesVersion(parsed.objectives)
+  }
+
+  if (hasObjectivesHeading(pr.body)) {
+    const own = objectivesOf(pr.body)
+    if (!own.ok) {
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'error',
+        message: `review-gate severity:infra — this PR body's own \`## Objectives\` section does not parse (${own.errors.join('; ')}) — cannot verify the objectives-version binding.`,
+        agent_recovery_prompt:
+          "Fix the PR body's `## Objectives` section, or have a principal apply the `vinaya/waiver:review` label, then re-run `vinaya check review-gate`."
+      })
+      process.exit(1)
+    }
+    return objectivesVersion(own.objectives)
+  }
+
+  return null
 }
 
 function shaFromLsRemote(branch: string): string | null {
@@ -324,17 +459,37 @@ function main(): void {
   // PR metadata is input data, never the source of the gate implementation or
   // its trust anchors. See `loadTrustAnchorConfig` in lib/config.ts for the
   // three failed attempts that established the config half of this boundary.
+  const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+
+  // A verified waiver skips objectives resolution entirely (#433, security
+  // review MAJOR) — `resolveObjectivesVersion` fails closed (`process.exit(1)`)
+  // on an unresolvable Issue, which runs BEFORE `checkReviewGate` is ever
+  // called (it is an inline argument expression) and would make `checkReviewGate`'s
+  // own waiver short-circuit unreachable for exactly the case the waiver
+  // exists to rescue: a linked Issue that got deleted or renumbered. Checking
+  // the waiver here first, with the identical `isWaiverLabelActorVerified`
+  // predicate `checkReviewGate` uses internally, restores that escape hatch
+  // without weakening it — an unverified/missing label still falls through
+  // to the real resolution and its fail-closed behavior, unchanged.
+  const waived = isWaiverLabelActorVerified({
+    label: WAIVER_LABEL_REVIEW,
+    labels,
+    labelActor: waiverLabelActor,
+    principalAllowlist
+  })
+
   const result = checkReviewGate({
     comments: pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
     labels,
     waiverLabelActor,
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig()),
+    principalAllowlist,
     mechanicalChecks,
     headSha,
     // A verdict judged a PATCH; the head sha is only its address. A merge
     // from `main` or a rebase that leaves the patch untouched must not void
     // a review that already read exactly those changes.
-    patchIdOf: (sha: string) => patchIdAt(pr.baseRefName, sha)
+    patchIdOf: (sha: string) => patchIdAt(pr.baseRefName, sha),
+    objectivesVersion: waived ? null : resolveObjectivesVersion(pr)
   })
 
   if (result.verdict === 'fail') {
