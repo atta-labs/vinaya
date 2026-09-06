@@ -1,6 +1,6 @@
 /**
  * `vinaya dispatch <role> --agent claude|codex|gemini --prompt-file <path>`
- * (task 3, `vinaya-log-v1`, Issue #406). Thin argv-parsing shim over
+ * (Issue #406). Thin argv-parsing shim over
  * `dispatchRole` (`../lib/dispatch.js`) — the real spawn/timeout/attribution
  * logic lives there. Calls `logFlushCommand` (`./log.js`) directly when
  * `--task`/`--pr` is given, per the Principal's ruling that this command's

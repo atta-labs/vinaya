@@ -10,7 +10,7 @@
  * them.
  *
  * Vendor headless flags were confirmed against each binary's own `--help` on
- * the authoring machine (task 3 brief, `vinaya-log-v1`), not guessed:
+ * the authoring machine, not guessed:
  *
  *   - `claude -p --output-format json` — print mode, prompt via stdin (no
  *     positional argument), a single JSON object on stdout whose

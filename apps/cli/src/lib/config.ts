@@ -531,8 +531,8 @@ export const VinayaConfigSchema = z.object({
   // Config-native project metadata — see the `ProjectEntrySchema` comment
   // above. Additive-only; absent entirely for a single-project repo.
   projects: z.array(ProjectEntrySchema).optional(),
-  // `vinaya dispatch <role> --agent <vendor>` (task 3, `vinaya-log-v1`,
-  // `apps/cli/src/lib/dispatch.ts`). `timeoutMs` is the wall-time ceiling
+  // `vinaya dispatch <role> --agent <vendor>` (`apps/cli/src/lib/dispatch.ts`).
+  // `timeoutMs` is the wall-time ceiling
   // before `dispatchRole` sends `SIGTERM` (then `SIGKILL`) to the child;
   // absent defaults to one hour (`DEFAULT_TIMEOUT_MS` in `dispatch.ts`).
   // `agent` is a default vendor the CLI's own `--agent` flag overrides, for a

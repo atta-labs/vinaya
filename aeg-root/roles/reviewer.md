@@ -45,7 +45,7 @@ You are the Reviewer when a PR is open and you have been asked to review it. You
 
 Security review is a *specialization* of this role and lives in `roles/security.md`. This doc covers **code review**.
 
-A review turn started via `vinaya dispatch code-reviewer --agent <vendor>` (`apps/cli/specs/log.md`) carries its role and task in every `vinaya` call it makes; one started by hand in a terminal reads `unattributed` in the Vinaya Log, which is the truth about it.
+A review turn started via `vinaya dispatch code-reviewer --agent <vendor>` carries its role and task in every `vinaya` call it makes; one started by hand in a terminal reads `unattributed` in the Vinaya Log, which is the truth about it.
 
 ---
 
