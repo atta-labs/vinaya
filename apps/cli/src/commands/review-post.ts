@@ -121,8 +121,14 @@ export function parseFindingsFile(content: string, allowedSeverities: readonly s
   return lines.map((line, idx) => {
     const parts = line.split('|')
     if (parts.length !== 3) {
+      // A `Search:` pattern reaching for regex alternation is the one way to
+      // land here that has nothing to do with the grammar being misunderstood,
+      // so it gets its own sentence rather than a bare field count.
+      const alternationHint = /\bSearch:/.test(line)
+        ? ' The `Search:` pattern cannot use `|` alternation — this file is `|`-delimited. Use a character class, or a shorter pattern matching the stem the copies share.'
+        : ''
       throw new FindingsParseError(
-        `findings file line ${idx + 1}: expected exactly 3 \`|\`-delimited fields (SEVERITY|file:line|description), found ${parts.length}: ${line}`
+        `findings file line ${idx + 1}: expected exactly 3 \`|\`-delimited fields (SEVERITY|file:line|description), found ${parts.length}: ${line}${alternationHint}`
       )
     }
     const severity = (parts[0] as string).trim().toUpperCase()
@@ -138,8 +144,62 @@ export function parseFindingsFile(content: string, allowedSeverities: readonly s
         `findings file line ${idx + 1}: file:line and description must both be non-empty: ${line}`
       )
     }
+    checkDocCorrectnessSearch(description, idx + 1)
     return { severity, location, description }
   })
+}
+
+/** The one finding class whose description carries a mandatory extra field. */
+const DOC_CORRECTNESS_CLASS = 'doc-correctness'
+
+/**
+ * The class token a finding description opens with, per `roles/reviewer.md`'s
+ * `F<n> <class>[ <state>]: <what is wrong>` grammar — `null` when the
+ * description does not open with one. Deliberately does not validate the class
+ * against a closed list: the grammar admits `other:<slug>`, and policing the
+ * vocabulary is not this function's job. It answers exactly one question, for
+ * the one class that carries an obligation.
+ */
+export function findingClass(description: string): string | null {
+  const m = /^F\d+\s+([a-z][a-z-]*(?::[a-z][a-z0-9-]*)?)\b/.exec(description.trim())
+  return m ? (m[1] as string) : null
+}
+
+/**
+ * A `doc-correctness` finding must carry a `Search:` pattern, and that pattern
+ * must carry no path filter.
+ *
+ * Why this is mechanical rather than trusted (Issue #434, review round 1,
+ * BLOCKER): the rule exists because one false sentence had five copies and
+ * seven review rounds each fixed only the copy its finding happened to anchor.
+ * A rule against that failure, enforced by nothing but the next reviewer's
+ * attention, is the same shape as the defect — a claim in doctrine that no
+ * code verifies. `roles/reviewer.md` calls a `Search:`-less doc-correctness
+ * finding malformed; this is what makes that word true.
+ *
+ * **What this does NOT check, stated so the doctrine does not overclaim
+ * again:** that the pattern actually matches the anchored line, that the
+ * Reviewer really re-ran it at the new head, or that the Developer really
+ * corrected every hit. Those are judgment, and they stay the Reviewer's.
+ * What is mechanical is that the pattern exists, travels with the finding
+ * onto every later round, and is repo-wide.
+ */
+export function checkDocCorrectnessSearch(description: string, lineNumber: number): void {
+  if (findingClass(description) !== DOC_CORRECTNESS_CLASS) return
+
+  const m = /\bSearch:\s*(\S.*)$/.exec(description)
+  if (m === null) {
+    throw new FindingsParseError(
+      `findings file line ${lineNumber}: a \`${DOC_CORRECTNESS_CLASS}\` finding must end its description with \`Search: <pattern>\` — a repo-wide \`git grep -n -iE\` pattern matching the false claim wherever it is stated, not only at the anchored file:line. A false sentence is a text-duplication defect, not a location defect (roles/reviewer.md).`
+    )
+  }
+
+  const pattern = (m[1] as string).trim()
+  if (/(?:^|\s)--(?:\s|$)/.test(pattern)) {
+    throw new FindingsParseError(
+      `findings file line ${lineNumber}: the \`Search:\` pattern carries a path filter (\`--\`): ${pattern}. It must be repo-wide — path-filtering it is how a sibling copy of the same false claim survives the round that was supposed to end it.`
+    )
+  }
 }
 
 /** Re-orders by severity rank, stable within a rank — the rendered "ordered by severity" claim never depends on caller-supplied ordering. */

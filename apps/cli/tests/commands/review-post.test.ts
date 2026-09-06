@@ -6,11 +6,13 @@ import { fileURLToPath } from 'node:url'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict, OBJECTIVES_SINCE_ISSUE } from '@attalabs/aeg-core'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import {
+  checkDocCorrectnessSearch,
   checkObjectiveIdCoverage,
   checkRenderedComment,
   deriveCodeReviewVerdict,
   deriveSecurityVerdict,
   type Finding,
+  findingClass,
   findingsOutsideDelta,
   findPriorVerdictComment,
   invalidObjectiveEvidenceReason,
@@ -19,6 +21,8 @@ import {
   type ObjectiveResult,
   ObjectivesParseError,
   parseChangedLineRanges,
+  parseFindingsFile,
+  FindingsParseError,
   parseObjectivesFile,
   parsePriorFindingIds,
   renderCodeReviewComment,
@@ -2125,5 +2129,68 @@ describe('review post — round two restates every prior objective too (#412, O1
       rmSync(cwd, { recursive: true, force: true })
       rmSync(stateDir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('a doc-correctness finding must carry a repo-wide Search: pattern (Issue #434, round 1)', () => {
+  const CR = ['BLOCKER', 'MAJOR', 'MINOR'] as const
+  const withSearch =
+    'MAJOR|aeg-root/roles/reviewer.md:132|F1 doc-correctness: the read window is stated as three lines. Search: first.three.lines'
+
+  it('reads the class token out of the description', () => {
+    expect(findingClass('F1 doc-correctness: x')).toBe('doc-correctness')
+    expect(findingClass('F2 doc-correctness resolved: x')).toBe('doc-correctness')
+    expect(findingClass('F3 correctness: x')).toBe('correctness')
+    expect(findingClass('F4 other:naming: x')).toBe('other:naming')
+    expect(findingClass('no id at all')).toBeNull()
+  })
+
+  it('accepts a doc-correctness finding carrying a repo-wide pattern', () => {
+    const parsed = parseFindingsFile(withSearch, CR)
+    expect(parsed).toHaveLength(1)
+    expect(parsed[0]?.description).toContain('Search:')
+  })
+
+  it('refuses a doc-correctness finding with no Search: field', () => {
+    const line = 'MAJOR|aeg-root/roles/reviewer.md:132|F1 doc-correctness: the read window is stated as three lines.'
+    expect(() => parseFindingsFile(line, CR)).toThrow(FindingsParseError)
+    expect(() => parseFindingsFile(line, CR)).toThrow(/must end its description with `Search: <pattern>`/)
+  })
+
+  it('refuses a Search: pattern carrying a path filter, which is how a sibling copy survives', () => {
+    const line =
+      'MAJOR|aeg-root/roles/reviewer.md:132|F1 doc-correctness: stale window. Search: first.three.lines -- aeg-root'
+    expect(() => parseFindingsFile(line, CR)).toThrow(/carries a path filter/)
+  })
+
+  it('does not mistake a double hyphen inside the pattern itself for a path filter', () => {
+    const line = 'MAJOR|a/b.md:1|F1 doc-correctness: stale. Search: first--three--lines'
+    expect(() => parseFindingsFile(line, CR)).not.toThrow()
+  })
+
+  it('leaves every other finding class alone', () => {
+    const line = 'BLOCKER|src/a.ts:10|F1 correctness: off-by-one, no Search: field needed here'
+    expect(() => parseFindingsFile(line, CR)).not.toThrow()
+  })
+
+  it('carries the obligation onto a later round, where the finding is restated with a state token', () => {
+    const resolved = 'MAJOR|a/b.md:1|F1 doc-correctness resolved: fixed everywhere.'
+    expect(() => parseFindingsFile(resolved, CR)).toThrow(/Search: <pattern>/)
+  })
+
+  it('checkDocCorrectnessSearch names the offending findings-file line', () => {
+    expect(() => checkDocCorrectnessSearch('F1 doc-correctness: no pattern', 7)).toThrow(/line 7/)
+  })
+})
+
+describe('a Search: pattern reaching for alternation gets told why (Issue #434, round 1)', () => {
+  it('names the pipe-delimiter conflict rather than only a field count', () => {
+    const line = 'MAJOR|a/b.md:1|F1 doc-correctness: stale. Search: first.(three|five).lines'
+    expect(() => parseFindingsFile(line, ['BLOCKER', 'MAJOR', 'MINOR'])).toThrow(/cannot use `\|` alternation/)
+  })
+
+  it('says nothing about alternation for an ordinary malformed line', () => {
+    expect(() => parseFindingsFile('MAJOR|a/b.md:1|F1 correctness: x|y', ['MAJOR'])).toThrow(/expected exactly 3/)
+    expect(() => parseFindingsFile('MAJOR|a/b.md:1|F1 correctness: x|y', ['MAJOR'])).not.toThrow(/alternation/)
   })
 })
