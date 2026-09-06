@@ -23,13 +23,21 @@
  * same extractors over the rendered text and refuses (exit `2`) unless
  * exactly the intended verdict comes back and the other role's extractor
  * finds nothing — a zero-network dry run of the same shape check
- * self-verification performs after posting. This is what actually makes free
- * caller text (a finding, `--scope`, `--summary`) safe: `verdict-extraction.ts`
- * reads only a comment's first three lines, which this command's own
- * templates always occupy with `VERDICT:`/`ESCALATE:` and `Judged head:` —
- * no caller field ever renders there (round-4 ruling on `#392`; the
+ * self-verification performs after posting. This check, not the render's
+ * construction, is what actually makes free caller text (a finding,
+ * `--scope`, `--summary`) safe: `verdict-extraction.ts` reads only a
+ * comment's first FIVE lines (round-4 ruling on `#392`, widened from three
+ * by dev-review-loop-v1 task 2, `#412`), and `renderCodeReviewComment`/
+ * `renderSecurityComment`'s caller fields never OPEN one of those lines —
+ * they only trail a fixed, renderer-owned label already on the line. The
+ * one field this does NOT hold for is `renderEscalationComment`'s
+ * `--summary`: pre-cutover, it becomes line 5 outright, unprefixed, so a
+ * summary whose own first line happened to read `VERDICT: APPROVE` would
+ * extract as a real verdict through construction alone. That is exactly
+ * the case this check exists to catch, mechanically, before any post — the
  * per-field guard layer that used to sit here is gone, replaced by this one
- * check at the shared boundary).
+ * check at the shared boundary, not by a blanket "caller text never reaches
+ * the window" guarantee that does not actually hold for every field.
  *
  * `--role code-reviewer` and `--role security` are the only two shapes —
  * mirroring `reviewer.md`/`security.md`'s templates exactly, including each
@@ -446,17 +454,21 @@ export function renderSecurityComment(input: SecurityInput): string {
 // --- pre-render check ---------------------------------------------------------
 
 /**
- * Round-4 ruling on `#392`: with `verdict-extraction.ts`'s extractors now
- * windowed to a comment's first three lines (never any caller-supplied field,
- * which always renders at line 5 or later), no per-field injection guard is
- * needed any more — one check at the render boundary replaces the whole
- * layer. Before any `gh` call, this runs the SAME two extractors the merge
- * gate calls over the text this command is about to post, and refuses unless
- * exactly the intended one returns the intended value and the other returns
- * none (an escalation: both return none). A caller-supplied field that
- * somehow still produced a stray structural-looking line would be caught
- * here, mechanically, before it ever reaches the forge — not assumed safe
- * because the render function "shouldn't" do that.
+ * Round-4 ruling on `#392`, window later widened from three to five lines
+ * by dev-review-loop-v1 task 2 (`#412`): `renderCodeReviewComment`/
+ * `renderSecurityComment`'s caller-supplied fields never OPEN one of the
+ * first five lines — they only ever trail a fixed, renderer-owned label
+ * already on that line. `renderEscalationComment`'s `summary` is the one
+ * exception: pre-cutover, it IS line 5 outright, unprefixed. Construction
+ * alone does not make every caller field safe, so no per-field injection
+ * guard was rebuilt to cover that gap — one check at the render boundary
+ * replaces the whole layer instead. Before any `gh` call, this runs the
+ * SAME two extractors the merge gate calls over the text this command is
+ * about to post, and refuses unless exactly the intended one returns the
+ * intended value and the other returns none (an escalation: both return
+ * none). A caller-supplied field that somehow still produced a stray
+ * structural-looking line — including exactly the escalation-summary case
+ * above — is caught here, mechanically, before it ever reaches the forge.
  */
 export type RenderCheckResult = { ok: true } | { ok: false; reason: string }
 
