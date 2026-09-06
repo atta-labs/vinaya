@@ -5,14 +5,23 @@ import { fileURLToPath } from 'node:url'
 
 /**
  * O2: no file other than `apps/cli/src/lib/log-sink.ts` performs the
- * outbox append, and no file other than the two named chokepoints calls
+ * outbox append, and no file other than the named chokepoints calls
  * `log()`. Both are proved by walking the real source tree — a passing
  * assertion here is a fact about the tree, not a belief about it.
+ *
+ * Amended by task 2 (#405): `vinaya log flush` (`apps/cli/src/commands/log.ts`)
+ * is the first real caller of either — it logs its own `forge_write` line
+ * through `log()`, and it is the one file besides the sink allowed to touch
+ * the outbox path directly, since truncation is a lifecycle half `log()`
+ * itself never performs.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
 const SINK_PATH = 'apps/cli/src/lib/log-sink.ts'
-const CALLER_ALLOWLIST = new Set(['apps/cli/src/lib/dispatch-role.ts', 'apps/cli/src/lib/dev-review-loop.ts'])
+const FLUSH_PATH = 'apps/cli/src/commands/log.ts'
+const FUTURE_CALLER_ALLOWLIST = new Set(['apps/cli/src/lib/dispatch-role.ts', 'apps/cli/src/lib/dev-review-loop.ts'])
+const CALLER_ALLOWLIST = new Set([...FUTURE_CALLER_ALLOWLIST, FLUSH_PATH])
+const OUTBOX_TRUNCATE_ALLOWLIST = new Set([FLUSH_PATH])
 
 function sourceFiles(dir: string, prefix: string): [string, string][] {
   const out: [string, string][] = []
@@ -49,9 +58,9 @@ describe('log-callers — O2', () => {
   const files = allSourceFiles()
   expect(files.length).toBeGreaterThan(0)
 
-  it('no file other than the sink references the outbox alongside a write call', () => {
+  it('no file other than the sink (or the flush) references the outbox alongside a write call', () => {
     const offenders = files
-      .filter(([rel]) => rel !== SINK_PATH)
+      .filter(([rel]) => rel !== SINK_PATH && !OUTBOX_TRUNCATE_ALLOWLIST.has(rel))
       .filter(([, abs]) => {
         const content = readFileSync(abs, 'utf8')
         return content.includes('outbox') && OUTBOX_WRITE_CALLS.some((call) => content.includes(call))
@@ -78,10 +87,15 @@ describe('log-callers — O2', () => {
     expect(offenders).toEqual([])
   })
 
-  it('the allowlist itself names no file that exists yet — both chokepoints land in a later task', () => {
+  it('the still-future allowlist entries name no file that exists yet — those chokepoints land in a later task', () => {
     const existing = files.map(([rel]) => rel)
-    for (const allowed of CALLER_ALLOWLIST) {
+    for (const allowed of FUTURE_CALLER_ALLOWLIST) {
       expect(existing).not.toContain(allowed)
     }
+  })
+
+  it('the flush allowlist entry does exist — task 2 is the landed caller, not a future one', () => {
+    const existing = files.map(([rel]) => rel)
+    expect(existing).toContain(FLUSH_PATH)
   })
 })
