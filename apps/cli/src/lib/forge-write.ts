@@ -33,6 +33,7 @@ import {
   checkDocUpdateList,
   checkForField,
   checkForgeTitle,
+  checkIssueBriefSections,
   checkIssueObjectives,
   checkIssueRationale,
   checkMilestoneShape,
@@ -372,6 +373,7 @@ function runBuiltin(name: BriefBuiltin, input: ForgeValidationInput): string[] {
     premiseCoverage: () => checkPremiseCoverage(body, changedFiles),
     issueRationale: () => checkIssueRationale(body),
     objectives: () => checkIssueObjectives(body, input.issueNumber ?? null),
+    briefSections: () => checkIssueBriefSections(body, input.issueNumber ?? null),
     milestoneShape: () => {
       const result = checkMilestoneShape(body)
       return { errors: result.status === 'fail' ? result.errors : [] }
@@ -404,6 +406,8 @@ const BUILTIN_RECOVERY: Record<BriefBuiltin, string> = {
     'Add the missing Planner-rationale field named above (every task Issue carries all eight fields), then re-run `{cmd}`.',
   objectives:
     'Add a `## Objectives` section of numbered `O<n>. <sentence>` lines (one observable outcome each), then re-run `{cmd}`.',
+  briefSections:
+    'Add the missing `## Surface`/`## Parts`/`## Test plan`/`## Stop conditions` section(s) named above, well-formed per their own grammar, then re-run `{cmd}`.',
   milestoneShape:
     'Fix the Milestone description as named above — a goal, an optional well-formed `Release:` field, and an optional parseable `### Tranche intents` section — then re-run `{cmd}`.'
 }

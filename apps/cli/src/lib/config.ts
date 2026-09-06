@@ -155,6 +155,7 @@ export const BRIEF_BUILTINS = [
   'premiseCoverage',
   'issueRationale',
   'objectives',
+  'briefSections',
   'milestoneShape'
 ] as const
 export type BriefBuiltin = (typeof BRIEF_BUILTINS)[number]
