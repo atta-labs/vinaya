@@ -407,6 +407,30 @@ function renderSection8(): string {
 }
 
 /**
+ * A fence marker guaranteed not to be broken by `lines`' own content — one
+ * backtick longer than the longest run of consecutive backticks any line
+ * contains, minimum three (CommonMark's own floor for a fenced block).
+ *
+ * `facts.testPlan.lines` is Issue-body text (`parseIssueTestPlan`), not
+ * this renderer's own literal — the Issue's `## Test plan` section can
+ * itself be fenced with a LONGER backtick run than three (` ```` ` around a
+ * body containing a literal ` ``` `), which `extractFencedBlocks` reads as
+ * ordinary content, not a nested fence. Splicing that content between a
+ * *fixed* ` ``` ` here would let the embedded run close this section's own
+ * fence early, spilling the rest of the Issue's text out as unfenced
+ * prose in the rendered brief — found live reviewing this exact task.
+ */
+function safeFence(lines: string[]): string {
+  let longest = 0
+  for (const line of lines) {
+    const m = line.match(/`+/g)
+    if (!m) continue
+    for (const run of m) longest = Math.max(longest, run.length)
+  }
+  return '`'.repeat(Math.max(3, longest + 1))
+}
+
+/**
  * §9 — copied from the Issue's own `## Test plan` section (`facts.testPlan`),
  * never re-derived from the surface file list. `renderBrief`'s missing-fact
  * check refuses before this runs when the Issue carries no parseable Test
@@ -425,12 +449,13 @@ function renderSection9(facts: BriefFacts): string {
   }
 
   const principalLines = facts.testPlan.principal.map((p) => `- [ ] **[principal]** ${p}`)
+  const fence = safeFence(facts.testPlan.lines)
   return [
     '## 9. Test Plan',
     '',
-    '```',
+    fence,
     ...facts.testPlan.lines,
-    '```',
+    fence,
     ...(principalLines.length > 0 ? ['', ...principalLines] : [])
   ].join('\n')
 }

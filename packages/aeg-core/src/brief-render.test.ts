@@ -198,6 +198,36 @@ describe('renderBrief', () => {
     expect(result.brief).toContain('- [ ] **[principal]** Verify in a real browser.')
   })
 
+  it('§9 widens its fence rather than let embedded backticks in Issue-sourced lines break out of it (security review finding)', () => {
+    // The Issue's own `## Test plan` can be fenced with MORE than three
+    // backticks, so a literal triple-backtick line survives inside
+    // `extractFencedBlocks`'s content as ordinary text — splicing it
+    // between a *fixed* three-backtick fence here would close the section
+    // early and spill the rest as unfenced prose.
+    const result = renderBrief(
+      baseFacts({
+        testPlan: {
+          kind: 'commands',
+          lines: ['bun test → 0 fail', '```', 'echo injected, now unfenced', '```'],
+          principal: []
+        }
+      }),
+      ''
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const section9 = result.brief.slice(result.brief.indexOf('## 9. Test Plan'))
+    const lines = section9.split('\n')
+    // Exactly two lines at the WIDENED four-backtick length (the real
+    // open/close fence) — the Issue's own embedded three-backtick lines
+    // must survive as plain content, never mistaken for the closer.
+    const widenedFenceLines = lines.filter((l) => l === '````')
+    const embeddedTripleBacktickLines = lines.filter((l) => l === '```')
+    expect(widenedFenceLines).toHaveLength(2)
+    expect(embeddedTripleBacktickLines).toHaveLength(2)
+    expect(section9).toContain('echo injected, now unfenced')
+  })
+
   it('refuses and names Test plan when the Issue Test plan section is unparseable', () => {
     const result = renderBrief(baseFacts({ testPlan: { kind: 'commands', lines: [], principal: [] } }), '')
     expect(result.ok).toBe(false)
