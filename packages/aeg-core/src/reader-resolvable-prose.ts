@@ -243,7 +243,9 @@ export function checkUnresolvableReferences(
     if (!cls || cls === 'internal') continue
     if (cls !== 'product' && !SWEPT_CLASSES.has(cls)) continue
     const blocking = cls === 'product'
-    const scrubbed = blocking ? stripNonProseForProduct(file.path, file.content) : stripNonProse(file.path, file.content)
+    const scrubbed = blocking
+      ? stripNonProseForProduct(file.path, file.content)
+      : stripNonProse(file.path, file.content)
     const patternsToRun = blocking ? productPatterns : patterns
     for (const { pattern, what, group } of patternsToRun) {
       pattern.lastIndex = 0

@@ -86,17 +86,15 @@ describe('classifyProseFile — the three-class map', () => {
   })
 
   it('classifies a file under a PRODUCT_SLUG_SCOPE prefix as product', () => {
-    expect(
-      classifyProseFile('apps/cli/src/commands/dispatch.ts', READER_FACING_PREFIX, READER_FACING_SUFFIX)
-    ).toBe('product')
+    expect(classifyProseFile('apps/cli/src/commands/dispatch.ts', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe(
+      'product'
+    )
     expect(classifyProseFile('.vinaya/hooks/pre-push', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('product')
     expect(classifyProseFile('apps/cli/README.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('product')
   })
 
   it('does NOT classify a path that merely starts with the same letters as a product prefix', () => {
-    expect(
-      classifyProseFile('apps/cli/srcx/index.ts', READER_FACING_PREFIX, READER_FACING_SUFFIX)
-    ).toBeNull()
+    expect(classifyProseFile('apps/cli/srcx/index.ts', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBeNull()
   })
 })
 

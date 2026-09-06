@@ -616,7 +616,18 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // sweep's real scope is legible here, and so a future `runner.ts`
       // change that extends `--diff-only` skipping to `scope: 'full'` finds
       // this already correct.
-      include: ['aeg-root/**/*.md']
+      //
+      // The four product-code globs below (Issue #435) mirror
+      // `PRODUCT_SLUG_SCOPE` in `reader-resolvable-prose.ts` — the surface
+      // whose tranche-slug citation is now this check's one blocking class.
+      include: [
+        'aeg-root/**/*.md',
+        'apps/cli/src/**',
+        '.github/workflows/**',
+        '.vinaya/**',
+        'apps/cli/README.md',
+        'packages/sources/README.md'
+      ]
     },
     0
   ],
