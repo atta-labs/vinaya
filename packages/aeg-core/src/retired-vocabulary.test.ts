@@ -13,10 +13,19 @@ import { describe, expect, it } from 'vitest'
  * deliberate copy of the pattern/exempt content here, not an import, so this
  * suite's own `grep -E` proof (below) stays independent of that module's
  * native-`RegExp` evaluator. `RETIRED_IN_PRODUCT`'s citation members
- * (`FORGE_NUMBER_PATTERN`/`TRANCHE_SLUG_VN_PATTERN`/`LEGACY_SLUG_PATTERN`)
- * are NOT copied there — those ban a live, unexplained citation, not a
- * retired concept, and are already `reader-resolvable-prose.ts`'s own
- * `checkUnresolvableReferences`.
+ * (`FORGE_NUMBER_PATTERN`/`LEGACY_SLUG_PATTERN`) are NOT copied there — those
+ * ban a live, unexplained citation, not a retired concept, and are already
+ * `reader-resolvable-prose.ts`'s own `checkUnresolvableReferences`. The
+ * tranche-slug citation pattern (`TRANCHE_SLUG_VN_PATTERN`) used to be a
+ * third member of this list, grepped here against a hand-picked list of
+ * other packages' paths (`apps/cli/src`, `.github/workflows`, `.vinaya`, two
+ * product READMEs); it no longer is. That citation ban — including its
+ * extension to product code, not just doctrine — now lives entirely in
+ * `reader-resolvable-prose.ts`'s `PRODUCT_SLUG_SCOPE`, proved by
+ * `reader-resolvable-prose.test.ts`, so a change to one package's files can
+ * no longer pass this package's cached test result at the push hook (a
+ * CLI-only diff never marks `aeg-core` affected, so a rule about CLI files
+ * living in an `aeg-core` test never ran on that push at all).
  *
  * Five review rounds each declared the decision-log claim swept, and each time
  * it resurfaced a few lines from where the previous pass fixed it — usually in
@@ -30,26 +39,26 @@ import { describe, expect, it } from 'vitest'
  * failure with the file and line printed.
  *
  * A second, related class joined this suite later: `RETIRED_IN_PRODUCT` also
- * bans a forge number (`#294`) and an internal tranche slug
- * (`aeg-forge-state-v1`) cited bare in the doctrine `aeg-root/**` publishes.
- * Neither is retired — both are the product's live vocabulary — but citing
- * one as an unexplained doctrine reference is exactly the residue the ruling
- * that ended the decision log already named: "a decision id, a retired
- * mechanism's vocabulary, an internal tranche slug — none of it means
- * anything to someone who was not here, and a tool meant to be adopted
+ * bans a forge number (`#294`) cited bare in the doctrine `aeg-root/**`
+ * publishes. It is not retired — it is the product's live vocabulary — but
+ * citing one as an unexplained doctrine reference is exactly the residue the
+ * ruling that ended the decision log already named: "a decision id, a
+ * retired mechanism's vocabulary, an internal tranche slug — none of it
+ * means anything to someone who was not here, and a tool meant to be adopted
  * cannot ship the residue of the monorepo it grew in." That ruling's
  * enforcement covered `D-###` and stopped; forge numbers and slugs survived
- * unwatched until this pair of patterns closed the gap. `FORGE_NUMBER_PATTERN`
- * and `LEGACY_SLUG_PATTERN` are scoped to `aeg-root` only via `PATTERN_SCOPE`
- * — that directory is pure doctrine prose, no test fixtures, so a blind grep
- * there cannot mistake a legitimate occurrence for a citation.
- * `TRANCHE_SLUG_VN_PATTERN` needed a wider net (a real citation surfaced in
- * shipped `apps/vinaya/cli/src` comments, not doctrine), but not the full
- * `PRODUCT` surface: widening it to every path once flooded with hundreds of
- * false positives — `aeg-core`/`aeg-forge-state`'s own test fixtures
- * legitimately using real tranche names as data, and other products' entirely
- * unrelated `-vN` naming (Vāda's `crucible-v1.yaml`). See the comment on
- * `PATTERN_SCOPE` for the resulting hand-picked surface.
+ * unwatched until this pattern (and the tranche-slug pattern below) closed
+ * the gap. `FORGE_NUMBER_PATTERN` and `LEGACY_SLUG_PATTERN` are scoped to
+ * `aeg-root` only via `PATTERN_SCOPE` — that directory is pure doctrine
+ * prose, no test fixtures, so a blind grep there cannot mistake a legitimate
+ * occurrence for a citation. The tranche-slug pattern once lived here too,
+ * scoped wider than `aeg-root` to also reach product code
+ * (`apps/cli/src`/`.github/workflows`/`.vinaya`/two READMEs) — that wider
+ * reach, and the pattern itself, now belong entirely to
+ * `reader-resolvable-prose.ts`'s `PRODUCT_SLUG_SCOPE` (Issue #435): this
+ * suite grepping another package's files let a CLI-only push slip past the
+ * rule, since the push hook's affected-test-suite run never touches
+ * `aeg-core` for a CLI-only diff.
  *
  * A third failure mode, found by post-merge review, joined coverage to
  * vacuity: `[a-z][a-z-]+-v[0-9]` only sees a tranche slug that ends `-vN`.
@@ -75,9 +84,9 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..')
  * subject is whether `LEGACY_SLUG_PATTERN` catches the class the `-vN`
  * pattern is blind to, not this repo's own archive contents, so the corpus
  * is a committed fixture instead of a live directory read. Same fixture
- * `reader-resolvable-prose.test.ts` uses. Slugs `TRANCHE_SLUG_VN_PATTERN`
- * already sees are excluded — no point banning the same string with two
- * patterns.
+ * `reader-resolvable-prose.test.ts` uses. Slugs the `-vN` pattern
+ * (`reader-resolvable-prose.ts`'s `TRANCHE_SLUG_VN_PATTERN`) already sees are
+ * excluded — no point banning the same string with two patterns.
  */
 function legacySlugs(): string[] {
   return readFileSync(join(__dirname, '..', 'tests', 'fixtures', 'legacy-tranche-slugs.txt'), 'utf8')
@@ -88,7 +97,6 @@ function legacySlugs(): string[] {
 }
 
 const FORGE_NUMBER_PATTERN = '#[0-9]{2,4}'
-const TRANCHE_SLUG_VN_PATTERN = '[a-z][a-z-]+-v[0-9]'
 const LEGACY_SLUGS = legacySlugs()
 // Empty only if every archived tranche ever adopts the `-vN` suffix — in
 // which case there is nothing left for this pattern to catch, and it is
@@ -145,15 +153,6 @@ const RETIRED_IN_PRODUCT = [
   // checks) — banning it repo-wide would flag the mechanism itself, not
   // the citation habit this class exists to stop.
   FORGE_NUMBER_PATTERN,
-  // An internal tranche slug — `aeg-forge-state-v1`, `vinaya-studio-v1` —
-  // cited in doctrine prose as a bare pointer to "the tranche that did
-  // this," with no reason restated. Same `aeg-root`-only scoping as the
-  // pattern above, for the identical reason: tranche slugs are the
-  // product's live naming scheme (Milestone titles, fixture filenames,
-  // test data across `aeg-core` and `aeg-forge-state`), not a retired
-  // vocabulary — only their use as an unexplained doctrine citation is
-  // banned.
-  TRANCHE_SLUG_VN_PATTERN,
   // The same citation class, for the slugs that predate `-vN`. See the file
   // header for why this is a second pattern rather than a broader regex.
   ...(LEGACY_SLUG_PATTERN ? [LEGACY_SLUG_PATTERN] : [])
@@ -162,42 +161,17 @@ const RETIRED_IN_PRODUCT = [
 /**
  * Scopes a `RETIRED_IN_PRODUCT` pattern narrower than the full `PRODUCT`
  * surface. Unlike `D-###`/`decision log` — genuinely retired concepts that
- * appear nowhere live — a forge number or tranche slug is the product's own
- * working vocabulary: it appears legitimately in fixtures, tests, and
- * source across every `PRODUCT` path. What's banned is narrower than the
- * string: citing one as an unexplained doctrine reference.
+ * appear nowhere live — a forge number is the product's own working
+ * vocabulary: it appears legitimately in fixtures, tests, and source across
+ * every `PRODUCT` path. What's banned is narrower than the string: citing
+ * one as an unexplained doctrine reference.
  *
  * `FORGE_NUMBER_PATTERN` and `LEGACY_SLUG_PATTERN` scope to `aeg-root` only
  * — pure doctrine prose, no test fixtures live there, so a blind grep can't
- * mistake a legitimate occurrence for a citation.
- *
- * `TRANCHE_SLUG_VN_PATTERN` needs a second surface: the real incident this
- * pattern exists to catch was a citation in shipped `apps/vinaya/cli/src`
- * comments, not doctrine. It stays narrow, not `PRODUCT`-wide — first tried
- * at `['.']`, which produced ~600 false positives (aeg-core/aeg-forge-state's
- * own test fixtures using real tranche names as data, plus other products'
- * unrelated `-vN` naming like Vāda's `crucible-v1.yaml`) once the grep
- * buffer bug that had been silently swallowing that flood as "no hits" got
- * fixed. `apps/vinaya/cli/src` only, not `cli/tests` — the fixtures there
- * are the same legitimate-data case aeg-core's own tests are.
- *
- * This does not contradict `PRODUCT`'s own "an enumerated list is a
- * blind spot" argument above — it is a different scoping problem, not
- * the same one solved differently. `D-###`/`decision log` are dead
- * vocabulary with no legitimate positive occurrence anywhere, so
- * `PRODUCT = ['.']` costs nothing to keep repo-wide. A tranche slug is
- * the product's own live naming, colliding with real fixtures and other
- * products' unrelated conventions everywhere outside doctrine — going
- * repo-wide there isn't "a list that might miss a future path," it's
- * "a list that is mostly wrong right now." Known, deliberately
- * out-of-surface consequence: this scope does not yet reach Herald's
- * or `packages/agents/`'s own source comments (e.g.
- * `packages/agents/forensic-hiring-auditor/src/tools/github-signals.ts`,
- * `apps/herald-ai/web/src/components/HeraldAccountMenu.tsx`,
- * `apps/herald-ai/web/src/components/envoy/ReportView.tsx`), which
- * still carry live tranche-slug citations today — tracked as its own
- * follow-up, #736 (widen to Herald/Vāda/attalabs the same way this
- * task widened to Vinaya) rather than silently left unowned.
+ * mistake a legitimate occurrence for a citation. Both members here stay
+ * aeg-root-only; neither needs the wider, product-code-reaching surface the
+ * tranche-slug pattern used to carry in this map. See the module header for
+ * where that pattern and its wider surface live now.
  */
 const PATTERN_SCOPE: Record<string, string[]> = {
   [FORGE_NUMBER_PATTERN]: ['aeg-root'],
@@ -208,22 +182,21 @@ const PATTERN_SCOPE: Record<string, string[]> = {
   // in this repo at all — there is no `apps/vinaya` umbrella folder, no
   // `CLAUDE.md` anywhere, and no web app — so they are dropped rather than
   // grep'd against a path that can never resolve here.
-  [TRANCHE_SLUG_VN_PATTERN]: [
-    'aeg-root',
-    'apps/cli/src',
-    '.github/workflows',
-    '.vinaya',
-    // Vinaya's own prose doctrine — README, never src or test/fixture dirs
-    // (those hold functional tranche-slug handling and legitimate test
-    // data, the same false-positive class ['.'] produced).
-    'apps/cli/README.md',
-    'packages/sources/README.md'
-  ],
-  // LEGACY_SLUG_PATTERN stays aeg-root-only, deliberately not widened with the
-  // VN pattern above: every slug it can ever match is, by construction,
-  // already archived (derived from aeg-root/tranches/completed/*.md) — citing
-  // a closed tranche is the safe case (same durability class as a closed PR),
-  // not the live-citation problem this widening exists to catch.
+  //
+  // TRANCHE_SLUG_VN_PATTERN is deliberately absent from this map: it is not
+  // one of this suite's `RETIRED_IN_PRODUCT` members any more, and this
+  // suite no longer greps `apps/cli/src`/`.github/workflows`/`.vinaya`/the
+  // two product READMEs for it at all. `reader-resolvable-prose.ts`'s own
+  // `PRODUCT_SLUG_SCOPE` now owns that exact surface, enforced through its
+  // own check rather than through this package's grep of another package's
+  // files — see the module header above.
+  //
+  // LEGACY_SLUG_PATTERN stays aeg-root-only, deliberately not widened the way
+  // the VN pattern used to be: every slug it can ever match is, by
+  // construction, already archived (derived from
+  // aeg-root/tranches/completed/*.md) — citing a closed tranche is the safe
+  // case (same durability class as a closed PR), not the live-citation
+  // problem the (now-removed) widening existed to catch.
   ...(LEGACY_SLUG_PATTERN ? { [LEGACY_SLUG_PATTERN]: ['aeg-root'] } : {})
 }
 
@@ -272,13 +245,10 @@ const PATTERN_EXEMPT: Record<string, string[]> = {
     // "## CONTRADICTION — <topic>" entry-shape ban. Not a citation
     // (task-729 sweep).
     'apps/vada-ai/specs/vada-reviewers-spec.md'
-  ],
-  '[a-z][a-z-]+-v[0-9]': [
-    // Team-catalog spec `id:` fields (`sparring-v1`, `brokered-trio-v1`) — the
-    // product's own live YAML naming, structurally identical in shape to an
-    // AEG tranche slug but not one. Not a citation.
-    '.claude/skills/atta-teams/SKILL.md'
   ]
+  // No `[a-z][a-z-]+-v[0-9]` entry: that pattern is no longer a
+  // `RETIRED_IN_PRODUCT` member (see the module header), so this map is
+  // never consulted for it any more.
 }
 
 const RETIRED = [
@@ -517,7 +487,9 @@ const SAMPLES: Record<string, string> = {
   'roles/team-leader\\.md': 'see roles/team-leader.md',
   'decision logic': 'NEGATIVE — all decision logic lives in the evaluator',
   [FORGE_NUMBER_PATTERN]: 'fixed the gap (task 3, #365)',
-  [TRANCHE_SLUG_VN_PATTERN]: 'landed in aeg-coherence-v1 task 3',
+  // No TRANCHE_SLUG_VN_PATTERN sample: it is no longer a `RETIRED_IN_PRODUCT`
+  // member (see the module header) — `reader-resolvable-prose.test.ts` proves
+  // it now.
   // Drawn from the exact class the `-vN` pattern is blind to (the class
   // this pattern exists to cover) — not a slug the pattern above already
   // catches, so this proves coverage, not just non-vacuity.
