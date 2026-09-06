@@ -139,6 +139,19 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'task dispatch',
+    description: 'Render, pin, and post the brief on the Issue as the frozen original; start the developer',
+    flags: [
+      { flag: '--agent <claude|codex|gemini>', description: 'Start the developer through dispatchRole once posted' }
+    ],
+    details: [
+      // AEG:CLAIM: apps/cli/src/lib/dispatch-task.ts contains:export const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
+      "Renders the brief from the Issue and the tree (the same assembly `brief render` uses) and posts it once as an Issue comment whose first line is `<!-- aeg:brief:v1 -->` and whose second line is `Brief hash: <sha256>` — the hash covers only the body below those two lines, so any reader recomputes it. Refuses outright, naming the existing comment's URL, when a `v1` comment already exists on the Issue — the brief is frozen by design, never overwritten or silently reissued.",
+      'With `--agent`, starts the Developer through `dispatchRole` when `apps/cli/src/lib/dispatch.ts` exports it; otherwise prints the rendered brief and the manual dispatch instruction and exits `0` — a soft dependency, never a hard block.'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'pr create',
     description: 'Open a pull request after full brief-schema validation',
     flags: [

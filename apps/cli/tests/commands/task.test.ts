@@ -1,0 +1,64 @@
+import { execFileSync } from 'node:child_process'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'bun:test'
+
+const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const INDEX = join(CLI_ROOT, 'src', 'index.ts')
+
+type CliResult = { status: number; stdout: string; stderr: string }
+
+function runCli(args: string[]): CliResult {
+  try {
+    const stdout = execFileSync('bun', [INDEX, ...args], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
+    return { status: 0, stdout, stderr: '' }
+  } catch (e) {
+    const err = e as { status?: number; stdout?: string; stderr?: string }
+    return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
+  }
+}
+
+describe('vinaya task — router wiring', () => {
+  it("refuses an unknown 'task' subcommand", () => {
+    const r = runCli(['task', 'bogus'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain("Unknown 'task' subcommand")
+    expect(r.stderr).toContain('dispatch')
+  })
+
+  it("refuses 'task' with no subcommand", () => {
+    const r = runCli(['task'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain("Unknown 'task' subcommand")
+  })
+})
+
+describe('vinaya task dispatch — argv parsing', () => {
+  it('refuses with no tranche/task id', () => {
+    const r = runCli(['task', 'dispatch'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('Usage: vinaya task dispatch')
+    expect(r.stderr).toContain('--agent')
+  })
+
+  it('refuses a non-numeric task id', () => {
+    const r = runCli(['task', 'dispatch', 'plan-brief-v1', 'two'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('task id must be numeric')
+  })
+
+  it('refuses an --agent value outside claude|codex|gemini', () => {
+    const r = runCli(['task', 'dispatch', 'plan-brief-v1', '427', '--agent', 'skills'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--agent must be one of')
+    expect(r.stderr).toContain('claude')
+    expect(r.stderr).toContain('codex')
+    expect(r.stderr).toContain('gemini')
+  })
+
+  it('refuses --agent with no value', () => {
+    const r = runCli(['task', 'dispatch', 'plan-brief-v1', '427', '--agent'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--agent must be one of')
+  })
+})
