@@ -34,11 +34,23 @@ export const HOST_VALUES = ['hook', 'ci', 'cli', 'loop'] as const
 export const HostSchema = z.enum(HOST_VALUES)
 export type Host = z.infer<typeof HostSchema>
 
+/**
+ * Letters, digits, dot, underscore, hyphen — deliberately excludes `<`, `>`,
+ * `/`, whitespace and newlines. `run_id` is spliced raw into a flush's
+ * `<!-- aeg:log:<run_id>:<seq_from>-<seq_to> -->` marker (`apps/cli/specs/log.md`
+ * § The flush) and is attacker-reachable via `VINAYA_RUN_ID` (security
+ * review, PR #439) — a value carrying `-->` or a newline would close the
+ * HTML comment early or break the fenced block once posted publicly.
+ * Refusing it here, at write time, means an unsafe value never reaches the
+ * outbox at all, rather than relying on a later reader to catch it.
+ */
+const RUN_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/
+
 const HeaderMetaSchema = z
   .object({
     schema: z.literal(1),
     ts: z.string(),
-    run_id: z.string(),
+    run_id: z.string().regex(RUN_ID_PATTERN),
     seq: z.number().int().nonnegative(),
     repo: z.string().nullable(),
     vinaya: z.string(),

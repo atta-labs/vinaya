@@ -90,8 +90,11 @@ function ndjsonLine(runId: string, seq: number, issue: number): string {
  * appended to `bodiesLogPath`, chunk-separated, so a test can inspect the
  * exact marker/fence a temp file carried before this command deletes it.
  * `failFlagPath`, when the file exists, makes every comment call fail.
+ * `failAfterNComments` makes the (N+1)th comment call (across issue/pr
+ * comment combined) fail while every call up to and including the Nth
+ * succeeds — the "chunk 1 succeeds, chunk 2 fails" story.
  */
-function stubGh(opts: { prBody?: string; failFlagPath?: string }): {
+function stubGh(opts: { prBody?: string; failFlagPath?: string; failAfterNComments?: number }): {
   env: Record<string, string>
   bodiesLogPath: string
   callsLogPath: string
@@ -103,6 +106,7 @@ function stubGh(opts: { prBody?: string; failFlagPath?: string }): {
   const counterPath = join(dir, 'counter')
   const prBodyPath = join(dir, 'pr-body.json')
   const failFlagPath = opts.failFlagPath ?? join(dir, 'FAIL')
+  const failAfterN = opts.failAfterNComments ?? -1
   writeFileSync(bodiesLogPath, '')
   writeFileSync(callsLogPath, '')
   writeFileSync(counterPath, '0')
@@ -112,9 +116,16 @@ function stubGh(opts: { prBody?: string; failFlagPath?: string }): {
     gh,
     `#!/bin/sh
 echo "$@" >> "${callsLogPath}"
-if [ -f "${failFlagPath}" ] && { [ "$1$2" = "issuecomment" ] || [ "$1$2" = "prcomment" ]; }; then
-  echo "simulated gh failure: rate limited" >&2
-  exit 1
+if [ "$1$2" = "issuecomment" ] || [ "$1$2" = "prcomment" ]; then
+  if [ -f "${failFlagPath}" ]; then
+    echo "simulated gh failure: rate limited" >&2
+    exit 1
+  fi
+  next=$(( $(cat "${counterPath}") + 1 ))
+  if [ ${failAfterN} -ge 0 ] && [ "$next" -gt ${failAfterN} ]; then
+    echo "simulated gh failure: rate limited" >&2
+    exit 1
+  fi
 fi
 if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
   n=$3
@@ -358,5 +369,111 @@ describe('vinaya log flush — defeat cases', () => {
     expect(r.status).toBe(2)
     const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
     expect(finding.check).toBe('log-flush-symlink')
+  })
+
+  it('gh succeeds on chunk 1 and fails on chunk 2: chunk 1 is truncated, chunk 2 remains, refused names the failing range (code review BLOCKER 3, PR #439)', () => {
+    const cwd = tempDir('log-flush-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-flush-home-')
+    const gh = stubGh({ failAfterNComments: 1 })
+
+    const original = [ndjsonLine('rX', 0, 111), ndjsonLine('rY', 0, 111)]
+    seedOutbox(home, 111, original)
+
+    const r = runCli(['log', 'flush', '--issue', '111'], cwd, { HOME: home, ...gh.env })
+
+    expect(r.status).toBe(2)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('log-flush-gh-failed')
+    expect(finding.message).toContain('rY')
+
+    const chunks = chunksOf(readFileSync(gh.bodiesLogPath, 'utf8'))
+    expect(chunks.length).toBe(1)
+    expect(chunks[0]).toContain('<!-- aeg:log:rX:0-0 -->')
+
+    const lines = readFileSync(outboxPath(home, 111), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+    // Chunk 1 (rX) truncated away; chunk 2 (rY) — never confirmed posted — remains, plus the audit trail.
+    expect(lines[0]).toEqual(JSON.parse(original[1] as string))
+    expect(lines[1].event).toBe('validated')
+    expect(lines[2].event).toBe('refused')
+    expect(lines[2].reason).toContain('rY')
+  })
+
+  it('refuses a corrupt outbox line (fails full schema re-validation) without posting or truncating anything (security review MEDIUM 2, PR #439)', () => {
+    const cwd = tempDir('log-flush-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-flush-home-')
+    const gh = stubGh({})
+
+    const corrupt = JSON.stringify({ meta: { schema: 1, run_id: 'rF', seq: 0 }, kind: 'forge_write' })
+    seedOutbox(home, 222, [corrupt])
+
+    const r = runCli(['log', 'flush', '--issue', '222'], cwd, { HOME: home, ...gh.env })
+
+    expect(r.status).toBe(2)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('log-flush-corrupt-line')
+
+    expect(readFileSync(outboxPath(home, 222), 'utf8')).toBe(`${corrupt}\n`)
+    expect(readFileSync(gh.callsLogPath, 'utf8')).toBe('')
+  })
+
+  it('re-redacts an outbox line before posting, even one that was never redacted on disk (second check-moment, security review MEDIUM 2, PR #439)', () => {
+    const cwd = tempDir('log-flush-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-flush-home-')
+    const gh = stubGh({})
+
+    const secret = `ghp_${'a'.repeat(36)}`
+    const unredacted = JSON.stringify({
+      meta: {
+        schema: 1,
+        ts: '2026-09-06T00:00:00.000Z',
+        run_id: 'rG',
+        seq: 0,
+        repo: null,
+        vinaya: '0.0.0',
+        doctrine: 'unknown',
+        host: 'cli',
+        machine: 'deadbeef'
+      },
+      subject: { issue: 333, role: 'developer' },
+      kind: 'forge_write',
+      event: 'refused',
+      payload: {},
+      op: 'issue.comment',
+      target: { issue: 333 },
+      reason: `gh: authentication failed for token ${secret}`
+    })
+    seedOutbox(home, 333, [unredacted])
+
+    const r = runCli(['log', 'flush', '--issue', '333'], cwd, { HOME: home, ...gh.env })
+
+    expect(r.status).toBe(0)
+    const posted = readFileSync(gh.bodiesLogPath, 'utf8')
+    expect(posted).not.toContain(secret)
+    expect(posted).toContain('<redacted>')
+  })
+})
+
+describe('tailHasOwnLine — the race-condition correlation (code review BLOCKER 2, PR #439)', () => {
+  it("ignores a concurrent process's matching-shape line carrying a DIFFERENT run_id, and finds this call's own line once it lands", async () => {
+    const { tailHasOwnLine } = await import('../../src/commands/log')
+    const home = tempDir('log-flush-race-')
+    const path = join(home, 'outbox.ndjson')
+    writeFileSync(path, '')
+    const priorSize = 0
+    const expected = { event: 'written' as const, op: 'issue.comment' as const, target: { issue: 1 } }
+
+    const decoy = `${JSON.stringify({ meta: { run_id: 'concurrent-process-run-id' }, kind: 'forge_write', event: 'written', op: 'issue.comment', target: { issue: 1 } })}\n`
+    writeFileSync(path, decoy, { flag: 'a' })
+    expect(tailHasOwnLine(path, priorSize, 'my-own-run-id', expected)).toBe(false)
+
+    const ownLine = `${JSON.stringify({ meta: { run_id: 'my-own-run-id' }, kind: 'forge_write', event: 'written', op: 'issue.comment', target: { issue: 1 } })}\n`
+    writeFileSync(path, ownLine, { flag: 'a' })
+    expect(tailHasOwnLine(path, priorSize, 'my-own-run-id', expected)).toBe(true)
   })
 })

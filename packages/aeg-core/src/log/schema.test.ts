@@ -201,4 +201,19 @@ describe('LogEventSchema — defeat cases', () => {
     const line = { ...validDispatched, meta: { ...meta, repo: null } }
     expect(LogEventSchema.safeParse(line).success).toBe(true)
   })
+
+  it("refuses a run_id carrying `-->` — would close the flush marker's HTML comment early (security review, PR #439)", () => {
+    const line = { ...validDispatched, meta: { ...meta, run_id: 'evil--><script>' } }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+
+  it('refuses a run_id carrying a newline', () => {
+    const line = { ...validDispatched, meta: { ...meta, run_id: 'evil\nrun-2' } }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+
+  it('accepts a run_id at the safe-charset boundary', () => {
+    const line = { ...validDispatched, meta: { ...meta, run_id: 'Run.id_09-safe' } }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
 })

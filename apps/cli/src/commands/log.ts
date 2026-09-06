@@ -10,12 +10,12 @@
 
 import { execFileSync } from 'node:child_process'
 import { lstatSync, readFileSync, statSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
-import { extractIssue, type ForgeOp } from '@attalabs/aeg-core'
+import { extractIssue, LogEventSchema, redact, type ForgeOp } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks/contract.js'
-import { log, outboxPathFor as sinkOutboxPathFor, type LogEventInput } from '../lib/log-sink.js'
+import { currentRunId, log, outboxPathFor as sinkOutboxPathFor, type LogEventInput } from '../lib/log-sink.js'
 import { GLOBAL_VINAYA_HOME } from '../lib/config.js'
 import { printJson } from '../lib/envelope.js'
 
@@ -34,23 +34,80 @@ function sizeOf(path: string): number {
   }
 }
 
+export type ForgeWriteSignature = {
+  event: 'validated' | 'refused' | 'written'
+  op: ForgeOp
+  target: { issue?: number; pr?: number }
+}
+
+/**
+ * True iff the bytes appended to `path` since `priorSize` include a line
+ * matching `expected` AND carrying `runId`. The `runId` check is
+ * load-bearing, not decorative (code review, PR #439): "the file grew"
+ * alone cannot tell this call's own fire-and-forget `log()` write apart
+ * from an unrelated, concurrent `vinaya` process appending to the SAME
+ * outbox at the same moment — two processes sharing an Issue's outbox is
+ * the normal case this command's own truncation comment already accounts
+ * for. Re-reads the whole grown region every poll, not just the newest
+ * line, so a concurrent process's line landing before or after ours within
+ * that region never hides ours. `runId` is a parameter (not read from
+ * `currentRunId()` internally) so this correlation logic is directly
+ * unit-testable against a decoy line with a different `run_id`.
+ */
+export function tailHasOwnLine(path: string, priorSize: number, runId: string, expected: ForgeWriteSignature): boolean {
+  let buf: Buffer
+  try {
+    buf = readFileSync(path)
+  } catch {
+    return false
+  }
+  if (buf.byteLength <= priorSize) return false
+  for (const raw of buf.subarray(priorSize).toString('utf8').split('\n')) {
+    if (!raw) continue
+    let obj: unknown
+    try {
+      obj = JSON.parse(raw)
+    } catch {
+      continue
+    }
+    const o = obj as { meta?: { run_id?: unknown }; kind?: unknown; event?: unknown; op?: unknown; target?: unknown }
+    if (
+      o.meta?.run_id === runId &&
+      o.kind === 'forge_write' &&
+      o.event === expected.event &&
+      o.op === expected.op &&
+      JSON.stringify(o.target) === JSON.stringify(expected.target)
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
 /**
  * `log()` is fire-and-forget (`deps.resolveRepo().then(...)`, no returned
  * promise, by design — task 1's shipped, frozen interface) and its internal
  * `resolveRepo()` call is a real (if usually cache-hit) async boundary, not
  * a fixed number of microtask ticks — a `setImmediate`/`Promise` drain proved
  * unreliable across hosts (observed live: passed under `node` on the built
- * CLI, failed under `bun` running the TS source directly). Waiting for the
- * outbox file to actually grow past its pre-call size is the only signal
- * that does not guess at scheduling internals.
+ * CLI, failed under `bun` running the TS source directly). Polling for THIS
+ * call's own line (`tailHasOwnLine`, keyed on `currentRunId()`) to actually
+ * land is the only signal that neither guesses at scheduling internals nor
+ * mistakes a concurrent process's write for this one's.
  */
-async function waitForOutboxGrowth(path: string, priorSize: number, timeoutMs = 2000): Promise<void> {
+async function waitForOwnLine(
+  path: string,
+  priorSize: number,
+  expected: ForgeWriteSignature,
+  timeoutMs = 2000
+): Promise<boolean> {
+  const runId = currentRunId()
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (sizeOf(path) > priorSize) return
+    if (tailHasOwnLine(path, priorSize, runId, expected)) return true
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
-  throw new Error(`log flush: log()'s own line never landed in ${path} within ${timeoutMs}ms`)
+  return false
 }
 
 /**
@@ -58,18 +115,23 @@ async function waitForOutboxGrowth(path: string, priorSize: number, timeoutMs = 
  * (`log/envelope.ts`'s `issueFromTask`) — never from an argument. For this
  * call's line to land in the SAME outbox this command is about to
  * truncate, `VINAYA_TASK` is set to the flushed Issue for the duration of
- * the call, restored after; `waitForOutboxGrowth` blocks until that
- * fire-and-forget write has actually landed on disk before this command
- * reads the file back or exits (a bare `process.exit()` right after `log()`
- * would otherwise abandon the write mid-flight).
+ * the call, restored after. Returns whether the write was confirmed landed
+ * (`waitForOwnLine`) rather than throwing — a timeout is not necessarily
+ * fatal (see call sites): a bare `process.exit()` right after `log()` would
+ * abandon the write mid-flight, but the caller decides what "not confirmed"
+ * means for its own position in the flush.
  */
-async function logForFlush(issueNumber: number, path: string, e: LogEventInput): Promise<void> {
+async function logForFlush(
+  issueNumber: number,
+  path: string,
+  e: LogEventInput & ForgeWriteSignature
+): Promise<boolean> {
   const prevTask = process.env.VINAYA_TASK
   process.env.VINAYA_TASK = String(issueNumber)
   const priorSize = sizeOf(path)
   try {
     log(e)
-    await waitForOutboxGrowth(path, priorSize)
+    return await waitForOwnLine(path, priorSize, { event: e.event, op: e.op, target: e.target })
   } finally {
     if (prevTask === undefined) delete process.env.VINAYA_TASK
     else process.env.VINAYA_TASK = prevTask
@@ -120,25 +182,49 @@ export class LineTooLargeError extends Error {
   }
 }
 
-type ParsedLine = { raw: string; runId: string; seq: number }
+/** Thrown by `parseOutboxLine` when a line fails full `LogEventSchema` re-validation — never posted, never trusted on faith. */
+export class CorruptOutboxLineError extends Error {
+  readonly index: number
+  constructor(index: number, reason: string) {
+    super(`log flush: outbox line ${index} failed schema re-validation — ${reason}`)
+    this.index = index
+  }
+}
 
+/** `runId`/`seq` for chunk planning; `postLine` is the re-redacted, re-serialized text actually posted — never the raw file bytes verbatim. */
+type ParsedLine = { postLine: string; runId: string; seq: number }
+
+/**
+ * Re-validates a stored outbox line against the FULL `LogEventSchema` — not
+ * merely presence of `meta.run_id`/`meta.seq` — and re-applies `redact()`
+ * before this text is ever posted publicly (security review, PR #439). The
+ * on-disk file is trusted for its own append-time write (`log()` already
+ * validated and redacted once), but a flush is the second check-moment
+ * before that content goes public, and a manually-edited line, a corrupted
+ * one, or a future gap in `redact.ts`'s pattern coverage must not slip an
+ * unfiltered line straight through. A line failing either check refuses the
+ * whole flush (`CorruptOutboxLineError`) rather than silently skipping or
+ * posting it — the same "refuse loudly, never mangle" posture as
+ * `LineTooLargeError`.
+ */
 function parseOutboxLine(raw: string, index: number): ParsedLine {
   let obj: unknown
   try {
     obj = JSON.parse(raw)
   } catch {
-    throw new Error(`log flush: outbox line ${index} is not valid JSON`)
+    throw new CorruptOutboxLineError(index, 'not valid JSON')
   }
-  const meta = (obj as { meta?: unknown }).meta as { run_id?: unknown; seq?: unknown } | undefined
-  if (!meta || typeof meta.run_id !== 'string' || typeof meta.seq !== 'number') {
-    throw new Error(`log flush: outbox line ${index} is missing meta.run_id / meta.seq`)
+  const result = LogEventSchema.safeParse(obj)
+  if (!result.success) {
+    throw new CorruptOutboxLineError(index, result.error.issues[0]?.message ?? 'schema violation')
   }
-  return { raw, runId: meta.run_id, seq: meta.seq }
+  const redacted = redact(result.data, homedir()) as { meta: { run_id: string; seq: number } }
+  return { postLine: JSON.stringify(redacted), runId: redacted.meta.run_id, seq: redacted.meta.seq }
 }
 
-function renderChunk(runId: string, seqFrom: number, seqTo: number, rawLines: readonly string[]): string {
+function renderChunk(runId: string, seqFrom: number, seqTo: number, postLines: readonly string[]): string {
   const marker = `<!-- aeg:log:${runId}:${seqFrom}-${seqTo} -->`
-  return `${marker}\n\n\`\`\`ndjson\n${rawLines.join('\n')}\n\`\`\`\n`
+  return `${marker}\n\n\`\`\`ndjson\n${postLines.join('\n')}\n\`\`\`\n`
 }
 
 /**
@@ -166,20 +252,20 @@ export function planFlush(lines: readonly string[], maxChars: number): FlushChun
     for (let k = i; k < j; k++) {
       const line = parsed[k] as ParsedLine
       if (groupLines.length === 0) {
-        groupLines = [line.raw]
+        groupLines = [line.postLine]
         seqFrom = line.seq
         seqTo = line.seq
         if (renderChunk(runId, seqFrom, seqTo, groupLines).length > maxChars) throw new LineTooLargeError(line.seq)
         continue
       }
-      const candidateLines = [...groupLines, line.raw]
+      const candidateLines = [...groupLines, line.postLine]
       const candidateBody = renderChunk(runId, seqFrom, line.seq, candidateLines)
       if (candidateBody.length <= maxChars) {
         groupLines = candidateLines
         seqTo = line.seq
       } else {
         chunks.push({ runId, seqFrom, seqTo, body: renderChunk(runId, seqFrom, seqTo, groupLines) })
-        groupLines = [line.raw]
+        groupLines = [line.postLine]
         seqFrom = line.seq
         seqTo = line.seq
         if (renderChunk(runId, seqFrom, seqTo, groupLines).length > maxChars) throw new LineTooLargeError(line.seq)
@@ -226,7 +312,13 @@ function postChunk(op: ForgeOp, targetId: string, body: string, index: number): 
         ? gh(['pr', 'comment', targetId, '--body-file', tmp])
         : gh(['issue', 'comment', targetId, '--body-file', tmp])
     const match = /#issuecomment-(\d+)/.exec(out)
-    return match ? (match[1] as string) : out
+    if (match) return match[1] as string
+    // `gh`'s stdout didn't shape into a comment URL — the post itself
+    // succeeded (no thrown error), but recording the raw, unparsed text as
+    // if it were the id would misrepresent an honest "we don't know the id"
+    // as a real one.
+    process.stderr.write(`vinaya: log flush could not parse a comment id from gh's output: ${out}\n`)
+    return `unparsed:${out.slice(0, 200)}`
   } finally {
     rmSync(tmp, { force: true })
   }
@@ -319,10 +411,38 @@ export async function logFlushCommand(args: string[]): Promise<void> {
         )
       )
     }
+    if (err instanceof CorruptOutboxLineError) {
+      refuse2(
+        makeCheckError(
+          'log-flush-corrupt-line',
+          err.message,
+          'Inspect the named line by hand (a manual edit, disk corruption, or a redact.ts gap) — nothing was posted or truncated.'
+        )
+      )
+    }
     throw err
   }
 
-  await logForFlush(issueNumber, path, { kind: 'forge_write', event: 'validated', op, target, payload: {} })
+  // O3 orders the audit line strictly before any post. If we cannot confirm
+  // it landed, we do not know that ordering held — refuse before posting
+  // anything rather than proceed on an unconfirmed guarantee. Nothing has
+  // been posted or truncated yet, so refusing here is safe and total.
+  const validatedLanded = await logForFlush(issueNumber, path, {
+    kind: 'forge_write',
+    event: 'validated',
+    op,
+    target,
+    payload: {}
+  })
+  if (!validatedLanded) {
+    refuse2(
+      makeCheckError(
+        'log-flush-audit-line-unconfirmed',
+        `log flush: could not confirm the 'validated' forge_write line landed in ${path} before posting.`,
+        'Re-run `vinaya log flush` — nothing was posted or truncated.'
+      )
+    )
+  }
 
   const commentIds: string[] = []
   let postedLineCount = 0
@@ -339,25 +459,27 @@ export async function logFlushCommand(args: string[]): Promise<void> {
     }
   }
 
-  if (failure) {
-    await logForFlush(issueNumber, path, {
-      kind: 'forge_write',
-      event: 'refused',
-      op,
-      target,
-      payload: {},
-      reason: `flush of run ${failure.chunk.runId} seq ${failure.chunk.seqFrom}-${failure.chunk.seqTo} failed: ${failure.message}`
-    })
-  } else {
-    await logForFlush(issueNumber, path, {
-      kind: 'forge_write',
-      event: 'written',
-      op,
-      target,
-      payload: {},
-      comment_ids: commentIds
-    })
-  }
+  // By this point posting is done (fully or partially) — truncation MUST
+  // still run regardless of whether this second audit line is confirmed,
+  // or an unconfirmed timeout here would silently re-post already-succeeded
+  // comments on the next flush (worse than a missing audit line).
+  const finalLanded = failure
+    ? await logForFlush(issueNumber, path, {
+        kind: 'forge_write',
+        event: 'refused',
+        op,
+        target,
+        payload: {},
+        reason: `flush of run ${failure.chunk.runId} seq ${failure.chunk.seqFrom}-${failure.chunk.seqTo} failed: ${failure.message}`
+      })
+    : await logForFlush(issueNumber, path, {
+        kind: 'forge_write',
+        event: 'written',
+        op,
+        target,
+        payload: {},
+        comment_ids: commentIds
+      })
 
   // Truncate to: the original lines never confirmed posted, plus whatever
   // was appended to the live file after `startOffset` — the `validated`/
@@ -371,6 +493,17 @@ export async function logFlushCommand(args: string[]): Promise<void> {
   const liveNow = readFileSync(path)
   const tail = liveNow.subarray(Math.min(startOffset, liveNow.byteLength))
   writeFileSync(path, Buffer.concat([Buffer.from(unposted, 'utf8'), tail]))
+
+  if (!finalLanded) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: 'log-flush-audit-line-unconfirmed',
+      severity: 'warning',
+      message: `log flush: could not confirm the '${failure ? 'refused' : 'written'}' forge_write line landed in ${path} — posting and truncation still completed.`,
+      agent_recovery_prompt:
+        'No action required for the posted comments; re-run `vinaya log flush` if the audit trail must be complete.'
+    })
+  }
 
   if (failure) {
     refuse2(

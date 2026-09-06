@@ -394,6 +394,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `renderGeminiCommand` | function | `apps/cli/src/lib/gemini-command-emitter.ts` |
 | `OUTBOX_MAX_BYTES` | const | `apps/cli/src/lib/log-sink.ts` |
 | `createLogSink` | function | `apps/cli/src/lib/log-sink.ts` |
+| `currentRunId` | function | `apps/cli/src/lib/log-sink.ts` |
 | `log` | function | `apps/cli/src/lib/log-sink.ts` |
 | `outboxPathFor` | function | `apps/cli/src/lib/log-sink.ts` |
 | `EVIDENCE_SUMMARY_PREFIX` | const | `apps/cli/src/lib/numstat.ts` |
@@ -431,7 +432,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `STUDIO_ARTIFACT_REPO` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_NODE_MODULES_PACKED_DIRNAME` | const | `apps/cli/src/lib/studio-bundle.ts` |
 
-(160 exports.)
+(161 exports.)
 
 ## Commands — `apps/cli/src/commands` (38 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
@@ -455,7 +456,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `issue create` | `issue.ts` | `issueCreateCommand` | 10 | exempt — see below | forgeWrite (target) |
 | `issue edit` | `issue.ts` | `issueEditCommand` | 10 | exempt — see below | forgeWrite (target) |
 | `issue objectives edit` | `issue-objectives.ts` | `issueObjectivesEditCommand` | 8 | exempt — see below | forgeWrite (target) |
-| `log flush` | `log.ts` | `logFlushCommand` | 3 | exempt — see below | sharedCommandShell (target) |
+| `log flush` | `log.ts` | `logFlushCommand` | 4 | exempt — see below | sharedCommandShell (target) |
 | `milestone create` | `milestone.ts` | `milestoneCreateCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `milestone adopt` | `milestone.ts` | `milestoneAdoptCommand` | 4 | exempt — see below | forgeWrite (target) |
 | `milestone edit` | `milestone.ts` | `milestoneEditCommand` | 7 | exempt — see below | forgeWrite (target) |
@@ -498,7 +499,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `issue create` | 2026-09-05 | 10 — lib (10): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `extractLabels`, `validateTaskIssue`, `printJson`, `ensureTrancheLabelExists`, `runGhWrite`, `resolveMilestoneAttachArgs` | `forgeWrite` |
 | `issue edit` | 2026-09-05 | 10 — lib (10): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `fetchForgeLabels`, `extractLabels`, `validateTaskIssue`, `parseIssueNumberFromRef`, `printJson`, `writeValidatedIssueEdit` | `forgeWrite` |
 | `issue objectives edit` | 2026-09-05 | 8 — lib (8): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `writeValidatedIssueEdit`, `locateBody`, `countMarkerComments`, `postMarkedComment`, `printJson` | `forgeWrite` |
-| `log flush` | 2026-09-06 | 3 — lib (3): `outboxPathFor`, `log`, `printJson` | `sharedCommandShell` |
+| `log flush` | 2026-09-06 | 4 — lib (4): `outboxPathFor`, `log`, `currentRunId`, `printJson` | `sharedCommandShell` |
 | `milestone create` | 2026-09-05 | 8 — lib (8): `extractTitle`, `refuse`, `makeCheckError`, `locateBody`, `resolveSections`, `validateForgeWrite`, `printJson`, `detectGitRepo` | `forgeWrite` |
 | `milestone adopt` | 2026-09-05 | 4 — lib (4): `refuse`, `makeCheckError`, `detectGitRepo`, `printJson` | `forgeWrite` |
 | `milestone edit` | 2026-09-05 | 7 — lib (7): `refuse`, `makeCheckError`, `locateBody`, `resolveSections`, `validateForgeWrite`, `printJson`, `detectGitRepo` | `forgeWrite` |
