@@ -180,12 +180,16 @@ describe('checkDocClaims — both phases in one call', () => {
       { path: 'aeg-root/x.md', content: '<!-- AEG:CLAIM: src/a.ts holds:x -->' },
       { path: 'aeg-root/y.md', content: '<!-- AEG:CLAIM: src/a.ts contains:gone -->' }
     ]
-    const findings = checkDocClaims(files, reader({ 'src/a.ts': 'present' }))
+    const { findings, bindingCount } = checkDocClaims(files, reader({ 'src/a.ts': 'present' }))
 
+    expect(bindingCount).toBe(1)
     expect(findings.map((f) => f.file)).toEqual(['aeg-root/x.md', 'aeg-root/y.md'])
   })
 
   it('is silent on a corpus with no markers at all', () => {
-    expect(checkDocClaims([{ path: 'aeg-root/x.md', content: 'Ordinary prose.' }], reader({}))).toEqual([])
+    expect(checkDocClaims([{ path: 'aeg-root/x.md', content: 'Ordinary prose.' }], reader({}))).toEqual({
+      findings: [],
+      bindingCount: 0
+    })
   })
 })

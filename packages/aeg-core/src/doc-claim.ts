@@ -217,17 +217,22 @@ export function evaluateClaimBindings(
   return findings
 }
 
-/** Both phases in one call: discover markers, report the malformed, evaluate the rest. */
+/**
+ * Both phases in one call: discover markers, report the malformed, evaluate
+ * the rest. Returns `bindingCount` alongside the findings so a caller that
+ * wants to report "how many bindings were verified" does not scan the corpus
+ * a second time to count them (review round 1, MINOR) — this is the one
+ * entry point `verify-docs` needs, and the only one the package barrel
+ * exports; the granular functions stay module-level for direct testing.
+ */
 export function checkDocClaims(
   files: readonly DocClaimSourceFile[],
   fileReader: (path: string) => string | null
-): ClaimFinding[] {
+): { findings: ClaimFinding[]; bindingCount: number } {
   const scanned = files.map((file) => scanFile(file.path, file.content))
-  return [
-    ...scanned.flatMap((s) => s.malformed),
-    ...evaluateClaimBindings(
-      scanned.flatMap((s) => s.bindings),
-      fileReader
-    )
-  ]
+  const bindings = scanned.flatMap((s) => s.bindings)
+  return {
+    findings: [...scanned.flatMap((s) => s.malformed), ...evaluateClaimBindings(bindings, fileReader)],
+    bindingCount: bindings.length
+  }
 }

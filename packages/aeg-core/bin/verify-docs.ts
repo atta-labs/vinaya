@@ -89,7 +89,6 @@ import {
   deriveTierFromDiff,
   type DocOwnersBinding,
   evaluateC5,
-  findClaimBindings,
   globToRegex,
   hasStatusBlock,
   isCodeFile,
@@ -397,18 +396,18 @@ function runC7(only?: ReadonlySet<string>): void {
 }
 
 /**
- * The corpus C8 sweeps: every doctrine page under `aeg-root/`, plus the
- * product files that can carry a TypeScript marker. The product list is
- * literal here rather than derived — the shared `PRODUCT_SLUG_SCOPE` export
- * does not exist yet on this branch's base; fold this list into it when it
- * lands, rather than keeping two.
+ * The corpus C8 sweeps: every doctrine page under `aeg-root/`, and every
+ * tracked `.ts`/`.md` file under `apps/` and `packages/`.
+ *
+ * Widened from a four-entry allowlist after review round 1 (Issue #434,
+ * MAJOR): the allowlist covered every marker this change happened to add,
+ * so it passed, while `documentation-coherence.md` told readers the check
+ * was repo-wide. A marker added later a few directories away would have sat
+ * outside the corpus and been verified by nothing — the doc overclaiming
+ * what the code did, which is the exact defect this check exists to catch.
+ * The corpus is now what the doctrine says it is.
  */
-const C8_PRODUCT_PATHS = [
-  'apps/cli/src',
-  'apps/cli/README.md',
-  'packages/aeg-core/src/verdict-extraction.ts',
-  'packages/sources/src/commands.ts'
-]
+const C8_PATHSPECS = ['aeg-root/*.md', 'apps/*.ts', 'apps/*.md', 'packages/*.ts', 'packages/*.md']
 
 /**
  * C8 — doc-claim bindings. A doctrine sentence or source comment stating what
@@ -423,21 +422,38 @@ const C8_PRODUCT_PATHS = [
  * that reads as checked and is not.
  */
 function runC8(only?: ReadonlySet<string>): void {
-  const listed = ['aeg-root/*.md', ...C8_PRODUCT_PATHS]
-    .flatMap((pathspec) => shFile('git', ['ls-files', pathspec]).split('\n'))
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .filter((filePath) => filePath.endsWith('.md') || filePath.endsWith('.ts'))
-    .filter((filePath) => (only ? only.has(filePath) : true))
+  const tracked = new Set(
+    C8_PATHSPECS.flatMap((pathspec) => shFile('git', ['ls-files', pathspec]).split('\n'))
+      .map((s) => s.trim())
+      .filter(Boolean)
+  )
 
-  const files = [...new Set(listed)]
+  const files = [...tracked]
+    .filter((filePath) => (only ? only.has(filePath) : true))
     .filter((filePath) => existsSync(filePath))
     .map((filePath) => ({ path: filePath, content: readFileSync(filePath, 'utf8') }))
 
   if (files.length === 0) return
 
-  const bindingCount = findClaimBindings(files).length
-  const findings = checkDocClaims(files, (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null))
+  // A cited path is read ONLY when git tracks it (security review round 1,
+  // MEDIUM). Corpus discovery already went through `git ls-files`; the reader
+  // did not, so a crafted `contains:` marker could aim it at any untracked
+  // file present at check time and read pass/fail as one bit about that
+  // file's content. Nothing is ever echoed, but the bit was real. Reading
+  // only tracked content removes the oracle rather than arguing about its
+  // bandwidth, and costs nothing: a marker citing an untracked file is a
+  // claim resting on something no reviewer can see, which is a finding on
+  // its own terms.
+  const trackedCited = new Set(
+    shFile('git', ['ls-files'])
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  )
+  const readCited = (path: string): string | null =>
+    trackedCited.has(path) && existsSync(path) ? readFileSync(path, 'utf8') : null
+
+  const { findings, bindingCount } = checkDocClaims(files, readCited)
 
   for (const f of findings) errors.push(`C8 doc-claim: ${f.message}`)
   if (findings.length === 0) {
