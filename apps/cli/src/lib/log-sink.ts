@@ -101,6 +101,22 @@ function isSafeRepoSegment(segment: string): boolean {
   return SAFE_PATH_SEGMENT.test(segment) && !segment.includes('..')
 }
 
+/**
+ * The outbox path `log()` writes to and `vinaya log flush` reads from —
+ * keyed by repo (or `unresolved`, never a value from an unvalidated
+ * `resolveRepo()` result) and by Issue (or `none`), never by PR (task 2,
+ * `apps/cli/specs/log.md`).
+ */
+export function outboxPathFor(
+  deps: Pick<LogSinkDeps, 'outboxRoot'>,
+  repo: { owner: string; repo: string } | null,
+  issue: number | null
+): string {
+  const dirName = repo ? `${repo.owner}-${repo.repo}` : 'unresolved'
+  const fileName = `${issue ?? 'none'}.ndjson`
+  return join(deps.outboxRoot(), dirName, fileName)
+}
+
 function hostFromEnv(env: NodeJS.ProcessEnv): Host {
   if (env.GITHUB_ACTIONS) return 'ci'
   if (env.VINAYA_HOST === 'hook') return 'hook'
@@ -246,9 +262,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): { log: (e: 
             return
           }
           const line = `${JSON.stringify(redact(parsed.data, deps.home()))}\n`
-          const dirName = repo ? `${repo.owner}-${repo.repo}` : 'unresolved'
-          const fileName = `${header.subject.issue ?? 'none'}.ndjson`
-          appendLine(join(deps.outboxRoot(), dirName, fileName), line, warnOnce)
+          appendLine(outboxPathFor(deps, repo, header.subject.issue), line, warnOnce)
         })
         .catch((err) => {
           warnOnce(`vinaya: log() failed — ${err instanceof Error ? err.message : String(err)}\n`)

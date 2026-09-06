@@ -395,6 +395,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `OUTBOX_MAX_BYTES` | const | `apps/cli/src/lib/log-sink.ts` |
 | `createLogSink` | function | `apps/cli/src/lib/log-sink.ts` |
 | `log` | function | `apps/cli/src/lib/log-sink.ts` |
+| `outboxPathFor` | function | `apps/cli/src/lib/log-sink.ts` |
 | `EVIDENCE_SUMMARY_PREFIX` | const | `apps/cli/src/lib/numstat.ts` |
 | `summariseNumstat` | function | `apps/cli/src/lib/numstat.ts` |
 | `applyEject` | function | `apps/cli/src/lib/ops.ts` |
@@ -430,7 +431,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `STUDIO_ARTIFACT_REPO` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_NODE_MODULES_PACKED_DIRNAME` | const | `apps/cli/src/lib/studio-bundle.ts` |
 
-(159 exports.)
+(160 exports.)
 
 ## Commands — `apps/cli/src/commands` (37 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 

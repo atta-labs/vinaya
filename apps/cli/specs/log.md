@@ -33,9 +33,9 @@ subject: {
 
 `Role` is the doctrine-facing spelling from the spec's Role union: `planner | brief-author | developer | code-reviewer | security | principal | archivist | architect` — not the `roles/*.md` filenames `resolveDoctrineRootInfo` resolves those names to.
 
-## The two families this task ships
+## The three families shipped so far
 
-`kind` is a closed union of `'dispatch' | 'dev_review_loop'` — the other four families (`gate`, `forge_write`, `command`, `tokens`) are out of scope here and refused by the schema. Every event carries `duration_ms?` and a `payload` field; both families put their real content in named top-level fields instead, so `payload` ships as an empty, `.strict()` object (an extra key inside it is still a schema violation).
+`kind` is a closed union of `'dispatch' | 'dev_review_loop' | 'forge_write'` — the other three families (`gate`, `command`, `tokens`) are out of scope here and refused by the schema. Every event carries `duration_ms?` and a `payload` field; every family puts its real content in named top-level fields instead, so `payload` ships as an empty, `.strict()` object (an extra key inside it is still a schema violation).
 
 **`dispatch`** — `target_role`, `model`, `round?`, `effect_id` on every event:
 
@@ -45,7 +45,15 @@ subject: {
 
 **`dev_review_loop`** — `loop_id` on every event, ten events: `loop_started`, `round_started`, `gate_result_read`, `verdicts_read`, `findings_compared`, `stop_condition_met`, `paused`, `resumed`, `round_ended`, `journal_finalized`. Field-for-field these match the spec's §5.2 block exactly; this file does not re-list every field to avoid a second copy drifting from the source.
 
-Both `dispatchRole` and `devReviewLoop` (the two chokepoints that will call `log()` for these families) land in a later task; this task ships the schema and the sink with zero real callers, proved by the same test that will fail on the first caller outside `apps/cli/src/lib/dispatch-role.ts` and `apps/cli/src/lib/dev-review-loop.ts`.
+**`forge_write`** (task 2, Issue #405) — `op: ForgeOpSchema` (`pr.create`, `pr.comment`, `pr.body.replace`, `pr.refreeze`, `issue.create`, `issue.edit`, `issue.comment`, `milestone.create`, `milestone.edit`, `milestone.close`, `label.add`, `label.remove`) and `target: { issue?: number; pr?: number }` on every event:
+
+- `validated` — the payload passed its schema check, about to be posted
+- `refused` — `reason: string`; the forge write failed (or a pre-flight check refused it)
+- `written` — `comment_ids: string[]`; every comment id the forge returned
+
+`vinaya log flush` (below) is the one caller today, using only `issue.comment`/`pr.comment`; the other ten ops are shaped for future forge-write call sites, not yet wired to one.
+
+`dispatchRole` and `devReviewLoop` (the two chokepoints that will call `log()` for the `dispatch`/`dev_review_loop` families) land in a later task; those two families still ship with zero real callers, proved by the same test that will fail on the first caller outside `apps/cli/src/lib/dispatch-role.ts` and `apps/cli/src/lib/dev-review-loop.ts`.
 
 ## The outbox
 
@@ -60,15 +68,21 @@ One file per task Issue under the machine-local home `~/.vinaya/` already used b
 
 `log()` never throws. Every failure path — an invalid payload, an unwritable directory, a symlinked target — returns without writing, and at most one line reaches `process.stderr` per process, guarded by a module-level flag: a broken outbox must never spam a gate or redden a check.
 
-## The flush marker (reserved)
+## The flush
 
-Task 2 flushes the outbox to one Issue comment per push, marked:
+`vinaya log flush --issue <n> | --pr <n>` (`apps/cli/src/commands/log.ts`) posts a target's outbox as one or more comments and truncates only what the forge confirmed. Exactly one of `--issue`/`--pr` is required. `--pr <n>` resolves the Issue from that PR's body `Closes #N` line — the same anchor every gate reads (`extractIssue`) — and refuses with a check error naming the missing line when the body carries none; it then flushes that Issue's outbox but posts the comments on the PR. The outbox stays keyed by Issue only, never by PR — `--pr` is a routing convenience over the same file `--issue` would read.
+
+Each comment opens with, on its own line:
 
 ```
 <!-- aeg:log:<run_id>:<seq_from>-<seq_to> -->
 ```
 
-This task does not implement the flush — the grammar is reserved here so the outbox's `run_id`/`seq` fields are already shaped for it.
+followed by a blank line and one fenced block tagged `ndjson`, one outbox line per line, verbatim. Splitting happens in two passes: first at `run_id` boundaries — a maximal run of *consecutive* lines sharing one `run_id`, never a global group-by-run_id — then, within each such run, at the size limit `FORGE_COMMENT_MAX_CHARS = 65536` (a chunk closes before adding the next line would push it, plus the marker and fence overhead, past the limit). Splitting at consecutive-only boundaries is what keeps every chunk's `seqFrom-seqTo` genuinely contiguous even when two run_ids interleave in the file: two runs of the same `run_id` separated by another run_id's lines become two separate chunks, never one range that silently spans the gap. A single outbox line too large to fit in one comment by itself is refused by its seq, never split across two comments. Several comments per flush are the normal case, not the exception.
+
+**Order, and why:** before any post, the flush's own line is written through `log()` — `kind: 'forge_write', event: 'validated'` — into the very outbox it is about to flush, landing there before truncation. Each chunk is then posted with `gh issue comment`/`gh pr comment --body-file <tmp>` (`<tmp>` written with the `wx` flag, removed in `finally`; the body is never passed on argv). After the last chunk succeeds, one `written` line (`comment_ids`: every id gh returned) is logged the same way; if any chunk fails, one `refused` line (`reason`: gh's stderr, verbatim) is logged instead and no further chunks are attempted. Only then is the outbox truncated — to exactly the original lines never confirmed posted, plus everything appended to the live file since the flush started (the `validated`/`written`/`refused` line just logged, and anything a concurrent process appended meanwhile). A gh failure therefore leaves every unposted original line in place; a fully successful flush leaves only its own `validated`/`written` lines, which ride to the next flush. A symlinked or non-regular-file outbox is refused the same way the sink refuses to write one — `lstat`, never a stat-then-open race.
+
+`log()` fills `subject.issue` from `VINAYA_TASK`, never from an argument, and is fire-and-forget (`resolveRepo().then(...)`, no returned promise) — so the flush's own `validated`/`written`/`refused` lines land in the correct outbox only because the flush scopes `VINAYA_TASK` to the Issue it is flushing for the duration of each call, and waits a full microtask/macrotask drain before reading the file back or exiting, so that internal write has actually landed.
 
 ## Attribution
 

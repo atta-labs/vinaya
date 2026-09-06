@@ -298,9 +298,7 @@ const forgeWriteShared = {
 export const ForgeWriteEventSchema = z.discriminatedUnion('event', [
   z.object({ ...forgeWriteShared, event: z.literal('validated') }).strict(),
   z.object({ ...forgeWriteShared, event: z.literal('refused'), reason: z.string() }).strict(),
-  z
-    .object({ ...forgeWriteShared, event: z.literal('written'), comment_ids: z.array(z.string()) })
-    .strict()
+  z.object({ ...forgeWriteShared, event: z.literal('written'), comment_ids: z.array(z.string()) }).strict()
 ])
 export type ForgeWriteEvent = z.infer<typeof ForgeWriteEventSchema>
 
