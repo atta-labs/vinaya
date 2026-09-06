@@ -110,9 +110,59 @@ describe('LogEventSchema — dev_review_loop family', () => {
   })
 })
 
+const validForgeWrite = {
+  meta,
+  subject,
+  kind: 'forge_write' as const,
+  event: 'validated' as const,
+  payload: {},
+  op: 'issue.comment' as const,
+  target: { issue: 412 }
+}
+
+describe('LogEventSchema — forge_write family', () => {
+  it('parses a valid validated line', () => {
+    expect(LogEventSchema.safeParse(validForgeWrite).success).toBe(true)
+  })
+
+  it('parses a valid refused line with a reason', () => {
+    const line = { ...validForgeWrite, event: 'refused' as const, reason: 'gh: rate limited' }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('parses a valid written line with comment_ids', () => {
+    const line = { ...validForgeWrite, event: 'written' as const, comment_ids: ['123456'] }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('refuses a written line missing comment_ids', () => {
+    const line = { ...validForgeWrite, event: 'written' as const }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+
+  it('refuses a refused line missing reason', () => {
+    const line = { ...validForgeWrite, event: 'refused' as const }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+
+  it('parses a target naming a pr instead of an issue', () => {
+    const line = { ...validForgeWrite, op: 'pr.comment' as const, target: { pr: 42 } }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('refuses an op outside the ForgeOp enum', () => {
+    const line = { ...validForgeWrite, op: 'pr.delete' }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+})
+
 describe('LogEventSchema — defeat cases', () => {
   it('refuses kind: gate — out of scope for this task', () => {
     expect(LogEventSchema.safeParse({ ...validDispatched, kind: 'gate' }).success).toBe(false)
+  })
+
+  it('refuses kind outside the three shipped families', () => {
+    expect(LogEventSchema.safeParse({ ...validForgeWrite, kind: 'command' }).success).toBe(false)
   })
 
   it('refuses an event outside its family', () => {
@@ -149,6 +199,21 @@ describe('LogEventSchema — defeat cases', () => {
 
   it('accepts meta.repo: null — the unresolved-repo path', () => {
     const line = { ...validDispatched, meta: { ...meta, repo: null } }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it("refuses a run_id carrying `-->` — would close the flush marker's HTML comment early (security review, PR #439)", () => {
+    const line = { ...validDispatched, meta: { ...meta, run_id: 'evil--><script>' } }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+
+  it('refuses a run_id carrying a newline', () => {
+    const line = { ...validDispatched, meta: { ...meta, run_id: 'evil\nrun-2' } }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+
+  it('accepts a run_id at the safe-charset boundary', () => {
+    const line = { ...validDispatched, meta: { ...meta, run_id: 'Run.id_09-safe' } }
     expect(LogEventSchema.safeParse(line).success).toBe(true)
   })
 })

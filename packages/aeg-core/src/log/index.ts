@@ -4,6 +4,8 @@ export { redact } from './redact'
 export {
   DispatchEventSchema,
   DevReviewLoopEventSchema,
+  ForgeOpSchema,
+  ForgeWriteEventSchema,
   HeaderSchema,
   HostSchema,
   HOST_VALUES,
@@ -15,6 +17,8 @@ export type {
   DispatchEvent,
   DispatchOutcome,
   DevReviewLoopEvent,
+  ForgeOp,
+  ForgeWriteEvent,
   Header,
   Host,
   LogEvent,

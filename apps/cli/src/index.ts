@@ -15,6 +15,7 @@ import { ejectCommand } from './commands/eject.js'
 import { initCommand, initProductCommand } from './commands/init.js'
 import { issueCreateCommand, issueEditCommand } from './commands/issue.js'
 import { issueObjectivesEditCommand } from './commands/issue-objectives.js'
+import { logFlushCommand } from './commands/log.js'
 import {
   milestoneAdoptCommand,
   milestoneCloseCommand,
@@ -178,6 +179,16 @@ try {
         console.error(
           `Unknown 'issue' subcommand: ${rawSubcommand ?? '(none)'} (expected 'create', 'edit', or 'objectives edit')`
         )
+        process.exit(2)
+      }
+      break
+    }
+    case 'log': {
+      const [subcommand, ...rest] = args
+      if (subcommand === 'flush') {
+        await logFlushCommand(rest)
+      } else {
+        console.error(`Unknown 'log' subcommand: ${subcommand ?? '(none)'} (expected 'flush')`)
         process.exit(2)
       }
       break

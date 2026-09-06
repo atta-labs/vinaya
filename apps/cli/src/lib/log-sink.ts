@@ -101,6 +101,22 @@ function isSafeRepoSegment(segment: string): boolean {
   return SAFE_PATH_SEGMENT.test(segment) && !segment.includes('..')
 }
 
+/**
+ * The outbox path `log()` writes to and `vinaya log flush` reads from —
+ * keyed by repo (or `unresolved`, never a value from an unvalidated
+ * `resolveRepo()` result) and by Issue (or `none`), never by PR (task 2,
+ * `apps/cli/specs/log.md`).
+ */
+export function outboxPathFor(
+  deps: Pick<LogSinkDeps, 'outboxRoot'>,
+  repo: { owner: string; repo: string } | null,
+  issue: number | null
+): string {
+  const dirName = repo ? `${repo.owner}-${repo.repo}` : 'unresolved'
+  const fileName = `${issue ?? 'none'}.ndjson`
+  return join(deps.outboxRoot(), dirName, fileName)
+}
+
 function hostFromEnv(env: NodeJS.ProcessEnv): Host {
   if (env.GITHUB_ACTIONS) return 'ci'
   if (env.VINAYA_HOST === 'hook') return 'hook'
@@ -188,7 +204,10 @@ function appendLine(path: string, line: string, warn: (message: string) => void)
 }
 
 /** Injectable for tests; the default instance below is wired to the real reads (env, git, the outbox under `GLOBAL_VINAYA_HOME`). */
-export function createLogSink(overrides: Partial<LogSinkDeps> = {}): { log: (e: LogEventInput) => void } {
+export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
+  log: (e: LogEventInput) => void
+  runId: string
+} {
   const deps: LogSinkDeps = { ...defaultDeps(), ...overrides }
   const runId = deps.env().VINAYA_RUN_ID || randomUUID()
   let seq = 0
@@ -246,9 +265,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): { log: (e: 
             return
           }
           const line = `${JSON.stringify(redact(parsed.data, deps.home()))}\n`
-          const dirName = repo ? `${repo.owner}-${repo.repo}` : 'unresolved'
-          const fileName = `${header.subject.issue ?? 'none'}.ndjson`
-          appendLine(join(deps.outboxRoot(), dirName, fileName), line, warnOnce)
+          appendLine(outboxPathFor(deps, repo, header.subject.issue), line, warnOnce)
         })
         .catch((err) => {
           warnOnce(`vinaya: log() failed — ${err instanceof Error ? err.message : String(err)}\n`)
@@ -258,10 +275,22 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): { log: (e: 
     }
   }
 
-  return { log }
+  return { log, runId }
 }
 
 const defaultSink = createLogSink()
+
+/**
+ * The current process's own `run_id` — fixed once, for the process lifetime,
+ * at `defaultSink`'s construction (`VINAYA_RUN_ID` or a fresh `randomUUID()`).
+ * `vinaya log flush` reads this to tell its OWN fire-and-forget `log()` call
+ * apart from a concurrent, unrelated process appending to the same outbox
+ * file at the same moment (code review, PR #439) — a bare "did the file
+ * grow" signal cannot make that distinction on its own.
+ */
+export function currentRunId(): string {
+  return defaultSink.runId
+}
 
 /**
  * `log(e)` — the one call site every future chokepoint (`dispatchRole`,
