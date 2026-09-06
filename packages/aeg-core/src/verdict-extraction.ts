@@ -25,6 +25,7 @@
  * code-reviewer.md`/`security-reviewer.md` require verbatim) — tightening
  * to it closes the gap without inventing a new convention.
  *
+ * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * The VALUE is windowed to the comment's first FIVE lines only
  * (review-convergence-v1 task 2, round 4, `#392`; widened by dev-review-loop-v1
  * task 2, `#412`, when `Objectives version:` became a third head line) —
@@ -50,6 +51,7 @@
  * narrowing what any real render needs matched; it is this module's own
  * contribution, not a claim that no render can still collide.
  *
+ * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * The CANDIDATE SET stays whole-body (review-convergence-v1 task 2, round 5,
  * `#392`) — round 4 windowed where a verdict's value is read, not which
  * comments count as a candidate at all. A comment whose only VERDICT-shaped
@@ -135,6 +137,9 @@ const HEAD_SHA_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Judged head:\s*([0-9a-f]{7,4
 const OBJECTIVES_VERSION_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Objectives version:\s*([0-9a-f]{64})(?![A-Za-z0-9])/im
 
 /**
+ * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+ * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
+ * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
  * Round-4 ruling on `#392`, widened by dev-review-loop-v1 task 2 (`#412`):
  * all three markers are read from a comment's first FIVE lines only, never
  * anywhere else in the body. Every shape this package itself renders
@@ -174,6 +179,7 @@ function extractObjectivesVersion(comment: string): string | null {
 }
 
 /**
+ * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * `headSha` is `null` in two distinct situations that both mean "cannot
  * confirm this verdict covers the current head": no verdict comment matched
  * at all (`danglingNote` is also set), or a verdict comment matched but
@@ -192,6 +198,7 @@ export type VerdictExtraction = {
 }
 
 /**
+ * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * Round 5 (`#392`): the candidate set — which comments even ATTEMPTED a
  * verdict — is a whole-body test, the pre-round-4 pattern. Only the VALUE is
  * read from the first five lines (round 4, widened by task 2 `#412`). Round
@@ -221,6 +228,7 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
   const latest = candidates[candidates.length - 1] as string
   const m = firstFiveLines(latest).match(valuePattern)
   if (!m) {
+    // AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
     return {
       value: `the most recent ${missingLabel} comment's VERDICT line is not within its first five lines — DANGLING, see below`,
       headSha: null,

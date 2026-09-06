@@ -73,7 +73,9 @@ On any failure: STOP and report.
 
 ## 8. Verification before claiming done
 
-- [the repo's static gates, by command — this repo: `bun run typecheck`, lint, build; `bunx turbo test --affected` per Part — the full `bun run test` suite is CI's to run, on the one push, never the Developer's to run locally]
+<!-- AEG:CLAIM: apps/cli/src/lib/artifacts.ts contains:bunx turbo test --affected --concurrency=1 || exit 1 -->
+
+- [the repo's static gates, by command, and nothing else — this repo: `bun run typecheck`, `bun run format-and-lint`, and the production build. Do NOT ask for a test-suite run per Part: the managed `pre-push` hook runs `bunx turbo test --affected` itself, once, on the one push, and refuses the push when it fails. A brief that also asks for it per Part buys nothing and pays the suite's full wall-clock on every Part.]
 - [every blast-radius consumer named in §4 re-verified, by name]
 - `roles/developer.md`'s tier checklist genuinely satisfied, and `PR_BODY="$(cat <body-file>)" vinaya check doc-coverage` green. (On this repo's toolchain, `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr` runs both as one command.)
 

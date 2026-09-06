@@ -119,6 +119,9 @@ CONFIG SCAN: [not applicable | clean | findings folded in above]
 SECRETS: [none found | listed above, redacted]
 ```
 
+<!-- AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string { -->
+<!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string { -->
+<!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult { -->
 Before its own post reaches the forge, `vinaya review post` refuses to post anything the gate would misread: it runs the exact same `VERDICT:`/`Judged head:`/`Objectives version:` extraction the merge gate uses over the rendered comment, and requires exactly the intended verdict to come back — and refuses outright if you pass a `--verdict PASS` together with any `NOT MET` objective, the same contradiction check `--verdict APPROVE` gets. Free text in a finding, `--config-scan`, `--secrets`, or an objective's evidence can say `VERDICT` or span multiple lines without risk — the extraction reads only a comment's first five lines, and in a code-reviewer or security comment a caller field never opens one of those lines (it only trails a fixed, renderer-owned label); an escalation's `--summary` is the one field that does occupy line 5 outright, which is exactly why this pre-post re-parse exists rather than construction alone.
 
 - **CRITICAL** — leaked live credential, auth bypass, key sent to client. Any CRITICAL → FAIL.

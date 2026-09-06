@@ -83,6 +83,7 @@ import {
 import {
   type DoctrineContent,
   deriveDiagramModel,
+  checkDocClaims,
   checkManifestValidity,
   DOC_OWNERS_PATH,
   deriveTierFromDiff,
@@ -270,6 +271,9 @@ function runPrMode(): void {
   // changed. Blocking here (this is the gate CI runs); the repo-wide sweep is
   // full mode's job.
   runC7(new Set(changed.filter((p) => p.startsWith(AEG_ROOT_PREFIX) && p.endsWith('.md'))))
+
+  // C8 — doc-claim bindings, scoped to the corpus files this diff touched.
+  runC8(new Set(changed))
 }
 
 // ---- push mode (C5 only — ring-0 pre-push gate) -----------------------
@@ -391,6 +395,80 @@ function runC7(only?: ReadonlySet<string>): void {
   for (const n of result.notes) notes.push(n)
 }
 
+/**
+ * The corpus C8 sweeps: every doctrine page under `aeg-root/`, and every
+ * tracked `.ts`/`.md` file under `apps/` and `packages/`.
+ *
+ * Widened from a four-entry allowlist after review round 1 (Issue #434,
+ * MAJOR): the allowlist covered every marker this change happened to add,
+ * so it passed, while `documentation-coherence.md` told readers the check
+ * was repo-wide. A marker added later a few directories away would have sat
+ * outside the corpus and been verified by nothing — the doc overclaiming
+ * what the code did, which is the exact defect this check exists to catch.
+ * The corpus is now what the doctrine says it is.
+ *
+ * AEG:CLAIM: packages/aeg-core/src/reader-resolvable-prose.ts contains:export const PRODUCT_SLUG_SCOPE: readonly string[] = [
+ * **Deliberately not `PRODUCT_SLUG_SCOPE`.** That export landed in `#436`
+ * and this brief anticipated folding into it. It answers a different
+ * question — which product paths a tranche slug is banned from — and is
+ * narrower, carrying no `packages/aeg-core/src` entry at all. Reusing it
+ * would silently shrink this corpus back below what the doctrine states and
+ * re-open the gap above. Two lists, because there are two questions.
+ */
+const C8_PATHSPECS = ['aeg-root/*.md', 'apps/*.ts', 'apps/*.md', 'packages/*.ts', 'packages/*.md']
+
+/**
+ * C8 — doc-claim bindings. A doctrine sentence or source comment stating what
+ * code does carries an `AEG:CLAIM` marker pinning the source that proves it;
+ * this verifies every marker against the file it cites.
+ *
+ * `only` is the diff's own changed-file set in PR mode (undefined in full
+ * mode). The corpus definition below does the scoping, so PR mode checks
+ * exactly the corpus files this diff touched — a marker whose cited file
+ * moved is caught by the PR that moves it, and the repo-wide sweep is full
+ * mode's job. Findings are blocking: an unverifiable marker is a sentence
+ * that reads as checked and is not.
+ */
+function runC8(only?: ReadonlySet<string>): void {
+  const tracked = new Set(
+    C8_PATHSPECS.flatMap((pathspec) => shFile('git', ['ls-files', pathspec]).split('\n'))
+      .map((s) => s.trim())
+      .filter(Boolean)
+  )
+
+  const files = [...tracked]
+    .filter((filePath) => (only ? only.has(filePath) : true))
+    .filter((filePath) => existsSync(filePath))
+    .map((filePath) => ({ path: filePath, content: readFileSync(filePath, 'utf8') }))
+
+  if (files.length === 0) return
+
+  // A cited path is read ONLY when git tracks it (security review round 1,
+  // MEDIUM). Corpus discovery already went through `git ls-files`; the reader
+  // did not, so a crafted `contains:` marker could aim it at any untracked
+  // file present at check time and read pass/fail as one bit about that
+  // file's content. Nothing is ever echoed, but the bit was real. Reading
+  // only tracked content removes the oracle rather than arguing about its
+  // bandwidth, and costs nothing: a marker citing an untracked file is a
+  // claim resting on something no reviewer can see, which is a finding on
+  // its own terms.
+  const trackedCited = new Set(
+    shFile('git', ['ls-files'])
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  )
+  const readCited = (path: string): string | null =>
+    trackedCited.has(path) && existsSync(path) ? readFileSync(path, 'utf8') : null
+
+  const { findings, bindingCount } = checkDocClaims(files, readCited)
+
+  for (const f of findings) errors.push(`C8 doc-claim: ${f.message}`)
+  if (findings.length === 0) {
+    notes.push(`C8 doc-claim: ${bindingCount} binding(s) verified.`)
+  }
+}
+
 function runFullMode(): void {
   // F1 — every spec carries a Status block.
   const specs = sh("git ls-files 'apps/**/specs/*.md'")
@@ -422,6 +500,9 @@ function runFullMode(): void {
 
   // C7 — published prose: repo-wide sweep of every surfaced doctrine doc.
   runC7()
+
+  // C8 — doc-claim bindings: repo-wide sweep of every marker.
+  runC8()
 }
 
 function runCompletenessScoreboard(bindings: DocOwnersBinding[], noDocRules: NoDocRule[]): void {
