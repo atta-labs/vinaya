@@ -406,6 +406,14 @@ function runC7(only?: ReadonlySet<string>): void {
  * outside the corpus and been verified by nothing — the doc overclaiming
  * what the code did, which is the exact defect this check exists to catch.
  * The corpus is now what the doctrine says it is.
+ *
+ * AEG:CLAIM: packages/aeg-core/src/reader-resolvable-prose.ts contains:export const PRODUCT_SLUG_SCOPE: readonly string[] = [
+ * **Deliberately not `PRODUCT_SLUG_SCOPE`.** That export landed in `#436`
+ * and this brief anticipated folding into it. It answers a different
+ * question — which product paths a tranche slug is banned from — and is
+ * narrower, carrying no `packages/aeg-core/src` entry at all. Reusing it
+ * would silently shrink this corpus back below what the doctrine states and
+ * re-open the gap above. Two lists, because there are two questions.
  */
 const C8_PATHSPECS = ['aeg-root/*.md', 'apps/*.ts', 'apps/*.md', 'packages/*.ts', 'packages/*.md']
 
