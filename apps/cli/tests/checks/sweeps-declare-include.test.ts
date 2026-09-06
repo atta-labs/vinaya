@@ -51,15 +51,27 @@ describe('sweeps declare include (task 12, #387)', () => {
 
   it('the five named sweeps (the four doctrine-root readers, plus workspace-escape) all declare the include', () => {
     const specs = coreCheckRegistry()
-    for (const name of [
-      'reader-resolvable-prose',
-      'retired-vocabulary',
-      'doctrine-portability',
-      'doctrine-no-procedures',
-      'workspace-escape'
-    ]) {
+    // `reader-resolvable-prose` alone widened its `include` (Issue #435): its
+    // one blocking class, `product`, sweeps `PRODUCT_SLUG_SCOPE` alongside
+    // the doctrine tree, so its declared globs grew past the bare
+    // `aeg-root/**/*.md` every other row here still declares.
+    const expectedInclude: Record<string, string[]> = {
+      'reader-resolvable-prose': [
+        'aeg-root/**/*.md',
+        'apps/cli/src/**',
+        '.github/workflows/**',
+        '.vinaya/**',
+        'apps/cli/README.md',
+        'packages/sources/README.md'
+      ],
+      'retired-vocabulary': ['aeg-root/**/*.md'],
+      'doctrine-portability': ['aeg-root/**/*.md'],
+      'doctrine-no-procedures': ['aeg-root/**/*.md'],
+      'workspace-escape': ['aeg-root/**/*.md']
+    }
+    for (const [name, include] of Object.entries(expectedInclude)) {
       const spec = specs.find((s) => s.name === name)
-      expect(spec?.include, `${name} should declare include`).toEqual(['aeg-root/**/*.md'])
+      expect(spec?.include, `${name} should declare include`).toEqual(include)
     }
   })
 })

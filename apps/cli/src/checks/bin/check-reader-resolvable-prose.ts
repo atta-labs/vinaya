@@ -32,14 +32,22 @@
  * per aeg-core's zero-I/O pure-rule charter (the rule itself takes file
  * paths + contents + term/slug lists and returns findings).
  *
- * **Report-only (rollout precedent: `aeg-root/enforcement.md`'s G1/G2
- * report-only period).** Findings print as `warning` severity; the exit code
- * stays 0 for that class. A blocking check on day one would fail every open
- * PR that already carries some of this backlog — the report-only period is
- * what lets that backlog surface and get cleaned up before the gate turns
- * strict. Orthogonal exception (Issue #314): a genuinely unresolvable
- * doctrine root is not a backlog finding — `main()` exits non-`0`/non-`1` for
- * that case, so it reads as a distinct `status: 'error'`, never a clean pass.
+ * **Report-only, except one blocking class (Issue #435).** The `ships` and
+ * `reader-facing` classes stay the original rollout precedent
+ * (`aeg-root/enforcement.md`'s G1/G2 report-only period): findings print as
+ * `warning` severity and never fail the exit code — a blocking check on day
+ * one would fail every open PR that already carries some of this backlog,
+ * and the report-only period is what lets that backlog surface and get
+ * cleaned up before the gate turns strict. The `product` class — a
+ * tranche-slug citation under `PRODUCT_SLUG_SCOPE` (CLI source, the CLI and
+ * sources READMEs, the workflows, `.vinaya`) — is the one exception: its
+ * finding is `blocking: true`, prints as `severity: 'error'`, and this run
+ * exits `1` if any reportable finding is blocking. It runs at the pre-push
+ * hook (`check --all --local`) over the diff and refuses the push, and again
+ * in CI, blocking, over the same diff. Orthogonal exception (Issue #314): a
+ * genuinely unresolvable doctrine root is not a backlog finding — `main()`
+ * exits non-`0`/non-`1` for that case, so it reads as a distinct
+ * `status: 'error'`, never a clean pass.
  *
  * scope: full — the SWEEP is the whole doctrine tree and the whole
  * reader-facing surface (when configured), never the PR's own diff; the
@@ -54,8 +62,13 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
-import { checkReaderResolvableProse, parseGlossaryTerms, type ProseSourceFile } from '@attalabs/aeg-core'
+import { extname, join } from 'node:path'
+import {
+  checkReaderResolvableProse,
+  parseGlossaryTerms,
+  PRODUCT_SLUG_SCOPE,
+  type ProseSourceFile
+} from '@attalabs/aeg-core'
 import { hasDoctrineEntry, resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
@@ -157,6 +170,43 @@ function readAll(paths: string[]): ProseSourceFile[] {
   return paths.map((p) => ({ path: p, content: readFileSync(p, 'utf8') }))
 }
 
+const PRODUCT_SCOPE_EXTENSIONS = new Set(['.ts', '.tsx', '.yml', '.md'])
+
+/**
+ * Every file under (or equal to) each `PRODUCT_SLUG_SCOPE` prefix, filtered
+ * to `.ts`/`.tsx`/`.yml`/`.md`, using the same directory skips `collect`
+ * already applies. Returned repo-relative to `root` — `classifyProseFile`'s
+ * `product` match is a literal-prefix compare against `PRODUCT_SLUG_SCOPE`'s
+ * own repo-relative strings, so these paths must stay in that coordinate
+ * system even where `shipsPaths` above may be absolute (`DOCTRINE_ROOT`
+ * resolves via `repoRoot()` on this repo).
+ */
+function collectProductScopeFiles(root: string): string[] {
+  const out: string[] = []
+  for (const prefix of PRODUCT_SLUG_SCOPE) {
+    const abs = join(root, prefix)
+    let isDir: boolean
+    try {
+      isDir = statSync(abs).isDirectory()
+    } catch {
+      continue
+    }
+    if (isDir) {
+      for (const f of collect(abs)) {
+        const rel = f.slice(root.length + 1)
+        if (PRODUCT_SCOPE_EXTENSIONS.has(extname(rel))) out.push(rel)
+      }
+    } else if (PRODUCT_SCOPE_EXTENSIONS.has(extname(prefix))) {
+      out.push(prefix)
+    }
+  }
+  return out
+}
+
+function readProductFiles(root: string, relPaths: string[]): ProseSourceFile[] {
+  return relPaths.map((rel) => ({ path: rel, content: readFileSync(join(root, rel), 'utf8') }))
+}
+
 /**
  * Legacy-slug list, derived from `<legacySlugDir>`'s `*.md` filenames.
  * Distinguishes "directory absent, class dormant" from "directory present,
@@ -222,7 +272,11 @@ function main(): void {
       ? collect(READER_FACING_PREFIX as string).filter((p) => p.endsWith(READER_FACING_SUFFIX))
       : []
 
-  const files = readAll([...shipsPaths, ...readerFacingPaths])
+  const productRoot = repoRoot() ?? process.cwd()
+  const productRelPaths = collectProductScopeFiles(productRoot)
+  const productFiles = readProductFiles(productRoot, productRelPaths)
+
+  const files = [...readAll([...shipsPaths, ...readerFacingPaths]), ...productFiles]
   const glossaryPath = join(DOCTRINE_ROOT, 'glossary.md')
   const glossaryTerms = existsSync(glossaryPath) ? parseGlossaryTerms(readFileSync(glossaryPath, 'utf8')) : []
   const legacySlugDir = LEGACY_SLUG_DIR ?? `${DOCTRINE_ROOT}/tranches/completed`
@@ -278,14 +332,17 @@ function main(): void {
   console.log(
     `${CHECK_NAME}: doctrine root "${DOCTRINE_ROOT}"; reader-facing class ${READER_FACING_ACTIVE ? 'ran' : 'dormant — proseGates.readerFacingPrefix/readerFacingSuffix not both set'}; ` +
       `legacy-slug class ${legacySlugsDormant ? `dormant — ${legacySlugDir} is absent` : `ran (${slugs.length} slug(s))`}; ` +
+      `product class ran (${productRelPaths.length} file(s) swept); ` +
       `${findings.length} finding(s) swept, ${reportable.length} in this diff`
   )
 
+  let hasBlocking = false
   for (const finding of reportable) {
+    if (finding.blocking) hasBlocking = true
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
-      severity: 'warning',
+      severity: finding.blocking ? 'error' : 'warning',
       message: `${finding.file}:${finding.line}: ${finding.message}`,
       file: finding.file,
       line: finding.line,
@@ -293,16 +350,22 @@ function main(): void {
         ? 'This page uses AEG/Vinaya-internal vocabulary a first-time reader cannot resolve. Either define the term ' +
           'inline (the same "Term — one-sentence definition" shape the glossary uses) at its first use on this page, ' +
           'or link to the glossary. Do not simply delete the word if the sentence needs it.'
-        : 'This doctrine or page cites a forge number or an internal tranche slug the reader has no tracker to ' +
-          'resolve. Rewrite the sentence to state the fact plainly instead of pointing at the citation — say what ' +
-          'was learned/decided, not where it was logged.'
+        : finding.blocking
+          ? 'This product-code file cites an internal tranche slug a reader outside this repo cannot resolve ' +
+            '(Issue #435 — reader-resolvable-prose.ts PRODUCT_SLUG_SCOPE). Remove the citation or rewrite the ' +
+            'comment/doc to state the fact plainly instead of pointing at the tranche that did it. This finding ' +
+            'blocks the push and CI.'
+          : 'This doctrine or page cites a forge number or an internal tranche slug the reader has no tracker to ' +
+            'resolve. Rewrite the sentence to state the fact plainly instead of pointing at the citation — say what ' +
+            'was learned/decided, not where it was logged.'
     })
   }
 
-  // Report-only: this check can only ever inform, never fail CI, until the
-  // backlog this run surfaces has been triaged and a follow-up task flips it
-  // to blocking (mirrors the G1/G2 rollout in `aeg-root/enforcement.md`).
-  process.exit(0)
+  // Report-only for `ships`/`reader-facing` findings — that backlog surfaces
+  // and gets cleaned up before the gate turns strict (mirrors the G1/G2
+  // rollout in `aeg-root/enforcement.md`). The `product` class is the one
+  // exception (Issue #435): any reportable blocking finding fails this run.
+  process.exit(hasBlocking ? 1 : 0)
 }
 
 main()
