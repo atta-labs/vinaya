@@ -1321,8 +1321,8 @@ describe('self-verification refuses cross-role contamination', () => {
   const PRINCIPALS = ['daniboomerang']
   const asComment = (body: string, author: string | null = 'daniboomerang') => [{ body, author }]
 
-  // Both markers are read from a comment's first THREE lines only (round-4
-  // ruling, `#392`) — the contaminating line must sit inside that window to
+  // All markers are read from a comment's first FIVE lines only (round-4
+  // ruling, `#392`, widened to five by `#412`) — the contaminating line must sit inside that window to
   // actually exercise the check; a line past it would extract as no verdict
   // by construction, proving nothing about the cross-role check itself.
   it('a code-review post that also re-parses as a security VERDICT fails self-verification', () => {
@@ -1434,7 +1434,7 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
     expect(result.ok).toBe(false)
   })
 
-  it('refuses a manufactured cross-role contamination (a second VERDICT-shaped line inside the first three lines)', () => {
+  it('refuses a manufactured cross-role contamination (a second VERDICT-shaped line inside the first five lines)', () => {
     const body = 'VERDICT: APPROVE\n\nVERDICT: PASS'
     const result = checkRenderedComment(body, { kind: 'code-review', verdict: 'APPROVE' })
     expect(result.ok).toBe(false)

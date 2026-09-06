@@ -16,8 +16,8 @@ const HEAD_SHA = '8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f'
 
 // Judged head: sits on line 3, matching the real render shape
 // (`review-post.ts`'s templates put `VERDICT:`/`Judged head:` on lines 1/3,
-// never later) — the extractors now read both markers from a comment's
-// first three lines only (round-4 ruling, `#392`). These fixtures test
+// never later) — the extractors now read the markers from a comment's
+// first five lines only (round-4 ruling, `#392`, widened by `#412`). These fixtures test
 // decoration, not marker position, so the decoration moves after the head.
 const APPROVE_COMMENT = principal(
   `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}\n\nBRIEF CONFORMANCE: clean. Looks good.`
