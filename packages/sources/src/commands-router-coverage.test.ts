@@ -92,7 +92,8 @@ describe('router -> COMMANDS coverage', () => {
         'studio',
         'quickstart',
         'tokens',
-        'release'
+        'release',
+        'dispatch'
       ])
     )
   })

@@ -44,6 +44,8 @@ Security review is a specialization of the Reviewer role (`roles/reviewer.md`). 
 
 > The check *categories* below (secret leakage, BYOK/crypto, auth/permissions, agent/MCP exposure, injection, dependency risk) are universal. The specific technologies named under them are **this repo's instance** (its crypto package, auth provider, cookie scope, MCP surfaces) — a different team keeps the categories and substitutes its own stack.
 
+A pass started via `vinaya dispatch security --agent <vendor>` (`apps/cli/specs/log.md`) carries its role and task in every `vinaya` call it makes; one started by hand in a terminal reads `unattributed` in the Vinaya Log, which is the truth about it.
+
 ---
 
 ## When you are the Security Reviewer
