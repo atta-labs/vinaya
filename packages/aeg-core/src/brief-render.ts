@@ -20,8 +20,13 @@
  */
 
 import { deriveSection7 } from './derive-section7'
-import { isDocFile } from './file-classify'
-import { OBJECTIVES_SINCE_ISSUE } from './issue-validation'
+import {
+  BRIEF_SECTIONS_SINCE_ISSUE,
+  type IssuePart,
+  type IssueSurface,
+  type IssueTestPlan,
+  OBJECTIVES_SINCE_ISSUE
+} from './issue-validation'
 import { type Objective, renderObjectives } from './objectives'
 import { deriveTierFromDiff } from './pr-tier'
 
@@ -122,6 +127,36 @@ export type BriefFacts = {
   rationale: Partial<Record<RationaleFieldKey, string>>
   /** The Issue's `## Objectives` list (`objectives.ts`'s `objectivesOf`), copied into the brief verbatim between the header and §2. */
   objectives: Objective[]
+  /**
+   * The Issue's `## Surface` section (`issue-validation.ts`'s
+   * `parseIssueSurface`) — feeds §4's Out of surface line and, together with
+   * `surfaceFiles`, its Create/Modify split. `{ in: [], out: [] }` (an empty
+   * `in:` list) is the absent-section sentinel: a real Surface always
+   * parses at least one `in:` glob, so an empty one means the Issue has no
+   * `## Surface` section (or it failed to parse) — the same
+   * empty-list-means-absent convention `objectives: []` already uses above.
+   */
+  surface: IssueSurface
+  /**
+   * The Issue's `## Parts` list (`issue-validation.ts`'s `parseIssueParts`),
+   * copied into §6 verbatim — one numbered Part per entry. `[]` is the
+   * absent-section sentinel, same convention as `objectives`/`surface`.
+   */
+  parts: IssuePart[]
+  /**
+   * The Issue's `## Test plan` section (`issue-validation.ts`'s
+   * `parseIssueTestPlan`), copied into §9 verbatim. `{ kind: 'commands',
+   * lines: [], principal: [] }` is the absent-section sentinel — a real
+   * `commands` plan always carries at least one line or one principal item.
+   */
+  testPlan: IssueTestPlan
+  /**
+   * The Issue's `## Stop conditions` bullets (`issue-validation.ts`'s
+   * `parseIssueStopConditions`), copied into §10 alongside the rationale's
+   * own Stop-and-escalate field. `[]` is the absent-section sentinel, same
+   * convention as `objectives`/`parts`.
+   */
+  stopConditions: string[]
   dispatchReady: boolean
   dispatchBlockers: string[]
   surfaceFiles: SurfaceFileFact[]
@@ -140,8 +175,6 @@ function bulletList(items: string[]): string {
 function isTestFile(path: string): boolean {
   return /\.test\.[jt]sx?$/i.test(path)
 }
-
-const PRINCIPAL_OBSERVATION_RE = /\bprincipal\b[^.\n]*\b(?:browser|signed-in|visual|session)\b/i
 
 function renderHeader(facts: BriefFacts, template: string): string {
   const introMatch = template.match(/^You are the AEG Developer\.[^\n]*$/m)
@@ -233,7 +266,10 @@ function renderSection4(facts: BriefFacts): string {
     modified.length > 0 ? bulletList(modified) : '- (none named)',
     ...(consumerLines.length > 0 ? ['', ...consumerLines] : []),
     '',
-    '**Out of surface:** [named explicitly by the Brief Author — not mechanically derivable]',
+    '**Out of surface:** ' +
+      (facts.surface.out.length > 0
+        ? facts.surface.out.join(', ')
+        : "(none named — the Issue's `## Surface` `out:` line is empty)"),
     '',
     '#### Premise pins',
     '',
@@ -265,6 +301,29 @@ function renderSection5(facts: BriefFacts): string {
   return lines.join('\n')
 }
 
+/** `Part <n> (<refs>)` reconstructed from a parsed `IssuePart` — the same citation grammar `brief-validation.ts`'s `PART_CITATION_RE` reads back out of §6. */
+function renderPartCitation(part: IssuePart): string {
+  const refs = part.objectiveIds.map((id) => `O${id}`).join(', ')
+  return `Part ${part.n} (${refs})`
+}
+
+/** Mirrors `brief-validation.ts`'s private `CHECK_NAME_RE` — not exported there, duplicated here for the same §4-triggers-a-§6-Defeat-cases-line rule `checkDefeatCases` enforces on the rendered output. */
+const RENDER_CHECK_NAME_RE = /\bcheck-[a-z0-9-]+(?:\.ts)?\b/
+/** Mirrors `brief-validation.ts`'s private `FORGE_WRITE_COMMAND_RE`. */
+const RENDER_FORGE_WRITE_COMMAND_RE =
+  /\bgh\s+(?:pr|issue)\s+(?:create|merge|close|comment|edit|review)\b|\bgit\s+push\b|\bvinaya\s+pr\s+(?:create|report\s+--write)\b/i
+
+/**
+ * §6 — one numbered Part per `IssuePart` (facts.parts), citation
+ * reconstructed verbatim per `renderPartCitation`. Files stay grouped by
+ * package exactly as before this task; a Part is zipped by position to a
+ * package group (Part 1 → the first touched package, Part 2 → the second,
+ * …) — the Issue's own Parts don't name globs, so position is the one
+ * mechanical link between "a Part exists" and "these files belong to it".
+ * A Part beyond the package-group count (an administrative Part — a
+ * changeset commit, the final push) renders with no Files sub-list; a
+ * package group beyond the Part count is appended to the last Part.
+ */
 function renderSection6(facts: BriefFacts): string {
   const byPackage = new Map<string, SurfaceFileFact[]>()
   const rootFiles: SurfaceFileFact[] = []
@@ -277,31 +336,46 @@ function renderSection6(facts: BriefFacts): string {
     list.push(f)
     byPackage.set(f.packageName, list)
   }
+  const groups: Array<{ pkg: string; files: SurfaceFileFact[] }> = [...byPackage].map(([pkg, files]) => ({
+    pkg,
+    files
+  }))
+  if (rootFiles.length > 0) groups.push({ pkg: 'the repo root', files: rootFiles })
 
-  const parts: string[] = []
-  let n = 1
-  for (const [pkg, files] of byPackage) {
-    parts.push(
-      [
-        `${n}. **Part ${n}:** ${facts.rationale.boundary}`,
-        '',
-        '   Files:',
-        ...files.map((f) => `   - ${f.path}`),
-        '',
-        `   Touches ${pkg}. The pre-push hook runs the affected suite on your one push and refuses it on failure — do not run it yourself per Part.`
-      ].join('\n')
-    )
-    n++
-  }
-  if (rootFiles.length > 0) {
-    parts.push(
-      [`${n}. **Part ${n}:** doctrine/root files.`, '', '   Files:', ...rootFiles.map((f) => `   - ${f.path}`)].join(
-        '\n'
-      )
-    )
-  }
+  const section4Text = renderSection4(facts)
+  const needsDefeatCases = RENDER_CHECK_NAME_RE.test(section4Text) || RENDER_FORGE_WRITE_COMMAND_RE.test(section4Text)
 
-  return ['## 6. Numbered parts — commit after EACH part; push once, before opening the PR', '', ...parts].join('\n')
+  const rendered = facts.parts.map((part, i) => {
+    const group = i < groups.length ? groups[i] : undefined
+    // Every group beyond the last Part attaches to that last Part, rather
+    // than being silently dropped.
+    const extraGroups = i === facts.parts.length - 1 ? groups.slice(facts.parts.length) : []
+    const allGroups = group ? [group, ...extraGroups] : extraGroups
+    const fileLines = allGroups.flatMap((g) => [
+      '',
+      `   Files (touches ${g.pkg}):`,
+      ...g.files.map((f) => `   - ${f.path}`)
+    ])
+    const lines = [
+      `${part.n}. **${renderPartCitation(part)}:** ${part.text}`,
+      ...fileLines,
+      ...(fileLines.length > 0
+        ? [
+            '',
+            '   The pre-push hook runs the affected suite on your one push and refuses it on failure — do not run it yourself per Part.'
+          ]
+        : []),
+      ...(i === facts.parts.length - 1 && needsDefeatCases
+        ? [
+            '',
+            "   **Defeat cases:** — see this Part's outcome text above, and the Traps to avoid field, for the inputs that would defeat the check(s)/command(s) named in §4."
+          ]
+        : [])
+    ]
+    return lines.join('\n')
+  })
+
+  return ['## 6. Numbered parts — commit after EACH part; push once, before opening the PR', '', ...rendered].join('\n')
 }
 
 function renderSection7(section7Pointers: string[]): string {
@@ -332,9 +406,14 @@ function renderSection8(): string {
   ].join('\n')
 }
 
+/**
+ * §9 — copied from the Issue's own `## Test plan` section (`facts.testPlan`),
+ * never re-derived from the surface file list. `renderBrief`'s missing-fact
+ * check refuses before this runs when the Issue carries no parseable Test
+ * plan, so by the time this executes `facts.testPlan` is real.
+ */
 function renderSection9(facts: BriefFacts): string {
-  const runtimeFiles = facts.surfaceFiles.filter((f) => !isDocFile(f.path))
-  if (runtimeFiles.length === 0) {
+  if (facts.testPlan.kind === 'unit-tests-only') {
     // Deliberately unbolded: `locateTestPlanSection`'s heading-form slicer
     // treats a bold `**Field:**`-shaped line as the START of the NEXT
     // section (`NEXT_SECTION_RE`) — a bolded `**Test Plan:** unit-tests-only`
@@ -345,29 +424,26 @@ function renderSection9(facts: BriefFacts): string {
     return ['## 9. Test Plan', '', 'Test Plan: unit-tests-only'].join('\n')
   }
 
-  const testFiles = runtimeFiles.filter((f) => isTestFile(f.path))
-  const commandLines =
-    testFiles.length > 0
-      ? testFiles.map((f) => `bun test ${f.path} → 0 fail`)
-      : ['bunx turbo test --affected --force → summary line ends "0 fail"']
-
-  const observationText = [
-    facts.rationale.boundary ?? '',
-    facts.rationale.trapsToAvoid ?? '',
-    facts.rationale.stopAndEscalate ?? ''
+  const principalLines = facts.testPlan.principal.map((p) => `- [ ] **[principal]** ${p}`)
+  return [
+    '## 9. Test Plan',
+    '',
+    '```',
+    ...facts.testPlan.lines,
+    '```',
+    ...(principalLines.length > 0 ? ['', ...principalLines] : [])
   ].join('\n')
-  const principalLine = PRINCIPAL_OBSERVATION_RE.test(observationText)
-    ? [
-        '',
-        "- [ ] **[principal]** Verify the change described in this task's rationale in a real signed-in session/browser."
-      ]
-    : []
-
-  return ['## 9. Test Plan', '', '```', ...commandLines, '```', ...principalLine].join('\n')
 }
 
+/** §10 — the Issue's own `## Stop conditions` bullets, followed by the rationale's Stop-and-escalate field, never the field alone. */
 function renderSection10(facts: BriefFacts): string {
-  return ['## 10. Stop conditions', '', `${facts.rationale.stopAndEscalate}`].join('\n')
+  return [
+    '## 10. Stop conditions',
+    '',
+    ...facts.stopConditions.map((c) => `- ${c}`),
+    '',
+    `${facts.rationale.stopAndEscalate}`
+  ].join('\n')
 }
 
 function renderSection11(template: string, facts: BriefFacts): string {
@@ -422,6 +498,31 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   // other consumer in this task already exempts.
   if (facts.objectives.length === 0 && facts.issue >= OBJECTIVES_SINCE_ISSUE) {
     missing.push('Objectives (Issue has no `## Objectives` section)')
+  }
+  // The four judgment sections (plan-brief-v1 task 1, Issue #426) are NOT
+  // grandfathered by `BRIEF_SECTIONS_SINCE_ISSUE` here, unlike Objectives
+  // above: a brief genuinely needs §4's Out of surface, §6's Parts, §9's
+  // Test plan and §10's Stop conditions to render regardless of which Issue
+  // number the gate itself would exempt — the cutover governs when the
+  // ISSUE CREATION gate starts requiring the section, not whether a brief
+  // can be rendered without one. The message names the cutover so a
+  // pre-cutover Issue reads this as "add the section", not as a gate bug.
+  const cutoverNote = `the Issue predates the \`## Surface\`/\`## Parts\`/\`## Test plan\`/\`## Stop conditions\` gate cutover at #${BRIEF_SECTIONS_SINCE_ISSUE}, but a brief still needs it to render`
+  if (facts.surface.in.length === 0) {
+    missing.push(`Surface (Issue has no \`## Surface\` section with a non-empty \`in:\` list — ${cutoverNote})`)
+  }
+  if (facts.parts.length === 0) {
+    missing.push(`Parts (Issue has no \`## Parts\` section with well-formed Part lines — ${cutoverNote})`)
+  }
+  if (
+    facts.testPlan.kind === 'commands' &&
+    facts.testPlan.lines.length === 0 &&
+    facts.testPlan.principal.length === 0
+  ) {
+    missing.push(`Test plan (Issue has no \`## Test plan\` section — ${cutoverNote})`)
+  }
+  if (facts.stopConditions.length === 0) {
+    missing.push(`Stop conditions (Issue has no \`## Stop conditions\` section with bullet items — ${cutoverNote})`)
   }
   if (!facts.dispatchReady) missing.push(...facts.dispatchBlockers)
 
