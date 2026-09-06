@@ -85,15 +85,13 @@ export function main(): void {
   // `isEligibleForProvenance` (pure, unit-tested) makes the actual decision;
   // this shim only fetches the two facts it needs — the branch ref, and the
   // closed Issue's live labels.
+  const { issue: primaryIssue } = extractIssue(pr.body)
   const ref = taskRefFromBranch(pr.headRefName)
   let issueLabels: string[] = []
-  if (ref === null) {
-    const { issue: candidateIssue } = extractIssue(pr.body)
-    if (candidateIssue !== null) {
-      issueLabels = shJson<{ labels: { name: string }[] }>(`gh issue view ${candidateIssue} --json labels`).labels.map(
-        (l) => l.name
-      )
-    }
+  if (ref === null && primaryIssue !== null) {
+    issueLabels = shJson<{ labels: { name: string }[] }>(`gh issue view ${primaryIssue} --json labels`).labels.map(
+      (l) => l.name
+    )
   }
 
   if (!isEligibleForProvenance(ref, issueLabels)) {
@@ -109,13 +107,33 @@ export function main(): void {
     process.exit(0)
   }
 
+  // The task Issue's frozen `aeg:brief:v1` comment URL (plan-brief-v1 task 2,
+  // #427) — a best-effort resolution: no Issue, no such comment (a
+  // pre-cutover task, or one dispatched by hand), or a failed fetch all
+  // degrade to `null`, which `buildProvenanceBlock` reports as DANGLING
+  // rather than blocking the merge-adjacent archival this shim runs after.
+  const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
+  let briefCommentUrl: string | null = null
+  if (primaryIssue !== null) {
+    try {
+      const issueComments = shJson<{ comments: { body: string; url: string }[] }>(
+        `gh issue view ${primaryIssue} --json comments`
+      )
+      const briefComment = issueComments.comments.find((c) => c.body.split('\n')[0] === AEG_BRIEF_V1_MARKER)
+      briefCommentUrl = briefComment?.url ?? null
+    } catch {
+      briefCommentUrl = null
+    }
+  }
+
   const facts: MergedPrFacts = {
     number: pr.number,
     headRefName: pr.headRefName,
     body: pr.body,
     mergedAt: pr.mergedAt,
     mergeSha,
-    comments
+    comments,
+    briefCommentUrl
   }
 
   const { block, issue, dangling } = buildProvenanceBlock(facts)

@@ -150,6 +150,7 @@ describe('anchor recognition is additive — PR #407 freeform round-trip', () =>
     const { block, issue, dangling } = buildProvenanceBlock(makeFacts(body))
     expect(issue).toBe(395)
     expect(dangling).toEqual([
+      'no `aeg:brief:v1` comment resolved for Issue #395 — Brief field is DANGLING',
       'no code-reviewer verdict comment found on this PR',
       'no security-review verdict comment found on this PR'
     ])
@@ -159,8 +160,13 @@ describe('anchor recognition is additive — PR #407 freeform round-trip', () =>
     //
     // Re-pinned again by the iteration → tranche rename. The block's only
     // rendered change is its task label: `task 31 (iteration <slug>)` became
-    // `task 31 (tranche <slug>)`. Assembly is untouched.
-    expect(sha256(block)).toBe('db426b34b87dd719d8ca4f26b19022b79e84e0b380edb6b23197681070af7ff3')
+    // `task 31 (tranche <slug>)`.
+    //
+    // Re-pinned again (plan-brief-v1 task 2, #427): the `- Brief:` line now
+    // names the Issue's `aeg:brief:v1` comment URL (DANGLING here — this
+    // fixture's `makeFacts` carries no `briefCommentUrl`) instead of the
+    // retired "in this PR body" text. Assembly is otherwise untouched.
+    expect(sha256(block)).toBe('f741d8b432279690daf4a8b4270c8a1c33805555db5b498a8fd5cfff80df2f98')
   })
 })
 

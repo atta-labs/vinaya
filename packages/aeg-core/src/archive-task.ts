@@ -25,6 +25,18 @@ export type MergedPrFacts = {
   mergedAt: string
   mergeSha: string
   comments: string[]
+  /**
+   * The task Issue's frozen `aeg:brief:v1` comment URL (`dispatchTask`,
+   * plan-brief-v1 task 2, #427) — the brief's permanent home now that it no
+   * longer lives in this PR body at all. `null` when the CLI shim
+   * (`bin/archive-task.ts`) could not resolve one — no Issue to close, no
+   * `aeg:brief:v1` comment on it (a pre-cutover task, or one dispatched by
+   * hand), or the lookup itself failed — never defaulted to a guess.
+   * Optional so a caller assembling `MergedPrFacts` without this task's
+   * change still type-checks; `buildProvenanceBlock` treats an absent field
+   * exactly like an explicit `null`.
+   */
+  briefCommentUrl?: string | null
 }
 
 const TASK_BRANCH_PATTERN = /^task\/([^/]+)\/([^/]+)$/
@@ -169,6 +181,10 @@ export function buildProvenanceBlock(facts: MergedPrFacts): {
   const tier = readTierFromPrBody(facts.body)
   if (tier === null) dangling.push('no `Tier:` field found in PR body — Tier field is DANGLING')
 
+  if (issue !== null && (facts.briefCommentUrl ?? null) === null) {
+    dangling.push(`no \`aeg:brief:v1\` comment resolved for Issue #${issue} — Brief field is DANGLING`)
+  }
+
   const project = extractField(facts.body, 'Project(?:\\(s\\))?', 'PROJECT')
   if (!project) dangling.push('no `Project:` field found in PR body — Project(s) field is DANGLING')
 
@@ -189,7 +205,7 @@ export function buildProvenanceBlock(facts: MergedPrFacts): {
     `${PROVENANCE_HEADING} — ${taskLabel}`,
     `- Issue:        ${issue !== null ? `#${issue}  (closed by merge)` : 'DANGLING — no Closes #N in PR body'}`,
     `- Tier:         ${tier !== null ? tier : 'DANGLING — no Tier field in PR body'}`,
-    '- Brief:        in this PR body (the frozen intent)',
+    `- Brief:        ${facts.briefCommentUrl ?? 'DANGLING — no aeg:brief:v1 comment resolved for this task'}`,
     `- Project(s):   ${project ?? 'DANGLING — no Project field in PR body'}`,
     `- Model/agent:  ${forField ?? 'DANGLING — no For field in PR body'}`,
     `- Code review:  ${codeReview.value}`,

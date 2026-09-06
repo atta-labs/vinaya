@@ -166,7 +166,9 @@ describe('hasProvenance', () => {
 
 describe('buildProvenanceBlock', () => {
   it('assembles the full happy path with the exact heading format', () => {
-    const { block, issue, dangling } = buildProvenanceBlock(facts({ body: FULL_BODY }))
+    const { block, issue, dangling } = buildProvenanceBlock(
+      facts({ body: FULL_BODY, briefCommentUrl: 'https://github.com/acme/widget/issues/309#issuecomment-1' })
+    )
     expect(block.split('\n')[0]).toBe('### AEG provenance — task 5d (tranche aeg-governance-hardening)')
     expect(issue).toBe(309)
     expect(dangling).toEqual([
@@ -175,10 +177,17 @@ describe('buildProvenanceBlock', () => {
     ])
     expect(block).toContain('- Issue:        #309  (closed by merge)')
     expect(block).toContain('- Tier:         3')
+    expect(block).toContain('- Brief:        https://github.com/acme/widget/issues/309#issuecomment-1')
     expect(block).toContain('- Project(s):   aeg, aeg-core')
     expect(block).toContain('- Model/agent:  a high-capability model (coding-agent CLI, dispatched session)')
     expect(block).toContain('- Ticket:       none')
     expect(block).toContain('- Merged:       abc123def456 at 2026-07-02T12:00:00Z')
+  })
+
+  it('flags a missing aeg:brief:v1 comment resolution as DANGLING (plan-brief-v1 task 2, #427)', () => {
+    const { block, dangling } = buildProvenanceBlock(facts({ body: FULL_BODY }))
+    expect(block).toContain('- Brief:        DANGLING — no aeg:brief:v1 comment resolved for this task')
+    expect(dangling).toContain('no `aeg:brief:v1` comment resolved for Issue #309 — Brief field is DANGLING')
   })
 
   it('flags a missing For: field as DANGLING, does not fabricate a value', () => {

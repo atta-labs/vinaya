@@ -37,6 +37,69 @@ import {
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'brief-shape'
+const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
+
+type IssueCommentsJson = { comments: Array<{ body: string }> }
+
+function fetchIssueComments(issueNumber: number): IssueCommentsJson {
+  const out = execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'comments'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  return JSON.parse(out) as IssueCommentsJson
+}
+
+type GradedBodyResolution = { ok: true; body: string } | { ok: false; message: string }
+
+/**
+ * The body `checkBriefSections` actually grades. On a task branch, the
+ * brief lives on the task Issue's frozen `aeg:brief:v1` comment, posted by
+ * `dispatchTask` — never in the PR body — so that comment, not `PR_BODY`,
+ * is what this check grades. A non-task (standalone `fix/*`) branch is
+ * unchanged: its brief, if any, is still authored directly into the PR
+ * body.
+ */
+function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResolution {
+  if (!taskBranch) return { ok: true, body: prBody }
+
+  const { issue } = extractIssue(prBody)
+  if (issue === null) {
+    return { ok: false, message: 'not dispatched — no `Closes #N` in the PR body to resolve the task Issue.' }
+  }
+
+  let json: IssueCommentsJson
+  try {
+    json = fetchIssueComments(issue)
+  } catch (err) {
+    // Same treatment `resolveObjectivesApplicability` already gives an
+    // unresolvable Issue number just below (a fixture's placeholder
+    // `Closes #999`, a deleted Issue): additive exemption, never a new
+    // hard-failure mode for a resource nothing required before this task.
+    // A DIFFERENT fetch failure (network, auth, rate-limit) still hard-fails.
+    if (isIssueNotFoundError(err)) {
+      return { ok: true, body: prBody }
+    }
+    return {
+      ok: false,
+      message: `could not fetch Issue #${issue}'s comments (\`gh issue view\`) to grade the dispatched brief: ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+  const comment = json.comments.find((c) => c.body.split('\n')[0] === AEG_BRIEF_V1_MARKER)
+  if (!comment) {
+    return { ok: false, message: `not dispatched — no \`aeg:brief:v1\` comment on Issue #${issue}.` }
+  }
+
+  // Everything after the marker line and the `Brief hash:` line, as a raw
+  // substring — mirrors `dispatch-task.ts`'s `contentAfterTwoLines`
+  // (duplicated rather than imported: this file cannot reach into
+  // `apps/cli/src/lib` from `apps/cli/src/checks/bin` without the same
+  // "commands never call commands"-adjacent layering this repo avoids
+  // elsewhere for cheap, tiny, cross-boundary helpers).
+  const body = comment.body
+  const firstNL = body.indexOf('\n')
+  const secondNL = firstNL === -1 ? -1 : body.indexOf('\n', firstNL + 1)
+  return { ok: true, body: secondNL === -1 ? '' : body.slice(secondNL + 1) }
+}
 
 /** Immediate child directory names of `dir` — `deriveWorkspaceMemberDirs`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */
 function listDirs(dir: string): string[] {
@@ -145,6 +208,20 @@ function main(): void {
     process.exit(0)
   }
 
+  const gradedBodyResolution = resolveGradedBody(prBody, taskBranch)
+  if (!gradedBodyResolution.ok) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `brief-shape: ${gradedBodyResolution.message}`,
+      agent_recovery_prompt:
+        'Dispatch this task with `vinaya task dispatch <tranche> <n>` (posts the `aeg:brief:v1` Issue comment), or check `gh auth status`/network, then re-run `vinaya check brief-shape`.'
+    })
+    process.exit(1)
+  }
+  const gradedBody = gradedBodyResolution.body
+
   const objectivesResolution = resolveObjectivesApplicability(prBody, taskBranch)
   if (objectivesResolution.applies && 'fetchError' in objectivesResolution) {
     emitCheckError({
@@ -157,7 +234,7 @@ function main(): void {
     process.exit(1)
   }
 
-  const { errors } = checkBriefSections(prBody, readTierFromPrBody, {
+  const { errors } = checkBriefSections(gradedBody, readTierFromPrBody, {
     requireClosesN: taskBranch,
     consumersOf: buildConsumersOf(),
     issueObjectives: objectivesResolution.applies ? objectivesResolution.objectives : undefined
