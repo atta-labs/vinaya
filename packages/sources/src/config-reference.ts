@@ -371,7 +371,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     semantics: [
       "De-hardcodes the two prose/vocabulary core checks — `reader-resolvable-prose` and `retired-vocabulary` — behind adopter configuration, so both can run for real in an adopter repo instead of only inside this monorepo's own dev loop. Read fresh on every `vinaya check` run (not at generation time), so an edit takes effect on the very next run with no `vinaya upgrade` needed.",
       "Every field is optional; unset entirely, both checks behave exactly as they did when this key did not exist — this repo's own prior hardcoded doctrine layout.",
-      "Both checks are report-only: a finding prints as a `warning`, and the check's own exit code always stays `0` — registering them (or configuring them) can never newly fail an existing install's CI."
+      "Both checks are report-only for the classes these fields configure — a finding prints as a `warning`, and the check's own exit code stays `0` for them — except `reader-resolvable-prose`'s one blocking class (Issue #435): a tranche-slug citation in product code (a fixed `PRODUCT_SLUG_SCOPE`, not configurable by this key) fails with `severity: 'error'` and a non-zero exit."
     ],
     example: `{
   "proseGates": {

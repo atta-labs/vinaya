@@ -522,3 +522,52 @@ describe('explicit proseGates.doctrineRoot still wins — retired-vocabulary (Is
     }
   })
 })
+
+// Issue #435: reader-resolvable-prose is report-only for every class except
+// one — a tranche-slug citation under `PRODUCT_SLUG_SCOPE` (product code,
+// e.g. `apps/cli/src`). That one class is blocking: this run's own exit code
+// reflects it. No `BASE_SHA` is set, same as the checkout-location suite
+// above — a fresh single-commit fixture with no remote has no resolvable
+// diff boundary, so `findingsInThisDiff` treats it as indeterminate and
+// reports everything, which is what lets a bare `bun <bin>` invocation here
+// see the finding at all.
+describe('reader-resolvable-prose: a product-code slug citation is a blocking finding (Issue #435)', () => {
+  it('a fixture with a tranche-slug citation under apps/cli/src exits 1', () => {
+    const root = initFixture('product-slug-blocking')
+    try {
+      mkdirSync(join(root, 'apps', 'cli', 'src'), { recursive: true })
+      writeFileSync(join(root, 'apps', 'cli', 'src', 'index.ts'), '// landed in aeg-coherence-v1\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add a CLI source file with a tranche-slug citation'], {
+        cwd: root
+      })
+
+      const result = Bun.spawnSync(['bun', READER_BIN], {
+        cwd: root,
+        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+      })
+      expect(result.exitCode).toBe(1)
+      expect(result.stderr.toString()).toContain('product code')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a fixture with no product-scope citation exits 0', () => {
+    const root = initFixture('product-slug-clean')
+    try {
+      mkdirSync(join(root, 'apps', 'cli', 'src'), { recursive: true })
+      writeFileSync(join(root, 'apps', 'cli', 'src', 'index.ts'), '// nothing to cite here\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add a clean CLI source file'], { cwd: root })
+
+      const result = Bun.spawnSync(['bun', READER_BIN], {
+        cwd: root,
+        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+      })
+      expect(result.exitCode).toBe(0)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})

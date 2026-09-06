@@ -9,6 +9,7 @@ import {
   classifyProseFile,
   legacySlugPattern,
   parseGlossaryTerms,
+  PRODUCT_SLUG_SCOPE,
   stripNonProse
 } from './reader-resolvable-prose'
 
@@ -82,6 +83,18 @@ describe('classifyProseFile — the three-class map', () => {
 
   it('classifies an unrelated source file as out of scope entirely', () => {
     expect(classifyProseFile('packages/aeg-core/src/index.ts', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBeNull()
+  })
+
+  it('classifies a file under a PRODUCT_SLUG_SCOPE prefix as product', () => {
+    expect(classifyProseFile('apps/cli/src/commands/dispatch.ts', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe(
+      'product'
+    )
+    expect(classifyProseFile('.vinaya/hooks/pre-push', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('product')
+    expect(classifyProseFile('apps/cli/README.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('product')
+  })
+
+  it('does NOT classify a path that merely starts with the same letters as a product prefix', () => {
+    expect(classifyProseFile('apps/cli/srcx/index.ts', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBeNull()
   })
 })
 
@@ -197,6 +210,76 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
       READER_FACING_SUFFIX
     )
     expect(fixed).toEqual([])
+  })
+})
+
+describe('the product class — a tranche-slug citation in product code is a blocking finding', () => {
+  it('fires as a blocking finding on a slug in CLI source', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/cli/src/index.ts', content: '// landed in aeg-coherence-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+    expect(findings[0]!.blocking).toBe(true)
+    expect(findings[0]!.message).toContain('product code')
+  })
+
+  it('does NOT fire on a bare forge number in the same product file — only the slug pattern extends here', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/cli/src/index.ts', content: 'fixed in (#365)' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('does NOT fire on a slug outside the product scope (a test/fixture dir under apps/cli)', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/cli/tests/x.test.ts', content: '// landed in aeg-coherence-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('every other (non-product) finding still carries blocking: false', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'aeg-root/roles/developer.md', content: 'landed in aeg-coherence-v1 task 3' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+    expect(findings[0]!.blocking).toBe(false)
+  })
+
+  it('does NOT fire on a slug split across two lines', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/cli/src/index.ts', content: '// landed in aeg-coherence\n-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('does NOT fire on a slug inside a fenced code block in a product README', () => {
+    const content = ['Usage:', '```', 'vinaya dispatch aeg-coherence-v1', '```', 'See the docs.'].join('\n')
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/cli/README.md', content }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('PRODUCT_SLUG_SCOPE is exactly the non-aeg-root scope list', () => {
+    expect(PRODUCT_SLUG_SCOPE).toEqual([
+      'apps/cli/src',
+      '.github/workflows',
+      '.vinaya',
+      'apps/cli/README.md',
+      'packages/sources/README.md'
+    ])
   })
 })
 

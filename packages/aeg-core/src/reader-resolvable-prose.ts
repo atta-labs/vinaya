@@ -36,7 +36,7 @@
  * `RegExp`, not `grep -E`, keeping them portable to either.
  */
 
-export type ProseFileClass = 'ships' | 'reader-facing' | 'internal'
+export type ProseFileClass = 'ships' | 'reader-facing' | 'internal' | 'product'
 
 export type ProseSourceFile = { path: string; content: string }
 
@@ -44,6 +44,31 @@ export type ProseFinding = {
   file: string
   line: number
   message: string
+  blocking: boolean
+}
+
+/**
+ * Path prefixes under which a tranche-slug citation in product code is a
+ * blocking finding — copied verbatim (aeg-root dropped) from the scope list
+ * `retired-vocabulary.test.ts`'s `PATTERN_SCOPE[TRANCHE_SLUG_VN_PATTERN]` used
+ * to grep directly; that suite no longer greps these paths itself
+ * (`prose-product-scope.test.ts` pins this list against drift instead).
+ */
+export const PRODUCT_SLUG_SCOPE: readonly string[] = [
+  'apps/cli/src',
+  '.github/workflows',
+  '.vinaya',
+  'apps/cli/README.md',
+  'packages/sources/README.md'
+]
+
+/** A path equal to, or nested under, `prefix` — never a bare-prefix substring match (`apps/cli/srcx` must not match `apps/cli/src`). */
+function isUnderOrEqual(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}/`)
+}
+
+function isProductScopeFile(path: string): boolean {
+  return PRODUCT_SLUG_SCOPE.some((prefix) => isUnderOrEqual(path, prefix))
 }
 
 /**
@@ -98,6 +123,7 @@ export function classifyProseFile(
     return 'reader-facing'
   }
   if (isSpecFile(path) || isClaudeMdFile(path)) return 'internal'
+  if (isProductScopeFile(path)) return 'product'
   return null
 }
 
@@ -131,6 +157,18 @@ export function stripNonProse(path: string, content: string): string {
       .replace(/(^|[^:])\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, ''))
   }
   return content
+}
+
+/**
+ * Product-class scrubbing: still skips fenced/inline markdown code (a slug
+ * shown as a usage example in a README must not fire), but does NOT strip
+ * `.ts`/`.tsx` comments the way `stripNonProse` does for `ships`/
+ * `reader-facing` files — the motivating case (Issue #435) is a tranche slug
+ * written into a CLI source *comment*, which reached CI specifically because
+ * nothing scanned comments in product code.
+ */
+function stripNonProseForProduct(path: string, content: string): string {
+  return path.endsWith('.md') ? stripNonProse(path, content) : content
 }
 
 function lineAt(content: string, index: number): number {
@@ -173,7 +211,9 @@ export function legacySlugPattern(legacySlugs: readonly string[]): RegExp | null
 /**
  * Class 1 — unresolvable references. Runs the reference patterns over every
  * swept file (`ships`/`reader-facing`), skipping code-fenced/commented-out
- * non-prose first.
+ * non-prose first. A `product`-class file (a tranche-slug citation under
+ * `PRODUCT_SLUG_SCOPE`) is checked only against `TRANCHE_SLUG_VN_PATTERN`,
+ * and its finding is `blocking: true`; every other finding is `blocking: false`.
  */
 export function checkUnresolvableReferences(
   files: readonly ProseSourceFile[],
@@ -194,11 +234,20 @@ export function checkUnresolvableReferences(
     ...(legacyPattern ? [{ pattern: legacyPattern, what: 'an internal tranche slug', group: 2 }] : [])
   ]
 
+  const productPatterns: { pattern: RegExp; what: string; group?: number }[] = [
+    { pattern: TRANCHE_SLUG_VN_PATTERN, what: 'an internal tranche slug in product code' }
+  ]
+
   for (const file of files) {
     const cls = classifyProseFile(file.path, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
-    if (!cls || !SWEPT_CLASSES.has(cls)) continue
-    const scrubbed = stripNonProse(file.path, file.content)
-    for (const { pattern, what, group } of patterns) {
+    if (!cls || cls === 'internal') continue
+    if (cls !== 'product' && !SWEPT_CLASSES.has(cls)) continue
+    const blocking = cls === 'product'
+    const scrubbed = blocking
+      ? stripNonProseForProduct(file.path, file.content)
+      : stripNonProse(file.path, file.content)
+    const patternsToRun = blocking ? productPatterns : patterns
+    for (const { pattern, what, group } of patternsToRun) {
       pattern.lastIndex = 0
       let match: RegExpExecArray | null = pattern.exec(scrubbed)
       while (match !== null) {
@@ -206,7 +255,8 @@ export function checkUnresolvableReferences(
         findings.push({
           file: file.path,
           line: lineAt(scrubbed, match.index),
-          message: `references ${what} ("${cited}") a reader outside this repo's tracker cannot resolve`
+          message: `references ${what} ("${cited}") a reader outside this repo's tracker cannot resolve`,
+          blocking
         })
         match = pattern.exec(scrubbed)
       }
@@ -285,7 +335,8 @@ export function checkUndefinedVocabulary(
       findings.push({
         file: file.path,
         line,
-        message: `uses coined term "${term}" without defining it inline or linking the glossary`
+        message: `uses coined term "${term}" without defining it inline or linking the glossary`,
+        blocking: false
       })
     }
   }
