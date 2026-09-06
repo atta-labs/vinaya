@@ -40,7 +40,7 @@ You are the AEG Developer. Read `aeg-root/roles/developer.md` first[, then the h
 **Modify:**
 - [exact file paths to modify, with what changes in each]
 
-**Out of surface:** [adjacent files/dirs the executor must NOT touch, named explicitly]
+**Out of surface:** [adjacent files/dirs the executor must NOT touch, named explicitly — `vinaya brief render` fills this verbatim from the Issue's `## Surface` `out:` list, never a hand-authored placeholder]
 
 #### Premise pins
 
@@ -64,7 +64,9 @@ On any failure: STOP and report.
 
 ## 6. Numbered parts — commit after EACH part; push once, before opening the PR
 
-1. **Part 1** (O[n]) — [exact files + exact function/type signatures + constraints — not prose. A Part that depends on a fact about current code opens with the fenced command that establishes it, followed by the executed output (skill §2's rule). Cite at least one `O<n>` from the Objectives section above; an administrative Part with no objective of its own (a changeset commit, the final push) may omit the citation.]
+[Rendered from the Issue's `## Parts` section — `vinaya brief render` fills one numbered Part per `Part <k> (O<n>[, O<m>]) — <outcome>` line, citation reconstructed verbatim, files grouped by package as today. Hand-authoring the same: exact files + exact function/type signatures + constraints — not prose. A Part that depends on a fact about current code opens with the fenced command that establishes it, followed by the executed output (skill §2's rule). Cite at least one `O<n>` from the Objectives section above; an administrative Part with no objective of its own (a changeset commit, the final push) may omit the citation.]
+
+1. **Part 1** (O[n]) — [exact files + exact function/type signatures + constraints — not prose.]
 2. **Part 2** (O[n]) — [next bounded unit of work]
 
 ## 7. Documentation-update list
@@ -81,12 +83,16 @@ On any failure: STOP and report.
 
 ## 9. Test Plan
 
+[Rendered from the Issue's `## Test plan` section — `vinaya brief render` copies it verbatim, never re-deriving one from the surface file list.]
+
 - [ ] **[agent]** [scriptable, non-auth check — the exact command + the concrete observable; evidence pasted, not paraphrased]
 - [ ] **[principal]** [auth-gated / vendor-key / visual check — what the Principal does and what they should observe]
 
 [Pure-logic tasks with no runtime surface in §4 declare the `unit-tests-only` sentinel on the Test Plan field instead of a checklist — one form or the other, never both.]
 
 ## 10. Stop conditions
+
+[Rendered from the Issue's `## Stop conditions` bullets, plus the Stop-and-escalate rationale field verbatim — never the field alone.]
 
 STOP and report if: pre-flight fails; [the Planner's stop-and-escalate conditions, substance-verbatim]; [task-specific stop conditions]; about to touch files outside the §4 surface; any destructive action not explicitly authorized.
 
