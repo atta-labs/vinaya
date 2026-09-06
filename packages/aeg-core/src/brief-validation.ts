@@ -862,7 +862,7 @@ export function checkDefeatCases(prBody: string): BriefSectionResult {
  * maps to no single objective; this brief's own §6 Part 5 ("changeset. Then
  * the one push.") is exactly that shape.
  */
-const PART_CITATION_RE = /Part\s+\d+\s*\(([^)]*)\)/gi
+export const PART_CITATION_RE = /Part\s+\d+\s*\(([^)]*)\)/gi
 const OBJECTIVE_REF_RE = /O(\d+)/g
 
 function citedObjectiveIds(section6: string): Set<number> {

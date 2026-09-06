@@ -18,7 +18,9 @@
 
 import { hasLabel, LABELS, projectFieldFromBody, projectsFromBody, SECTION_HEADER } from '@attalabs/aeg-forge-state'
 import { stripCode } from './anchored-region'
+import { checkTestPlan, extractFencedBlocks } from './brief-validation'
 import { objectivesOf } from './objectives'
+import { locateTestPlanSection } from './test-plan-section'
 
 export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }
 
@@ -120,6 +122,253 @@ export function checkIssueObjectives(body: string, issueNumber: number | null): 
   const result = objectivesOf(body)
   if (result.ok) return { status: 'pass', errors: [] }
   return { status: 'fail', errors: result.errors.map((e) => `issue-validation objectives: ${e}`) }
+}
+
+// ---------------------------------------------------------------------------
+// Judgment sections as data (plan-brief-v1 task 1, Issue #426). Four more
+// task-Issue sections, each parsed by its own pure function: `## Surface`,
+// `## Parts`, `## Test plan`, `## Stop conditions`. `brief-render.ts` reads
+// their parsed values to fill a brief's §4/§6/§9/§10 mechanically, so `vinaya
+// brief render` needs no hand edit to become dispatchable (O2/O3). Gated by
+// `BRIEF_SECTIONS_SINCE_ISSUE`, the same cutover-by-Issue-number shape as
+// `OBJECTIVES_SINCE_ISSUE` above — an Issue below the cutover legitimately
+// carries none of the four, and `checkIssueBriefSections` passes it
+// unconditionally; `issueNumber === null` is NOT exempted (fail-closed, same
+// posture `checkIssueObjectives` takes for a not-yet-created Issue).
+// ---------------------------------------------------------------------------
+
+/** One section's raw text, from its `## <name>` heading to the next `##` heading or the end — `null` when the heading is absent. Mirrors `objectives.ts`'s private `objectivesSectionText`, parametrized on the heading name. */
+function topLevelSectionText(body: string, headingName: string): string | null {
+  const headingRe = new RegExp(`^##[ \\t]*${headingName}[ \\t]*$`, 'im')
+  const heading = headingRe.exec(body)
+  if (!heading) return null
+  const afterHeading = body.slice(heading.index + heading[0].length)
+  const next = /^##[ \t]/m.exec(afterHeading)
+  return next ? afterHeading.slice(0, next.index) : afterHeading
+}
+
+/**
+ * True iff `text` contains a backticked span with a `/` inside it — the same
+ * bare-path signal `objectives.ts`'s private `hasBacktickedPath` detects for
+ * an Objectives line, duplicated here (that helper is not exported, and
+ * `objectives.ts` is out of this task's surface) for `## Parts` lines, which
+ * carry the identical "never a path" rule. Linear-scan, not a two-wildcard
+ * regex, for the same ReDoS reason that function's own doc comment records.
+ */
+function partHasBacktickedPath(text: string): boolean {
+  let i = 0
+  while (i < text.length) {
+    const start = text.indexOf('`', i)
+    if (start === -1) return false
+    const end = text.indexOf('`', start + 1)
+    if (end === -1) return false
+    if (text.slice(start + 1, end).includes('/')) return true
+    i = end + 1
+  }
+  return false
+}
+
+/** How many non-path words a Parts line's outcome needs outside its backticked spans to count as a real sentence — same threshold and rationale as `objectives.ts`'s `MIN_WORDS_OUTSIDE_BACKTICKS`. */
+const PART_MIN_WORDS_OUTSIDE_BACKTICKS = 3
+
+function stripPartBackticks(text: string): string {
+  return text.replace(/`[^`\n]*`/g, ' ')
+}
+
+function partWordCount(text: string): number {
+  return text.split(/\s+/).filter((w) => /[a-z]/i.test(w)).length
+}
+
+/** A `## Surface` `in:`/`out:` entry — directory-level only, per the grammar's own rule. A trailing `/**`/`/*` glob suffix is stripped before the extension check, so `packages/aeg-core/**` reads as a directory. */
+function looksLikeFilePath(entry: string): boolean {
+  const stripped = entry.replace(/\/\*\*?$/, '')
+  return /\.[A-Za-z0-9]{1,6}$/.test(stripped)
+}
+
+function splitGlobList(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+}
+
+export type IssueSurface = { in: string[]; out: string[] }
+export type IssuePart = { n: number; objectiveIds: number[]; text: string }
+export type IssueTestPlan = { kind: 'unit-tests-only' } | { kind: 'commands'; lines: string[]; principal: string[] }
+
+type ParsedIssueSection<T> = { ok: true; value: T } | { ok: false; errors: string[] }
+
+/**
+ * `## Surface` — a directory-level `in:` glob list (what this task touches)
+ * and `out:` glob list (what it explicitly does not), each comma-separated.
+ * Refuses a file path in either list — Surface entries are directory-level,
+ * never a specific file (the Brief Author's own §4 maps globs to files at
+ * render time).
+ */
+export function parseIssueSurface(body: string): ParsedIssueSection<IssueSurface> {
+  const section = topLevelSectionText(body, 'Surface')
+  if (section === null) return { ok: false, errors: ['no `## Surface` heading found in the body.'] }
+
+  const inLine = /^in:\s*(.+)$/im.exec(section)
+  const outLine = /^out:\s*(.+)$/im.exec(section)
+  const errors: string[] = []
+  if (!inLine) errors.push('`## Surface` has no `in:` line.')
+  if (!outLine) errors.push('`## Surface` has no `out:` line.')
+  if (errors.length > 0) return { ok: false, errors }
+
+  const inGlobs = splitGlobList((inLine as RegExpExecArray)[1] as string)
+  const outGlobs = splitGlobList((outLine as RegExpExecArray)[1] as string)
+  for (const g of [...inGlobs, ...outGlobs]) {
+    if (looksLikeFilePath(g)) {
+      errors.push(
+        `\`${g}\` in \`## Surface\` looks like a file path — Surface entries are directory-level globs, never file paths.`
+      )
+    }
+  }
+  if (inGlobs.length === 0) errors.push("`## Surface`'s `in:` line resolved to zero globs.")
+  if (errors.length > 0) return { ok: false, errors }
+
+  return { ok: true, value: { in: inGlobs, out: outGlobs } }
+}
+
+/** One `Part <n> (<refs>) — <outcome>` line, anywhere in the `## Parts` section. */
+const ISSUE_PART_LINE_RE = /^Part\s+(\d+)\s*\(([^)]*)\)\s*[-—–]\s*(.*)$/i
+
+/**
+ * `## Parts` — numbered `Part <n> (O<k>[, O<j>]) — <outcome>` lines, the same
+ * citation grammar `brief-validation.ts`'s `PART_CITATION_RE` reads out of a
+ * brief's own §6. An outcome names outcomes and symbols, never a file path
+ * (refused the same way `objectives.ts` refuses a bare-path objective).
+ */
+export function parseIssueParts(body: string): ParsedIssueSection<IssuePart[]> {
+  const section = topLevelSectionText(body, 'Parts')
+  if (section === null) return { ok: false, errors: ['no `## Parts` heading found in the body.'] }
+
+  const lines = section
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+
+  const parts: IssuePart[] = []
+  const errors: string[] = []
+  for (const line of lines) {
+    const m = ISSUE_PART_LINE_RE.exec(line)
+    if (!m) {
+      errors.push(`"${line}" is not a well-formed Parts line — expected \`Part <n> (<refs>) — <outcome>\`.`)
+      continue
+    }
+    const n = Number.parseInt(m[1] as string, 10)
+    const refs = m[2] as string
+    const text = (m[3] as string).trim()
+    if (text.length === 0) {
+      errors.push(`Part ${n} has no outcome text after the dash — every Part states one observable outcome.`)
+      continue
+    }
+    if (partHasBacktickedPath(text) && partWordCount(stripPartBackticks(text)) < PART_MIN_WORDS_OUTSIDE_BACKTICKS) {
+      errors.push(`Part ${n} is little more than a file path — a Part names an outcome and symbols, never a bare path.`)
+      continue
+    }
+    const objectiveIds = [...refs.matchAll(/O(\d+)/g)].map((r) => Number.parseInt(r[1] as string, 10))
+    parts.push({ n, objectiveIds, text })
+  }
+
+  if (parts.length === 0) {
+    errors.push('the `## Parts` section has no well-formed `Part <n> (<refs>) — <outcome>` lines.')
+  }
+  if (errors.length > 0) return { ok: false, errors }
+  return { ok: true, value: parts }
+}
+
+const ISSUE_PRINCIPAL_LINE_RE = /^-\s*\[[ xX]\]\s*\*{2}\[principal\]\*{2}(.*)$/gim
+const UNIT_TESTS_ONLY_SENTINEL_RE = /(?:\*\*)?Test plan(?:\*\*)?\s*:\s*(?:\*\*)?\s*unit-tests-only/i
+
+/**
+ * `## Test plan` — reuses `checkTestPlan`/`extractFencedBlocks`
+ * (`brief-validation.ts`) rather than a second parser: the `unit-tests-only`
+ * sentinel, or a fenced command list plus optional `**[principal]**` items.
+ * The two forms are mutually exclusive, same rule `checkTestPlanExclusivity`
+ * applies to a PR body's Test Plan.
+ */
+export function parseIssueTestPlan(body: string): ParsedIssueSection<IssueTestPlan> {
+  const located = locateTestPlanSection(body)
+  if (!located.found) return { ok: false, errors: ['no `## Test plan` section found in the body.'] }
+
+  const presence = checkTestPlan(body)
+  if (presence.status === 'fail') return { ok: false, errors: presence.errors }
+
+  const region = located.section
+  const hasSentinel = UNIT_TESTS_ONLY_SENTINEL_RE.test(region)
+  const blocks = extractFencedBlocks(region)
+
+  if (hasSentinel && blocks.length > 0) {
+    return {
+      ok: false,
+      errors: [
+        '`## Test plan` carries both the `unit-tests-only` sentinel and a fenced command list — the two are mutually exclusive, same exclusivity rule as the PR body Test Plan.'
+      ]
+    }
+  }
+  if (hasSentinel) return { ok: true, value: { kind: 'unit-tests-only' } }
+
+  const lines = blocks.flatMap((b) =>
+    b.content
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0)
+  )
+  const principal = [...region.matchAll(ISSUE_PRINCIPAL_LINE_RE)].map((m) => (m[1] ?? '').trim()).filter(Boolean)
+  if (lines.length === 0 && principal.length === 0) {
+    return {
+      ok: false,
+      errors: [
+        '`## Test plan` carries neither the `unit-tests-only` sentinel, a fenced command list, nor a `**[principal]**` item.'
+      ]
+    }
+  }
+  return { ok: true, value: { kind: 'commands', lines, principal } }
+}
+
+/** `## Stop conditions` — a bullet list, each item the outcome-agnostic condition under which the executing agent must stop and escalate. */
+export function parseIssueStopConditions(body: string): ParsedIssueSection<string[]> {
+  const section = topLevelSectionText(body, 'Stop conditions')
+  if (section === null) return { ok: false, errors: ['no `## Stop conditions` heading found in the body.'] }
+  const items = [...section.matchAll(/^[-*]\s+(.+)$/gm)].map((m) => (m[1] as string).trim()).filter(Boolean)
+  if (items.length === 0) {
+    return { ok: false, errors: ['the `## Stop conditions` section has no bullet-list items.'] }
+  }
+  return { ok: true, value: items }
+}
+
+/**
+ * The Issue number from which the four judgment sections above become
+ * mandatory — this Issue's own number, the first Issue this tranche cut.
+ * Same cutover-by-Issue-number shape as `OBJECTIVES_SINCE_ISSUE`; a task
+ * Issue below this number legitimately carries none of the four.
+ */
+export const BRIEF_SECTIONS_SINCE_ISSUE = 426
+
+/**
+ * **The brief-sections gate.** A task Issue numbered at or above
+ * `BRIEF_SECTIONS_SINCE_ISSUE` must carry all four of `## Surface`,
+ * `## Parts`, `## Test plan`, `## Stop conditions`, each well-formed per its
+ * own parser above. Below the cutover, an Issue passes unconditionally.
+ * `issueNumber === null` is NOT exempted — fail-closed, the same posture
+ * `checkIssueObjectives` takes for an Issue with no number yet.
+ */
+export function checkIssueBriefSections(body: string, issueNumber: number | null): IssueSectionResult {
+  if (issueNumber !== null && issueNumber < BRIEF_SECTIONS_SINCE_ISSUE) return { status: 'pass', errors: [] }
+
+  const errors: string[] = []
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) errors.push(...surface.errors.map((e) => `issue-validation Surface: ${e}`))
+  const parts = parseIssueParts(body)
+  if (!parts.ok) errors.push(...parts.errors.map((e) => `issue-validation Parts: ${e}`))
+  const testPlan = parseIssueTestPlan(body)
+  if (!testPlan.ok) errors.push(...testPlan.errors.map((e) => `issue-validation Test plan: ${e}`))
+  const stopConditions = parseIssueStopConditions(body)
+  if (!stopConditions.ok) errors.push(...stopConditions.errors.map((e) => `issue-validation Stop conditions: ${e}`))
+
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
 
 /** true when any label marks this as a task Issue (the rationale contract applies). */
@@ -631,7 +880,12 @@ const BRIEF_MARKERS: Array<{ name: string; pattern: RegExp }> = [
   { name: 'Technical surface map', pattern: /(?:^#{1,6}\s*|\*\*)\s*Technical surface map\b/im },
   { name: 'Premise', pattern: /(?:^#{1,6}\s*|\*\*)\s*Premise(?:\*\*)?\s*[:—–]/im },
   { name: 'Step 0', pattern: /(?:^#{1,6}\s*|\*\*)\s*Step 0\b/im },
-  { name: 'Test Plan', pattern: /(?:^#{1,6}\s*|\*\*)\s*Test Plan\b/im }
+  // Heading form removed (plan-brief-v1 task 1, Issue #426): `## Test plan` is
+  // now an Issue-native section since `BRIEF_SECTIONS_SINCE_ISSUE`, parsed by
+  // `parseIssueTestPlan` above — a heading is not a marker any more. The bold
+  // inline form (`**Test Plan:** …`) is unaffected and still catches a brief's
+  // own Test Plan field pasted verbatim into an Issue.
+  { name: 'Test Plan', pattern: /\*\*\s*Test Plan\b/im }
 ]
 
 /**

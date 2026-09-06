@@ -4,8 +4,10 @@ import { amendRationaleDeps, projectsFromBody } from '@attalabs/aeg-forge-state'
 import { describe, expect, it } from 'vitest'
 import { fenceShapes } from '../tests/fixtures/fence-shapes'
 import {
+  BRIEF_SECTIONS_SINCE_ISSUE,
   checkBlastRadiusScope,
   checkConflictCompleteness,
+  checkIssueBriefSections,
   checkIssueObjectives,
   checkIssueRationale,
   checkIssueType,
@@ -15,6 +17,10 @@ import {
   declaredProjects,
   isTaskIssueLabelSet,
   OBJECTIVES_SINCE_ISSUE,
+  parseIssueParts,
+  parseIssueStopConditions,
+  parseIssueSurface,
+  parseIssueTestPlan,
   type TaskIssueFacts
 } from './issue-validation'
 
@@ -571,7 +577,7 @@ describe('checkNoBriefContent (B)', () => {
     expect(r.errors[0]).toMatch(/References/)
   })
 
-  it.each(['Technical surface map', 'Step 0', 'Test Plan'])('fails on a brief-shaped "%s" heading', (heading) => {
+  it.each(['Technical surface map', 'Step 0'])('fails on a brief-shaped "%s" heading', (heading) => {
     expect(checkNoBriefContent(`${rationale({ boundary: 'x' })}\n## ${heading}\n\nstuff\n`).status).toBe('fail')
   })
 
@@ -583,6 +589,20 @@ describe('checkNoBriefContent (B)', () => {
 
   it('passes a clean rationale-only body', () => {
     expect(checkNoBriefContent(rationale({ boundary: 'x' })).status).toBe('pass')
+  })
+
+  // plan-brief-v1 task 1, Issue #426: `## Surface`/`## Parts`/`## Test plan`/
+  // `## Stop conditions` are Issue-native sections since `BRIEF_SECTIONS_SINCE_ISSUE`
+  // — a heading is not a brief-content marker for these four any more.
+  it.each(['Surface', 'Parts', 'Test plan', 'Stop conditions'])(
+    'a "## %s" heading alone is NOT a brief-content marker (Issue-native since #426)',
+    (heading) => {
+      expect(checkNoBriefContent(`${rationale({ boundary: 'x' })}\n## ${heading}\n\nstuff\n`).status).toBe('pass')
+    }
+  )
+
+  it('still fails on a bold **Test Plan:** brief-content marker', () => {
+    expect(checkNoBriefContent(`${rationale({ boundary: 'x' })}\n**Test Plan:** unit-tests-only\n`).status).toBe('fail')
   })
 })
 
@@ -930,5 +950,188 @@ describe('checkProjectsRegistered — what reaches the operator’s terminal', (
     const r = checkProjectsRegistered('**Project:** nosuchproject', [], REGISTERED)
     expect(r.errors[0]).toMatch(/aeg-core/)
     expect(r.errors[0]).toMatch(/nosuchproject/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// plan-brief-v1 task 1, Issue #426 — the four judgment-sections-as-data
+// parsers, and the gate that composes them.
+// ---------------------------------------------------------------------------
+
+const ISSUE_426_BODY = readFileSync(join(import.meta.dirname, '../tests/fixtures/issue-426-body.md'), 'utf8')
+
+describe('parseIssueSurface', () => {
+  it('parses a well-formed in:/out: pair', () => {
+    const body = '## Surface\n\nin: packages/aeg-core/src, apps/cli/src\nout: apps/cli/src/commands\n'
+    const r = parseIssueSurface(body)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.in).toEqual(['packages/aeg-core/src', 'apps/cli/src'])
+    expect(r.value.out).toEqual(['apps/cli/src/commands'])
+  })
+
+  it('refuses when the `## Surface` heading is absent', () => {
+    const r = parseIssueSurface('nothing surface-shaped here')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/no `## Surface` heading/)
+  })
+
+  it('refuses when `in:` is missing', () => {
+    const r = parseIssueSurface('## Surface\n\nout: packages/ui\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors.join(' ')).toMatch(/no `in:` line/)
+  })
+
+  it('refuses a file path in `in:` — Surface entries are directory-level globs', () => {
+    const r = parseIssueSurface('## Surface\n\nin: packages/aeg-core/src/issue-validation.ts\nout: —\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/looks like a file path/)
+  })
+
+  it('refuses a file path in `out:` too', () => {
+    const r = parseIssueSurface('## Surface\n\nin: packages/aeg-core/src\nout: apps/cli/README.md\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/looks like a file path/)
+  })
+
+  it('tolerates a trailing `/**` glob suffix as directory-level', () => {
+    const r = parseIssueSurface('## Surface\n\nin: packages/aeg-core/**\nout: —\n')
+    expect(r.ok).toBe(true)
+  })
+})
+
+describe('parseIssueParts', () => {
+  it('parses numbered Part lines with their objective refs', () => {
+    const body = '## Parts\n\nPart 1 (O1) — the parsers.\nPart 2 (O1, O2) — the render.\n'
+    const r = parseIssueParts(body)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual([
+      { n: 1, objectiveIds: [1], text: 'the parsers.' },
+      { n: 2, objectiveIds: [1, 2], text: 'the render.' }
+    ])
+  })
+
+  it('refuses when the `## Parts` heading is absent', () => {
+    const r = parseIssueParts('nothing parts-shaped here')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/no `## Parts` heading/)
+  })
+
+  it('refuses a line with no outcome text after the dash', () => {
+    const r = parseIssueParts('## Parts\n\nPart 1 (O1) — \n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/no outcome text/)
+  })
+
+  it('refuses an outcome that is little more than a bare file path', () => {
+    const r = parseIssueParts('## Parts\n\nPart 1 (O1) — `packages/aeg-core/src/issue-validation.ts`\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/little more than a file path/)
+  })
+
+  it('a Part naming no objective (an administrative Part) parses with an empty objectiveIds', () => {
+    const r = parseIssueParts('## Parts\n\nPart 1 () — changesets, then the one push.\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value[0]?.objectiveIds).toEqual([])
+  })
+})
+
+describe('parseIssueTestPlan', () => {
+  it('parses the unit-tests-only sentinel', () => {
+    const r = parseIssueTestPlan('## Test plan\n\nTest plan: unit-tests-only\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({ kind: 'unit-tests-only' })
+  })
+
+  it('parses a fenced command list plus a `[principal]` item', () => {
+    const body = [
+      '## Test plan',
+      '',
+      '```',
+      'bun test → 0 fail',
+      '```',
+      '',
+      '- [ ] **[principal]** Verify in a real browser.',
+      ''
+    ].join('\n')
+    const r = parseIssueTestPlan(body)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({
+      kind: 'commands',
+      lines: ['bun test → 0 fail'],
+      principal: ['Verify in a real browser.']
+    })
+  })
+
+  it('refuses both the sentinel and a fence together — same exclusivity rule as the PR body', () => {
+    const body = ['## Test plan', '', 'Test plan: unit-tests-only', '', '```', 'bun test → 0 fail', '```', ''].join(
+      '\n'
+    )
+    const r = parseIssueTestPlan(body)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/mutually exclusive/)
+  })
+
+  it('refuses when the `## Test plan` section is absent', () => {
+    const r = parseIssueTestPlan('nothing test-plan-shaped here')
+    expect(r.ok).toBe(false)
+  })
+})
+
+describe('parseIssueStopConditions', () => {
+  it('parses a bullet list', () => {
+    const r = parseIssueStopConditions('## Stop conditions\n\n- Pre-flight fails.\n- A premise pin mismatches.\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual(['Pre-flight fails.', 'A premise pin mismatches.'])
+  })
+
+  it('refuses when the section has no bullet items', () => {
+    const r = parseIssueStopConditions('## Stop conditions\n\nnothing bulleted here\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/no bullet-list items/)
+  })
+
+  it('refuses when the `## Stop conditions` heading is absent', () => {
+    expect(parseIssueStopConditions('nothing here').ok).toBe(false)
+  })
+})
+
+describe('checkIssueBriefSections', () => {
+  it('passes a fully-formed Issue at the cutover (#426 itself)', () => {
+    expect(BRIEF_SECTIONS_SINCE_ISSUE).toBe(426)
+    const r = checkIssueBriefSections(ISSUE_426_BODY, 426)
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails, naming Parts, when `## Parts` is removed from an at-cutover Issue', () => {
+    const withoutParts = ISSUE_426_BODY.replace(/## Parts[\s\S]*?(?=\n## Test plan)/, '')
+    const r = checkIssueBriefSections(withoutParts, 426)
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/Parts/)
+  })
+
+  it('passes an Issue below the cutover carrying none of the four sections', () => {
+    const r = checkIssueBriefSections('a body with nothing but a title.', 425)
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails closed on a null Issue number, even with none of the four sections', () => {
+    const r = checkIssueBriefSections('a body with nothing but a title.', null)
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBeGreaterThan(0)
   })
 })
