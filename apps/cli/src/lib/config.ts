@@ -530,7 +530,27 @@ export const VinayaConfigSchema = z.object({
     .optional(),
   // Config-native project metadata — see the `ProjectEntrySchema` comment
   // above. Additive-only; absent entirely for a single-project repo.
-  projects: z.array(ProjectEntrySchema).optional()
+  projects: z.array(ProjectEntrySchema).optional(),
+  // `vinaya dispatch <role> --agent <vendor>` (task 3, `vinaya-log-v1`,
+  // `apps/cli/src/lib/dispatch.ts`). `timeoutMs` is the wall-time ceiling
+  // before `dispatchRole` sends `SIGTERM` (then `SIGKILL`) to the child;
+  // absent defaults to one hour (`DEFAULT_TIMEOUT_MS` in `dispatch.ts`).
+  // `agent` is a default vendor the CLI's own `--agent` flag overrides, for a
+  // repo that always dispatches the same vendor.
+  //
+  // The three vendor names are duplicated here as a literal enum rather than
+  // imported from `./dispatch.js`'s `AGENT_VENDOR_NAMES`: `dispatch.ts`
+  // itself calls `loadConfig()` (this file) to resolve `dispatch.timeoutMs`,
+  // so importing the other direction would make the two files circular. The
+  // list is fixed at three and reviewed alongside any change to
+  // `dispatch.ts`'s own `AgentVendor` union, which stays the source of truth
+  // for the type.
+  dispatch: z
+    .object({
+      timeoutMs: z.number().int().positive().optional(),
+      agent: z.enum(['claude', 'codex', 'gemini']).optional()
+    })
+    .optional()
 })
 
 export type VinayaConfig = z.infer<typeof VinayaConfigSchema>
