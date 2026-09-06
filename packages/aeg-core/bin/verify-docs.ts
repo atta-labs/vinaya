@@ -83,11 +83,13 @@ import {
 import {
   type DoctrineContent,
   deriveDiagramModel,
+  checkDocClaims,
   checkManifestValidity,
   DOC_OWNERS_PATH,
   deriveTierFromDiff,
   type DocOwnersBinding,
   evaluateC5,
+  findClaimBindings,
   globToRegex,
   hasStatusBlock,
   isCodeFile,
@@ -270,6 +272,9 @@ function runPrMode(): void {
   // changed. Blocking here (this is the gate CI runs); the repo-wide sweep is
   // full mode's job.
   runC7(new Set(changed.filter((p) => p.startsWith(AEG_ROOT_PREFIX) && p.endsWith('.md'))))
+
+  // C8 — doc-claim bindings, scoped to the corpus files this diff touched.
+  runC8(new Set(changed))
 }
 
 // ---- push mode (C5 only — ring-0 pre-push gate) -----------------------
@@ -391,6 +396,55 @@ function runC7(only?: ReadonlySet<string>): void {
   for (const n of result.notes) notes.push(n)
 }
 
+/**
+ * The corpus C8 sweeps: every doctrine page under `aeg-root/`, plus the
+ * product files that can carry a TypeScript marker. The product list is
+ * literal here rather than derived — the shared `PRODUCT_SLUG_SCOPE` export
+ * does not exist yet on this branch's base; fold this list into it when it
+ * lands, rather than keeping two.
+ */
+const C8_PRODUCT_PATHS = [
+  'apps/cli/src',
+  'apps/cli/README.md',
+  'packages/aeg-core/src/verdict-extraction.ts',
+  'packages/sources/src/commands.ts'
+]
+
+/**
+ * C8 — doc-claim bindings. A doctrine sentence or source comment stating what
+ * code does carries an `AEG:CLAIM` marker pinning the source that proves it;
+ * this verifies every marker against the file it cites.
+ *
+ * `only` is the diff's own changed-file set in PR mode (undefined in full
+ * mode). The corpus definition below does the scoping, so PR mode checks
+ * exactly the corpus files this diff touched — a marker whose cited file
+ * moved is caught by the PR that moves it, and the repo-wide sweep is full
+ * mode's job. Findings are blocking: an unverifiable marker is a sentence
+ * that reads as checked and is not.
+ */
+function runC8(only?: ReadonlySet<string>): void {
+  const listed = ['aeg-root/*.md', ...C8_PRODUCT_PATHS]
+    .flatMap((pathspec) => shFile('git', ['ls-files', pathspec]).split('\n'))
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((filePath) => filePath.endsWith('.md') || filePath.endsWith('.ts'))
+    .filter((filePath) => (only ? only.has(filePath) : true))
+
+  const files = [...new Set(listed)]
+    .filter((filePath) => existsSync(filePath))
+    .map((filePath) => ({ path: filePath, content: readFileSync(filePath, 'utf8') }))
+
+  if (files.length === 0) return
+
+  const bindingCount = findClaimBindings(files).length
+  const findings = checkDocClaims(files, (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null))
+
+  for (const f of findings) errors.push(`C8 doc-claim: ${f.message}`)
+  if (findings.length === 0) {
+    notes.push(`C8 doc-claim: ${bindingCount} binding(s) verified.`)
+  }
+}
+
 function runFullMode(): void {
   // F1 — every spec carries a Status block.
   const specs = sh("git ls-files 'apps/**/specs/*.md'")
@@ -422,6 +476,9 @@ function runFullMode(): void {
 
   // C7 — published prose: repo-wide sweep of every surfaced doctrine doc.
   runC7()
+
+  // C8 — doc-claim bindings: repo-wide sweep of every marker.
+  runC8()
 }
 
 function runCompletenessScoreboard(bindings: DocOwnersBinding[], noDocRules: NoDocRule[]): void {
