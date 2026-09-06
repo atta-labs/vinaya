@@ -12,9 +12,12 @@ const reader = (files: Record<string, string>) => (path: string) => files[path] 
 
 describe('findClaimBindings — marker discovery', () => {
   it('parses the markdown form and reports the marker line', () => {
-    const content = ['Intro.', '', '<!-- AEG:CLAIM: src/a.ts contains:function windows( -->', 'The bound sentence.'].join(
-      '\n'
-    )
+    const content = [
+      'Intro.',
+      '',
+      '<!-- AEG:CLAIM: src/a.ts contains:function windows( -->',
+      'The bound sentence.'
+    ].join('\n')
     const bindings = findClaimBindings([{ path: 'aeg-root/x.md', content }])
 
     expect(bindings).toHaveLength(1)
@@ -87,7 +90,9 @@ describe('findMalformedClaimMarkers', () => {
   })
 
   it('reports a marker missing its literal', () => {
-    const findings = findMalformedClaimMarkers([{ path: 'apps/cli/src/a.ts', content: '// AEG:CLAIM: src/a.ts contains:' }])
+    const findings = findMalformedClaimMarkers([
+      { path: 'apps/cli/src/a.ts', content: '// AEG:CLAIM: src/a.ts contains:' }
+    ])
 
     expect(findings).toHaveLength(1)
     expect(findings[0]?.message).toContain('binds nothing')

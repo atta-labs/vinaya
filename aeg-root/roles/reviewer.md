@@ -129,6 +129,9 @@ TESTS: [honest | issues listed in findings]
 DOCS: [tier-appropriate | missing items listed in findings]
 ```
 
+<!-- AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string { -->
+<!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string { -->
+<!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult { -->
 `vinaya review post` also refuses before posting anything if you pass a BLOCKER finding together with `--verdict APPROVE`, or any `NOT MET` objective together with `--verdict APPROVE` — both contradictions are caught mechanically, not left to review. Before its own post reaches the forge, it refuses to post anything the gate would misread: it runs the exact same `VERDICT:`/`Judged head:`/`Objectives version:` extraction the merge gate uses over the rendered comment, and requires exactly the intended verdict to come back. Free text in a finding, a conformance field, an objective's evidence, or `--scope-evidence-file` can say `VERDICT` or span multiple lines without risk — the extraction reads only a comment's first five lines, and in a code-reviewer or security comment a caller field never opens one of those lines (it only trails a fixed, renderer-owned label); an escalation's `--summary` is the one field that does occupy line 5 outright, which is exactly why this pre-post re-parse exists rather than construction alone.
 
 - **BLOCKER** — blocks merge. Wrong behavior; a dishonest test; a document the brief's documentation-update list names that is absent from the diff or states the changed behavior backwards; a scope violation; a **spec contradiction**.

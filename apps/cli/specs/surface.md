@@ -476,6 +476,8 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 
 (37 rows — all 37 shipped `COMMANDS` entries. Compliant: 9. Exempt: 28.)
 
+The `review post` and `pr rule` source comments describe the verdict-extraction read window, so they carry `AEG:CLAIM` markers pinning the code that proves each claim; `verify-docs` C8 verifies them, and a change to that window fails the check in every file stating it rather than only where a reviewer happened to look. See `aeg-root/documentation-coherence.md`.
+
 ## Exemptions
 
 Every non-compliant command from the table above, dated, with the count of distinct in-scope calls its entry function makes today (`apps/cli/src/lib` exports plus, per the Principal's ruling, any call into another `commands/*.ts` file — refused outright, never allowed, but tracked here rather than blocking dispatch of this task) and the chokepoint whose landing retires the row. No command is rewritten in this task.

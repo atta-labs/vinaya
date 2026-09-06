@@ -13,14 +13,15 @@ import {
 const RETRY = 'vinaya pr rule <pr> --file <ruling.md>'
 
 /**
+ * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` treat "no
  * candidate line anywhere in the body" as the ONE case where `danglingNote`
  * carries this exact sentinel text — every other outcome (a clean verdict
  * with `danglingNote: null`, or a candidate line sitting outside the
- * extractor's first-three-line read window) means the file carries verdict
+ * extractor's first-five-line read window) means the file carries verdict
  * grammar somewhere and must be refused. Comparing against the sentinel,
  * rather than trusting `danglingNote === null` alone, is what catches a
- * `VERDICT:` line buried past line 3 — still a whole-body candidate, still
+ * `VERDICT:` line buried past line 5 — still a whole-body candidate, still
  * disqualifying.
  */
 const NO_CODE_REVIEW_CANDIDATE = 'no code-reviewer verdict comment found on this PR'

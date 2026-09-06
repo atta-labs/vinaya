@@ -19,6 +19,9 @@
  * `Judged head:`) is rendered by this command's own code from validated
  * enum/sha inputs, never from a caller-supplied string.
  *
+ * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+ * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
+ * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
  * Before any post reaches the forge, `checkRenderedComment` runs the exact
  * same extractors over the rendered text and refuses (exit `2`) unless
  * exactly the intended verdict comes back and the other role's extractor
@@ -361,6 +364,7 @@ export function renderCodeReviewComment(input: CodeReviewInput): string {
     lines.push(`Objectives version: ${input.objectivesVersion}`, '')
   }
   if (input.scopeEvidence !== null) {
+    // AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
     // Directly below the verdict block, per `reviewer.md`'s own evidence
     // rule — safe as free multi-line text now that the gate's extractors
     // read only a comment's first five lines (round-4 ruling, `#392`,
@@ -454,6 +458,9 @@ export function renderSecurityComment(input: SecurityInput): string {
 // --- pre-render check ---------------------------------------------------------
 
 /**
+ * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+ * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
+ * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
  * Round-4 ruling on `#392`, window later widened from three to five lines
  * by a later task (`#412`): `renderCodeReviewComment`/
  * `renderSecurityComment`'s caller-supplied fields never OPEN one of the

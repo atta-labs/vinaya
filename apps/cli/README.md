@@ -12,6 +12,10 @@ npx @attalabs/vinaya init        # or: pnpm dlx / yarn dlx / bunx
 
 ## Commands
 
+<!-- AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string { -->
+<!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string { -->
+<!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult { -->
+
 | Command | Description |
 |---------|-------------|
 | `vinaya help` | Usage text |
