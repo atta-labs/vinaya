@@ -355,6 +355,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `repoRoot` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `resolveChangedFiles` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `resolveDiff` | function | `apps/cli/src/lib/diff-evidence.ts` |
+| `AGENT_VENDOR_NAMES` | const | `apps/cli/src/lib/dispatch.ts` |
+| `dispatchRole` | function | `apps/cli/src/lib/dispatch.ts` |
+| `isAgentVendor` | function | `apps/cli/src/lib/dispatch.ts` |
 | `appendDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `applyDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `freshDocOwners` | function | `apps/cli/src/lib/doc-owners-write.ts` |
@@ -432,9 +435,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `STUDIO_ARTIFACT_REPO` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_NODE_MODULES_PACKED_DIRNAME` | const | `apps/cli/src/lib/studio-bundle.ts` |
 
-(161 exports.)
+(164 exports.)
 
-## Commands — `apps/cli/src/commands` (38 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
+## Commands — `apps/cli/src/commands` (39 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
 | Command | File | Entry function | In-scope calls today | Status | One lib function (compliant) / retirement target (exempt) |
 |---|---|---|---|---|---|
@@ -476,8 +479,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `studio` | `studio.ts` | `runStudio` | 1 | compliant | `packageRoot` |
 | `quickstart` | `quickstart.ts` | `quickstartCommand` | 9 | exempt — see below | sharedCommandShell (target) |
 | `release` | `release.ts` | `releaseCommand` | 0 | compliant | — (self-contained) |
+| `dispatch` | `dispatch.ts` | `dispatchCommand` | 5 | exempt — see below | sharedCommandShell (target) |
 
-(38 rows — all 38 shipped `COMMANDS` entries. Compliant: 9. Exempt: 29.)
+(39 rows — all 39 shipped `COMMANDS` entries. Compliant: 9. Exempt: 30.)
 
 `review post` refuses a `doc-correctness` finding whose description carries no `Search:` pattern, or whose pattern carries a path filter — a content rule on the existing description field, not a change to the `|`-delimited grammar. The `review post` and `pr rule` source comments describe the verdict-extraction read window, so they carry `AEG:CLAIM` markers pinning the code that proves each claim; `verify-docs` C8 verifies them, and a change to that window fails the check in every file stating it rather than only where a reviewer happened to look. See `aeg-root/documentation-coherence.md`.
 
@@ -517,8 +521,9 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `waiver` | 2026-09-05 | 2 — lib: `prompt`, `closeStdin` | `sharedCommandShell` |
 | `quickstart` | 2026-09-05 | 9 — lib: `planDocOwnersBinding`, `applyDocOwnersBinding`, `renderDocOwnersBindingDiffLine`, `promptYesNo`, `prompt`; commands/\*.ts (refused outright): `runInit` (`init.ts`), `runInitProduct` (`init.ts`), `runDemoBreak` (`demo.ts`), `runDoctor` (`doctor.ts`) | `sharedCommandShell` |
 | `pr-verify-evidence-logic.ts` (not a command — see note) | 2026-09-05 | n/a — lib code (`publishedMergeBase`, `normaliseLines`, `compareEvidence`, `renderVerdict`) colocated in `apps/cli/src/commands/` instead of `apps/cli/src/lib/` | moves to `apps/cli/src/lib/` in the next task touching `pr-verify-evidence` |
+| `dispatch` | 2026-09-07 | 5 — lib (4): `loadConfig`, `isAgentVendor`, `dispatchRole`, `printJson`; commands/\*.ts (refused outright): `logFlushCommand` (`log.ts`) | `sharedCommandShell` |
 
-`dispatchRole` and `runTask` retire no row today — neither chokepoint has a shipped command yet; both are forward-looking per the Tech Spec.
+`dispatchRole` retires no row today — its own command (`dispatch`) is new, not a retirement of an existing exempt row; `runTask` remains forward-looking, with no shipped command yet.
 
 `issue create`/`issue edit` re-verified after `BRIEF_BUILTINS` (`apps/cli/src/lib/config.ts`) and its `runBuiltin` table (`apps/cli/src/lib/forge-write.ts`) gained a `briefSections` entry: both rows' own in-scope call count is unchanged — `validateTaskIssue` was already the one call either row lists, and a new entry inside that function's internal table is not a new call site in either command's own body.
 
