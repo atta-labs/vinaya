@@ -631,12 +631,18 @@ export const COMMANDS: readonly Command[] = [
         description: "Flush the outbox to this PR's Issue after the dispatch — mutually exclusive with `--task`"
       },
       { flag: '--round', description: 'Round number, for a dispatch inside a review loop' },
+      {
+        flag: '--resume <id>',
+        description:
+          "Resume the vendor's own session/thread from a prior dispatch's returned `resumeId`, instead of starting a fresh one"
+      },
       { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
     ],
     details: [
       "Sets `VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_ROUND` on the child only — never on this process's own environment — and refuses by name, before any spawn attempt, when the named vendor binary is absent from `PATH` or present but not executable.",
       "Records `dispatched` (with the prompt's sha256), `outcome_received` (duration, the vendor's own usage when its stdout prints a recognizable shape), or `dispatch_failed` (`timeout`, `crash`, or `refused`) through the Vinaya Log's one `dispatch` family writer, `dispatchRole`. A wall-time ceiling (`dispatch.timeoutMs` in config, default one hour) sends `SIGTERM` then, after a grace window, `SIGKILL`.",
-      "When `--task` or `--pr` is given, flushes that outbox via `vinaya log flush` immediately after the child settles — `--task` and `--pr` are mutually exclusive here, matching `log flush`'s own single-target rule. Without either, the dispatch still runs and logs; nothing is flushed, and the lines ride to the next flush."
+      "When `--task` or `--pr` is given, flushes that outbox via `vinaya log flush` immediately after the child settles — `--task` and `--pr` are mutually exclusive here, matching `log flush`'s own single-target rule. Without either, the dispatch still runs and logs; nothing is flushed, and the lines ride to the next flush.",
+      "A successful dispatch's `DispatchHandle` carries `resumeId` — the vendor's own session/thread identifier (claude/gemini: `session_id`; codex: `thread_id`), parsed from its stdout, `null` on any failure. Passing that value as `--resume <id>` on a later call swaps in that vendor's own resume invocation (`claude -p -r <id> ...`; `codex exec resume <id> ...`; `gemini ... --resume <id> ...`) in place of its first-dispatch args."
     ],
     status: 'shipped'
   }
