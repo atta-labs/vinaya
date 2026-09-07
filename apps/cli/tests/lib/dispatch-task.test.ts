@@ -201,8 +201,8 @@ describe('dispatchTask', () => {
     expect(printed).toContain('--agent codex')
   })
 
-  describe('--agent authorization', () => {
-    it('refuses before any render, comment check, or post when the actor is not on the Principal allowlist', async () => {
+  describe('dispatch authorization — Principal-only, with or without --agent', () => {
+    it('refuses before any render, comment check, or post when the actor is not on the Principal allowlist (--agent given)', async () => {
       await expect(
         dispatchTask(
           { tranche: 'plan-brief-v1', n: 427, agent: 'claude' },
@@ -211,7 +211,7 @@ describe('dispatchTask', () => {
       ).rejects.toThrow(/random-collaborator.*Principal allowlist/s)
     })
 
-    it('refuses (fail-closed) when the actor identity cannot be resolved at all', async () => {
+    it('refuses (fail-closed) when the actor identity cannot be resolved at all (--agent given)', async () => {
       await expect(
         dispatchTask(
           { tranche: 'plan-brief-v1', n: 427, agent: 'claude' },
@@ -220,20 +220,32 @@ describe('dispatchTask', () => {
       ).rejects.toThrow(/could not resolve the identity/)
     })
 
-    it('is never consulted when --agent is omitted — posting the brief alone needs no Principal check', async () => {
-      let authChecked = false
+    it('refuses before any render, comment check, or post when the actor is not on the Principal allowlist — no --agent, posting alone is gated too', async () => {
+      let postCalled = false
+      await expect(
+        dispatchTask(
+          { tranche: 'plan-brief-v1', n: 427 },
+          deps({
+            resolveDispatchAuthorization: () => ({ authorized: false, login: 'random-collaborator' }),
+            postMarkedComment: () => {
+              postCalled = true
+              return 'unused'
+            }
+          })
+        )
+      ).rejects.toThrow(/random-collaborator.*Principal allowlist/s)
+      expect(postCalled).toBe(false)
+    })
+
+    it('proceeds to post when the actor IS on the Principal allowlist, no --agent needed', async () => {
       const result = await dispatchTask(
         { tranche: 'plan-brief-v1', n: 427 },
         postingDeps({
           postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-1',
-          resolveDispatchAuthorization: () => {
-            authChecked = true
-            return { authorized: true, login: 'a-principal' }
-          }
+          resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' })
         })
       )
       expect(result.posted).toBe(true)
-      expect(authChecked).toBe(false)
     })
   })
 })

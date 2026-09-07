@@ -182,15 +182,21 @@ async function withPromptFile<T>(prompt: string, fn: (promptFile: string) => Pro
 export type DispatchAuthorization = { authorized: boolean; login: string | null }
 
 /**
- * `--agent` starts a real, unattended, code-writing coding-agent session —
- * the one action `dispatchTask` takes that is not merely posting a comment.
- * Found live (security review): nothing gated who could trigger it — any
- * actor with `gh` write access to this repo, not only the Principal, could
- * run `--agent` locally once `dispatchRole` ships.
- * Checked BEFORE anything else — no render, no forge read, no post — when
- * `agent` is given, mirroring `refuseUnlessPrincipal`'s own fail-closed
- * posture (`lib/forge-write.ts`, `pr rule`/`issue objectives edit`): an
- * unresolvable identity refuses the same as a disallowed one.
+ * `process.md`'s own Phase 5 ("Who: Principal, or delegated Brief Author
+ * within ratification-window scope") names dispatch itself as a Principal
+ * action, not only the `--agent` session-start it can optionally trigger —
+ * freezing a brief onto an Issue is the "todo → in-flight" transition, and
+ * every automated dispatch already runs under the Principal's own `gh`
+ * identity (the same posture every other write in this model takes), so
+ * gating the whole command costs no real automation path. Found live
+ * (security review, round `1`): the first cut gated only `--agent`, leaving
+ * plain posting open to any actor with `gh` write access — precisely the
+ * gap this task's own by-hand recovery on Issue `#427` exploited, posting
+ * a comment `dispatchTask` never authorized. Checked BEFORE anything
+ * else — no render, no forge read, no post — mirroring
+ * `refuseUnlessPrincipal`'s own fail-closed posture (`lib/forge-write.ts`,
+ * `pr rule`/`issue objectives edit`): an unresolvable identity refuses the
+ * same as a disallowed one.
  */
 function resolveDispatchAuthorization(): DispatchAuthorization {
   const login = currentGhLogin()
@@ -225,7 +231,9 @@ const defaultDeps: DispatchTaskDeps = {
 /**
  * Renders the brief, posts it as the frozen `aeg:brief:v1` Issue comment
  * (refusing a second one), and starts the Developer when `--agent` is given
- * and `dispatchRole` is available.
+ * and `dispatchRole` is available. Dispatching at all — posting the brief,
+ * with or without `--agent` — is Principal-only; see
+ * `resolveDispatchAuthorization`'s own doc comment.
  */
 export async function dispatchTask(
   input: DispatchTaskInput,
@@ -234,15 +242,14 @@ export async function dispatchTask(
   const { tranche, n, agent } = input
 
   // Authorization is checked before anything else — no render, no forge
-  // read, no post — when `agent` is given: starting a real coding-agent
-  // session is the one action here that isn't merely posting a comment.
-  if (agent) {
+  // read, no post — for the whole command, not only the `--agent` path.
+  {
     const { authorized, login } = deps.resolveDispatchAuthorization()
     if (!authorized) {
       throw new DispatchTaskError(
         login === null
-          ? 'could not resolve the identity `gh` is authenticated as — starting the developer via `--agent` is Principal-only and refuses rather than proceeding with an unverified actor.'
-          : `\`${login}\` is not on the Principal allowlist — starting the developer via \`--agent\` is Principal-only.`
+          ? 'could not resolve the identity `gh` is authenticated as — `task dispatch` is Principal-only and refuses rather than proceeding with an unverified actor.'
+          : `\`${login}\` is not on the Principal allowlist — \`task dispatch\` is Principal-only.`
       )
     }
   }
