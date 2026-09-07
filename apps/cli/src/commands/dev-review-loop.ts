@@ -1,6 +1,6 @@
 /**
- * `vinaya dev-review-loop --task <n> --agent claude|codex|gemini`
- * (dev-review-loop-v1 task 5, `#415`). A thin argv-parsing shim over
+ * `vinaya dev-review-loop --task <n> --agent claude|codex|gemini` (`#415`).
+ * A thin argv-parsing shim over
  * `devReviewLoop` (`../lib/dev-review-loop.js`) — the real driver logic
  * lives there. Four lib calls (`loadConfig`, `isAgentVendor`, `devReviewLoop`,
  * `printJson`), the same argv-plumbing shape `dispatch`'s own command takes

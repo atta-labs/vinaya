@@ -1,6 +1,6 @@
 /**
- * `devReviewLoop` — the driver half of the loop spec (dev-review-loop-v1
- * task 5, `#415`; Linear "Tech spec — Developer Review Loop" rev 4, §16).
+ * `devReviewLoop` — the driver half of the loop spec (`#415`; Linear
+ * "Tech spec — Developer Review Loop" rev 4, §16).
  * `assessRound` (`@attalabs/aeg-core`, task 4) is the ENTIRE policy; this
  * file never re-implements a stop condition, a confidence rule, or a
  * round-outcome decision. It only turns real forge/dispatch facts into
