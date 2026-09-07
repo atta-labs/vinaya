@@ -71,6 +71,8 @@ export type DispatchOpts = {
   task?: number
   pr?: number
   round?: number
+  /** The vendor's own session/thread identifier from a prior dispatch's `resumeId`, to resume that exact session instead of starting fresh. */
+  resumeId?: string
   /**
    * The prompt's source file path — required by the brief's stated shape.
    * Unused by any of the three vendors' own invocation today (all three
@@ -87,6 +89,8 @@ export type DispatchHandle = {
   exitCode: number | null
   durationMs: number
   usage: { input: number; output: number } | null
+  /** The vendor's own session/thread identifier, parsed from a successful dispatch's stdout — `null` on any failure path or an unparseable shape. */
+  resumeId: string | null
   timedOut: boolean
   /** Set only when the dispatch did not reach a normal `outcome_received`. */
   failureReason?: DispatchFailureReason
@@ -142,15 +146,67 @@ function parseGeminiUsage(_stdout: string): null {
   return null
 }
 
-type VendorSpec = { binary: string; args: readonly string[]; parseUsage: UsageParser }
+function parseClaudeResumeId(stdout: string): string | null {
+  try {
+    const obj = JSON.parse(stdout) as { session_id?: unknown }
+    return typeof obj.session_id === 'string' ? obj.session_id : null
+  } catch {
+    return null
+  }
+}
+
+function parseCodexResumeId(stdout: string): string | null {
+  for (const raw of stdout.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    try {
+      const obj = JSON.parse(line) as { type?: unknown; thread_id?: unknown }
+      if (obj.type === 'thread.started' && typeof obj.thread_id === 'string') return obj.thread_id
+    } catch {
+      // not a JSON line — same defensive posture as parseCodexUsage
+    }
+  }
+  return null
+}
+
+function parseGeminiResumeId(stdout: string): string | null {
+  try {
+    const obj = JSON.parse(stdout) as { session_id?: unknown }
+    return typeof obj.session_id === 'string' ? obj.session_id : null
+  } catch {
+    return null
+  }
+}
+
+type VendorSpec = {
+  binary: string
+  args: readonly string[]
+  resumeArgs: (id: string) => string[]
+  parseUsage: UsageParser
+  parseResumeId: (stdout: string) => string | null
+}
 
 const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
-  claude: { binary: 'claude', args: ['-p', '--output-format', 'json'], parseUsage: parseClaudeUsage },
-  codex: { binary: 'codex', args: ['exec', '--json', '-'], parseUsage: parseCodexUsage },
+  claude: {
+    binary: 'claude',
+    args: ['-p', '--output-format', 'json'],
+    resumeArgs: (id) => ['-p', '-r', id, '--output-format', 'json'],
+    parseUsage: parseClaudeUsage,
+    parseResumeId: parseClaudeResumeId
+  },
+  codex: {
+    binary: 'codex',
+    args: ['exec', '--json', '-'],
+    resumeArgs: (id) => ['exec', 'resume', id, '--json', '-'],
+    parseUsage: parseCodexUsage,
+    parseResumeId: parseCodexResumeId
+  },
   gemini: {
     binary: 'gemini',
     args: ['-p', '', '--output-format', 'json', '--skip-trust'],
-    parseUsage: parseGeminiUsage
+    resumeArgs: (id) => ['-p', '', '--resume', id, '--output-format', 'json', '--skip-trust'],
+    parseUsage: parseGeminiUsage,
+    parseResumeId: parseGeminiResumeId
   }
 }
 
@@ -307,7 +363,7 @@ export async function dispatchRole(
       duration_ms: durationMs
     })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
-    return { exitCode: null, durationMs, usage: null, timedOut: false, failureReason: 'refused' }
+    return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
   }
 
   {
@@ -328,7 +384,7 @@ export async function dispatchRole(
   const timeoutMs = loadConfig()?.dispatch?.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
   return new Promise<DispatchHandle>((resolve) => {
-    const child = spawn(binaryPath, vendor.args, {
+    const child = spawn(binaryPath, opts.resumeId ? vendor.resumeArgs(opts.resumeId) : vendor.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
@@ -391,7 +447,7 @@ export async function dispatchRole(
         duration_ms: durationMs
       })
       void finish(
-        { exitCode: null, durationMs, usage: null, timedOut: false, failureReason: 'crash' },
+        { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'crash' },
         'dispatch_failed',
         priorSize
       )
@@ -424,7 +480,7 @@ export async function dispatchRole(
           duration_ms: durationMs
         })
         void finish(
-          { exitCode: code, durationMs, usage: null, timedOut: true, failureReason: 'timeout' },
+          { exitCode: code, durationMs, usage: null, resumeId: null, timedOut: true, failureReason: 'timeout' },
           'dispatch_failed',
           priorSize
         )
@@ -445,7 +501,7 @@ export async function dispatchRole(
           duration_ms: durationMs
         })
         void finish(
-          { exitCode: code, durationMs, usage: null, timedOut: false, failureReason: 'crash' },
+          { exitCode: code, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'crash' },
           'dispatch_failed',
           priorSize
         )
@@ -453,6 +509,7 @@ export async function dispatchRole(
       }
 
       const usage = vendor.parseUsage(stdoutBuf)
+      const resumeId = vendor.parseResumeId(stdoutBuf)
       const priorSize = sizeOfSafe(outboxPath)
       log({
         kind: 'dispatch',
@@ -468,7 +525,7 @@ export async function dispatchRole(
         usage,
         duration_ms: durationMs
       })
-      void finish({ exitCode: code, durationMs, usage, timedOut: false }, 'outcome_received', priorSize)
+      void finish({ exitCode: code, durationMs, usage, resumeId, timedOut: false }, 'outcome_received', priorSize)
     })
 
     child.stdin.write(prompt)
