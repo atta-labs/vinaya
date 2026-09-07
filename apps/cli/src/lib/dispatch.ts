@@ -182,10 +182,25 @@ function promptHashOf(prompt: string): string {
  * dispatch (`dispatchCommand`'s own `process.exit(1)`) can abandon the write
  * mid-flight, silently losing the very `dispatch_failed` line O2 requires.
  * This mirrors `apps/cli/src/commands/log.ts`'s `waitForOwnLine` discipline
- * exactly (that helper is private to that file, so this is its own scoped
- * copy, matched on `run_id` + `kind` + `event` rather than `op`/`target`).
+ * (that helper is private to that file, so this is its own scoped copy),
+ * matched on `run_id` + `effect_id` + `kind` + `event` — not `run_id` alone.
+ *
+ * **`run_id` alone is not unique to one dispatch (code-review finding,
+ * PR #441).** A dispatched role's own `vinaya dispatch` call (a nested
+ * dispatch — no loop feature required, reachable today) inherits its
+ * parent's `VINAYA_RUN_ID` via the child's env (by design, so a report can
+ * join every line under one run) — `createLogSink`'s own `runId = deps.env().
+ * VINAYA_RUN_ID || randomUUID()` picks that inherited value straight back
+ * up. Two dispatches sharing one `run_id` racing this same outbox file could
+ * match EACH OTHER's `dispatched`/`outcome_received` line on `run_id` +
+ * `kind` + `event` alone, resolving early on a line that was never this
+ * call's own — reintroducing the exact "a concurrent process's write read as
+ * mine" bug class this polling exists to close (`log.ts`'s own
+ * `tailHasOwnLine` doc comment). `effect_id` (`randomUUID()`, generated once
+ * per `dispatchRole` call, present on every line that call logs) is the
+ * value actually unique per invocation; matching on it too closes this.
  */
-function hasOwnDispatchLine(path: string, priorSize: number, runId: string, event: string): boolean {
+function hasOwnDispatchLine(path: string, priorSize: number, runId: string, effectId: string, event: string): boolean {
   let buf: Buffer
   try {
     buf = readFileSync(path)
@@ -196,8 +211,15 @@ function hasOwnDispatchLine(path: string, priorSize: number, runId: string, even
   for (const raw of buf.subarray(priorSize).toString('utf8').split('\n')) {
     if (!raw) continue
     try {
-      const obj = JSON.parse(raw) as { meta?: { run_id?: unknown }; kind?: unknown; event?: unknown }
-      if (obj.meta?.run_id === runId && obj.kind === 'dispatch' && obj.event === event) return true
+      const obj = JSON.parse(raw) as {
+        meta?: { run_id?: unknown }
+        effect_id?: unknown
+        kind?: unknown
+        event?: unknown
+      }
+      if (obj.meta?.run_id === runId && obj.effect_id === effectId && obj.kind === 'dispatch' && obj.event === event) {
+        return true
+      }
     } catch {
       // not a JSON line — never trusted blindly
     }
@@ -209,12 +231,13 @@ async function waitForDispatchLine(
   path: string,
   priorSize: number,
   runId: string,
+  effectId: string,
   event: string,
   timeoutMs = 2000
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (hasOwnDispatchLine(path, priorSize, runId, event)) return
+    if (hasOwnDispatchLine(path, priorSize, runId, effectId, event)) return
     await new Promise((r) => setTimeout(r, 5))
   }
   // Best-effort durability wait, not a correctness gate — `log()` itself
@@ -283,7 +306,7 @@ export async function dispatchRole(
       reason: 'refused',
       duration_ms: durationMs
     })
-    await waitForDispatchLine(outboxPath, priorSize, runId, 'dispatch_failed')
+    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     return { exitCode: null, durationMs, usage: null, timedOut: false, failureReason: 'refused' }
   }
 
@@ -299,7 +322,7 @@ export async function dispatchRole(
       effect_id: effectId,
       prompt_hash: promptHashOf(prompt)
     })
-    await waitForDispatchLine(outboxPath, priorSize, runId, 'dispatched')
+    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatched')
   }
 
   const timeoutMs = loadConfig()?.dispatch?.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -345,7 +368,7 @@ export async function dispatchRole(
       // The corresponding `log()` call already ran, with `priorSize` taken
       // right before it — this just confirms it landed before the caller
       // can possibly exit the process out from under it.
-      await waitForDispatchLine(outboxPath, priorSize, runId, event)
+      await waitForDispatchLine(outboxPath, priorSize, runId, effectId, event)
       resolve(handle)
     }
 

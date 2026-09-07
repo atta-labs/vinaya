@@ -335,3 +335,80 @@ describe('dispatchRole — two dispatches in the same process', () => {
     expect(runIds.size).toBe(2)
   })
 })
+
+describe('dispatchRole — a shared run_id (a nested dispatch inheriting VINAYA_RUN_ID)', () => {
+  it('correlates each of two concurrent dispatches by effect_id, not run_id alone (code-review finding, PR #441)', async () => {
+    // A dispatched role's own `vinaya dispatch` call inherits its parent's
+    // `VINAYA_RUN_ID` via the child's env (by design — no loop feature
+    // needed, reachable today) — `createLogSink`'s `runId = deps.env().
+    // VINAYA_RUN_ID || randomUUID()` then picks that inherited value
+    // straight back up, so two concurrent dispatches CAN legitimately
+    // share one run_id. Simulated here by exporting `VINAYA_RUN_ID` before
+    // both calls, rather than actually nesting a real child dispatch.
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\necho '{"usage":{"input_tokens":11,"output_tokens":22}}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const script = join(cwd, 'shared-run-id.ts')
+    writeFileSync(
+      script,
+      [
+        `import { dispatchRole } from ${JSON.stringify(dispatchLib)}`,
+        `process.env.VINAYA_RUN_ID = 'shared-run-id-fixture'`,
+        `const opts = { promptFile: ${JSON.stringify(promptFile)} }`,
+        // Concurrent, not sequential — this is what makes a shared
+        // run_id's two 'dispatched'/'outcome_received' pairs actually
+        // race for the same (run_id, kind, event) match window.
+        'await Promise.all([',
+        `  dispatchRole('developer', 'claude', 'p', opts),`,
+        `  dispatchRole('code-reviewer', 'claude', 'p', opts)`,
+        '])'
+      ].join('\n')
+    )
+
+    execFileSync('bun', [script], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+    })
+
+    const lines = outboxLines(home, 'none') as Array<{
+      meta: { run_id: string }
+      effect_id: string
+      event: string
+      target_role: string
+    }>
+    expect(lines.length).toBe(4)
+
+    // Both calls really did share one run_id — the scenario under test,
+    // not a fixture that accidentally avoided it.
+    const runIds = new Set(lines.map((l) => l.meta.run_id))
+    expect(runIds).toEqual(new Set(['shared-run-id-fixture']))
+
+    // Despite the shared run_id, every line is unambiguously attributable
+    // to its own call via effect_id: exactly two distinct effect_ids, each
+    // carrying exactly one 'dispatched' and one 'outcome_received' line,
+    // and each effect_id's lines agree on which role they belong to (never
+    // a 'developer' line and a 'code-reviewer' line sharing one effect_id).
+    const byEffectId = new Map<string, typeof lines>()
+    for (const line of lines) {
+      const group = byEffectId.get(line.effect_id) ?? []
+      group.push(line)
+      byEffectId.set(line.effect_id, group)
+    }
+    expect(byEffectId.size).toBe(2)
+    for (const group of byEffectId.values()) {
+      expect(group.map((l) => l.event).sort()).toEqual(['dispatched', 'outcome_received'])
+      expect(new Set(group.map((l) => l.target_role)).size).toBe(1)
+    }
+    expect(new Set(lines.map((l) => l.target_role))).toEqual(new Set(['developer', 'code-reviewer']))
+  }, 10_000)
+})
