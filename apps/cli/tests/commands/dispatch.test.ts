@@ -232,3 +232,30 @@ describe('vinaya dispatch — invalid role/vendor', () => {
     expect(r.stderr).toMatch(/nonexistent-vendor/)
   })
 })
+
+describe('vinaya dispatch --resume', () => {
+  it('reaches the child argv and resumeId appears in --json output — per-vendor argv shape is lib/dispatch.test.ts\'s job', () => {
+    const home = tempDir('vinaya-dispatch-cmd-home-')
+    const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
+    const binDir = tempDir('vinaya-dispatch-cmd-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    writeFileSync(
+      join(binDir, 'claude'),
+      `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{"session_id":"resume-id-123","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+    )
+    chmodSync(join(binDir, 'claude'), 0o755)
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, 'do the thing')
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--resume', 'resume-id-123', '--json'],
+      cwd,
+      home,
+      `${binDir}:${process.env.PATH ?? ''}`
+    )
+    expect(r.status).toBe(0)
+    expect((JSON.parse(r.stdout) as { data: { resumeId: string | null } }).data.resumeId).toBe('resume-id-123')
+    const argv = readFileSync(argvOut, 'utf8').replace(/\n$/, '').split('\n')
+    expect(argv).toEqual(['-p', '-r', 'resume-id-123', '--output-format', 'json'])
+  })
+})
