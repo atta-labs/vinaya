@@ -35,6 +35,7 @@ import { join } from 'node:path'
 import {
   assessRound,
   initialLoopState,
+  isPrincipal,
   type Confidence,
   type Decision,
   type DevReviewLoopEventInput,
@@ -63,7 +64,7 @@ import {
   type DispatchHandle
 } from './dispatch.js'
 import { AEG_BRIEF_V1_MARKER, contentAfterTwoLines } from './dispatch-task.js'
-import { GLOBAL_VINAYA_HOME } from './config.js'
+import { GLOBAL_VINAYA_HOME, loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { packageRoot } from './package-root.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
@@ -155,7 +156,55 @@ function contentAfterOneLine(body: string): string {
   return idx === -1 ? '' : body.slice(idx + 1)
 }
 
-/** Every ruling comment's body (after its marker line) on PR `prNumber`, in the forge's own comment order. */
+export type MarkerComment = { body: string; author: string | null }
+
+/**
+ * `gh {pr,issue} view --json comments` returns `author.login` on every
+ * comment by default — no extra field flag needed (confirmed against
+ * `review-post.ts`'s own identical `c.author?.login ?? null` read).
+ */
+function markerComments(raw: string): MarkerComment[] {
+  const parsed = JSON.parse(raw) as { comments: { body: string; author?: { login?: string } | null }[] }
+  return parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
+}
+
+/**
+ * Security review, PR #445 round 1, HIGH: `fetchRulings`/`fetchFrozenBrief`
+ * trusted ANY comment matching their marker regex, author unchecked — a
+ * non-principal PR/Issue commenter could post a fake `aeg:principal:ruling`-
+ * or `aeg:brief:v1`-shaped comment and have its content concatenated
+ * straight into the resumed developer's prompt every round, in this fully
+ * unattended, commit-pushing loop. Both now require the matching comment's
+ * author to resolve as a principal — the SAME `isPrincipal`/
+ * `resolvePrincipalAllowlist` machinery `review-post.ts`'s own
+ * `principalBodies` already uses for exactly this kind of forge-read trust
+ * boundary, reused rather than re-derived.
+ */
+function principalAllowlist(): string[] {
+  return resolvePrincipalAllowlist(loadTrustAnchorConfig())
+}
+
+/** Pure: every ruling body (after its marker line), from principal-authored comments only — unit-testable with no `gh` call. */
+export function filterPrincipalRulings(comments: readonly MarkerComment[], allowlist: readonly string[]): string[] {
+  return comments
+    .filter((c) => isPrincipal(c.author, allowlist as string[]))
+    .filter((c) => RULING_MARKER.test(c.body.split('\n')[0] ?? ''))
+    .map((c) => contentAfterOneLine(c.body).trim())
+}
+
+/** Pure: the principal-authored `aeg:brief:v1` comment among `comments`, or `null` — unit-testable with no `gh` call. */
+export function findPrincipalFrozenBrief(
+  comments: readonly MarkerComment[],
+  allowlist: readonly string[]
+): MarkerComment | null {
+  return (
+    comments.find(
+      (c) => c.body.split('\n')[0] === AEG_BRIEF_V1_MARKER && isPrincipal(c.author, allowlist as string[])
+    ) ?? null
+  )
+}
+
+/** Every ruling comment's body (after its marker line) on PR `prNumber`, in the forge's own comment order — principal-authored only. */
 export function fetchRulings(prNumber: number): string[] {
   let out: string
   try {
@@ -165,13 +214,10 @@ export function fetchRulings(prNumber: number): string[] {
       `fetchRulings: could not fetch PR #${prNumber}'s comments: ${err instanceof Error ? err.message : String(err)}`
     )
   }
-  const comments = (JSON.parse(out) as { comments: { body: string }[] }).comments
-  return comments
-    .filter((c) => RULING_MARKER.test(c.body.split('\n')[0] ?? ''))
-    .map((c) => contentAfterOneLine(c.body).trim())
+  return filterPrincipalRulings(markerComments(out), principalAllowlist())
 }
 
-/** The Issue's frozen `aeg:brief:v1` comment's brief text — refuses (throws) rather than inventing a brief when none exists yet. */
+/** The Issue's frozen `aeg:brief:v1` comment's brief text, principal-authored only — refuses (throws) rather than inventing a brief when none exists yet. */
 export function fetchFrozenBrief(issueNumber: number): string {
   let out: string
   try {
@@ -181,11 +227,10 @@ export function fetchFrozenBrief(issueNumber: number): string {
       `fetchFrozenBrief: could not fetch Issue #${issueNumber}'s comments: ${err instanceof Error ? err.message : String(err)}`
     )
   }
-  const comments = (JSON.parse(out) as { comments: { body: string }[] }).comments
-  const found = comments.find((c) => c.body.split('\n')[0] === AEG_BRIEF_V1_MARKER)
+  const found = findPrincipalFrozenBrief(markerComments(out), principalAllowlist())
   if (!found) {
     throw new Error(
-      `fetchFrozenBrief: Issue #${issueNumber} carries no frozen \`aeg:brief:v1\` comment — \`vinaya task dispatch\` must post the brief before this loop can start.`
+      `fetchFrozenBrief: Issue #${issueNumber} carries no principal-authored, frozen \`aeg:brief:v1\` comment — \`vinaya task dispatch\` must post the brief before this loop can start.`
     )
   }
   return contentAfterTwoLines(found.body)
@@ -194,6 +239,38 @@ export function fetchFrozenBrief(issueNumber: number): string {
 export function fetchIssueTitle(issueNumber: number): string {
   const out = sh('gh', ['issue', 'view', String(issueNumber), '--json', 'title'])
   return (JSON.parse(out) as { title: string }).title
+}
+
+/**
+ * Code review, PR #445 round 1, BLOCKER: the reviewer prompt's `OBJECTIVES:`
+ * fact was `fetchFrozenBrief`'s ENTIRE brief text (every section — Context,
+ * Technical dependencies, stop conditions, all of it), not "objectives from
+ * the Issue" as O2 actually says and `renderReviewerPrompt`'s own doc
+ * comment claims. This reads the Issue's `## Objectives` section only,
+ * directly off its body (never the frozen brief comment) — the current
+ * objectives, nothing else, matching the facts-only contract the lint in
+ * `renderReviewerDispatchPrompt` exists to enforce.
+ */
+/** Pure: the `## Objectives` section text out of an Issue body, or `''` when the Issue has none — unit-testable with no `gh` call. */
+export function extractObjectivesSection(body: string): string {
+  const lines = body.split('\n')
+  const start = lines.findIndex((l) => /^##\s*objectives\s*$/i.test(l.trim()))
+  if (start === -1) return ''
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((l) => /^##\s/.test(l))
+  return (end === -1 ? rest : rest.slice(0, end)).join('\n').trim()
+}
+
+export function fetchIssueObjectives(issueNumber: number): string {
+  let body: string
+  try {
+    body = sh('gh', ['issue', 'view', String(issueNumber), '--json', 'body', '--jq', '.body'])
+  } catch (err) {
+    throw new Error(
+      `fetchIssueObjectives: could not fetch Issue #${issueNumber}'s body: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+  return extractObjectivesSection(body)
 }
 
 const ISSUE_TITLE_SHAPE = /^\[([^\]]+)\]\s+(\d+)\s+[—-]/
@@ -381,6 +458,7 @@ export type LoopDeps = {
   fetchCiConclusion: typeof fetchCiConclusion
   fetchRulings: typeof fetchRulings
   fetchFrozenBrief: typeof fetchFrozenBrief
+  fetchIssueObjectives: typeof fetchIssueObjectives
   developerBranchFor: (issueNumber: number) => string
   findOpenPrForBranch: typeof findOpenPrForBranch
   outboxRoot: () => string
@@ -459,6 +537,7 @@ function defaultDeps(): LoopDeps {
     fetchCiConclusion,
     fetchRulings,
     fetchFrozenBrief,
+    fetchIssueObjectives,
     developerBranchFor: (n) => developerBranchFor(n),
     findOpenPrForBranch,
     outboxRoot,
@@ -945,7 +1024,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     } else if (decision.type === 'dispatch_reviewers') {
       const head = d.resolveHead(branch)
       const ciConclusion = d.fetchCiConclusion(head)
-      const objectives = d.fetchFrozenBrief(input.task)
+      const objectives = d.fetchIssueObjectives(input.task)
       const rulings = d.fetchRulings(prNumber)
       const facts: ReviewerPromptFacts = { objectives, rulings, head, ciConclusion }
 

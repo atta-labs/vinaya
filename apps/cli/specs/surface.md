@@ -359,9 +359,13 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `unsetCoreHooksPath` | function | `apps/cli/src/lib/detect.ts` |
 | `resolveHead` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchCiConclusion` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `filterPrincipalRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `findPrincipalFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchIssueTitle` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `extractObjectivesSection` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchIssueObjectives` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `developerBranchFor` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `findOpenPrForBranch` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `lintReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
