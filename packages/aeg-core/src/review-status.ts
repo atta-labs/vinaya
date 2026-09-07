@@ -78,9 +78,13 @@ export function parseDeveloperRoundMarker(body: string): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-type VerdictComment = { judgedHead: string | null; objectivesVersion: string | null; ids: Map<string, string | null> }
+export type VerdictComment = {
+  judgedHead: string | null
+  objectivesVersion: string | null
+  ids: Map<string, string | null>
+}
 
-function findingStates(body: string): Map<string, string | null> {
+export function findingStates(body: string): Map<string, string | null> {
   const out = new Map<string, string | null>()
   for (const m of body.matchAll(FINDING_LINE)) {
     const id = `F${m[1]}`
@@ -108,15 +112,21 @@ function asVerdictComment(body: string): VerdictComment | null {
   }
 }
 
-type Round = { judgedHead: string | null; objectivesVersion: string | null; ids: Map<string, string | null> }
+export type Round = { judgedHead: string | null; objectivesVersion: string | null; ids: Map<string, string | null> }
 
 /**
  * One round per `Judged head:` value, in the order that head was first
  * judged. A code-review verdict and a security verdict cast on the same head
  * are one round, not two — which is why the grouping key is the judged head
  * and not the comment count.
+ *
+ * Exported for `dev-review-loop/assess-round.ts` (dev-review-loop-v1 task 4,
+ * `#414`) to reuse the same id-state merge semantics (first non-null state
+ * wins on a duplicate id) when it combines a round's reviewer and security
+ * `VerdictObservation`s into one id-state map — no behaviour change, no
+ * second copy of the merge rule.
  */
-function groupRounds(verdicts: VerdictComment[]): Round[] {
+export function groupRounds(verdicts: VerdictComment[]): Round[] {
   const rounds: Round[] = []
   for (const v of verdicts) {
     const existing = rounds.find((r) => r.judgedHead === v.judgedHead)

@@ -9,6 +9,7 @@ import { briefRenderCommand } from './commands/brief.js'
 import { checkCommand } from './commands/check.js'
 import { commitMsgCommand } from './commands/commit-msg.js'
 import { demoBreakCommand } from './commands/demo.js'
+import { dispatchCommand } from './commands/dispatch.js'
 import { doctorCommand } from './commands/doctor.js'
 import { doctrineCommand } from './commands/doctrine.js'
 import { ejectCommand } from './commands/eject.js'
@@ -256,6 +257,10 @@ try {
     }
     case 'tokens': {
       tokensCommand(args)
+      break
+    }
+    case 'dispatch': {
+      await dispatchCommand(args)
       break
     }
     default:

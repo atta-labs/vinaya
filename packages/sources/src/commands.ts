@@ -614,5 +614,30 @@ export const COMMANDS: readonly Command[] = [
       'This is the one procedure named in `apps/cli/specs/self-hosting.md`, "How the published version is produced" — publishing itself stays manual and human-triggered; this command only removes the hand-typed four-step recipe.'
     ],
     status: 'shipped'
+  },
+  {
+    name: 'dispatch',
+    description:
+      "Start a role's headless agent session (claude/codex/gemini) with attribution set on its environment, recording the outcome through the Vinaya Log",
+    flags: [
+      {
+        flag: '--agent',
+        description: 'Vendor to start: `claude`, `codex`, or `gemini` (falls back to `dispatch.agent` in config)'
+      },
+      { flag: '--prompt-file', description: 'Path to the prompt text sent to the agent (never on argv)' },
+      { flag: '--task', description: "This dispatch's task Issue number — mutually exclusive with `--pr`" },
+      {
+        flag: '--pr',
+        description: "Flush the outbox to this PR's Issue after the dispatch — mutually exclusive with `--task`"
+      },
+      { flag: '--round', description: 'Round number, for a dispatch inside a review loop' },
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
+    ],
+    details: [
+      "Sets `VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_ROUND` on the child only — never on this process's own environment — and refuses by name, before any spawn attempt, when the named vendor binary is absent from `PATH` or present but not executable.",
+      "Records `dispatched` (with the prompt's sha256), `outcome_received` (duration, the vendor's own usage when its stdout prints a recognizable shape), or `dispatch_failed` (`timeout`, `crash`, or `refused`) through the Vinaya Log's one `dispatch` family writer, `dispatchRole`. A wall-time ceiling (`dispatch.timeoutMs` in config, default one hour) sends `SIGTERM` then, after a grace window, `SIGKILL`.",
+      "When `--task` or `--pr` is given, flushes that outbox via `vinaya log flush` immediately after the child settles — `--task` and `--pr` are mutually exclusive here, matching `log flush`'s own single-target rule. Without either, the dispatch still runs and logs; nothing is flushed, and the lines ride to the next flush."
+    ],
+    status: 'shipped'
   }
 ]

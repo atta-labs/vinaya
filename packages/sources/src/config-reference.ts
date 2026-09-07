@@ -413,6 +413,35 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       'The archived-tranche directory `reader-resolvable-prose`\'s legacy-slug citation class derives its slug list from (filenames only, never content). Defaults to `"<doctrineRoot>/tranches/completed"`. Absent on disk degrades this class to explicitly dormant, never an error.'
     ],
     example: `{ "legacySlugDir": "governance-docs/tranches/completed" }`
+  },
+  {
+    key: 'dispatch',
+    type: 'object (optional)',
+    semantics: [
+      '`vinaya dispatch <role> --agent claude|codex|gemini` (`apps/cli/src/lib/dispatch.ts`) settings: the wall-time ceiling before the headless child is signaled, and a default vendor for repos that always dispatch the same one.'
+    ],
+    example: `{
+  "dispatch": {
+    "timeoutMs": 3600000,
+    "agent": "claude"
+  }
+}`
+  },
+  {
+    key: 'dispatch.timeoutMs',
+    type: 'number (optional, positive integer)',
+    semantics: [
+      'The wall-time ceiling for one dispatched agent process. Absent defaults to one hour (3600000ms). When it elapses, `dispatchRole` sends `SIGTERM`, then `SIGKILL` after a fixed grace window if the child has not exited.'
+    ],
+    example: `{ "dispatch": { "timeoutMs": 1800000 } }`
+  },
+  {
+    key: 'dispatch.agent',
+    type: '"claude" | "codex" | "gemini" (optional)',
+    semantics: [
+      "A default vendor `vinaya dispatch`'s own `--agent` flag overrides when given. Absent, `--agent` is required on the command line."
+    ],
+    example: `{ "dispatch": { "agent": "claude" } }`
   }
 ] as const
 
