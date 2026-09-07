@@ -234,7 +234,7 @@ describe('vinaya dispatch — invalid role/vendor', () => {
 })
 
 describe('vinaya dispatch --resume', () => {
-  it('reaches the child argv and resumeId appears in --json output — per-vendor argv shape is lib/dispatch.test.ts\'s job', () => {
+  it("reaches the child argv and resumeId appears in --json output — per-vendor argv shape is lib/dispatch.test.ts's job", () => {
     const home = tempDir('vinaya-dispatch-cmd-home-')
     const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
     const binDir = tempDir('vinaya-dispatch-cmd-bin-')
