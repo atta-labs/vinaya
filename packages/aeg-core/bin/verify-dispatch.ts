@@ -31,10 +31,13 @@
  *                      classification + a baseline capture (informational —
  *                      the standing contract is "≤ captured baseline", never
  * "must be green"/live-fire #2).
- *   --premise <file>   Re-assert every `Premise:` pin in the given body file
- *                      against the current on-disk state. A failed premise
- *                      is a stop condition, not a silent re-guess
- *                      (contracts/brief-developer.md).
+ *   --premise [file]   Re-assert every `Premise:` pin against the current
+ *                      on-disk state. With a file argument, reads that body
+ *                      file (a brief not yet dispatched). With none, resolves
+ *                      the task Issue's frozen `aeg:brief:v1` comment
+ *                      instead (plan-brief-v1 task 2, #427) and re-asserts
+ *                      the premises it carries. A failed premise is a stop
+ *                      condition, not a silent re-guess (contracts/brief-developer.md).
  *   --simulate <file>  Dry-run the exit gates BEFORE work starts: verify-brief
  *                      + verify-docs --pr + push-mode C5, all against the
  *                      intended body file. No diff exists yet at this point,
@@ -660,6 +663,91 @@ function countErrorLines(output: string): number {
 
 // ---- modes ---------------------------------------------------------------------
 
+const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
+
+/**
+ * Everything in a posted `aeg:brief:v1` comment after its marker line and
+ * `Brief hash:` line, as a raw substring — never a line-split-then-rejoin,
+ * which would silently renormalize whatever separates the two header lines
+ * from the brief body. Exported so `verify-dispatch.test.ts` can pin it
+ * against the same fixture vectors `apps/cli/tests/lib/dispatch-task.test.ts`
+ * pins its own copy against (`dispatch-task.ts`'s `contentAfterTwoLines`) —
+ * duplicated, not imported: this bin lives in `@attalabs/aeg-core` and
+ * cannot import `apps/cli` (`check-brief-shape.ts` carries a third copy for
+ * the same reason). Found live (code review): three copies of hash-contract-
+ * critical logic with zero test proving they agree is exactly the
+ * three-copies-disagreeing failure mode `edge-resolve.ts`'s own doc comment
+ * already warns this codebase about — this export, and its two siblings, are
+ * what let each side's test suite assert the SAME fixture vectors rather
+ * than trusting the doc comment alone.
+ */
+export function contentAfterTwoLines(body: string): string {
+  const first = body.indexOf('\n')
+  if (first === -1) return ''
+  const second = body.indexOf('\n', first + 1)
+  if (second === -1) return ''
+  return body.slice(second + 1)
+}
+async function runPremiseModeFromIssue(trancheSlug: string, taskId: string): Promise<void> {
+  const repo = await resolveRepo()
+  if (!repo) {
+    console.error(
+      'verify-dispatch --premise: could not resolve a GitHub repo (set AEG_REPO=owner/repo, or confirm `gh auth login`).'
+    )
+    process.exit(1)
+  }
+
+  let tranche: Tranche
+  try {
+    tranche = await deriveTrancheFromForge(repo.owner, repo.repo, trancheSlug)
+  } catch (err) {
+    console.error(
+      `verify-dispatch --premise: could not derive tranche \`${trancheSlug}\` from the forge: ${err instanceof Error ? err.message : String(err)}`
+    )
+    process.exit(1)
+  }
+  const task = tranche.tasks.find((t) => t.id === taskId)
+  if (!task || task.issue === null) {
+    console.error(
+      `verify-dispatch --premise: not dispatched — task "${taskId}" in tranche \`${trancheSlug}\` has no Issue.`
+    )
+    process.exit(1)
+  }
+
+  const commentsJson = shJson<{ comments: Array<{ body: string }> }>('gh', [
+    'issue',
+    'view',
+    String(task.issue),
+    '-R',
+    `${repo.owner}/${repo.repo}`,
+    '--json',
+    'comments'
+  ])
+  const briefComment = commentsJson?.comments.find((c) => c.body.split('\n')[0] === AEG_BRIEF_V1_MARKER)
+  if (!briefComment) {
+    console.error(`verify-dispatch --premise: not dispatched — no \`aeg:brief:v1\` comment on Issue #${task.issue}.`)
+    process.exit(1)
+  }
+
+  const brief = contentAfterTwoLines(briefComment.body)
+
+  const assertions = parsePremiseBlock(brief)
+  if (assertions.length === 0) {
+    console.log(
+      'verify-dispatch --premise: no `Premise:` assertions found in the dispatched brief — nothing to re-assert.'
+    )
+    process.exit(0)
+  }
+  const result = checkPremises(assertions, (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null))
+  if (!result.pass) {
+    console.error(`\nverify-dispatch --premise FAILED — ${result.failures.length} premise(s) no longer hold:\n`)
+    for (const f of result.failures) console.error(`  ✗ ${f}`)
+    process.exit(1)
+  }
+  console.log(`verify-dispatch --premise: all ${assertions.length} premise(s) re-asserted successfully.`)
+  process.exit(0)
+}
+
 function runPremiseMode(bodyFile: string): void {
   const body = readFileSync(bodyFile, 'utf8')
   const assertions = parsePremiseBlock(body)
@@ -925,7 +1013,7 @@ if (import.meta.main) {
 
   if (!trancheSlug || !taskId || trancheSlug.startsWith('--')) {
     console.error(
-      'Usage: verify-dispatch <tranche> <n> [--premise <file>] [--simulate <file>] [--check-baseline <file>] [--surfaces <glob1,glob2,...>]'
+      'Usage: verify-dispatch <tranche> <n> [--premise [file]] [--simulate <file>] [--check-baseline <file>] [--surfaces <glob1,glob2,...>]'
     )
     process.exit(1)
   }
@@ -944,11 +1032,11 @@ if (import.meta.main) {
     runSurfacesMode(globs)
   } else if (premiseIdx !== -1) {
     const file = argv[premiseIdx + 1]
-    if (!file) {
-      console.error('--premise requires a body-file path.')
-      process.exit(1)
+    if (!file || file.startsWith('--')) {
+      await runPremiseModeFromIssue(trancheSlug, taskId)
+    } else {
+      runPremiseMode(file)
     }
-    runPremiseMode(file)
   } else if (simulateIdx !== -1) {
     const file = argv[simulateIdx + 1]
     if (!file) {

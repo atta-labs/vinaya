@@ -1,7 +1,4 @@
 import { execFileSync } from 'node:child_process'
-import { rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { printJson } from '../lib/envelope'
 import {
   type BodyResult,
@@ -133,79 +130,41 @@ function fetchPrForgeContext(prRef: string): { changedFiles: string[]; branch: s
 }
 
 /**
- * `pr create`'s brief/report split (task 4, #397): `aeg-root/templates/
- * pr-report-template.md`'s `## Reference — the dispatched brief` section,
- * wrapped in `<!-- aeg:brief:start -->` / `<!-- aeg:brief:end -->` markers,
- * is never sent to the forge as body text — PR `#396`'s body was `47` KB,
- * `37` KB of it the brief copy. `report` is everything before the START
- * marker (what `gh pr create` actually receives); `brief` is the marked
- * content, verbatim, posted as its own PR comment. A body with no START marker (a brief with no `## Reference`
- * section at all, or a non-brief-shaped body) splits to `{ report: body,
- * brief: null }` — nothing to post, nothing lost.
- *
- * Uses the LAST START marker and the FIRST END marker after it, never the
- * first START in the body: the template's own Decisions/Reference prose can
- * legitimately mention the marker syntax by name (as this very docstring
- * does), and the one real, intentional pair is always the final section in
- * a well-formed body — an `indexOf` from the front collided with exactly
- * such a mention live on this task's own dispatch (#397, PR `#398`),
- * truncating the report and posting a near-empty brief comment.
+ * The brief now lives on the Issue as the frozen `aeg:brief:v1` comment,
+ * posted by `dispatchTask` (`lib/dispatch-task.ts`) —
+ * `pr create` no longer splits a brief section out of the PR body, and never
+ * posts a second copy of it as a PR comment. A body still carrying either
+ * legacy marker (from a stale template, or a hand-pasted reference brief)
+ * is refused outright rather than silently accepted: a PR body copying the
+ * OLD split convention has already stopped matching what every reader now
+ * expects to find on the Issue, and passing it through would ship a body
+ * shaped for a mechanism that no longer runs.
  */
-const BRIEF_START = '<!-- aeg:brief:start -->'
-const BRIEF_END = '<!-- aeg:brief:end -->'
-
-function splitBriefSection(body: string): { report: string; brief: string | null } {
-  const startIdx = body.lastIndexOf(BRIEF_START)
-  if (startIdx === -1) return { report: body, brief: null }
-  const contentStart = startIdx + BRIEF_START.length
-  const endIdx = body.indexOf(BRIEF_END, contentStart)
-  if (endIdx === -1) return { report: body, brief: null }
-  return {
-    report: body.slice(0, startIdx).trimEnd(),
-    brief: body.slice(contentStart, endIdx).trim()
-  }
-}
+const LEGACY_BRIEF_MARKERS = ['<!-- aeg:brief:start -->', '<!-- aeg:brief:end -->']
 
 /**
- * Posts the split-out brief as its own PR comment, marked `<!-- aeg:brief
- * -->` so every reader that binds to that marker recognizes it regardless
- * of which identity posted it.
- *
- * A failed post is a HARD refusal: silently dropping the brief loses the
- * PR's only durable record of intent, indistinguishable from a Developer
- * who never pasted one.
+ * Line-anchored, not a whole-body substring search: the real, structural
+ * marker this retires always sat alone on its own line, immediately
+ * preceding `## Reference — the dispatched brief`. A body that merely
+ * *describes* the retired convention in prose — this very PR's own body
+ * included, wrapped in backticks — must not trip the same refusal a real
+ * leftover marker does (found live authoring this task's own PR body).
  */
-function postBriefComment(url: string, brief: string): void {
-  const match = /\/pull\/(\d+)/.exec(url)
-  if (!match) {
-    refuse([
-      makeCheckError(
-        'pr-brief-comment',
-        `PR was created (${url || '(gh printed no URL)'}) but its number could not be parsed from the URL, so the aeg:brief comment was not posted.`,
-        'Manually post the dispatched brief as a PR comment, prefixed with `<!-- aeg:brief -->` on its own line.'
-      )
-    ])
-  }
-  const prNumber = match[1] as string
-  const commentBody = `<!-- aeg:brief -->\n${brief}\n`
-  const tmp = join(tmpdir(), `vinaya-pr-create-brief-${process.pid}-${Date.now()}.md`)
-  writeFileSync(tmp, commentBody)
-  try {
-    execFileSync('gh', ['pr', 'comment', prNumber, '--body-file', tmp], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-  } catch (err) {
-    refuse([
-      makeCheckError(
-        'pr-brief-comment',
-        `PR ${url} was created but posting its aeg:brief comment failed: ${err instanceof Error ? err.message : String(err)}`,
-        `Post the comment manually: \`gh pr comment ${prNumber} --body-file <brief.md>\` (prefixed with \`<!-- aeg:brief -->\`).`
-      )
-    ])
-  } finally {
-    rmSync(tmp, { force: true })
-  }
+function hasLegacyBriefMarkerLine(body: string, marker: string): boolean {
+  const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`^\\s*${escaped}\\s*$`, 'm').test(body)
+}
+
+function refuseOnLegacyBriefMarkers(body: string, retryCommand: string): void {
+  const found = LEGACY_BRIEF_MARKERS.filter((marker) => hasLegacyBriefMarkerLine(body, marker))
+  if (found.length === 0) return
+  refuse([
+    makeCheckError(
+      'pr-brief-comment',
+      `body carries the retired brief-split marker(s) (${found.join(', ')}) — the brief lives on the Issue's \`aeg:brief:v1\` comment now, never split out of the PR body.`,
+      `Remove the \`## Reference\` section and its markers from the body (see \`aeg-root/templates/pr-report-template.md\`), then re-run \`${retryCommand}\`.`
+    )
+  ])
 }
 
 // --- commands ----------------------------------------------------------------
@@ -313,13 +272,11 @@ export async function prCreateCommand(args: string[]): Promise<void> {
     ])
   }
 
-  // Split the brief out (task 4, #397) BEFORE any check runs: every gate
-  // below — `validateForgeWrite`, `body-bare-digits`, the registry's
-  // `PR_BODY` checks — grades what actually reaches the forge as the body,
-  // never the reference brief riding along beside it. `body` from here on
-  // IS the report half; `brief` (possibly null) is posted as its own
-  // comment once the PR exists.
-  const { report: body, brief } = splitBriefSection(rawBody)
+  // No split any more: the brief lives on the Issue's `aeg:brief:v1`
+  // comment, never riding along inside the PR body — `body` is simply the
+  // raw body every gate below grades and `gh` receives.
+  const body = rawBody
+  refuseOnLegacyBriefMarkers(body, RETRY_CREATE)
 
   const sections = resolveSections('pr', RETRY_CREATE)
   const changedFiles = localChangedFiles()
@@ -363,13 +320,7 @@ export async function prCreateCommand(args: string[]): Promise<void> {
     reportPass(json, 'pr create')
     return
   }
-  // `resolveShippableArgs` materializes whatever `body` this BodyResult
-  // carries into the temp file `gh` actually reads — swapping in the report
-  // half here (never the raw combined body) is what makes `body` the file
-  // `gh pr create` receives, not merely the text these checks graded.
-  const shippedBodyResult: BodyResult | null = bodyResult ? { ...bodyResult, body } : null
-  const url = runGhWrite(['pr', 'create'], ghArgs, shippedBodyResult, json)
-  if (brief !== null) postBriefComment(url, brief)
+  runGhWrite(['pr', 'create'], ghArgs, bodyResult, json)
 }
 
 export function prEditCommand(args: string[]): void {

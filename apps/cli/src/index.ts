@@ -35,6 +35,7 @@ import { releaseCommand } from './commands/release.js'
 import { reviewPostCommand } from './commands/review-post.js'
 import { reviewStatusCommand } from './commands/review-status.js'
 import { runStudio } from './commands/studio.js'
+import { taskDispatchCommand } from './commands/task.js'
 import { tokensCommand } from './commands/tokens.js'
 import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
@@ -180,6 +181,16 @@ try {
         console.error(
           `Unknown 'issue' subcommand: ${rawSubcommand ?? '(none)'} (expected 'create', 'edit', or 'objectives edit')`
         )
+        process.exit(2)
+      }
+      break
+    }
+    case 'task': {
+      const [subcommand, ...rest] = args
+      if (subcommand === 'dispatch') {
+        await taskDispatchCommand(rest)
+      } else {
+        console.error(`Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch')`)
         process.exit(2)
       }
       break

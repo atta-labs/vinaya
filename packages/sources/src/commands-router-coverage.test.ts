@@ -80,6 +80,7 @@ describe('router -> COMMANDS coverage', () => {
         'issue create',
         'issue edit',
         'issue objectives edit',
+        'task dispatch',
         'log flush',
         'milestone create',
         'milestone adopt',

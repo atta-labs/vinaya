@@ -7,7 +7,7 @@ Closes #381
 **Project:** aeg-core, cli, sources, vinaya
 <!-- AEG:PROJECT:END -->
 
-## Summary
+## Decisions
 
 Two pull requests in this tranche took six and four review rounds, and every extra round traced back to a sentence somebody wrote instead of a command somebody ran. This turns each of those sentences into a function with an output. Token rows are read from round comments through the principal allowlist, so a stranger's pasted table is no longer counted as a role's turn. A ticked `[agent]` Test Plan box now has to have a Developer round comment standing behind it, and when it does not the gate says "not yet" — a new `pending` field on `CheckError` — rather than "wrong". `vinaya review status <pr>` prints the loop's own state and the branch's distance from its base, so "is this converging?" and "am I behind?" are answered by running something. The merge gate binds a verdict to the pull request's patch identity as well as its head sha, so a merge from the main branch that changes not one line of the patch no longer costs a round re-casting a verdict over changes the reviewer already read. And a new ring-`0` check refuses a staged check binary whose index mode is not executable, before it leaves the machine.
 

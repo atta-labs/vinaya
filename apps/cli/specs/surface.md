@@ -16,7 +16,7 @@ Three layers:
 
 **Predicate the test enforces (per Principal ruling on Issue #418):** for a command's entry function, collect every call expression (transitively through same-file helpers) whose callee resolves to an export of `apps/cli/src/lib/**` or of another `apps/cli/src/commands/*.ts` file. A call into `apps/cli/src/lib` beyond the one named function is a violation. A call into another `commands/*.ts` file is refused outright — commands never call commands — with zero allowance beyond the same dated-exemption mechanism (no separate carve-out). `printJson`, `promptYesNo`/`closeStdin`, and `packageRoot` count toward the cap like any other call — no allowlist (see Open note below). Calls into `@attalabs/aeg-core` are unrestricted (policy is meant to be composed freely).
 
-**Open note (Principal ruling, 2026-09-05):** `printJson`, `promptYesNo`/`closeStdin`, and `packageRoot` are called by most commands purely for output/prompt/path-resolution plumbing, not business effect. They are not allowlisted out of the cap — they count like any other call — but the shape that will retire most of today's exemptions for install/scaffolding commands (`doctor`, `doctrine`, `eject`, `init`, `init product`, `quickstart`, `upgrade`, `demo break`, `waiver`, `brief render`) is a **shared command shell** consolidating this plumbing, not one of the six chokepoints below. That shell is a later task, named here as `sharedCommandShell` in the Exemptions table until it exists.
+**Open note (Principal ruling, 2026-09-05):** `printJson`, `promptYesNo`/`closeStdin`, and `packageRoot` are called by most commands purely for output/prompt/path-resolution plumbing, not business effect. They are not allowlisted out of the cap — they count like any other call — but the shape that will retire most of today's exemptions for install/scaffolding commands (`doctor`, `doctrine`, `eject`, `init`, `init product`, `quickstart`, `upgrade`, `demo break`, `waiver`) is a **shared command shell** consolidating this plumbing, not one of the six chokepoints below. That shell is a later task, named here as `sharedCommandShell` in the Exemptions table until it exists.
 
 ## Policy — `@attalabs/aeg-core` public exports
 
@@ -180,7 +180,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `parseTranche` | function | `packages/aeg-core/src/parse-tranche.ts` |
 | `checkPrReportDensity` | function | `packages/aeg-core/src/pr-report-density.ts` |
 | `checkScopeDensity` | function | `packages/aeg-core/src/pr-report-density.ts` |
-| `checkSummaryDensity` | function | `packages/aeg-core/src/pr-report-density.ts` |
+| `checkDecisionsDensity` | function | `packages/aeg-core/src/pr-report-density.ts` |
 | `deriveTierFromDiff` | function | `packages/aeg-core/src/pr-tier.ts` |
 | `overrideActive` | function | `packages/aeg-core/src/pr-tier.ts` |
 | `readTierFromPrBody` | function | `packages/aeg-core/src/pr-tier.ts` |
@@ -297,6 +297,10 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `SETUP_BUN_SHA` | const | `apps/cli/src/lib/artifacts.ts` |
 | `starterConfig` | function | `apps/cli/src/lib/artifacts.ts` |
 | `TRACKED_HOOK_DIR` | const | `apps/cli/src/lib/artifacts.ts` |
+| `assembleAndRenderBrief` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `expandGlob` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `packageNameForPath` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `sha256OfFile` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `buildClaudeCommandOps` | function | `apps/cli/src/lib/claude-command-emitter.ts` |
 | `CLAUDE_COMMAND_GROUP` | const | `apps/cli/src/lib/claude-command-emitter.ts` |
 | `CLAUDE_COMMAND_PATH` | const | `apps/cli/src/lib/claude-command-emitter.ts` |
@@ -358,6 +362,12 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `repoRoot` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `resolveChangedFiles` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `resolveDiff` | function | `apps/cli/src/lib/diff-evidence.ts` |
+| `AEG_BRIEF_V1_MARKER` | const | `apps/cli/src/lib/dispatch-task.ts` |
+| `briefHash` | function | `apps/cli/src/lib/dispatch-task.ts` |
+| `contentAfterTwoLines` | function | `apps/cli/src/lib/dispatch-task.ts` |
+| `DISPATCH_AGENTS` | const | `apps/cli/src/lib/dispatch-task.ts` |
+| `dispatchTask` | function | `apps/cli/src/lib/dispatch-task.ts` |
+| `DispatchTaskError` | class | `apps/cli/src/lib/dispatch-task.ts` |
 | `AGENT_VENDOR_NAMES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `dispatchRole` | function | `apps/cli/src/lib/dispatch.ts` |
 | `isAgentVendor` | function | `apps/cli/src/lib/dispatch.ts` |
@@ -438,9 +448,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `STUDIO_ARTIFACT_REPO` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_NODE_MODULES_PACKED_DIRNAME` | const | `apps/cli/src/lib/studio-bundle.ts` |
 
-(164 exports.)
+(174 exports.)
 
-## Commands — `apps/cli/src/commands` (39 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
+## Commands — `apps/cli/src/commands` (40 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
 | Command | File | Entry function | In-scope calls today | Status | One lib function (compliant) / retirement target (exempt) |
 |---|---|---|---|---|---|
@@ -453,7 +463,8 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `new check` | `new-check.ts` | `newCheckCommand` | 0 | compliant | — (self-contained) |
 | `new noop-check` | `new-noop-check.ts` | `newNoopCheckCommand` | 0 | compliant | — (self-contained) |
 | `new role` | `new-role.ts` | `newRoleCommand` | 0 | compliant | — (self-contained) |
-| `brief render` | `brief.ts` | `briefRenderCommand` | 2 | exempt — see below | sharedCommandShell (target) |
+| `brief render` | `brief.ts` | `briefRenderCommand` | 1 | compliant | `assembleAndRenderBrief` |
+| `task dispatch` | `task.ts` | `taskDispatchCommand` | 1 | compliant | `dispatchTask` |
 | `pr create` | `pr.ts` | `prCreateCommand` | 9 | exempt — see below | forgeWrite (target) |
 | `pr edit` | `pr.ts` | `prEditCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `pr report` | `pr-report.ts` | `prReportCommand` | 3 | exempt — see below | collectTokens (target) |
@@ -484,7 +495,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `release` | `release.ts` | `releaseCommand` | 0 | compliant | — (self-contained) |
 | `dispatch` | `dispatch.ts` | `dispatchCommand` | 5 | exempt — see below | sharedCommandShell (target) |
 
-(39 rows — all 39 shipped `COMMANDS` entries. Compliant: 9. Exempt: 30.)
+(40 rows — all 40 shipped `COMMANDS` entries. Compliant: 11. Exempt: 29.)
 
 `review post` refuses a `doc-correctness` finding whose description carries no `Search:` pattern, or whose pattern carries a path filter — a content rule on the existing description field, not a change to the `|`-delimited grammar. The `review post` and `pr rule` source comments describe the verdict-extraction read window, so they carry `AEG:CLAIM` markers pinning the code that proves each claim; `verify-docs` C8 verifies them, and a change to that window fails the check in every file stating it rather than only where a reviewer happened to look. See `aeg-root/documentation-coherence.md`.
 
@@ -497,7 +508,6 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `init` | 2026-09-05 | 9 — lib (9): `isAgentVendor`, `detectVendoredVinaya`, `readRepoCiSetup`, `buildInitOps`, `planInstall`, `renderInstallDiff`, `applyInstall`, `promptYesNo`, `closeStdin` | `sharedCommandShell` |
 | `init product` | 2026-09-05 | 8 — lib (8): `planRegistryRow`, `planConfigProjectEntry`, `renderRegistryRowDiffLine`, `renderConfigProjectEntryDiffLine`, `applyRegistryRow`, `applyConfigProjectEntry`, `promptYesNo`, `closeStdin` | `sharedCommandShell` |
 | `check` | 2026-09-05 | 3 — lib: `loadConfigChecked`, `configPath`, `printJson` | `runChecks` |
-| `brief render` | 2026-09-05 | 2 — lib: `resolvePrincipalAllowlist`, `loadTrustAnchorConfig` | `sharedCommandShell` |
 | `pr create` | 2026-09-05 | 9 — lib (9): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `loadConfigChecked`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
 | `pr edit` | 2026-09-05 | 8 — lib (8): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
 | `pr report` | 2026-09-05 | 3 — lib: `summariseNumstat`; commands/\*.ts (refused outright): `realDeps`, `meteringRefusalMessage` (`tokens.ts`) | `collectTokens` |

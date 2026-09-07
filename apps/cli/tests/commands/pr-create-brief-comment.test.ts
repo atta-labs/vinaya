@@ -6,15 +6,13 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'bun:test'
 
 /**
- * `vinaya pr create` splits the brief out of the body (task 4, #397) end to
- * end, against a `gh` stub on `PATH` — the same discipline
- * `review-status.test.ts` uses. `rings.
- * ring1_forgeWriteInterception: true` keeps this test scoped to the split
- * itself: it empties `resolveSections` (nothing config-driven to satisfy)
- * and skips `refuseOnRedBody`'s registry `PR_BODY` pass, leaving only
- * `checkForgeTitle` and `body-bare-digits` — both trivially satisfied by an
- * ordinary title and a digit-free report — as the gates a synthetic fixture
- * body must pass.
+ * `vinaya pr create` no longer splits a brief section out of the body
+ * (plan-brief-v1 task 2, #427) — the brief lives on the task Issue's frozen
+ * `aeg:brief:v1` comment (`vinaya task dispatch`), never in the PR body. This
+ * file, which used to exercise the retired split end to end, now covers its
+ * replacement: a body still carrying either legacy `aeg:brief:start`/
+ * `aeg:brief:end` marker is refused outright, and an ordinary new-shaped body
+ * (no `## Reference` section at all) opens clean, unaffected.
  */
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -48,22 +46,20 @@ function runCli(args: string[], cwd: string, env: Record<string, string | undefi
   }
 }
 
-/**
- * A `gh` stub answering `pr create` with a fake PR URL (copying the exact
- * body-file `gh` was handed to `createBodyLogPath`, for the test to inspect
- * afterward) and `pr comment <n> --body-file <path>` by appending its
- * content to `commentsLogPath` — one entry per call, in call order.
- */
-function stubGh(prUrl: string): { path: Record<string, string>; createBodyLogPath: string; commentsLogPath: string } {
+/** A `gh` stub answering `pr create` with a fake PR URL, logging the exact
+ * body-file it was handed so a test can assert what actually reached `gh`
+ * (or, for the refusal cases, assert it was never invoked at all). */
+function stubGh(prUrl: string): { path: Record<string, string>; createBodyLogPath: string; callLogPath: string } {
   const dir = tempDir('pr-create-stub-')
   const createBodyLogPath = join(dir, 'create-body.log')
-  const commentsLogPath = join(dir, 'comments.log')
+  const callLogPath = join(dir, 'calls.log')
   writeFileSync(createBodyLogPath, '')
-  writeFileSync(commentsLogPath, '')
+  writeFileSync(callLogPath, '')
   const gh = join(dir, 'gh')
   writeFileSync(
     gh,
     `#!/bin/sh
+echo "$@" >> "${callLogPath}"
 if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
   shift 2
   bodyFile=""
@@ -77,31 +73,37 @@ if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
   echo "${prUrl}"
   exit 0
 fi
-if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
-  # args: pr comment <n> --body-file <path>
-  bodyFile="$5"
-  echo "PR:$3" >> "${commentsLogPath}"
-  cat "$bodyFile" >> "${commentsLogPath}"
-  echo "---" >> "${commentsLogPath}"
-  exit 0
-fi
 exit 1
 `
   )
   chmodSync(gh, 0o755)
-  return { path: { PATH: `${dir}:${process.env.PATH ?? ''}` }, createBodyLogPath, commentsLogPath }
+  return { path: { PATH: `${dir}:${process.env.PATH ?? ''}` }, createBodyLogPath, callLogPath }
+}
+
+function initRepo(): string {
+  const repo = tempDir('pr-create-repo-')
+  execFileSync('git', ['init', '-q'], { cwd: repo })
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
+  writeFileSync(
+    join(repo, 'vinaya.config.json'),
+    `${JSON.stringify({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } }, null, 2)}\n`
+  )
+  execFileSync('git', ['add', '.'], { cwd: repo })
+  execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+  return repo
 }
 
 const BRIEF_TEXT = [
   '**For:** Sonnet (coding-agent CLI)',
-  '**Goal:** exercise the brief/report split end to end.',
+  '**Goal:** exercise the legacy-marker refusal.',
   '',
   '## 2. Context',
   '',
   '- Fixture brief, not a real dispatch.'
 ].join('\n')
 
-function fixtureBody(): string {
+function newShapedBody(): string {
   return [
     '<!-- AEG:CLOSES:START -->',
     'Closes #42',
@@ -112,9 +114,9 @@ function fixtureBody(): string {
     '**Project:** vinaya',
     '<!-- AEG:PROJECT:END -->',
     '',
-    '## Summary',
+    '## Decisions',
     '',
-    'Splits the brief out of the PR body into its own comment.',
+    'No open choices.',
     '',
     '## Test plan',
     '',
@@ -127,134 +129,95 @@ function fixtureBody(): string {
     '<!-- AEG:TIER:START -->',
     '**Tier:** 1',
     '<!-- AEG:TIER:END -->',
-    '',
-    '---',
-    '',
-    '<!-- aeg:brief:start -->',
-    '## Reference — the dispatched brief',
-    '',
-    BRIEF_TEXT,
-    '<!-- aeg:brief:end -->',
     ''
   ].join('\n')
 }
 
-describe('vinaya pr create — splits the brief into its own comment (task 4, #397)', () => {
-  it('the body sent to gh carries no brief/reference section; the aeg:brief comment carries the brief verbatim', () => {
-    const repo = tempDir('pr-create-repo-')
-    execFileSync('git', ['init', '-q'], { cwd: repo })
-    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
-    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
-    writeFileSync(
-      join(repo, 'vinaya.config.json'),
-      `${JSON.stringify({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } }, null, 2)}\n`
-    )
-    execFileSync('git', ['add', '.'], { cwd: repo })
-    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
-
+describe('vinaya pr create — refuses a body still carrying the retired brief split (plan-brief-v1 task 2, #427)', () => {
+  it('a body carrying <!-- aeg:brief:start --> is refused — gh is never invoked', () => {
+    const repo = initRepo()
     const bodyPath = join(repo, 'pr-body.md')
-    writeFileSync(bodyPath, fixtureBody())
+    writeFileSync(
+      bodyPath,
+      [
+        newShapedBody(),
+        '---',
+        '',
+        '<!-- aeg:brief:start -->',
+        '## Reference — the dispatched brief',
+        '',
+        BRIEF_TEXT,
+        '<!-- aeg:brief:end -->',
+        ''
+      ].join('\n')
+    )
+    const { path, callLogPath } = stubGh('https://github.com/acme/widget/pull/42')
 
-    const { path, createBodyLogPath, commentsLogPath } = stubGh('https://github.com/acme/widget/pull/42')
+    const r = runCli(
+      ['pr', 'create', '--body-file', bodyPath, '--title', 'Fix(cli): legacy marker refused'],
+      repo,
+      path
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('aeg:brief:start')
+    expect(r.stderr).toContain('pr-brief-comment')
 
-    const r = runCli(['pr', 'create', '--body-file', bodyPath, '--title', 'Fix(cli): split brief comment'], repo, path)
+    expect(readFileSync(callLogPath, 'utf-8')).toBe('')
+  })
+
+  it('a body carrying only the trailing <!-- aeg:brief:end --> marker (unpaired) is still refused', () => {
+    const repo = initRepo()
+    const bodyPath = join(repo, 'pr-body.md')
+    writeFileSync(bodyPath, `${newShapedBody()}\n<!-- aeg:brief:end -->\n`)
+    const { path, callLogPath } = stubGh('https://github.com/acme/widget/pull/42')
+
+    const r = runCli(
+      ['pr', 'create', '--body-file', bodyPath, '--title', 'Fix(cli): unpaired marker refused'],
+      repo,
+      path
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('aeg:brief:end')
+    expect(readFileSync(callLogPath, 'utf-8')).toBe('')
+  })
+
+  it('an ordinary new-shaped body (no ## Reference section, no legacy markers) opens clean', () => {
+    const repo = initRepo()
+    const bodyPath = join(repo, 'pr-body.md')
+    writeFileSync(bodyPath, newShapedBody())
+    const { path, createBodyLogPath } = stubGh('https://github.com/acme/widget/pull/43')
+
+    const r = runCli(['pr', 'create', '--body-file', bodyPath, '--title', 'Fix(cli): new-shaped body'], repo, path)
     expect(r.status).toBe(0)
 
     const sentBody = readFileSync(createBodyLogPath, 'utf-8')
-    expect(sentBody).not.toContain('aeg:brief:start')
-    expect(sentBody).not.toContain('<details>')
-    expect(sentBody).not.toContain('## Reference — the dispatched brief')
-    expect(sentBody).not.toContain(BRIEF_TEXT)
-    expect(sentBody).toContain('## Summary')
-    expect(sentBody).toContain('**Tier:** 1')
-
-    const comments = readFileSync(commentsLogPath, 'utf-8')
-    const entries = comments.split('---\n').filter((s) => s.trim().length > 0)
-    expect(entries.length).toBe(1)
-    expect(entries[0]).toContain('<!-- aeg:brief -->')
-    expect(entries[0]).toContain(BRIEF_TEXT)
+    expect(sentBody).toContain('## Decisions')
+    expect(sentBody).not.toContain('## Reference')
+    expect(sentBody).not.toContain('aeg:brief')
   })
 
-  it('a report that mentions the marker syntax by name does not truncate the split — the LAST pair wins (live incident, PR #398)', () => {
-    const repo = tempDir('pr-create-repo-selfmention-')
-    execFileSync('git', ['init', '-q'], { cwd: repo })
-    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
-    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
-    writeFileSync(
-      join(repo, 'vinaya.config.json'),
-      `${JSON.stringify({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } }, null, 2)}\n`
-    )
-    execFileSync('git', ['add', '.'], { cwd: repo })
-    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
-
-    const decisionMentioningMarker =
-      'Implemented as a marker pair, `<!-- aeg:brief:start -->` / `<!-- aeg:brief:end -->`, wrapping the Reference section.'
-    const body = [
-      fixtureBody().split('---\n')[0],
-      '## Decisions',
-      '',
-      decisionMentioningMarker,
-      '',
-      '---',
-      '',
-      '<!-- aeg:brief:start -->',
-      '## Reference — the dispatched brief',
-      '',
-      BRIEF_TEXT,
-      '<!-- aeg:brief:end -->',
-      ''
-    ].join('\n')
+  it('a body that only MENTIONS a legacy marker inline, backticked, in prose is not refused', () => {
+    const repo = initRepo()
     const bodyPath = join(repo, 'pr-body.md')
-    writeFileSync(bodyPath, body)
-
-    const { path, createBodyLogPath, commentsLogPath } = stubGh('https://github.com/acme/widget/pull/44')
+    writeFileSync(
+      bodyPath,
+      [
+        newShapedBody(),
+        '## Decisions',
+        '',
+        'This task retires the `<!-- aeg:brief:start -->`/`<!-- aeg:brief:end -->` marker pair — a body still carrying either as a real, own-line marker is refused.'
+      ].join('\n')
+    )
+    const { path, createBodyLogPath } = stubGh('https://github.com/acme/widget/pull/45')
 
     const r = runCli(
-      ['pr', 'create', '--body-file', bodyPath, '--title', 'Fix(cli): self-mentioning marker'],
+      ['pr', 'create', '--body-file', bodyPath, '--title', 'Fix(cli): self-mentioning prose'],
       repo,
       path
     )
     expect(r.status).toBe(0)
 
     const sentBody = readFileSync(createBodyLogPath, 'utf-8')
-    expect(sentBody).toContain(decisionMentioningMarker)
-    expect(sentBody).toContain('## Summary')
-    expect(sentBody).not.toContain('## Reference — the dispatched brief')
-    expect(sentBody).not.toContain(BRIEF_TEXT)
-
-    const comments = readFileSync(commentsLogPath, 'utf-8')
-    const entries = comments.split('---\n').filter((s) => s.trim().length > 0)
-    expect(entries.length).toBe(1)
-    expect(entries[0]).toContain('<!-- aeg:brief -->')
-    expect(entries[0]).toContain(BRIEF_TEXT)
-  })
-
-  it('a body with no aeg:brief section posts no comment at all', () => {
-    const repo = tempDir('pr-create-repo-nobrief-')
-    execFileSync('git', ['init', '-q'], { cwd: repo })
-    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
-    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
-    writeFileSync(
-      join(repo, 'vinaya.config.json'),
-      `${JSON.stringify({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } }, null, 2)}\n`
-    )
-    execFileSync('git', ['add', '.'], { cwd: repo })
-    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
-
-    const bodyPath = join(repo, 'pr-body.md')
-    const bodyNoBrief = fixtureBody().split('---\n')[0] as string
-    writeFileSync(bodyPath, bodyNoBrief)
-
-    const { path, createBodyLogPath, commentsLogPath } = stubGh('https://github.com/acme/widget/pull/43')
-
-    const r = runCli(['pr', 'create', '--body-file', bodyPath, '--title', 'Fix(cli): no brief section'], repo, path)
-    expect(r.status).toBe(0)
-
-    const sentBody = readFileSync(createBodyLogPath, 'utf-8')
-    expect(sentBody).toContain('## Summary')
-
-    const comments = readFileSync(commentsLogPath, 'utf-8')
-    const entries = comments.split('---\n').filter((s) => s.trim().length > 0)
-    expect(entries.length).toBe(0)
+    expect(sentBody).toContain('retires the')
   })
 })

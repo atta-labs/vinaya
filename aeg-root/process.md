@@ -94,7 +94,7 @@ When a task is picked up for execution, the Brief Author writes its brief — **
 
 A brief is self-contained and executable without further conversation. If it needs clarifying questions, it's incomplete.
 
-**Where the brief lives:** it is pasted to the Developer and will land in the **PR body** at Phase 9. It is **not** committed and **not** put in the Issue body — the Issue (created by the Planner) holds task identity + metadata only. A brief in the Issue would age before work starts.
+**Where the brief lives:** `vinaya task dispatch` posts it once, frozen, as the task Issue's own `aeg:brief:v1` comment, before the Developer starts — never in the PR body, which carries only the Developer's report. It is **not** committed and **not** put in the Issue's own body — the Issue body (created by the Planner) holds task identity + metadata only; the brief is a comment on it, not a field of it.
 
 **Artifacts:** the brief (a markdown block, not a committed file). The task's Issue already exists from tranche planning.
 
@@ -127,7 +127,7 @@ If it fails, it's not dispatchable until fixed. The Developer also re-checks wel
 
 Dispatch starts the task. There are two equivalent routes:
 
-- **Manual:** the Principal pastes the brief into the coding agent. The brief's worktree-first Step 0 makes the Developer create its own worktree (`.worktrees/task/<tranche>/<n>/`, branch `task/<tranche>/<n>`, from `origin/main`) as its first action.
+- **Manual:** `vinaya task dispatch <tranche> <n>` posts the frozen `aeg:brief:v1` Issue comment, then the Principal pastes that comment's content into the coding agent. The brief's worktree-first Step 0 makes the Developer create its own worktree (`.worktrees/task/<tranche>/<n>/`, branch `task/<tranche>/<n>`, from `origin/main`) as its first action.
 - **Automated:** an automation layer creates the worktree, generates the agent's config, spawns the Developer in it, and streams progress. This is a convenience; the semantics are identical to manual.
 
 Either way: **before starting, the Developer checks the dispatch gates against the forge** — every `depends-on` task's PR merged, no `conflicts-with` sibling's PR open. If a gate isn't satisfied, it does not start (the task serializes). Opening the branch *is* the `todo → in-flight` transition; nobody writes a status label.
@@ -193,7 +193,7 @@ Before opening the PR, the Developer runs the tier-appropriate Task Done checkli
 
 The Developer opens a PR with:
 - Title in commitlint format (`Type: Subject`)
-- **The brief pasted into the body** — its permanent home, read by the Reviewer and Archivist
+- **No brief in the body at all** — its permanent home is the task Issue's frozen `aeg:brief:v1` comment (posted at Phase 5, before the Developer ever started), which is where the Reviewer and Archivist read it
 - A `Tier:` declaration (`Tier: 0|1|3`) so verify-docs reads the correct tier
 - `Closes #N` linking the task's Issue (so the merge auto-closes it)
 - Body following the PR template (what shipped, validated mechanism, what's not in scope, next steps)
