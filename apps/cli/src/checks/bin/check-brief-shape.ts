@@ -35,6 +35,7 @@ import {
   readTierFromPrBody
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { contentAfterTwoLines } from '../../lib/dispatch-task.js'
 
 const CHECK_NAME = 'brief-shape'
 const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
@@ -90,15 +91,16 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
   }
 
   // Everything after the marker line and the `Brief hash:` line, as a raw
-  // substring — mirrors `dispatch-task.ts`'s `contentAfterTwoLines`
-  // (duplicated rather than imported: this file cannot reach into
-  // `apps/cli/src/lib` from `apps/cli/src/checks/bin` without the same
-  // "commands never call commands"-adjacent layering this repo avoids
-  // elsewhere for cheap, tiny, cross-boundary helpers).
-  const body = comment.body
-  const firstNL = body.indexOf('\n')
-  const secondNL = firstNL === -1 ? -1 : body.indexOf('\n', firstNL + 1)
-  return { ok: true, body: secondNL === -1 ? '' : body.slice(secondNL + 1) }
+  // substring. Imported, not duplicated: `check-brief-shape.ts` and
+  // `dispatch-task.ts` both live in `apps/cli` (unlike
+  // `packages/aeg-core/bin/verify-dispatch.ts`, a genuinely separate
+  // package that cannot import `apps/cli` at all) — other check bin scripts
+  // already import from `../../lib/*` (`check-doc-coverage.ts`,
+  // `check-body-bare-digits.ts`, …), so a same-package import here is not a
+  // new pattern. Found live (code review): this file's own prior comment
+  // claimed a cross-boundary constraint that does not actually exist,
+  // duplicating logic that could simply be shared.
+  return { ok: true, body: contentAfterTwoLines(comment.body) }
 }
 
 /** Immediate child directory names of `dir` — `deriveWorkspaceMemberDirs`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */

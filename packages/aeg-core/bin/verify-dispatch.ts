@@ -666,15 +666,28 @@ function countErrorLines(output: string): number {
 const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
 
 /**
- * `--premise` with no file argument: the brief now lives on the task
- * Issue's frozen `aeg:brief:v1` comment (`dispatchTask`, plan-brief-v1 task
- * 2, #427), not in a local body-file — this resolves it from there instead.
- *
- * The content re-asserted is everything after the marker line and the
- * `Brief hash:` line, as a raw substring — mirrors `dispatch-task.ts`'s
- * `contentAfterTwoLines` (duplicated here rather than imported: this bin
- * lives in `@attalabs/aeg-core` and cannot import `apps/cli`).
+ * Everything in a posted `aeg:brief:v1` comment after its marker line and
+ * `Brief hash:` line, as a raw substring — never a line-split-then-rejoin,
+ * which would silently renormalize whatever separates the two header lines
+ * from the brief body. Exported so `verify-dispatch.test.ts` can pin it
+ * against the same fixture vectors `apps/cli/tests/lib/dispatch-task.test.ts`
+ * pins its own copy against (`dispatch-task.ts`'s `contentAfterTwoLines`) —
+ * duplicated, not imported: this bin lives in `@attalabs/aeg-core` and
+ * cannot import `apps/cli` (`check-brief-shape.ts` carries a third copy for
+ * the same reason). Found live (code review): three copies of hash-contract-
+ * critical logic with zero test proving they agree is exactly the
+ * three-copies-disagreeing failure mode `edge-resolve.ts`'s own doc comment
+ * already warns this codebase about — this export, and its two siblings, are
+ * what let each side's test suite assert the SAME fixture vectors rather
+ * than trusting the doc comment alone.
  */
+export function contentAfterTwoLines(body: string): string {
+  const first = body.indexOf('\n')
+  if (first === -1) return ''
+  const second = body.indexOf('\n', first + 1)
+  if (second === -1) return ''
+  return body.slice(second + 1)
+}
 async function runPremiseModeFromIssue(trancheSlug: string, taskId: string): Promise<void> {
   const repo = await resolveRepo()
   if (!repo) {
@@ -716,10 +729,7 @@ async function runPremiseModeFromIssue(trancheSlug: string, taskId: string): Pro
     process.exit(1)
   }
 
-  const body = briefComment.body
-  const firstNL = body.indexOf('\n')
-  const secondNL = firstNL === -1 ? -1 : body.indexOf('\n', firstNL + 1)
-  const brief = secondNL === -1 ? '' : body.slice(secondNL + 1)
+  const brief = contentAfterTwoLines(briefComment.body)
 
   const assertions = parsePremiseBlock(brief)
   if (assertions.length === 0) {
