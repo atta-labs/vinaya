@@ -242,7 +242,6 @@ function assessGate(
       ...state,
       rounds: [...state.rounds, record],
       pending: null,
-      previousResolvedEmpty: true,
       ...withRoundStats(state, obs.stats)
     }
     return { decision: { type: 'dispatch_developer' }, state: newState, events }
@@ -310,7 +309,6 @@ function assessGate(
       rounds: [...state.rounds, record],
       pending: null,
       extraTurnUsed: true,
-      previousResolvedEmpty: true,
       ...withRoundStats(state, obs.stats)
     }
     return { decision: { type: 'dispatch_developer', reason: 'confidence' }, state: newState, events }
