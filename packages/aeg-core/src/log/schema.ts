@@ -223,7 +223,20 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       ...loopShared,
       event: z.literal('stop_condition_met'),
       round: z.number().int(),
-      condition: z.enum(['green', 'max_rounds', 'no_progress', 'escalated', 'principal_stop'])
+      // `confidence` and `reappearance` widen this enum additively
+      // (dev-review-loop-v1 task 4, `#414`, O2 amendment 2026-09-06): a
+      // confidence collapse and a finding-id reappearance are each their own
+      // condition, distinguished from the generic `no_progress` stall and
+      // from each other, rather than collapsing all three into one value.
+      condition: z.enum([
+        'green',
+        'max_rounds',
+        'no_progress',
+        'escalated',
+        'principal_stop',
+        'confidence',
+        'reappearance'
+      ])
     })
     .strict(),
   z

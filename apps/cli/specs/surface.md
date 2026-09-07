@@ -107,6 +107,9 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `deriveSection7` | function | `packages/aeg-core/src/derive-section7.ts` |
 | `globsOverlap` | function | `packages/aeg-core/src/derive-section7.ts` |
 | `deriveTranche` | function | `packages/aeg-core/src/derive-tranche.ts` |
+| `assessRound` | function | `packages/aeg-core/src/dev-review-loop/assess-round.ts` |
+| `renderSummary` | function | `packages/aeg-core/src/dev-review-loop/render-summary.ts` |
+| `initialLoopState` | function | `packages/aeg-core/src/dev-review-loop/types.ts` |
 | `deriveDiagramModel` | function | `packages/aeg-core/src/diagram-model.ts` |
 | `checkDirectMainPush` | function | `packages/aeg-core/src/direct-main-push.ts` |
 | `checkDispatchReadiness` | function | `packages/aeg-core/src/dispatch-gate.ts` |

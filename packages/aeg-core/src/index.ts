@@ -350,6 +350,24 @@ export {
   renderObjectives
 } from './objectives'
 export type { Objective, ParsedObjectives } from './objectives'
+export { assessRound, initialLoopState, renderSummary } from './dev-review-loop'
+export type {
+  Confidence,
+  Decision,
+  DevReviewLoopEventInput,
+  FindingObservation,
+  FindingState,
+  Journal,
+  LoopConfig,
+  LoopState,
+  Observations,
+  PauseReason,
+  PendingRound,
+  RoundOutcome,
+  RoundRecord,
+  RoundStats,
+  VerdictObservation
+} from './dev-review-loop'
 export {
   buildHeader,
   DispatchEventSchema,
