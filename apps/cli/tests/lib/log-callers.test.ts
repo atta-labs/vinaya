@@ -21,15 +21,28 @@ import { fileURLToPath } from 'node:url'
  * `dispatch.ts` — is the second real caller. It only reads the outbox (to
  * poll for its own lines actually landing before returning), never appends
  * or truncates, so it is not added to `OUTBOX_TRUNCATE_ALLOWLIST`.
+ *
+ * Amended by task 5 (#415): `devReviewLoop` (`apps/cli/src/lib/dev-review-loop.ts`)
+ * is the third real caller, moved out of `FUTURE_CALLER_ALLOWLIST` now that
+ * it exists. It reads the outbox the same way `dispatch.ts` does (polling
+ * for its own log lines), and it separately WRITES under the outbox root —
+ * but never the ndjson log file itself: `writeHeldVerdict` writes one
+ * `<outboxRoot>/dev-review-loop/<task>/round-<n>-<role>.md` file per held
+ * reviewer verdict, a third category next to log-sink's append and flush's
+ * truncate. `OUTBOX_HELD_VERDICT_ALLOWLIST` names this explicitly rather
+ * than silently widening `OUTBOX_TRUNCATE_ALLOWLIST` to cover a write it
+ * does not describe.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
 const SINK_PATH = 'apps/cli/src/lib/log-sink.ts'
 const FLUSH_PATH = 'apps/cli/src/commands/log.ts'
 const DISPATCH_PATH = 'apps/cli/src/lib/dispatch.ts'
-const FUTURE_CALLER_ALLOWLIST = new Set(['apps/cli/src/lib/dev-review-loop.ts'])
-const CALLER_ALLOWLIST = new Set([...FUTURE_CALLER_ALLOWLIST, FLUSH_PATH, DISPATCH_PATH])
+const DEV_REVIEW_LOOP_PATH = 'apps/cli/src/lib/dev-review-loop.ts'
+const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
+const CALLER_ALLOWLIST = new Set([...FUTURE_CALLER_ALLOWLIST, FLUSH_PATH, DISPATCH_PATH, DEV_REVIEW_LOOP_PATH])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([FLUSH_PATH])
+const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([DEV_REVIEW_LOOP_PATH])
 
 function sourceFiles(dir: string, prefix: string): [string, string][] {
   const out: [string, string][] = []
@@ -66,9 +79,11 @@ describe('log-callers — O2', () => {
   const files = allSourceFiles()
   expect(files.length).toBeGreaterThan(0)
 
-  it('no file other than the sink (or the flush) references the outbox alongside a write call', () => {
+  it('no file other than the sink (or the flush, or the held-verdict writer) references the outbox alongside a write call', () => {
     const offenders = files
-      .filter(([rel]) => rel !== SINK_PATH && !OUTBOX_TRUNCATE_ALLOWLIST.has(rel))
+      .filter(
+        ([rel]) => rel !== SINK_PATH && !OUTBOX_TRUNCATE_ALLOWLIST.has(rel) && !OUTBOX_HELD_VERDICT_ALLOWLIST.has(rel)
+      )
       .filter(([, abs]) => {
         const content = readFileSync(abs, 'utf8')
         return content.includes('outbox') && OUTBOX_WRITE_CALLS.some((call) => content.includes(call))
@@ -110,5 +125,10 @@ describe('log-callers — O2', () => {
   it('the dispatch allowlist entry does exist — task 3 is the landed caller, not a future one', () => {
     const existing = files.map(([rel]) => rel)
     expect(existing).toContain(DISPATCH_PATH)
+  })
+
+  it('the dev-review-loop allowlist entry does exist — task 5 is the landed caller, not a future one', () => {
+    const existing = files.map(([rel]) => rel)
+    expect(existing).toContain(DEV_REVIEW_LOOP_PATH)
   })
 })

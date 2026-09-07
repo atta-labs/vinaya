@@ -9,6 +9,7 @@ import { briefRenderCommand } from './commands/brief.js'
 import { checkCommand } from './commands/check.js'
 import { commitMsgCommand } from './commands/commit-msg.js'
 import { demoBreakCommand } from './commands/demo.js'
+import { devReviewLoopCommand } from './commands/dev-review-loop.js'
 import { dispatchCommand } from './commands/dispatch.js'
 import { doctorCommand } from './commands/doctor.js'
 import { doctrineCommand } from './commands/doctrine.js'
@@ -261,6 +262,10 @@ try {
     }
     case 'dispatch': {
       await dispatchCommand(args)
+      break
+    }
+    case 'dev-review-loop': {
+      await devReviewLoopCommand(args)
       break
     }
     default:

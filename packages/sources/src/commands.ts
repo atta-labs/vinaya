@@ -648,5 +648,25 @@ export const COMMANDS: readonly Command[] = [
       "A successful dispatch's `DispatchHandle` carries `resumeId` — the vendor's own session/thread identifier (claude/gemini: `session_id`; codex: `thread_id`), parsed from its stdout, `null` on any failure. Passing that value as `--resume <id>` on a later call swaps in that vendor's own resume invocation (`claude -p -r <id> ...`; `codex exec resume <id> ...`; `gemini ... --resume <id> ...`) in place of its first-dispatch args."
     ],
     status: 'shipped'
+  },
+  {
+    name: 'dev-review-loop',
+    description:
+      'Dispatch the developer, run review rounds against the forge, resume the same developer session every round, and hold every verdict until the policy says publish',
+    flags: [
+      { flag: '--task <n>', description: "This task's Issue number — its frozen `aeg:brief:v1` comment is the brief" },
+      {
+        flag: '--agent <claude|codex|gemini>',
+        description: 'Vendor for every dispatch this loop makes (falls back to `dispatch.agent` in config)'
+      },
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
+    ],
+    details: [
+      'Dispatches the developer through `dispatchRole` with the brief read from the Issue, waits for the PR it opens, then runs `assessRound` (`@attalabs/aeg-core`) — the entire policy — against observations this command reads from the forge: the head via `git ls-remote` only (never `gh pr view headRefOid`, which can lag a push), CI conclusion via the check-runs API (never run locally), and ruling comments matching `<!-- aeg:principal:ruling:<pr>-<k> -->`.',
+      "Nothing is posted to the PR before the policy decides `publish`: each round's reviewer and security verdicts are dispatched fresh (never a resumed session) through `dispatchRole`, rendered through `review post`'s own render functions, and written to a local file under the outbox — never `gh pr comment`/`gh pr review`. Posting the held verdicts is a separate, later task.",
+      "The developer's session is resumed every round via `dispatchRole`'s `resumeId` — never a fresh session — for every vendor; a round whose resume fails for a vendor that resumed successfully the round before stops the loop rather than silently falling back to a fresh developer session.",
+      'Every dispatch and round transition is a log line through the Vinaya Log, flushed to the forge at each round boundary.'
+    ],
+    status: 'shipped'
   }
 ]
