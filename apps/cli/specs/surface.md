@@ -8,6 +8,8 @@ One command is one function, published and tested. `apps/cli/tests/surface-index
 
 A command is a function with argument parsing in front. Commands never call commands. One capability is one function.
 
+The tables below index exported functions/consts/classes only — a change that adds or removes none of those (a new field on an already-exported type, a new CLI flag on an already-listed command) needs no new row here and does not make this file stale.
+
 Three layers:
 
 - **Policy** — `@attalabs/aeg-core`. Pure functions: no filesystem, no network, no process. Read here, never written by this task.

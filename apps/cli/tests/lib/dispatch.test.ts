@@ -412,3 +412,83 @@ describe('dispatchRole — a shared run_id (a nested dispatch inheriting VINAYA_
     expect(new Set(lines.map((l) => l.target_role))).toEqual(new Set(['developer', 'code-reviewer']))
   }, 10_000)
 })
+
+/** One argv element per line, preserving an empty-string element (gemini's `-p ''`) as a blank line — unambiguous, unlike a single space-joined `echo "$@"`. */
+function readArgv(path: string): string[] {
+  return readFileSync(path, 'utf8').replace(/\n$/, '').split('\n')
+}
+
+type ResumeVendorFixture = {
+  agent: 'claude' | 'codex' | 'gemini'
+  /** stdout a real first dispatch prints, carrying `synthId` as that vendor's own resume identifier. */
+  firstStdout: (synthId: string) => string
+  /** The exact argv `dispatchRole` must pass the vendor's binary for a `--resume <id>` dispatch. */
+  resumeArgv: (id: string) => string[]
+}
+
+const RESUME_VENDOR_FIXTURES: ResumeVendorFixture[] = [
+  {
+    agent: 'claude',
+    firstStdout: (id) => `{"session_id":"${id}","usage":{"input_tokens":1,"output_tokens":1}}`,
+    resumeArgv: (id) => ['-p', '-r', id, '--output-format', 'json']
+  },
+  {
+    agent: 'codex',
+    firstStdout: (id) =>
+      `{"type":"thread.started","thread_id":"${id}"}\n{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}`,
+    resumeArgv: (id) => ['exec', 'resume', id, '--json', '-']
+  },
+  {
+    agent: 'gemini',
+    firstStdout: (id) => `{"session_id":"${id}"}`,
+    resumeArgv: (id) => ['-p', '', '--resume', id, '--output-format', 'json', '--skip-trust']
+  }
+]
+
+describe('dispatchRole — resume identifier (round-trip, per vendor)', () => {
+  for (const fixture of RESUME_VENDOR_FIXTURES) {
+    it(`${fixture.agent}: a successful dispatch returns resumeId, and --resume <id> reaches the child as that vendor's own resume argv`, () => {
+      const synthId = '11111111-1111-1111-1111-111111111111'
+      const home = tempDir('vinaya-dispatch-home-')
+      const cwd = tempDir('vinaya-dispatch-cwd-')
+      const binDir = tempDir('vinaya-dispatch-bin-')
+      const argvOut = join(cwd, 'argv.out')
+      const promptFile = join(cwd, 'prompt.txt')
+      writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+      const path = `${binDir}:${pathWithoutRealVendors()}`
+
+      // First dispatch: no `--resume` — the fake binary ignores its argv and
+      // prints the vendor's real first-dispatch shape carrying `synthId`.
+      writeFakeBinary(
+        binDir,
+        fixture.agent,
+        `#!/bin/sh\ncat > /dev/null\nprintf '%s' '${fixture.firstStdout(synthId)}'\nexit 0\n`
+      )
+      const first = runDispatch(
+        ['developer', '--agent', fixture.agent, '--prompt-file', promptFile, '--json'],
+        cwd,
+        home,
+        path
+      )
+      expect(first.status).toBe(0)
+      expect((JSON.parse(first.stdout) as { data: { resumeId: string | null } }).data.resumeId).toBe(synthId)
+
+      // Second dispatch: `--resume <synthId>` — the fake binary now records
+      // its own argv, one element per line, so the exact resume shape is
+      // checkable rather than merely "some flag we hoped for."
+      writeFakeBinary(
+        binDir,
+        fixture.agent,
+        `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done > "${argvOut}"\ncat > /dev/null\nprintf '%s' '${fixture.firstStdout(synthId)}'\nexit 0\n`
+      )
+      const second = runDispatch(
+        ['developer', '--agent', fixture.agent, '--prompt-file', promptFile, '--resume', synthId, '--json'],
+        cwd,
+        home,
+        path
+      )
+      expect(second.status).toBe(0)
+      expect(readArgv(argvOut)).toEqual(fixture.resumeArgv(synthId))
+    })
+  }
+})

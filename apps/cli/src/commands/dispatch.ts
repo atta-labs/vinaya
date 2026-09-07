@@ -34,6 +34,7 @@ type ParsedArgs = {
   task: number | undefined
   pr: number | undefined
   round: number | undefined
+  resume: string | undefined
   json: boolean
 }
 
@@ -44,6 +45,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let task: number | undefined
   let pr: number | undefined
   let round: number | undefined
+  let resume: string | undefined
   let json = false
   for (let i = 1; i < args.length; i++) {
     const a = args[i]
@@ -52,9 +54,10 @@ function parseArgs(args: string[]): ParsedArgs {
     else if (a === '--task') task = Number(args[++i])
     else if (a === '--pr') pr = Number(args[++i])
     else if (a === '--round') round = Number(args[++i])
+    else if (a === '--resume') resume = args[++i]
     else if (a === '--json') json = true
   }
-  return { role, agent, promptFile, task, pr, round, json }
+  return { role, agent, promptFile, task, pr, round, resume, json }
 }
 
 export async function dispatchCommand(args: string[]): Promise<void> {
@@ -111,6 +114,7 @@ export async function dispatchCommand(args: string[]): Promise<void> {
     task: parsed.task,
     pr: parsed.pr,
     round: parsed.round,
+    resumeId: parsed.resume,
     promptFile
   })
 
@@ -120,13 +124,16 @@ export async function dispatchCommand(args: string[]): Promise<void> {
       exitCode: handle.exitCode,
       durationMs: handle.durationMs,
       usage: handle.usage,
+      resumeId: handle.resumeId,
       timedOut: handle.timedOut,
       failureReason: handle.failureReason ?? null
     })
   } else if (handle.failureReason) {
     process.stderr.write(`vinaya dispatch: ${role} via ${agent} failed (${handle.failureReason})\n`)
   } else {
-    process.stdout.write(`vinaya dispatch: ${role} via ${agent} completed in ${handle.durationMs}ms\n`)
+    process.stdout.write(
+      `vinaya dispatch: ${role} via ${agent} completed in ${handle.durationMs}ms (resumeId: ${handle.resumeId ?? 'none'})\n`
+    )
   }
 
   if (parsed.task !== undefined) {
