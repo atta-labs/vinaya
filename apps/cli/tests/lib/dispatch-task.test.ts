@@ -10,17 +10,75 @@ import {
 
 const BRIEF_TEXT = '**For:** Sonnet\n**Tier:** 1\n\nCloses #427\n\nYou are the AEG Developer.'
 
+/**
+ * Pinned identically in `packages/aeg-core/bin/verify-dispatch.content-after-two-lines.test.ts`
+ * against that file's own, unavoidably duplicated copy of this same function
+ * (a genuinely separate package that cannot import `apps/cli` at all — see
+ * `dispatch-task.ts`'s own doc comment on `contentAfterTwoLines`). A future
+ * edit to either copy that stops agreeing with the other fails a test on
+ * whichever side drifted, rather than surviving as an undetected mismatch —
+ * the exact gap code review found live on this task.
+ */
+const CONTENT_AFTER_TWO_LINES_VECTORS: Array<{ name: string; input: string; expected: string }> = [
+  {
+    name: 'marker, hash line, then brief text with a trailing newline',
+    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc123\nThe brief text.\nMore text.\n',
+    expected: 'The brief text.\nMore text.\n'
+  },
+  {
+    name: 'marker and hash line only, no body at all',
+    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc123',
+    expected: ''
+  },
+  {
+    name: 'a body with no newline anywhere',
+    input: 'no newline at all',
+    expected: ''
+  },
+  {
+    name: 'exactly two lines (no third line to slice out)',
+    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc123\n',
+    expected: ''
+  },
+  {
+    name: 'a blank line immediately after the hash line survives verbatim',
+    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc\n\nBrief text after a blank line.\n',
+    expected: '\nBrief text after a blank line.\n'
+  },
+  {
+    name: 'brief text that itself contains a line starting with the marker string',
+    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nSee <!-- aeg:brief:v1 --> for details.\n',
+    expected: 'See <!-- aeg:brief:v1 --> for details.\n'
+  }
+]
+
 function deps(overrides: Partial<DispatchTaskDeps> = {}): DispatchTaskDeps {
   const neverCalled = (name: string) => () => {
     throw new Error(`${name} should not have been called`)
   }
   return {
-    assembleAndRenderBrief: async () => ({ ok: true, brief: BRIEF_TEXT }),
-    findExistingV1Comment: () => null,
+    assembleAndRenderBrief: neverCalled(
+      'assembleAndRenderBrief'
+    ) as unknown as DispatchTaskDeps['assembleAndRenderBrief'],
+    findExistingV1Comment: neverCalled('findExistingV1Comment') as unknown as DispatchTaskDeps['findExistingV1Comment'],
     postMarkedComment: neverCalled('postMarkedComment') as unknown as DispatchTaskDeps['postMarkedComment'],
     resolveDispatchRole: async () => null,
+    resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' }),
     ...overrides
   }
+}
+
+/** The common, non-`--agent` deps shape most tests below actually exercise —
+ * `assembleAndRenderBrief`/`findExistingV1Comment` are real functions there,
+ * so the `deps()` default above (which refuses if either is called) is
+ * overridden explicitly per test instead of loosened globally, keeping the
+ * "never called" default meaningful for the authorization tests it exists for. */
+function postingDeps(overrides: Partial<DispatchTaskDeps> = {}): DispatchTaskDeps {
+  return deps({
+    assembleAndRenderBrief: async () => ({ ok: true, brief: BRIEF_TEXT }),
+    findExistingV1Comment: () => null,
+    ...overrides
+  })
 }
 
 describe('dispatchTask', () => {
@@ -28,7 +86,7 @@ describe('dispatchTask', () => {
     let posted: { kind: string; ref: string; marker: string; body: string } | null = null
     const result = await dispatchTask(
       { tranche: 'plan-brief-v1', n: 427 },
-      deps({
+      postingDeps({
         postMarkedComment: (kind, ref, marker, body) => {
           posted = { kind, ref, marker, body }
           return 'https://github.com/acme/widget/issues/427#issuecomment-1'
@@ -59,7 +117,7 @@ describe('dispatchTask', () => {
     await expect(
       dispatchTask(
         { tranche: 'plan-brief-v1', n: 427 },
-        deps({
+        postingDeps({
           findExistingV1Comment: () => ({
             body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
             url: 'https://github.com/acme/widget/issues/427#issuecomment-1'
@@ -79,7 +137,7 @@ describe('dispatchTask', () => {
     await expect(
       dispatchTask(
         { tranche: 'plan-brief-v1', n: 427 },
-        deps({
+        postingDeps({
           assembleAndRenderBrief: async () => ({
             ok: false,
             missing: ['Test plan (Issue has no `## Test plan` section)']
@@ -94,11 +152,11 @@ describe('dispatchTask', () => {
     expect(existingCheckCalled).toBe(false)
   })
 
-  it('with --agent and dispatchRole available, calls it with the posted brief', async () => {
+  it('with --agent and dispatchRole available, calls it with the posted brief and a real promptFile', async () => {
     const calls: unknown[][] = []
     await dispatchTask(
       { tranche: 'plan-brief-v1', n: 427, agent: 'claude' },
-      deps({
+      postingDeps({
         postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-1',
         resolveDispatchRole: async () => {
           return async (...args: unknown[]) => {
@@ -108,7 +166,16 @@ describe('dispatchTask', () => {
       })
     )
     expect(calls.length).toBe(1)
-    expect(calls[0]).toEqual(['developer', 'claude', BRIEF_TEXT, { task: 427 }])
+    const [role, agent, prompt, opts] = calls[0] as [string, string, string, { task: number; promptFile: string }]
+    expect(role).toBe('developer')
+    expect(agent).toBe('claude')
+    expect(prompt).toBe(BRIEF_TEXT)
+    expect(opts.task).toBe(427)
+    // `dispatchRole`'s real `DispatchOpts.promptFile` is required — this is
+    // the exact gap a signature mismatch across the dynamic-import boundary
+    // let through uncaught by `tsc` (found live, security/code review).
+    expect(typeof opts.promptFile).toBe('string')
+    expect(opts.promptFile.length).toBeGreaterThan(0)
   })
 
   it('with --agent and dispatchRole unavailable, prints the manual instruction and resolves cleanly', async () => {
@@ -121,7 +188,7 @@ describe('dispatchTask', () => {
     try {
       const result = await dispatchTask(
         { tranche: 'plan-brief-v1', n: 427, agent: 'codex' },
-        deps({
+        postingDeps({
           postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-1',
           resolveDispatchRole: async () => null
         })
@@ -133,4 +200,48 @@ describe('dispatchTask', () => {
     expect(printed).toContain('dispatchRole` is not available yet')
     expect(printed).toContain('--agent codex')
   })
+
+  describe('--agent authorization', () => {
+    it('refuses before any render, comment check, or post when the actor is not on the Principal allowlist', async () => {
+      await expect(
+        dispatchTask(
+          { tranche: 'plan-brief-v1', n: 427, agent: 'claude' },
+          deps({ resolveDispatchAuthorization: () => ({ authorized: false, login: 'random-collaborator' }) })
+        )
+      ).rejects.toThrow(/random-collaborator.*Principal allowlist/s)
+    })
+
+    it('refuses (fail-closed) when the actor identity cannot be resolved at all', async () => {
+      await expect(
+        dispatchTask(
+          { tranche: 'plan-brief-v1', n: 427, agent: 'claude' },
+          deps({ resolveDispatchAuthorization: () => ({ authorized: false, login: null }) })
+        )
+      ).rejects.toThrow(/could not resolve the identity/)
+    })
+
+    it('is never consulted when --agent is omitted — posting the brief alone needs no Principal check', async () => {
+      let authChecked = false
+      const result = await dispatchTask(
+        { tranche: 'plan-brief-v1', n: 427 },
+        postingDeps({
+          postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-1',
+          resolveDispatchAuthorization: () => {
+            authChecked = true
+            return { authorized: true, login: 'a-principal' }
+          }
+        })
+      )
+      expect(result.posted).toBe(true)
+      expect(authChecked).toBe(false)
+    })
+  })
+})
+
+describe('contentAfterTwoLines', () => {
+  for (const { name, input, expected } of CONTENT_AFTER_TWO_LINES_VECTORS) {
+    it(name, () => {
+      expect(contentAfterTwoLines(input)).toBe(expected)
+    })
+  }
 })

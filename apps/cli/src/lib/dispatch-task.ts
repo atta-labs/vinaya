@@ -18,8 +18,13 @@
 
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { isPrincipal } from '@attalabs/aeg-core'
 import { assembleAndRenderBrief } from './brief-assembly.js'
-import { postMarkedComment } from './forge-write.js'
+import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
+import { currentGhLogin, postMarkedComment } from './forge-write.js'
 
 export const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
 
@@ -57,13 +62,16 @@ type IssueCommentsJson = { comments: IssueComment[] }
  * normalize whatever separates the two header lines from the brief
  * differently than the literal bytes a reader sees below them.
  *
- * Duplicated (not imported) in `verify-dispatch.ts` and
- * `check-brief-shape.ts` — both live outside this file's own reach
- * (`@attalabs/aeg-core`'s `bin/`, and `apps/cli/src/checks/`, cannot import
- * `apps/cli/src/lib/dispatch-task.ts` without an awkward or backwards
- * dependency) — same discipline this file's own `sh()` mirrors from
- * `pr.ts`'s local `git()`. All three copies share this one doc comment's
- * contract; a change to the hashed region updates every copy.
+ * This is the ONE real implementation — `check-brief-shape.ts` imports it
+ * directly (same package, `apps/cli/src/checks/bin` already imports from
+ * `apps/cli/src/lib` elsewhere). Duplicated exactly once, unavoidably, in
+ * `packages/aeg-core/bin/verify-dispatch.ts`: that file lives in a genuinely
+ * separate package and cannot import `apps/cli` at all — same discipline
+ * this file's own `sh()` mirrors from `pr.ts`'s local `git()`.
+ * `verify-dispatch.test.ts` and `dispatch-task.test.ts` both pin the same
+ * fixture vectors against their own copy, so the two implementations
+ * disagreeing fails a test on either side rather than surviving as an
+ * undetected drift.
  */
 export function contentAfterTwoLines(body: string): string {
   const first = body.indexOf('\n')
@@ -109,7 +117,19 @@ function findExistingV1Comment(n: number): IssueComment | null {
   return fetchIssueComments(n).find((c) => c.body.split('\n')[0] === AEG_BRIEF_V1_MARKER) ?? null
 }
 
-type DispatchRoleFn = (role: string, agent: DispatchAgent, brief: string, context: { task: number }) => Promise<unknown>
+/**
+ * Mirrors `dispatch.ts`'s real `DispatchOpts` — `promptFile` is REQUIRED
+ * there, not optional: found live reviewing this
+ * exact task, the first-cut type here omitted it entirely, a mismatch `tsc`
+ * cannot catch across a dynamic import resolved by a runtime-built
+ * specifier (see `resolveDispatchRole` below). `promptFile` is unused by
+ * any vendor's invocation today per that file's own doc comment, but the
+ * field is still required by the type this dynamically-loaded function
+ * actually exports, so a real value is always supplied — see
+ * `withPromptFile`.
+ */
+type DispatchRoleOpts = { task: number; promptFile: string }
+type DispatchRoleFn = (role: string, agent: DispatchAgent, prompt: string, opts: DispatchRoleOpts) => Promise<unknown>
 
 /**
  * `apps/cli/src/lib/dispatch.ts`'s `dispatchRole` export is a soft
@@ -142,6 +162,43 @@ function printManualDispatchInstruction(tranche: string, n: number, agent: Dispa
 }
 
 /**
+ * Writes `prompt` to a fresh temp file and calls `fn` with its path,
+ * removing the file (and its directory) afterward regardless of outcome —
+ * `dispatchRole`'s real `DispatchOpts.promptFile` is required even though
+ * every vendor's own invocation reads the prompt from `prompt`/stdin, not
+ * this file, today.
+ */
+async function withPromptFile<T>(prompt: string, fn: (promptFile: string) => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-dispatch-prompt-'))
+  const promptFile = join(dir, 'prompt.md')
+  writeFileSync(promptFile, prompt, 'utf8')
+  try {
+    return await fn(promptFile)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+export type DispatchAuthorization = { authorized: boolean; login: string | null }
+
+/**
+ * `--agent` starts a real, unattended, code-writing coding-agent session —
+ * the one action `dispatchTask` takes that is not merely posting a comment.
+ * Found live (security review): nothing gated who could trigger it — any
+ * actor with `gh` write access to this repo, not only the Principal, could
+ * run `--agent` locally once `dispatchRole` ships.
+ * Checked BEFORE anything else — no render, no forge read, no post — when
+ * `agent` is given, mirroring `refuseUnlessPrincipal`'s own fail-closed
+ * posture (`lib/forge-write.ts`, `pr rule`/`issue objectives edit`): an
+ * unresolvable identity refuses the same as a disallowed one.
+ */
+function resolveDispatchAuthorization(): DispatchAuthorization {
+  const login = currentGhLogin()
+  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  return { authorized: login !== null && isPrincipal(login, allowlist), login }
+}
+
+/**
  * Injection seam for `apps/cli/tests/lib/dispatch-task.test.ts` — same
  * convention `commands/archive.ts`'s `ArchiveDeps` already uses in this
  * repo. `taskDispatchCommand` (the one real caller) never passes a second
@@ -154,13 +211,15 @@ export type DispatchTaskDeps = {
   findExistingV1Comment: (n: number) => IssueComment | null
   postMarkedComment: typeof postMarkedComment
   resolveDispatchRole: () => Promise<DispatchRoleFn | null>
+  resolveDispatchAuthorization: () => DispatchAuthorization
 }
 
 const defaultDeps: DispatchTaskDeps = {
   assembleAndRenderBrief,
   findExistingV1Comment,
   postMarkedComment,
-  resolveDispatchRole
+  resolveDispatchRole,
+  resolveDispatchAuthorization
 }
 
 /**
@@ -173,6 +232,20 @@ export async function dispatchTask(
   deps: DispatchTaskDeps = defaultDeps
 ): Promise<DispatchTaskResult> {
   const { tranche, n, agent } = input
+
+  // Authorization is checked before anything else — no render, no forge
+  // read, no post — when `agent` is given: starting a real coding-agent
+  // session is the one action here that isn't merely posting a comment.
+  if (agent) {
+    const { authorized, login } = deps.resolveDispatchAuthorization()
+    if (!authorized) {
+      throw new DispatchTaskError(
+        login === null
+          ? 'could not resolve the identity `gh` is authenticated as — starting the developer via `--agent` is Principal-only and refuses rather than proceeding with an unverified actor.'
+          : `\`${login}\` is not on the Principal allowlist — starting the developer via \`--agent\` is Principal-only.`
+      )
+    }
+  }
 
   const result = await deps.assembleAndRenderBrief(tranche, String(n))
   if (!result.ok) {
@@ -193,7 +266,9 @@ export async function dispatchTask(
   if (agent) {
     const dispatchRole = await deps.resolveDispatchRole()
     if (dispatchRole) {
-      await dispatchRole('developer', agent, result.brief, { task: n })
+      await withPromptFile(result.brief, (promptFile) =>
+        dispatchRole('developer', agent, result.brief, { task: n, promptFile })
+      )
     } else {
       printManualDispatchInstruction(tranche, n, agent)
     }
