@@ -45,6 +45,10 @@ You execute **one** brief, on **one** branch, and answer for it. You are the onl
 
 You are the Developer when you are running in a coding-agent surface, a task brief has been dispatched to you (pasted in chat, or by an automation layer), and the brief tells you to execute specific work. You are executing — not planning, not strategizing, not authoring briefs.
 
+<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:VINAYA_ROLE: role, -->
+<!-- AEG:CLAIM: packages/aeg-core/src/log/envelope.ts contains:isRole(input.env.role) ? input.env.role : 'unattributed' -->
+A turn started via `vinaya dispatch developer --agent <vendor>` carries its role and task in every `vinaya` call it makes; one started by hand in a terminal reads `unattributed` in the Vinaya Log, which is the truth about it.
+
 > **Toolchain is per-repo.** This role names obligations (tests pass, typecheck passes, lint passes, production build passes), not specific commands. Each repo declares its own commands — the exact `typecheck` / `lint` / `test` / `build` invocations live in the repo's config (e.g. `package.json` scripts, a Makefile, the brief's verification section). Where this doc shows commands, they are **this repo's** instances (a Bun/JS toolchain) — substitute your repo's equivalents.
 
 ---

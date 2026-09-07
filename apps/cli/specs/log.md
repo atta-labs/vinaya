@@ -53,7 +53,9 @@ subject: {
 
 `vinaya log flush` (below) is the one caller today, using only `issue.comment`/`pr.comment`; the other ten ops are shaped for future forge-write call sites, not yet wired to one.
 
-`dispatchRole` and `devReviewLoop` (the two chokepoints that will call `log()` for the `dispatch`/`dev_review_loop` families) land in a later task; those two families still ship with zero real callers, proved by the same test that will fail on the first caller outside `apps/cli/src/lib/dispatch-role.ts` and `apps/cli/src/lib/dev-review-loop.ts`.
+`dispatchRole` (task 3, `vinaya-log-v1`, Issue #406) is the `dispatch` family's real caller, in `apps/cli/src/lib/dispatch.ts` — not `dispatch-role.ts`, this file's own earlier forward-looking guess at the filename. `devReviewLoop` (the `dev_review_loop` chokepoint) lands in a later task; that family still ships with zero real callers, proved by the same test that will fail on the first caller outside `apps/cli/src/lib/dispatch.ts` and `apps/cli/src/lib/dev-review-loop.ts`.
+
+**`dispatchRole`'s own `outcome_received` lines carry a placeholder `outcome`.** `DispatchOutcomeSchema`'s seven variants each require role/action-specific identifying data (a PR number, a head sha, a comment id) that a generic headless launcher cannot honestly produce from an exit code and a vendor's own usage blob alone. Until the schema gains a variant for "completed, no specific forge outcome recorded here," a successful dispatch's `outcome_received` line carries `{ type: 'plan', issues: [] }` — the one member satisfiable with no invented identifier — and this must not be read as "a plan was cut." See `apps/cli/src/lib/dispatch.ts`'s own module doc for the full reasoning.
 
 ## The outbox
 
@@ -88,7 +90,9 @@ polling the outbox file for its own line to land (`waitForOwnLine`, bounded at 2
 
 ## Attribution
 
-`VINAYA_RUN_ID`, `VINAYA_ROLE`, `VINAYA_TASK`, `VINAYA_ROUND` are read from `process.env` by the sink, never passed as an argument — a caller cannot override its own attribution. Absent: `role: 'unattributed'`, `issue: null`, a `run_id` generated once per process (`crypto.randomUUID()`). `host` is `'ci'` when `GITHUB_ACTIONS` is set, else `'hook'`/`'loop'` from `VINAYA_HOST`, else `'cli'`. A session not started through `vinaya dispatch` (task 3) is `unattributed`, which is the truth about it — the same class of honesty as `role: 'unattributed'` anywhere else in this doctrine.
+`VINAYA_RUN_ID`, `VINAYA_ROLE`, `VINAYA_TASK`, `VINAYA_ROUND` are read from `process.env` by the sink, never passed as an argument — a caller cannot override its own attribution. Absent: `role: 'unattributed'`, `issue: null`, a `run_id` generated once per process (`crypto.randomUUID()`). `host` is `'ci'` when `GITHUB_ACTIONS` is set, else `'hook'`/`'loop'` from `VINAYA_HOST`, else `'cli'`. A session not started through `vinaya dispatch` (task 3, shipped) is `unattributed`, which is the truth about it — the same class of honesty as `role: 'unattributed'` anywhere else in this doctrine.
+
+`vinaya dispatch <role> --agent claude|codex|gemini` (`apps/cli/src/lib/dispatch.ts`) is the real mechanism: it sets all four variables on the CHILD process's environment only — via `spawn`'s own `env` option, never by mutating the parent's `process.env` — and separately calls `createLogSink({ env: () => ({ ...process.env, VINAYA_ROLE, VINAYA_TASK, VINAYA_ROUND }) })` once per dispatch so its OWN `dispatched`/`outcome_received`/`dispatch_failed` lines carry the same attribution without ever touching the parent's real environment. `--task` is optional: given, the line's `issue` is that number; absent, `issue: null` and `role` still comes from the `<role>` argument — never `unattributed`, since the role is always known at the point of dispatch. The child inherits the SAME `run_id` the parent's three lines used, so every `vinaya` call the child makes in turn (its own Stop hook, a nested dispatch) joins under it.
 
 ## Redaction
 

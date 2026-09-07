@@ -45,6 +45,10 @@ You are the Reviewer when a PR is open and you have been asked to review it. You
 
 Security review is a *specialization* of this role and lives in `roles/security.md`. This doc covers **code review**.
 
+<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:VINAYA_ROLE: role, -->
+<!-- AEG:CLAIM: packages/aeg-core/src/log/envelope.ts contains:isRole(input.env.role) ? input.env.role : 'unattributed' -->
+A review turn started via `vinaya dispatch code-reviewer --agent <vendor>` carries its role and task in every `vinaya` call it makes; one started by hand in a terminal reads `unattributed` in the Vinaya Log, which is the truth about it.
+
 ---
 
 ## When you are the Reviewer
