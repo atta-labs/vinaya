@@ -3,9 +3,10 @@
  * Pure — no `fs`, no `fetch`, no `process.env`.
  *
  * `aeg-root/roles/developer.md` § "PR body — canonical form" and
- * `aeg-root/templates/pr-report-template.md` both require `## Summary` and
- * `## Scope` to be exactly one paragraph — narrative root-cause detail
- * belongs in a section of its own below the canonical four, a commit
+ * `aeg-root/templates/pr-report-template.md` both require `## Decisions`
+ * (`## Summary` before the plan-brief-v1 rename — see below) and `## Scope`
+ * to hold exactly one blank-line-delimited block — narrative root-cause
+ * detail belongs in a section of its own below the canonical four, a commit
  * message, or the changeset, never padded into the report itself and never
  * hand-typed into the AEG:EVIDENCE block. Nothing enforced that rule
  * mechanically:
@@ -16,23 +17,36 @@
  * (`body-bare-digits`, `reader-resolvable-prose`'s glossary rule) — the same
  * class of gap `#341` hit in code, just in prose instead.
  *
+ * Re-pointed at `## Decisions` (plan-brief-v1, dogfooding finding): the
+ * canonical template renamed `## Summary` to `## Decisions` — a heading this
+ * name-matched check cannot see under its old name — and reviewing that
+ * same task caught the gap live: a heading rename silently retiring a
+ * mechanical check is the same regression class `#341`/`#358` already named
+ * for this file, just in the check's own target this time. `Decisions`'
+ * shape differs from `Summary`'s (a bullet list, one line per open choice,
+ * not a prose paragraph) but the enforced property is unchanged either way:
+ * exactly one blank-line-delimited block, so a real bullet list still
+ * passes (no blank lines between its own items) while padding it with a
+ * second, separately-blocked paragraph of prose still fails.
+ *
  * Deterministic and structural only, matching `brief-validation.ts`'s own
  * "presence-only" philosophy: this counts blank-line-delimited text blocks,
  * never judges whether the prose itself is good.
  *
- * The rule is literal — one paragraph, full stop — so a `### subsection`, a
- * bullet list, or a markdown table under Summary/Scope all fail too, same as
- * a second prose paragraph would (confirmed by probe, PR review on #358).
- * That is intentional, not an oversight: `developer.md`'s own escape hatch
- * for exactly this case is "Add anything you want beneath the four
- * sections" — structured detail belongs in a section of its own below
- * Summary/Scope/Test-plan/Evidence, not folded into one of the four. A
+ * The rule is literal — one block, full stop — so a `### subsection` or a
+ * markdown table under Decisions/Scope fails too, same as a second
+ * blank-line-separated paragraph would (confirmed by probe, PR review on
+ * `#358`, back when this section was still named `Summary`). That is
+ * intentional, not an oversight: `developer.md`'s own escape hatch for
+ * exactly this case is "Add anything you want beneath the four sections" —
+ * structured detail belongs in a section of its own below
+ * Decisions/Scope/Test-plan/Evidence, not folded into one of the four. A
  * multi-line blockquote is the one shape this rule does NOT split on (its
  * `\n>\n` continuation lines are never blank) — but only when the
  * blockquote IS the section, start to finish: prose before or after it is
  * still a separate blank-line-delimited block, so "intro sentence, then a
  * blockquote aside, then a closing sentence" is three blocks and still
- * fails (confirmed by probe, PR review on #358 — this is not the
+ * fails (confirmed by probe, PR review on `#358` — this is not the
  * "structured aside alongside prose" shape it can look like at a glance).
  * The exemption only covers a section whose entire content, quoted in
  * full, is the one thing being said.
@@ -101,8 +115,8 @@ function checkSectionDensity(prBody: string, heading: string): DensityResult {
   }
 }
 
-export function checkSummaryDensity(prBody: string): DensityResult {
-  return checkSectionDensity(prBody, 'Summary')
+export function checkDecisionsDensity(prBody: string): DensityResult {
+  return checkSectionDensity(prBody, 'Decisions')
 }
 
 export function checkScopeDensity(prBody: string): DensityResult {
@@ -111,6 +125,6 @@ export function checkScopeDensity(prBody: string): DensityResult {
 
 /** Aggregates both section checks — one error line per over-dense section. */
 export function checkPrReportDensity(prBody: string): { errors: string[] } {
-  const results = [checkSummaryDensity(prBody), checkScopeDensity(prBody)]
+  const results = [checkDecisionsDensity(prBody), checkScopeDensity(prBody)]
   return { errors: results.flatMap((r) => r.errors) }
 }

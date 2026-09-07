@@ -177,7 +177,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `parseTranche` | function | `packages/aeg-core/src/parse-tranche.ts` |
 | `checkPrReportDensity` | function | `packages/aeg-core/src/pr-report-density.ts` |
 | `checkScopeDensity` | function | `packages/aeg-core/src/pr-report-density.ts` |
-| `checkSummaryDensity` | function | `packages/aeg-core/src/pr-report-density.ts` |
+| `checkDecisionsDensity` | function | `packages/aeg-core/src/pr-report-density.ts` |
 | `deriveTierFromDiff` | function | `packages/aeg-core/src/pr-tier.ts` |
 | `overrideActive` | function | `packages/aeg-core/src/pr-tier.ts` |
 | `readTierFromPrBody` | function | `packages/aeg-core/src/pr-tier.ts` |
