@@ -251,7 +251,7 @@ export function fetchIssueTitle(issueNumber: number): string {
  * objectives, nothing else, matching the facts-only contract the lint in
  * `renderReviewerDispatchPrompt` exists to enforce.
  */
-/** Pure: the `## Objectives` section text out of an Issue body, or `''` when the Issue has none — unit-testable with no `gh` call. */
+/** Pure: the `## Objectives` section text out of a body, or `''` when there is none — unit-testable with no `gh` call. */
 export function extractObjectivesSection(body: string): string {
   const lines = body.split('\n')
   const start = lines.findIndex((l) => /^##\s*objectives\s*$/i.test(l.trim()))
@@ -261,16 +261,25 @@ export function extractObjectivesSection(body: string): string {
   return (end === -1 ? rest : rest.slice(0, end)).join('\n').trim()
 }
 
+/**
+ * Security review, PR #445 round 2, HIGH: the round-1 fix for the OBJECTIVES
+ * BLOCKER read the ISSUE BODY directly (`gh issue view --json body`) with no
+ * author check at all — reopening the identical injection class the round-1
+ * HIGH fix had just closed for comments, through a different door: any
+ * collaborator with plain write access can edit an Issue body (no comment,
+ * no marker, nothing `isPrincipal` could filter) and land content in every
+ * round's prompt. The fix is not a new author check on the Issue body —
+ * GitHub exposes no reliable "who last edited this section" signal to check
+ * — it's sourcing from a document that is ALREADY principal-gated:
+ * `renderObjectives` (`@attalabs/aeg-core`) copies the Issue's `## Objectives`
+ * section into the frozen brief VERBATIM, same heading, same text
+ * (`brief-render.ts`'s own doc comment). `fetchFrozenBrief` already requires
+ * a principal-authored `aeg:brief:v1` comment; extracting Objectives from
+ * THAT text, never a fresh ungated Issue-body read, closes this with no new
+ * gh call and no new trust-boundary code at all.
+ */
 export function fetchIssueObjectives(issueNumber: number): string {
-  let body: string
-  try {
-    body = sh('gh', ['issue', 'view', String(issueNumber), '--json', 'body', '--jq', '.body'])
-  } catch (err) {
-    throw new Error(
-      `fetchIssueObjectives: could not fetch Issue #${issueNumber}'s body: ${err instanceof Error ? err.message : String(err)}`
-    )
-  }
-  return extractObjectivesSection(body)
+  return extractObjectivesSection(fetchFrozenBrief(issueNumber))
 }
 
 const ISSUE_TITLE_SHAPE = /^\[([^\]]+)\]\s+(\d+)\s+[—-]/
