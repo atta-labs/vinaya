@@ -377,7 +377,19 @@ function grep(pattern: string, scope: string[] = SCOPE): string[] {
         '--exclude-dir=.next',
         '--exclude-dir=.turbo',
         '--exclude-dir=dist',
-        '--exclude-dir=build'
+        '--exclude-dir=build',
+        // grep walks the physical filesystem, not the git index — .gitignore
+        // (which excludes both of these) has no effect here. A concurrent
+        // agent's own worktree is a separate checkout on a different branch;
+        // its files are not this tree's shipped surface, and its own
+        // in-progress test fixtures can legitimately name a retired term as a
+        // negative example, the same self-reference reason this file exempts
+        // itself. Found live: a concurrent worktree under .worktrees/ left a
+        // dangling path grep tried to read mid-sweep, and a concurrent
+        // worktree under .claude/worktrees/ tripped a real match on another
+        // task's own test fixture.
+        '--exclude-dir=.worktrees',
+        '--exclude-dir=worktrees'
       ],
       // maxBuffer is defense in depth, not the fix — --exclude-dir above is
       // what keeps output bounded. 20MB is generous headroom past the
