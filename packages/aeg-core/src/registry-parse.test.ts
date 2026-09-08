@@ -67,16 +67,16 @@ describe('parseEnforcementRegistry', () => {
     expect(ring2Rows[1]?.implementation).toBe('')
   })
 
-  it('parses the real enforcement.md — 53 rows (34 plus the six standalone-shim rows G2 demanded, plus the retired-vocabulary row task 7 added, plus the G6 row task 8 added, plus the doctrine-portability row task 234 added, plus the workspace-escape row task 17 added, plus the main-branch-refusal row task 9 added, plus the published-lifecycle audit row task 36 added, plus the changeset-coverage row fix/changeset-coverage-check added, plus the quoted-command row fix/quoted-command-staleness added, plus the token-collection-wired row task 5 added, plus the token-report row vinaya-token-determinism-v1 task 4 added, plus the PR-report density row fix/pr-body-density-check added, plus the doctrine-no-procedures row review-convergence-v1 task 10 added, plus the exec-bits row review-convergence-v1 task 8 added), only non-deterministic rows carry an empty implementation', () => {
+  it('parses the real enforcement.md — 57 rows (34 plus the six standalone-shim rows G2 demanded, plus the retired-vocabulary row task 7 added, plus the G6 row task 8 added, plus the doctrine-portability row task 234 added, plus the workspace-escape row task 17 added, plus the main-branch-refusal row task 9 added, plus the published-lifecycle audit row task 36 added, plus the changeset-coverage row fix/changeset-coverage-check added, plus the quoted-command row fix/quoted-command-staleness added, plus the token-collection-wired row task 5 added, plus the token-report row vinaya-token-determinism-v1 task 4 added, plus the PR-report density row fix/pr-body-density-check added, plus the doctrine-no-procedures row review-convergence-v1 task 10 added, plus the exec-bits row review-convergence-v1 task 8 added, plus the four rows plan-brief-v1 task 8 added closing G2\'s twin-form backlog and O7 — body-bare-digits, evidence-fresh, doc-coverage (PR open/edit), surface-scope), only non-deterministic rows carry an empty implementation', () => {
     const content = readFileSync(ENFORCEMENT_PATH, 'utf8')
     const rows = parseEnforcementRegistry(content)
 
-    expect(rows).toHaveLength(53)
+    expect(rows).toHaveLength(57)
 
     const ring0Count = rows.filter((r) => r.ring === 'ring0').length
     const ring1Count = rows.filter((r) => r.ring === 'ring1').length
     const ring2Count = rows.filter((r) => r.ring === 'ring2').length
-    expect(ring0Count + ring1Count + ring2Count).toBe(53)
+    expect(ring0Count + ring1Count + ring2Count).toBe(57)
 
     const emptyImplementation = rows.filter((r) => r.implementation === '')
     // "Staleness audits" is the one genuinely non-deterministic row with no file.

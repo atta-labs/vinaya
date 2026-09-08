@@ -45,11 +45,11 @@ describe('checkG1', () => {
 })
 
 describe('checkG2', () => {
-  it('reports a candidate file absent from every row implementation as info, never fail', () => {
+  it('reports a candidate file absent from every row implementation as fail (blocking, plan-brief-v1 8)', () => {
     const rows: GateRow[] = [makeRow({ implementation: '.husky/pre-commit' })]
     const candidateFiles = ['.husky/pre-commit', '.husky/orphan-hook']
     const result = checkG2(rows, candidateFiles)
-    expect(result.status).toBe('info')
+    expect(result.status).toBe('fail')
     expect(result.findings).toHaveLength(1)
     expect(result.findings[0]?.path).toBe('.husky/orphan-hook')
   })
@@ -63,7 +63,7 @@ describe('checkG2', () => {
   // The trap Issue #104 exists to close: a stub row that fills
   // `implementation` alone would satisfy the orphan half above and read as
   // "documented" — the placeholder scan is what keeps it flagged.
-  it('reports info for a row still carrying the scaffold placeholder marker in its summary', () => {
+  it('reports fail for a row still carrying the scaffold placeholder marker in its summary', () => {
     const rows: GateRow[] = [
       makeRow({
         implementation: 'packages/aeg-core/bin/check-new-thing.ts',
@@ -71,18 +71,18 @@ describe('checkG2', () => {
       })
     ]
     const result = checkG2(rows, ['packages/aeg-core/bin/check-new-thing.ts'])
-    expect(result.status).toBe('info')
+    expect(result.status).toBe('fail')
     expect(result.findings).toHaveLength(1)
     expect(result.findings[0]?.reason).toContain('placeholder')
   })
 
-  it('reports info for a row carrying the marker in its description or spec cell too', () => {
+  it('reports fail for a row carrying the marker in its description or spec cell too', () => {
     const rows: GateRow[] = [
       makeRow({ implementation: 'a.ts', description: '[undocumented — fill in why]' }),
       makeRow({ implementation: 'b.ts', spec: '[undocumented — fill in why]' })
     ]
     const result = checkG2(rows, ['a.ts', 'b.ts'])
-    expect(result.status).toBe('info')
+    expect(result.status).toBe('fail')
     expect(result.findings).toHaveLength(2)
   })
 
@@ -97,7 +97,7 @@ describe('checkG2', () => {
     // The candidate IS named now (the orphan half would pass clean) — the
     // placeholder half is what still surfaces it.
     const result = checkG2(rows, ['packages/aeg-core/bin/check-new-thing.ts'])
-    expect(result.status).toBe('info')
+    expect(result.status).toBe('fail')
     expect(result.findings.length).toBeGreaterThan(0)
   })
 
@@ -113,6 +113,53 @@ describe('checkG2', () => {
     const result = checkG2(rows, ['packages/aeg-core/bin/verify-registry.ts'])
     expect(result.status).toBe('pass')
     expect(result.findings).toHaveLength(0)
+  })
+
+  // O14 — twin-form recognition: the same mechanism ships as two physical
+  // files (a packages/aeg-core/bin standalone form and an apps/cli check-bin
+  // CLI-registered form), and a row names only one. The candidate's own
+  // claimed check name(s) overlapping some OTHER row's claimed name(s) is
+  // enough — no second row is invented for the same fact.
+  it('a shipped-bin candidate whose own name is claimed by a DIFFERENT row (its aeg-core twin) passes', () => {
+    const rows: GateRow[] = [makeRow({ implementation: 'packages/aeg-core/bin/verify-brief.ts' })]
+    const result = checkG2(rows, ['apps/cli/src/checks/bin/check-brief-shape.ts'])
+    expect(result.status).toBe('pass')
+    expect(result.findings).toHaveLength(0)
+  })
+
+  it('an aeg-core-bin candidate whose own name is claimed by its apps/cli twin row passes, symmetrically', () => {
+    const rows: GateRow[] = [makeRow({ implementation: 'apps/cli/src/checks/bin/check-brief-shape.ts' })]
+    const result = checkG2(rows, ['packages/aeg-core/bin/verify-brief.ts'])
+    expect(result.status).toBe('pass')
+    expect(result.findings).toHaveLength(0)
+  })
+
+  it('a NON_GATE_BINS-listed aeg-core bin needs no row at all — the honest fix is the gate stops asking', () => {
+    const rows: GateRow[] = [makeRow({ implementation: 'a.ts' })]
+    const result = checkG2(rows, ['packages/aeg-core/bin/report-tokens.ts'])
+    expect(result.status).toBe('pass')
+    expect(result.findings).toHaveLength(0)
+  })
+
+  it('a listed non-gate hook script needs no row at all', () => {
+    const rows: GateRow[] = [makeRow({ implementation: 'a.ts' })]
+    const result = checkG2(rows, ['.claude/hooks/track-transcript.sh'])
+    expect(result.status).toBe('pass')
+    expect(result.findings).toHaveLength(0)
+  })
+
+  it('an explicitly excepted twin candidate passes even with no claimable overlap', () => {
+    const rows: GateRow[] = [makeRow({ implementation: 'packages/aeg-core/bin/verify-coherence.ts' })]
+    const result = checkG2(rows, ['apps/cli/src/checks/bin/check-closes-n.ts'])
+    expect(result.status).toBe('pass')
+    expect(result.findings).toHaveLength(0)
+  })
+
+  it('a genuinely unrelated aeg-core bin (not NON_GATE_BINS, no claimed-name overlap) still fails', () => {
+    const rows: GateRow[] = [makeRow({ implementation: 'packages/aeg-core/bin/verify-brief.ts' })]
+    const result = checkG2(rows, ['packages/aeg-core/bin/totally-unrelated.ts'])
+    expect(result.status).toBe('fail')
+    expect(result.findings).toHaveLength(1)
   })
 })
 

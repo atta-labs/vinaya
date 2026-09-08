@@ -1001,10 +1001,48 @@ node ${selfHost.bin} ${args} || exit 1`
 // pushing the branch is what makes one *possible*, not what creates it. CI's
 // `vinaya-checks.yml` runs on the `pull_request` event and omits `--local`,
 // so both checks run for real, against the real PR body, once one exists.
+/**
+ * O9 — the local gates run only what the change requires, and fix what they
+ * can rather than merely refusing it. Gated on `selfHost` like the pre-push
+ * affected-test block below it: only a repo vendoring `@attalabs/vinaya` as
+ * a workspace member is assumed to run this repo's own Bun/Biome/Turborepo
+ * toolchain — an ordinary adopter's commit is not made to depend on `biome`
+ * or `turbo` existing.
+ *
+ * Two steps, in order:
+ *
+ * 1. `biome check --write --staged .` applies every safe formatting/lint fix
+ *    to the STAGED files only, then exits non-zero if a real (unfixable, or
+ *    unsafe) violation remains — never merely reporting what a human must
+ *    fix by hand. `--write` rewrites the WORKING TREE, not the index, so the
+ *    fixed content restages itself only for files that were already staged
+ *    before this ran (`git diff --cached --name-only` captured up front) —
+ *    never a file the developer deliberately left unstaged.
+ * 2. `turbo typecheck --affected` — the identical `--affected` derivation
+ *    the pre-push hook's own test step already uses, scoped to whichever
+ *    packages the staged diff actually touches rather than every package
+ *    `bun run typecheck` would check.
+ *
+ * Both cost seconds because both are scoped; the doctrine `vinaya check`
+ * gate that follows was already diff-scoped (`--diff-only`) before this.
+ */
 function preCommitBody(selfHost: VendoredVinaya | null): string {
-  return `# Vinaya commit-time gate. Runs the deterministic checks over your staged
+  const doctrineGate = `# Vinaya commit-time gate. Runs the deterministic checks over your staged
 # diff before the commit lands.
 ${hookRun(selfHost, 'check --all --diff-only --local --skip-full')}`
+
+  if (!selfHost) return doctrineGate
+
+  return `# Ring 0: format + lint your staged files, applying every safe fix, then
+# type-check only the packages your staged diff actually touches (O9) —
+# scoped so this hook costs seconds, not the whole repo's worth of work.
+VINAYA_STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACMR)"
+bunx biome check --write --staged . || exit 1
+if [ -n "$VINAYA_STAGED_FILES" ]; then
+  echo "$VINAYA_STAGED_FILES" | xargs git add --
+fi
+bunx turbo typecheck --affected || exit 1
+${doctrineGate}`
 }
 
 function prePushBody(selfHost: VendoredVinaya | null): string {

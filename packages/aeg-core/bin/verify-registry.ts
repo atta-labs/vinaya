@@ -6,9 +6,9 @@
  * discipline: this is the thin I/O shim; the pure evaluators live in
  * `../src/registry-parse.ts` / `../src/registry-checks.ts`).
  *
- * Rollout policy: G2 is report-only — it can only print `info`, never
- * affect the exit code. G1 (task 8, re-graded) and G3/G4/G5 are blocking:
- * the process exits non-zero if any of them returns `'fail'`.
+ * Rollout policy: G1 and G2 (both re-graded blocking in plan-brief-v1 task 8)
+ * and G3/G4/G5 are blocking: the process exits non-zero if any of them
+ * returns `'fail'`.
  *
  * G6 does NOT run from this standalone bin: it needs `coreCheckRegistry()`,
  * which lives in `apps/cli` and `aeg-core` cannot import without closing a
@@ -371,7 +371,9 @@ if (import.meta.main) {
   )
 
   const blocking = results.filter(
-    (r) => (r.check === 'G1' || r.check === 'G3' || r.check === 'G4' || r.check === 'G5') && r.status === 'fail'
+    (r) =>
+      (r.check === 'G1' || r.check === 'G2' || r.check === 'G3' || r.check === 'G4' || r.check === 'G5') &&
+      r.status === 'fail'
   )
   process.exit(blocking.length > 0 ? 1 : 0)
 }

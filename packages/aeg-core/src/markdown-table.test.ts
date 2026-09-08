@@ -77,8 +77,9 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
     // fix/unfreeze-and-rerun (Issue #399) removed the `pr-body-frozen` row
     // (ring 1) and the `pr refreeze` row (ring 0).
     // fix/true-head-and-stale-sites (Issue #402) moved the raw-API row in
-    // from ring 0.
-    expect(ring1.rows).toHaveLength(27)
+    // from ring 0. plan-brief-v1 task 8 added four rows: body-bare-digits,
+    // evidence-fresh, doc-coverage (PR open/edit), and surface-scope (O7).
+    expect(ring1.rows).toHaveLength(31)
 
     // (2026-07-13) removed the "Daily drift check — stuck row-adjacent
     // blockers" ring-2 row (its subject matter, stale-blocker.ts, was retired).

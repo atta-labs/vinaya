@@ -285,18 +285,16 @@ async function main(): Promise<void> {
   const g5 = checkG5(roles, contracts)
   const g6 = checkG6(rows, new Set(coreCheckRegistry().map((s) => s.name)))
 
-  // G2: report-only (rollout policy mirrored from verify-registry.ts) —
-  // surfaced as a warning, never affects the exit code.
-  emitResult(g2, false)
-
-  // G1 (task 8, re-graded) and G3/G4/G5/G6: blocking.
+  // G1 and G2 (both re-graded blocking in plan-brief-v1 task 8) and
+  // G3/G4/G5/G6: blocking.
   emitResult(g1, true)
+  emitResult(g2, true)
   emitResult(g3, true)
   emitResult(g4Result, true)
   emitResult(g5, true)
   emitResult(g6, true)
 
-  const blockingFailed = [g1, g3, g4Result, g5, g6].some((r) => r.status === 'fail')
+  const blockingFailed = [g1, g2, g3, g4Result, g5, g6].some((r) => r.status === 'fail')
   process.exit(blockingFailed ? 1 : 0)
 }
 
