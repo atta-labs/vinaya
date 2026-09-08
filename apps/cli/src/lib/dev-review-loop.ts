@@ -58,6 +58,7 @@ import {
   isEscalationClass,
   parseFindingsFile,
   parseObjectivesFile,
+  principalBodies,
   renderCodeReviewComment,
   renderEscalationComment,
   renderSecurityComment
@@ -460,9 +461,18 @@ function postPrComment(pr: number, body: string): string {
   }
 }
 
+/**
+ * Attributed bodies only — a comment whose author does not resolve as a
+ * principal is not evidence that THIS run's own post landed (security
+ * review, PR #459: this is the same untrusted-comment class PR #445 closed
+ * for `fetchRulings`/`fetchFrozenBrief`, reintroduced here). Reuses
+ * `review-post.ts`'s `principalBodies` — the exact filter `checkReviewGate`
+ * itself applies before calling either extractor — rather than a second,
+ * parallel derivation.
+ */
 function fetchAllPrCommentBodies(pr: number): string[] {
   const out = sh('gh', ['pr', 'view', String(pr), '--json', 'comments'])
-  return markerComments(out).map((c) => c.body)
+  return principalBodies(markerComments(out), principalAllowlist())
 }
 
 export type PublishInput = {
