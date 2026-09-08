@@ -1,11 +1,5 @@
 # @attalabs/vinaya
 
-## 0.25.1
-
-### Patch Changes
-
-- Republish under 0.25.1: `@attalabs/vinaya@0.25.0` never fully indexed on the npm registry after an interrupted publish attempt, leaving it in a stuck staged state (404 on lookup, 409 on republish). No code change — this bump only unblocks publishing.
-
 ## 0.25.0
 
 ### Minor Changes
