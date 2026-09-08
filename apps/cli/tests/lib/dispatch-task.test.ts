@@ -5,7 +5,8 @@ import {
   contentAfterTwoLines,
   type DispatchTaskDeps,
   DispatchTaskError,
-  dispatchTask
+  dispatchTask,
+  extractAgentClass
 } from '../../src/lib/dispatch-task.js'
 
 const BRIEF_TEXT = '**For:** Sonnet\n**Tier:** 1\n\nCloses #427\n\nYou are the AEG Developer.'
@@ -62,6 +63,7 @@ function deps(overrides: Partial<DispatchTaskDeps> = {}): DispatchTaskDeps {
     postMarkedComment: neverCalled('postMarkedComment') as unknown as DispatchTaskDeps['postMarkedComment'],
     resolveDispatchRole: async () => null,
     resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' }),
+    resolveModelForDispatch: () => undefined,
     ...overrides
   }
 }
@@ -201,6 +203,47 @@ describe('dispatchTask', () => {
     expect(opts.promptFile.length).toBeGreaterThan(0)
   })
 
+  it('O3: an explicit --model wins over resolution, and reaches dispatchRole', async () => {
+    const calls: unknown[][] = []
+    let resolveArgs: unknown = null
+    await dispatchTask(
+      { tranche: 'plan-brief-v1', n: 427, agent: 'claude', model: 'opus' },
+      postingDeps({
+        postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-1',
+        resolveDispatchRole: async () => {
+          return async (...args: unknown[]) => {
+            calls.push(args)
+          }
+        },
+        resolveModelForDispatch: (agent, issue, explicitModel) => {
+          resolveArgs = [agent, issue, explicitModel]
+          return explicitModel
+        }
+      })
+    )
+    expect(resolveArgs).toEqual(['claude', 427, 'opus'])
+    const [, , , opts] = calls[0] as [string, string, string, { model?: string }]
+    expect(opts.model).toBe('opus')
+  })
+
+  it('O3: no --model given — dispatchRole receives whatever the resolver comes back with, undefined included', async () => {
+    const calls: unknown[][] = []
+    await dispatchTask(
+      { tranche: 'plan-brief-v1', n: 427, agent: 'claude' },
+      postingDeps({
+        postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-1',
+        resolveDispatchRole: async () => {
+          return async (...args: unknown[]) => {
+            calls.push(args)
+          }
+        },
+        resolveModelForDispatch: () => 'sonnet'
+      })
+    )
+    const [, , , opts] = calls[0] as [string, string, string, { model?: string }]
+    expect(opts.model).toBe('sonnet')
+  })
+
   it('with --agent and dispatchRole unavailable, prints the manual instruction and resolves cleanly', async () => {
     const originalWrite = process.stdout.write.bind(process.stdout)
     let printed = ''
@@ -279,4 +322,25 @@ describe('contentAfterTwoLines', () => {
       expect(contentAfterTwoLines(input)).toBe(expected)
     })
   }
+})
+
+describe('extractAgentClass (O3, #456)', () => {
+  it('reads the class word out of the rendered rationale field, label included', () => {
+    expect(
+      extractAgentClass(
+        '**Suggested agent-class** — mid — the per-vendor flag discovery and the precedence rule are judgment; the wiring is mechanical.'
+      )
+    ).toBe('mid')
+    expect(extractAgentClass('**agent-class** — high — needs a deep dig.')).toBe('high')
+    expect(extractAgentClass('**Suggested agent-class** – fast – a quick fix.')).toBe('fast')
+  })
+
+  it('returns null for a word outside the three-value vocabulary, never a guess', () => {
+    expect(extractAgentClass('**Suggested agent-class** — low — a single small pure function.')).toBeNull()
+  })
+
+  it('returns null when the field is missing entirely', () => {
+    expect(extractAgentClass('')).toBeNull()
+    expect(extractAgentClass('**Boundary** — some unrelated field.')).toBeNull()
+  })
 })
