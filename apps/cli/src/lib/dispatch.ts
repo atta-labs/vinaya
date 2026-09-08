@@ -97,8 +97,16 @@ export type DispatchHandle = {
   failureReason?: DispatchFailureReason
 }
 
-/** One hour — matches `dispatch.timeoutMs`'s documented default in `VinayaConfigSchema`. */
-const DEFAULT_TIMEOUT_MS = 3_600_000
+/**
+ * Four hours — matches `dispatch.timeoutMs`'s documented default in
+ * `VinayaConfigSchema`. Raised from the original one hour (O4, Issue #450):
+ * a real dispatched agent turn was found live still working past the
+ * thirty-minute mark, and a one-hour ceiling gives too little margin before
+ * a genuinely working agent is killed mid-task. The ceiling itself stays —
+ * an unbounded dispatch is how a hung agent runs forever unnoticed — just
+ * long enough now that reaching it is a real signal, not routine noise.
+ */
+const DEFAULT_TIMEOUT_MS = 14_400_000
 
 /** Grace window between `SIGTERM` and `SIGKILL` once the ceiling fires. */
 const SIGKILL_GRACE_MS = 5_000
