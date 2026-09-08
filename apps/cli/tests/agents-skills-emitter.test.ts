@@ -133,7 +133,7 @@ Run \`bun apps/cli/src/index.ts doctrine --role developer\` and follow its outpu
     // discovery that inferred retirement from the file's absence read the
     // role as live here and never cleaned up an existing adopter's skill.
     // Retirement is declared (`RETIRED_ROLE_NAMES`), so presence is irrelevant.
-    it('flags a retired role\'s skill even while its role file is still present', () => {
+    it("flags a retired role's skill even while its role file is still present", () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
       writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
