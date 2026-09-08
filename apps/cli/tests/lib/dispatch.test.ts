@@ -20,6 +20,13 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { randomUUID } from 'node:crypto'
+import {
+  DEFAULT_TIMEOUT_MS,
+  HEARTBEAT_INTERVAL_MS,
+  openOutputTee,
+  timeoutWarningLeadMs
+} from '../../src/lib/dispatch.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -491,4 +498,83 @@ describe('dispatchRole — resume identifier (round-trip, per vendor)', () => {
       expect(readArgv(argvOut)).toEqual(fixture.resumeArgv(synthId))
     })
   }
+})
+
+/**
+ * Observability (Issue #450). The four behaviours this task added were shipped
+ * with no test of their own; these cover each one at the level it can honestly
+ * be reached. `timeoutWarningLeadMs` and `openOutputTee` are imported directly
+ * — they are pure-enough units that need no spawned process, unlike the
+ * `dispatchRole` cases above, which must go through the real CLI entry point
+ * for the reason that file's own header records.
+ */
+describe('dispatch observability (#450)', () => {
+  it('the shipped default deadline is four hours, not one', () => {
+    expect(DEFAULT_TIMEOUT_MS).toBe(14_400_000)
+    // The regression this pins: a one-hour default killed a dispatched agent
+    // that had made five commits and was still working.
+    expect(DEFAULT_TIMEOUT_MS).toBeGreaterThan(3_600_000)
+  })
+
+  it('warns before the deadline, never after it, and never at the deadline itself', () => {
+    // Capped lead for a long run: four hours warns five minutes out.
+    expect(timeoutWarningLeadMs(14_400_000)).toBe(300_000)
+    // Short runs fall back to half the budget, so the warning still lands
+    // while there is time to act rather than as the kill arrives.
+    expect(timeoutWarningLeadMs(60_000)).toBe(30_000)
+    expect(timeoutWarningLeadMs(1_000)).toBe(500)
+    // The invariant that matters, across the whole range: strictly inside the
+    // budget, so a warning is never scheduled at or past the SIGTERM.
+    for (const budget of [1_000, 60_000, 600_000, 3_600_000, 14_400_000]) {
+      const lead = timeoutWarningLeadMs(budget)
+      expect(lead).toBeGreaterThan(0)
+      expect(lead).toBeLessThan(budget)
+    }
+  })
+
+  it('the heartbeat interval is short enough to distinguish working from hung', () => {
+    expect(HEARTBEAT_INTERVAL_MS).toBeLessThanOrEqual(60_000)
+    expect(HEARTBEAT_INTERVAL_MS).toBeGreaterThan(0)
+  })
+
+  it('tees child output to a readable file keyed by the run, and reads back what was written', async () => {
+    const effectId = `test-${randomUUID()}`
+    const tee = openOutputTee(effectId)
+    expect(tee.path).not.toBeNull()
+    expect(tee.path as string).toContain(effectId)
+
+    tee.write(Buffer.from('first chunk\n'))
+    tee.write(Buffer.from('second chunk\n'))
+    tee.end()
+
+    // The point of the tee is that a human can read it WHILE the run is alive,
+    // so the bytes must actually reach the file rather than sit in a buffer.
+    // `createWriteStream` flushes on the event loop, so this polls with an
+    // await — a synchronous spin would block the very flush it waits for,
+    // which is exactly how this test first failed.
+    const deadline = Date.now() + 3000
+    let contents = ''
+    while (Date.now() < deadline) {
+      try {
+        contents = readFileSync(tee.path as string, 'utf8')
+        if (contents.includes('second chunk')) break
+      } catch {
+        // not created yet
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    expect(contents).toContain('first chunk')
+    expect(contents).toContain('second chunk')
+    rmSync(tee.path as string, { force: true })
+  })
+
+  it('an unwritable tee degrades to a no-op instead of failing the dispatch', () => {
+    // A broken output path must never take down a run — the same posture
+    // `log()` takes for a broken outbox.
+    const tee = openOutputTee('nested/../../escape-attempt')
+    expect(() => {
+      tee.write(Buffer.from('x'))
+      tee.end()
+    }).not.toThrow()
+  })
 })

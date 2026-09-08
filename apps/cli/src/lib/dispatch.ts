@@ -106,13 +106,13 @@ export type DispatchHandle = {
  * an unbounded dispatch is how a hung agent runs forever unnoticed — just
  * long enough now that reaching it is a real signal, not routine noise.
  */
-const DEFAULT_TIMEOUT_MS = 14_400_000
+export const DEFAULT_TIMEOUT_MS = 14_400_000
 
 /** Grace window between `SIGTERM` and `SIGKILL` once the ceiling fires. */
 const SIGKILL_GRACE_MS = 5_000
 
 /** How often a still-running dispatch announces that it is alive (O1). */
-const HEARTBEAT_INTERVAL_MS = 60_000
+export const HEARTBEAT_INTERVAL_MS = 60_000
 
 /**
  * How long before the deadline the approaching-timeout warning fires (O3).
@@ -120,7 +120,7 @@ const HEARTBEAT_INTERVAL_MS = 60_000
  * still gets a warning inside its own ceiling rather than one scheduled past
  * it and never firing.
  */
-function timeoutWarningLeadMs(timeoutMs: number): number {
+export function timeoutWarningLeadMs(timeoutMs: number): number {
   return Math.min(300_000, Math.floor(timeoutMs / 2))
 }
 
@@ -134,7 +134,11 @@ function timeoutWarningLeadMs(timeoutMs: number): number {
  * no-op tee, matching this module's "never throws" posture — losing the
  * human-readable copy is not a reason to fail the dispatch itself.
  */
-function openOutputTee(effectId: string): { write: (chunk: Buffer) => void; end: () => void; path: string | null } {
+export function openOutputTee(effectId: string): {
+  write: (chunk: Buffer) => void
+  end: () => void
+  path: string | null
+} {
   try {
     const dir = join(GLOBAL_VINAYA_HOME, 'dispatch-output')
     mkdirSync(dir, { recursive: true })
