@@ -26,18 +26,27 @@ export async function briefRenderCommand(args: string[]): Promise<void> {
   const trancheSlug = args[0]
   const taskId = args[1]
   if (!trancheSlug || !taskId || trancheSlug.startsWith('--')) {
-    console.error('Usage: vinaya brief render <tranche> <n> --surfaces <glob1,glob2,...> [--out <path>]')
+    console.error('Usage: vinaya brief render <tranche> <n> [--surfaces <glob1,glob2,...>] [--out <path>]')
     process.exit(2)
   }
 
+  // `--surfaces` is an override, not a requirement (task 5, Issue #447, O4):
+  // omitted, `assembleAndRenderBrief` derives the surface from the Issue's
+  // own `## Surface` section — the same source `vinaya task dispatch`
+  // already reads — so the two entry points can never render a brief from
+  // different surfaces, and nobody has to retype globs the Issue already
+  // declares.
   const surfacesIdx = args.indexOf('--surfaces')
   const surfacesArg = surfacesIdx !== -1 ? args[surfacesIdx + 1] : undefined
-  if (!surfacesArg) refuse('--surfaces <glob1,glob2,...> is required.')
-  const globs = (surfacesArg as string)
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-  if (globs.length === 0) refuse('--surfaces resolved to zero globs.')
+  let globs: string[] | undefined
+  if (surfacesIdx !== -1) {
+    if (!surfacesArg) refuse('--surfaces <glob1,glob2,...> was passed with no value.')
+    globs = (surfacesArg as string)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (globs.length === 0) refuse('--surfaces resolved to zero globs.')
+  }
 
   const outIdx = args.indexOf('--out')
   const outPath = outIdx !== -1 ? args[outIdx + 1] : undefined

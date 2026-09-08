@@ -45,6 +45,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `resolveWorkspaceEntry` | function | `packages/aeg-core/src/blast-radius-domains.ts` |
 | `checkBranchTopology` | function | `packages/aeg-core/src/branch-topology-gate.ts` |
 | `taskBranchTopologyFields` | function | `packages/aeg-core/src/branch-topology-gate.ts` |
+| `extractBoundaryFilePaths` | function | `packages/aeg-core/src/brief-render.ts` |
 | `parseRationaleFields` | function | `packages/aeg-core/src/brief-render.ts` |
 | `renderBrief` | function | `packages/aeg-core/src/brief-render.ts` |
 | `AGENT_BOXES_REFUSED_SINCE_PR` | const | `packages/aeg-core/src/brief-validation.ts` |
@@ -267,7 +268,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `projectsFromBody` | function | `packages/aeg-forge-state/src/list-tasks.ts` |
 | `mapForgeFacts` | function | `packages/aeg-forge-state/src/map-forge-facts.ts` |
 
-(237 exports.)
+(238 exports.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
@@ -302,6 +303,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `assembleAndRenderBrief` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `expandGlob` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `packageNameForPath` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `resolveBoundaryPaths` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `sha256OfFile` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `buildClaudeCommandOps` | function | `apps/cli/src/lib/claude-command-emitter.ts` |
 | `CLAUDE_COMMAND_GROUP` | const | `apps/cli/src/lib/claude-command-emitter.ts` |
@@ -475,7 +477,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `STUDIO_ARTIFACT_REPO` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_NODE_MODULES_PACKED_DIRNAME` | const | `apps/cli/src/lib/studio-bundle.ts` |
 
-(174 exports.)
+(175 exports.)
 
 ## Commands — `apps/cli/src/commands` (41 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 

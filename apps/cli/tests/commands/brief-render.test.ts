@@ -44,10 +44,16 @@ describe('vinaya brief render — usage refusals (no network reached)', () => {
     expect(result.stderr).toContain('Usage: vinaya brief render')
   })
 
-  it('refuses with no --surfaces', () => {
-    const result = runCli(['brief', 'render', 'some-tranche', '1'])
+  it('refuses when --surfaces is passed with no value', () => {
+    const result = runCli(['brief', 'render', 'some-tranche', '1', '--surfaces'])
     expect(result.status).toBe(1)
     expect(result.stderr).toContain('--surfaces')
+  })
+
+  it('refuses when --surfaces resolves to zero globs', () => {
+    const result = runCli(['brief', 'render', 'some-tranche', '1', '--surfaces', ' , ,'])
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('--surfaces resolved to zero globs')
   })
 
   it('refuses on an unknown brief subcommand', () => {
@@ -55,6 +61,26 @@ describe('vinaya brief render — usage refusals (no network reached)', () => {
     expect(result.status).toBe(2)
     expect(result.stderr).toContain("Unknown 'brief' subcommand")
   })
+})
+
+describe('vinaya brief render — --surfaces is an override, not a requirement (task 5, Issue #447, O4)', () => {
+  // Reaches the live forge via `gh` (same constraint this file's own doc
+  // comment records for full end-to-end coverage) — asserts only that
+  // omitting `--surfaces` no longer trips the old local refusal, proving
+  // control passed through to `assembleAndRenderBrief`'s own Issue-surface
+  // derivation instead, the same one `vinaya task dispatch` already uses.
+  it(
+    'omitting --surfaces no longer refuses locally — it derives the surface from the Issue instead',
+    () => {
+      const result = runCli(['brief', 'render', 'some-tranche', '1'])
+      expect(result.stderr).not.toContain('--surfaces <glob1,glob2,...> was passed with no value')
+      expect(result.stderr).not.toContain('--surfaces resolved to zero globs')
+    },
+    // A real `gh`/forge round-trip, not the sub-second local-only cases
+    // above — bun's default 5000ms per-test timeout is too tight for it
+    // under load (observed live: 2.9s in isolation, 5.6s in the full suite).
+    30_000
+  )
 })
 
 describe('brief.ts local helpers — repo-root-relative', () => {

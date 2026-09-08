@@ -10,7 +10,7 @@ import {
   parseIssueTestPlan,
   readTierFromPrBody
 } from './index'
-import { type BriefFacts, parseRationaleFields, renderBrief } from './brief-render'
+import { type BriefFacts, extractBoundaryFilePaths, parseRationaleFields, renderBrief } from './brief-render'
 
 const TEMPLATE = readFileSync(join(import.meta.dirname, '../../../aeg-root/templates/brief-template.md'), 'utf8')
 
@@ -82,6 +82,36 @@ describe('parseRationaleFields', () => {
   it('a field absent from the body is absent from the result, not an empty string', () => {
     const fields = parseRationaleFields('nothing rationale-shaped here')
     expect(fields.boundary).toBeUndefined()
+  })
+})
+
+describe('extractBoundaryFilePaths (task 5, Issue #447, O3)', () => {
+  it('extracts every backtick-wrapped, path-shaped token, deduplicated in order', () => {
+    const text =
+      "In: `apps/cli/src/lib/dispatch-task.ts` and `apps/cli/src/lib/brief-assembly.ts`'s result type, " +
+      'plus `packages/aeg-core/src/brief-render.ts` again.'
+    expect(extractBoundaryFilePaths(text)).toEqual([
+      'apps/cli/src/lib/dispatch-task.ts',
+      'apps/cli/src/lib/brief-assembly.ts',
+      'packages/aeg-core/src/brief-render.ts'
+    ])
+  })
+
+  it('ignores a glob example (contains `*`) — Surface globs are never file-level entries', () => {
+    expect(extractBoundaryFilePaths('an Issue declaring `apps/cli/**` rendered a brief')).toEqual([])
+  })
+
+  it('ignores a multi-word command example (contains a space)', () => {
+    expect(extractBoundaryFilePaths('prescribing `git push -u origin HEAD` as the push step')).toEqual([])
+  })
+
+  it('ignores a backticked token with no recognizable extension', () => {
+    expect(extractBoundaryFilePaths('the renderer discards `n` instead of returning it')).toEqual([])
+  })
+
+  it('extracts a bare filename with no directory prefix, elided from a shared list', () => {
+    const text = 'the Step 0 line — `aeg-root/aeg-manual-flow.md`, `process.md`, `roles/developer.md`'
+    expect(extractBoundaryFilePaths(text)).toEqual(['aeg-root/aeg-manual-flow.md', 'process.md', 'roles/developer.md'])
   })
 })
 
@@ -286,7 +316,7 @@ describe('renderBrief', () => {
     expect(result.brief).toMatch(/consumer-tests: none —/)
   })
 
-  it('§5 Step 0 creates the worktree branch with --no-track and configures push.autoSetupRemote, so a plain `git push` reaches the task\'s own ref (task 5, Issue #447, O2)', () => {
+  it("§5 Step 0 creates the worktree branch with --no-track and configures push.autoSetupRemote, so a plain `git push` reaches the task's own ref (task 5, Issue #447, O2)", () => {
     const result = renderBrief(baseFacts(), TEMPLATE)
     expect(result.ok).toBe(true)
     if (!result.ok) return
