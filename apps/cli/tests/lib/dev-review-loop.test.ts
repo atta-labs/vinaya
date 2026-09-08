@@ -29,11 +29,21 @@
  * (`-r <id>`, asserted present by the fake binary itself — exit `9`
  * otherwise) rather than started fresh, and the captured round-2 prompt is
  * checked to actually carry round 1's review content.
+ *
+ * Task 6 (`#416`) adds publication and pause: the fake `gh` now actually
+ * records `pr comment` posts (one file per post under `$HOME/.fake-gh-posted-
+ * comments/`) and replays them on `pr view --json comments`, so `publishRound`'s
+ * own post-then-re-fetch-then-extract self-check sees real posted content,
+ * the same shape the real forge would hand back. This backs three more
+ * scenarios: publish posts exactly three comments and a rerun posts none of
+ * them twice (O1); an escalation pauses with a marked comment and a non-zero
+ * exit (O2); and `--resume` reads a Principal ruling off the same PR and
+ * carries it into the next developer dispatch (O2).
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -105,12 +115,22 @@ exit 0
   )
 }
 
-/** Answers exactly the `gh` calls this round-1-only-publish scenario makes; anything else is an explicit test failure, not a silent pass. */
+/**
+ * Answers exactly the `gh` calls this scenario makes; anything else is an
+ * explicit test failure, not a silent pass. `pr comment` and the dynamic
+ * half of `pr view --json comments` exist for task 6's publication step:
+ * each posted comment is saved as its own file under `$FAKE_GH_STATE`, and
+ * a `pr view --json comments` read replays them in post order — so
+ * `publishRound`'s own post-then-re-fetch-then-extract self-check sees
+ * exactly what it just posted, the same way the real forge would.
+ */
 function writeFakeGh(dir: string): void {
   writeFakeBinary(
     dir,
     'gh',
     `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
   exit 0
@@ -123,8 +143,28 @@ if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
   echo '[{"number":123,"headRefName":"${BRANCH}"}]'
   exit 0
 fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
-  echo '{"comments":[]}'
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
   exit 0
 fi
 if [ "$1" = "api" ]; then
@@ -176,8 +216,16 @@ exit 1
 type CliResult = { status: number; stdout: string; stderr: string }
 
 function runLoop(home: string, cwd: string, path: string): CliResult {
+  return runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'])
+}
+
+function runResume(home: string, cwd: string, path: string, pr: number): CliResult {
+  return runDevReviewLoopArgs(home, cwd, path, ['--resume', String(pr), '--agent', 'claude'])
+}
+
+function runDevReviewLoopArgs(home: string, cwd: string, path: string, args: string[]): CliResult {
   try {
-    const stdout = execFileSync('bun', [INDEX, 'dev-review-loop', '--task', String(TASK), '--agent', 'claude'], {
+    const stdout = execFileSync('bun', [INDEX, 'dev-review-loop', ...args], {
       encoding: 'utf8',
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -188,6 +236,14 @@ function runLoop(home: string, cwd: string, path: string): CliResult {
     const err = e as { status?: number; stdout?: string; stderr?: string }
     return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
   }
+}
+
+function postedCommentFiles(home: string): string[] {
+  const dir = join(home, '.fake-gh-posted-comments')
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
+    .filter((f) => f.startsWith('comment-'))
+    .sort((a, b) => Number(a.match(/\d+/)?.[0]) - Number(b.match(/\d+/)?.[0]))
 }
 
 function outboxLines(home: string): Array<Record<string, unknown>> {
@@ -227,7 +283,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
       'utf8'
     )
     expect(securityVerdict).toMatch(/^VERDICT: PASS$/m)
-  })
+  }, 20000)
 
   it('logs the exact assessRound event sequence for a clean round 1, byte-for-byte on event names', () => {
     const { home, cwd, path } = setUp()
@@ -272,16 +328,143 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
 
     const journalFinalized = lines.find((l) => l.event === 'journal_finalized') as Record<string, unknown>
     expect(journalFinalized.result).toBe('merged_ready')
-  })
+  }, 20000)
 
-  it('posts nothing to the PR before publish — no review-verdict forge writes fire', () => {
+  it('publishes the two verdicts then the summary, in order, self-verified — and a rerun posts nothing twice (O1)', () => {
     const { home, cwd, path } = setUp()
-    const r = runLoop(home, cwd, path)
-    expect(r.status).toBe(0)
-    const combined = `${r.stdout}\n${r.stderr}`
-    expect(combined).not.toMatch(/gh pr comment/)
-    expect(combined).not.toMatch(/gh pr review/)
-  })
+    const r1 = runLoop(home, cwd, path)
+    expect(r1.status).toBe(0)
+    expect(r1.stdout).toMatch(/publish/)
+
+    const firstRunFiles = postedCommentFiles(home)
+    expect(firstRunFiles).toHaveLength(3)
+
+    const [reviewerFile, securityFile, summaryFile] = firstRunFiles
+    const reviewerPosted = readFileSync(join(home, '.fake-gh-posted-comments', reviewerFile as string), 'utf8')
+    expect(reviewerPosted).toMatch(/^VERDICT: APPROVE$/m)
+    expect(reviewerPosted).toMatch(new RegExp(`^Judged head: ${HEAD_SHA}$`, 'm'))
+
+    const securityPosted = readFileSync(join(home, '.fake-gh-posted-comments', securityFile as string), 'utf8')
+    expect(securityPosted).toMatch(/^VERDICT: PASS$/m)
+
+    const summaryPosted = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile as string), 'utf8')
+    expect(summaryPosted).toMatch(/\| round \|/)
+    expect(summaryPosted).not.toMatch(/^VERDICT:/m)
+    expect(summaryPosted).not.toMatch(/^Judged head:/m)
+
+    // Same deterministic fixture, same $HOME: a rerun reaches round 1 clean
+    // → publish again, but `postForgeEffectOnce`'s effect records from the
+    // first run make it post nothing a second time.
+    const r2 = runLoop(home, cwd, path)
+    expect(r2.status).toBe(0)
+    expect(r2.stdout).toMatch(/publish/)
+    expect(postedCommentFiles(home)).toEqual(firstRunFiles)
+  }, 20000)
+})
+
+// --- pause and --resume (O2) ------------------------------------------------
+
+/**
+ * Code-reviewer escalates on round 1 (`ESCALATE: authority`) — `assessRound`
+ * turns that into `pause{reason:'escalation'}` before any verdict is ever
+ * held or posted. `$HOME/.escalated-once` distinguishes the two SEPARATE
+ * `runDevReviewLoopArgs` invocations this scenario needs (same `$HOME`
+ * across both): the first attempt escalates; the second — after `--resume`
+ * reads a since-posted Principal ruling — reviews clean and publishes.
+ */
+function writeFakeClaudePauseThenResumeScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+PROMPT="$(cat)"
+WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    if [ -f "$HOME/.escalated-once" ]; then
+      : > "$WD/findings.txt"
+      printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    else
+      touch "$HOME/.escalated-once"
+      : > "$WD/findings.txt"
+      printf 'ESCALATE: authority\\nSUMMARY: needs a call nobody made.\\n' > "$WD/report.txt"
+    fi
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    mkdir -p "$WORKROOT"
+    printf '%s\\n---\\n' "$PROMPT" >> "$WORKROOT/dev-prompts.txt"
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+function setUpPauseResume(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudePauseThenResumeScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — escalation pauses, --resume continues after a ruling', () => {
+  it('pauses with a marked comment and a non-zero exit, then --resume publishes after a ruling', () => {
+    const { home, cwd, path } = setUpPauseResume()
+
+    const paused = runLoop(home, cwd, path)
+    expect(paused.status).not.toBe(0)
+    expect(paused.stdout).toMatch(/paused \(escalation\)/)
+
+    const pausedFiles = postedCommentFiles(home)
+    expect(pausedFiles).toHaveLength(1)
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[0] as string), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
+    expect(pauseComment).toMatch(/vinaya dev-review-loop --resume 123/)
+    expect(pauseComment).not.toMatch(/^VERDICT:/m)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.round).toBe(1)
+    expect(pauseState.reason).toBe('escalation')
+
+    // Seed a Principal ruling comment on the PR — the same shape
+    // `filterPrincipalRulings`'s own unit tests use — before resuming.
+    writeFileSync(
+      join(home, '.fake-gh-posted-comments', 'comment-2.md'),
+      `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
+    )
+
+    const resumed = runResume(home, cwd, path, 123)
+    expect(resumed.status).toBe(0)
+    expect(resumed.stdout).toMatch(/publish/)
+
+    const devPrompts = readFileSync(
+      join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'dev-prompts.txt'),
+      'utf8'
+    )
+    expect(devPrompts).toMatch(/Principal ruling on this pause/)
+    expect(devPrompts).toMatch(/Go ahead and fix it\./)
+
+    // Published: the two verdicts and the summary, appended after the pause
+    // comment and the seeded ruling.
+    const allComments = postedCommentFiles(home)
+    expect(allComments).toHaveLength(5)
+  }, 20000)
 })
 
 // --- round 2: a genuine resume, not just a clean round 1 -------------------
@@ -416,7 +599,7 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
     ])
     const rounds = lines.filter((l) => l.event === 'round_started').map((l) => (l as Record<string, unknown>).round)
     expect(rounds).toEqual([1, 2])
-  })
+  }, 20000)
 })
 
 // --- pure-function coverage for the two Decisions-section fixes -----------

@@ -31,17 +31,22 @@ import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   assessRound,
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict,
   initialLoopState,
   isPrincipal,
+  renderSummary,
   type Confidence,
   type Decision,
   type DevReviewLoopEventInput,
+  type Journal,
   type LoopConfig,
   type LoopState,
   type Observations,
+  type PauseReason,
   type RoundStats,
   type VerdictObservation
 } from '@attalabs/aeg-core'
@@ -65,6 +70,7 @@ import {
 } from './dispatch.js'
 import { AEG_BRIEF_V1_MARKER, contentAfterTwoLines } from './dispatch-task.js'
 import { GLOBAL_VINAYA_HOME, loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
+import { postMarkedComment } from './forge-write.js'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { packageRoot } from './package-root.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
@@ -364,7 +370,11 @@ export function outboxRoot(): string {
   return join(GLOBAL_VINAYA_HOME, 'outbox')
 }
 
-/** One file per verdict: `<outboxRoot>/dev-review-loop/<task>/round-<round>-<role>.md`. Real `fs.writeFileSync`, never `gh pr comment` — the held verdict lives here until task 6 (not this task) posts it. */
+function heldVerdictPath(root: string, task: number, round: number, role: 'reviewer' | 'security'): string {
+  return join(root, 'dev-review-loop', String(task), `round-${round}-${role}.md`)
+}
+
+/** One file per verdict: `<outboxRoot>/dev-review-loop/<task>/round-<round>-<role>.md`. Real `fs.writeFileSync`, never `gh pr comment` — the held verdict lives here until publication (`publishRound`, below) posts it. */
 export function writeHeldVerdict(
   root: string,
   task: number,
@@ -374,11 +384,200 @@ export function writeHeldVerdict(
 ): void {
   const dir = join(root, 'dev-review-loop', String(task))
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, `round-${round}-${role}.md`), renderedComment, 'utf8')
+  writeFileSync(heldVerdictPath(root, task, round, role), renderedComment, 'utf8')
 }
 
 function reviewerWorkDir(root: string, task: number, round: number, role: 'reviewer' | 'security'): string {
   return join(root, 'dev-review-loop', String(task), `round-${round}-${role}-work`)
+}
+
+// --- publication (O1) -------------------------------------------------------
+
+type ForgeEffectRecord = { effectId: string; status: 'started' | 'posted'; url?: string }
+
+function forgeEffectPath(root: string, task: number, key: string): string {
+  return join(root, 'dev-review-loop', String(task), `effect-${key}.json`)
+}
+
+function readForgeEffect(path: string): ForgeEffectRecord | null {
+  const raw = readIfExists(path)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as ForgeEffectRecord
+  } catch {
+    return null
+  }
+}
+
+function writeForgeEffect(path: string, record: ForgeEffectRecord): void {
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, JSON.stringify(record), 'utf8')
+}
+
+/**
+ * Posts through `poster` at most once per `key`: an effect id is recorded in
+ * the outbox as `started` before `poster` runs, then overwritten as `posted`
+ * (with the URL `poster` returned) right after — mirroring `dispatch.ts`'s
+ * own effect-id-before/checked-after discipline (its doc comment,
+ * `hasOwnDispatchLine`), adapted here to a comment post rather than a
+ * process spawn since `DevReviewLoopEvent` carries no `effect_id` field to
+ * key on (`hasOwnLoopLine`'s own doc comment, above). A rerun that finds an
+ * already-`posted` record returns its recorded URL without calling `poster`
+ * again — O1's "nothing is posted twice on a rerun."
+ */
+function postForgeEffectOnce(root: string, task: number, key: string, poster: () => string): string {
+  const path = forgeEffectPath(root, task, key)
+  const existing = readForgeEffect(path)
+  if (existing?.status === 'posted' && existing.url) return existing.url
+  const effectId = existing?.effectId ?? randomUUID()
+  writeForgeEffect(path, { effectId, status: 'started' })
+  const url = poster()
+  writeForgeEffect(path, { effectId, status: 'posted', url })
+  return url
+}
+
+/**
+ * Raw `gh pr comment`, no marker line — deliberately NOT `postMarkedComment`
+ * (`./forge-write.js`): that function forces a marker onto line 1, which
+ * shifts every line of a rendered verdict down by one and pushes a present
+ * `Objectives version:` line outside `extractCodeReviewVerdict`/
+ * `extractSecurityReviewVerdict`'s five-line read window
+ * (`verdict-extraction.ts`'s own `firstFiveLines`). Same temp-file-then-`gh
+ * comment` shape `postMarkedComment` and `review-post.ts`'s own (unexported)
+ * `postComment` both use.
+ */
+function postPrComment(pr: number, body: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-dev-review-loop-comment-'))
+  const tmp = join(dir, 'comment.md')
+  writeFileSync(tmp, body, 'utf8')
+  try {
+    return execFileSync('gh', ['pr', 'comment', String(pr), '--body-file', tmp], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+function fetchAllPrCommentBodies(pr: number): string[] {
+  const out = sh('gh', ['pr', 'view', String(pr), '--json', 'comments'])
+  return markerComments(out).map((c) => c.body)
+}
+
+export type PublishInput = {
+  task: number
+  round: number
+  prNumber: number
+  /** The round's judged head — every posted verdict is expected to bind to this, re-verified after each post. */
+  expectedHead: string
+  journal: Journal
+}
+
+/**
+ * O1: at green, posts the two verdicts `writeHeldVerdict` already wrote for
+ * `round`, then one summary comment from `renderSummary` — each through
+ * `postForgeEffectOnce`'s idempotent forge-write, each re-read afterward
+ * through the SAME extractors the merge gate calls (`extractCodeReviewVerdict`/
+ * `extractSecurityReviewVerdict`), confirming the posted comment resolves
+ * cleanly to `expectedHead`. The summary is checked BEFORE it is posted,
+ * never after: `renderSummary`'s own doc comment guarantees no `VERDICT:`/
+ * `Judged head:`/`Objectives version:` line, but this is re-verified live
+ * against the two real extractors rather than trusted from that comment
+ * alone (Traps to avoid) — a summary that parses as a verdict is refused,
+ * not posted.
+ */
+export function publishRound(root: string, input: PublishInput): void {
+  const { task, round, prNumber, expectedHead } = input
+  const reviewerBody = readIfExists(heldVerdictPath(root, task, round, 'reviewer'))
+  const securityBody = readIfExists(heldVerdictPath(root, task, round, 'security'))
+  if (!reviewerBody || !securityBody) {
+    throw new Error(
+      `publishRound: missing held verdict file(s) for task ${task} round ${round} — writeHeldVerdict should have written both before assessRound ever returned 'publish'.`
+    )
+  }
+
+  postForgeEffectOnce(root, task, `${round}-reviewer-verdict`, () => postPrComment(prNumber, reviewerBody))
+  const postedReviewer = extractCodeReviewVerdict(fetchAllPrCommentBodies(prNumber))
+  if (postedReviewer.danglingNote || postedReviewer.headSha !== expectedHead) {
+    throw new Error(
+      `publishRound: posted reviewer verdict does not re-parse clean through extractCodeReviewVerdict bound to ${expectedHead}: ${postedReviewer.danglingNote ?? `headSha read back as ${String(postedReviewer.headSha)}`}`
+    )
+  }
+
+  postForgeEffectOnce(root, task, `${round}-security-verdict`, () => postPrComment(prNumber, securityBody))
+  const postedSecurity = extractSecurityReviewVerdict(fetchAllPrCommentBodies(prNumber))
+  if (postedSecurity.danglingNote || postedSecurity.headSha !== expectedHead) {
+    throw new Error(
+      `publishRound: posted security verdict does not re-parse clean through extractSecurityReviewVerdict bound to ${expectedHead}: ${postedSecurity.danglingNote ?? `headSha read back as ${String(postedSecurity.headSha)}`}`
+    )
+  }
+
+  const summary = renderSummary(input.journal)
+  const summaryAsCodeReview = extractCodeReviewVerdict([summary])
+  const summaryAsSecurity = extractSecurityReviewVerdict([summary])
+  if (summaryAsCodeReview.danglingNote === null || summaryAsSecurity.danglingNote === null) {
+    throw new Error(
+      "publishRound: the rendered summary re-parses as a real verdict through the gate's own extractors — refusing to post it (a summary mistaken for a verdict decides a merge)."
+    )
+  }
+  postForgeEffectOnce(root, task, `${round}-summary`, () => postPrComment(prNumber, summary))
+}
+
+// --- pause (O2) --------------------------------------------------------------
+
+/** Exactly `<!-- aeg:loop:paused:<reason> -->` — carries no verdict grammar (Traps to avoid). */
+function pauseMarker(reason: PauseReason): string {
+  return `<!-- aeg:loop:paused:${reason} -->`
+}
+
+/** The pause comment's body — the reason and the exact resume command, nothing verdict-shaped. */
+export function renderPauseComment(prNumber: number, reason: PauseReason): string {
+  return [
+    `The dev-review-loop paused: ${reason}.`,
+    '',
+    'A Principal ruling is needed before this can continue. Once one is posted on this PR, resume with:',
+    '',
+    '```',
+    `vinaya dev-review-loop --resume ${prNumber}`,
+    '```'
+  ].join('\n')
+}
+
+function postPauseComment(root: string, task: number, prNumber: number, reason: PauseReason): void {
+  postForgeEffectOnce(root, task, 'pause', () =>
+    postMarkedComment('pr', String(prNumber), pauseMarker(reason), renderPauseComment(prNumber, reason))
+  )
+}
+
+type PauseState = {
+  task: number
+  round: number
+  head: string
+  branch: string
+  prNumber: number
+  reason: PauseReason
+  pausedAt: string
+}
+
+function pauseStatePath(root: string, task: number): string {
+  return join(root, 'dev-review-loop', String(task), 'pause-state.json')
+}
+
+function writePauseState(root: string, state: PauseState): void {
+  const path = pauseStatePath(root, state.task)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, JSON.stringify(state), 'utf8')
+}
+
+function readPauseState(root: string, task: number): PauseState | null {
+  const raw = readIfExists(pauseStatePath(root, task))
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as PauseState
+  } catch {
+    return null
+  }
 }
 
 // --- confidence -------------------------------------------------------------
@@ -566,8 +765,8 @@ function defaultDeps(): LoopDeps {
 
 // --- the loop -----------------------------------------------------------------
 
-export type LoopInput = { task: number; agent: AgentVendor }
-export type LoopResult = { finalDecision: Decision; prNumber: number }
+export type LoopInput = { agent: AgentVendor } & ({ task: number } | { resumePr: number })
+export type LoopResult = { finalDecision: Decision; prNumber: number; task: number }
 
 function parseShortstat(stat: string): { filesChanged: number; insertions: number; deletions: number } {
   const m = /(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/.exec(stat)
@@ -828,8 +1027,66 @@ function renderReviewerDispatchPrompt(
  * observations read from the forge and from held reviewer outcomes, until
  * a `publish` or `pause` decision.
  */
+/** `Closes #(\d+)` off a PR body — the same reference every dispatched PR body already carries (`roles/developer.md`) — the only way `--resume <pr>` can find the task a bare PR number belongs to. */
+export function taskFromPrBody(body: string): number | null {
+  const m = /Closes #(\d+)/i.exec(body)
+  return m ? Number(m[1]) : null
+}
+
+function fetchPrBody(pr: number): string {
+  const out = sh('gh', ['pr', 'view', String(pr), '--json', 'body'])
+  return (JSON.parse(out) as { body: string }).body
+}
+
 export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = {}): Promise<LoopResult> {
   const d: LoopDeps = { ...defaultDeps(), ...deps }
+  const root = d.outboxRoot()
+
+  let task: number
+  let branch: string
+  let prNumber = -1 // resolved below, before any use — never read while -1
+  let resumeFrom: PauseState | null = null
+
+  if ('resumePr' in input) {
+    const resumePr = input.resumePr
+    const closesTask = taskFromPrBody(fetchPrBody(resumePr))
+    if (closesTask === null) {
+      throw new Error(
+        `devReviewLoop --resume: PR #${resumePr}'s body carries no \`Closes #N\` reference — cannot derive its task.`
+      )
+    }
+    const held = readPauseState(root, closesTask)
+    if (!held) {
+      throw new Error(
+        `devReviewLoop --resume: no held pause state found for task ${closesTask} (PR #${resumePr}) — nothing to resume.`
+      )
+    }
+    if (held.prNumber !== resumePr) {
+      throw new Error(
+        `devReviewLoop --resume: task ${closesTask}'s held pause state names PR #${held.prNumber}, not PR #${resumePr}.`
+      )
+    }
+    const rulings = d.fetchRulings(resumePr)
+    if (rulings.length === 0) {
+      throw new Error(
+        `devReviewLoop --resume: PR #${resumePr} carries no Principal ruling comment yet — nothing to resume from.`
+      )
+    }
+    const currentHead = d.resolveHead(held.branch)
+    if (currentHead !== held.head) {
+      throw new Error(
+        `devReviewLoop --resume: PR #${resumePr}'s head has moved since it paused (paused at ${held.head}, now ${currentHead}) — restart from round ${held.round} against the new head; resume never silently replays from round 1.`
+      )
+    }
+    task = held.task
+    branch = held.branch
+    prNumber = held.prNumber
+    resumeFrom = held
+  } else {
+    task = input.task
+    branch = d.developerBranchFor(task)
+  }
+
   const { log, runId } = createLogSink()
   if (!process.env.VINAYA_RUN_ID) process.env.VINAYA_RUN_ID = runId
   // `buildHeader` derives `subject.issue` (and thus the outbox file this
@@ -838,18 +1095,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // sets it on each CHILD's env already; this driver's own top-level events
   // (`loop_started`, `round_started`, …) need it on THIS process's env too,
   // or they land under the `none` bucket instead of this task's.
-  process.env.VINAYA_TASK = String(input.task)
+  process.env.VINAYA_TASK = String(task)
 
   // Primes `resolveRepo()`'s process-lifetime cache BEFORE this loop's own
   // `log()` calls start racing each other on it (see `waitForLoopLineCount`'s
   // doc comment) — every later call in this process, including the ones
   // inside `log()` itself, resolves the identical value instantly.
   const repo = await resolveRepo().catch(() => null)
-  const branch = d.developerBranchFor(input.task)
-  const root = d.outboxRoot()
   const repoRoot = d.repoRoot()
   const confidenceFilePath = join(repoRoot, '.worktrees', branch, CONFIDENCE_FILE_NAME)
-  const loopOutboxPath = outboxPathFor({ outboxRoot: () => root }, repo, input.task)
+  const loopOutboxPath = outboxPathFor({ outboxRoot: () => root }, repo, task)
   /**
    * Awaits EACH event's own landing before firing the next `log()` call —
    * not just the batch's last one. `resolveRepo()` only caches a
@@ -872,7 +1127,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
   const config: LoopConfig = {
     loopId: randomUUID(),
-    task: input.task,
+    task: task,
     // `loop_started`'s own schema constrains `policy.reviewers`/`policy.models`
     // keys to `RoleSchema` (`schema.ts`) — the DOCTRINE role vocabulary
     // (`code-reviewer`), not `VerdictObservation.role`'s separate
@@ -885,17 +1140,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   }
   let state: LoopState = initialLoopState(config)
 
-  let round = 1
+  let round = resumeFrom ? resumeFrom.round : 1
   let devResumeId: string | null = null
   let devDispatchSucceededBefore = false
-  let prNumber = -1 // resolved below, before any use — never read while -1
   let lastReviewContext: string | null = null
+  let resumedDispatch = resumeFrom !== null
 
   async function dispatchDeveloper(prompt: string, roundNum: number): Promise<DispatchHandle> {
     const isResume = devResumeId !== null
     const handle = await withPromptFile(prompt, (promptFile) =>
       d.dispatchRole('developer', input.agent, prompt, {
-        task: input.task,
+        task: task,
         round: roundNum,
         resumeId: devResumeId ?? undefined,
         promptFile
@@ -914,16 +1169,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     roundNum: number,
     facts: ReviewerPromptFacts
   ): Promise<RoundVerdictParse> {
-    const workDir = reviewerWorkDir(root, input.task, roundNum, role)
+    const workDir = reviewerWorkDir(root, task, roundNum, role)
     mkdirSync(workDir, { recursive: true })
     const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
     const prompt = renderReviewerDispatchPrompt(role, facts, workDir)
     const handle = await withPromptFile(prompt, (promptFile) =>
-      d.dispatchRole(dispatchRoleName, input.agent, prompt, { task: input.task, round: roundNum, promptFile })
+      d.dispatchRole(dispatchRoleName, input.agent, prompt, { task: task, round: roundNum, promptFile })
     )
     await assertDispatchOrEscalate(handle, input.agent, false, false)
-    const parsed = buildVerdictFromReport(role, workDir, facts.head, input.agent, input.task, handle)
-    writeHeldVerdict(root, input.task, roundNum, role, parsed.rendered)
+    const parsed = buildVerdictFromReport(role, workDir, facts.head, input.agent, task, handle)
+    writeHeldVerdict(root, task, roundNum, role, parsed.rendered)
     return parsed
   }
 
@@ -961,22 +1216,30 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     return content ? parseConfidenceReply(content) : 'absent'
   }
 
-  // Round 1: fresh dispatch, brief read from the frozen Issue comment (O1).
-  const roundStart0 = d.now()
-  const brief = d.fetchFrozenBrief(input.task)
-  await dispatchDeveloper(brief, round)
+  let roundStartMs = d.now()
+  if (resumeFrom) {
+    // O2: resuming — the PR and branch are already known (`resumeFrom`), so
+    // there is no round-1 dispatch and no PR to poll for. `lastReviewContext`
+    // carries the Principal's ruling(s) instead of a reviewer's findings;
+    // `resumedDispatch` (below) labels the prompt accordingly, once.
+    const rulings = d.fetchRulings(prNumber)
+    lastReviewContext = rulings.map((r, i) => `${i + 1}. ${r}`).join('\n')
+  } else {
+    // Round 1: fresh dispatch, brief read from the frozen Issue comment (O1).
+    const brief = d.fetchFrozenBrief(task)
+    await dispatchDeveloper(brief, round)
 
-  prNumber = await pollUntil(
-    () => d.findOpenPrForBranch(branch),
-    d.prPollMaxAttempts,
-    d.prPollIntervalMs,
-    d.sleep,
-    `devReviewLoop: no open PR appeared for branch \`${branch}\` within the poll budget.`
-  ).then((pr) => pr.number)
+    prNumber = await pollUntil(
+      () => d.findOpenPrForBranch(branch),
+      d.prPollMaxAttempts,
+      d.prPollIntervalMs,
+      d.sleep,
+      `devReviewLoop: no open PR appeared for branch \`${branch}\` within the poll budget.`
+    ).then((pr) => pr.number)
+  }
 
   let decision: Decision = { type: 'dispatch_developer' }
-  let roundStartMs = roundStart0
-  let firstPass = true
+  let firstPass = !resumeFrom
 
   /**
    * Round-number discipline: `round` increments ONLY when a genuine review
@@ -997,9 +1260,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     if (decision.type === 'dispatch_developer') {
       if (!firstPass) {
         const prompt = [
-          lastReviewContext
-            ? `Round ${round} review findings:\n\n${lastReviewContext}\n`
-            : 'CI was red on the last head — fix and push.',
+          resumedDispatch
+            ? `Principal ruling on this pause:\n\n${lastReviewContext}\n`
+            : lastReviewContext
+              ? `Round ${round} review findings:\n\n${lastReviewContext}\n`
+              : 'CI was red on the last head — fix and push.',
           'Address the findings above per aeg-root/roles/developer.md. Push fixes as new commits on the SAME branch; do not open a new PR.',
           round >= 2 ? CONFIDENCE_PROMPT_LINE : ''
         ]
@@ -1007,6 +1272,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           .join('\n\n')
         roundStartMs = d.now()
         await dispatchDeveloper(prompt, round)
+        resumedDispatch = false
       }
       firstPass = false
 
@@ -1017,7 +1283,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       state = result.state
       decision = result.decision
       await logEvents(result.events)
-      d.flushOutbox(input.task)
+      d.flushOutbox(task)
     } else if (decision.type === 'ask_confidence') {
       const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${CONFIDENCE_PROMPT_LINE}`
       await dispatchDeveloper(reaskPrompt, round)
@@ -1029,11 +1295,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       state = result.state
       decision = result.decision
       await logEvents(result.events)
-      d.flushOutbox(input.task)
+      d.flushOutbox(task)
     } else if (decision.type === 'dispatch_reviewers') {
       const head = d.resolveHead(branch)
       const ciConclusion = d.fetchCiConclusion(head)
-      const objectives = d.fetchIssueObjectives(input.task)
+      const objectives = d.fetchIssueObjectives(task)
       const rulings = d.fetchRulings(prNumber)
       const facts: ReviewerPromptFacts = { objectives, rulings, head, ciConclusion }
 
@@ -1048,13 +1314,35 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       state = result.state
       decision = result.decision
       await logEvents(result.events)
-      d.flushOutbox(input.task)
+      d.flushOutbox(task)
       if (decision.type === 'dispatch_developer') round += 1
     }
 
-    if (decision.type === 'publish' || decision.type === 'pause') {
-      d.flushOutbox(input.task)
-      return { finalDecision: decision, prNumber }
+    if (decision.type === 'publish') {
+      publishRound(root, {
+        task,
+        round,
+        prNumber,
+        expectedHead: d.resolveHead(branch),
+        journal: { rounds: state.rounds }
+      })
+      d.flushOutbox(task)
+      return { finalDecision: decision, prNumber, task }
+    }
+
+    if (decision.type === 'pause') {
+      writePauseState(root, {
+        task,
+        round,
+        head: d.resolveHead(branch),
+        branch,
+        prNumber,
+        reason: decision.reason,
+        pausedAt: new Date().toISOString()
+      })
+      postPauseComment(root, task, prNumber, decision.reason)
+      d.flushOutbox(task)
+      return { finalDecision: decision, prNumber, task }
     }
   }
 }
