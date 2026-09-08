@@ -505,7 +505,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `doctor` | `doctor.ts` | `doctorCommand` | 17 | exempt — see below | sharedCommandShell (target) |
 | `tokens` | `tokens.ts` | `tokensCommand` | 1 | compliant | `parseTokensCollectDeclaration` |
 | `doctrine` | `doctrine.ts` | `doctrineCommand` | 2 | exempt — see below | sharedCommandShell (target) |
-| `upgrade` | `upgrade.ts` | `upgradeCommand` | 19 | exempt — see below | sharedCommandShell (target) |
+| `upgrade` | `upgrade.ts` | `upgradeCommand` | 22 | exempt — see below | sharedCommandShell (target) |
 | `archive` | `archive.ts` | `archiveCommand` | 2 | exempt — see below | collectTokens (target) |
 | `archive tranche` | `archive.ts` | `archiveTrancheCommand` | 3 | exempt — see below | collectTokens (target) |
 | `audit` | `audit.ts` | `auditCommand` | 2 | exempt — see below | runChecks (target) |
@@ -548,7 +548,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `review post` | 2026-09-05 | 5 — lib: `refuse`, `makeCheckError`, `printJson`, `resolvePrincipalAllowlist`, `loadTrustAnchorConfig` (re-verified after the `--objectives-file` addition — the new resolution/render path calls only `gh` directly and this file's own exported helpers, so the in-scope count is unchanged) | `devReviewLoop` |
 | `doctor` | 2026-09-05 | 17 — lib (16): `hookDirFromManifest`, `detectVendoredVinaya`, `readRepoCiSetup`, `resolveAgentVendors`, `buildInitOps`, `isDefaultedAgentVendorPath`, `resolveManagedBlockPath`, `markerLines`, `renderBlock`, `foreignRawHooks`, `starterConfig`, `checksMissingEnvDeclaration`, `envDeclarationWarning`, `lintEnvDeclarations`, `globalChecksIgnoredWarning`, `printJson`; commands/\*.ts (refused outright): `resolveDoctrineRootInfo` (`doctrine.ts`) | `sharedCommandShell` |
 | `doctrine` | 2026-09-05 | 2 — lib: `packageRoot`, `printJson` | `sharedCommandShell` |
-| `upgrade` | 2026-09-05 | 19 — lib (19): `hookDirFromManifest`, `resolveManagedBlockPath`, `stripBlockFromContent`, `blockStripLeavesEmpty`, `foreignRawHooks`, `activeRawHooks`, `detectVendoredVinaya`, `readRepoCiSetup`, `resolveAgentVendors`, `buildInitOps`, `isDefaultedAgentVendorPath`, `markerLines`, `renderBlock`, `indent`, `writeFileWithDirs`, `createHost`, `appendBlock`, `promptYesNo`, `closeStdin` | `sharedCommandShell` |
+| `upgrade` | 2026-09-08 | 22 — lib (21): `hookDirFromManifest`, `resolveManagedBlockPath`, `stripBlockFromContent`, `blockStripLeavesEmpty`, `foreignRawHooks`, `activeRawHooks`, `detectVendoredVinaya`, `readRepoCiSetup`, `resolveAgentVendors`, `buildInitOps`, `isDefaultedAgentVendorPath`, `markerLines`, `renderBlock`, `indent`, `writeFileWithDirs`, `createHost`, `appendBlock`, `promptYesNo`, `closeStdin`, `staleAgentSkillPaths`, `containedAbs`; commands/\*.ts (refused outright): `resolveDoctrineRoot` (`doctrine.ts`) | `sharedCommandShell` |
 | `archive` | 2026-09-05 | 2 — lib: `loadConfig`; commands/\*.ts (refused outright): `realDeps` (`tokens.ts`) | `collectTokens` |
 | `archive tranche` | 2026-09-05 | 3 — lib: `promptYesNo`, `closeStdin`; commands/\*.ts (refused outright): `realDeps` (`tokens.ts`) | `collectTokens` |
 | `audit` | 2026-09-05 | 2 — lib: `loadConfig`, `printJson` | `runChecks` |
