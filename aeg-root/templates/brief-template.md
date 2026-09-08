@@ -54,7 +54,7 @@ You are the AEG Developer. Read `aeg-root/roles/developer.md` first[, then the h
 **Step 0 (mandatory, verbatim):**
 
 ```
-git worktree add .worktrees/task/[tranche-slug]/[n] -b task/[tranche-slug]/[n] origin/main && cd .worktrees/task/[tranche-slug]/[n] && bun install --frozen-lockfile --silent
+git worktree add .worktrees/task/[tranche-slug]/[n] -b task/[tranche-slug]/[n] --no-track origin/main && cd .worktrees/task/[tranche-slug]/[n] && git config push.autoSetupRemote true && bun install --frozen-lockfile --silent
 ```
 
 1. Clean status; parent `origin/main`; branch suffix literal-matches topology `#` column (`[n]`).

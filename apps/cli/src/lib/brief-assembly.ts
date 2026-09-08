@@ -130,7 +130,19 @@ function workspaceGlobs(): string[] {
   return Array.isArray(root.workspaces) ? (root.workspaces as string[]) : []
 }
 
-export type AssembleAndRenderBriefResult = { ok: true; brief: string } | { ok: false; missing: string[] }
+/**
+ * `issue` is the real forge Issue number this brief was rendered from and
+ * closes — `task.issue`, resolved below from the tranche's forge-derived
+ * task list, never the raw task id a caller passed in as `taskId`. Returned
+ * rather than discarded so a caller that only has the task id (`dispatchTask`)
+ * can still post to and read from the Issue this brief actually belongs to,
+ * instead of reusing the task id as if it were an Issue number (task 5,
+ * Issue #447, O1) — live evidence: dispatching task 3 with this field
+ * discarded posted its brief on Issue #3, an unrelated merged Issue.
+ */
+export type AssembleAndRenderBriefResult =
+  | { ok: true; brief: string; issue: number }
+  | { ok: false; missing: string[] }
 
 /**
  * Renders the twelve-section brief for `<tranche> <n>` from the forge and the
@@ -289,5 +301,5 @@ export async function assembleAndRenderBrief(
 
   const template = readFileSync(TEMPLATE_PATH, 'utf8')
   const result = renderBrief(facts, template)
-  return result.ok ? { ok: true, brief: result.brief } : { ok: false, missing: result.missing }
+  return result.ok ? { ok: true, brief: result.brief, issue: task.issue } : { ok: false, missing: result.missing }
 }

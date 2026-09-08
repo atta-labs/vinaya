@@ -290,7 +290,7 @@ function renderSection5(facts: BriefFacts): string {
     '**Step 0 (mandatory, verbatim):**',
     '',
     '```',
-    `git worktree add .worktrees/task/${facts.trancheSlug}/${facts.taskId} -b task/${facts.trancheSlug}/${facts.taskId} origin/main && cd .worktrees/task/${facts.trancheSlug}/${facts.taskId} && bun install --frozen-lockfile --silent`,
+    `git worktree add .worktrees/task/${facts.trancheSlug}/${facts.taskId} -b task/${facts.trancheSlug}/${facts.taskId} --no-track origin/main && cd .worktrees/task/${facts.trancheSlug}/${facts.taskId} && git config push.autoSetupRemote true && bun install --frozen-lockfile --silent`,
     '```',
     '',
     '1. Clean status; parent `origin/main`; branch suffix literal-matches the task id.',

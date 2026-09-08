@@ -571,3 +571,5 @@ Every non-compliant command from the table above, dated, with the count of disti
 
 `dispatchRole` (Issue #450, dispatch observability) gained five exports — `DEFAULT_TIMEOUT_MS`, `HEARTBEAT_INTERVAL_MS`, `MAX_TEE_BYTES`, `openOutputTee` and `timeoutWarningLeadMs`, all listed above — and dropped none. They are exported to be reachable from a test at all: the observability behaviours cannot be asserted through `dispatchRole` alone without spawning a real vendor process. `AGENT_VENDOR_NAMES`/`dispatchRole`/`isAgentVendor` are unchanged.
 
+`assembleAndRenderBrief`'s own resolved-Issue result field (Issue #447, O1) is a new field on its already-exported return type, not a new function/const/class export — per this file's own rule (`## The rule`), it needs no new row here. `task dispatch` (`taskDispatchCommand`) still calls only `dispatchTask`, unchanged.
+

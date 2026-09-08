@@ -86,7 +86,7 @@ When a task is picked up for execution, the Brief Author writes its brief — **
 - Type 1 / Type 2 declaration if architectural decisions are expected
 - `principal_delegate:` if the work runs while the Principal is offline
 - Spike flag (`spike: true`) if exploratory
-- The mandatory worktree-first Step 0 (`git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> origin/main` — no exceptions)
+- The mandatory worktree-first Step 0 (`git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> --no-track origin/main` — no exceptions)
 - An explicit documentation-update list tied to the tier
 - Optional `Ticket:` (reference-only provenance) and, in a multi-project repo, `Project:` (resolves against `projects.md`)
 - Clear scope, stop conditions, Task Done checklist

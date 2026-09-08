@@ -164,7 +164,7 @@ If any fails: post a comment listing the exact items missing. The Principal deci
 - Requires a well-formed brief. If handed a loose prompt → *"This isn't a brief — missing tier / scope / stop-conditions. Get one from the Brief Author."*
 - Checks the gates against the forge before starting: dependency's PR merged? conflicting sibling's PR closed? If not → *"Task N serializes behind <dep/sibling>; not starting."*
 - If `Project:` doesn't resolve against the registry → *"Project 'x' isn't registered."*
-- Worktree Step 0: `git worktree add .worktrees/task/<it>/<n> -b task/<it>/<n> origin/main && cd .worktrees/task/<it>/<n>`, do the work, open the PR.
+- Worktree Step 0: `git worktree add .worktrees/task/<it>/<n> -b task/<it>/<n> --no-track origin/main && cd .worktrees/task/<it>/<n> && git config push.autoSetupRemote true`, do the work, open the PR.
 - Done-checklist: **the brief (and `Ticket:`/`Project:` lines) is pasted into the PR body.** That's it for state — opening the PR *is* the status transition. The Developer writes no status anywhere.
 
 **Reviewer (code)** — requires an open PR with the brief in its body. Refuses: no PR → *"Nothing to review."* No brief → *"This PR has no brief; I can't judge scope against intent."* Authored it → *"I can't review my own work."* Checks brief-conformance **and** spec-conformance (the `Project:` spec in the unit's `specs/`). Produces APPROVE | REQUEST CHANGES (per `roles/reviewer.md`).

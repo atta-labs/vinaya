@@ -286,6 +286,20 @@ describe('renderBrief', () => {
     expect(result.brief).toMatch(/consumer-tests: none —/)
   })
 
+  it('§5 Step 0 creates the worktree branch with --no-track and configures push.autoSetupRemote, so a plain `git push` reaches the task\'s own ref (task 5, Issue #447, O2)', () => {
+    const result = renderBrief(baseFacts(), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // Without `--no-track`, `git worktree add -b <branch> origin/main` tracks
+    // `origin/main` itself — a plain `git push` then fails with git's
+    // upstream-name-mismatch error, which suggests `git push origin HEAD:main`
+    // (live evidence: reproduced dispatching this exact task).
+    expect(result.brief).toContain(
+      'git worktree add .worktrees/task/review-convergence-v1/42 -b task/review-convergence-v1/42 --no-track origin/main'
+    )
+    expect(result.brief).toContain('git config push.autoSetupRemote true')
+  })
+
   it('§6/§8 no longer instruct running the affected suite per Part — the pre-push hook already does (O10)', () => {
     const result = renderBrief(baseFacts(), TEMPLATE)
     expect(result.ok).toBe(true)

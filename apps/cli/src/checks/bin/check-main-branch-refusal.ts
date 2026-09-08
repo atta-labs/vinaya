@@ -89,7 +89,7 @@ function main(): void {
       check: CHECK_NAME,
       severity: 'error',
       message: `main-branch-refusal: HEAD is on \`${finding.defaultBranch}\`, this repo's default branch — work belongs in a worktree on its own branch, not committed directly here.`,
-      agent_recovery_prompt: `Move this work to a worktree instead of committing on \`${finding.defaultBranch}\`: \`git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> origin/${finding.defaultBranch}\`, \`cd\` into it, and redo the change there.`
+      agent_recovery_prompt: `Move this work to a worktree instead of committing on \`${finding.defaultBranch}\`: \`git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> --no-track origin/${finding.defaultBranch}\`, \`cd\` into it, run \`git config push.autoSetupRemote true\`, and redo the change there.`
     })
     process.exit(1)
   }
