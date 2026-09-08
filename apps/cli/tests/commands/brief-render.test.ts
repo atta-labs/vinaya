@@ -69,18 +69,15 @@ describe('vinaya brief render — --surfaces is an override, not a requirement (
   // omitting `--surfaces` no longer trips the old local refusal, proving
   // control passed through to `assembleAndRenderBrief`'s own Issue-surface
   // derivation instead, the same one `vinaya task dispatch` already uses.
-  it(
-    'omitting --surfaces no longer refuses locally — it derives the surface from the Issue instead',
-    () => {
-      const result = runCli(['brief', 'render', 'some-tranche', '1'])
-      expect(result.stderr).not.toContain('--surfaces <glob1,glob2,...> was passed with no value')
-      expect(result.stderr).not.toContain('--surfaces resolved to zero globs')
-    },
-    // A real `gh`/forge round-trip, not the sub-second local-only cases
-    // above — bun's default 5000ms per-test timeout is too tight for it
-    // under load (observed live: 2.9s in isolation, 5.6s in the full suite).
-    30_000
-  )
+  // The 30s timeout below: a real `gh`/forge round-trip, not the sub-second
+  // local-only cases above — bun's default 5000ms per-test timeout is too
+  // tight for it under load (observed live: 2.9s in isolation, 5.6s in the
+  // full suite).
+  it('omitting --surfaces no longer refuses locally — it derives the surface from the Issue instead', () => {
+    const result = runCli(['brief', 'render', 'some-tranche', '1'])
+    expect(result.stderr).not.toContain('--surfaces <glob1,glob2,...> was passed with no value')
+    expect(result.stderr).not.toContain('--surfaces resolved to zero globs')
+  }, 30_000)
 })
 
 describe('brief.ts local helpers — repo-root-relative', () => {
