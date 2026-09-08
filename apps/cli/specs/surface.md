@@ -413,6 +413,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `renderPauseComment` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `renderReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `resolveHead` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `routeCompletionEvents` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `taskFromPrBody` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `writeHeldVerdict` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `changedLineRanges` | function | `apps/cli/src/lib/diff-evidence.ts` |
@@ -526,7 +527,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `AEG_BRIEF_V1_MARKER` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(222 exports.)
+(223 exports.)
 
 ## Commands — `apps/cli/src/commands` (41 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 

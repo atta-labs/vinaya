@@ -50,8 +50,10 @@ import { fileURLToPath } from 'node:url'
 import {
   extractObjectivesSection,
   filterPrincipalRulings,
-  findPrincipalFrozenBrief
+  findPrincipalFrozenBrief,
+  routeCompletionEvents
 } from '../../src/lib/dev-review-loop.js'
+import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -182,6 +184,104 @@ exit 1
 `
   )
 }
+
+/**
+ * Same as `writeFakeGh`, except the SECOND `pr comment` post of a publish
+ * (the security verdict, right after the reviewer verdict lands) fails —
+ * simulating a crash partway through `publishRound` (regression test, PR
+ * #459: a crash mid-publish must not leave the durable log claiming
+ * `merged_ready` for a run that never actually finished publishing).
+ */
+function writeFakeGhCrashOnSecondPost(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$N" = "1" ]; then
+    echo "fake gh: simulated crash on the second publish post" >&2
+    exit 1
+  fi
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+function setUpCrashMidPublish(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaude(binDir)
+  writeFakeGhCrashOnSecondPost(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a crash mid-publish never logs merged_ready (regression, PR #459 MAJOR)', () => {
+  it('posts the reviewer verdict, crashes on the security verdict, and the outbox never claims merged_ready', () => {
+    const { home, cwd, path } = setUpCrashMidPublish()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+
+    // Exactly one post landed — the crash hit the second, before the third
+    // (the summary) was ever attempted.
+    expect(postedCommentFiles(home)).toHaveLength(1)
+
+    // The regression: `journal_finalized`/`merged_ready` was logged in the
+    // SAME breath as the round outcome, before `publishRound` ever ran, so a
+    // crash here still left the durable log asserting a completion that
+    // never happened. Fixed: the event is held until `publishRound` returns
+    // without throwing, so a crash here means it never logs at all.
+    const journalFinalizedLines = outboxLines(home).filter((l) => l.event === 'journal_finalized')
+    expect(journalFinalizedLines).toHaveLength(0)
+  }, 20000)
+})
 
 /** Answers exactly the `git` calls `resolveHead`/`fetchCiConclusion`'s stats path makes; a non-git scratch `cwd` makes every OTHER git call (repo/doctrine resolution) fail cleanly on its own, same as \`dispatch.test.ts\`'s own non-git-cwd trick. */
 function writeFakeGit(dir: string): void {
@@ -602,6 +702,84 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
   }, 20000)
 })
 
+// --- no_progress pause still logs its completion event (regression, PR #459 MAJOR) ---
+
+/**
+ * The reviewer reports the SAME unresolved blocker on round 1 and round 2
+ * (security stays clean throughout) — `assessRound` turns two consecutive
+ * changes-requested rounds that resolve nothing into `pause{reason:
+ * 'no_progress'}`. Round 2 needs a confidence line ≥50 (`round >= 2` asks
+ * for one) so the loop reaches the reviewers at all, rather than pausing on
+ * `confidence` first.
+ */
+function writeFakeClaudeNoProgressScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+cat > /dev/null
+WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    printf 'BLOCKER|smoke.ts:1|persistent blocker, never resolved\\n' > "$WD/findings.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo '{"session_id":"sec-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    if [ "$VINAYA_ROUND" != "1" ]; then
+      mkdir -p "$PWD/.worktrees/task/dev-review-loop-v1/$VINAYA_TASK"
+      echo "CONFIDENCE: 90 — still trying" > "$PWD/.worktrees/task/dev-review-loop-v1/$VINAYA_TASK/.vinaya-confidence"
+    fi
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+function setUpNoProgress(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeNoProgressScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a paused loop for reason no_progress still logs its completion event', () => {
+  it('pauses on no_progress after two rounds resolve nothing, and journal_finalized is not dropped', () => {
+    const { home, cwd, path } = setUpNoProgress()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(no_progress\)/)
+
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', 'comment-1.md'), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:no_progress -->$/m)
+
+    // The regression: this event was captured into `pendingCompletionEvents`
+    // by the `dispatch_reviewers` branch's unconditional filter, and only
+    // the `publish` branch ever flushed that variable — so a `pause` never
+    // logged it, permanently, on every successful run. Fixed:
+    // `routeCompletionEvents` only defers for a `publish` decision.
+    const journalFinalized = outboxLines(home).find((l) => l.event === 'journal_finalized') as
+      | Record<string, unknown>
+      | undefined
+    expect(journalFinalized).toBeDefined()
+    expect(journalFinalized?.result).toBe('stopped')
+  }, 20000)
+})
+
 // --- pure-function coverage for the two Decisions-section fixes -----------
 
 describe('extractObjectivesSection (pure)', () => {
@@ -628,6 +806,48 @@ describe('extractObjectivesSection (pure)', () => {
   it('returns empty string when the Issue has no Objectives heading', () => {
     expect(extractObjectivesSection('Just some prose, no headings at all.')).toBe('')
   })
+})
+
+describe('routeCompletionEvents (pure) — regression, PR #459 MAJOR', () => {
+  const journalFinalized = { event: 'journal_finalized', result: 'stopped' } as unknown as DevReviewLoopEventInput
+  const roundEnded = { event: 'round_ended', outcome: 'changes_requested' } as unknown as DevReviewLoopEventInput
+  const events = [roundEnded, journalFinalized]
+
+  it("defers journal_finalized for a 'publish' decision, until publishRound confirms it", () => {
+    const routed = routeCompletionEvents(events, 'publish')
+    expect(routed.toLogNow).toEqual([roundEnded])
+    expect(routed.toDeferUntilPublish).toEqual([journalFinalized])
+  })
+
+  // The bug: every one of these decisions ends the run right there — there
+  // is no later publish step for its `journal_finalized` to wait on. The
+  // prior fix filtered it out of `logEvents` unconditionally and only the
+  // `publish` branch ever flushed the held-back copy, so a `pause` decision
+  // captured its completion event and then never logged it, permanently.
+  for (const decisionType of ['pause', 'dispatch_developer', 'ask_confidence', 'dispatch_reviewers'] as const) {
+    it(`logs journal_finalized immediately for a '${decisionType}' decision (never dropped)`, () => {
+      const routed = routeCompletionEvents(events, decisionType)
+      expect(routed.toLogNow).toEqual(events)
+      expect(routed.toDeferUntilPublish).toEqual([])
+    })
+  }
+
+  // The three pause reasons the regression silently dropped on every
+  // successful run — `assessVerdicts`'s `reappearance`/`no_progress`/
+  // `max_rounds` sites all produce a `pause` decision (see `Decision` in
+  // `packages/aeg-core/src/dev-review-loop/types.ts`: `reason` is not part
+  // of what `routeCompletionEvents` branches on) — so the `'pause'` case in
+  // the loop above covers all three by construction. The end-to-end test
+  // below ('a paused loop for reason no_progress still logs its completion
+  // event') is the concrete proof for one of them through the real driver.
+
+  // `routeCompletionEvents` only decides WHEN a `merged_ready` event becomes
+  // eligible to log (after `publishRound` returns without throwing) — it
+  // cannot itself prove the crash-mid-publish property, since that lives in
+  // `devReviewLoop`'s unguarded sequencing: a throw from `publishRound`
+  // propagates out before `await logEvents(pendingCompletionEvents)` is ever
+  // reached. See 'a crash mid-publish never logs merged_ready', below, for
+  // the real, end-to-end proof of that.
 })
 
 describe('filterPrincipalRulings / findPrincipalFrozenBrief (pure)', () => {

@@ -1066,6 +1066,39 @@ function fetchPrBody(pr: number): string {
   return (JSON.parse(out) as { body: string }).body
 }
 
+/**
+ * Splits an `assessRound` result's events into what logs immediately and
+ * what waits for `publishRound` to actually succeed. Only a `publish`
+ * decision (`assess-round.ts`'s `merged_ready` site) has a real publish step
+ * worth waiting on — a crash between the verdict posts and the summary post
+ * must not leave the durable log claiming a run that never finished. Every
+ * OTHER decision that carries a `journal_finalized` event — the two
+ * confidence-pause sites in `assessGate`, and `reappearance`/`no_progress`/
+ * `max_rounds` in `assessVerdicts` — already IS the run's completed outcome
+ * the moment `assessRound` returns it: there is no later confirmation step
+ * for those to wait on, so their `journal_finalized` logs immediately, same
+ * as every other event that round produced.
+ *
+ * Regression (PR #459, MAJOR): the prior fix filtered `journal_finalized`
+ * out of every `dispatch_reviewers`-branch call regardless of decision type,
+ * and only the `publish` branch ever flushed the held-back copy — so a
+ * `pause` decision's completion event was captured into
+ * `pendingCompletionEvents` and then never logged, permanently, on every
+ * successful pause. This function makes the one case that legitimately
+ * defers explicit, rather than an unconditional filter two branches away
+ * from the only code that un-defers it.
+ */
+export function routeCompletionEvents(
+  events: readonly DevReviewLoopEventInput[],
+  decisionType: Decision['type']
+): { toLogNow: DevReviewLoopEventInput[]; toDeferUntilPublish: DevReviewLoopEventInput[] } {
+  if (decisionType !== 'publish') return { toLogNow: [...events], toDeferUntilPublish: [] }
+  return {
+    toLogNow: events.filter((e) => e.event !== 'journal_finalized'),
+    toDeferUntilPublish: events.filter((e) => e.event === 'journal_finalized')
+  }
+}
+
 export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = {}): Promise<LoopResult> {
   const d: LoopDeps = { ...defaultDeps(), ...deps }
   const root = d.outboxRoot()
@@ -1351,8 +1384,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const result = assessRound(state, obs)
       state = result.state
       decision = result.decision
-      pendingCompletionEvents = result.events.filter((e) => e.event === 'journal_finalized')
-      await logEvents(result.events.filter((e) => e.event !== 'journal_finalized'))
+      const routed = routeCompletionEvents(result.events, decision.type)
+      pendingCompletionEvents = routed.toDeferUntilPublish
+      await logEvents(routed.toLogNow)
       d.flushOutbox(task)
       if (decision.type === 'dispatch_developer') round += 1
     }
