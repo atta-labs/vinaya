@@ -357,6 +357,26 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `resolveHookDir` | function | `apps/cli/src/lib/detect.ts` |
 | `setCoreHooksPath` | function | `apps/cli/src/lib/detect.ts` |
 | `unsetCoreHooksPath` | function | `apps/cli/src/lib/detect.ts` |
+| `resolveHead` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchCiConclusion` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `filterPrincipalRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `findPrincipalFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchIssueTitle` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `extractObjectivesSection` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchIssueObjectives` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `developerBranchFor` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `findOpenPrForBranch` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `lintReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `renderReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `outboxRoot` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `writeHeldVerdict` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `CONFIDENCE_PROMPT_LINE` | const | `apps/cli/src/lib/dev-review-loop.ts` |
+| `parseConfidenceReply` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `DevReviewLoopResumeError` | class | `apps/cli/src/lib/dev-review-loop.ts` |
+| `devReviewLoop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `DEV_REVIEW_LOOP_AGENTS` | const | `apps/cli/src/lib/dev-review-loop.ts` |
 | `changedLineRanges` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `fileDiffAgainst` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `findingsInThisDiff` | function | `apps/cli/src/lib/diff-evidence.ts` |
@@ -452,7 +472,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 
 (174 exports.)
 
-## Commands — `apps/cli/src/commands` (40 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
+## Commands — `apps/cli/src/commands` (41 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
 | Command | File | Entry function | In-scope calls today | Status | One lib function (compliant) / retirement target (exempt) |
 |---|---|---|---|---|---|
@@ -496,6 +516,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `quickstart` | `quickstart.ts` | `quickstartCommand` | 9 | exempt — see below | sharedCommandShell (target) |
 | `release` | `release.ts` | `releaseCommand` | 0 | compliant | — (self-contained) |
 | `dispatch` | `dispatch.ts` | `dispatchCommand` | 5 | exempt — see below | sharedCommandShell (target) |
+| `dev-review-loop` | `dev-review-loop.ts` | `devReviewLoopCommand` | 4 | exempt — see below | sharedCommandShell (target) |
 
 (40 rows — all 40 shipped `COMMANDS` entries. Compliant: 11. Exempt: 29.)
 
@@ -537,8 +558,9 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `quickstart` | 2026-09-05 | 9 — lib: `planDocOwnersBinding`, `applyDocOwnersBinding`, `renderDocOwnersBindingDiffLine`, `promptYesNo`, `prompt`; commands/\*.ts (refused outright): `runInit` (`init.ts`), `runInitProduct` (`init.ts`), `runDemoBreak` (`demo.ts`), `runDoctor` (`doctor.ts`) | `sharedCommandShell` |
 | `pr-verify-evidence-logic.ts` (not a command — see note) | 2026-09-05 | n/a — lib code (`publishedMergeBase`, `normaliseLines`, `compareEvidence`, `renderVerdict`) colocated in `apps/cli/src/commands/` instead of `apps/cli/src/lib/` | moves to `apps/cli/src/lib/` in the next task touching `pr-verify-evidence` |
 | `dispatch` | 2026-09-07 | 5 — lib (4): `loadConfig`, `isAgentVendor`, `dispatchRole`, `printJson`; commands/\*.ts (refused outright): `logFlushCommand` (`log.ts`) | `sharedCommandShell` |
+| `dev-review-loop` | 2026-09-07 | 4 — lib: `loadConfig`, `isAgentVendor`, `devReviewLoop`, `printJson` | `sharedCommandShell` |
 
-`dispatchRole` retires no row today — its own command (`dispatch`) is new, not a retirement of an existing exempt row; `runTask` remains forward-looking, with no shipped command yet.
+`dispatchRole` retires no row today — its own command (`dispatch`) is new, not a retirement of an existing exempt row; `runTask` remains forward-looking, with no shipped command yet. `devReviewLoop` (this task) likewise retires no row today — it is itself a new named chokepoint (`## Effects` intro), and `dev-review-loop`'s own command calls it alongside the same three argv-plumbing calls `dispatch` already carries (`loadConfig`/`isAgentVendor`/`printJson`) — once `sharedCommandShell` absorbs those, this command is left calling only `devReviewLoop`, becoming compliant on its own rather than needing a second named target.
 
 `issue create`/`issue edit` re-verified after `BRIEF_BUILTINS` (`apps/cli/src/lib/config.ts`) and its `runBuiltin` table (`apps/cli/src/lib/forge-write.ts`) gained a `briefSections` entry: both rows' own in-scope call count is unchanged — `validateTaskIssue` was already the one call either row lists, and a new entry inside that function's internal table is not a new call site in either command's own body.
 
