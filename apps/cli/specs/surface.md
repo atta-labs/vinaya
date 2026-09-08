@@ -423,10 +423,14 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `DISPATCH_AGENTS` | const | `apps/cli/src/lib/dispatch-task.ts` |
 | `dispatchTask` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `DispatchTaskError` | class | `apps/cli/src/lib/dispatch-task.ts` |
+| `extractAgentClass` | function | `apps/cli/src/lib/dispatch-task.ts` |
+| `AGENT_CLASS_VALUES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `AGENT_VENDOR_NAMES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `DEFAULT_TIMEOUT_MS` | const | `apps/cli/src/lib/dispatch.ts` |
 | `dispatchRole` | function | `apps/cli/src/lib/dispatch.ts` |
 | `HEARTBEAT_INTERVAL_MS` | const | `apps/cli/src/lib/dispatch.ts` |
+| `identifyVendorFromModelShape` | function | `apps/cli/src/lib/dispatch.ts` |
+| `isAgentClass` | function | `apps/cli/src/lib/dispatch.ts` |
 | `isAgentVendor` | function | `apps/cli/src/lib/dispatch.ts` |
 | `MAX_TEE_BYTES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `openOutputTee` | function | `apps/cli/src/lib/dispatch.ts` |
@@ -436,6 +440,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `renderClaudeEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderCodexEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderGeminiEvent` | function | `apps/cli/src/lib/dispatch.ts` |
+| `resolveClassModel` | function | `apps/cli/src/lib/dispatch.ts` |
 | `timeoutWarningLeadMs` | function | `apps/cli/src/lib/dispatch.ts` |
 | `appendDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `applyDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
