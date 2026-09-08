@@ -565,7 +565,14 @@ export function renderPauseComment(prNumber: number, reason: PauseReason): strin
  * and so still posts only once, preserving the original idempotency
  * requirement; only the key changed, not the once-only guarantee.
  */
-function postPauseComment(root: string, task: number, round: number, head: string, prNumber: number, reason: PauseReason): void {
+function postPauseComment(
+  root: string,
+  task: number,
+  round: number,
+  head: string,
+  prNumber: number,
+  reason: PauseReason
+): void {
   postForgeEffectOnce(root, task, `pause-${round}-${head}`, () =>
     postMarkedComment('pr', String(prNumber), pauseMarker(reason), renderPauseComment(prNumber, reason))
   )

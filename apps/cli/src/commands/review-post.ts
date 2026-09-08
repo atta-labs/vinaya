@@ -720,7 +720,10 @@ function checkExtraction(
  * publication self-check (task 6, `#416`) can apply the SAME filter rather
  * than re-deriving one — see that file's `publishRound` doc comment.
  */
-export function principalBodies(comments: readonly ReviewGateComment[], principalAllowlist: readonly string[]): string[] {
+export function principalBodies(
+  comments: readonly ReviewGateComment[],
+  principalAllowlist: readonly string[]
+): string[] {
   return comments.filter((c) => isPrincipal(c.author, principalAllowlist as string[])).map((c) => c.body)
 }
 
