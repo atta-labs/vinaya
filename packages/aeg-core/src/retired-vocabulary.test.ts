@@ -306,6 +306,10 @@ const EXEMPT = [
   'packages/aeg-core/src/retired-vocabulary-scan.test.ts',
   '/fixtures/',
   '/node_modules/',
+  // studio-standalone's bundled copy of its own dependencies, renamed with a
+  // leading underscore to dodge tooling that only recognizes `node_modules`
+  // — same reason `/node_modules/` above is exempt.
+  '/_node_modules/',
   '/.next/',
   '/.turbo/'
 ]
