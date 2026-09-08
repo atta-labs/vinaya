@@ -1,5 +1,40 @@
 # @atta/vinaya-sources
 
+## 0.25.0
+
+### Minor Changes
+
+- bd992c7: `vinaya issue objectives edit <n> --add "<sentence>" | --drop O<k> | --replace O<k> "<sentence>" --reason "<text>"` rewrites a task Issue's `## Objectives` section through the same validated `issue edit` write path (`writeValidatedIssueEdit`, extracted from `apps/cli/src/commands/issue.ts` into `apps/cli/src/lib/forge-write.ts`), then posts one comment marked `<!-- aeg:objectives:v<k> -->` carrying the previous list, the new list, the reason, and the new version hash. `--drop` never renumbers the survivors; a drop that leaves the list non-contiguous from `O1` is refused with the parser's own message.
+  
+  `vinaya pr rule <pr> --file <ruling.md>` posts a Principal ruling as its own marked comment (`<!-- aeg:principal:ruling:<pr>-<k> -->`), refusing a file that carries verdict grammar or reads as an escalation so a ruling is never mistaken for a code-review or security verdict.
+
+### Patch Changes
+
+- f2a20f8: A task Issue body now carries four more sections under the Planner's rationale — `## Surface` (directory-level `in:`/`out:` glob lists), `## Parts` (numbered `Part <k> (O<n>[, O<m>]) — <outcome>` lines), `## Test plan` (the `unit-tests-only` sentinel or a fenced command list), and `## Stop conditions` (a bullet list) — each parsed by its own function in `@attalabs/aeg-core` (`parseIssueSurface`, `parseIssueParts`, `parseIssueTestPlan`, `parseIssueStopConditions`), and composed into one gate, `checkIssueBriefSections`. A task Issue numbered at or above `BRIEF_SECTIONS_SINCE_ISSUE` is refused, naming the missing/malformed section, when any of the four is absent; below the cutover an Issue passes unconditionally, and a null Issue number fails closed.
+  
+  `vinaya brief render` now fills a rendered brief's §4 Out of surface, §6 Numbered parts, §9 Test Plan, and §10 Stop conditions directly from these four parsed sections instead of a hand-authored placeholder, and refuses — naming the section — when one cannot be derived. A rendered brief needs no hand edit to pass `verify-brief`/`brief-shape`.
+- 7059598: Adds `vinaya dev-review-loop --task <n> --agent claude | codex | gemini` — dispatches the developer through `dispatchRole` with the brief read from the task Issue's frozen `aeg:brief:v1` comment, waits for the PR it opens, then runs rounds by calling `assessRound` (`@attalabs/aeg-core`) with observations read from the forge (`git ls-remote` for the head, the check-runs API for CI, `<!-- aeg:principal:ruling:<pr>-<k> -->`-marked comments for rulings) until it returns `publish` or `pause`. Each round's reviewer and security verdicts are dispatched fresh, rendered through `review post`'s render functions, and held as local files under the outbox — nothing is posted to the PR before `publish`. The developer's own session is resumed every round via `dispatchRole`'s `resumeId`; a resume failure for a vendor that resumed successfully the round before stops the loop rather than falling back to a fresh session.
+- 831ae1b: `dispatchRole`'s returned `DispatchHandle` now carries `resumeId` — the vendor's own session/thread identifier (claude/gemini: `session_id`; codex: `thread_id`) parsed from a successful dispatch's stdout, `null` on any failure. `dispatchRole` also accepts an optional `resumeId` on `DispatchOpts` that swaps in each vendor's own resume invocation (`claude -p -r <id> --output-format json`; `codex exec resume <id> --json -`; `gemini -p '' --resume <id> --output-format json --skip-trust`) instead of its first-dispatch args. `vinaya dispatch <role> --agent <vendor> ... --resume <id>` exposes this at the command line, printing `resumeId` alongside the existing fields.
+- f8f8baa: Adds `vinaya dispatch <role> --agent claude | codex | gemini --prompt-file <path>` — starts the named vendor's headless mode with `VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_ROUND` set on the child's environment only, refuses by name before any spawn attempt when the binary is absent or not executable, and enforces a wall-time ceiling (`dispatch.timeoutMs` in config, default one hour) with `SIGTERM` then `SIGKILL`. Records `dispatched`/`outcome_received`/`dispatch_failed` through the Vinaya Log's `dispatch` family (`apps/cli/src/lib/dispatch.ts`), and flushes the outbox via `vinaya log flush` when `--task`/`--pr` is given. `vinaya.config.json` gains `dispatch.timeoutMs`/`dispatch.agent`.
+- 8a26dc3: Adds the `forge_write` family to the Vinaya Log schema (`ForgeOpSchema`, `ForgeWriteEventSchema`, `LogEventSchema` widened to a three-way union) and `vinaya log flush --issue <n> | --pr <n>`, which posts a target's outbox as one or more marked comments (`<!-- aeg:log:<run_id>:<seq_from>-<seq_to> -->`), logs its own `forge_write` line before truncating, and truncates only the lines the forge confirmed.
+- ba2ac11: `vinaya task dispatch <tranche> <n> [--agent claude | codex | gemini]` renders a task's brief from its Issue and the tree, pins the premises, and posts it once as a frozen `aeg:brief:v1` Issue comment — refusing outright, naming the existing comment's URL, if the Issue already carries one. With `--agent`, it starts the Developer through `dispatchRole` when that function is available, else prints the rendered brief and the manual dispatch instruction.
+  
+  `vinaya pr create` no longer splits a brief section out of the PR body or posts it as a second comment — the brief now lives exclusively on the task Issue, posted by `task dispatch` before the Developer ever starts. A body still carrying either legacy `aeg:brief:start`/`aeg:brief:end` marker is refused outright. The PR body template's `## Summary` section is renamed `## Decisions` — one line per choice the brief left open, never a restatement of what the diff does — and its `## Reference — the dispatched brief` section is removed entirely.
+  
+  Every reader that previously read the brief out of the PR body now reads the Issue's `aeg:brief:v1` comment instead on a task branch: `verify-dispatch --premise` (with no file argument), `check-brief-shape`, and the post-merge Archivist's provenance assembly (whose `- Brief:` line now names the comment's URL). A standalone `fix/*` branch's brief is unaffected — it still lives directly in its own PR body.
+- Updated dependencies [f2a20f8]
+- Updated dependencies [8825319]
+- Updated dependencies [c70b5b0]
+- Updated dependencies [8a26dc3]
+- Updated dependencies [5f529b1]
+- Updated dependencies [112613a]
+- Updated dependencies [9237f92]
+- Updated dependencies [ba2ac11]
+- Updated dependencies [b8a540c]
+  - @attalabs/aeg-core@0.25.0
+  - @attalabs/aeg-forge-state@0.25.0
+  - @attalabs/aeg-types@0.25.0
+
 ## 0.24.1
 
 ### Patch Changes
