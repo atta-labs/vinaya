@@ -161,14 +161,19 @@ export type { ReviewGateComment, ReviewGateInput, ReviewGateResult, ReviewGateVe
 export {
   checkBlastRadiusScope,
   checkConflictCompleteness,
+  checkDocsWithinSurface,
   checkIssueBriefSections,
   checkIssueObjectives,
   checkIssueRationale,
   checkIssueType,
   checkNoBriefContent,
+  checkPartsCiteDefinedObjectives,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
+  checkSurfaceGlobsResolve,
+  checkSurfaceScope,
   declaredProjects,
+  globCoversPath,
   isTaskIssueLabelSet,
   BRIEF_SECTIONS_SINCE_ISSUE,
   OBJECTIVES_SINCE_ISSUE,
@@ -182,6 +187,8 @@ export type {
   IssueSectionResult,
   IssueSurface,
   IssueTestPlan,
+  SurfaceScopeResult,
+  SurfaceScopeViolation,
   ProjectPath,
   TaskIssueFacts
 } from './issue-validation'

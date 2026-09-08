@@ -179,10 +179,22 @@ function partWordCount(text: string): number {
   return text.split(/\s+/).filter((w) => /[a-z]/i.test(w)).length
 }
 
-/** A `## Surface` `in:`/`out:` entry — directory-level only, per the grammar's own rule. A trailing `/**`/`/*` glob suffix is stripped before the extension check, so `packages/aeg-core/**` reads as a directory. */
+/**
+ * A `## Surface` `in:`/`out:` entry — directory-level only, per the grammar's
+ * own rule. A trailing `/**`/`/*` glob suffix is stripped before the
+ * extension check, so `packages/aeg-core/**` reads as a directory.
+ *
+ * A dot-prefixed directory (`.claude`, `.github`) must read as a directory,
+ * not a file: its last path segment's only `.` sits at index 0, which is a
+ * name, not an extension. A real file's dot sits after at least one other
+ * character (`foo.ts`, `.env.local`'s trailing `.local`). Only the latter
+ * counts as "looks like a file path".
+ */
 function looksLikeFilePath(entry: string): boolean {
   const stripped = entry.replace(/\/\*\*?$/, '')
-  return /\.[A-Za-z0-9]{1,6}$/.test(stripped)
+  const lastSegment = stripped.split('/').pop() ?? stripped
+  const extMatch = /\.[A-Za-z0-9]{1,6}$/.exec(lastSegment)
+  return extMatch !== null && extMatch.index > 0
 }
 
 function splitGlobList(raw: string): string[] {
@@ -231,6 +243,83 @@ export function parseIssueSurface(body: string): ParsedIssueSection<IssueSurface
   return { ok: true, value: { in: inGlobs, out: outGlobs } }
 }
 
+/**
+ * A directory-level glob/path from one field "covers" a directory-level
+ * domain/path from another when either contains the other as a path prefix
+ * — shared by O4 (does a `## Surface` `in:` glob touch a shared collision
+ * domain?) and O6 (does a `## Surface` glob contain a doc pointer?). Both
+ * sides are stripped of a trailing `/**`/`/*` and any trailing slash first.
+ */
+export function globCoversPath(glob: string, path: string): boolean {
+  const g = glob.replace(/\/\*\*?$/, '').replace(/\/+$/, '')
+  const p = path.replace(/\/+$/, '')
+  return g === p || g.startsWith(`${p}/`) || p.startsWith(`${g}/`)
+}
+
+/**
+ * **O1 — a declared Surface glob must resolve.** Every `## Surface` `in:`
+ * glob must match at least one real tracked file, or a Surface that cannot
+ * render a file list is caught at authoring time instead of at dispatch
+ * (`brief-assembly.ts`'s own render-time sanity check, which currently
+ * catches the identical defect too late). `resolvesToFile` is injected —
+ * this module stays pure, no `git`/`fs` — and the caller
+ * (`forge-write.ts`) passes the SAME `expandGlob` predicate
+ * `brief-assembly.ts` already uses to render, so the gate and the renderer
+ * can never disagree about whether a glob resolves (O3).
+ *
+ * A backtick-wrapped glob (`` `packages/foo/**` ``) is not stripped or
+ * specially refused here: the literal backticks are part of the string
+ * handed to `resolvesToFile`, which can never match a real tracked path, so
+ * this check catches it the same way it catches a typo'd directory — naming
+ * the glob exactly as written, backticks included.
+ *
+ * `out:` entries are not checked — declaring something out of scope that
+ * does not yet exist (a directory not yet created) is a legitimate
+ * exclusion, not a defect.
+ */
+export function checkSurfaceGlobsResolve(body: string, resolvesToFile: (glob: string) => boolean): IssueSectionResult {
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return { status: 'pass', errors: [] }
+  const errors: string[] = []
+  for (const glob of surface.value.in) {
+    if (!resolvesToFile(glob)) {
+      errors.push(
+        `issue-validation Surface: \`${glob}\` in \`## Surface\`'s \`in:\` list matches no tracked file — a Surface that cannot resolve cannot render a brief's file list.`
+      )
+    }
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+export type SurfaceScopeViolation = { file: string; glob: string }
+export type SurfaceScopeResult = { ok: true } | { ok: false; violations: SurfaceScopeViolation[] }
+
+/**
+ * **O7 — a task-branch PR's changed files must stay inside its Issue's
+ * declared surface.** `outGlobs` is the Issue's own `## Surface` `out:`
+ * list (parsed by the caller via `parseIssueSurface`, same reuse discipline
+ * as everything else here); `changedFiles` is the PR/branch's own diff.
+ * Every changed file crossing a declared `out:` glob is a violation, naming
+ * both the file and the glob it crosses — collected in one pass (O12's own
+ * discipline), never only the first. Uses the SAME `globCoversPath`
+ * predicate O4/O6 already use to decide whether a Surface glob covers a
+ * path, so "does this file cross the boundary" can never disagree with how
+ * the boundary itself is read elsewhere in this module.
+ *
+ * Pure: takes the already-resolved file list and glob list, never reads
+ * disk or the forge itself — the caller (a check-bin adapter) resolves
+ * both.
+ */
+export function checkSurfaceScope(changedFiles: string[], outGlobs: string[]): SurfaceScopeResult {
+  if (outGlobs.length === 0) return { ok: true }
+  const violations: SurfaceScopeViolation[] = []
+  for (const file of changedFiles) {
+    const glob = outGlobs.find((g) => globCoversPath(g, file))
+    if (glob) violations.push({ file, glob })
+  }
+  return violations.length > 0 ? { ok: false, violations } : { ok: true }
+}
+
 /** One `Part <n> (<refs>) — <outcome>` line, anywhere in the `## Parts` section. */
 const ISSUE_PART_LINE_RE = /^Part\s+(\d+)\s*\(([^)]*)\)\s*[-—–]\s*(.*)$/i
 
@@ -277,6 +366,37 @@ export function parseIssueParts(body: string): ParsedIssueSection<IssuePart[]> {
   }
   if (errors.length > 0) return { ok: false, errors }
   return { ok: true, value: parts }
+}
+
+/**
+ * **O2 — a `## Parts` citation must name a real Objective.** `Part <n>
+ * (O<k>, …)` cites objective ids the Issue's own `## Objectives` section
+ * defines — reusing `objectivesOf` (the one Objectives parser every other
+ * consumer reads, `objectives.ts`'s own doc comment) rather than a second
+ * hand-rolled id set, so this can never disagree with what the Objectives
+ * gate itself accepts.
+ *
+ * Passes trivially when either section is malformed — `checkIssueParts`'s
+ * own shape errors and `checkIssueObjectives`'s own errors already cover
+ * that; this function only ever reports a citation of an id that is
+ * genuinely absent from an otherwise well-formed Objectives list.
+ */
+export function checkPartsCiteDefinedObjectives(body: string): IssueSectionResult {
+  const parts = parseIssueParts(body)
+  const objectives = objectivesOf(body)
+  if (!parts.ok || !objectives.ok) return { status: 'pass', errors: [] }
+  const definedIds = new Set(objectives.objectives.map((o) => Number.parseInt(o.id.slice(1), 10)))
+  const errors: string[] = []
+  for (const part of parts.value) {
+    for (const objectiveId of part.objectiveIds) {
+      if (!definedIds.has(objectiveId)) {
+        errors.push(
+          `issue-validation Parts: Part ${part.n} cites O${objectiveId}, which the Issue's own \`## Objectives\` section does not define.`
+        )
+      }
+    }
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
 
 const ISSUE_PRINCIPAL_LINE_RE = /^-\s*\[[ xX]\]\s*\*{2}\[principal\]\*{2}(.*)$/gim
@@ -817,27 +937,54 @@ const BLAST_RADIUS_ACK_RE = /(?:\*\*)?blast-radius-ack(?:\*\*)?\s*[:—–-]/i
  * seam-is-dormant-when-absent shape `doc-owners` uses. The check cannot be
  * deterministic without its source of truth, and inventing one inline is worse
  * than not running.
+ *
+ * **O4 — above the brief-sections cutover, this decides from `## Surface`
+ * alone.** A task Issue's own `Boundary`/`Project(s) + blast radius` prose
+ * can name a shared package precisely IN ORDER TO EXCLUDE it ("does not
+ * touch `packages/ui`") — a negation the text scan below cannot tell apart
+ * from a real touch-claim, and a heuristic in a blocking gate is wrong in
+ * both directions. `## Surface`'s `in:` glob list is parsed structure with
+ * no negation to misread: at or above `BRIEF_SECTIONS_SINCE_ISSUE`, where
+ * every task Issue carries one, a shared domain is "named" iff a declared
+ * `in:` glob covers it (`globCoversPath`) — never by scanning prose for the
+ * domain's name. Below the cutover, an Issue legitimately carries no
+ * `## Surface` at all, so the original prose scan is unchanged.
+ * `issueNumber` follows the same fail-closed posture as
+ * `checkIssueObjectives`/`checkIssueBriefSections`: `null` (not yet known,
+ * e.g. `issue create`) is NOT treated as "at or above the cutover" — it
+ * falls back to the prose scan, since a not-yet-created Issue's own
+ * `## Surface` cannot yet be trusted to be the mandatory kind.
  */
 export function checkBlastRadiusScope(
   body: string,
   _labels: string[],
   sharedPackages: string[],
-  projectPaths: ProjectPath[]
+  projectPaths: ProjectPath[],
+  issueNumber: number | null = null
 ): IssueSectionResult {
   if (sharedPackages.length === 0) return { status: 'pass', errors: [] }
-  // Scoped to the two fields that declare the task's OWN surface. Scanning the
-  // whole body fails correct plans in bulk: a rationale names packages for many
-  // reasons that are not edits — a dependency it imports unchanged (#591/#599
-  // name `packages/aeg-core` because Vinaya's CLI imports it), a trap to avoid,
-  // an Origin note. A full-body scan flagged 46 of 166 historical task Issues,
-  // nearly all of them correctly-scoped work. Boundary and Project(s) + blast
-  // radius are where a task states what it touches, so that is where a
-  // touch-claim is load-bearing enough to block on.
-  const text = [
-    rationaleFieldText(PATH_TEXT(body), 'Boundary'),
-    rationaleFieldText(PATH_TEXT(body), 'Project\\(s\\)|Project(?:s)?\\s*\\+|blast radius')
-  ].join('\n')
-  const named = sharedPackages.filter((d) => namesPath(text, d))
+  const decideFromSurface = issueNumber !== null && issueNumber >= BRIEF_SECTIONS_SINCE_ISSUE
+  let named: string[]
+  if (decideFromSurface) {
+    const surface = parseIssueSurface(body)
+    const surfaceIn = surface.ok ? surface.value.in : []
+    named = sharedPackages.filter((d) => surfaceIn.some((glob) => globCoversPath(glob, d)))
+  } else {
+    // Scoped to the two fields that declare the task's OWN surface. Scanning
+    // the whole body fails correct plans in bulk: a rationale names packages
+    // for many reasons that are not edits — a dependency it imports unchanged
+    // (#591/#599 name `packages/aeg-core` because Vinaya's CLI imports it), a
+    // trap to avoid, an Origin note. A full-body scan flagged 46 of 166
+    // historical task Issues, nearly all of them correctly-scoped work.
+    // Boundary and Project(s) + blast radius are where a task states what it
+    // touches, so that is where a touch-claim is load-bearing enough to
+    // block on.
+    const text = [
+      rationaleFieldText(PATH_TEXT(body), 'Boundary'),
+      rationaleFieldText(PATH_TEXT(body), 'Project\\(s\\)|Project(?:s)?\\s*\\+|blast radius')
+    ].join('\n')
+    named = sharedPackages.filter((d) => namesPath(text, d))
+  }
   if (named.length === 0) return { status: 'pass', errors: [] }
 
   // Registry-validated, not merely declared. The bypass below widens the review
@@ -947,6 +1094,9 @@ function rationaleFieldText(text: string, labelPattern: string): string {
 const DOC_PATH_RE =
   /(?:(?:aeg-root|apps|packages|specs|docs|tools|\.claude|\.github)\/[\w./@-]*\.(?:md|mdx)|\.claude\/(?:skills|rules)\/[\w./-]+|\b(?:docs-index|decisions|projects|state-machine|enforcement|process|README|CLAUDE)\.md\b|\b[\w-]+-(?:spec|decisions|backlog)\.md\b)/i
 
+/** `DOC_PATH_RE`, globally — same grammar, used to enumerate every doc pointer in a field rather than only testing presence of one. */
+const DOC_PATH_RE_GLOBAL = new RegExp(DOC_PATH_RE.source, 'gi')
+
 /**
  * The doc-less-surface exemption, shaped after `brief-validation`'s
  * `Test Plan: unit-tests-only` sentinel: an explicit, greppable opt-out a human
@@ -979,6 +1129,52 @@ export function checkRationaleNamesDocs(body: string): IssueSectionResult {
       'issue-validation docs read: neither "Docs to keep coherent" nor "Traps to avoid" names a concrete doc path (aeg-root/…, .claude/skills/…, apps/*/CLAUDE.md, apps/*/specs/…). Naming one is the artifact of having read the surface being planned — the forge write triggers no skill-check hook, so this field is the only read-obligation signal. For a genuinely doc-less surface, write the explicit `no-doc-surface` sentinel.'
     ]
   }
+}
+
+/**
+ * **O6 — a "Docs to keep coherent" pointer must fall inside this task's own
+ * declared surface.** A doc a task claims to keep coherent, but that its
+ * own `## Surface` excludes (an `out:` glob) or never reaches (no `in:`
+ * glob covers it), is a pointer this task cannot act on — the widening move
+ * (grow the surface until the pointer fits) is the wrong direction here:
+ * that is what renders an unusable brief, the exact failure the sibling
+ * task (plan-brief-v1 5) exists to fix on the render side. This gate is the
+ * authoring-time twin: catch the mismatch before it ever reaches a brief.
+ *
+ * At or above `BRIEF_SECTIONS_SINCE_ISSUE` only — below it an Issue
+ * legitimately carries no `## Surface` to compare against, same cutover
+ * every other Surface-aware check in this module uses. Passes trivially
+ * when the Surface itself doesn't parse (`checkIssueBriefSections` already
+ * reports that malformation) or the docs field carries the `no-doc-surface`
+ * sentinel (nothing to compare).
+ */
+export function checkDocsWithinSurface(body: string, issueNumber: number | null): IssueSectionResult {
+  if (issueNumber !== null && issueNumber < BRIEF_SECTIONS_SINCE_ISSUE) return { status: 'pass', errors: [] }
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return { status: 'pass', errors: [] }
+
+  const text = PATH_TEXT(body)
+  const scope = rationaleFieldText(text, 'Docs to keep coherent|§7')
+  if (NO_DOC_SURFACE_RE.test(scope)) return { status: 'pass', errors: [] }
+
+  const pointers = [...new Set([...scope.matchAll(DOC_PATH_RE_GLOBAL)].map((m) => m[0]))]
+  const errors: string[] = []
+  for (const pointer of pointers) {
+    const excludingGlob = surface.value.out.find((glob) => globCoversPath(glob, pointer))
+    if (excludingGlob) {
+      errors.push(
+        `issue-validation Docs to keep coherent: \`${pointer}\` falls inside \`## Surface\`'s \`out:\` glob \`${excludingGlob}\` — this task's own declared surface explicitly excludes the doc it claims to keep coherent.`
+      )
+      continue
+    }
+    const coveredByIn = surface.value.in.some((glob) => globCoversPath(glob, pointer))
+    if (!coveredByIn) {
+      errors.push(
+        `issue-validation Docs to keep coherent: \`${pointer}\` falls outside every \`## Surface\` \`in:\` glob — this task's own declared surface never reaches the doc it claims to keep coherent.`
+      )
+    }
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
 
 /** One open task Issue, reduced to what the conflict-completeness warning needs. */
