@@ -12,15 +12,36 @@
  * here uses (`single-plan-pr`, `closes-n`, …), so this also runs pre-PR
  * from a push-time hook, not only in CI.
  *
- * Dormant, never blocking, when any of: the branch is not a task branch
- * (`taskBranchTopologyFields` returns `null`); the forge/repo cannot be
- * resolved or reached (a transient outage must never block every push —
- * same posture `single-plan-pr`'s `gh pr list` failure already takes);
- * the task's topology row carries no Issue number yet; the Issue's body
- * carries no well-formed `## Surface` (below the brief-sections cutover,
- * or malformed — `checkIssueBriefSections`/`issue create`/`edit` already
- * catch a malformed Surface at authoring time, so this check does not
- * duplicate that refusal); or the Issue declares no `out:` globs at all.
+ * Dormant, never blocking, for exactly ONE reason: the branch is not a task
+ * branch at all (`taskBranchTopologyFields` returns `null`) — O7 binds a
+ * "task-branch PR", so a non-task branch (a `changeset-release/*` bot PR, a
+ * one-off `chore/*` branch) is categorically outside this check's scope,
+ * the same posture `check-branch-topology.ts`'s identical `!fields` guard
+ * already takes for the sibling gate. This is a scope boundary, not a
+ * loophole: a task's Developer is bound (`roles/developer.md` entry gate
+ * item 6, and the `first-push-dispatch` push-time gate) to use the real
+ * `task/<tranche>/<n>` branch name, so renaming a real task's branch to
+ * dodge this check would trip that gate first. Security review (task
+ * plan-brief-v1 8) flagged this path as fail-open alongside three others;
+ * Principal ruling: leave THIS one dormant — flipping it to a refusal
+ * would fail two branches already open on the forge that predate this gate
+ * entirely (`changeset-release/main` #452, `chore/vinaya-0.25.1-republish`
+ * #448, neither a task branch), and deciding otherwise is the same
+ * cutover-by-number call `BRIEF_SECTIONS_SINCE_ISSUE` already is — the
+ * Principal's to make, not this task's. See the PR body/comments for the
+ * report.
+ *
+ * Every OTHER resolution failure now REFUSES by name instead of passing
+ * silently, per that same ruling: the repo/forge/Issue-number lookup
+ * cannot be completed; the Issue's body cannot be fetched; the Issue
+ * carries no well-formed `## Surface` (a malformed or below-cutover Surface
+ * — `checkIssueBriefSections`/`issue create`/`edit` already refuse a
+ * malformed Surface at authoring time going forward, so a task-branch PR
+ * reaching this check with one is either pre-cutover or a hole in that
+ * upstream gate, and either way "cannot determine scope" is not a pass);
+ * or the Issue's `## Surface` declares an `out:` line that resolves to zero
+ * globs. An author with a genuinely Surface-less task gets a named refusal
+ * naming what would satisfy it, never a green tick.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -72,13 +93,30 @@ function fetchIssueBody(issue: number): string | null {
   }
 }
 
+/** Emits one refusal and exits 1 — the shared shape every named resolution-failure path below uses. */
+function refuse(message: string, agent_recovery_prompt: string): never {
+  emitCheckError({
+    schema: CHECK_SCHEMA_VERSION,
+    check: CHECK_NAME,
+    severity: 'error',
+    message: `surface-scope: ${message}`,
+    agent_recovery_prompt
+  })
+  process.exit(1)
+}
+
 async function main(): Promise<void> {
   const branch = process.env.BRANCH || git(['rev-parse', '--abbrev-ref', 'HEAD'])
   const fields = taskBranchTopologyFields(branch)
   if (!fields) process.exit(0)
 
   const repo = resolveRepo()
-  if (!repo) process.exit(0)
+  if (!repo) {
+    refuse(
+      `branch \`${branch}\` names a task, but this repository's owner/repo could not be resolved from \`AEG_REPO\` or \`git remote get-url origin\` — cannot look up which Issue's Surface bounds this PR.`,
+      'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya check surface-scope`.'
+    )
+  }
 
   let issue: number | null = null
   try {
@@ -86,16 +124,40 @@ async function main(): Promise<void> {
     const topology = await source.getTranche(fields.tranche)
     const task = topology?.tasks.find((t) => t.id === fields.taskId) ?? null
     issue = task?.issue ?? null
-  } catch {
-    process.exit(0)
+  } catch (err) {
+    refuse(
+      `could not reach the forge to resolve tranche \`${fields.tranche}\`'s topology: ${(err as Error).message}`,
+      'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check surface-scope`.'
+    )
   }
-  if (issue === null) process.exit(0)
+  if (issue === null) {
+    refuse(
+      `no Issue number is recorded for task \`${fields.taskId}\` in tranche \`${fields.tranche}\`'s forge topology — cannot look up which Issue's Surface bounds this PR.`,
+      'Confirm this task has a real forge Issue and that the topology row carries its number, then re-run `vinaya check surface-scope`.'
+    )
+  }
 
   const body = fetchIssueBody(issue)
-  if (body === null) process.exit(0)
+  if (body === null) {
+    refuse(
+      `could not fetch Issue #${issue}'s body via \`gh issue view\` — cannot read its \`## Surface\` section.`,
+      'Confirm `gh auth status` passes and that the Issue exists, then re-run `vinaya check surface-scope`.'
+    )
+  }
 
   const surface = parseIssueSurface(body)
-  if (!surface.ok || surface.value.out.length === 0) process.exit(0)
+  if (!surface.ok) {
+    refuse(
+      `Issue #${issue} carries no well-formed \`## Surface\` section (${surface.errors.join('; ')}) — this task's boundary cannot be determined, so its scope cannot be enforced.`,
+      `Add a well-formed \`## Surface\` section (an \`in:\` glob list and an \`out:\` glob list) to Issue #${issue} via \`vinaya issue edit\`, which re-validates it, then re-run \`vinaya check surface-scope\`.`
+    )
+  }
+  if (surface.value.out.length === 0) {
+    refuse(
+      `Issue #${issue}'s \`## Surface\` \`out:\` line resolves to zero globs — an empty boundary is not an enforceable one.`,
+      `Add at least one real \`out:\` glob to Issue #${issue}'s \`## Surface\` via \`vinaya issue edit\`, then re-run \`vinaya check surface-scope\`.`
+    )
+  }
 
   const base = process.env.BASE_SHA || 'origin/main'
   let files = changedFiles(base)
