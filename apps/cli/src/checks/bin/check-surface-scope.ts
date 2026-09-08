@@ -21,12 +21,12 @@
  * loophole: a task's Developer is bound (`roles/developer.md` entry gate
  * item 6, and the `first-push-dispatch` push-time gate) to use the real
  * `task/<tranche>/<n>` branch name, so renaming a real task's branch to
- * dodge this check would trip that gate first. Security review (task
- * plan-brief-v1 8) flagged this path as fail-open alongside three others;
- * Principal ruling: leave THIS one dormant — flipping it to a refusal
- * would fail two branches already open on the forge that predate this gate
- * entirely (`changeset-release/main` #452, `chore/vinaya-0.25.1-republish`
- * #448, neither a task branch), and deciding otherwise is the same
+ * dodge this check would trip that gate first. Security review flagged
+ * this path as fail-open alongside three others; Principal ruling: leave
+ * THIS one dormant — flipping it to a refusal would fail two branches
+ * already open on the forge that predate this gate entirely
+ * (`changeset-release/main` #452, `chore/vinaya-0.25.1-republish` #448,
+ * neither a task branch), and deciding otherwise is the same
  * cutover-by-number call `BRIEF_SECTIONS_SINCE_ISSUE` already is — the
  * Principal's to make, not this task's. See the PR body/comments for the
  * report.
