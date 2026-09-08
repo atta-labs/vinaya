@@ -1138,7 +1138,7 @@ export function checkRationaleNamesDocs(body: string): IssueSectionResult {
  * glob covers it), is a pointer this task cannot act on — the widening move
  * (grow the surface until the pointer fits) is the wrong direction here:
  * that is what renders an unusable brief, the exact failure the sibling
- * task (plan-brief-v1 5) exists to fix on the render side. This gate is the
+ * sibling task exists to fix on the render side. This gate is the
  * authoring-time twin: catch the mismatch before it ever reaches a brief.
  *
  * At or above `BRIEF_SECTIONS_SINCE_ISSUE` only — below it an Issue

@@ -77,7 +77,7 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
     // fix/unfreeze-and-rerun (Issue #399) removed the `pr-body-frozen` row
     // (ring 1) and the `pr refreeze` row (ring 0).
     // fix/true-head-and-stale-sites (Issue #402) moved the raw-API row in
-    // from ring 0. plan-brief-v1 task 8 added four rows: body-bare-digits,
+    // from ring 0. This same wave added four rows: body-bare-digits,
     // evidence-fresh, doc-coverage (PR open/edit), and surface-scope (O7).
     expect(ring1.rows).toHaveLength(31)
 

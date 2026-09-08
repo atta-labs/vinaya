@@ -4,7 +4,7 @@ import ts from 'typescript'
 import { describe, expect, it } from 'bun:test'
 
 /**
- * O16 (plan-brief-v1 8) — a change that adds, removes or renames an export
+ * O16 — a change that adds, removes or renames an export
  * is refused while `apps/cli/specs/surface.md`'s Policy/Effects tables
  * still disagree with it. `surface-index.test.ts` already enforces the
  * Commands table against the real source tree ("this file is its source of

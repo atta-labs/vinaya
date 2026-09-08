@@ -6,7 +6,7 @@
  * discipline: this is the thin I/O shim; the pure evaluators live in
  * `../src/registry-parse.ts` / `../src/registry-checks.ts`).
  *
- * Rollout policy: G1 and G2 (both re-graded blocking in plan-brief-v1 task 8)
+ * Rollout policy: G1 and G2 (both re-graded blocking in this same wave)
  * and G3/G4/G5 are blocking: the process exits non-zero if any of them
  * returns `'fail'`.
  *

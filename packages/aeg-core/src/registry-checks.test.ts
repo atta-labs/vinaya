@@ -45,7 +45,7 @@ describe('checkG1', () => {
 })
 
 describe('checkG2', () => {
-  it('reports a candidate file absent from every row implementation as fail (blocking, plan-brief-v1 8)', () => {
+  it('reports a candidate file absent from every row implementation as fail (blocking)', () => {
     const rows: GateRow[] = [makeRow({ implementation: '.husky/pre-commit' })]
     const candidateFiles = ['.husky/pre-commit', '.husky/orphan-hook']
     const result = checkG2(rows, candidateFiles)

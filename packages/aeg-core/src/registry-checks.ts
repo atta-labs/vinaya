@@ -12,7 +12,7 @@
  * Rollout policy: G1 was report-only through its own rollout window; task 8
  * flipped it to blocking once the orphan backlog it existed to surface was
  * clean (0 findings against the real `enforcement.md` at the time of the
- * flip). G2 was report-only through plan-brief-v1 task 8, which found its
+ * flip). G2 was report-only until this task, which found its
  * entire remaining backlog was not orphans at all — fourteen files were the
  * second physical form of an already-documented mechanism (`claimedCheckNames`
  * twin-form recognition, see `checkG2`'s own doc comment), and two more were
@@ -118,7 +118,7 @@ const NON_GATE_HOOK_SCRIPTS: readonly string[] = ['.claude/hooks/track-transcrip
  * `candidateFiles` is already-globbed by the caller (`.husky/*`,
  * `.claude/hooks/*.sh`, `packages/aeg-core/bin/*.ts`, excluding `.husky/_`).
  *
- * **Twin-form recognition (plan-brief-v1 8, O14).** The same enforcement
+ * **Twin-form recognition (O14).** The same enforcement
  * mechanism routinely ships as two physical files — a `packages/aeg-core/
  * bin/*.ts` standalone form and an `apps/cli/src/checks/bin/check-*.ts`
  * CLI-registered form — but a row's `implementation` cell holds exactly one

@@ -1106,10 +1106,10 @@ describe('checkDocsWithinSurface (O6)', () => {
   })
 
   it('fails, naming the pointer and the glob, when the pointer falls inside an `out:` glob', () => {
-    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/tranches/plan-brief-v1.md\`.\n`
+    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/tranches/example-tranche.md\`.\n`
     const r = checkDocsWithinSurface(body, 500)
     expect(r.status).toBe('fail')
-    expect(r.errors[0]).toMatch(/aeg-root\/tranches\/plan-brief-v1\.md/)
+    expect(r.errors[0]).toMatch(/aeg-root\/tranches\/example-tranche\.md/)
     expect(r.errors[0]).toMatch(/aeg-root\/tranches\/\*\*/)
   })
 

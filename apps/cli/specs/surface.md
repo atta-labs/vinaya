@@ -2,7 +2,7 @@
 
 Status: draft
 
-One command is one function, published and tested. `apps/cli/tests/surface-index.test.ts` enforces the Commands/Exemptions tables below against the real source tree, and `apps/cli/tests/surface-spec-exports.test.ts` enforces the Policy/Effects tables below the same way (O16, plan-brief-v1 8) — an export added, removed, or renamed without a matching row here fails that test. This file is its source of truth, not the reverse.
+One command is one function, published and tested. `apps/cli/tests/surface-index.test.ts` enforces the Commands/Exemptions tables below against the real source tree, and `apps/cli/tests/surface-spec-exports.test.ts` enforces the Policy/Effects tables below the same way (O16) — an export added, removed, or renamed without a matching row here fails that test. This file is its source of truth, not the reverse.
 
 ## The rule
 

@@ -285,7 +285,7 @@ async function main(): Promise<void> {
   const g5 = checkG5(roles, contracts)
   const g6 = checkG6(rows, new Set(coreCheckRegistry().map((s) => s.name)))
 
-  // G1 and G2 (both re-graded blocking in plan-brief-v1 task 8) and
+  // G1 and G2 (both re-graded blocking in this same wave) and
   // G3/G4/G5/G6: blocking.
   emitResult(g1, true)
   emitResult(g2, true)

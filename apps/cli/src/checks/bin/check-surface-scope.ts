@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: surface-scope (plan-brief-v1 8, O7). A task-branch PR whose
+ * Core check: surface-scope (O7). A task-branch PR whose
  * changed files fall inside its own Issue's declared `## Surface` `out:`
  * globs is refused, naming the file and the glob it crosses — an
  * undeclared boundary crossing caught mechanically instead of by a
