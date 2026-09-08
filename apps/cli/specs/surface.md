@@ -564,3 +564,5 @@ Every non-compliant command from the table above, dated, with the count of disti
 
 `issue create`/`issue edit` re-verified after `BRIEF_BUILTINS` (`apps/cli/src/lib/config.ts`) and its `runBuiltin` table (`apps/cli/src/lib/forge-write.ts`) gained a `briefSections` entry: both rows' own in-scope call count is unchanged — `validateTaskIssue` was already the one call either row lists, and a new entry inside that function's internal table is not a new call site in either command's own body.
 
+`dispatchRole` (Issue #450, dispatch observability) gained no new export and dropped none — `AGENT_VENDOR_NAMES`/`dispatchRole`/`isAgentVendor` above are unchanged — so per this file's own rule (`## The rule` above), no table row moves. Internally: the dispatched child's stdout/stderr are now teed to a machine-local file under `~/.vinaya/dispatch-output/`, a heartbeat and an approaching-timeout warning print to this process's own stderr while the child runs, and `DEFAULT_TIMEOUT_MS` (with `VinayaConfigSchema`'s matching `dispatch.timeoutMs` doc comment) is raised from one hour to four. None of this changes `dispatch`'s own row 560 in-scope call count.
+

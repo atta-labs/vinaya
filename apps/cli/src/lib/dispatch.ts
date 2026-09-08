@@ -52,7 +52,8 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto'
-import { accessSync, constants as fsConstants, readFileSync } from 'node:fs'
+import { accessSync, constants as fsConstants, mkdirSync, readFileSync } from 'node:fs'
+import { createWriteStream } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import type { Role } from '@attalabs/aeg-core'
@@ -101,6 +102,36 @@ const DEFAULT_TIMEOUT_MS = 3_600_000
 
 /** Grace window between `SIGTERM` and `SIGKILL` once the ceiling fires. */
 const SIGKILL_GRACE_MS = 5_000
+
+/**
+ * Tees the child's raw stdout/stderr bytes to a machine-local file so a
+ * human can read what the agent is doing while it is still running (O2) —
+ * never inside the repository tree (a dispatch's own worktree could be
+ * mid-rebase or reviewed by someone else) and never a replacement for the
+ * in-memory `stdoutBuf` the exit handler parses for outcome data. Failure to
+ * create the file (an unwritable home, a full disk) degrades to a silent
+ * no-op tee, matching this module's "never throws" posture — losing the
+ * human-readable copy is not a reason to fail the dispatch itself.
+ */
+function openOutputTee(effectId: string): { write: (chunk: Buffer) => void; end: () => void; path: string | null } {
+  try {
+    const dir = join(GLOBAL_VINAYA_HOME, 'dispatch-output')
+    mkdirSync(dir, { recursive: true })
+    const path = join(dir, `${effectId}.log`)
+    const stream = createWriteStream(path, { flags: 'a' })
+    return {
+      write: (chunk: Buffer) => {
+        stream.write(chunk)
+      },
+      end: () => {
+        stream.end()
+      },
+      path
+    }
+  } catch {
+    return { write: () => {}, end: () => {}, path: null }
+  }
+}
 
 type UsageParser = (stdout: string) => { input: number; output: number } | null
 
@@ -401,12 +432,23 @@ export async function dispatchRole(
     let stdoutBuf = ''
     const MAX_STDOUT_BYTES = 1_000_000
 
+    const outputTee = openOutputTee(effectId)
+    if (outputTee.path !== null) {
+      process.stderr.write(`[vinaya dispatch] ${role} via ${agent}: output teed to ${outputTee.path}\n`)
+    }
+
     child.stdout.on('data', (chunk: Buffer) => {
+      // Teed off the SAME chunk the parser below consumes, never taken from
+      // it: `stdoutBuf` still sees every byte, capped exactly as before.
+      outputTee.write(chunk)
       if (stdoutBuf.length < MAX_STDOUT_BYTES) stdoutBuf += chunk.toString('utf8')
     })
-    // Drained, never inspected for outcome and never logged (O2/constraints):
-    // stderr content never decides success or failure, only exit code does.
-    child.stderr.on('data', () => {})
+    // Still never inspected for outcome (O2/constraints: stderr content
+    // never decides success or failure, only exit code does) — but no
+    // longer discarded outright, so a human reading the tee file sees it.
+    child.stderr.on('data', (chunk: Buffer) => {
+      outputTee.write(chunk)
+    })
 
     const timeoutTimer = setTimeout(() => {
       timedOut = true
@@ -421,6 +463,7 @@ export async function dispatchRole(
       settled = true
       clearTimeout(timeoutTimer)
       if (killTimer) clearTimeout(killTimer)
+      outputTee.end()
       // The corresponding `log()` call already ran, with `priorSize` taken
       // right before it — this just confirms it landed before the caller
       // can possibly exit the process out from under it.
