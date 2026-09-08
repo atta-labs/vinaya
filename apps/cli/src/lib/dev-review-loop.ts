@@ -1261,6 +1261,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
   let decision: Decision = { type: 'dispatch_developer' }
   let firstPass = !resumeFrom
+  // Held back from `logEvents` until `publishRound` (below) actually
+  // succeeds — `assessRound`'s one `journal_finalized`/`merged_ready` event
+  // (`assess-round.ts`) always arrives bundled with a `publish` decision in
+  // the SAME `result.events`, and logging it immediately, before the posts
+  // it claims are done, is what let a crash mid-publish leave the durable
+  // log asserting a completion the pull request never got (code review, PR
+  // #459, MAJOR). Every other event in that same `result.events` — the
+  // round's own `stop_condition_met`/`round_ended` — is true regardless of
+  // whether publication later fails, so only this one event is deferred.
+  let pendingCompletionEvents: DevReviewLoopEventInput[] = []
 
   /**
    * Round-number discipline: `round` increments ONLY when a genuine review
@@ -1334,7 +1344,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const result = assessRound(state, obs)
       state = result.state
       decision = result.decision
-      await logEvents(result.events)
+      pendingCompletionEvents = result.events.filter((e) => e.event === 'journal_finalized')
+      await logEvents(result.events.filter((e) => e.event !== 'journal_finalized'))
       d.flushOutbox(task)
       if (decision.type === 'dispatch_developer') round += 1
     }
@@ -1347,6 +1358,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         expectedHead: d.resolveHead(branch),
         journal: { rounds: state.rounds }
       })
+      // Only now — posts confirmed, not merely attempted — does the durable
+      // log get to say this run completed. A throw above (a post that
+      // failed, or re-parsed dirty) skips this entirely, so the log never
+      // claims `merged_ready` for a run that did not actually finish.
+      await logEvents(pendingCompletionEvents)
       d.flushOutbox(task)
       return { finalDecision: decision, prNumber, task }
     }
