@@ -43,6 +43,18 @@ const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
 const CALLER_ALLOWLIST = new Set([...FUTURE_CALLER_ALLOWLIST, FLUSH_PATH, DISPATCH_PATH, DEV_REVIEW_LOOP_PATH])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([FLUSH_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([DEV_REVIEW_LOOP_PATH])
+/**
+ * Amended by task 8 (#454, O8): `dispatch.ts` durably records a run's vendor
+ * resume identifier under `~/.vinaya/dispatch-resume/`, so an operator can
+ * answer a stopped agent with `--resume <id>` instead of losing the session.
+ * That is a SIBLING of the outbox under the same machine-local home, never the
+ * outbox itself — this file has always named the outbox in prose because it
+ * polls it for its own log lines, and the check below matches a file that
+ * merely mentions `outbox` and separately calls a write. It cannot tell where
+ * the write points, so the exemption is stated here rather than the check
+ * silently widened.
+ */
+const OUTBOX_RESUME_RECORD_ALLOWLIST = new Set([DISPATCH_PATH])
 
 function sourceFiles(dir: string, prefix: string): [string, string][] {
   const out: [string, string][] = []
@@ -82,7 +94,11 @@ describe('log-callers — O2', () => {
   it('no file other than the sink (or the flush, or the held-verdict writer) references the outbox alongside a write call', () => {
     const offenders = files
       .filter(
-        ([rel]) => rel !== SINK_PATH && !OUTBOX_TRUNCATE_ALLOWLIST.has(rel) && !OUTBOX_HELD_VERDICT_ALLOWLIST.has(rel)
+        ([rel]) =>
+          rel !== SINK_PATH &&
+          !OUTBOX_TRUNCATE_ALLOWLIST.has(rel) &&
+          !OUTBOX_HELD_VERDICT_ALLOWLIST.has(rel) &&
+          !OUTBOX_RESUME_RECORD_ALLOWLIST.has(rel)
       )
       .filter(([, abs]) => {
         const content = readFileSync(abs, 'utf8')
