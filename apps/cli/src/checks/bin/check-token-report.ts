@@ -35,10 +35,16 @@
  *
  * scope: diff — the artifact under test is the PR body, not repo files,
  * same convention as `closes-n`/`test-plan`/`body-bare-digits`.
+ *
+ * The no-row refusal is task-PR-only (task 10, Issue #460): a release PR
+ * the changesets bot opens can never carry a "develop" turn's row, so it
+ * is scoped out via `isTaskBranch(branch)` — the same shared predicate
+ * `check-brief-shape.ts`/`check-branch-topology.ts`/`check-surface-scope.ts`
+ * already use, not a second spelling of it.
  */
 
 import { lstatSync, readFileSync } from 'node:fs'
-import { resolveMeteringCapability, type MeteringCapabilityDeps } from '@attalabs/aeg-core'
+import { isTaskBranch, resolveMeteringCapability, type MeteringCapabilityDeps } from '@attalabs/aeg-core'
 import { emitCheckError } from '../contract'
 import { evaluateTokenReportEnforcement } from '../token-report-enforcement-logic'
 
@@ -81,7 +87,12 @@ function main(): void {
 
   const capability = resolveMeteringCapability(deps)
   const prBody = process.env.PR_BODY ?? ''
-  const result = evaluateTokenReportEnforcement(CHECK_NAME, capability, prBody)
+  // Same `process.env.BRANCH ?? ''` shape as `check-brief-shape.ts`'s
+  // identical requiresOpenPr/scope:diff check — declared in `registry.ts`
+  // so the runner forwards it rather than stripping it before spawn.
+  const branch = process.env.BRANCH ?? ''
+  const isTaskPr = isTaskBranch(branch)
+  const result = evaluateTokenReportEnforcement(CHECK_NAME, capability, prBody, isTaskPr)
 
   if (!result.pass) {
     emitCheckError(result.error)

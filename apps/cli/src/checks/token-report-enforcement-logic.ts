@@ -33,6 +33,12 @@
  * are inspected. The shipped `report-tokens.ts` renderer always emits `—`
  * there for want of a maintained pricing table, so failing on it would
  * block every real PR.
+ *
+ * The no-row refusal (`entries.length === 0`) applies only when `isTaskPr`
+ * is true (task 10, Issue #460) — a task pull request never leaves the
+ * ledger with a silent hole, but a non-task pull request (the changesets
+ * bot's release PR, chief example) never carries a "develop" turn to
+ * report at all and is not refused for a row it could never satisfy.
  */
 import { parseTokenReportEntries, type LedgerRow, type MeteringCapability } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, type CheckError } from './contract'
@@ -76,7 +82,8 @@ function blankCellError(checkName: string, entry: LedgerRow): CheckError {
 export function evaluateTokenReportEnforcement(
   checkName: string,
   capability: MeteringCapability,
-  prBody: string
+  prBody: string,
+  isTaskPr: boolean
 ): TokenReportEnforcementResult {
   // Empty PR_BODY is the sanctioned "no PR yet, likely a local invocation"
   // case `test-plan-gate.ts`'s identical `if (!body)` guard already
@@ -85,17 +92,24 @@ export function evaluateTokenReportEnforcement(
   // no PR body to evaluate at all, never a PR that shipped one blank.
   if (!prBody) return { pass: true }
 
-  // O13 — a ledger with NO row is refused regardless of capability. An
-  // incapable (operator-metered) host is a legitimate reason for every cell
-  // to read `—`, never a legitimate reason for the whole section to be
-  // ABSENT: `tranche-model.md` §12 states the operator-metered case writes
-  // `—` in the grammar, in a row — "that is the sanctioned outcome, not a
-  // failure to comply" — never an omission. Before this, `!capability.capable`
-  // returned `pass: true` before this check ever ran, so a merged task on an
-  // incapable host could carry no "## Token report" section at all and still
-  // pass silently — the exact silent hole this rule closes.
+  // O13 — a ledger with NO row is refused regardless of capability, but
+  // ONLY on a task pull request. An incapable (operator-metered) host is a
+  // legitimate reason for every cell to read `—`, never a legitimate
+  // reason for the whole section to be ABSENT: `tranche-model.md` §12
+  // states the operator-metered case writes `—` in the grammar, in a row —
+  // "that is the sanctioned outcome, not a failure to comply" — never an
+  // omission. Before this, `!capability.capable` returned `pass: true`
+  // before this check ever ran, so a merged task on an incapable host
+  // could carry no "## Token report" section at all and still pass
+  // silently — the exact silent hole this rule closes. A non-task PR (e.g.
+  // the changesets bot's release PR) never carries a "develop" turn to
+  // report at all, so it can never satisfy this row — the rule scopes to
+  // `isTaskPr` rather than refusing a PR that structurally cannot comply.
   const entries = parseTokenReportEntries(prBody)
-  if (entries.length === 0) return { pass: false, error: missingSectionError(checkName) }
+  if (entries.length === 0) {
+    if (!isTaskPr) return { pass: true }
+    return { pass: false, error: missingSectionError(checkName) }
+  }
 
   if (!capability.capable) return { pass: true }
 
