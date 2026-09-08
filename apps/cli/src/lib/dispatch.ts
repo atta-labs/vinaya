@@ -271,7 +271,24 @@ function parseCodexUsage(stdout: string): { input: number; output: number } | nu
 }
 
 /** Gemini's own JSON stdout is a per-model `stats.models.*.tokens` breakdown, not a single `{ input, output }` pair (confirmed live, module doc above) — never guessed into one. */
-function parseGeminiUsage(_stdout: string): null {
+export function parseGeminiUsage(stdout: string): { input: number; output: number } | null {
+  // The terminal `result` event's `stats` carries the counts; scanned from the
+  // end for the same reason the other two parsers are. This previously always
+  // returned null, so a gemini dispatch reported no usage at all.
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as {
+        stats?: { input_tokens?: unknown; output_tokens?: unknown }
+      }
+      const st = obj.stats
+      if (st && typeof st.input_tokens === 'number' && typeof st.output_tokens === 'number') {
+        return { input: st.input_tokens, output: st.output_tokens }
+      }
+    } catch {
+      // not a JSON line — keep scanning backwards
+    }
+  }
   return null
 }
 
@@ -364,8 +381,9 @@ export function renderClaudeEvent(obj: Record<string, unknown>): string | null {
           ''
         const trimmed = subject.length > 120 ? `${subject.slice(0, 117)}...` : subject
         out.push(trimmed ? `⚙ ${block.name}: ${trimmed}` : `⚙ ${block.name}`)
-      } else if (block.type === 'tool_result') {
       }
+      // Every other block kind — a tool result above all — renders nothing:
+      // results are the bulk of a run and the tee already holds them verbatim.
     }
     return out.length > 0 ? out.join('\n') : null
   }
@@ -383,7 +401,16 @@ export function renderCodexEvent(obj: Record<string, unknown>): string | null {
 }
 
 /** Gemini's streaming shape is not yet verified against a real run; show nothing rather than guess a field. */
-export function renderGeminiEvent(_obj: Record<string, unknown>): string | null {
+export function renderGeminiEvent(obj: Record<string, unknown>): string | null {
+  if (obj.type === 'init') return '⏵ session started'
+  if (obj.type === 'message' && obj.role === 'assistant') {
+    const text = typeof obj.content === 'string' ? obj.content.trim() : ''
+    return text.length > 0 ? text : null
+  }
+  if (obj.type === 'result') {
+    const status = typeof obj.status === 'string' ? obj.status : 'finished'
+    return `⏹ ${status}`
+  }
   return null
 }
 
@@ -411,8 +438,11 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
   },
   gemini: {
     binary: 'gemini',
-    args: ['-p', '', '--output-format', 'json', '--skip-trust'],
-    resumeArgs: (id) => ['-p', '', '--resume', id, '--output-format', 'json', '--skip-trust'],
+    // Verified against a real run, not assumed (the Issue's own trap): gemini
+    // emits `init`, then a `message` per turn carrying `role`/`content`, then
+    // a terminal `result` whose `stats` holds the token counts.
+    args: ['-p', '', '--output-format', 'stream-json', '--skip-trust'],
+    resumeArgs: (id) => ['-p', '', '--resume', id, '--output-format', 'stream-json', '--skip-trust'],
     parseUsage: parseGeminiUsage,
     parseResumeId: parseGeminiResumeId,
     renderEvent: renderGeminiEvent

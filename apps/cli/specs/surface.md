@@ -268,7 +268,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `projectsFromBody` | function | `packages/aeg-forge-state/src/list-tasks.ts` |
 | `mapForgeFacts` | function | `packages/aeg-forge-state/src/map-forge-facts.ts` |
 
-(238 exports.)
+(241 exports.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
@@ -405,6 +405,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `renderClaudeEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderCodexEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderGeminiEvent` | function | `apps/cli/src/lib/dispatch.ts` |
+| `parseGeminiUsage` | function | `apps/cli/src/lib/dispatch.ts` |
 | `appendDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `applyDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `freshDocOwners` | function | `apps/cli/src/lib/doc-owners-write.ts` |
@@ -482,7 +483,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `STUDIO_ARTIFACT_REPO` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_NODE_MODULES_PACKED_DIRNAME` | const | `apps/cli/src/lib/studio-bundle.ts` |
 
-(175 exports.)
+(206 exports.)
 
 ## Commands — `apps/cli/src/commands` (41 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 

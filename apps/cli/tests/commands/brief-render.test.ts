@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
@@ -64,20 +66,33 @@ describe('vinaya brief render — usage refusals (no network reached)', () => {
 })
 
 describe('vinaya brief render — --surfaces is an override, not a requirement (task 5, Issue #447, O4)', () => {
-  // Reaches the live forge via `gh` (same constraint this file's own doc
-  // comment records for full end-to-end coverage) — asserts only that
-  // omitting `--surfaces` no longer trips the old local refusal, proving
+  // Network-free, per this file's own discipline. The point is provable
+  // locally because the OLD behaviour refused on the missing flag *before*
+  // any forge call: run somewhere with no repo to resolve, and the run must
+  // now get as far as the repo-resolution failure instead of stopping at the
+  // flag. Reaching a later, different refusal is exactly the proof that
   // control passed through to `assembleAndRenderBrief`'s own Issue-surface
-  // derivation instead, the same one `vinaya task dispatch` already uses.
-  // The 30s timeout below: a real `gh`/forge round-trip, not the sub-second
-  // local-only cases above — bun's default 5000ms per-test timeout is too
-  // tight for it under load (observed live: 2.9s in isolation, 5.6s in the
-  // full suite).
-  it('omitting --surfaces no longer refuses locally — it derives the surface from the Issue instead', () => {
-    const result = runCli(['brief', 'render', 'some-tranche', '1'])
-    expect(result.stderr).not.toContain('--surfaces <glob1,glob2,...> was passed with no value')
-    expect(result.stderr).not.toContain('--surfaces resolved to zero globs')
-  }, 30_000)
+  // derivation — the same one `vinaya task dispatch` already uses.
+  it('omitting --surfaces no longer refuses on the flag — it gets past it', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'vinaya-brief-render-norepo-'))
+    try {
+      const result = execFileSync('bun', [INDEX, 'brief', 'render', 'some-tranche', '1'], {
+        encoding: 'utf8',
+        cwd: outside,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, AEG_REPO: '' }
+      })
+      expect(result).toBeDefined()
+    } catch (e) {
+      const err = e as { stdout?: string; stderr?: string }
+      const out = `${err.stdout ?? ''}${err.stderr ?? ''}`
+      expect(out).not.toContain('--surfaces <glob1,glob2,...> is required')
+      expect(out).not.toContain('--surfaces <glob1,glob2,...> was passed with no value')
+      expect(out).not.toContain('--surfaces resolved to zero globs')
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('brief.ts local helpers — repo-root-relative', () => {

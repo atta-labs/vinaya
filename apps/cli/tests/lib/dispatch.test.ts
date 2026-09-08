@@ -27,6 +27,7 @@ import {
   DEFAULT_TIMEOUT_MS,
   parseClaudeResumeId,
   parseClaudeUsage,
+  parseGeminiUsage,
   renderClaudeEvent,
   renderGeminiEvent,
   HEARTBEAT_INTERVAL_MS,
@@ -458,7 +459,9 @@ const RESUME_VENDOR_FIXTURES: ResumeVendorFixture[] = [
   {
     agent: 'gemini',
     firstStdout: (id) => `{"session_id":"${id}"}`,
-    resumeArgv: (id) => ['-p', '', '--resume', id, '--output-format', 'json', '--skip-trust']
+    // Streams for the same reason claude does (Issue #447, O5); shape
+    // verified against a real gemini run, not assumed.
+    resumeArgv: (id) => ['-p', '', '--resume', id, '--output-format', 'stream-json', '--skip-trust']
   }
 ]
 
@@ -767,9 +770,28 @@ describe('dispatch streaming output (#447 O5)', () => {
   it('renders nothing for an event that carries nothing worth showing', () => {
     expect(renderClaudeEvent({ type: 'rate_limit_event', rate_limit_info: {} })).toBeNull()
     expect(renderClaudeEvent({ type: 'system', subtype: 'hook_started' })).toBeNull()
-    // Gemini's streaming shape is unverified — it must show nothing rather
-    // than guess at a field name.
-    expect(renderGeminiEvent({ anything: true })).toBeNull()
+    expect(renderGeminiEvent({ type: 'rate_limit', anything: true })).toBeNull()
+  })
+
+  it("renders gemini's own stream, whose shape was verified against a real run", () => {
+    // `init` / `message` / `result` — the three event kinds a real
+    // `gemini --output-format stream-json` run emits, checked rather than
+    // assumed (the Issue's trap named exactly this).
+    expect(renderGeminiEvent({ type: 'init', session_id: 'x' })).toBe('⏵ session started')
+    expect(renderGeminiEvent({ type: 'message', role: 'assistant', content: '  ok  ' })).toBe('ok')
+    expect(renderGeminiEvent({ type: 'result', status: 'success' })).toBe('⏹ success')
+    // A user echo is the prompt coming back, not the agent working.
+    expect(renderGeminiEvent({ type: 'message', role: 'user', content: 'the prompt' })).toBeNull()
+  })
+
+  it("reads gemini's usage from its terminal result event, where it previously read none at all", () => {
+    const stream = [
+      JSON.stringify({ type: 'init' }),
+      JSON.stringify({ type: 'message', role: 'assistant', content: 'ok' }),
+      JSON.stringify({ type: 'result', status: 'success', stats: { input_tokens: 8983, output_tokens: 36 } })
+    ].join('\n')
+    expect(parseGeminiUsage(stream)).toEqual({ input: 8983, output: 36 })
+    expect(parseGeminiUsage('not json')).toBeNull()
   })
 
   it("reads usage from a stream's terminal event, and still from a single whole-blob payload", () => {
