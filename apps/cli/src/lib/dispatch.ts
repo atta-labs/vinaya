@@ -52,7 +52,7 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto'
-import { accessSync, constants as fsConstants, mkdirSync, readFileSync } from 'node:fs'
+import { accessSync, constants as fsConstants, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { chmodSync, createWriteStream } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
@@ -326,6 +326,63 @@ function parseGeminiResumeId(stdout: string): string | null {
   try {
     const obj = JSON.parse(stdout) as { session_id?: unknown }
     return typeof obj.session_id === 'string' ? obj.session_id : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Where a successful dispatch's own vendor resume identifier is durably
+ * recorded, keyed by role + vendor + the task/PR this run was attributed to
+ * — so a later, separate `vinaya dispatch` invocation (a different
+ * terminal, possibly days later) can find the id needed to answer a stopped
+ * agent through `--resume <id> --prompt-file <answer>`, instead of the id
+ * living only in the window that printed it (O8, Issue #454; Principal
+ * ruling: answer through the resume path that already exists — `--resume`/
+ * `--prompt-file` are already parsed — never a live channel held open on a
+ * blocking read).
+ *
+ * Deliberately NOT the Vinaya Log's own `dispatch` family:
+ * `DispatchOutcomeSchema` (`packages/aeg-core/src/log/schema.ts`) has no
+ * member for "here is a vendor session id" — every variant names a specific
+ * forge outcome (`pr_opened`, `verdict`, …) — and the schema, `.strict()`
+ * throughout, is out of this task's own surface (see this file's module doc
+ * on the `outcome_received` placeholder). A second, narrower durable file —
+ * machine-local, the same `~/.vinaya/` home `dispatch-output`'s tee already
+ * uses — is the destination that needs no schema change.
+ */
+function resumeRecordPathFor(role: Role, agent: AgentVendor, task?: number, pr?: number): string {
+  const scope = task !== undefined ? `issue${task}` : pr !== undefined ? `pr${pr}` : 'unscoped'
+  return join(GLOBAL_VINAYA_HOME, 'dispatch-resume', `${role}-${agent}-${scope}.json`)
+}
+
+type ResumeRecord = {
+  resumeId: string
+  role: Role
+  agent: AgentVendor
+  task: number | null
+  pr: number | null
+  round: number | null
+  effectId: string
+  capturedAt: string
+}
+
+/**
+ * Overwrites the one record for this role+vendor+scope with the latest
+ * resume id — only the most recently produced session is ever the one worth
+ * resuming, so there is nothing to append to. Never throws, matching this
+ * module's "never throws" posture: an unwritable home degrades to no durable
+ * record, the same failure mode `openOutputTee` already accepts for its own
+ * file.
+ */
+function recordResumeState(record: ResumeRecord): string | null {
+  try {
+    const dir = join(GLOBAL_VINAYA_HOME, 'dispatch-resume')
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    chmodSync(dir, 0o700)
+    const path = resumeRecordPathFor(record.role, record.agent, record.task ?? undefined, record.pr ?? undefined)
+    writeFileSync(path, JSON.stringify(record, null, 2), { mode: 0o600 })
+    return path
   } catch {
     return null
   }
@@ -824,6 +881,23 @@ export async function dispatchRole(
       }
 
       const resumeId = vendor.parseResumeId(stdoutBuf)
+      if (resumeId !== null) {
+        const resumeRecordPath = recordResumeState({
+          resumeId,
+          role,
+          agent,
+          task: opts.task ?? null,
+          pr: opts.pr ?? null,
+          round: opts.round ?? null,
+          effectId,
+          capturedAt: new Date().toISOString()
+        })
+        if (resumeRecordPath !== null) {
+          process.stderr.write(
+            `[vinaya dispatch ${effectId}] ${role} via ${agent}: resumable — session recorded at ${resumeRecordPath}\n`
+          )
+        }
+      }
       const priorSize = sizeOfSafe(outboxPath)
       log({
         kind: 'dispatch',

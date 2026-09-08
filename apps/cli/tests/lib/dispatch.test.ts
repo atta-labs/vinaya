@@ -550,6 +550,115 @@ describe('dispatchRole — resume identifier (round-trip, per vendor)', () => {
 })
 
 /**
+ * O8 (Issue #454). Answering a stopped agent goes through the resume path
+ * that already exists (`--resume <id> --prompt-file <answer>`) — the gap
+ * this closes is that the id it needs was never recorded anywhere a later,
+ * separate invocation could find it, only printed to the window that ran
+ * the dispatch that produced it.
+ */
+describe('dispatchRole — resume state durably recorded (O8)', () => {
+  it('a successful dispatch with a resume id writes a record a later invocation can find, keyed by role/vendor/task, overwritten by the next run', () => {
+    const synthId1 = '22222222-2222-2222-2222-222222222222'
+    const synthId2 = '33333333-3333-3333-3333-333333333333'
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'developer-claude-issue454.json')
+
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"session_id":"${synthId1}","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+    )
+    // `--task` makes `dispatchCommand` also try `vinaya log flush` with no
+    // `gh` on PATH outside a git repo — refused locally with exit `2`, the
+    // same deliberate shape the first `dispatchRole` describe block above
+    // documents. The resume record is written by `dispatchRole` itself,
+    // before that flush step ever runs, so it exists regardless.
+    const first = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '454'],
+      cwd,
+      home,
+      path
+    )
+    expect(first.status).toBe(2)
+
+    const record1 = JSON.parse(readFileSync(recordPath, 'utf8')) as {
+      resumeId: string
+      role: string
+      agent: string
+      task: number | null
+      pr: number | null
+    }
+    expect(record1.resumeId).toBe(synthId1)
+    expect(record1.role).toBe('developer')
+    expect(record1.agent).toBe('claude')
+    expect(record1.task).toBe(454)
+    expect(record1.pr).toBeNull()
+
+    // Owner-only, matching the tee file's own permission discipline.
+    expect(statSync(recordPath).mode & 0o777).toBe(0o600)
+
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"session_id":"${synthId2}","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+    )
+    const second = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '454'],
+      cwd,
+      home,
+      path
+    )
+    expect(second.status).toBe(2)
+
+    // Overwritten, not appended — only the latest session is resumable.
+    const record2 = JSON.parse(readFileSync(recordPath, 'utf8')) as { resumeId: string }
+    expect(record2.resumeId).toBe(synthId2)
+  })
+
+  it('a dispatch with neither --task nor --pr records the id under an "unscoped" key', () => {
+    const synthId = '44444444-4444-4444-4444-444444444444'
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"session_id":"${synthId}","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+    )
+    const result = runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
+    expect(result.status).toBe(0)
+
+    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'developer-claude-unscoped.json')
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')) as { resumeId: string; task: number | null }
+    expect(record.resumeId).toBe(synthId)
+    expect(record.task).toBeNull()
+  })
+
+  it('a crashing child writes no resume record — there is no session to resume', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    writeFakeBinary(binDir, 'claude', '#!/bin/sh\ncat > /dev/null\nexit 7\n')
+    const result = runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
+    expect(result.status).toBe(1)
+    expect(existsSync(join(home, '.vinaya', 'dispatch-resume'))).toBe(false)
+  })
+})
+
+/**
  * Observability (Issue #450). The four behaviours this task added were shipped
  * with no test of their own; these cover each one at the level it can honestly
  * be reached. `timeoutWarningLeadMs` and `openOutputTee` are imported directly
