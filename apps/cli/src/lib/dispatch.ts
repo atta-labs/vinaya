@@ -107,6 +107,16 @@ const SIGKILL_GRACE_MS = 5_000
 const HEARTBEAT_INTERVAL_MS = 60_000
 
 /**
+ * How long before the deadline the approaching-timeout warning fires (O3).
+ * Capped at 5 minutes so a short `dispatch.timeoutMs` (e.g. a test's 2500ms)
+ * still gets a warning inside its own ceiling rather than one scheduled past
+ * it and never firing.
+ */
+function timeoutWarningLeadMs(timeoutMs: number): number {
+  return Math.min(300_000, Math.floor(timeoutMs / 2))
+}
+
+/**
  * Tees the child's raw stdout/stderr bytes to a machine-local file so a
  * human can read what the agent is doing while it is still running (O2) —
  * never inside the repository tree (a dispatch's own worktree could be
@@ -464,10 +474,22 @@ export async function dispatchRole(
       )
     }, HEARTBEAT_INTERVAL_MS)
 
+    const warnLeadMs = timeoutWarningLeadMs(timeoutMs)
+    const warnTimer: ReturnType<typeof setTimeout> = setTimeout(
+      () => {
+        process.stderr.write(
+          `[vinaya dispatch] ${role} via ${agent}: approaching timeout — SIGTERM in ~${Math.round(warnLeadMs / 1000)}s unless it finishes first\n`
+        )
+      },
+      Math.max(timeoutMs - warnLeadMs, 0)
+    )
+
     const timeoutTimer = setTimeout(() => {
       timedOut = true
+      process.stderr.write(`[vinaya dispatch] ${role} via ${agent}: ceiling reached — sending SIGTERM\n`)
       child.kill('SIGTERM')
       killTimer = setTimeout(() => {
+        process.stderr.write(`[vinaya dispatch] ${role} via ${agent}: still alive after SIGTERM — sending SIGKILL\n`)
         child.kill('SIGKILL')
       }, SIGKILL_GRACE_MS)
     }, timeoutMs)
@@ -478,6 +500,7 @@ export async function dispatchRole(
       clearTimeout(timeoutTimer)
       if (killTimer) clearTimeout(killTimer)
       clearInterval(heartbeatTimer)
+      clearTimeout(warnTimer)
       outputTee.end()
       // The corresponding `log()` call already ran, with `priorSize` taken
       // right before it — this just confirms it landed before the caller
