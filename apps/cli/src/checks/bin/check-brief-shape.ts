@@ -91,10 +91,9 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
   }
 
   // Everything after the marker line and the `Brief hash:` line, as a raw
-  // substring. Imported from `@attalabs/aeg-core` (plan-brief-v1 task 3,
-  // #428), the same promoted export `packages/aeg-core/bin/verify-brief.ts`
-  // and `dispatch-task.ts` both use — the one canonical implementation, not
-  // a same-package copy.
+  // substring. Imported from `@attalabs/aeg-core` — the same promoted export
+  // `packages/aeg-core/bin/verify-brief.ts` and `dispatch-task.ts` both use,
+  // so there is one canonical implementation rather than a same-package copy.
   return { ok: true, body: contentAfterTwoLines(comment.body) }
 }
 
