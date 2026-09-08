@@ -554,8 +554,19 @@ export function renderPauseComment(prNumber: number, reason: PauseReason): strin
   ].join('\n')
 }
 
-function postPauseComment(root: string, task: number, prNumber: number, reason: PauseReason): void {
-  postForgeEffectOnce(root, task, 'pause', () =>
+/**
+ * Keyed by `round-head`, the pause INSTANCE — not the fixed literal `'pause'`
+ * a prior version used, which keyed the idempotency record by task alone
+ * (code review, PR #459, BLOCKER): a task pauses, resumes, and pauses again
+ * with a resumed loop still at the same `round` but a new `head` (the
+ * resumed developer pushes fixes before pausing a second time), so `head`
+ * is what tells two real pauses apart. A genuine rerun of the SAME pause —
+ * same round, same head, nothing changed — still resolves to the same key
+ * and so still posts only once, preserving the original idempotency
+ * requirement; only the key changed, not the once-only guarantee.
+ */
+function postPauseComment(root: string, task: number, round: number, head: string, prNumber: number, reason: PauseReason): void {
+  postForgeEffectOnce(root, task, `pause-${round}-${head}`, () =>
     postMarkedComment('pr', String(prNumber), pauseMarker(reason), renderPauseComment(prNumber, reason))
   )
 }
@@ -1341,16 +1352,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     if (decision.type === 'pause') {
+      const pauseHead = d.resolveHead(branch)
       writePauseState(root, {
         task,
         round,
-        head: d.resolveHead(branch),
+        head: pauseHead,
         branch,
         prNumber,
         reason: decision.reason,
         pausedAt: new Date().toISOString()
       })
-      postPauseComment(root, task, prNumber, decision.reason)
+      postPauseComment(root, task, round, pauseHead, prNumber, decision.reason)
       d.flushOutbox(task)
       return { finalDecision: decision, prNumber, task }
     }
