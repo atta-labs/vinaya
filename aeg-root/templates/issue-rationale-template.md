@@ -3,7 +3,7 @@ sidebar_title: "Template: Issue rationale"
 ---
 # Template — Issue rationale (the Planner's eight fields)
 
-**Copy the block below the divider into the task Issue's body and replace every `[…]` placeholder with real content.** This is the rationale grammar that the ring-0 creation gate (`vinaya issue create`/`vinaya issue edit`) and `vinaya check coherence`'s R1 check parse: a `## Objectives` section above all eight producer fields of the `aeg-root/contracts/planner-brief.md` contract, in bold-inline form (`**<Field>** — …`; the `### <Field>` heading form is equally valid). The contract and `aeg-root/roles/planner.md` § "The Planner's rationale" remain the source of truth for what each field must *contain* — this file packages the shape; it does not lower the reasoning bar. A field filled with boilerplate is still a malformed rationale, even though it parses.
+**Copy the block below the divider into the task Issue's body and replace every `[…]` placeholder with real content.** This is the rationale grammar that the ring-0 creation gate (`vinaya issue create`/`vinaya issue edit`) and `vinaya check coherence`'s R1 check parse: a `## Objectives` section above all eight producer fields of the `aeg-root/contracts/planner-developer.md` contract, in bold-inline form (`**<Field>** — …`; the `### <Field>` heading form is equally valid). The contract and `aeg-root/roles/planner.md` §§ "The Planner's rationale" and "Rationale grammar" remain the source of truth for what each field must *contain* — this file packages the shape; it does not lower the reasoning bar. A field filled with boilerplate is still a malformed rationale, even though it parses.
 
 ---
 
@@ -15,12 +15,12 @@ sidebar_title: "Template: Issue rationale"
 
 ## Objectives
 
-O1. [OBJECTIVE — one observable outcome this task makes true, as a sentence — never a file path; the Brief Author maps it to files.]
+O1. [OBJECTIVE — one observable outcome this task makes true, as a sentence — never a file path; the dispatch act's render maps it to files.]
 O2. [OBJECTIVE — numbered contiguously from O1, one line per objective, as many as this task genuinely has.]
 
 ## Planner's rationale
 
-**Boundary** — [BOUNDARY — what this task is and, crucially, what it is NOT: what was deliberately split out, where the edges sit. Make the in/out sets concrete enough that the Brief Author can bound a file surface from them.]
+**Boundary** — [BOUNDARY — what this task is and, crucially, what it is NOT: what was deliberately split out, where the edges sit. Make the in/out sets concrete enough that the dispatch act's render can bound a file surface from them.]
 
 **Sizing** — [SIZING — state that the task passed the four "too big?" tests (one verification story; one agent can hold it; bounded file surface; single failure mode) — or how a larger candidate was split when it failed one. Name the single verification story.]
 

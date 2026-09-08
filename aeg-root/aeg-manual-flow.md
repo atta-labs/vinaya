@@ -69,7 +69,7 @@ So **no role ever writes status.** Opening the PR *is* the in-review signal; mer
 ## 3. The brief is the unit of context
 
 1. **Context lives in the brief.** If it isn't in the brief, it doesn't exist. An agent never needs to read elsewhere to understand its task.
-2. **The brief is pasted, not committed — and lands in the PR body.** You hand it to the Developer directly (all sections per the `brief-authoring` skill). When the Developer opens the PR, the brief goes into the PR description — its permanent home, attached to the work it governed, read by Reviewer and Archivist. **Never in the Issue** (it would age and attract edits). Retry reuses the same PR body.
+2. **The brief is rendered mechanically, never hand-written — and lands in the task Issue's own comment.** The Planner's dispatch act checks the task's gates, then runs `vinaya task dispatch`, which renders every section from the Issue's rationale and judgment sections and posts it, frozen, as that Issue's `aeg:brief:v1` comment — before the Developer's worktree exists. That comment is the brief's permanent home, attached to the work it governs, read by Developer, Reviewer and Archivist. **Never hand-written into the Issue's own body** (it would age and attract edits), and never the PR body's primary source (the PR body carries only the Developer's report; a reference copy of the brief may still ride along there). Retry re-reads the same frozen comment.
 3. **`Ticket:` and `Project:` are reference-only.** `Ticket:` is N↔M provenance (Jira/Linear) — no agent reads it, it's never a substitute for brief context. `Project:` (multi-valued) resolves against `projects.md` to route the agent to the right specs (and is what the Reviewer spec-checks against, and what the Archivist records in the provenance block); omit it in a single-project repo.
 
 ---
@@ -84,9 +84,9 @@ When invoked, an agent does not trust that you called it correctly. It checks tw
 
 ## 4.5. The conversational protocol — how every role talks to the Principal
 
-Self-location (§4) is *what* an agent verifies before acting. The **conversational protocol** is *how* it speaks while it works. It applies to **every conversational role** (the Principal-facing Planner and Brief Author, and the Developer, Reviewer, Security passes), so that across the whole flow the human always knows **who is speaking, what stage they're in, what just happened, and what comes next.** A governed flow that runs silently is illegible; legibility is itself a governance property (it is the same "make the invisible visible" that §1 calls the point of manual mode).
+Self-location (§4) is *what* an agent verifies before acting. The **conversational protocol** is *how* it speaks while it works. It applies to **every conversational role** (the Principal-facing Planner, in both its acts, and the Developer, Reviewer, Security passes), so that across the whole flow the human always knows **who is speaking, what stage they're in, what just happened, and what comes next.** A governed flow that runs silently is illegible; legibility is itself a governance property (it is the same "make the invisible visible" that §1 calls the point of manual mode).
 
-This is a **shared, model-level protocol**. Each role specializes it in its own role doc (the Planner's specialization is in `roles/planner.md` — the first written; Brief Author, Developer, and Reviewer specializations follow as each is modeled). The shared spine, which no role overrides:
+This is a **shared, model-level protocol**. Each role specializes it in its own role doc (the Planner's specialization is in `roles/planner.md`, covering both its plan and dispatch acts — the first written; Developer and Reviewer specializations follow as each is modeled). The shared spine, which no role overrides:
 
 1. **Announce the role on entry.** Open by naming who you are and what you're about to do. The Principal should never be unsure which role/mode they're talking to. *"I'm the Planner. I'll turn this intent into a tranche — readiness gate first, then sizing, then the topology and the Issues."*
 
@@ -102,7 +102,7 @@ This is a **shared, model-level protocol**. Each role specializes it in its own 
 
 7. **Be clear about durability — never let the Principal think a conclusion lives only in the chat.** Everything you commit is on the forge/repo, permanent, not in conversation memory; if the laptop or the chat vanished, the committed work remains. When you record something, say plainly that it's written and where, so "decided but revisable" is never mistaken for "unsaved."
 
-8. **Proactive coherence status report — before any phase that touches a prior task's archival state.** Before beginning any brief-authoring or execution phase, the chat-surface role MUST proactively report the coherence status of relevant prior tasks to the Principal — not just silently gate-fail on a mismatch. The pattern is **detect-and-INFORM**, not only detect-and-refuse. Do not wait for the Principal to ask. State the status of each predicate for each in-scope prior task, then declare whether the gate passes or fails and what is owed if it fails. Example: *"Before beginning brief for task X, I must report: prior task Y — Issue #N is closed ✓, PR #M is merged to main ✓, provenance block is absent ✗. Gate fails — the Archivist must post the provenance block on PR #M before I can author this brief. Here is what is owed: [list]."* Or, when all predicates pass: *"Prior task Y gate: Issue #N closed ✓, PR #M merged ✓, provenance block present ✓ — gate passes."* This report is mandatory even when the gate passes (one line suffices) — silence is not an acceptable "all good" signal.
+8. **Proactive coherence status report — before any phase that touches a prior task's archival state.** Before beginning any dispatch or execution phase, the chat-surface role MUST proactively report the coherence status of relevant prior tasks to the Principal — not just silently gate-fail on a mismatch. The pattern is **detect-and-INFORM**, not only detect-and-refuse. Do not wait for the Principal to ask. State the status of each predicate for each in-scope prior task, then declare whether the gate passes or fails and what is owed if it fails. Example: *"Before dispatching task X, I must report: prior task Y — Issue #N is closed ✓, PR #M is merged to main ✓, provenance block is absent ✗. Gate fails — the Archivist must post the provenance block on PR #M before I can dispatch this task. Here is what is owed: [list]."* Or, when all predicates pass: *"Prior task Y gate: Issue #N closed ✓, PR #M merged ✓, provenance block present ✓ — gate passes."* This report is mandatory even when the gate passes (one line suffices) — silence is not an acceptable "all good" signal.
 
 Keep all of this **light** — a sentence at each seam, not paragraphs. The goal is a Principal who always feels oriented, never managed. Terse remains the house style; this protocol adds **signposting, not verbosity.** A role that runs the whole flow in silence and dumps a result at the end is violating the protocol even if the result is correct — because the Principal could not see, and therefore could not govern, the steps that produced it.
 
@@ -112,15 +112,15 @@ Keep all of this **light** — a sentence at each seam, not paragraphs. The goal
 
 | Step | Role | You hand it | It produces | Entry gate (refuses if…) |
 |------|------|-------------|-------------|--------------------------|
-| 0 | **Planner** (Brief Author mode) | intent + a ticket slice | a tranche: Issues + thin topology file | asked to write one brief / to implement |
+| 0 | **Planner** (plan act) | intent + a ticket slice | a tranche: Issues + thin topology file | asked to write one brief / to implement |
 | 1 | **Principal** (you) | an intent / goal | a decision to proceed, a tier | — |
-| 2 | **Brief Author** (Brief Author mode) | the intent + the task's Issue | a brief, all sections | asked to write code instead of a brief |
-| 3 | **Developer** | the brief | a worktree, the work, an open PR (brief in body) | input isn't a well-formed brief; a `depends-on` isn't merged; a `conflicts-with` sibling's PR is open |
-| 4 | **Reviewer (code)** | "review the PR for task N" | VERDICT (APPROVE / REQUEST CHANGES) | no open PR, no brief in the PR body, or it authored the code |
-| 5 | **Security** | "security-review the PR for task N" | VERDICT (PASS / FAIL) | no open PR, or no brief in the PR body |
-| 6 | **Principal + Brief Author** (you) | the verdicts | merge decision (review side) | review passes not done |
-| 7a | **Verification — agent half** (the Developer-agent re-runs) | the brief's §9 Test Plan | every `[agent]` item executed with the actual output posted to the PR | no open PR; no brief in the PR body; no Test Plan; or all items are `[principal]`-only |
-| 7b | **Verification — Principal half** (you, in a browser) | the brief's §9 Test Plan | every `[principal]` checkbox ticked on the PR | no open PR; no brief in the PR body; no `[principal]` items in the Test Plan |
+| 2 | **Planner** (dispatch act) | the task's gate check + its Issue | a rendered brief, posted frozen on the Issue | a dispatch gate unmet, or the render can't derive a required section |
+| 3 | **Developer** | the brief | a worktree, the work, an open PR carrying its report | input isn't a well-formed brief; a `depends-on` isn't merged; a `conflicts-with` sibling's PR is open |
+| 4 | **Reviewer (code)** | "review the PR for task N" | VERDICT (APPROVE / REQUEST CHANGES) | no open PR, no frozen brief comment on the task Issue, or it authored the code |
+| 5 | **Security** | "security-review the PR for task N" | VERDICT (PASS / FAIL) | no open PR, or no frozen brief comment on the task Issue |
+| 6 | **Principal + Planner** (you) | the verdicts | merge decision (review side) | review passes not done |
+| 7a | **Verification — agent half** (the Developer-agent re-runs) | the brief's §9 Test Plan | every `[agent]` item executed with the actual output posted to the PR | no open PR; no frozen brief comment on the task Issue; no Test Plan; or all items are `[principal]`-only |
+| 7b | **Verification — Principal half** (you, in a browser) | the brief's §9 Test Plan | every `[principal]` checkbox ticked on the PR | no open PR; no frozen brief comment on the task Issue; no `[principal]` items in the Test Plan |
 | 8 | **Principal** (you) | a PR with all Test Plan checkboxes ticked AND review verdicts clean | the merge | any Test Plan checkbox unticked, or review/security verdict unresolved |
 | 9 | **Archivist** | "close out the PR for task N" | a close-out report + provenance block | **PR is not merged** |
 
@@ -132,7 +132,7 @@ Each agent finds the task's PR via the branch convention `task/<tranche>/<n>` an
 
 **When the last open task branch for a tranche is merged, the tranche enters Tranche Close** (Phase 13 in `process.md`). Detect this by querying the forge: `gh pr list --state open --json number,headRefName` filtered to branches matching `task/<tranche>/*` — if nothing returns, the tranche's last task has merged.
 
-The Principal **initiates** tranche close explicitly (declares "we're closing this tranche" and hands off to the Planner / Brief Author). The Archivist **may detect** it automatically in future versions — when all task PRs merged and no open branches remain for the tranche. Until then, the Principal's explicit call is the gate.
+The Principal **initiates** tranche close explicitly (declares "we're closing this tranche" and hands off to the Planner). The Archivist **may detect** it automatically in future versions — when all task PRs merged and no open branches remain for the tranche. Until then, the Principal's explicit call is the gate.
 
 See `process.md` Phase 13 for the full close-out steps: verify all tasks merged, run a brief retrospective, archive the tranche file, update state docs, ratify pending Type 1 decisions, declare what's next.
 
@@ -150,22 +150,22 @@ Before the Principal merges (Step 8), any Developer helping merge or pushing a "
 
 If any fails: post a comment listing the exact items missing. The Principal decides whether to proceed.
 
-> **At the end of every role's turn: report your tokens — you do not append your own row** to the tranche's token/cost ledger (`aeg-root/tranches/<name>.tokens.md`). No role writes its own row on a task branch. A role is **self-metering** — its host exposes the session's own usage to the agent — or **operator-metered** — the host exposes nothing, leaving a human the only source. A self-metering role (typically the Developer, and the Archivist when automated) reports exact figures in the PR body, collected by whatever mechanism that host offers. An operator-metered role (typically the Planner, Brief Author, Reviewer and Security) reports in its verdict comment or planning report with the numeric cells `—`. That host capability is the only thing that licenses a `—`; no role estimates, and no role fills in another's cell. The per-task **Archivist** collects every report and appends the rows — Phase, Role, Agent/Model, Tokens in, Tokens out, Cost, Date — post-merge at close-out; never edits a row; re-entry appends. See `tranche-model.md` §12 for the canonical format and the rationale; the file is a §13 append-only artifact.
+> **At the end of every role's turn: report your tokens — you do not append your own row** to the tranche's token/cost ledger (`aeg-root/tranches/<name>.tokens.md`). No role writes its own row on a task branch. A role is **self-metering** — its host exposes the session's own usage to the agent — or **operator-metered** — the host exposes nothing, leaving a human the only source. A self-metering role (typically the Developer, and the Archivist when automated) reports exact figures in the PR body, collected by whatever mechanism that host offers. An operator-metered role (typically the Planner in either act, Reviewer and Security) reports in its verdict comment or planning report with the numeric cells `—`. That host capability is the only thing that licenses a `—`; no role estimates, and no role fills in another's cell. The per-task **Archivist** collects every report and appends the rows — Phase, Role, Agent/Model, Tokens in, Tokens out, Cost, Date — post-merge at close-out; never edits a row; re-entry appends. See `tranche-model.md` §12 for the canonical format and the rationale; the file is a §13 append-only artifact.
 
 ---
 
 ## 6. Per-role entry gates (refusal language)
 
-**Planner** — see `roles/planner.md` (split-vs-combine by verification coupling; plan-integrity gates; the conversational protocol specialization). Refuses single-brief / implement requests; refuses execution metadata in the file or Issue; refuses planning metadata on Issues; refuses to build a conflict scanner; validates every `Project:` against the registry.
+**Planner (plan act)** — see `roles/planner.md` (split-vs-combine by verification coupling; plan-integrity gates; the conversational protocol specialization). Refuses single-brief / implement requests; refuses execution metadata in the file or Issue; refuses planning metadata on Issues; refuses to build a conflict scanner; validates every `Project:` against the registry.
 
-**Brief Author** — requires an intent (ideally an Issue). Refuses to implement: *"I author the brief, I don't implement."* Produces a brief per the skill (tier, type, scope, stop conditions, deliverable, optional `Ticket:`/`Project:`).
+**Planner (dispatch act)** — see `roles/planner.md` § The dispatch act. Requires the task's Issue to exist and pass its rationale gate. Refuses to hand-write brief prose: *"There's nothing to author — the render is mechanical. I check the gates, then dispatch."* Checks Issue-existence, dependencies merged, no open conflicting sibling, and render-completeness, then runs `vinaya task dispatch`.
 
 **Developer**
-- Requires a well-formed brief. If handed a loose prompt → *"This isn't a brief — missing tier / scope / stop-conditions. Get one from the Brief Author."*
+- Requires a well-formed brief. If handed a loose prompt → *"This isn't a brief — missing tier / scope / stop-conditions. Get one dispatched from the Planner."*
 - Checks the gates against the forge before starting: dependency's PR merged? conflicting sibling's PR closed? If not → *"Task N serializes behind <dep/sibling>; not starting."*
 - If `Project:` doesn't resolve against the registry → *"Project 'x' isn't registered."*
 - Worktree Step 0: `git worktree add .worktrees/task/<it>/<n> -b task/<it>/<n> --no-track origin/main && cd .worktrees/task/<it>/<n> && git config push.autoSetupRemote true`, do the work, open the PR.
-- Done-checklist: **the brief (and `Ticket:`/`Project:` lines) is pasted into the PR body.** That's it for state — opening the PR *is* the status transition. The Developer writes no status anywhere.
+- Done-checklist: **the PR body carries the Developer's report** (the brief itself is already frozen on the task Issue's comment; the `Ticket:`/`Project:` lines are restated in the PR body from the brief). That's it for state — opening the PR *is* the status transition. The Developer writes no status anywhere.
 
 **Reviewer (code)** — requires an open PR with the brief in its body. Refuses: no PR → *"Nothing to review."* No brief → *"This PR has no brief; I can't judge scope against intent."* Authored it → *"I can't review my own work."* Checks brief-conformance **and** spec-conformance (the `Project:` spec in the unit's `specs/`). Produces APPROVE | REQUEST CHANGES (per `roles/reviewer.md`).
 

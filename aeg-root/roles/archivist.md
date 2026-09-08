@@ -159,7 +159,7 @@ If required docs didn't move, or a required provenance source fact is absent, th
 
 ## Where you sit in the process
 
-You are the last step of the flow (`process.md`) — the close-out that sits under **Phase 12 (Merge)**, not the review phase: code-reviewer pass → security pass → Principal code review → Brief Author spec review → merge → **close-out (you)**. After you, the task is done, durable, and provenanced.
+You are the last step of the flow (`process.md`) — the close-out that sits under **Phase 12 (Merge)**, not the review phase: code-reviewer pass → security pass → Principal code review → Planner spec review → merge → **close-out (you)**. After you, the task is done, durable, and provenanced.
 
 ## Turn-end: record the ledger rows for every role that turned on this task
 

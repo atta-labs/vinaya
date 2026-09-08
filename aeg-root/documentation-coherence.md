@@ -11,10 +11,10 @@ Documentation coherence is not one obligation — it is a relay across every rol
 
 | Role | Reads (before acting) | Writes (at its seam) |
 |---|---|---|
-| **Planner** | Every spec/skill/doc relevant to the whole tranche's code surfaces — the whole-tranche read pass required before cutting a single task (Pillar 1). | The **"Docs to keep coherent"** rationale field on each task's Issue — names intended surfaces (not resolved doc pointers; the manifest evolves before dispatch). No doc files edited directly. |
-| **Brief Author** | The Planner's rationale (via `contracts/planner-brief.md`), plus its **own task-scoped re-read** of the same surface — re-verified fresh at dispatch time, since docs may have moved since planning (Pillar 1). | Brief **§2** (surfaces what the Developer must know) and **§7** (the doc-update list) — mechanically re-derived by matching the task's intended surfaces against the live `.vinaya/doc-owners` manifest (`deriveSection7`), then supplemented by its own reading. Any override of the derived floor carries a one-line reason. |
+| **Planner (plan act)** | Every spec/skill/doc relevant to the whole tranche's code surfaces — the whole-tranche read pass required before cutting a single task (Pillar 1). | The **"Docs to keep coherent"** rationale field on each task's Issue — names intended surfaces (not resolved doc pointers; the manifest evolves before dispatch). No doc files edited directly. |
+| **Planner (dispatch act)** | The same task's rationale (via `contracts/planner-developer.md`), plus its **own task-scoped re-read** of the same surface — re-verified fresh at dispatch time, since docs may have moved since planning (Pillar 1). | Brief **§2** (surfaces what the Developer must know) and **§7** (the doc-update list) — mechanically re-derived by matching the task's intended surfaces against the live `.vinaya/doc-owners` manifest (`deriveSection7`), then supplemented by its own reading. Any override of the derived floor carries a one-line reason. |
 | **Developer** | The brief's §2 and §7 — zero-discovery execution: the Developer does not re-derive what §7 already names. | Updates every doc named in §7 in the same PR (Pillar 2, a DoD gate — a named doc not updated is a BLOCKER at review). Independently, for any changed code file that matches an `.vinaya/doc-owners` binding, satisfies C5's bind‑or‑waive rule (update the bound doc, `Doc-ack:`, or a principal's actor-verified waiver label) whether or not §7 named it. |
-| **Reviewer** | The brief in the PR body, then the diff. | No files — a **verdict** with a dual check: §7 completeness/correctness as a BLOCKER gate (`contracts/developer-reviewer.md`), and judgment of C5-covered doc **correctness** (a passing C5 plus a no-op or misleading doc edit is still a BLOCKER). |
+| **Reviewer** | The brief, read from the task Issue's frozen `aeg:brief:v1` comment, then the diff. | No files — a **verdict** with a dual check: §7 completeness/correctness as a BLOCKER gate (`contracts/developer-reviewer.md`), and judgment of C5-covered doc **correctness** (a passing C5 plus a no-op or misleading doc edit is still a BLOCKER). |
 | **Archivist** | The merged PR (brief, diff, Reviewer's verdict). | Post-merge **coherence confirmation** — confirms the tier-required docs actually moved and are coherent with what merged (not just present); updates the per-project `state.md` for every project the task listed; updates `docs-index.md` if files were added, removed, or renamed. |
 
 ---
@@ -23,21 +23,21 @@ Documentation coherence is not one obligation — it is a relay across every rol
 
 Coherence is enforced on two independent tracks that both run on every PR:
 
-- **Judgment track — §7.** A human/agent-read obligation: the Planner and Brief Author identify which docs a task's *specific* change will make incoherent, name them, and the Developer updates them; the Reviewer judges whether the update is actually correct, not just present. This catches docs the mechanical manifest hasn't been taught about yet — a doc that's relevant by context and reading, not by a declared glob.
+- **Judgment track — §7.** A human/agent-read obligation: the Planner, in both its acts, identifies which docs a task's *specific* change will make incoherent, names them, and the Developer updates them; the Reviewer judges whether the update is actually correct, not just present. This catches docs the mechanical manifest hasn't been taught about yet — a doc that's relevant by context and reading, not by a declared glob.
 - **Mechanical track — C5 / `.vinaya/doc-owners`.** A CODEOWNERS-shaped `<code-glob> → <doc-pointer>` manifest; `verify-docs` C5 glob-matches every changed code file against it and enforces bind-or-waive (update the bound doc, `Doc-ack:` a URL pointer, or a principal's actor-verified waiver label) — dormant until a binding exists, orthogonal to tier (state-machine.md §15). This is the backstop for surfaces someone already declared load-bearing, independent of whether any human remembered to name them in §7 this time.
 
 Neither track substitutes for the other: §7 catches what the manifest doesn't yet know; C5 catches what a tired §7 pass forgets.
 
 ---
 
-## The Planner/Brief-Author split
+## The Planner's two reads
 
-The read obligation splits by altitude, not by redundancy:
+The read obligation splits by altitude, not by redundancy — both reads are the same role's, one at plan time, one at dispatch time:
 
-- The **Planner's** read pass is whole-tranche — before any task is cut, it reads the specs/skills/docs relevant to every surface in scope and records, per task, which docs that task will make incoherent.
-- The **Brief Author's** read pass is task-scoped re-verification — at dispatch time (which may be well after planning), it re-reads the same surface fresh and mechanically re-derives the §7 floor from the *live* `doc-owners` manifest (`deriveSection7`), because the manifest — and the docs themselves — can have moved since the Planner's pass. The Planner names intended surfaces, never resolved pointers, for exactly this reason.
+- The **plan act's** read pass is whole-tranche — before any task is cut, it reads the specs/skills/docs relevant to every surface in scope and records, per task, which docs that task will make incoherent.
+- The **dispatch act's** read pass is task-scoped re-verification — at dispatch time (which may be well after planning), it re-reads the same surface fresh and mechanically re-derives the §7 floor from the *live* `doc-owners` manifest (`deriveSection7`), because the manifest — and the docs themselves — can have moved since the plan act's pass. The plan act names intended surfaces, never resolved pointers, for exactly this reason.
 
-This is why the Planner's rationale field survives even though a mechanical derivation exists: the derivation runs once, at brief time, against current reality — it cannot run at plan time without freezing a pointer list that goes stale.
+This is why the plan act's rationale field survives even though a mechanical derivation exists: the derivation runs once, at dispatch time, against current reality — it cannot run at plan time without freezing a pointer list that goes stale.
 
 ---
 
@@ -71,6 +71,6 @@ The Reviewer's judgment now sits **on top of** the check rather than instead of 
 ## Cross-references
 
 - The read/write obligation, the `doc-owners` coverage gate, and the mechanical derivation of the doc-update list are all stated above; the seam contracts carry the per-role halves.
-- **Seam contracts** (`aeg-root/contracts/`): `planner-brief.md`, `brief-developer.md`, `developer-reviewer.md`, `reviewer-archivist.md`, `archivist-tranche-archivist.md`, `tranche-archivist-planner.md`.
+- **Seam contracts** (`aeg-root/contracts/`): `planner-developer.md`, `developer-reviewer.md`, `reviewer-archivist.md`, `archivist-tranche-archivist.md`, `tranche-archivist-planner.md`.
 - **`state-machine.md` §15** — Coherence Seam: Doc Coverage — the C5 mechanics in full.
 - **`enforcement.md`** — the three-ring enforcement map; documentation coverage is called out there as enforced at both push and PR-open.

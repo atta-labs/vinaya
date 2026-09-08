@@ -1,7 +1,7 @@
 ---
 name: aeg
 sidebar_title: Operating Model (aeg)
-description: The front door to Agentic Execution Governance (AEG) — the operating model every agent works inside. Load at the start of ANY session in this repo, before doing anything substantive, regardless of role. Covers what AEG is, the four truth domains, forge-derived status, the tranche topology file, where the plan vs the flow vs governance live, the dispatch gates, the brief, the anti-regression rules, the orient-from-root layout (`aeg-root/` model + `aeg-project/` state), and the model-vs-product distinction. Ends by routing to the aeg-roles skill and the reading order. Does NOT cover role specifics (see aeg-roles + roles/*.md) or brief authoring (see brief-authoring).
+description: The front door to Agentic Execution Governance (AEG) — the operating model every agent works inside. Load at the start of ANY session in this repo, before doing anything substantive, regardless of role. Covers what AEG is, the four truth domains, forge-derived status, the tranche topology file, where the plan vs the flow vs governance live, the dispatch gates, the brief, the anti-regression rules, the orient-from-root layout (`aeg-root/` model + `aeg-project/` state), and the model-vs-product distinction. Ends by routing to the aeg-roles skill and the reading order. Does NOT cover role specifics (see aeg-roles + roles/*.md) or the mechanics of dispatching one task's brief (see `roles/planner.md` § The dispatch act).
 ---
 
 <!-- CANONICAL SOURCE. This file is the canonical home of the `aeg` skill, inside the AEG unit (aeg-root/skills/). provides for an agent-specific GENERATED VIEW under `.claude/skills/` (or another agent's equivalent), rebuilt from this file rather than authored by hand — but no such generator exists yet, and this repo has no generated view of this skill: agents are pointed at aeg-root/ directly (this repo's root agent-context file). Edit THIS file; if a generator is ever built, regenerate rather than hand-editing its output. -->
@@ -61,11 +61,11 @@ Conflicts are **package-level, and mostly derived, not hand-declared** (collisio
 
 ## 7. The brief
 
-The brief is the task's full execution context: **just-in-time, pasted not committed, lands in the PR body**, frozen at dispatch, amended only via escalation. If it isn't in the brief, it doesn't exist. Authoring rules: the **brief-authoring** skill. Brief Step 0 is always worktree creation (`git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> --no-track origin/main`).
+The brief is the task's full execution context: **rendered mechanically, never hand-written, posted once frozen as the task Issue's own `aeg:brief:v1` comment**, amended only via escalation. If it isn't in the brief, it doesn't exist. Rendering + dispatch rules: `roles/planner.md` § The dispatch act. Brief Step 0 is always worktree creation (`git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> --no-track origin/main`).
 
 ## 8. Roles (one line each — load the role doc for detail)
 
-Principal → Planner → Brief Author → Developer → Reviewer (code + security) → merge, plus the non-conversational Archivist. The Planner turns intent plus a backlog slice into a tranche; the Brief Author writes one task's brief. **Do not operate from this list — load your role doc.** The **aeg-roles** skill routes you to the right one.
+Principal → Planner → Developer → Reviewer (code + security) → merge, plus the non-conversational Archivist. The Planner turns intent plus a backlog slice into a tranche (its plan act) and later checks a task's gates and dispatches its rendered brief (its dispatch act) — two acts, one role. **Do not operate from this list — load your role doc.** The **aeg-roles** skill routes you to the right one.
 
 ## 9. Tiers, decisions, ratification (the governance layer)
 
