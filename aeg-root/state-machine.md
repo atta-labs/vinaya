@@ -185,7 +185,7 @@ Used when designing future state, writing briefs, planning tranches. Ordering:
 7. Briefs / Issues / PR descriptions — prior intent
 8. Conversation logs — lowest
 
-**Mode selection:** "currently true?" → audit. "change it to?" → planning. verify-docs runs in audit mode; brief authoring and tranche planning run in planning mode.
+**Mode selection:** "currently true?" → audit. "change it to?" → planning. verify-docs runs in audit mode; the Planner's dispatch act and tranche planning run in planning mode.
 
 ---
 
