@@ -286,6 +286,42 @@ describe('dispatchRole — timeout ceiling', () => {
     const failed = lines.find((l) => l.event === 'dispatch_failed')
     expect((failed as { reason: string }).reason).toBe('timeout')
   }, 10_000)
+
+  // O10 — a run's token record survives the manner of its death: the parent
+  // captures usage from the accumulated stdout AT THE MOMENT it ends the
+  // child, not only on a clean exit.
+  it('a killed child still leaves real usage figures in the dispatch_failed line, not a hardcoded null', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    // Prints a complete stream-json usage line BEFORE going unresponsive —
+    // the exact shape `parseClaudeUsage` reads. `stdout` is unbuffered on a
+    // bare `echo`, so this line reaches the parent's `stdoutBuf` well before
+    // the timeout ceiling fires.
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\necho '{"usage":{"input_tokens":184327,"output_tokens":22190}}'\ntrap '' TERM\ncat > /dev/null &\nsleep 30\n`
+    )
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { timeoutMs: 2500 } }))
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(1)
+
+    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
+    const failed = lines.find((l) => l.event === 'dispatch_failed') as
+      | { reason: string; usage: { input: number; output: number } | null }
+      | undefined
+    expect(failed?.reason).toBe('timeout')
+    expect(failed?.usage).toEqual({ input: 184327, output: 22190 })
+  }, 15_000)
 })
 
 describe('dispatchRole — stderr content never decides the outcome', () => {

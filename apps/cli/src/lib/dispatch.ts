@@ -599,6 +599,7 @@ export async function dispatchRole(
       ...roundField,
       effect_id: effectId,
       reason: 'refused',
+      usage: null,
       duration_ms: durationMs
     })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
@@ -742,6 +743,7 @@ export async function dispatchRole(
         ...roundField,
         effect_id: effectId,
         reason: 'crash',
+        usage: null,
         duration_ms: durationMs
       })
       void finish(
@@ -764,6 +766,19 @@ export async function dispatchRole(
     child.on('exit', (code) => {
       const durationMs = Date.now() - start
 
+      // O10 — a run's token record survives the manner of its death. The
+      // parent captures usage from `stdoutBuf` HERE, at the moment it ends
+      // the child, on every exit path (a clean success, a timeout kill, a
+      // non-zero crash) — never only on the success path below. `stdoutBuf`
+      // already accumulates every byte the child printed before it died
+      // (capped at `MAX_STDOUT_BYTES`), so a partial-but-complete usage line
+      // a vendor flushed just before SIGTERM/SIGKILL landed is not lost
+      // merely because the run itself didn't exit cleanly. `parseUsage` on
+      // an empty or usage-less buffer already returns `null` — the same
+      // honest "no figures" outcome the timeout/crash paths hardcoded
+      // before, just no longer hardcoded when real figures ARE present.
+      const usage = vendor.parseUsage(stdoutBuf)
+
       if (timedOut) {
         const priorSize = sizeOfSafe(outboxPath)
         log({
@@ -775,10 +790,11 @@ export async function dispatchRole(
           ...roundField,
           effect_id: effectId,
           reason: 'timeout',
+          usage,
           duration_ms: durationMs
         })
         void finish(
-          { exitCode: code, durationMs, usage: null, resumeId: null, timedOut: true, failureReason: 'timeout' },
+          { exitCode: code, durationMs, usage, resumeId: null, timedOut: true, failureReason: 'timeout' },
           'dispatch_failed',
           priorSize
         )
@@ -796,17 +812,17 @@ export async function dispatchRole(
           ...roundField,
           effect_id: effectId,
           reason: 'crash',
+          usage,
           duration_ms: durationMs
         })
         void finish(
-          { exitCode: code, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'crash' },
+          { exitCode: code, durationMs, usage, resumeId: null, timedOut: false, failureReason: 'crash' },
           'dispatch_failed',
           priorSize
         )
         return
       }
 
-      const usage = vendor.parseUsage(stdoutBuf)
       const resumeId = vendor.parseResumeId(stdoutBuf)
       const priorSize = sizeOfSafe(outboxPath)
       log({
