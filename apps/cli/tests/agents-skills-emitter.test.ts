@@ -7,7 +7,8 @@ import {
   buildAgentsSkillsOps,
   discoverRoleNames,
   formatRoleTitle,
-  renderAgentSkill
+  renderAgentSkill,
+  staleAgentSkillPaths
 } from '../src/lib/agents-skills-emitter.js'
 
 describe('agents-skills-emitter', () => {
@@ -105,6 +106,37 @@ Run \`bun apps/cli/src/index.ts doctrine --role developer\` and follow its outpu
 
     it('is unchanged for the ordinary adopter when selfHost is explicitly null', () => {
       expect(renderAgentSkill('developer', null)).toBe(renderAgentSkill('developer'))
+    })
+  })
+
+  describe('staleAgentSkillPaths', () => {
+    it('flags a manifest-recorded skill whose role no longer resolves under roles/', () => {
+      const rolesDir = join(tempDir, 'roles')
+      mkdirSync(rolesDir, { recursive: true })
+      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
+
+      const manifestFiles = [
+        '.agents/skills/vinaya-developer/SKILL.md',
+        '.agents/skills/vinaya-brief-author/SKILL.md',
+        '.vinaya/hooks/pre-commit'
+      ]
+      expect(staleAgentSkillPaths(tempDir, manifestFiles)).toEqual(['.agents/skills/vinaya-brief-author/SKILL.md'])
+    })
+
+    it('returns empty when every recorded skill still resolves a live role', () => {
+      const rolesDir = join(tempDir, 'roles')
+      mkdirSync(rolesDir, { recursive: true })
+      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
+
+      expect(staleAgentSkillPaths(tempDir, ['.agents/skills/vinaya-developer/SKILL.md'])).toEqual([])
+    })
+
+    it('ignores paths outside the .agents/skills/vinaya-<role>/SKILL.md shape', () => {
+      const rolesDir = join(tempDir, 'roles')
+      mkdirSync(rolesDir, { recursive: true })
+      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
+
+      expect(staleAgentSkillPaths(tempDir, ['.claude/commands/vinaya.md', 'VINAYA.md'])).toEqual([])
     })
   })
 

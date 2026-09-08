@@ -19,9 +19,11 @@
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import {
+  AEG_BRIEF_V1_MARKER,
   BRIEF_RULES_SINCE_PR,
   buildConsumersOf as buildConsumersOfShared,
   checkBriefSections,
+  contentAfterTwoLines,
   extractIssue,
   hasObjectivesHeading,
   isBriefShaped,
@@ -35,10 +37,8 @@ import {
   readTierFromPrBody
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { contentAfterTwoLines } from '../../lib/dispatch-task.js'
 
 const CHECK_NAME = 'brief-shape'
-const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
 
 type IssueCommentsJson = { comments: Array<{ body: string }> }
 
@@ -91,15 +91,10 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
   }
 
   // Everything after the marker line and the `Brief hash:` line, as a raw
-  // substring. Imported, not duplicated: `check-brief-shape.ts` and
-  // `dispatch-task.ts` both live in `apps/cli` (unlike
-  // `packages/aeg-core/bin/verify-dispatch.ts`, a genuinely separate
-  // package that cannot import `apps/cli` at all) — other check bin scripts
-  // already import from `../../lib/*` (`check-doc-coverage.ts`,
-  // `check-body-bare-digits.ts`, …), so a same-package import here is not a
-  // new pattern. Found live (code review): this file's own prior comment
-  // claimed a cross-boundary constraint that does not actually exist,
-  // duplicating logic that could simply be shared.
+  // substring. Imported from `@attalabs/aeg-core` (plan-brief-v1 task 3,
+  // #428), the same promoted export `packages/aeg-core/bin/verify-brief.ts`
+  // and `dispatch-task.ts` both use — the one canonical implementation, not
+  // a same-package copy.
   return { ok: true, body: contentAfterTwoLines(comment.body) }
 }
 

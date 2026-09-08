@@ -1116,7 +1116,7 @@ anything substantive:
 
 prints the absolute path to that role's doctrine — \`architect\`,
 \`developer\`, \`reviewer\`, \`planner\`, \`security\`, \`archivist\`,
-\`tranche-archivist\`, \`brief-author\`, or \`principal\`. If your agent tool
+\`tranche-archivist\`, or \`principal\`. If your agent tool
 supports slash-style commands, the same doctrine is likely exposed as
 \`/vinaya <role>\` — check your tool's command list before falling back to
 the raw CLI form.
@@ -1281,7 +1281,7 @@ const FIXED_LABEL_METADATA: Record<Exclude<LabelKey, 'tranche'>, LabelMeta> = {
   'needs-principal-input': { color: 'b60205', description: 'Blocked on a Principal decision' },
   'needs-brief-correction': {
     color: 'fbca04',
-    description: 'Blocked on the Brief Author — brief contradicts the surface'
+    description: 'Blocked on the Planner — brief contradicts the surface'
   },
   'waiver-docs': { color: '0e8a16', description: 'Doc-coverage gate excused for this PR (principal-applied)' },
   'waiver-review': { color: '0e8a16', description: 'Review gate excused for this PR (principal-applied)' },

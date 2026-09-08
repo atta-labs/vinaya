@@ -99,6 +99,45 @@ describe('vinaya upgrade', () => {
     expect(out).toContain('already current')
   })
 
+  it('removes a stale generated agent skill for a retired role, dropping it from the manifest', async () => {
+    await runInit(['--yes'], initDeps())
+
+    // No role file under aeg-root/roles/ is named this, so it is stale by
+    // construction — the same shape a real role retirement leaves behind in
+    // a repo that generated the skill before the role was removed.
+    const stalePath = '.agents/skills/vinaya-retired-fixture-role/SKILL.md'
+    mkdirSync(join(root, '.agents/skills/vinaya-retired-fixture-role'), { recursive: true })
+    writeFileSync(join(root, stalePath), '---\nname: vinaya-retired-fixture-role\n---\nstale\n')
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.managed.files.push(stalePath)
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+
+    let rc = -1
+    const out = await captureStdout(async () => {
+      rc = await runUpgrade(['--yes'], upgradeDeps())
+    })
+    expect(rc).toBe(0)
+    expect(out).toContain(`remove ${stalePath}`)
+    expect(existsSync(join(root, stalePath))).toBe(false)
+
+    const after = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(after.managed.files).not.toContain(stalePath)
+  })
+
+  it('--dry-run leaves a stale generated agent skill on disk, only reporting it', async () => {
+    await runInit(['--yes'], initDeps())
+    const stalePath = '.agents/skills/vinaya-retired-fixture-role/SKILL.md'
+    mkdirSync(join(root, '.agents/skills/vinaya-retired-fixture-role'), { recursive: true })
+    writeFileSync(join(root, stalePath), '---\nname: vinaya-retired-fixture-role\n---\nstale\n')
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.managed.files.push(stalePath)
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+
+    const out = await captureStdout(() => runUpgrade(['--dry-run'], upgradeDeps()))
+    expect(out).toContain(`remove ${stalePath}`)
+    expect(existsSync(join(root, stalePath))).toBe(true)
+  })
+
   it('--dry-run shows the regeneration diff and writes nothing', async () => {
     await runInit(['--yes'], initDeps())
     writeFileSync(join(root, CHECKS_WORKFLOW_PATH), 'name: hand-edited\n')

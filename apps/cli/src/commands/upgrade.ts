@@ -34,11 +34,13 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
 import { buildInitOps, CONFIG_PATH, type HookDir, type InitContext, TRACKED_HOOK_DIR } from '../lib/artifacts.js'
+import { staleAgentSkillPaths } from '../lib/agents-skills-emitter.js'
 import {
   CLAUDE_SETTINGS_PATH,
   CLAUDE_STOP_HOOK_MARKER,
   CLAUDE_STOP_HOOK_SCRIPT_PATH
 } from '../lib/claude-stop-hook-emitter.js'
+import { resolveDoctrineRoot } from './doctrine.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import {
   isDefaultedAgentVendorPath,
@@ -61,6 +63,7 @@ import {
 import {
   appendBlock,
   blockStripLeavesEmpty,
+  containedAbs,
   createHost,
   indent,
   markerLines,
@@ -303,17 +306,35 @@ function extractWorkflowTrigger(content: string): string | null {
   return match?.[1] ?? null
 }
 
+/** A manifest-recorded agent-skill file whose role has been retired — removed on apply, dropped from the manifest. */
+export type StaleFile = { path: string; present: boolean }
+
 export type UpgradePlan = {
   entries: UpgradeEntry[]
   routing: HookRouting
+  staleFiles: StaleFile[]
   /** null when the manifest is already at the package's current version. */
   versionMigration: { from: number; to: number } | null
   hasChanges: boolean
 }
 
-export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManifest, routing: HookRouting): UpgradePlan {
+export function planUpgrade(
+  ops: Op[],
+  repoRoot: string,
+  manifest: ManagedManifest,
+  routing: HookRouting,
+  staleSkillPaths: readonly string[] = []
+): UpgradePlan {
   const entries: UpgradeEntry[] = []
-  let hasChanges = routing.arm || routing.migratesManifest || routing.strips.some((s) => s.present)
+  const staleFiles: StaleFile[] = staleSkillPaths.map((path) => ({
+    path,
+    present: existsSync(join(repoRoot, path))
+  }))
+  let hasChanges =
+    routing.arm ||
+    routing.migratesManifest ||
+    routing.strips.some((s) => s.present) ||
+    staleFiles.some((f) => f.present)
   const ownedFiles = new Set(manifest.files)
   const blockKey = (path: string, marker: string) => `${path}::${marker}`
   const ownedBlocks = new Set(manifest.blocks.map((b) => blockKey(b.path, b.marker)))
@@ -427,7 +448,7 @@ export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManife
 
   const versionMigration =
     manifest.version === MANAGED_MANIFEST_VERSION ? null : { from: manifest.version, to: MANAGED_MANIFEST_VERSION }
-  return { entries, routing, versionMigration, hasChanges: hasChanges || versionMigration !== null }
+  return { entries, routing, staleFiles, versionMigration, hasChanges: hasChanges || versionMigration !== null }
 }
 
 /**
@@ -440,6 +461,19 @@ export function planUpgrade(ops: Op[], repoRoot: string, manifest: ManagedManife
  * see them as genuinely recorded rather than re-derived every time, exactly
  * as `init` records them for a fresh install.
  */
+/**
+ * Drops every `plan.staleFiles` path from `manifest.files` — deleted from
+ * disk above (or already gone), so the manifest must stop claiming
+ * ownership of it too. Otherwise the next `upgrade` (or `eject`) still finds
+ * the retired role's path recorded and re-derives it as stale forever, or
+ * `eject` reports "gone" for a path that was never really ambiguous.
+ */
+function withoutStaleFiles(manifest: ManagedManifest, plan: UpgradePlan): ManagedManifest {
+  if (plan.staleFiles.length === 0) return manifest
+  const stale = new Set(plan.staleFiles.map((f) => f.path))
+  return { ...manifest, files: manifest.files.filter((f) => !stale.has(f)) }
+}
+
 function withClaudeStopHookRecorded(manifest: ManagedManifest, plan: UpgradePlan): ManagedManifest {
   let files = manifest.files
   let blocks = manifest.blocks
@@ -480,6 +514,18 @@ export function renderUpgradeDiff(plan: UpgradePlan): string {
   if (plan.versionMigration) {
     lines.push('── Manifest ─────────────────────────────')
     lines.push(`  ~ migrate manifest version ${plan.versionMigration.from} → ${plan.versionMigration.to}`)
+    lines.push('')
+  }
+
+  if (plan.staleFiles.length > 0) {
+    lines.push('── Retired role skills ─────────────────────────────')
+    for (const f of plan.staleFiles) {
+      lines.push(
+        f.present
+          ? `  - remove ${f.path} (role retired — its doctrine now refuses)`
+          : `  · gone   ${f.path} (already removed)`
+      )
+    }
     lines.push('')
   }
 
@@ -616,6 +662,15 @@ export function applyUpgrade(plan: UpgradePlan, repoRoot: string): void {
     }
   }
 
+  // Retired-role agent skills — same idiom as `applyEject`'s `delete-file`
+  // action: re-resolve containment at apply time rather than trust the plan,
+  // and only touch a path that is actually present.
+  for (const f of plan.staleFiles) {
+    if (!f.present) continue
+    const abs = containedAbs(repoRoot, f.path)
+    if (abs !== null) rmSync(abs, { force: true })
+  }
+
   // Legacy `.git/hooks` strips run AFTER the tracked copies above are on
   // disk, so there is no instant with neither location holding the hooks.
   // Resolved through `resolveManagedBlockPath` (linked-worktree `.git` is a
@@ -682,7 +737,15 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
     agents: resolveAgentVendors(planManifest)
   }
   const ops = buildInitOps(ctx)
-  const plan = planUpgrade(ops, repo.repoRoot, planManifest, routing)
+  // Only when the `skills` vendor is active: a repo that never opted into
+  // `.agents/skills/` never recorded one in `manifest.files` either, so
+  // `staleAgentSkillPaths` would trivially find nothing — but resolving a
+  // doctrine root it doesn't need is needless work on every other upgrade.
+  const doctrineRootForStaleSkills = ctx.agents.has('skills') ? resolveDoctrineRoot() : null
+  const staleSkillPaths = doctrineRootForStaleSkills
+    ? staleAgentSkillPaths(doctrineRootForStaleSkills, planManifest.files)
+    : []
+  const plan = planUpgrade(ops, repo.repoRoot, planManifest, routing, staleSkillPaths)
 
   if (!plan.hasChanges) {
     // A refused hook migration is not a "change", but silence here would
@@ -720,7 +783,7 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
   applyUpgrade(plan, repo.repoRoot)
   // Arm AFTER the tracked hooks are on disk — never route git at nothing.
   if (routing.arm) await deps.setHooksPath(repo.repoRoot, TRACKED_HOOK_DIR)
-  writeManifestVersion(repo.repoRoot, withClaudeStopHookRecorded(planManifest, plan))
+  writeManifestVersion(repo.repoRoot, withClaudeStopHookRecorded(withoutStaleFiles(planManifest, plan), plan))
 
   process.stdout.write('\nVinaya upgraded.\n')
   return 0

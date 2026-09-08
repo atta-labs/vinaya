@@ -116,6 +116,19 @@ describe('vinaya doctrine', () => {
     expect(suggestionList).not.toMatch(/\bprincipal\b/)
   })
 
+  it('--role brief-author refuses with a pointer to planner — the role is retired even while the file still exists', async () => {
+    const proc = Bun.spawn(['bun', CLI_ENTRY, 'doctrine', '--role', 'brief-author'], {
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+    const exitCode = await proc.exited
+    const stderr = await new Response(proc.stderr).text()
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain("'brief-author' has been retired")
+    expect(stderr).toContain('--role planner')
+  })
+
   it('actor: agent and actor: either roles both still resolve — the exclusion is actor-specific, not a blanket narrowing', () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine')

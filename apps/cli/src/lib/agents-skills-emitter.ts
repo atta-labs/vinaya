@@ -26,7 +26,7 @@ export const AGENTS_SKILLS_GROUP = 'Agent skills (.agents/skills/)'
 
 /**
  * Format a role slug into a human-readable AEG role title.
- * e.g. "developer" -> "Developer", "brief-author" -> "Brief Author", "tranche-archivist" -> "Tranche Archivist"
+ * e.g. "developer" -> "Developer", "planner" -> "Planner", "tranche-archivist" -> "Tranche Archivist"
  */
 export function formatRoleTitle(roleName: string): string {
   return roleName
@@ -91,4 +91,23 @@ export function buildAgentsSkillsOps(doctrineRoot: string, selfHost: VendoredVin
     content: renderAgentSkill(role, selfHost),
     group: AGENTS_SKILLS_GROUP
   }))
+}
+
+/** Matches `agentSkillPath`'s own shape, capturing the role slug back out. */
+const AGENT_SKILL_PATH_PATTERN = /^\.agents\/skills\/vinaya-([^/]+)\/SKILL\.md$/
+
+/**
+ * Manifest-recorded agent-skill paths whose role no longer resolves under
+ * `<doctrineRoot>/roles/` (deleted outright, or now `actor: human`) — a
+ * generated skill left pointing at `vinaya doctrine --role <retired>`, which
+ * now refuses. Never hardcodes a role name: the same live-scan
+ * `discoverRoleNames` already uses, diffed against what a past `init`/`upgrade`
+ * actually wrote, so any future retired role is caught the same way.
+ */
+export function staleAgentSkillPaths(doctrineRoot: string, manifestFiles: readonly string[]): string[] {
+  const liveRoles = new Set(discoverRoleNames(doctrineRoot))
+  return manifestFiles.filter((path) => {
+    const match = AGENT_SKILL_PATH_PATTERN.exec(path)
+    return match !== null && !liveRoles.has(match[1] as string)
+  })
 }
