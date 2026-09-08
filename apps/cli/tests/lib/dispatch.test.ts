@@ -21,9 +21,12 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
+import { readdirSync, statSync } from 'node:fs'
 import {
   DEFAULT_TIMEOUT_MS,
   HEARTBEAT_INTERVAL_MS,
+  MAX_TEE_BYTES,
   openOutputTee,
   timeoutWarningLeadMs
 } from '../../src/lib/dispatch.js'
@@ -508,6 +511,29 @@ describe('dispatchRole — resume identifier (round-trip, per vendor)', () => {
  * `dispatchRole` cases above, which must go through the real CLI entry point
  * for the reason that file's own header records.
  */
+/** Where `openOutputTee` writes. Derived, never hardcoded, so a moved home moves the test with it. */
+const TEE_DIR = join(homedir(), '.vinaya', 'dispatch-output')
+
+/**
+ * Read a teed file once the expected marker has landed. `createWriteStream`
+ * flushes on the event loop, so this awaits between polls — a synchronous spin
+ * blocks the very flush it is waiting for.
+ */
+async function readWhenReady(path: string, marker: string): Promise<string> {
+  const deadline = Date.now() + 3000
+  let contents = ''
+  while (Date.now() < deadline) {
+    try {
+      contents = readFileSync(path, 'utf8')
+      if (contents.includes(marker)) break
+    } catch {
+      // not created yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  return contents
+}
+
 describe('dispatch observability (#450)', () => {
   it('the shipped default deadline is four hours, not one', () => {
     expect(DEFAULT_TIMEOUT_MS).toBe(14_400_000)
@@ -568,13 +594,60 @@ describe('dispatch observability (#450)', () => {
     rmSync(tee.path as string, { force: true })
   })
 
-  it('an unwritable tee degrades to a no-op instead of failing the dispatch', () => {
-    // A broken output path must never take down a run — the same posture
-    // `log()` takes for a broken outbox.
-    const tee = openOutputTee('nested/../../escape-attempt')
-    expect(() => {
-      tee.write(Buffer.from('x'))
+  it('refuses a traversal id outright, writing no file anywhere', () => {
+    // The previous version of this test passed a traversal string and asserted
+    // only that it did not throw — which is true of a function that happily
+    // writes outside its directory. Assert the containment the name claims.
+    const before = existsSync(TEE_DIR) ? readdirSync(TEE_DIR) : []
+    for (const bad of ['nested/../../escape-attempt', '../escape', 'a/b', '', '.']) {
+      const tee = openOutputTee(bad)
+      expect(tee.path).toBeNull()
+      tee.write(Buffer.from('must not be written'))
       tee.end()
-    }).not.toThrow()
+    }
+    const after = existsSync(TEE_DIR) ? readdirSync(TEE_DIR) : []
+    expect(after).toEqual(before)
+  })
+
+  it('redacts credentials before they reach the file', async () => {
+    const effectId = `test-${randomUUID()}`
+    const tee = openOutputTee(effectId)
+    // Exactly what a dispatched agent prints when it runs `env` or `gh auth token`.
+    tee.write(Buffer.from('GITHUB_TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n'))
+    tee.write(Buffer.from('Authorization: Bearer sk-secret-value-here\n'))
+    tee.write(Buffer.from('harmless line\n'))
+    tee.end()
+
+    const contents = await readWhenReady(tee.path as string, 'harmless line')
+    expect(contents).toContain('harmless line')
+    expect(contents).not.toContain('ghp_0123456789abcdefghijklmnopqrstuvwxyz')
+    expect(contents).not.toContain('sk-secret-value-here')
+    rmSync(tee.path as string, { force: true })
+  })
+
+  it('creates the log owner-only, inside an owner-only directory', async () => {
+    const effectId = `test-${randomUUID()}`
+    const tee = openOutputTee(effectId)
+    tee.write(Buffer.from('x\n'))
+    tee.end()
+    await readWhenReady(tee.path as string, 'x')
+    expect(statSync(tee.path as string).mode & 0o777).toBe(0o600)
+    expect(statSync(TEE_DIR).mode & 0o777).toBe(0o700)
+    rmSync(tee.path as string, { force: true })
+  })
+
+  it('stops writing at the size cap instead of growing without bound', async () => {
+    const effectId = `test-${randomUUID()}`
+    const tee = openOutputTee(effectId)
+    const chunk = Buffer.from(`${'y'.repeat(64 * 1024)}\n`)
+    for (let i = 0; i < Math.ceil(MAX_TEE_BYTES / chunk.length) + 8; i++) tee.write(chunk)
+    tee.end()
+    await readWhenReady(tee.path as string, 'y')
+    // Bounded by the cap. Slack is one chunk (the write that crosses the cap
+    // is allowed to complete) plus the carry tail flushed at `end`.
+    expect(statSync(tee.path as string).size).toBeLessThanOrEqual(MAX_TEE_BYTES + chunk.length + 512)
+    // And it really did stop: without a cap this would be ~9 chunks larger.
+    expect(statSync(tee.path as string).size).toBeLessThan(chunk.length * (Math.ceil(MAX_TEE_BYTES / chunk.length) + 8))
+    rmSync(tee.path as string, { force: true })
   })
 })
