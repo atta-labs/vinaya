@@ -534,7 +534,7 @@ export const VinayaConfigSchema = z.object({
   // `vinaya dispatch <role> --agent <vendor>` (`apps/cli/src/lib/dispatch.ts`).
   // `timeoutMs` is the wall-time ceiling
   // before `dispatchRole` sends `SIGTERM` (then `SIGKILL`) to the child;
-  // absent defaults to one hour (`DEFAULT_TIMEOUT_MS` in `dispatch.ts`).
+  // absent defaults to four hours (`DEFAULT_TIMEOUT_MS` in `dispatch.ts`).
   // `agent` is a default vendor the CLI's own `--agent` flag overrides, for a
   // repo that always dispatches the same vendor.
   //

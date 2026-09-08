@@ -393,6 +393,11 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `AGENT_VENDOR_NAMES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `dispatchRole` | function | `apps/cli/src/lib/dispatch.ts` |
 | `isAgentVendor` | function | `apps/cli/src/lib/dispatch.ts` |
+| `DEFAULT_TIMEOUT_MS` | const | `apps/cli/src/lib/dispatch.ts` |
+| `HEARTBEAT_INTERVAL_MS` | const | `apps/cli/src/lib/dispatch.ts` |
+| `MAX_TEE_BYTES` | const | `apps/cli/src/lib/dispatch.ts` |
+| `openOutputTee` | function | `apps/cli/src/lib/dispatch.ts` |
+| `timeoutWarningLeadMs` | function | `apps/cli/src/lib/dispatch.ts` |
 | `appendDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `applyDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `freshDocOwners` | function | `apps/cli/src/lib/doc-owners-write.ts` |
@@ -563,4 +568,6 @@ Every non-compliant command from the table above, dated, with the count of disti
 `dispatchRole` retires no row today — its own command (`dispatch`) is new, not a retirement of an existing exempt row; `runTask` remains forward-looking, with no shipped command yet. `devReviewLoop` (this task) likewise retires no row today — it is itself a new named chokepoint (`## Effects` intro), and `dev-review-loop`'s own command calls it alongside the same three argv-plumbing calls `dispatch` already carries (`loadConfig`/`isAgentVendor`/`printJson`) — once `sharedCommandShell` absorbs those, this command is left calling only `devReviewLoop`, becoming compliant on its own rather than needing a second named target.
 
 `issue create`/`issue edit` re-verified after `BRIEF_BUILTINS` (`apps/cli/src/lib/config.ts`) and its `runBuiltin` table (`apps/cli/src/lib/forge-write.ts`) gained a `briefSections` entry: both rows' own in-scope call count is unchanged — `validateTaskIssue` was already the one call either row lists, and a new entry inside that function's internal table is not a new call site in either command's own body.
+
+`dispatchRole` (Issue #450, dispatch observability) gained five exports — `DEFAULT_TIMEOUT_MS`, `HEARTBEAT_INTERVAL_MS`, `MAX_TEE_BYTES`, `openOutputTee` and `timeoutWarningLeadMs`, all listed above — and dropped none. They are exported to be reachable from a test at all: the observability behaviours cannot be asserted through `dispatchRole` alone without spawning a real vendor process. `AGENT_VENDOR_NAMES`/`dispatchRole`/`isAgentVendor` are unchanged.
 

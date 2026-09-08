@@ -15,11 +15,21 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
+import { readdirSync, statSync } from 'node:fs'
+import {
+  DEFAULT_TIMEOUT_MS,
+  HEARTBEAT_INTERVAL_MS,
+  MAX_TEE_BYTES,
+  openOutputTee,
+  timeoutWarningLeadMs
+} from '../../src/lib/dispatch.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -491,4 +501,208 @@ describe('dispatchRole — resume identifier (round-trip, per vendor)', () => {
       expect(readArgv(argvOut)).toEqual(fixture.resumeArgv(synthId))
     })
   }
+})
+
+/**
+ * Observability (Issue #450). The four behaviours this task added were shipped
+ * with no test of their own; these cover each one at the level it can honestly
+ * be reached. `timeoutWarningLeadMs` and `openOutputTee` are imported directly
+ * — they are pure-enough units that need no spawned process, unlike the
+ * `dispatchRole` cases above, which must go through the real CLI entry point
+ * for the reason that file's own header records.
+ */
+/** Where `openOutputTee` writes. Derived, never hardcoded, so a moved home moves the test with it. */
+const TEE_DIR = join(homedir(), '.vinaya', 'dispatch-output')
+
+/**
+ * Read a teed file once the expected marker has landed. `createWriteStream`
+ * flushes on the event loop, so this awaits between polls — a synchronous spin
+ * blocks the very flush it is waiting for.
+ */
+async function readWhenReady(path: string, marker: string): Promise<string> {
+  const deadline = Date.now() + 3000
+  let contents = ''
+  while (Date.now() < deadline) {
+    try {
+      contents = readFileSync(path, 'utf8')
+      if (contents.includes(marker)) break
+    } catch {
+      // not created yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  return contents
+}
+
+describe('dispatch observability (#450)', () => {
+  it('the shipped default deadline is four hours, not one', () => {
+    expect(DEFAULT_TIMEOUT_MS).toBe(14_400_000)
+    // The regression this pins: a one-hour default killed a dispatched agent
+    // that had made five commits and was still working.
+    expect(DEFAULT_TIMEOUT_MS).toBeGreaterThan(3_600_000)
+  })
+
+  it('warns before the deadline, never after it, and never at the deadline itself', () => {
+    // Capped lead for a long run: four hours warns five minutes out.
+    expect(timeoutWarningLeadMs(14_400_000)).toBe(300_000)
+    // Short runs fall back to half the budget, so the warning still lands
+    // while there is time to act rather than as the kill arrives.
+    expect(timeoutWarningLeadMs(60_000)).toBe(30_000)
+    expect(timeoutWarningLeadMs(1_000)).toBe(500)
+    // The invariant that matters, across the whole range: strictly inside the
+    // budget, so a warning is never scheduled at or past the SIGTERM.
+    for (const budget of [1_000, 60_000, 600_000, 3_600_000, 14_400_000]) {
+      const lead = timeoutWarningLeadMs(budget)
+      expect(lead).toBeGreaterThan(0)
+      expect(lead).toBeLessThan(budget)
+    }
+  })
+
+  it('the heartbeat interval is short enough to distinguish working from hung', () => {
+    expect(HEARTBEAT_INTERVAL_MS).toBeLessThanOrEqual(60_000)
+    expect(HEARTBEAT_INTERVAL_MS).toBeGreaterThan(0)
+  })
+
+  it('tees child output to a readable file keyed by the run, and reads back what was written', async () => {
+    const effectId = `test-${randomUUID()}`
+    const tee = openOutputTee(effectId)
+    expect(tee.path).not.toBeNull()
+    expect(tee.path as string).toContain(effectId)
+
+    tee.write(Buffer.from('first chunk\n'))
+    tee.write(Buffer.from('second chunk\n'))
+    tee.end()
+
+    // The point of the tee is that a human can read it WHILE the run is alive,
+    // so the bytes must actually reach the file rather than sit in a buffer.
+    // `createWriteStream` flushes on the event loop, so this polls with an
+    // await — a synchronous spin would block the very flush it waits for,
+    // which is exactly how this test first failed.
+    const deadline = Date.now() + 3000
+    let contents = ''
+    while (Date.now() < deadline) {
+      try {
+        contents = readFileSync(tee.path as string, 'utf8')
+        if (contents.includes('second chunk')) break
+      } catch {
+        // not created yet
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    expect(contents).toContain('first chunk')
+    expect(contents).toContain('second chunk')
+    rmSync(tee.path as string, { force: true })
+  })
+
+  it('refuses a traversal id outright, writing no file anywhere', () => {
+    // The previous version of this test passed a traversal string and asserted
+    // only that it did not throw — which is true of a function that happily
+    // writes outside its directory. Assert the containment the name claims.
+    const before = existsSync(TEE_DIR) ? readdirSync(TEE_DIR) : []
+    for (const bad of ['nested/../../escape-attempt', '../escape', 'a/b', '', '.']) {
+      const tee = openOutputTee(bad)
+      expect(tee.path).toBeNull()
+      tee.write(Buffer.from('must not be written'))
+      tee.end()
+    }
+    const after = existsSync(TEE_DIR) ? readdirSync(TEE_DIR) : []
+    expect(after).toEqual(before)
+  })
+
+  it('redacts credentials before they reach the file', async () => {
+    const effectId = `test-${randomUUID()}`
+    const tee = openOutputTee(effectId)
+    // Exactly what a dispatched agent prints when it runs `env` or `gh auth token`.
+    tee.write(Buffer.from('GITHUB_TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n'))
+    tee.write(Buffer.from('Authorization: Bearer sk-secret-value-here\n'))
+    tee.write(Buffer.from('harmless line\n'))
+    tee.end()
+
+    const contents = await readWhenReady(tee.path as string, 'harmless line')
+    expect(contents).toContain('harmless line')
+    expect(contents).not.toContain('ghp_0123456789abcdefghijklmnopqrstuvwxyz')
+    expect(contents).not.toContain('sk-secret-value-here')
+    rmSync(tee.path as string, { force: true })
+  })
+
+  it('creates the log owner-only, inside an owner-only directory', async () => {
+    const effectId = `test-${randomUUID()}`
+    const tee = openOutputTee(effectId)
+    tee.write(Buffer.from('x\n'))
+    tee.end()
+    await readWhenReady(tee.path as string, 'x')
+    expect(statSync(tee.path as string).mode & 0o777).toBe(0o600)
+    expect(statSync(TEE_DIR).mode & 0o777).toBe(0o700)
+    rmSync(tee.path as string, { force: true })
+  })
+
+  it('stops writing at the size cap instead of growing without bound', async () => {
+    const effectId = `test-${randomUUID()}`
+    const tee = openOutputTee(effectId)
+    const chunk = Buffer.from(`${'y'.repeat(64 * 1024)}\n`)
+    for (let i = 0; i < Math.ceil(MAX_TEE_BYTES / chunk.length) + 8; i++) tee.write(chunk)
+    tee.end()
+    await readWhenReady(tee.path as string, 'y')
+    // Bounded by the cap. Slack is one chunk (the write that crosses the cap
+    // is allowed to complete) plus the carry tail flushed at `end`.
+    expect(statSync(tee.path as string).size).toBeLessThanOrEqual(MAX_TEE_BYTES + chunk.length + 512)
+    // And it really did stop: without a cap this would be ~9 chunks larger.
+    expect(statSync(tee.path as string).size).toBeLessThan(chunk.length * (Math.ceil(MAX_TEE_BYTES / chunk.length) + 8))
+    rmSync(tee.path as string, { force: true })
+  })
+})
+
+/**
+ * The wiring, not the units. Every test above this block exercises
+ * `openOutputTee`/`timeoutWarningLeadMs` directly; this one drives a REAL
+ * `vinaya dispatch` against a fake vendor and asserts that the tee is
+ * actually connected to the child's streams, lands under the run's own HOME,
+ * and scrubs what the child printed. A unit test of the tee cannot catch the
+ * tee being wired to nothing.
+ */
+describe('dispatch observability — wired through a real run (#450)', () => {
+  it("tees the child's real output to HOME, redacted, and names the file on stderr", () => {
+    const home = tempDir('vinaya-tee-home-')
+    const cwd = tempDir('vinaya-tee-cwd-')
+    const binDir = tempDir('vinaya-tee-bin-')
+    // A vendor that prints a credential on stdout and a line on stderr —
+    // exactly the shape of a coding agent running `env` mid-task.
+    writeFakeBinary(
+      binDir,
+      'claude',
+      '#!/bin/sh\ncat > /dev/null\n' +
+        "echo 'GITHUB_TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz'\n" +
+        "echo 'diagnostic line on stderr' >&2\n" +
+        'echo \'{"usage":{"input_tokens":1,"output_tokens":2}}\'\nexit 0\n'
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    // `spawnSync`, not the `runDispatch` helper above: that helper returns
+    // `stderr: ''` on a successful run (`execFileSync` yields stdout only),
+    // and the operator lines this test is about are written to stderr.
+    const r = spawnSync('bun', [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', promptFile], {
+      encoding: 'utf8',
+      cwd,
+      env: { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+    })
+    expect(r.status).toBe(0)
+
+    // The path is announced once, correlated with the run's effect id.
+    expect(r.stderr).toContain('output teed to')
+    expect(r.stderr).toMatch(/\[vinaya dispatch [0-9a-f-]{36}\]/)
+
+    const teeDir = join(home, '.vinaya', 'dispatch-output')
+    const logs = readdirSync(teeDir)
+    expect(logs).toHaveLength(1)
+    const contents = readFileSync(join(teeDir, logs[0] as string), 'utf8')
+
+    // Wired to BOTH streams — stderr was discarded entirely before this task.
+    expect(contents).toContain('diagnostic line on stderr')
+    // And scrubbed on the way: the child printed a token, the file has none.
+    expect(contents).not.toContain('ghp_0123456789abcdefghijklmnopqrstuvwxyz')
+    expect(contents).toContain('GITHUB_TOKEN=')
+
+    expect(statSync(join(teeDir, logs[0] as string)).mode & 0o777).toBe(0o600)
+  })
 })

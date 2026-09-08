@@ -52,9 +52,12 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto'
-import { accessSync, constants as fsConstants, readFileSync } from 'node:fs'
+import { accessSync, constants as fsConstants, mkdirSync, readFileSync } from 'node:fs'
+import { chmodSync, createWriteStream } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
+import { homedir } from 'node:os'
+import { redact } from '@attalabs/aeg-core'
 import type { Role } from '@attalabs/aeg-core'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
@@ -96,11 +99,128 @@ export type DispatchHandle = {
   failureReason?: DispatchFailureReason
 }
 
-/** One hour — matches `dispatch.timeoutMs`'s documented default in `VinayaConfigSchema`. */
-const DEFAULT_TIMEOUT_MS = 3_600_000
+/**
+ * Four hours — matches `dispatch.timeoutMs`'s documented default in
+ * `VinayaConfigSchema`. Raised from the original one hour (O4, Issue #450):
+ * a real dispatched agent turn was found live still working past the
+ * thirty-minute mark, and a one-hour ceiling gives too little margin before
+ * a genuinely working agent is killed mid-task. The ceiling itself stays —
+ * an unbounded dispatch is how a hung agent runs forever unnoticed — just
+ * long enough now that reaching it is a real signal, not routine noise.
+ */
+export const DEFAULT_TIMEOUT_MS = 14_400_000
 
 /** Grace window between `SIGTERM` and `SIGKILL` once the ceiling fires. */
 const SIGKILL_GRACE_MS = 5_000
+
+/** How often a still-running dispatch announces that it is alive (O1). */
+export const HEARTBEAT_INTERVAL_MS = 60_000
+
+/**
+ * How long before the deadline the approaching-timeout warning fires (O3).
+ * Capped at 5 minutes so a short `dispatch.timeoutMs` (e.g. a test's 2500ms)
+ * still gets a warning inside its own ceiling rather than one scheduled past
+ * it and never firing.
+ */
+export function timeoutWarningLeadMs(timeoutMs: number): number {
+  return Math.min(300_000, Math.floor(timeoutMs / 2))
+}
+
+/**
+ * Tees the child's raw stdout/stderr bytes to a machine-local file so a
+ * human can read what the agent is doing while it is still running (O2) —
+ * never inside the repository tree (a dispatch's own worktree could be
+ * mid-rebase or reviewed by someone else) and never a replacement for the
+ * in-memory `stdoutBuf` the exit handler parses for outcome data. Failure to
+ * create the file (an unwritable home, a full disk) degrades to a silent
+ * no-op tee, matching this module's "never throws" posture — losing the
+ * human-readable copy is not a reason to fail the dispatch itself.
+ */
+/** Hard ceiling on one run's teed output. A four-hour run's stdout is unbounded otherwise. */
+export const MAX_TEE_BYTES = 8 * 1024 * 1024
+
+/**
+ * A run's own output, teed to a file a human can read WHILE the run is alive.
+ *
+ * Three properties are load-bearing, and all three are security properties —
+ * this file persists the full stdout AND stderr of a credentialed subprocess
+ * that runs arbitrary shell commands mid-task (`env`, reading a `.env`,
+ * `gh auth token`), so its raw bytes are exactly the bytes that must never
+ * reach disk unscrubbed:
+ *
+ *  1. **Redacted.** Every chunk goes through `@attalabs/aeg-core`'s `redact` —
+ *     the same function every outbox line already passes through — so a
+ *     GitHub token or an `Authorization: Bearer` value is replaced before it
+ *     is written, and an absolute path under the home directory is rewritten
+ *     to `~/…`. Chunk boundaries can split a token, so a tail of the previous
+ *     chunk is carried and re-scanned rather than trusting chunk alignment.
+ *  2. **Owner-only, and inside its own directory.** The file is created 0600
+ *     in a 0700 directory, and `effectId` is refused unless it is a plain
+ *     identifier — a caller passing a traversal string gets no file at all,
+ *     rather than a file written wherever the string resolved to.
+ *  3. **Bounded, and never fatal.** Writing stops at `MAX_TEE_BYTES`, and a
+ *     write-time failure (a full disk mid-run) degrades this to a no-op
+ *     instead of throwing: an async `stream.write` error would otherwise be
+ *     unhandled and take down the dispatch this tee only observes.
+ */
+export function openOutputTee(effectId: string): {
+  write: (chunk: Buffer) => void
+  end: () => void
+  path: string | null
+} {
+  const inert = { write: () => {}, end: () => {}, path: null }
+  // Refuse anything that is not a plain id BEFORE it reaches `join`, so a
+  // traversal string can never resolve outside the intended directory.
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(effectId)) return inert
+  try {
+    const dir = join(GLOBAL_VINAYA_HOME, 'dispatch-output')
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    // `mkdirSync`'s mode applies only when it creates the directory — an
+    // existing one keeps whatever permissions it already had, which for a
+    // directory created before this hardening is world-readable.
+    chmodSync(dir, 0o700)
+    const path = join(dir, `${effectId}.log`)
+    const stream = createWriteStream(path, { flags: 'a', mode: 0o600 })
+    let broken = false
+    let written = 0
+    let carry = ''
+    // A stream error is asynchronous; without this listener it is an
+    // unhandled 'error' event, which is fatal to the process.
+    stream.on('error', () => {
+      broken = true
+    })
+    const home = homedir()
+    return {
+      write: (chunk: Buffer) => {
+        if (broken || written >= MAX_TEE_BYTES) return
+        try {
+          const text = carry + chunk.toString('utf8')
+          // Keep a tail unwritten so a secret straddling two chunks is still
+          // matched whole on the next pass; flush it at `end`.
+          const cut = Math.max(0, text.length - 256)
+          const emit = redact(text.slice(0, cut), home)
+          carry = text.slice(cut)
+          if (emit.length === 0) return
+          written += Buffer.byteLength(emit)
+          stream.write(emit)
+        } catch {
+          broken = true
+        }
+      },
+      end: () => {
+        try {
+          if (!broken && carry.length > 0) stream.write(redact(carry, home))
+          stream.end()
+        } catch {
+          broken = true
+        }
+      },
+      path
+    }
+  } catch {
+    return inert
+  }
+}
 
 type UsageParser = (stdout: string) => { input: number; output: number } | null
 
@@ -401,17 +521,53 @@ export async function dispatchRole(
     let stdoutBuf = ''
     const MAX_STDOUT_BYTES = 1_000_000
 
+    const outputTee = openOutputTee(effectId)
+    if (outputTee.path !== null) {
+      process.stderr.write(`[vinaya dispatch ${effectId}] ${role} via ${agent}: output teed to ${outputTee.path}\n`)
+    }
+
     child.stdout.on('data', (chunk: Buffer) => {
+      // Teed off the SAME chunk the parser below consumes, never taken from
+      // it: `stdoutBuf` still sees every byte, capped exactly as before.
+      outputTee.write(chunk)
       if (stdoutBuf.length < MAX_STDOUT_BYTES) stdoutBuf += chunk.toString('utf8')
     })
-    // Drained, never inspected for outcome and never logged (O2/constraints):
-    // stderr content never decides success or failure, only exit code does.
-    child.stderr.on('data', () => {})
+    // Still never inspected for outcome (O2/constraints: stderr content
+    // never decides success or failure, only exit code does) — but no
+    // longer discarded outright, so a human reading the tee file sees it.
+    child.stderr.on('data', (chunk: Buffer) => {
+      outputTee.write(chunk)
+    })
+
+    // Print mode (O1's motivating trap) may emit nothing on stdout until
+    // the very end — the heartbeat is deliberately independent of the
+    // child's own output, so liveness is reported even when there is
+    // nothing yet to tee.
+    const heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {
+      const elapsedS = Math.round((Date.now() - start) / 1000)
+      process.stderr.write(
+        `[vinaya dispatch ${effectId}] ${role} via ${agent}: still running — ${elapsedS}s elapsed (ceiling ${Math.round(timeoutMs / 1000)}s)\n`
+      )
+    }, HEARTBEAT_INTERVAL_MS)
+
+    const warnLeadMs = timeoutWarningLeadMs(timeoutMs)
+    const warnTimer: ReturnType<typeof setTimeout> = setTimeout(
+      () => {
+        process.stderr.write(
+          `[vinaya dispatch ${effectId}] ${role} via ${agent}: approaching timeout — SIGTERM in ~${Math.round(warnLeadMs / 1000)}s unless it finishes first\n`
+        )
+      },
+      Math.max(timeoutMs - warnLeadMs, 0)
+    )
 
     const timeoutTimer = setTimeout(() => {
       timedOut = true
+      process.stderr.write(`[vinaya dispatch ${effectId}] ${role} via ${agent}: ceiling reached — sending SIGTERM\n`)
       child.kill('SIGTERM')
       killTimer = setTimeout(() => {
+        process.stderr.write(
+          `[vinaya dispatch ${effectId}] ${role} via ${agent}: still alive after SIGTERM — sending SIGKILL\n`
+        )
         child.kill('SIGKILL')
       }, SIGKILL_GRACE_MS)
     }, timeoutMs)
@@ -421,6 +577,9 @@ export async function dispatchRole(
       settled = true
       clearTimeout(timeoutTimer)
       if (killTimer) clearTimeout(killTimer)
+      clearInterval(heartbeatTimer)
+      clearTimeout(warnTimer)
+      outputTee.end()
       // The corresponding `log()` call already ran, with `priorSize` taken
       // right before it — this just confirms it landed before the caller
       // can possibly exit the process out from under it.
