@@ -37,10 +37,29 @@ export function formatRoleTitle(roleName: string): string {
 }
 
 /**
+ * Roles this codebase has retired, declared rather than inferred.
+ *
+ * Retirement is a STATED fact, never derived from a role file's absence. The
+ * doctrine file may legitimately outlive the code's knowledge of the role —
+ * `aeg-root/roles/brief-author.md` stays on disk until the doctrine task
+ * deletes it, because `registry-gates`' G5 refuses a contract naming a role
+ * with no file. Inferring "retired" from a missing file therefore gets BOTH
+ * consumers of `discoverRoleNames` wrong while that window is open:
+ * `staleAgentSkillPaths` would keep reading an adopter's stale skill as live
+ * and never clean it up, and `agentSkillsArtifacts` would keep GENERATING a
+ * skill whose embedded `vinaya doctrine --role brief-author` this same release
+ * makes refuse — an artifact broken by construction the moment it is written.
+ *
+ * A name here stays correct, merely redundant, once its role file is deleted.
+ */
+export const RETIRED_ROLE_NAMES: ReadonlySet<string> = new Set(['brief-author'])
+
+/**
  * Discover role names available under `<doctrineRoot>/roles/`, from `*.md` filenames —
  * excluding any role whose frontmatter declares `actor: human` (agent-skill files are
- * only ever generated for `agent` or `either` actors). Results are sorted alphabetically
- * for deterministic, idempotent output.
+ * only ever generated for `agent` or `either` actors) and any role named in
+ * `RETIRED_ROLE_NAMES`. Results are sorted alphabetically for deterministic,
+ * idempotent output.
  */
 export function discoverRoleNames(doctrineRoot: string): string[] {
   const rolesDir = join(doctrineRoot, 'roles')
@@ -48,6 +67,7 @@ export function discoverRoleNames(doctrineRoot: string): string[] {
   return readdirSync(rolesDir)
     .filter((name) => name.endsWith('.md'))
     .map((name) => name.slice(0, -'.md'.length))
+    .filter((roleName) => !RETIRED_ROLE_NAMES.has(roleName))
     .filter((roleName) => {
       const { data } = matter(readFileSync(join(rolesDir, `${roleName}.md`), 'utf8'))
       return data.actor !== 'human'

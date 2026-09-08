@@ -37,12 +37,12 @@ describe('agents-skills-emitter', () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
       writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
-      writeFileSync(join(rolesDir, 'brief-author.md'), '# Brief Author\n')
+      writeFileSync(join(rolesDir, 'reviewer.md'), '# Reviewer\n')
       writeFileSync(join(rolesDir, 'archivist.md'), '# Archivist\n')
       writeFileSync(join(rolesDir, 'ignored.txt'), 'ignore me\n')
 
       const roles = discoverRoleNames(tempDir)
-      expect(roles).toEqual(['archivist', 'brief-author', 'developer'])
+      expect(roles).toEqual(['archivist', 'developer', 'reviewer'])
     })
 
     it('returns empty array if roles directory does not exist', () => {
@@ -81,6 +81,10 @@ Run \`vinaya doctrine --role developer\` and follow its output as your operating
       expect(agentSkillPath('developer')).toBe('.agents/skills/vinaya-developer/SKILL.md')
     })
 
+    // `renderAgentSkill` is a pure string function; it renders whatever name it
+    // is handed. Retirement is enforced upstream, in `discoverRoleNames`, so no
+    // caller ever hands it a retired role — this case only pins the hyphenated
+    // title formatting.
     it('matches exact 3-line pointer specification for brief-author', () => {
       const expected = `---
 name: vinaya-brief-author
@@ -121,6 +125,42 @@ Run \`bun apps/cli/src/index.ts doctrine --role developer\` and follow its outpu
         '.vinaya/hooks/pre-commit'
       ]
       expect(staleAgentSkillPaths(tempDir, manifestFiles)).toEqual(['.agents/skills/vinaya-brief-author/SKILL.md'])
+    })
+
+    // The real scenario, not a synthetic one: `brief-author.md` is STILL ON
+    // DISK — the doctrine task deletes it, not this one, because
+    // `registry-gates`' G5 refuses a contract naming a role with no file. A
+    // discovery that inferred retirement from the file's absence read the
+    // role as live here and never cleaned up an existing adopter's skill.
+    // Retirement is declared (`RETIRED_ROLE_NAMES`), so presence is irrelevant.
+    it('flags a retired role\'s skill even while its role file is still present', () => {
+      const rolesDir = join(tempDir, 'roles')
+      mkdirSync(rolesDir, { recursive: true })
+      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
+      writeFileSync(join(rolesDir, 'brief-author.md'), '# Brief Author\n')
+
+      expect(discoverRoleNames(tempDir)).not.toContain('brief-author')
+      expect(discoverRoleNames(tempDir)).toContain('developer')
+      expect(
+        staleAgentSkillPaths(tempDir, [
+          '.agents/skills/vinaya-developer/SKILL.md',
+          '.agents/skills/vinaya-brief-author/SKILL.md'
+        ])
+      ).toEqual(['.agents/skills/vinaya-brief-author/SKILL.md'])
+    })
+
+    // The sharper half of the same defect: generation, not just cleanup. A
+    // fresh `init`/`upgrade` must not WRITE a skill whose embedded
+    // `vinaya doctrine --role brief-author` this same release makes refuse.
+    it('never generates an agent skill for a retired role whose file still exists', () => {
+      const rolesDir = join(tempDir, 'roles')
+      mkdirSync(rolesDir, { recursive: true })
+      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
+      writeFileSync(join(rolesDir, 'brief-author.md'), '# Brief Author\n')
+
+      const paths = buildAgentsSkillsOps(tempDir).map((op) => op.path)
+      expect(paths).not.toContain('.agents/skills/vinaya-brief-author/SKILL.md')
+      expect(paths).toContain('.agents/skills/vinaya-developer/SKILL.md')
     })
 
     it('returns empty when every recorded skill still resolves a live role', () => {

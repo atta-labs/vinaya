@@ -32,7 +32,16 @@ const REPO_ROOT = join(import.meta.dir, '..', '..', '..')
  */
 const SCAN_ROOTS = ['packages/aeg-core/src', 'packages/aeg-forge-state/src', 'packages/aeg-types/src', 'apps/cli/src']
 
-const ALLOWLISTED_FILES = new Set(['apps/cli/src/commands/doctrine.ts', 'apps/cli/src/lib/dispatch-task.ts'])
+const ALLOWLISTED_FILES = new Set([
+  'apps/cli/src/commands/doctrine.ts',
+  'apps/cli/src/lib/dispatch-task.ts',
+  // The retirement DECLARATION itself (`RETIRED_ROLE_NAMES`). Retiring a
+  // role means naming it exactly once, in the place that states it is
+  // retired — the alternative is inferring retirement from a role file's
+  // absence, which is the bug this task fixed: the file deliberately
+  // outlives the code, so absence proves nothing.
+  'apps/cli/src/lib/agents-skills-emitter.ts'
+])
 
 const NAME_PATTERN = /\bbrief[- ]author\b/i
 
@@ -61,6 +70,12 @@ describe('no-brief-author — brief-author is retired as a role id (plan-brief-v
       }
     }
     expect(offenders).toEqual([])
+  })
+
+  it('the retirement declaration still names it — the allowlist entry is load-bearing, not a blanket exemption', () => {
+    const content = readFileSync(join(REPO_ROOT, 'apps/cli/src/lib/agents-skills-emitter.ts'), 'utf8')
+    expect(content).toContain('RETIRED_ROLE_NAMES')
+    expect(content).toContain('brief-author')
   })
 
   it('the allowlisted doctrine.ts still legitimately names it — this test goes stale (not silently vacuous) the day it stops', () => {
