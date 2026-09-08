@@ -15,7 +15,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -649,5 +649,60 @@ describe('dispatch observability (#450)', () => {
     // And it really did stop: without a cap this would be ~9 chunks larger.
     expect(statSync(tee.path as string).size).toBeLessThan(chunk.length * (Math.ceil(MAX_TEE_BYTES / chunk.length) + 8))
     rmSync(tee.path as string, { force: true })
+  })
+})
+
+/**
+ * The wiring, not the units. Every test above this block exercises
+ * `openOutputTee`/`timeoutWarningLeadMs` directly; this one drives a REAL
+ * `vinaya dispatch` against a fake vendor and asserts that the tee is
+ * actually connected to the child's streams, lands under the run's own HOME,
+ * and scrubs what the child printed. A unit test of the tee cannot catch the
+ * tee being wired to nothing.
+ */
+describe('dispatch observability — wired through a real run (#450)', () => {
+  it("tees the child's real output to HOME, redacted, and names the file on stderr", () => {
+    const home = tempDir('vinaya-tee-home-')
+    const cwd = tempDir('vinaya-tee-cwd-')
+    const binDir = tempDir('vinaya-tee-bin-')
+    // A vendor that prints a credential on stdout and a line on stderr —
+    // exactly the shape of a coding agent running `env` mid-task.
+    writeFakeBinary(
+      binDir,
+      'claude',
+      '#!/bin/sh\ncat > /dev/null\n' +
+        "echo 'GITHUB_TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz'\n" +
+        "echo 'diagnostic line on stderr' >&2\n" +
+        'echo \'{"usage":{"input_tokens":1,"output_tokens":2}}\'\nexit 0\n'
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    // `spawnSync`, not the `runDispatch` helper above: that helper returns
+    // `stderr: ''` on a successful run (`execFileSync` yields stdout only),
+    // and the operator lines this test is about are written to stderr.
+    const r = spawnSync('bun', [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', promptFile], {
+      encoding: 'utf8',
+      cwd,
+      env: { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+    })
+    expect(r.status).toBe(0)
+
+    // The path is announced once, correlated with the run's effect id.
+    expect(r.stderr).toContain('output teed to')
+    expect(r.stderr).toMatch(/\[vinaya dispatch [0-9a-f-]{36}\]/)
+
+    const teeDir = join(home, '.vinaya', 'dispatch-output')
+    const logs = readdirSync(teeDir)
+    expect(logs).toHaveLength(1)
+    const contents = readFileSync(join(teeDir, logs[0] as string), 'utf8')
+
+    // Wired to BOTH streams — stderr was discarded entirely before this task.
+    expect(contents).toContain('diagnostic line on stderr')
+    // And scrubbed on the way: the child printed a token, the file has none.
+    expect(contents).not.toContain('ghp_0123456789abcdefghijklmnopqrstuvwxyz')
+    expect(contents).toContain('GITHUB_TOKEN=')
+
+    expect(statSync(join(teeDir, logs[0] as string)).mode & 0o777).toBe(0o600)
   })
 })
