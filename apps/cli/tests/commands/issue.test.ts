@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -322,22 +322,38 @@ describe('vinaya issue create --validate-only — briefSections builtin', () => 
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'vinaya-issue-brief-sections-test-'))
     writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify(BRIEF_SECTIONS_CONFIG), 'utf8')
+    // O1 — checkSurfaceGlobsResolve resolves the fixture's `## Surface` `in:`
+    // globs (`apps/cli/src/commands`, `apps/cli/src/lib`) against REAL
+    // tracked files via `git ls-files`, so the "passes" test below needs a
+    // real repo carrying matching paths, not just a bare scratch directory.
+    execFileSync('git', ['init', '--quiet'], { cwd })
+    mkdirSync(join(cwd, 'apps/cli/src/commands'), { recursive: true })
+    mkdirSync(join(cwd, 'apps/cli/src/lib'), { recursive: true })
+    writeFileSync(join(cwd, 'apps/cli/src/commands/fixture.ts'), '')
+    writeFileSync(join(cwd, 'apps/cli/src/lib/fixture.ts'), '')
+    execFileSync('git', ['add', '.'], { cwd })
   })
   afterEach(() => {
     rmSync(cwd, { recursive: true, force: true })
   })
 
   it('passes a task Issue carrying all four sections', () => {
+    // O6 — the shared fixture's own "Docs to keep coherent" pointer
+    // (`apps/cli/README.md`) falls outside its declared `## Surface` `in:`
+    // globs, which `checkDocsWithinSurface` now correctly refuses. Patched
+    // to a covered path HERE, in a scratch copy under `cwd` (never editing
+    // the shared fixture file itself, which this task's own Issue declares
+    // out of scope) — the same real repo/tracked-files setup `beforeEach`
+    // already establishes covers this patched path too.
+    const patchedBody = readFileSync(join(FORGE_FIXTURES, 'issue-brief-sections-valid.md'), 'utf8').replace(
+      '`apps/cli/README.md`',
+      '`apps/cli/src/lib/README.md`'
+    )
+    const bodyPath = join(cwd, 'body.md')
+    writeFileSync(bodyPath, patchedBody, 'utf8')
+
     const r = runCli(
-      [
-        'issue',
-        'create',
-        '--validate-only',
-        '--body-file',
-        join(FORGE_FIXTURES, 'issue-brief-sections-valid.md'),
-        '--label',
-        'vinaya/tranche:demo'
-      ],
+      ['issue', 'create', '--validate-only', '--body-file', bodyPath, '--label', 'vinaya/tranche:demo'],
       cwd
     )
     expect(r.status).toBe(0)
