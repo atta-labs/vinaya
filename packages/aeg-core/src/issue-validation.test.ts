@@ -1143,10 +1143,7 @@ describe('checkSurfaceScope (O7)', () => {
   })
 
   it('fails, naming the file and the glob, when a changed file falls inside an out: glob', () => {
-    const result = checkSurfaceScope(
-      ['packages/aeg-core/src/other/thing.ts'],
-      ['packages/aeg-core/src/other/**']
-    )
+    const result = checkSurfaceScope(['packages/aeg-core/src/other/thing.ts'], ['packages/aeg-core/src/other/**'])
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.violations).toEqual([
@@ -1155,10 +1152,7 @@ describe('checkSurfaceScope (O7)', () => {
   })
 
   it('reports every violation in one pass, not only the first (O12 discipline)', () => {
-    const result = checkSurfaceScope(
-      ['a/one.ts', 'b/two.ts', 'c/three.ts'],
-      ['a/**', 'b/**']
-    )
+    const result = checkSurfaceScope(['a/one.ts', 'b/two.ts', 'c/three.ts'], ['a/**', 'b/**'])
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.violations).toEqual([
@@ -1197,7 +1191,7 @@ describe('checkBlastRadiusScope (O4) — structural mode at/above the brief-sect
       'in: apps/vinaya/**',
       'out: packages/ui/**',
       '',
-      "**Boundary** — Does NOT touch `packages/ui` (that package is out of scope).",
+      '**Boundary** — Does NOT touch `packages/ui` (that package is out of scope).',
       '',
       '**Project:** vinaya'
     ].join('\n')

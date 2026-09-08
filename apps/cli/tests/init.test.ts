@@ -1125,7 +1125,9 @@ describe('generated pre-commit hook: scoped format/lint/typecheck (O9)', () => {
     expect(preCommit.indexOf('bunx biome check --write --staged .')).toBeLessThan(
       preCommit.indexOf('bunx turbo typecheck --affected')
     )
-    expect(preCommit.indexOf('bunx turbo typecheck --affected')).toBeLessThan(preCommit.indexOf('check --all --diff-only'))
+    expect(preCommit.indexOf('bunx turbo typecheck --affected')).toBeLessThan(
+      preCommit.indexOf('check --all --diff-only')
+    )
   })
 
   it('restages exactly the files that were staged before the fix, not the whole working tree', async () => {

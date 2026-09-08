@@ -145,7 +145,7 @@ function checkTableAgainstReal(rows: SpecRow[], real: RealExport[], label: strin
     const stale = rows.filter((r) => !realByKey.has(compositeKey(r.name, r.file)))
     expect(
       stale.map((r) => `${r.name} (${r.file})`),
-      `surface.md row(s) with no matching real export — remove or fix`
+      'surface.md row(s) with no matching real export — remove or fix'
     ).toEqual([])
   })
 
@@ -153,7 +153,7 @@ function checkTableAgainstReal(rows: SpecRow[], real: RealExport[], label: strin
     const missing = real.filter((e) => !rowByKey.has(compositeKey(e.name, e.file)))
     expect(
       missing.map((e) => `${e.name} (${e.file})`),
-      `real export(s) with no surface.md row — add one`
+      'real export(s) with no surface.md row — add one'
     ).toEqual([])
   })
 
@@ -161,7 +161,10 @@ function checkTableAgainstReal(rows: SpecRow[], real: RealExport[], label: strin
     const wrong = rows
       .filter((r) => realByKey.has(compositeKey(r.name, r.file)))
       .filter((r) => realByKey.get(compositeKey(r.name, r.file))!.kind !== r.kind)
-      .map((r) => `${r.name} (${r.file}): surface.md says ${r.kind}, really ${realByKey.get(compositeKey(r.name, r.file))!.kind}`)
+      .map(
+        (r) =>
+          `${r.name} (${r.file}): surface.md says ${r.kind}, really ${realByKey.get(compositeKey(r.name, r.file))!.kind}`
+      )
     expect(wrong).toEqual([])
   })
 }
@@ -181,7 +184,7 @@ describe('surface.md Policy table mirrors packages/aeg-core/src/index.ts exactly
 // Effects — apps/cli/src/lib/**, one module per file, no barrel
 // ---------------------------------------------------------------------------
 
-describe('surface.md Effects table mirrors apps/cli/src/lib/**\'s real exports exactly (O16)', () => {
+describe("surface.md Effects table mirrors apps/cli/src/lib/**'s real exports exactly (O16)", () => {
   const configPath = ts.findConfigFile(CLI_ROOT, ts.sys.fileExists, 'tsconfig.json')
   if (!configPath) throw new Error('surface-spec-exports: could not find apps/cli/tsconfig.json')
   const configFile = ts.readConfigFile(configPath, ts.sys.readFile)

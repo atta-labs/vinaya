@@ -659,7 +659,7 @@ const ISSUE_CONTENT_RECOVERY = {
   partsCiteObjectives:
     'Fix the named Part to cite an objective id the `## Objectives` section actually defines, or add the missing objective, then re-run `{cmd}`.',
   docsWithinSurface:
-    "Move the named doc pointer to a path `## Surface`'s `in:` globs actually cover (never widen the surface just to fit the pointer — that renders an unusable brief), or drop it from \"Docs to keep coherent\" if this task does not really keep it coherent, then re-run `{cmd}`."
+    'Move the named doc pointer to a path `## Surface`\'s `in:` globs actually cover (never widen the surface just to fit the pointer — that renders an unusable brief), or drop it from "Docs to keep coherent" if this task does not really keep it coherent, then re-run `{cmd}`.'
 } as const
 
 export type IssueContentInput = {

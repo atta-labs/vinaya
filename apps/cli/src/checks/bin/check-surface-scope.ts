@@ -172,7 +172,7 @@ async function main(): Promise<void> {
         severity: 'error',
         message: `surface-scope: \`${v.file}\` falls inside Issue #${issue}'s \`## Surface\` \`out:\` glob \`${v.glob}\` — this task's own declared surface excludes it.`,
         agent_recovery_prompt:
-          'Either the file genuinely belongs outside this task (drop the change from this PR), or the Issue\'s own `## Surface` `out:` list is wrong (fix it via `vinaya issue edit`, which re-validates it) — then re-run `vinaya check surface-scope`.',
+          "Either the file genuinely belongs outside this task (drop the change from this PR), or the Issue's own `## Surface` `out:` list is wrong (fix it via `vinaya issue edit`, which re-validates it) — then re-run `vinaya check surface-scope`.",
         file: v.file
       })
     }
