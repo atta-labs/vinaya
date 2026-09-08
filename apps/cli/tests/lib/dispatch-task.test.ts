@@ -73,7 +73,7 @@ function deps(overrides: Partial<DispatchTaskDeps> = {}): DispatchTaskDeps {
  * "never called" default meaningful for the authorization tests it exists for. */
 function postingDeps(overrides: Partial<DispatchTaskDeps> = {}): DispatchTaskDeps {
   return deps({
-    assembleAndRenderBrief: async () => ({ ok: true, brief: BRIEF_TEXT }),
+    assembleAndRenderBrief: async () => ({ ok: true, brief: BRIEF_TEXT, issue: 427 }),
     findExistingV1Comment: () => null,
     ...overrides
   })
@@ -108,6 +108,31 @@ describe('dispatchTask', () => {
     expect(reconstructed).toBe(`${BRIEF_TEXT}\n`)
     const hashLine = p.body.split('\n')[0]
     expect(hashLine).toBe(`Brief hash: ${briefHash(BRIEF_TEXT)}`)
+  })
+
+  it('posts on the resolved Issue, not the task id, when the two differ (task 5, Issue #447, O1)', async () => {
+    const findCalls: number[] = []
+    const postCalls: string[] = []
+    const result = await dispatchTask(
+      { tranche: 'plan-brief-v1', n: 3 },
+      postingDeps({
+        assembleAndRenderBrief: async () => ({ ok: true, brief: BRIEF_TEXT, issue: 986 }),
+        findExistingV1Comment: (issue) => {
+          findCalls.push(issue)
+          return null
+        },
+        postMarkedComment: (_kind, ref) => {
+          postCalls.push(ref)
+          return 'https://github.com/acme/widget/issues/986#issuecomment-1'
+        }
+      })
+    )
+    expect(result.posted).toBe(true)
+    // Live bug this regresses: task id 3 must never be used as the Issue
+    // number just because it's numerically a valid one — dispatching task 3
+    // once posted its brief on the unrelated, already-merged Issue #3.
+    expect(findCalls).toEqual([986])
+    expect(postCalls).toEqual(['986'])
   })
 
   it('refuses a second dispatch on the same Issue, naming the existing comment url — nothing posted', async () => {

@@ -235,14 +235,21 @@ export async function dispatchTask(
     )
   }
 
-  const existing = deps.findExistingV1Comment(n)
+  // `result.issue` is the real forge Issue number the render step already
+  // resolved from the task id — used for every forge read/write below,
+  // never `n` (the task id) again. Reusing `n` as an Issue number here was
+  // the live bug: dispatching task 3 posted its brief on Issue #3, an
+  // unrelated merged Issue, because this code used to read `n` here.
+  const issue = result.issue
+
+  const existing = deps.findExistingV1Comment(issue)
   if (existing) {
     throw new DispatchTaskError(`Task ${n} in tranche \`${tranche}\` is already dispatched — see ${existing.url}`)
   }
 
   const hash = briefHash(result.brief)
   const commentBody = `Brief hash: ${hash}\n${result.brief}`
-  const url = deps.postMarkedComment('issue', String(n), AEG_BRIEF_V1_MARKER, commentBody)
+  const url = deps.postMarkedComment('issue', String(issue), AEG_BRIEF_V1_MARKER, commentBody)
 
   if (agent) {
     const dispatchRole = await deps.resolveDispatchRole()

@@ -45,6 +45,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `resolveWorkspaceEntry` | function | `packages/aeg-core/src/blast-radius-domains.ts` |
 | `checkBranchTopology` | function | `packages/aeg-core/src/branch-topology-gate.ts` |
 | `taskBranchTopologyFields` | function | `packages/aeg-core/src/branch-topology-gate.ts` |
+| `extractBoundaryFilePaths` | function | `packages/aeg-core/src/brief-render.ts` |
 | `parseRationaleFields` | function | `packages/aeg-core/src/brief-render.ts` |
 | `renderBrief` | function | `packages/aeg-core/src/brief-render.ts` |
 | `AGENT_BOXES_REFUSED_SINCE_PR` | const | `packages/aeg-core/src/brief-validation.ts` |
@@ -267,7 +268,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `projectsFromBody` | function | `packages/aeg-forge-state/src/list-tasks.ts` |
 | `mapForgeFacts` | function | `packages/aeg-forge-state/src/map-forge-facts.ts` |
 
-(237 exports.)
+(241 exports.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
@@ -302,6 +303,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `assembleAndRenderBrief` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `expandGlob` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `packageNameForPath` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `resolveBoundaryPaths` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `sha256OfFile` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `buildClaudeCommandOps` | function | `apps/cli/src/lib/claude-command-emitter.ts` |
 | `CLAUDE_COMMAND_GROUP` | const | `apps/cli/src/lib/claude-command-emitter.ts` |
@@ -398,6 +400,12 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `MAX_TEE_BYTES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `openOutputTee` | function | `apps/cli/src/lib/dispatch.ts` |
 | `timeoutWarningLeadMs` | function | `apps/cli/src/lib/dispatch.ts` |
+| `parseClaudeResumeId` | function | `apps/cli/src/lib/dispatch.ts` |
+| `parseClaudeUsage` | function | `apps/cli/src/lib/dispatch.ts` |
+| `renderClaudeEvent` | function | `apps/cli/src/lib/dispatch.ts` |
+| `renderCodexEvent` | function | `apps/cli/src/lib/dispatch.ts` |
+| `renderGeminiEvent` | function | `apps/cli/src/lib/dispatch.ts` |
+| `parseGeminiUsage` | function | `apps/cli/src/lib/dispatch.ts` |
 | `appendDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `applyDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `freshDocOwners` | function | `apps/cli/src/lib/doc-owners-write.ts` |
@@ -475,7 +483,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `STUDIO_ARTIFACT_REPO` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_NODE_MODULES_PACKED_DIRNAME` | const | `apps/cli/src/lib/studio-bundle.ts` |
 
-(174 exports.)
+(206 exports.)
 
 ## Commands — `apps/cli/src/commands` (41 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
@@ -569,5 +577,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 
 `issue create`/`issue edit` re-verified after `BRIEF_BUILTINS` (`apps/cli/src/lib/config.ts`) and its `runBuiltin` table (`apps/cli/src/lib/forge-write.ts`) gained a `briefSections` entry: both rows' own in-scope call count is unchanged — `validateTaskIssue` was already the one call either row lists, and a new entry inside that function's internal table is not a new call site in either command's own body.
 
-`dispatchRole` (Issue #450, dispatch observability) gained five exports — `DEFAULT_TIMEOUT_MS`, `HEARTBEAT_INTERVAL_MS`, `MAX_TEE_BYTES`, `openOutputTee` and `timeoutWarningLeadMs`, all listed above — and dropped none. They are exported to be reachable from a test at all: the observability behaviours cannot be asserted through `dispatchRole` alone without spawning a real vendor process. `AGENT_VENDOR_NAMES`/`dispatchRole`/`isAgentVendor` are unchanged.
+`dispatchRole` (Issue #450, dispatch observability) gained five exports — `DEFAULT_TIMEOUT_MS`, `HEARTBEAT_INTERVAL_MS`, `MAX_TEE_BYTES`, `openOutputTee` and `timeoutWarningLeadMs`, all listed above — and dropped none. They are exported to be reachable from a test at all: the observability behaviours cannot be asserted through `dispatchRole` alone without spawning a real vendor process. `AGENT_VENDOR_NAMES`/`dispatchRole`/`isAgentVendor` are unchanged. Issue #447's O5 adds five more — `parseClaudeUsage` and `parseClaudeResumeId`, exported so a test can assert they read a stream's terminal event as well as a single whole-blob payload, and the three `render*Event` functions, one per vendor, that turn that vendor's own stream into the lines an operator reads while the agent works.
+
+`assembleAndRenderBrief`'s own resolved-Issue result field (Issue #447, O1) is a new field on its already-exported return type, not a new function/const/class export — per this file's own rule (`## The rule`), it needs no new row here. `task dispatch` (`taskDispatchCommand`) still calls only `dispatchTask`, unchanged.
 

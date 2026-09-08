@@ -19,6 +19,7 @@ import {
   buildConsumersOf,
   checkDispatchReadiness,
   checkIssueRationale,
+  extractBoundaryFilePaths,
   fetchForgeFacts,
   fetchOpenIssuesByLabel,
   objectivesOf,
@@ -94,6 +95,31 @@ export function sha256OfFile(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
 }
 
+/**
+ * Resolves each `extractBoundaryFilePaths` token to a real tracked path
+ * against `allTrackedFiles` (a `git ls-files` snapshot, injected rather than
+ * read here so this stays testable without a real repo) — an exact match, or
+ * a UNIQUE suffix match for a bare filename elided from a shared directory
+ * prefix in the Boundary prose (e.g. Issue #447's own "aeg-root/
+ * aeg-manual-flow.md, process.md, roles/developer.md"). A token matching
+ * zero or more-than-one tracked file is dropped, never guessed — task 5,
+ * Issue #447, O3.
+ */
+export function resolveBoundaryPaths(tokens: string[], allTrackedFiles: string[]): string[] {
+  const trackedSet = new Set(allTrackedFiles)
+  const resolved = new Set<string>()
+  for (const token of tokens) {
+    if (trackedSet.has(token)) {
+      resolved.add(token)
+      continue
+    }
+    const suffix = `/${token}`
+    const suffixMatches = allTrackedFiles.filter((f) => f.endsWith(suffix))
+    if (suffixMatches.length === 1) resolved.add(suffixMatches[0] as string)
+  }
+  return [...resolved]
+}
+
 function listDirs(dir: string): string[] {
   try {
     return readdirSync(dir, { withFileTypes: true })
@@ -130,7 +156,17 @@ function workspaceGlobs(): string[] {
   return Array.isArray(root.workspaces) ? (root.workspaces as string[]) : []
 }
 
-export type AssembleAndRenderBriefResult = { ok: true; brief: string } | { ok: false; missing: string[] }
+/**
+ * `issue` is the real forge Issue number this brief was rendered from and
+ * closes — `task.issue`, resolved below from the tranche's forge-derived
+ * task list, never the raw task id a caller passed in as `taskId`. Returned
+ * rather than discarded so a caller that only has the task id (`dispatchTask`)
+ * can still post to and read from the Issue this brief actually belongs to,
+ * instead of reusing the task id as if it were an Issue number (task 5,
+ * Issue #447, O1) — live evidence: dispatching task 3 with this field
+ * discarded posted its brief on Issue #3, an unrelated merged Issue.
+ */
+export type AssembleAndRenderBriefResult = { ok: true; brief: string; issue: number } | { ok: false; missing: string[] }
 
 /**
  * Renders the twelve-section brief for `<tranche> <n>` from the forge and the
@@ -238,18 +274,32 @@ export async function assembleAndRenderBrief(
 
   const surfaceResult = parseIssueSurface(issueBody)
   const surface: IssueSurface = surfaceResult.ok ? surfaceResult.value : { in: [], out: [] }
+  const rationale = parseRationaleFields(issueBody)
 
+  // Every declared Surface glob must still resolve to at least one real
+  // tracked file — a sanity check on the Issue's own `## Surface` `in:`
+  // list, catching a typo'd/empty directory — but the MATCHES themselves are
+  // no longer what §4's file list is built from (see below): a directory-
+  // level glob is never a file-level change set (task 5, Issue #447, O3).
   const globs = surfaceGlobsOverride ?? surface.in
-  const surfaceFiles: SurfaceFileFact[] = []
   for (const glob of globs) {
-    const matches = expandGlob(glob)
-    if (matches.length === 0) {
+    if (expandGlob(glob).length === 0) {
       return { ok: false, missing: [`--surfaces glob "${glob}" matched no tracked file.`] }
     }
-    for (const path of matches) {
-      surfaceFiles.push({ path, sha256: sha256OfFile(path), packageName: packageNameForPath(path) })
-    }
   }
+
+  // §4's Create/Modify file list and premise pins are the files the
+  // Boundary rationale field actually names — the only per-task source
+  // precise enough to produce a brief a developer can act on, since a
+  // directory-level Surface glob can only ever name a whole directory.
+  const allTrackedFiles = git(['ls-files'])
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const boundaryTokens = extractBoundaryFilePaths(rationale.boundary ?? '')
+  const surfaceFiles: SurfaceFileFact[] = resolveBoundaryPaths(boundaryTokens, allTrackedFiles)
+    .sort()
+    .map((path) => ({ path, sha256: sha256OfFile(path), packageName: packageNameForPath(path) }))
 
   const workspaces = workspaceGlobs()
   const consumersOf = buildConsumersOf(workspaces, listDirs, readManifest)
@@ -271,7 +321,7 @@ export async function assembleAndRenderBrief(
     projects: task.projects,
     dependsOn: task.dependsOn,
     conflictsWith: task.conflictsWith,
-    rationale: parseRationaleFields(issueBody),
+    rationale,
     objectives: (() => {
       const parsed = objectivesOf(issueBody)
       return parsed.ok ? parsed.objectives : []
@@ -289,5 +339,5 @@ export async function assembleAndRenderBrief(
 
   const template = readFileSync(TEMPLATE_PATH, 'utf8')
   const result = renderBrief(facts, template)
-  return result.ok ? { ok: true, brief: result.brief } : { ok: false, missing: result.missing }
+  return result.ok ? { ok: true, brief: result.brief, issue: task.issue } : { ok: false, missing: result.missing }
 }

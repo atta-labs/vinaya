@@ -256,6 +256,9 @@ describe('vinaya dispatch --resume', () => {
     expect(r.status).toBe(0)
     expect((JSON.parse(r.stdout) as { data: { resumeId: string | null } }).data.resumeId).toBe('resume-id-123')
     const argv = readFileSync(argvOut, 'utf8').replace(/\n$/, '').split('\n')
-    expect(argv).toEqual(['-p', '-r', 'resume-id-123', '--output-format', 'json'])
+    // `stream-json` with the `--verbose` the CLI requires alongside `-p`
+    // (Issue #447, O5): the resume path streams for the same reason the
+    // first turn does — the operator watches the work either way.
+    expect(argv).toEqual(['-p', '-r', 'resume-id-123', '--verbose', '--output-format', 'stream-json'])
   })
 })

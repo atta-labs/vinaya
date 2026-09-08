@@ -345,7 +345,7 @@ Every brief includes stop conditions. Honor them unconditionally. Common reasons
 When dispatched by an automation layer, you work in the worktree it created at `.worktrees/task/<tranche>/<n>/` on branch `task/<tranche>/<n>` — your isolated workspace, branched from `origin/main`.
 
 When working manually, the brief's pre-flight Step 0 gives you the worktree command. Run it first:
-- `git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> origin/main && cd .worktrees/task/<tranche>/<n>`
+- `git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> --no-track origin/main && cd .worktrees/task/<tranche>/<n> && git config push.autoSetupRemote true`
 - Then `git worktree list` to confirm you're not accidentally working in another task's worktree
 - Branch from `origin/main`, never from `HEAD` of the current local checkout (which may be behind)
 - Confirm the branch was created correctly: `git log --oneline -3` should show the expected parent

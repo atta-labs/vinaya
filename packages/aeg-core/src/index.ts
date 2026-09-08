@@ -342,7 +342,7 @@ export type {
 } from './milestone-validation'
 export { findWorkspaceEscapes } from './workspace-escape'
 export type { WorkspaceEscapeFinding, WorkspaceEscapeReason, WorkspaceEscapeSourceFile } from './workspace-escape'
-export { parseRationaleFields, renderBrief } from './brief-render'
+export { extractBoundaryFilePaths, parseRationaleFields, renderBrief } from './brief-render'
 export type { BriefFacts, RationaleFieldKey, RenderResult, SurfaceFileFact } from './brief-render'
 export {
   hasObjectivesHeading,

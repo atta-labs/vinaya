@@ -224,15 +224,24 @@ export function openOutputTee(effectId: string): {
 
 type UsageParser = (stdout: string) => { input: number; output: number } | null
 
-function parseClaudeUsage(stdout: string): { input: number; output: number } | null {
-  try {
-    const obj = JSON.parse(stdout) as { usage?: { input_tokens?: unknown; output_tokens?: unknown } }
-    const u = obj.usage
-    if (u && typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
-      return { input: u.input_tokens, output: u.output_tokens }
+export function parseClaudeUsage(stdout: string): { input: number; output: number } | null {
+  // `stream-json` prints one event per line and the terminal event carries
+  // `usage`; scanned from the end for the same reason `parseCodexUsage` is.
+  // A single whole-blob `json` payload is one line, so it parses here too —
+  // this reads both forms rather than trading one for the other.
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as {
+        usage?: { input_tokens?: unknown; output_tokens?: unknown }
+      }
+      const u = obj.usage
+      if (u && typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
+        return { input: u.input_tokens, output: u.output_tokens }
+      }
+    } catch {
+      // not a JSON line — keep scanning backwards, never a guessed shape
     }
-  } catch {
-    // fall through to null — never a guessed shape
   }
   return null
 }
@@ -262,17 +271,41 @@ function parseCodexUsage(stdout: string): { input: number; output: number } | nu
 }
 
 /** Gemini's own JSON stdout is a per-model `stats.models.*.tokens` breakdown, not a single `{ input, output }` pair (confirmed live, module doc above) — never guessed into one. */
-function parseGeminiUsage(_stdout: string): null {
+export function parseGeminiUsage(stdout: string): { input: number; output: number } | null {
+  // The terminal `result` event's `stats` carries the counts; scanned from the
+  // end for the same reason the other two parsers are. This previously always
+  // returned null, so a gemini dispatch reported no usage at all.
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as {
+        stats?: { input_tokens?: unknown; output_tokens?: unknown }
+      }
+      const st = obj.stats
+      if (st && typeof st.input_tokens === 'number' && typeof st.output_tokens === 'number') {
+        return { input: st.input_tokens, output: st.output_tokens }
+      }
+    } catch {
+      // not a JSON line — keep scanning backwards
+    }
+  }
   return null
 }
 
-function parseClaudeResumeId(stdout: string): string | null {
-  try {
-    const obj = JSON.parse(stdout) as { session_id?: unknown }
-    return typeof obj.session_id === 'string' ? obj.session_id : null
-  } catch {
-    return null
+export function parseClaudeResumeId(stdout: string): string | null {
+  // Same two-form tolerance as `parseClaudeUsage`: the terminal event of a
+  // `stream-json` run carries `session_id`, and a whole-blob `json` payload
+  // is simply the single line.
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as { session_id?: unknown }
+      if (typeof obj.session_id === 'string') return obj.session_id
+    } catch {
+      // not a JSON line — keep scanning backwards
+    }
   }
+  return null
 }
 
 function parseCodexResumeId(stdout: string): string | null {
@@ -304,29 +337,115 @@ type VendorSpec = {
   resumeArgs: (id: string) => string[]
   parseUsage: UsageParser
   parseResumeId: (stdout: string) => string | null
+  /** One line of this vendor's own stream, rendered for a human, or `null` for an event worth nothing on screen. */
+  renderEvent: (obj: Record<string, unknown>) => string | null
+}
+
+/**
+ * One line of the vendor's own stream, rendered for a human, or `null` for an
+ * event that carries nothing worth showing.
+ *
+ * Vendor-agnostic by construction: each vendor already declares how to read
+ * its own structured channel (`parseUsage`, `parseResumeId`), and this is the
+ * third member of that same family. The operator sees the agent working
+ * whichever vendor was dispatched, and no vendor's format leaks past its own
+ * renderer.
+ *
+ * The cause this exists for is NOT vendor-specific: the child is spawned onto
+ * pipes, so no vendor sees a TTY and every one of them falls back to a
+ * buffered batch mode that prints nothing until it exits. Requesting the
+ * streaming form of the structured channel is what restores the view without
+ * a pseudo-terminal — which this bundled CLI cannot carry (`node-pty` is a
+ * native addon) and which would cost `parseUsage` the structured figures it
+ * reads.
+ */
+export function renderClaudeEvent(obj: Record<string, unknown>): string | null {
+  const type = obj.type
+  if (type === 'assistant' || type === 'user') {
+    const msg = obj.message as { content?: unknown } | undefined
+    const content = Array.isArray(msg?.content) ? (msg?.content as Record<string, unknown>[]) : []
+    const out: string[] = []
+    for (const block of content) {
+      if (block.type === 'text' && typeof block.text === 'string' && block.text.trim().length > 0) {
+        out.push(block.text.trim())
+      } else if (block.type === 'tool_use' && typeof block.name === 'string') {
+        const input = block.input as Record<string, unknown> | undefined
+        // The one field that says WHICH thing the tool acted on, when there
+        // is one — a path, a command, a pattern. Never the whole payload:
+        // a file write's `content` is the file, and belongs in the tee.
+        const subject =
+          (typeof input?.file_path === 'string' && input.file_path) ||
+          (typeof input?.command === 'string' && input.command) ||
+          (typeof input?.pattern === 'string' && input.pattern) ||
+          (typeof input?.path === 'string' && input.path) ||
+          ''
+        const trimmed = subject.length > 120 ? `${subject.slice(0, 117)}...` : subject
+        out.push(trimmed ? `⚙ ${block.name}: ${trimmed}` : `⚙ ${block.name}`)
+      }
+      // Every other block kind — a tool result above all — renders nothing:
+      // results are the bulk of a run and the tee already holds them verbatim.
+    }
+    return out.length > 0 ? out.join('\n') : null
+  }
+  if (type === 'system' && obj.subtype === 'init') return '⏵ session started'
+  if (typeof obj.stop_reason === 'string') return `⏹ ${obj.stop_reason}`
+  return null
+}
+
+/** Codex prints one event per line under `--json`; its item text is the human-facing part. */
+export function renderCodexEvent(obj: Record<string, unknown>): string | null {
+  const type = typeof obj.type === 'string' ? obj.type : ''
+  if (type.endsWith('.completed') || type.endsWith('.started')) return `⏵ ${type}`
+  const item = obj.item as { text?: unknown } | undefined
+  return typeof item?.text === 'string' && item.text.trim().length > 0 ? item.text.trim() : null
+}
+
+/** Gemini's streaming shape is not yet verified against a real run; show nothing rather than guess a field. */
+export function renderGeminiEvent(obj: Record<string, unknown>): string | null {
+  if (obj.type === 'init') return '⏵ session started'
+  if (obj.type === 'message' && obj.role === 'assistant') {
+    const text = typeof obj.content === 'string' ? obj.content.trim() : ''
+    return text.length > 0 ? text : null
+  }
+  if (obj.type === 'result') {
+    const status = typeof obj.status === 'string' ? obj.status : 'finished'
+    return `⏹ ${status}`
+  }
+  return null
 }
 
 const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
   claude: {
     binary: 'claude',
-    args: ['-p', '--output-format', 'json'],
-    resumeArgs: (id) => ['-p', '-r', id, '--output-format', 'json'],
+    // `stream-json` is the SAME structured channel as `json`, emitted one
+    // event per line as it happens instead of one blob at exit — so the
+    // operator sees the work and `parseUsage` still reads real figures.
+    // `--verbose` is required by the CLI whenever `-p` is paired with
+    // `stream-json`; without it the flag combination is refused.
+    args: ['-p', '--verbose', '--output-format', 'stream-json'],
+    resumeArgs: (id) => ['-p', '-r', id, '--verbose', '--output-format', 'stream-json'],
     parseUsage: parseClaudeUsage,
-    parseResumeId: parseClaudeResumeId
+    parseResumeId: parseClaudeResumeId,
+    renderEvent: renderClaudeEvent
   },
   codex: {
     binary: 'codex',
     args: ['exec', '--json', '-'],
     resumeArgs: (id) => ['exec', 'resume', id, '--json', '-'],
     parseUsage: parseCodexUsage,
-    parseResumeId: parseCodexResumeId
+    parseResumeId: parseCodexResumeId,
+    renderEvent: renderCodexEvent
   },
   gemini: {
     binary: 'gemini',
-    args: ['-p', '', '--output-format', 'json', '--skip-trust'],
-    resumeArgs: (id) => ['-p', '', '--resume', id, '--output-format', 'json', '--skip-trust'],
+    // Verified against a real run, not assumed (the Issue's own trap): gemini
+    // emits `init`, then a `message` per turn carrying `role`/`content`, then
+    // a terminal `result` whose `stats` holds the token counts.
+    args: ['-p', '', '--output-format', 'stream-json', '--skip-trust'],
+    resumeArgs: (id) => ['-p', '', '--resume', id, '--output-format', 'stream-json', '--skip-trust'],
     parseUsage: parseGeminiUsage,
-    parseResumeId: parseGeminiResumeId
+    parseResumeId: parseGeminiResumeId,
+    renderEvent: renderGeminiEvent
   }
 }
 
@@ -526,11 +645,31 @@ export async function dispatchRole(
       process.stderr.write(`[vinaya dispatch ${effectId}] ${role} via ${agent}: output teed to ${outputTee.path}\n`)
     }
 
+    // Whatever has arrived since the last complete line. The vendor's stream
+    // is line-delimited but a chunk can split one, so a partial tail is held
+    // back rather than parsed and discarded.
+    let renderCarry = ''
     child.stdout.on('data', (chunk: Buffer) => {
       // Teed off the SAME chunk the parser below consumes, never taken from
       // it: `stdoutBuf` still sees every byte, capped exactly as before.
       outputTee.write(chunk)
       if (stdoutBuf.length < MAX_STDOUT_BYTES) stdoutBuf += chunk.toString('utf8')
+
+      // Show the work as it happens. Rendering must never be able to end the
+      // run it is only observing, so every failure here is swallowed: a
+      // malformed line, an unexpected shape, a renderer that throws.
+      renderCarry += chunk.toString('utf8')
+      const lines = renderCarry.split('\n')
+      renderCarry = lines.pop() ?? ''
+      for (const line of lines) {
+        if (line.trim().length === 0) continue
+        try {
+          const rendered = vendor.renderEvent(JSON.parse(line) as Record<string, unknown>)
+          if (rendered) process.stderr.write(`${rendered}\n`)
+        } catch {
+          // not a JSON line, or a renderer that refused it — never fatal
+        }
+      }
     })
     // Still never inspected for outcome (O2/constraints: stderr content
     // never decides success or failure, only exit code does) — but no

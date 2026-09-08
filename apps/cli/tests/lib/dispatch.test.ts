@@ -25,6 +25,11 @@ import { homedir } from 'node:os'
 import { readdirSync, statSync } from 'node:fs'
 import {
   DEFAULT_TIMEOUT_MS,
+  parseClaudeResumeId,
+  parseClaudeUsage,
+  parseGeminiUsage,
+  renderClaudeEvent,
+  renderGeminiEvent,
   HEARTBEAT_INTERVAL_MS,
   MAX_TEE_BYTES,
   openOutputTee,
@@ -440,7 +445,10 @@ const RESUME_VENDOR_FIXTURES: ResumeVendorFixture[] = [
   {
     agent: 'claude',
     firstStdout: (id) => `{"session_id":"${id}","usage":{"input_tokens":1,"output_tokens":1}}`,
-    resumeArgv: (id) => ['-p', '-r', id, '--output-format', 'json']
+    // `--verbose` is required by the CLI when `-p` is paired with
+    // `stream-json`; the resume path streams for the same reason the first
+    // turn does (Issue #447, O5).
+    resumeArgv: (id) => ['-p', '-r', id, '--verbose', '--output-format', 'stream-json']
   },
   {
     agent: 'codex',
@@ -451,7 +459,9 @@ const RESUME_VENDOR_FIXTURES: ResumeVendorFixture[] = [
   {
     agent: 'gemini',
     firstStdout: (id) => `{"session_id":"${id}"}`,
-    resumeArgv: (id) => ['-p', '', '--resume', id, '--output-format', 'json', '--skip-trust']
+    // Streams for the same reason claude does (Issue #447, O5); shape
+    // verified against a real gemini run, not assumed.
+    resumeArgv: (id) => ['-p', '', '--resume', id, '--output-format', 'stream-json', '--skip-trust']
   }
 ]
 
@@ -704,5 +714,109 @@ describe('dispatch observability — wired through a real run (#450)', () => {
     expect(contents).toContain('GITHUB_TOKEN=')
 
     expect(statSync(join(teeDir, logs[0] as string)).mode & 0o777).toBe(0o600)
+  })
+})
+
+/**
+ * Streaming the agent's own output (Issue #447, O5). The cause is
+ * vendor-agnostic — the child is spawned on pipes, sees no TTY, and every
+ * vendor falls back to a buffered mode that prints nothing until exit — so
+ * these cover the rendering contract each vendor plugs into, plus the two
+ * parsers that had to learn to read a stream's terminal event instead of one
+ * whole blob.
+ */
+describe('dispatch streaming output (#447 O5)', () => {
+  it('renders an assistant turn as the text a human reads', () => {
+    const line = renderClaudeEvent({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: '  Reading the brief.  ' }] }
+    })
+    expect(line).toBe('Reading the brief.')
+  })
+
+  it('renders a tool call with the one field naming what it acted on', () => {
+    expect(
+      renderClaudeEvent({
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', name: 'Edit', input: { file_path: 'src/a.ts' } }] }
+      })
+    ).toBe('⚙ Edit: src/a.ts')
+    expect(
+      renderClaudeEvent({
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'bun test' } }] }
+      })
+    ).toBe('⚙ Bash: bun test')
+  })
+
+  it('never renders a tool result, which is bulk already captured verbatim in the tee', () => {
+    const line = renderClaudeEvent({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', content: 'x'.repeat(50_000) }] }
+    })
+    expect(line).toBeNull()
+  })
+
+  it('truncates a very long subject rather than flooding the terminal', () => {
+    const long = `src/${'a'.repeat(400)}.ts`
+    const line = renderClaudeEvent({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: long } }] }
+    }) as string
+    expect(line.length).toBeLessThan(140)
+    expect(line.endsWith('...')).toBe(true)
+  })
+
+  it('renders nothing for an event that carries nothing worth showing', () => {
+    expect(renderClaudeEvent({ type: 'rate_limit_event', rate_limit_info: {} })).toBeNull()
+    expect(renderClaudeEvent({ type: 'system', subtype: 'hook_started' })).toBeNull()
+    expect(renderGeminiEvent({ type: 'rate_limit', anything: true })).toBeNull()
+  })
+
+  it("renders gemini's own stream, whose shape was verified against a real run", () => {
+    // `init` / `message` / `result` — the three event kinds a real
+    // `gemini --output-format stream-json` run emits, checked rather than
+    // assumed (the Issue's trap named exactly this).
+    expect(renderGeminiEvent({ type: 'init', session_id: 'x' })).toBe('⏵ session started')
+    expect(renderGeminiEvent({ type: 'message', role: 'assistant', content: '  ok  ' })).toBe('ok')
+    expect(renderGeminiEvent({ type: 'result', status: 'success' })).toBe('⏹ success')
+    // A user echo is the prompt coming back, not the agent working.
+    expect(renderGeminiEvent({ type: 'message', role: 'user', content: 'the prompt' })).toBeNull()
+  })
+
+  it("reads gemini's usage from its terminal result event, where it previously read none at all", () => {
+    const stream = [
+      JSON.stringify({ type: 'init' }),
+      JSON.stringify({ type: 'message', role: 'assistant', content: 'ok' }),
+      JSON.stringify({ type: 'result', status: 'success', stats: { input_tokens: 8983, output_tokens: 36 } })
+    ].join('\n')
+    expect(parseGeminiUsage(stream)).toEqual({ input: 8983, output: 36 })
+    expect(parseGeminiUsage('not json')).toBeNull()
+  })
+
+  it("reads usage from a stream's terminal event, and still from a single whole-blob payload", () => {
+    const stream = [
+      JSON.stringify({ type: 'system', subtype: 'init' }),
+      JSON.stringify({ type: 'assistant', message: { content: [] } }),
+      JSON.stringify({ stop_reason: 'end_turn', usage: { input_tokens: 11, output_tokens: 22 } })
+    ].join('\n')
+    expect(parseClaudeUsage(stream)).toEqual({ input: 11, output: 22 })
+    // The pre-streaming form is one line, so it must keep working — the
+    // change reads both rather than trading one for the other.
+    expect(parseClaudeUsage(JSON.stringify({ usage: { input_tokens: 3, output_tokens: 4 } }))).toEqual({
+      input: 3,
+      output: 4
+    })
+    expect(parseClaudeUsage('not json at all')).toBeNull()
+  })
+
+  it("reads the resume id from a stream's terminal event, and still from a whole-blob payload", () => {
+    const stream = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'early-and-ignored' }),
+      JSON.stringify({ stop_reason: 'end_turn', session_id: 'the-real-one' })
+    ].join('\n')
+    expect(parseClaudeResumeId(stream)).toBe('the-real-one')
+    expect(parseClaudeResumeId(JSON.stringify({ session_id: 'single-blob' }))).toBe('single-blob')
+    expect(parseClaudeResumeId('')).toBeNull()
   })
 })

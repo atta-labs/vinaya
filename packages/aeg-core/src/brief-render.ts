@@ -107,6 +107,45 @@ export function parseRationaleFields(body: string): Partial<Record<RationaleFiel
   return out
 }
 
+/**
+ * The backtick-wrapped, path-shaped tokens named in the Boundary field's own
+ * prose — the ONLY mechanical source §4 (`renderSection4`, below) draws its
+ * Create/Modify file list and premise pins from (task 5, Issue #447, O3).
+ *
+ * `## Surface` is directory-level globs only, by design (its own grammar
+ * refuses file paths) — expanding those globs wholesale into §4 is the exact
+ * defect this replaces: live evidence, an Issue declaring `apps/cli/**`
+ * rendered a brief instructing the developer to modify roughly four hundred
+ * files, each with its own sha256 pin. The Planner's Boundary prose is where
+ * task authors already name the real files in scope (to justify why each is
+ * touched) — extracting from there, instead of from Surface, also reaches
+ * files a directory glob cannot express at all: this very task's own
+ * Boundary names `packages/aeg-core/src/brief-render.ts`, which sits outside
+ * every one of its Surface `in:` globs.
+ *
+ * A token counts as path-shaped when it is backtick-delimited, contains no
+ * space (excludes multi-word command examples like `git push -u origin
+ * HEAD`) or `*` (excludes glob examples like `apps/cli/**`), and ends in a
+ * short alphanumeric extension. Resolving a token to a real repo path (exact
+ * match, or a unique `git ls-files` suffix match for a bare filename elided
+ * from a shared directory prefix in the Boundary prose, e.g. "aeg-root/
+ * aeg-manual-flow.md, process.md, roles/developer.md") is the caller's job —
+ * this function is pure text extraction, no `fs`/`git`.
+ */
+export function extractBoundaryFilePaths(boundaryText: string): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const match of boundaryText.matchAll(/`([^`\n]+)`/g)) {
+    const token = (match[1] as string).trim()
+    if (token.length === 0 || token.includes(' ') || token.includes('*')) continue
+    if (!/\.[A-Za-z0-9]{1,6}$/.test(token)) continue
+    if (seen.has(token)) continue
+    seen.add(token)
+    out.push(token)
+  }
+  return out
+}
+
 /** One §4 surface-map file: its path, a whole-file `sha256` premise pin, and the workspace package that owns it (`null` for a file outside every workspace member, e.g. a doctrine file under `aeg-root/`). */
 export type SurfaceFileFact = {
   path: string
@@ -290,7 +329,7 @@ function renderSection5(facts: BriefFacts): string {
     '**Step 0 (mandatory, verbatim):**',
     '',
     '```',
-    `git worktree add .worktrees/task/${facts.trancheSlug}/${facts.taskId} -b task/${facts.trancheSlug}/${facts.taskId} origin/main && cd .worktrees/task/${facts.trancheSlug}/${facts.taskId} && bun install --frozen-lockfile --silent`,
+    `git worktree add .worktrees/task/${facts.trancheSlug}/${facts.taskId} -b task/${facts.trancheSlug}/${facts.taskId} --no-track origin/main && cd .worktrees/task/${facts.trancheSlug}/${facts.taskId} && git config push.autoSetupRemote true && bun install --frozen-lockfile --silent`,
     '```',
     '',
     '1. Clean status; parent `origin/main`; branch suffix literal-matches the task id.',
