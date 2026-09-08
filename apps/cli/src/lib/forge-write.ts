@@ -30,6 +30,7 @@ import {
   checkAutonomyClause,
   checkBlastRadiusScope,
   checkBriefClosesN,
+  checkDocsWithinSurface,
   checkDocUpdateList,
   checkForField,
   checkForgeTitle,
@@ -38,11 +39,13 @@ import {
   checkIssueRationale,
   checkMilestoneShape,
   checkNoBriefContent,
+  checkPartsCiteDefinedObjectives,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
   checkProjectField,
   checkRationaleNamesDocs,
   checkStopConditions,
+  checkSurfaceGlobsResolve,
   checkSurfaceMap,
   checkTestPlan,
   checkTestPlanExclusivity,
@@ -61,6 +64,7 @@ import {
   readTierFromPrBody,
   trancheLabel
 } from '@attalabs/aeg-core'
+import { expandGlob } from './brief-assembly'
 import { findMilestoneAttachTargetForSlug, hasExplicitMilestoneFlag } from '@attalabs/aeg-forge-state'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks/contract'
 import {
@@ -649,7 +653,13 @@ const ISSUE_CONTENT_RECOVERY = {
   noBriefContent:
     "Move the brief-shaped section named above out of the Issue body and into the brief — the Issue carries the Planner's durable rationale, not the brief's just-in-time surface — then re-run `{cmd}`.",
   rationaleNamesDocs:
-    'Name a concrete doc/skill path (e.g. `aeg-root/…`, `.claude/skills/…/SKILL.md`) in "Docs to keep coherent" or "Traps", or write the `no-doc-surface` sentinel if the surface genuinely has none, then re-run `{cmd}`.'
+    'Name a concrete doc/skill path (e.g. `aeg-root/…`, `.claude/skills/…/SKILL.md`) in "Docs to keep coherent" or "Traps", or write the `no-doc-surface` sentinel if the surface genuinely has none, then re-run `{cmd}`.',
+  surfaceGlobsResolve:
+    'Fix the named `## Surface` `in:` glob so it matches at least one real tracked file (a typo, or a directory that does not exist yet), then re-run `{cmd}`.',
+  partsCiteObjectives:
+    'Fix the named Part to cite an objective id the `## Objectives` section actually defines, or add the missing objective, then re-run `{cmd}`.',
+  docsWithinSurface:
+    'Move the named doc pointer to a path `## Surface`\'s `in:` globs actually cover (never widen the surface just to fit the pointer — that renders an unusable brief), or drop it from "Docs to keep coherent" if this task does not really keep it coherent, then re-run `{cmd}`.'
 } as const
 
 export type IssueContentInput = {
@@ -658,19 +668,31 @@ export type IssueContentInput = {
   sharedPackages: string[]
   projectPaths: ProjectPath[]
   retryCommand: string
+  issueNumber: number | null
+  resolvesToFile: (glob: string) => boolean
 }
 
 /**
- * Runs the three Issue-only content checks and returns every finding as a
+ * Runs the Issue-only content checks and returns every finding as a
  * `CheckError`. Pure over its inputs, same discipline as `validateForgeWrite`
  * — the caller (a command file) resolves `sharedPackages`/`projectPaths` from
- * disk/forge and passes them in.
+ * disk/forge and passes them in. `resolvesToFile` is the injected Surface-
+ * glob predicate (O3) — the caller passes the SAME `expandGlob` implementation
+ * `brief-assembly.ts`'s render path already uses, so the gate and the
+ * renderer can never disagree about whether a glob resolves.
  */
 export function validateIssueContent(input: IssueContentInput): CheckError[] {
   const findings: Array<[string[], keyof typeof ISSUE_CONTENT_RECOVERY]> = [
-    [checkBlastRadiusScope(input.body, input.labels, input.sharedPackages, input.projectPaths).errors, 'blastRadius'],
+    [
+      checkBlastRadiusScope(input.body, input.labels, input.sharedPackages, input.projectPaths, input.issueNumber)
+        .errors,
+      'blastRadius'
+    ],
     [checkNoBriefContent(input.body).errors, 'noBriefContent'],
-    [checkRationaleNamesDocs(input.body).errors, 'rationaleNamesDocs']
+    [checkRationaleNamesDocs(input.body).errors, 'rationaleNamesDocs'],
+    [checkSurfaceGlobsResolve(input.body, input.resolvesToFile).errors, 'surfaceGlobsResolve'],
+    [checkPartsCiteDefinedObjectives(input.body).errors, 'partsCiteObjectives'],
+    [checkDocsWithinSurface(input.body, input.issueNumber).errors, 'docsWithinSurface']
   ]
   const errors: CheckError[] = []
   for (const [messages, kind] of findings) {
@@ -810,7 +832,9 @@ export function validateTaskIssue(
     labels,
     sharedPackages: readSharedPackages(),
     projectPaths: readProjectPaths(),
-    retryCommand
+    retryCommand,
+    issueNumber,
+    resolvesToFile: (glob) => expandGlob(glob).length > 0
   })
   if (contentErrors.length > 0) refuse(contentErrors)
 }

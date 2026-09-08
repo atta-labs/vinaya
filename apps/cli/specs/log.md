@@ -41,7 +41,7 @@ subject: {
 
 - `dispatched` — `prompt_hash`
 - `outcome_received` — `outcome: DispatchOutcome` (a `type`-discriminated union: `pr_opened`, `round_pushed`, `verdict`, `escalation`, `brief`, `plan`, `archive`), `usage: { input, output } | null`
-- `dispatch_failed` — `reason: 'timeout' | 'crash' | 'refused' | 'unattributed_write'`
+- `dispatch_failed` — `reason: 'timeout' | 'crash' | 'refused' | 'unattributed_write'`, `usage: { input, output } | null` — a run's token record survives the manner of its death: the parent parses whatever the child had already printed to stdout at the moment it ends the child (a SIGTERM/SIGKILL timeout, a non-zero exit), the same `stdoutBuf` a clean `outcome_received` reads, rather than hardcoding `null` on every non-clean exit. `null` here means the buffer genuinely carried no parseable usage line, not that the path never looked.
 
 **`dev_review_loop`** — `loop_id` on every event, ten events: `loop_started`, `round_started`, `gate_result_read`, `verdicts_read`, `findings_compared`, `stop_condition_met`, `paused`, `resumed`, `round_ended`, `journal_finalized`. Field-for-field these match the spec's §5.2 block exactly; this file does not re-list every field to avoid a second copy drifting from the source.
 

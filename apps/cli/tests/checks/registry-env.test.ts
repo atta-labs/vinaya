@@ -56,6 +56,7 @@ describe('registry env declarations', () => {
         'retired-vocabulary',
         'review-gate',
         'single-plan-pr',
+        'surface-scope',
         'test-plan',
         'token-collection-wired',
         'token-report',

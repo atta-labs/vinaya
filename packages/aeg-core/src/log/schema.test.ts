@@ -80,7 +80,24 @@ describe('LogEventSchema — dispatch family', () => {
       target_role: 'developer' as const,
       model: 'sonnet',
       effect_id: 'e1',
-      reason: 'timeout' as const
+      reason: 'timeout' as const,
+      usage: null
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('parses a dispatch_failed line with real usage — O10, a killed run still has figures', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dispatch' as const,
+      event: 'dispatch_failed' as const,
+      payload: {},
+      target_role: 'developer' as const,
+      model: 'sonnet',
+      effect_id: 'e1',
+      reason: 'timeout' as const,
+      usage: { input: 184327, output: 22190 }
     }
     expect(LogEventSchema.safeParse(line).success).toBe(true)
   })

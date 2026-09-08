@@ -345,51 +345,60 @@ const PRODUCT = ['.']
  */
 const SCOPE = ['.']
 
+/** Same extension/bare-name set the old `--include` flags encoded, read off `git ls-files` instead of a directory walk. */
+const INCLUDE_EXTENSIONS = ['.md', '.ts', '.tsx', '.yml']
+/** Both extensionless governance files: the doc-ownership manifest and the collision-domain list. An extension-only filter cannot see either. */
+const INCLUDE_BARE_NAMES = new Set(['doc-owners', 'packages'])
+
+/**
+ * O11 — the files this sweep can possibly see are exactly the files `git`
+ * tracks, scoped by `git ls-files -- <scope>` rather than a directory walk
+ * behind a hand-maintained `--exclude-dir` list. A concurrent linked
+ * worktree (`.worktrees/**`), a build output (`dist/`), or a vendored
+ * dependency (`studio-standalone/_node_modules/`, confirmed absent from
+ * `git ls-files` — never assumed) is out of scope by construction, because
+ * none of them is ever a tracked file; no real source directory can be
+ * skipped for merely sharing a name with one of those, because nothing here
+ * names one. The extension/bare-name filter is unchanged from the old
+ * `--include` flags, so the sweep's own surface does not silently widen.
+ */
+function trackedFiles(scope: string[]): string[] {
+  let out: string
+  try {
+    out = execFileSync('git', ['ls-files', '--', ...scope], { cwd: REPO_ROOT, encoding: 'utf8' })
+  } catch {
+    return []
+  }
+  return out
+    .split('\n')
+    .filter(Boolean)
+    .filter((f) => INCLUDE_EXTENSIONS.some((ext) => f.endsWith(ext)) || INCLUDE_BARE_NAMES.has(f.split('/').pop() ?? f))
+}
+
 function grep(pattern: string, scope: string[] = SCOPE): string[] {
+  const files = trackedFiles(scope)
+  // Zero qualifying tracked files is a legitimate "nothing to scan" — never
+  // invoke `grep` with no file arguments, which reads stdin instead and
+  // hangs rather than returning.
+  if (files.length === 0) return []
   try {
     const out = execFileSync(
       'grep',
-      [
-        '-rnE',
-        pattern,
-        ...scope,
-        '--include=*.md',
-        '--include=*.ts',
-        '--include=*.tsx',
-        '--include=*.yml',
-        // Both extensionless governance files: the doc-ownership manifest and
-        // the collision-domain list. A glob-only include cannot see either.
-        '--include=doc-owners',
-        '--include=packages',
-        // PRODUCT went from a 7-path enumeration to ['.'] — every one of
-        // those paths was hand-picked to stay outside node_modules; '.' is
-        // not. Without these, a common-shape pattern (e.g. the tranche-slug
-        // regex matching version strings like `--tls-max-v1.2` in vendored
-        // .d.ts files) produces megabytes of matches and blows execFileSync's
-        // default 1MB buffer — see the catch block below for what that does
-        // if left uncaught.
-        '--exclude-dir=node_modules',
-        '--exclude-dir=.git',
-        '--exclude-dir=.next',
-        '--exclude-dir=.turbo',
-        '--exclude-dir=dist',
-        '--exclude-dir=build'
-      ],
-      // maxBuffer is defense in depth, not the fix — --exclude-dir above is
-      // what keeps output bounded. 20MB is generous headroom past the
-      // largest observed full-repo sweep (~250KB) without masking a genuine
-      // future blowup by just raising the ceiling indefinitely.
+      ['-nE', pattern, ...files],
+      // maxBuffer is defense in depth, not the fix — the tracked-file list
+      // itself is what keeps this bounded now. 20MB is generous headroom
+      // past the largest observed full-repo sweep (~250KB) without masking
+      // a genuine future blowup by just raising the ceiling indefinitely.
       { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 }
     )
     return out.split('\n').filter(Boolean)
   } catch (error) {
     // grep's contract: exit 1 means "no matches" — every other outcome
-    // (a bad pattern, a missing scope path, ENOBUFS from an unbounded
-    // scope) is a real failure. A bare `catch { return [] }` could not
-    // tell those apart: it turned the exact ENOBUFS case above into a
-    // silent, incorrect "clean repo" instead of a loud test failure. That
-    // is not hypothetical — it is what widening PRODUCT to ['.'] did to
-    // this suite before --exclude-dir existed.
+    // (a bad pattern, ENOBUFS from an unbounded scope) is a real failure. A
+    // bare `catch { return [] }` could not tell those apart: it turned the
+    // exact ENOBUFS case above into a silent, incorrect "clean repo" instead
+    // of a loud test failure. That is not hypothetical — it is what widening
+    // PRODUCT to ['.'] did to this suite before this bound existed.
     if ((error as { status?: number }).status === 1) return []
     throw error
   }

@@ -228,8 +228,9 @@ describe('checkG2 + scaffold integration: a stub-bearing table stays loud', () =
 
     const result = checkG2(reparsed, candidateFiles)
     // The orphan half is now silent (implementation is present) — the
-    // placeholder half is what still reports it.
-    expect(result.status).toBe('info')
+    // placeholder half is what still reports it. G2 is blocking as of
+    // this same wave (was report-only/'info').
+    expect(result.status).toBe('fail')
     expect(result.findings.some((f) => f.reason.includes('placeholder'))).toBe(true)
   })
 })

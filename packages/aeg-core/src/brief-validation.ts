@@ -194,22 +194,29 @@ export function checkTestPlanExclusivity(prBody: string): BriefSectionResult {
  * check a box asserting there is nothing to verify, so it blocks the merge
  * gate forever. If a brief genuinely has no principal-runnable surface, the
  * item must be omitted entirely, not declared and left permanently unticked.
+ *
+ * **O12 — reports every placeholder line, not only the first.** A body with
+ * more than one `**[principal]** None …` line used to `return` on the first
+ * `matchAll` hit, so an author fixing the reported line and re-running
+ * would meet the second violation only on the NEXT run — one round-trip per
+ * line for a mechanically-fixable body. Collecting into `errors` and
+ * falling through is the same shape every sibling exhaustive check in this
+ * file already uses (`checkCommandsCarryOutput`, `checkConsumerTests`,
+ * `checkObjectivesCoverage`).
  */
 export function checkPrincipalPlaceholder(prBody: string): BriefSectionResult {
   const region = testPlanRegion(prBody)
   const lineRe = /^-\s*\[[ xX]\]\s*\*{2}\[principal\]\*{2}(.*)$/gim
+  const errors: string[] = []
   for (const m of region.matchAll(lineRe)) {
     const content = m[1] ?? ''
     if (/^\s*None\b/i.test(content)) {
-      return {
-        status: 'fail',
-        errors: [
-          'brief-validation Test Plan shape: a `**[principal]**` checkbox item is a "None" placeholder — if there is no principal-runnable surface, omit the item entirely; an untickable placeholder box blocks the merge gate forever.'
-        ]
-      }
+      errors.push(
+        `brief-validation Test Plan shape: a \`**[principal]**\` checkbox item is a "None" placeholder ("${content.trim()}") — if there is no principal-runnable surface, omit the item entirely; an untickable placeholder box blocks the merge gate forever.`
+      )
     }
   }
-  return { status: 'pass', errors: [] }
+  return errors.length > 0 ? { status: 'fail', errors } : { status: 'pass', errors: [] }
 }
 
 /**

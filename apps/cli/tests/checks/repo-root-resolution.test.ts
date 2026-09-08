@@ -91,6 +91,7 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         'retired-vocabulary',
         'review-gate',
         'single-plan-pr',
+        'surface-scope',
         'test-plan',
         'token-collection-wired',
         'token-report',

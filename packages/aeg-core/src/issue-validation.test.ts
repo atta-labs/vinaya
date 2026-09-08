@@ -10,10 +10,14 @@ import {
   checkIssueBriefSections,
   checkIssueObjectives,
   checkIssueRationale,
+  checkDocsWithinSurface,
   checkIssueType,
   checkNoBriefContent,
+  checkPartsCiteDefinedObjectives,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
+  checkSurfaceGlobsResolve,
+  checkSurfaceScope,
   declaredProjects,
   isTaskIssueLabelSet,
   OBJECTIVES_SINCE_ISSUE,
@@ -1001,6 +1005,227 @@ describe('parseIssueSurface', () => {
   it('tolerates a trailing `/**` glob suffix as directory-level', () => {
     const r = parseIssueSurface('## Surface\n\nin: packages/aeg-core/**\nout: —\n')
     expect(r.ok).toBe(true)
+  })
+
+  // O15 — a dot-prefixed directory (`.claude`, `.github`) is a directory, not
+  // a file: its last segment's only `.` sits at index 0, a name, not an
+  // extension.
+  it('O15: a bare dot-directory entry is not read as a file path', () => {
+    const r = parseIssueSurface('## Surface\n\nin: .claude\nout: —\n')
+    expect(r.ok).toBe(true)
+  })
+
+  it('O15: a dot-directory with a trailing `/**` is not read as a file path', () => {
+    const r = parseIssueSurface('## Surface\n\nin: .github/**\nout: —\n')
+    expect(r.ok).toBe(true)
+  })
+
+  it('O15: a real dotfile inside a dot-directory is still refused as a file path', () => {
+    const r = parseIssueSurface('## Surface\n\nin: .claude/skills/foo.md\nout: —\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/looks like a file path/)
+  })
+})
+
+describe('checkSurfaceGlobsResolve (O1)', () => {
+  it('passes when every `in:` glob resolves', () => {
+    const body = '## Surface\n\nin: packages/aeg-core/src\nout: —\n'
+    const r = checkSurfaceGlobsResolve(body, () => true)
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails, naming the glob, when an `in:` glob resolves to nothing', () => {
+    const body = '## Surface\n\nin: packages/does-not-exist\nout: —\n'
+    const r = checkSurfaceGlobsResolve(body, () => false)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/does-not-exist/)
+    expect(r.errors[0]).toMatch(/matches no tracked file/)
+  })
+
+  it('names only the glob that fails, not the whole list', () => {
+    const body = '## Surface\n\nin: packages/aeg-core/src, packages/nope\nout: —\n'
+    const r = checkSurfaceGlobsResolve(body, (glob) => glob !== 'packages/nope')
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBe(1)
+    expect(r.errors[0]).toMatch(/packages\/nope/)
+  })
+
+  it('catches a backtick-wrapped glob naturally — it can never resolve to a real tracked path', () => {
+    const body = '## Surface\n\nin: `packages/aeg-core/src`\nout: —\n'
+    const r = checkSurfaceGlobsResolve(body, (glob) => !glob.includes('`'))
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toContain('`packages/aeg-core/src`')
+  })
+
+  it('does not check `out:` globs — a legitimate exclusion may not exist yet', () => {
+    const body = '## Surface\n\nin: packages/aeg-core/src\nout: packages/not-created-yet\n'
+    const r = checkSurfaceGlobsResolve(body, (glob) => glob === 'packages/aeg-core/src')
+    expect(r.status).toBe('pass')
+  })
+
+  it('passes trivially when `## Surface` itself does not parse — reported elsewhere', () => {
+    const r = checkSurfaceGlobsResolve('nothing surface-shaped here', () => false)
+    expect(r.status).toBe('pass')
+  })
+})
+
+describe('checkPartsCiteDefinedObjectives (O2)', () => {
+  const objectives = '## Objectives\n\nO1. Do the first thing.\nO2. Do the second thing.\n'
+
+  it('passes when every Part cites a defined objective', () => {
+    const body = `${objectives}\n## Parts\n\nPart 1 (O1) — the parsers.\nPart 2 (O1, O2) — the render.\n`
+    expect(checkPartsCiteDefinedObjectives(body).status).toBe('pass')
+  })
+
+  it('fails, naming the part and the undefined citation, when a Part cites O3 with no O3', () => {
+    const body = `${objectives}\n## Parts\n\nPart 1 (O1) — the parsers.\nPart 2 (O3) — a phantom objective.\n`
+    const r = checkPartsCiteDefinedObjectives(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/Part 2/)
+    expect(r.errors[0]).toMatch(/O3/)
+  })
+
+  it('passes trivially when Objectives is malformed — reported by checkIssueObjectives instead', () => {
+    const body = '## Parts\n\nPart 1 (O9) — cites an objective that does not exist anywhere.\n'
+    expect(checkPartsCiteDefinedObjectives(body).status).toBe('pass')
+  })
+
+  it('passes trivially when Parts is malformed — reported by parseIssueParts instead', () => {
+    const body = `${objectives}\n## Parts\n\nnothing part-shaped here\n`
+    expect(checkPartsCiteDefinedObjectives(body).status).toBe('pass')
+  })
+})
+
+describe('checkDocsWithinSurface (O6)', () => {
+  const surface = '## Surface\n\nin: aeg-root/skills/**\nout: aeg-root/tranches/**\n'
+
+  it('passes when the docs pointer falls inside an `in:` glob', () => {
+    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/skills/foo/SKILL.md\`.\n`
+    expect(checkDocsWithinSurface(body, 500).status).toBe('pass')
+  })
+
+  it('fails, naming the pointer and the glob, when the pointer falls inside an `out:` glob', () => {
+    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/tranches/example-tranche.md\`.\n`
+    const r = checkDocsWithinSurface(body, 500)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/aeg-root\/tranches\/example-tranche\.md/)
+    expect(r.errors[0]).toMatch(/aeg-root\/tranches\/\*\*/)
+  })
+
+  it('fails when the pointer falls outside every `in:` glob', () => {
+    const body = `${surface}\n**Docs to keep coherent** — Update \`apps/cli/specs/surface.md\`.\n`
+    const r = checkDocsWithinSurface(body, 500)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/apps\/cli\/specs\/surface\.md/)
+  })
+
+  it('passes on the explicit `no-doc-surface` sentinel — nothing to compare', () => {
+    const body = `${surface}\n**Docs to keep coherent** — no-doc-surface.\n`
+    expect(checkDocsWithinSurface(body, 500).status).toBe('pass')
+  })
+
+  it('passes below the brief-sections cutover — no `## Surface` to compare against', () => {
+    const body = '**Docs to keep coherent** — Update `apps/cli/specs/surface.md`.\n'
+    expect(checkDocsWithinSurface(body, 425).status).toBe('pass')
+  })
+
+  it('passes trivially when `## Surface` does not parse — reported elsewhere', () => {
+    const body = '**Docs to keep coherent** — Update `apps/cli/specs/surface.md`.\n'
+    expect(checkDocsWithinSurface(body, 500).status).toBe('pass')
+  })
+})
+
+describe('checkSurfaceScope (O7)', () => {
+  it('passes when no changed file falls inside an out: glob', () => {
+    const result = checkSurfaceScope(['packages/aeg-core/src/issue-validation.ts'], ['packages/aeg-core/src/other/**'])
+    expect(result.ok).toBe(true)
+  })
+
+  it('fails, naming the file and the glob, when a changed file falls inside an out: glob', () => {
+    const result = checkSurfaceScope(['packages/aeg-core/src/other/thing.ts'], ['packages/aeg-core/src/other/**'])
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.violations).toEqual([
+      { file: 'packages/aeg-core/src/other/thing.ts', glob: 'packages/aeg-core/src/other/**' }
+    ])
+  })
+
+  it('reports every violation in one pass, not only the first (O12 discipline)', () => {
+    const result = checkSurfaceScope(['a/one.ts', 'b/two.ts', 'c/three.ts'], ['a/**', 'b/**'])
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.violations).toEqual([
+      { file: 'a/one.ts', glob: 'a/**' },
+      { file: 'b/two.ts', glob: 'b/**' }
+    ])
+  })
+
+  it('passes trivially when no out: globs are declared', () => {
+    const result = checkSurfaceScope(['anything.ts'], [])
+    expect(result.ok).toBe(true)
+  })
+
+  it('names the first matching glob when a file falls under more than one', () => {
+    const result = checkSurfaceScope(['a/b/c.ts'], ['a/**', 'a/b/**'])
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.violations[0]?.glob).toBe('a/**')
+  })
+})
+
+describe('checkBlastRadiusScope (O4) — structural mode at/above the brief-sections cutover', () => {
+  it('fails from `## Surface` alone when an `in:` glob covers a shared domain, even with no Boundary prose', () => {
+    const body = '## Surface\n\nin: packages/ui/**\nout: —\n\n**Project:** vinaya\n'
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, 500)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/ui/)
+  })
+
+  it('passes from `## Surface` alone when no `in:` glob covers a shared domain, even if Boundary prose names it to EXCLUDE it', () => {
+    // The exact O4 case: naming a package in order to exclude it must not trip
+    // the gate once the decision is structural.
+    const body = [
+      '## Surface',
+      '',
+      'in: apps/vinaya/**',
+      'out: packages/ui/**',
+      '',
+      '**Boundary** — Does NOT touch `packages/ui` (that package is out of scope).',
+      '',
+      '**Project:** vinaya'
+    ].join('\n')
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, 500)
+    expect(r.status).toBe('pass')
+  })
+
+  it('falls back to the prose scan below the cutover, unchanged', () => {
+    const body = rationale({ boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).' })
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, 425)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/ui/)
+  })
+
+  it('falls back to the prose scan on a null issueNumber (not yet created), unchanged', () => {
+    const body = rationale({ boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).' })
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, null)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/ui/)
+  })
+
+  it('still honors the ack line and the ownership bypass in structural mode', () => {
+    const body = [
+      '## Surface',
+      '',
+      'in: packages/ui/**',
+      'out: —',
+      '',
+      '**blast-radius-ack:** every consumer keeps the existing fallback path.',
+      '',
+      '**Project:** vinaya'
+    ].join('\n')
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, 500)
+    expect(r.status).toBe('pass')
   })
 })
 

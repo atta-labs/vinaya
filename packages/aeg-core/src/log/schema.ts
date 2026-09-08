@@ -138,6 +138,12 @@ const dispatchShared = {
   effect_id: z.string()
 }
 
+/** Shared by `outcome_received` and `dispatch_failed` (O10) — a run's token record survives the manner of its death, so the same nullable shape applies whether the run exited cleanly or was killed. */
+const dispatchUsageField = z
+  .object({ input: z.number().nonnegative(), output: z.number().nonnegative() })
+  .strict()
+  .nullable()
+
 export const DispatchEventSchema = z.discriminatedUnion('event', [
   z.object({ ...dispatchShared, event: z.literal('dispatched'), prompt_hash: z.string() }).strict(),
   z
@@ -145,14 +151,15 @@ export const DispatchEventSchema = z.discriminatedUnion('event', [
       ...dispatchShared,
       event: z.literal('outcome_received'),
       outcome: DispatchOutcomeSchema,
-      usage: z.object({ input: z.number().nonnegative(), output: z.number().nonnegative() }).strict().nullable()
+      usage: dispatchUsageField
     })
     .strict(),
   z
     .object({
       ...dispatchShared,
       event: z.literal('dispatch_failed'),
-      reason: z.enum(['timeout', 'crash', 'refused', 'unattributed_write'])
+      reason: z.enum(['timeout', 'crash', 'refused', 'unattributed_write']),
+      usage: dispatchUsageField
     })
     .strict()
 ])

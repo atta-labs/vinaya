@@ -1100,6 +1100,85 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
   })
 })
 
+describe('generated pre-commit hook: scoped format/lint/typecheck (O9)', () => {
+  function vendorVinaya(): void {
+    writeFileSync(
+      join(root, 'package.json'),
+      `${JSON.stringify({ name: 'vinaya', private: true, workspaces: ['apps/*', 'packages/*'] }, null, 2)}\n`
+    )
+    mkdirSync(join(root, 'apps/cli'), { recursive: true })
+    writeFileSync(
+      join(root, 'apps/cli/package.json'),
+      `${JSON.stringify({ name: '@attalabs/vinaya', version: '0.4.6', bin: { vinaya: './dist/index.js' } }, null, 2)}\n`
+    )
+  }
+
+  it('fixes staged files with biome, restages them, then type-checks only affected packages — vendored repo only', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const preCommit = readFileSync(join(root, '.husky/pre-commit'), 'utf-8')
+    expect(preCommit).toContain('bunx biome check --write --staged .')
+    expect(preCommit).toContain('bunx turbo typecheck --affected')
+    // The fix-then-restage step must run BEFORE typecheck (so typecheck sees
+    // the fixed code) and typecheck must run BEFORE the doctrine gate (cheap,
+    // deterministic checks refuse first).
+    expect(preCommit.indexOf('bunx biome check --write --staged .')).toBeLessThan(
+      preCommit.indexOf('bunx turbo typecheck --affected')
+    )
+    expect(preCommit.indexOf('bunx turbo typecheck --affected')).toBeLessThan(
+      preCommit.indexOf('check --all --diff-only')
+    )
+  })
+
+  it('restages exactly the files that were staged before the fix, not the whole working tree', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const preCommit = readFileSync(join(root, '.husky/pre-commit'), 'utf-8')
+    expect(preCommit).toContain('git diff --cached --name-only --diff-filter=ACMR')
+    expect(preCommit).toContain('xargs git add --')
+  })
+
+  it('an ordinary (non-vendored) adopter never gets the biome/turbo steps — no assumption they run Bun/Biome/Turborepo', async () => {
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const preCommit = readFileSync(join(root, '.husky/pre-commit'), 'utf-8')
+    expect(preCommit).not.toContain('bunx biome')
+    expect(preCommit).not.toContain('bunx turbo')
+  })
+
+  it('refuses the commit (non-zero exit) when biome finds an unfixable violation — real end-to-end execution', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+
+    mkdirSync(join(root, 'apps/cli/dist'), { recursive: true })
+    writeFileSync(join(root, 'apps/cli/dist/index.js'), 'process.exit(0)\n')
+
+    // A fake `bunx` on PATH that fails on the biome step, exactly as a real
+    // unfixable violation would — this is the mechanism under test, not the
+    // real biome binary.
+    const fakeBinDir = join(root, 'fake-bin')
+    mkdirSync(fakeBinDir, { recursive: true })
+    writeFileSync(
+      join(fakeBinDir, 'bunx'),
+      '#!/bin/sh\nif [ "$1" = "biome" ]; then echo "fake biome: unfixable violation" >&2; exit 1; fi\nexit 0\n',
+      { mode: 0o755 }
+    )
+
+    let error: unknown
+    try {
+      execFileSync('sh', [join(root, '.husky/pre-commit')], {
+        cwd: root,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}` }
+      })
+    } catch (e) {
+      error = e
+    }
+    expect(error).toBeDefined()
+    const stderr = String((error as { stderr?: Buffer })?.stderr ?? '')
+    expect(stderr).toContain('fake biome: unfixable violation')
+  })
+})
+
 describe('detectVendoredVinaya', () => {
   it('is null for a repo with no package.json, no workspaces, or no such member', () => {
     expect(detectVendoredVinaya(root)).toBeNull() // bare fixture: README.md only

@@ -45,12 +45,15 @@ function missingSectionError(checkName: string): CheckError {
     check: checkName,
     severity: 'error',
     message:
-      'token-report: this host is metering-capable, but the PR body carries no "Token report" ' +
-      'section — presence is checked here, never whether any figures reported are correct.',
+      'token-report: the PR body carries no "Token report" row at all — presence is checked here, ' +
+      'never whether any figures reported are correct. An operator-metered host that genuinely ' +
+      'cannot meter this turn still states that in a row (`tranche-model.md` §12) rather than by ' +
+      'omitting the section: a merged task must never leave the ledger with a silent hole where its ' +
+      'spend should be.',
     agent_recovery_prompt:
-      'Collect your real token figures by whatever means this host offers, then paste a ' +
-      '"## Token report" section into the PR body (see roles/developer.md\'s token-reporting ' +
-      'obligation), and re-run `vinaya check token-report`.'
+      'Paste a "## Token report" section into the PR body with at least one row (see ' +
+      "roles/developer.md's token-reporting obligation) — real figures if this host exposes them, " +
+      'or `—` cells if it genuinely does not, then re-run `vinaya check token-report`.'
   }
 }
 
@@ -81,10 +84,20 @@ export function evaluateTokenReportEnforcement(
   // PR_BODY once a real PR exists, so an empty string here means there is
   // no PR body to evaluate at all, never a PR that shipped one blank.
   if (!prBody) return { pass: true }
-  if (!capability.capable) return { pass: true }
 
+  // O13 — a ledger with NO row is refused regardless of capability. An
+  // incapable (operator-metered) host is a legitimate reason for every cell
+  // to read `—`, never a legitimate reason for the whole section to be
+  // ABSENT: `tranche-model.md` §12 states the operator-metered case writes
+  // `—` in the grammar, in a row — "that is the sanctioned outcome, not a
+  // failure to comply" — never an omission. Before this, `!capability.capable`
+  // returned `pass: true` before this check ever ran, so a merged task on an
+  // incapable host could carry no "## Token report" section at all and still
+  // pass silently — the exact silent hole this rule closes.
   const entries = parseTokenReportEntries(prBody)
   if (entries.length === 0) return { pass: false, error: missingSectionError(checkName) }
+
+  if (!capability.capable) return { pass: true }
 
   const badEntry = entries.find((e) => e.tokensIn === null || e.tokensOut === null)
   if (badEntry) return { pass: false, error: blankCellError(checkName, badEntry) }

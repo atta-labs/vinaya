@@ -161,7 +161,9 @@ describe('validateIssueContent — the three content checks', () => {
       labels: ['vinaya/tranche:demo'],
       sharedPackages: ['packages/ui'],
       projectPaths: [{ name: 'vinaya', path: '.' }],
-      retryCommand: cmd
+      retryCommand: cmd,
+      issueNumber: null,
+      resolvesToFile: () => true
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -176,7 +178,9 @@ describe('validateIssueContent — the three content checks', () => {
       labels: ['vinaya/tranche:demo'],
       sharedPackages: ['packages/ui'],
       projectPaths: [{ name: 'vinaya', path: '.' }],
-      retryCommand: cmd
+      retryCommand: cmd,
+      issueNumber: null,
+      resolvesToFile: () => true
     })
     expect(errors).toEqual([])
   })
@@ -187,7 +191,9 @@ describe('validateIssueContent — the three content checks', () => {
       labels: ['vinaya/tranche:demo'],
       sharedPackages: [],
       projectPaths: [],
-      retryCommand: cmd
+      retryCommand: cmd,
+      issueNumber: null,
+      resolvesToFile: () => true
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -200,7 +206,9 @@ describe('validateIssueContent — the three content checks', () => {
       labels: ['vinaya/tranche:demo'],
       sharedPackages: [],
       projectPaths: [],
-      retryCommand: cmd
+      retryCommand: cmd,
+      issueNumber: null,
+      resolvesToFile: () => true
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -213,7 +221,9 @@ describe('validateIssueContent — the three content checks', () => {
       labels: ['vinaya/tranche:demo'],
       sharedPackages: [],
       projectPaths: [],
-      retryCommand: cmd
+      retryCommand: cmd,
+      issueNumber: null,
+      resolvesToFile: () => true
     })
     expect(errors).toEqual([])
   })

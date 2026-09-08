@@ -180,6 +180,12 @@ None — fixture content only.
 ## Test Plan
 Test Plan: unit-tests-only
 
+## Token report
+
+| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |
+| --- | --- | --- | --- | --- | --- | --- |
+| demo: develop | Developer | — | — | — | — | — |
+
 ## Stop Conditions
 Autonomy: Do not stop to ask clarifying questions — this is a scripted demo; proceed and clean up automatically.
 

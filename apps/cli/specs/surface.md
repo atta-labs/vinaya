@@ -2,7 +2,7 @@
 
 Status: draft
 
-One command is one function, published and tested. `apps/cli/tests/surface-index.test.ts` enforces every table below against the real source tree; this file is its source of truth, not the reverse.
+One command is one function, published and tested. `apps/cli/tests/surface-index.test.ts` enforces the Commands/Exemptions tables below against the real source tree, and `apps/cli/tests/surface-spec-exports.test.ts` enforces the Policy/Effects tables below the same way (O16) — an export added, removed, or renamed without a matching row here fails that test. This file is its source of truth, not the reverse.
 
 ## The rule
 
@@ -48,6 +48,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `extractBoundaryFilePaths` | function | `packages/aeg-core/src/brief-render.ts` |
 | `parseRationaleFields` | function | `packages/aeg-core/src/brief-render.ts` |
 | `renderBrief` | function | `packages/aeg-core/src/brief-render.ts` |
+| `AEG_BRIEF_V1_MARKER` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `AGENT_BOXES_REFUSED_SINCE_PR` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `BRIEF_RULES_SINCE_PR` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `checkAutonomyClause` | function | `packages/aeg-core/src/brief-validation.ts` |
@@ -61,6 +62,8 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `checkForgeTitle` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `checkNoAgentBoxes` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `checkNoUnpinnedCodeClaims` | function | `packages/aeg-core/src/brief-validation.ts` |
+| `checkObjectivesCopy` | function | `packages/aeg-core/src/brief-validation.ts` |
+| `checkObjectivesCoverage` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `checkPlanPrNoCloses` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `checkPremiseCoverage` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `checkPrincipalPlaceholder` | function | `packages/aeg-core/src/brief-validation.ts` |
@@ -74,12 +77,14 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `COMMAND_WORDS` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `COMMIT_TYPE_STYLE` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `COMMIT_TYPES` | const | `packages/aeg-core/src/brief-validation.ts` |
+| `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `extractFencedBlocks` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `headerRegion` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `inferBranchFromBody` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `isBriefShaped` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `isGrandfatherableBriefRuleError` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `isTaskBranch` | function | `packages/aeg-core/src/brief-validation.ts` |
+| `PART_CITATION_RE` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `partitionBriefErrorsByRollout` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `isTokenCollectionWiringBroken` | function | `packages/aeg-core/src/claude-code-transcript.ts` |
 | `resolveMeteringCapability` | function | `packages/aeg-core/src/claude-code-transcript.ts` |
@@ -116,6 +121,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `deriveDiagramModel` | function | `packages/aeg-core/src/diagram-model.ts` |
 | `checkDirectMainPush` | function | `packages/aeg-core/src/direct-main-push.ts` |
 | `checkDispatchReadiness` | function | `packages/aeg-core/src/dispatch-gate.ts` |
+| `checkDocClaims` | function | `packages/aeg-core/src/doc-claim.ts` |
 | `classifyDocOwnersManifest` | function | `packages/aeg-core/src/doc-owners.ts` |
 | `DOC_OWNERS_PATH` | const | `packages/aeg-core/src/doc-owners.ts` |
 | `evaluateC5` | function | `packages/aeg-core/src/doc-owners.ts` |
@@ -141,27 +147,42 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `NON_GATE_BINS` | const | `packages/aeg-core/src/gate-audience.ts` |
 | `SHIPPED_BIN_AUDIENCE` | const | `packages/aeg-core/src/gate-audience.ts` |
 | `decideIssueAssignment` | function | `packages/aeg-core/src/issue-assignment.ts` |
+| `BRIEF_SECTIONS_SINCE_ISSUE` | const | `packages/aeg-core/src/issue-validation.ts` |
 | `checkBlastRadiusScope` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkConflictCompleteness` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkDocsWithinSurface` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkIssueBriefSections` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkIssueObjectives` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkIssueRationale` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkIssueType` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkNoBriefContent` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkPartsCiteDefinedObjectives` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkProjectsRegistered` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkRationaleNamesDocs` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkSurfaceGlobsResolve` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkSurfaceScope` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `declaredProjects` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `globCoversPath` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `isTaskIssueLabelSet` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `OBJECTIVES_SINCE_ISSUE` | const | `packages/aeg-core/src/issue-validation.ts` |
+| `parseIssueParts` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `parseIssueStopConditions` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `parseIssueSurface` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `parseIssueTestPlan` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `classifyLeftover` | function | `packages/aeg-core/src/leftover-detection.ts` |
 | `checkLocalAnchorCoverage` | function | `packages/aeg-core/src/local-anchor-coverage.ts` |
 | `buildHeader` | function | `packages/aeg-core/src/log/envelope.ts` |
 | `redact` | function | `packages/aeg-core/src/log/redact.ts` |
-| `ROLE_VALUES` | const | `packages/aeg-core/src/log/schema.ts` |
-| `RoleSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `DevReviewLoopEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `DispatchEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `ForgeOpSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `ForgeWriteEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `HeaderSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `HOST_VALUES` | const | `packages/aeg-core/src/log/schema.ts` |
 | `HostSchema` | const | `packages/aeg-core/src/log/schema.ts` |
-| `HeaderSchema` | const | `packages/aeg-core/src/log/schema.ts` |
-| `DispatchEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
-| `DevReviewLoopEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `LogEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `ROLE_VALUES` | const | `packages/aeg-core/src/log/schema.ts` |
+| `RoleSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `checkMainBranchRefusal` | function | `packages/aeg-core/src/main-branch-refusal.ts` |
 | `checkManifestValidity` | function | `packages/aeg-core/src/manifest-validity.ts` |
 | `parseNoDocRules` | function | `packages/aeg-core/src/manifest-validity.ts` |
@@ -174,6 +195,11 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `checkMilestoneShape` | function | `packages/aeg-core/src/milestone-validation.ts` |
 | `releaseFieldFromBody` | function | `packages/aeg-core/src/milestone-validation.ts` |
 | `isNewDiskStateFile` | function | `packages/aeg-core/src/no-disk-state.ts` |
+| `hasObjectivesHeading` | function | `packages/aeg-core/src/objectives.ts` |
+| `isIssueNotFoundError` | function | `packages/aeg-core/src/objectives.ts` |
+| `objectivesOf` | function | `packages/aeg-core/src/objectives.ts` |
+| `objectivesVersion` | function | `packages/aeg-core/src/objectives.ts` |
+| `renderObjectives` | function | `packages/aeg-core/src/objectives.ts` |
 | `parseLedger` | function | `packages/aeg-core/src/parse-ledger.ts` |
 | `rowFromCells` | function | `packages/aeg-core/src/parse-ledger.ts` |
 | `parseRegistry` | function | `packages/aeg-core/src/parse-registry.ts` |
@@ -181,9 +207,9 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `parseTokenReportEntries` | function | `packages/aeg-core/src/parse-token-report.ts` |
 | `parseTokensLines` | function | `packages/aeg-core/src/parse-token-report.ts` |
 | `parseTranche` | function | `packages/aeg-core/src/parse-tranche.ts` |
+| `checkDecisionsDensity` | function | `packages/aeg-core/src/pr-report-density.ts` |
 | `checkPrReportDensity` | function | `packages/aeg-core/src/pr-report-density.ts` |
 | `checkScopeDensity` | function | `packages/aeg-core/src/pr-report-density.ts` |
-| `checkDecisionsDensity` | function | `packages/aeg-core/src/pr-report-density.ts` |
 | `deriveTierFromDiff` | function | `packages/aeg-core/src/pr-tier.ts` |
 | `overrideActive` | function | `packages/aeg-core/src/pr-tier.ts` |
 | `readTierFromPrBody` | function | `packages/aeg-core/src/pr-tier.ts` |
@@ -200,6 +226,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `classifyProseFile` | function | `packages/aeg-core/src/reader-resolvable-prose.ts` |
 | `legacySlugPattern` | function | `packages/aeg-core/src/reader-resolvable-prose.ts` |
 | `parseGlossaryTerms` | function | `packages/aeg-core/src/reader-resolvable-prose.ts` |
+| `PRODUCT_SLUG_SCOPE` | const | `packages/aeg-core/src/reader-resolvable-prose.ts` |
 | `stripNonProse` | function | `packages/aeg-core/src/reader-resolvable-prose.ts` |
 | `checkG1` | function | `packages/aeg-core/src/registry-checks.ts` |
 | `checkG2` | function | `packages/aeg-core/src/registry-checks.ts` |
@@ -268,7 +295,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `projectsFromBody` | function | `packages/aeg-forge-state/src/list-tasks.ts` |
 | `mapForgeFacts` | function | `packages/aeg-forge-state/src/map-forge-facts.ts` |
 
-(241 exports.)
+(268 exports.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
@@ -284,8 +311,11 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `discoverRoleNames` | function | `apps/cli/src/lib/agents-skills-emitter.ts` |
 | `formatRoleTitle` | function | `apps/cli/src/lib/agents-skills-emitter.ts` |
 | `renderAgentSkill` | function | `apps/cli/src/lib/agents-skills-emitter.ts` |
+| `RETIRED_ROLE_NAMES` | const | `apps/cli/src/lib/agents-skills-emitter.ts` |
+| `staleAgentSkillPaths` | function | `apps/cli/src/lib/agents-skills-emitter.ts` |
 | `ARCHIVIST_WORKFLOW_PATH` | const | `apps/cli/src/lib/artifacts.ts` |
 | `BODY_CHECKS_WORKFLOW_PATH` | const | `apps/cli/src/lib/artifacts.ts` |
+| `BRANCH_PROTECTION_NOTE` | const | `apps/cli/src/lib/artifacts.ts` |
 | `buildInitOps` | function | `apps/cli/src/lib/artifacts.ts` |
 | `CHECKS_FOLDER_PLACEHOLDER_PATH` | const | `apps/cli/src/lib/artifacts.ts` |
 | `CHECKS_WORKFLOW_PATH` | const | `apps/cli/src/lib/artifacts.ts` |
@@ -321,6 +351,8 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `getTokensCollectTrust` | function | `apps/cli/src/lib/config.ts` |
 | `gitBlobHash` | function | `apps/cli/src/lib/config.ts` |
 | `gitCommonDir` | function | `apps/cli/src/lib/config.ts` |
+| `GLOBAL_CONFIG_PATH` | const | `apps/cli/src/lib/config.ts` |
+| `GLOBAL_VINAYA_HOME` | const | `apps/cli/src/lib/config.ts` |
 | `globalChecksIgnoredWarning` | function | `apps/cli/src/lib/config.ts` |
 | `globalPrincipalsIgnoredWarning` | function | `apps/cli/src/lib/config.ts` |
 | `globalReleaseActorIgnoredWarning` | function | `apps/cli/src/lib/config.ts` |
@@ -333,6 +365,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `loadConfig` | function | `apps/cli/src/lib/config.ts` |
 | `loadConfigChecked` | function | `apps/cli/src/lib/config.ts` |
 | `loadTrustAnchorConfig` | function | `apps/cli/src/lib/config.ts` |
+| `LOCAL_CONFIG_FILENAME` | const | `apps/cli/src/lib/config.ts` |
 | `MANAGED_MANIFEST_VERSION` | const | `apps/cli/src/lib/config.ts` |
 | `parseTokensCollectDeclaration` | function | `apps/cli/src/lib/config.ts` |
 | `readRepoCiSetup` | function | `apps/cli/src/lib/config.ts` |
@@ -359,26 +392,26 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `resolveHookDir` | function | `apps/cli/src/lib/detect.ts` |
 | `setCoreHooksPath` | function | `apps/cli/src/lib/detect.ts` |
 | `unsetCoreHooksPath` | function | `apps/cli/src/lib/detect.ts` |
-| `resolveHead` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchCiConclusion` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `filterPrincipalRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `findPrincipalFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchIssueTitle` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `extractObjectivesSection` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchIssueObjectives` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `developerBranchFor` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `findOpenPrForBranch` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `lintReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `renderReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `outboxRoot` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `writeHeldVerdict` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `CONFIDENCE_PROMPT_LINE` | const | `apps/cli/src/lib/dev-review-loop.ts` |
-| `parseConfidenceReply` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `DevReviewLoopResumeError` | class | `apps/cli/src/lib/dev-review-loop.ts` |
-| `devReviewLoop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `DEV_REVIEW_LOOP_AGENTS` | const | `apps/cli/src/lib/dev-review-loop.ts` |
+| `developerBranchFor` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `devReviewLoop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `DevReviewLoopResumeError` | class | `apps/cli/src/lib/dev-review-loop.ts` |
+| `extractObjectivesSection` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchCiConclusion` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchIssueObjectives` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchIssueTitle` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `filterPrincipalRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `findOpenPrForBranch` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `findPrincipalFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `lintReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `outboxRoot` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `parseConfidenceReply` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `renderReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `resolveHead` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `writeHeldVerdict` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `changedLineRanges` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `fileDiffAgainst` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `findingsInThisDiff` | function | `apps/cli/src/lib/diff-evidence.ts` |
@@ -386,26 +419,24 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `repoRoot` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `resolveChangedFiles` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `resolveDiff` | function | `apps/cli/src/lib/diff-evidence.ts` |
-| `AEG_BRIEF_V1_MARKER` | const | `apps/cli/src/lib/dispatch-task.ts` |
 | `briefHash` | function | `apps/cli/src/lib/dispatch-task.ts` |
-| `contentAfterTwoLines` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `DISPATCH_AGENTS` | const | `apps/cli/src/lib/dispatch-task.ts` |
 | `dispatchTask` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `DispatchTaskError` | class | `apps/cli/src/lib/dispatch-task.ts` |
 | `AGENT_VENDOR_NAMES` | const | `apps/cli/src/lib/dispatch.ts` |
-| `dispatchRole` | function | `apps/cli/src/lib/dispatch.ts` |
-| `isAgentVendor` | function | `apps/cli/src/lib/dispatch.ts` |
 | `DEFAULT_TIMEOUT_MS` | const | `apps/cli/src/lib/dispatch.ts` |
+| `dispatchRole` | function | `apps/cli/src/lib/dispatch.ts` |
 | `HEARTBEAT_INTERVAL_MS` | const | `apps/cli/src/lib/dispatch.ts` |
+| `isAgentVendor` | function | `apps/cli/src/lib/dispatch.ts` |
 | `MAX_TEE_BYTES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `openOutputTee` | function | `apps/cli/src/lib/dispatch.ts` |
-| `timeoutWarningLeadMs` | function | `apps/cli/src/lib/dispatch.ts` |
 | `parseClaudeResumeId` | function | `apps/cli/src/lib/dispatch.ts` |
 | `parseClaudeUsage` | function | `apps/cli/src/lib/dispatch.ts` |
+| `parseGeminiUsage` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderClaudeEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderCodexEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderGeminiEvent` | function | `apps/cli/src/lib/dispatch.ts` |
-| `parseGeminiUsage` | function | `apps/cli/src/lib/dispatch.ts` |
+| `timeoutWarningLeadMs` | function | `apps/cli/src/lib/dispatch.ts` |
 | `appendDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `applyDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `freshDocOwners` | function | `apps/cli/src/lib/doc-owners-write.ts` |
@@ -443,23 +474,30 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `GEMINI_COMMAND_GROUP` | const | `apps/cli/src/lib/gemini-command-emitter.ts` |
 | `GEMINI_COMMAND_PATH` | const | `apps/cli/src/lib/gemini-command-emitter.ts` |
 | `renderGeminiCommand` | function | `apps/cli/src/lib/gemini-command-emitter.ts` |
-| `OUTBOX_MAX_BYTES` | const | `apps/cli/src/lib/log-sink.ts` |
 | `createLogSink` | function | `apps/cli/src/lib/log-sink.ts` |
 | `currentRunId` | function | `apps/cli/src/lib/log-sink.ts` |
 | `log` | function | `apps/cli/src/lib/log-sink.ts` |
+| `OUTBOX_MAX_BYTES` | const | `apps/cli/src/lib/log-sink.ts` |
 | `outboxPathFor` | function | `apps/cli/src/lib/log-sink.ts` |
 | `EVIDENCE_SUMMARY_PREFIX` | const | `apps/cli/src/lib/numstat.ts` |
 | `summariseNumstat` | function | `apps/cli/src/lib/numstat.ts` |
+| `appendBlock` | function | `apps/cli/src/lib/ops.ts` |
 | `applyEject` | function | `apps/cli/src/lib/ops.ts` |
 | `applyInstall` | function | `apps/cli/src/lib/ops.ts` |
 | `blockStripLeavesEmpty` | function | `apps/cli/src/lib/ops.ts` |
 | `containedAbs` | function | `apps/cli/src/lib/ops.ts` |
 | `containedManagedBlockAbs` | function | `apps/cli/src/lib/ops.ts` |
+| `createHost` | function | `apps/cli/src/lib/ops.ts` |
+| `indent` | function | `apps/cli/src/lib/ops.ts` |
+| `markerLines` | function | `apps/cli/src/lib/ops.ts` |
 | `planEject` | function | `apps/cli/src/lib/ops.ts` |
 | `planInstall` | function | `apps/cli/src/lib/ops.ts` |
+| `renderBlock` | function | `apps/cli/src/lib/ops.ts` |
 | `renderEjectDiff` | function | `apps/cli/src/lib/ops.ts` |
 | `renderInstallDiff` | function | `apps/cli/src/lib/ops.ts` |
 | `resolveManagedBlockPath` | function | `apps/cli/src/lib/ops.ts` |
+| `stripBlockFromContent` | function | `apps/cli/src/lib/ops.ts` |
+| `writeFileWithDirs` | function | `apps/cli/src/lib/ops.ts` |
 | `printHelp` | function | `apps/cli/src/lib/output.ts` |
 | `packageRoot` | function | `apps/cli/src/lib/package-root.ts` |
 | `__resetStdinForTest` | function | `apps/cli/src/lib/prompt.ts` |
@@ -482,8 +520,10 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `STUDIO_ARTIFACT_RELEASE_TAG` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_ARTIFACT_REPO` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_NODE_MODULES_PACKED_DIRNAME` | const | `apps/cli/src/lib/studio-bundle.ts` |
+| `AEG_BRIEF_V1_MARKER` | const | `packages/aeg-core/src/brief-validation.ts` |
+| `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(206 exports.)
+(219 exports.)
 
 ## Commands — `apps/cli/src/commands` (41 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 

@@ -65,12 +65,27 @@ describe('evaluateTokenReportEnforcement', () => {
     const result = evaluateTokenReportEnforcement(CHECK_NAME, CAPABLE, '## Summary\n\nShipped the thing.\n')
     expect(result.pass).toBe(false)
     if (result.pass) throw new Error('unreachable')
-    expect(result.error.message).toContain('no "Token report" section')
+    expect(result.error.message).toContain('no "Token report" row')
   })
 
-  it('incapable (any reason): passes silently, even with a blank/missing body', () => {
+  it('incapable + a row present (even all "—" cells): passes — the sanctioned operator-metered shape', () => {
     expect(evaluateTokenReportEnforcement(CHECK_NAME, INCAPABLE, BLANK_BODY)).toEqual({ pass: true })
+  })
+
+  it('empty PR_BODY still passes regardless of capability, before the row check ever runs', () => {
     expect(evaluateTokenReportEnforcement(CHECK_NAME, INCAPABLE, '')).toEqual({ pass: true })
+  })
+
+  // O13 — the silent hole this task closes: before this fix, `!capability.capable`
+  // returned `pass: true` BEFORE the entries.length check ever ran, so a merged
+  // task PR on an incapable host could carry no "## Token report" section at
+  // all and still pass. `tranche-model.md` §12: the operator-metered case
+  // writes `—` in a row — never omits the section.
+  it('O13: incapable + NO "Token report" section at all: fails — a silent hole is never sanctioned', () => {
+    const result = evaluateTokenReportEnforcement(CHECK_NAME, INCAPABLE, '## Summary\n\nShipped the thing.\n')
+    expect(result.pass).toBe(false)
+    if (result.pass) throw new Error('unreachable')
+    expect(result.error.message).toContain('no "Token report" row')
   })
 
   it("incapable for a wiring-defect reason still passes here — that is token-collection-wired's job, not this check's", () => {

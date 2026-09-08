@@ -219,6 +219,19 @@ describe('checkPrincipalPlaceholder', () => {
     ].join('\n')
     expect(checkPrincipalPlaceholder(body).status).toBe('pass')
   })
+
+  it('O12: reports every placeholder line in one pass, not only the first', () => {
+    const body = [
+      '- [ ] **[principal]** None — no auth surface.',
+      '- [ ] **[principal]** Sign in and verify the billing page.',
+      '- [ ] **[principal]** none — nothing else to check.'
+    ].join('\n')
+    const r = checkPrincipalPlaceholder(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBe(2)
+    expect(r.errors[0]).toMatch(/no auth surface/)
+    expect(r.errors[1]).toMatch(/nothing else to check/)
+  })
 })
 
 describe('checkSurfaceMap', () => {
