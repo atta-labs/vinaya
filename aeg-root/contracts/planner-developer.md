@@ -22,7 +22,7 @@ This seam sits between the brief and the agent that executes it. It exists to cl
 
 **What it does not carry** — status, which is derived from branches and pull requests and never written; the planner's durable reasoning, which crossed the previous seam and lives on the issue; and any authority to amend the brief. The brief is frozen at dispatch; a change to it is an escalation, not an edit.
 
-**How it physically runs** — the carrier is the task Issue's own `aeg:brief:v1` comment, posted once, frozen, by `vinaya task dispatch` before the Developer's worktree ever exists. That is the brief's permanent home: the executing agent reads it there, the reviewer reads it there to judge intent against outcome, and the close-out reads it there as evidence. It is never committed into the repository and never carried in the pull-request body, which holds only the Developer's report — a brief kept anywhere else goes stale before the work starts.
+**How it physically runs** — the carrier is a frozen comment the dispatch command posts on the task's own tracking issue, before the Developer's worktree ever exists. That is the brief's permanent home: the executing agent reads it there, the reviewer reads it there to judge intent against outcome, and the close-out reads it there as evidence. It is never committed into the repository and never carried in the pull-request body, which holds only the Developer's report — a brief kept anywhere else goes stale before the work starts.
 
 
 ---
