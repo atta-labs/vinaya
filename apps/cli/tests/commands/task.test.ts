@@ -61,4 +61,16 @@ describe('vinaya task dispatch — argv parsing', () => {
     expect(r.status).toBe(2)
     expect(r.stderr).toContain('--agent must be one of')
   })
+
+  it('refuses --model with no value (O1/O3, #456)', () => {
+    const r = runCli(['task', 'dispatch', 'plan-brief-v1', '427', '--model'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--model requires a value')
+  })
+
+  it('mentions --model in its usage line', () => {
+    const r = runCli(['task', 'dispatch'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--model')
+  })
 })
