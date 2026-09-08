@@ -103,6 +103,9 @@ const DEFAULT_TIMEOUT_MS = 3_600_000
 /** Grace window between `SIGTERM` and `SIGKILL` once the ceiling fires. */
 const SIGKILL_GRACE_MS = 5_000
 
+/** How often a still-running dispatch announces that it is alive (O1). */
+const HEARTBEAT_INTERVAL_MS = 60_000
+
 /**
  * Tees the child's raw stdout/stderr bytes to a machine-local file so a
  * human can read what the agent is doing while it is still running (O2) —
@@ -450,6 +453,17 @@ export async function dispatchRole(
       outputTee.write(chunk)
     })
 
+    // Print mode (O1's motivating trap) may emit nothing on stdout until
+    // the very end — the heartbeat is deliberately independent of the
+    // child's own output, so liveness is reported even when there is
+    // nothing yet to tee.
+    const heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {
+      const elapsedS = Math.round((Date.now() - start) / 1000)
+      process.stderr.write(
+        `[vinaya dispatch] ${role} via ${agent}: still running — ${elapsedS}s elapsed (ceiling ${Math.round(timeoutMs / 1000)}s)\n`
+      )
+    }, HEARTBEAT_INTERVAL_MS)
+
     const timeoutTimer = setTimeout(() => {
       timedOut = true
       child.kill('SIGTERM')
@@ -463,6 +477,7 @@ export async function dispatchRole(
       settled = true
       clearTimeout(timeoutTimer)
       if (killTimer) clearTimeout(killTimer)
+      clearInterval(heartbeatTimer)
       outputTee.end()
       // The corresponding `log()` call already ran, with `priorSize` taken
       // right before it — this just confirms it landed before the caller
