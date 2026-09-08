@@ -131,7 +131,7 @@ export type DerivedTranche = {
  * The tranche total is `sum(rows)`, derived at read time — never stored.
  *
  * The two capture sources surface here as `null` cells: a row written by a
- * claude.ai role (Planner / Brief Author / Reviewer / Security) before the
+ * claude.ai role (Planner / Reviewer / Security) before the
  * Principal has filled in its usage figure has `tokensIn`/`tokensOut`/`cost`
  * as `null`; a terminal-role row (Developer / Archivist with `/cost`) has
  * exact numbers.

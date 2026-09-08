@@ -55,12 +55,12 @@
  * For a comma-separated list of intended surface
  *                      globs, by matching them against
  *                      `.vinaya/doc-owners`. Prints every fired
- *                      binding so a Planner/Brief Author sees, DURING Dig,
+ *                      binding so the Planner sees, DURING Dig,
  *                      which doc pointers this task's surface will require at
  *                      PR-open (C5) — instead of discovering it for the first
  *                      time when `open-pr.ts` refuses. Read-only; makes no
  *                      forge calls. (`deriveSection7`, previously a
- *                      Planner/Brief-Author aid with no CLI entry point.)
+ *                      Planner aid with no CLI entry point.)
  *
  * Exit code: 0 when ready (and, in --premise/--simulate/--check-baseline
  * mode, when that mode's check passes); 1 otherwise, with every failing
@@ -83,6 +83,7 @@ import {
   type RepoRef
 } from '@attalabs/aeg-forge-state'
 import {
+  AEG_BRIEF_V1_MARKER,
   type BaselineEntry,
   captureBaseline,
   checkDispatchReadiness,
@@ -90,6 +91,7 @@ import {
   checkPremises,
   classifyLeftover,
   compareToBaseline,
+  contentAfterTwoLines,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
   type DispatchPriorTrancheFact,
@@ -663,31 +665,6 @@ function countErrorLines(output: string): number {
 
 // ---- modes ---------------------------------------------------------------------
 
-const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
-
-/**
- * Everything in a posted `aeg:brief:v1` comment after its marker line and
- * `Brief hash:` line, as a raw substring — never a line-split-then-rejoin,
- * which would silently renormalize whatever separates the two header lines
- * from the brief body. Exported so `verify-dispatch.test.ts` can pin it
- * against the same fixture vectors `apps/cli/tests/lib/dispatch-task.test.ts`
- * pins its own copy against (`dispatch-task.ts`'s `contentAfterTwoLines`) —
- * duplicated, not imported: this bin lives in `@attalabs/aeg-core` and
- * cannot import `apps/cli` (`check-brief-shape.ts` carries a third copy for
- * the same reason). Found live (code review): three copies of hash-contract-
- * critical logic with zero test proving they agree is exactly the
- * three-copies-disagreeing failure mode `edge-resolve.ts`'s own doc comment
- * already warns this codebase about — this export, and its two siblings, are
- * what let each side's test suite assert the SAME fixture vectors rather
- * than trusting the doc comment alone.
- */
-export function contentAfterTwoLines(body: string): string {
-  const first = body.indexOf('\n')
-  if (first === -1) return ''
-  const second = body.indexOf('\n', first + 1)
-  if (second === -1) return ''
-  return body.slice(second + 1)
-}
 async function runPremiseModeFromIssue(trancheSlug: string, taskId: string): Promise<void> {
   const repo = await resolveRepo()
   if (!repo) {

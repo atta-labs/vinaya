@@ -29,7 +29,7 @@
  * `verify-coherence.ts --closes-n` does.
  *
  * Authoring-time entry (`--body-file <path>`): the same validator, run against a
- * brief file before a PR (or even a branch) exists, so a Brief Author can gate a
+ * brief file before a PR (or even a branch) exists, so the Planner can gate a
  * brief at authoring time instead of discovering the gap in CI after dispatch.
  * With no `BRANCH`/`--branch`, the branch is inferred from the brief's own Step 0
  * `git worktree add … -b <branch>` line, which is where a brief declares what it
@@ -44,10 +44,12 @@ import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import {
+  AEG_BRIEF_V1_MARKER,
   buildConsumersOf,
   checkBriefSections,
   checkForgeTitle,
   checkPlanPrNoCloses,
+  contentAfterTwoLines,
   extractIssue,
   hasObjectivesHeading,
   inferBranchFromBody,
@@ -110,8 +112,8 @@ const TASK_BRANCH_PATTERN = /^task\/[^/]+\/[^/]+$/
  * A flag's parse outcome. The three cases are kept distinct because collapsing
  * "absent" and "present but unparseable" into one `null` is a silent-green path:
  * `--body-file` with a fumbled path (shell glob, tab-completion miss, wrong arg
- * order) would fall through to the empty-`PR_BODY` branch and exit 0, handing a
- * Brief Author a green on a brief nobody graded — the exact failure class this
+ * order) would fall through to the empty-`PR_BODY` branch and exit 0, handing the
+ * Planner a green on a brief nobody graded — the exact failure class this
  * gate exists to eliminate, reintroduced through its own new entry point
  * (PR #631 review MAJOR).
  */
@@ -139,6 +141,60 @@ function fetchIssueBodyForObjectives(issueNumber: number): string {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   })
+}
+
+type IssueCommentsJson = { comments: Array<{ body: string }> }
+
+/** `gh issue view <n> --json comments` — the one live read `resolveGradedBody` needs. */
+function fetchIssueCommentsForGrading(issueNumber: number): IssueCommentsJson {
+  const out = execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'comments'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  return JSON.parse(out) as IssueCommentsJson
+}
+
+type GradedBodyResolution = { ok: true; body: string } | { ok: false; message: string }
+
+/**
+ * The body `checkBriefSections` actually grades (plan-brief-v1 task 3,
+ * #428 — folded in from #422). On a task branch, the brief lives on the
+ * task Issue's frozen `aeg:brief:v1` comment posted by `dispatchTask`
+ * (`vinaya task dispatch`), never in the PR body — so that comment, not
+ * `PR_BODY`, is what gets graded. This is the SAME resolution
+ * `apps/cli/src/checks/bin/check-brief-shape.ts` runs in CI (`resolveGradedBody`
+ * there), so the authoring-time entry point here and the CI gate cannot
+ * disagree about a post-split brief. A non-task branch is unchanged: its
+ * brief, if any, is still authored directly into the body being graded.
+ */
+function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResolution {
+  if (!taskBranch) return { ok: true, body: prBody }
+
+  const { issue } = extractIssue(prBody)
+  if (issue === null) {
+    return { ok: false, message: 'not dispatched — no `Closes #N` in the PR body to resolve the task Issue.' }
+  }
+
+  let json: IssueCommentsJson
+  try {
+    json = fetchIssueCommentsForGrading(issue)
+  } catch (err) {
+    // Same treatment `resolveIssueObjectives` already gives an unresolvable
+    // Issue number just below (a fixture's placeholder `Closes #999`, a
+    // deleted Issue): additive exemption, never a new hard-failure mode for
+    // a resource nothing required before this task. A DIFFERENT fetch
+    // failure (network, auth, rate-limit) still hard-fails.
+    if (isIssueNotFoundError(err)) return { ok: true, body: prBody }
+    return {
+      ok: false,
+      message: `could not fetch Issue #${issue}'s comments (\`gh issue view\`) to grade the dispatched brief: ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+  const comment = json.comments.find((c) => c.body.split('\n')[0] === AEG_BRIEF_V1_MARKER)
+  if (!comment) {
+    return { ok: false, message: `not dispatched — no \`aeg:brief:v1\` comment on Issue #${issue}.` }
+  }
+  return { ok: true, body: contentAfterTwoLines(comment.body) }
 }
 
 /**
@@ -266,9 +322,21 @@ export function main(): void {
     process.exit(0)
   }
 
+  // `--body-file` is the authoring-time entry, run before a branch (let
+  // alone a dispatched task Issue) necessarily exists — grade the file's
+  // own content directly, never fetch an Issue comment that cannot exist
+  // yet. Only the real `PR_BODY` path substitutes the frozen Issue comment.
+  const gradedBodyResolution: GradedBodyResolution =
+    bodyFile === null ? resolveGradedBody(prBody, isTaskBranch) : { ok: true, body: prBody }
+  if (!gradedBodyResolution.ok) {
+    console.error(`\n[verify-brief] FAILED — ${gradedBodyResolution.message}`)
+    process.exit(1)
+  }
+  const gradedBody = gradedBodyResolution.body
+
   const issueObjectives = resolveIssueObjectives(prBody, isTaskBranch)
 
-  const { errors } = checkBriefSections(prBody, readTierFromPrBody, {
+  const { errors } = checkBriefSections(gradedBody, readTierFromPrBody, {
     requireClosesN: isTaskBranch,
     consumersOf: buildConsumersOfLocal(),
     issueObjectives: issueObjectives ?? undefined

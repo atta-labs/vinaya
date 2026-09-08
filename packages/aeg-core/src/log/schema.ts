@@ -18,7 +18,6 @@ import { z } from 'zod'
 /** Every dispatchable doctrine role, spelled exactly as the spec's Role union (§5.1) — the doctrine-facing name (`code-reviewer`), not the `reviewer.md` filename `resolveDoctrineRootInfo` resolves it to. */
 export const ROLE_VALUES = [
   'planner',
-  'brief-author',
   'developer',
   'code-reviewer',
   'security',

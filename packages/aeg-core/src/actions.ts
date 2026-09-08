@@ -105,10 +105,10 @@ export const ACTIONS: Action[] = [
     id: 'author-the-brief',
     label: 'author the brief',
     crosses: 'none',
-    performedBy: ['brief-author'],
+    performedBy: ['planner'],
     summary: 'Ever started a task with no clear idea of what "done" means?',
     description:
-      'Turning one intent into instructions someone can execute: what to build, what is out of scope, and what done means.'
+      'Dispatching one intent as instructions someone can execute: what to build, what is out of scope, and what done means.'
   },
   {
     id: 'produce-the-verdict',

@@ -252,7 +252,7 @@ describe('renderBrief', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.brief).toContain('**Out of surface:** packages/aeg-core/tests')
-    expect(result.brief).not.toContain('named explicitly by the Brief Author')
+    expect(result.brief).not.toContain('named explicitly by the Planner')
   })
 
   it('§6 renders one numbered Part per IssuePart, its citation reconstructed verbatim', () => {

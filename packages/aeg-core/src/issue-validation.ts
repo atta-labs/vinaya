@@ -202,7 +202,7 @@ type ParsedIssueSection<T> = { ok: true; value: T } | { ok: false; errors: strin
  * `## Surface` — a directory-level `in:` glob list (what this task touches)
  * and `out:` glob list (what it explicitly does not), each comma-separated.
  * Refuses a file path in either list — Surface entries are directory-level,
- * never a specific file (the Brief Author's own §4 maps globs to files at
+ * never a specific file (the Planner's own §4 maps globs to files at
  * render time).
  */
 export function parseIssueSurface(body: string): ParsedIssueSection<IssueSurface> {
@@ -891,7 +891,7 @@ const BRIEF_MARKERS: Array<{ name: string; pattern: RegExp }> = [
 /**
  * **B — brief content in the Issue.** Fails when the code-stripped body carries
  * a brief-shaped heading. The Issue is the Planner's durable rationale; the
- * brief is the Brief Author's just-in-time execution context, authored against
+ * brief is the Planner's just-in-time execution context, dispatched against
  * the surface as it exists at dispatch. Copying the second into the first
  * creates a stale copy nobody re-reads and nobody updates.
  */

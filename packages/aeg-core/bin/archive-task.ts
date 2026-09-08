@@ -24,6 +24,7 @@
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
 import {
+  AEG_BRIEF_V1_MARKER,
   buildProvenanceBlock,
   extractIssue,
   hasProvenance,
@@ -112,7 +113,6 @@ export function main(): void {
   // pre-cutover task, or one dispatched by hand), or a failed fetch all
   // degrade to `null`, which `buildProvenanceBlock` reports as DANGLING
   // rather than blocking the merge-adjacent archival this shim runs after.
-  const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
   let briefCommentUrl: string | null = null
   if (primaryIssue !== null) {
     try {

@@ -3,8 +3,8 @@
  * surface globs against `.vinaya/doc-owners` bindings (state-machine.md
  * Section 15). Pure — parses doc-owners content via `parseDocOwners` (no
  * second parser) and does segment-wise glob overlap between each intended
- * surface and each binding's code glob. A Planner/Brief-Author aid only —
- * not wired into any CI gate.
+ * surface and each binding's code glob. A Planner aid only — not wired
+ * into any CI gate.
  */
 
 import { parseDocOwners } from './doc-owners'
