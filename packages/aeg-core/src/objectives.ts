@@ -129,7 +129,7 @@ export function objectivesOf(body: string): ParsedObjectives {
     }
     if (hasBacktickedPath(text) && wordCount(stripObjectiveBackticks(text)) < MIN_WORDS_OUTSIDE_BACKTICKS) {
       errors.push(
-        `O${n} is little more than a file path — an objective states an observable outcome, never a bare path (the Brief Author maps it to files).`
+        `O${n} is little more than a file path — an objective states an observable outcome, never a bare path (the Planner maps it to files).`
       )
       continue
     }

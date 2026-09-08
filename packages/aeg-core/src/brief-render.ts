@@ -15,7 +15,7 @@
  * Verification command list beyond the fixed full run) is out of this task's
  * scope — Issue #387: "NOT this task: rendering any judgment section." Those
  * sections are rendered with the mechanical content this module CAN derive;
- * anything genuinely judgment-only is left for the Brief Author to add by
+ * anything genuinely judgment-only is left for the Planner to add by
  * hand after render.
  */
 
@@ -187,7 +187,7 @@ function renderHeader(facts: BriefFacts, template: string): string {
 
   const reason = facts.rationale.suggestedAgentClass ?? ''
   // `deriveTierFromDiff` never returns `3` — Tier 3 stays a judgment call the
-  // Brief Author raises by hand; the mechanical floor this renderer can prove
+  // Planner raises by hand; the mechanical floor this renderer can prove
   // is 0 or 1, exactly the two values that check itself is capable of ruling
   // out for a doc/spec-touching surface.
   const tier = deriveTierFromDiff(facts.surfaceFiles.map((f) => f.path))

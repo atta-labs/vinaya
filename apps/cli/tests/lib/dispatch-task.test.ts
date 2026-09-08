@@ -11,13 +11,11 @@ import {
 const BRIEF_TEXT = '**For:** Sonnet\n**Tier:** 1\n\nCloses #427\n\nYou are the AEG Developer.'
 
 /**
- * Pinned identically in `packages/aeg-core/bin/verify-dispatch.content-after-two-lines.test.ts`
- * against that file's own, unavoidably duplicated copy of this same function
- * (a genuinely separate package that cannot import `apps/cli` at all — see
- * `dispatch-task.ts`'s own doc comment on `contentAfterTwoLines`). A future
- * edit to either copy that stops agreeing with the other fails a test on
- * whichever side drifted, rather than surviving as an undetected mismatch —
- * the exact gap code review found live on this task.
+ * `contentAfterTwoLines` and `AEG_BRIEF_V1_MARKER` are the promoted
+ * `@attalabs/aeg-core` exports (plan-brief-v1 task 3, #428) — `dispatch-task.ts`
+ * re-exports them rather than carrying its own copy. Pinned identically in
+ * `packages/aeg-core/bin/verify-dispatch.content-after-two-lines.test.ts`,
+ * proving both packages agree on the SAME function.
  */
 const CONTENT_AFTER_TWO_LINES_VECTORS: Array<{ name: string; input: string; expected: string }> = [
   {

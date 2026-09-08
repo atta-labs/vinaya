@@ -21,12 +21,12 @@ import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isPrincipal } from '@attalabs/aeg-core'
+import { AEG_BRIEF_V1_MARKER, isPrincipal } from '@attalabs/aeg-core'
 import { assembleAndRenderBrief } from './brief-assembly.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { currentGhLogin, postMarkedComment } from './forge-write.js'
 
-export const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
+export { AEG_BRIEF_V1_MARKER, contentAfterTwoLines } from '@attalabs/aeg-core'
 
 /**
  * The coding-agent vendor `--agent` names — distinct from `agent-vendors.ts`'s
@@ -54,32 +54,6 @@ function sh(cmd: string, args: string[]): string {
 
 type IssueComment = { body: string; url: string }
 type IssueCommentsJson = { comments: IssueComment[] }
-
-/**
- * The content a reader recomputes the brief hash over: everything in the
- * posted comment after the marker line and the `Brief hash:` line, as a raw
- * substring — never a line-split-then-rejoin, which would silently
- * normalize whatever separates the two header lines from the brief
- * differently than the literal bytes a reader sees below them.
- *
- * This is the ONE real implementation — `check-brief-shape.ts` imports it
- * directly (same package, `apps/cli/src/checks/bin` already imports from
- * `apps/cli/src/lib` elsewhere). Duplicated exactly once, unavoidably, in
- * `packages/aeg-core/bin/verify-dispatch.ts`: that file lives in a genuinely
- * separate package and cannot import `apps/cli` at all — same discipline
- * this file's own `sh()` mirrors from `pr.ts`'s local `git()`.
- * `verify-dispatch.test.ts` and `dispatch-task.test.ts` both pin the same
- * fixture vectors against their own copy, so the two implementations
- * disagreeing fails a test on either side rather than surviving as an
- * undetected drift.
- */
-export function contentAfterTwoLines(body: string): string {
-  const first = body.indexOf('\n')
-  if (first === -1) return ''
-  const second = body.indexOf('\n', first + 1)
-  if (second === -1) return ''
-  return body.slice(second + 1)
-}
 
 /**
  * `sha256` of the brief text as it will appear below the two header lines

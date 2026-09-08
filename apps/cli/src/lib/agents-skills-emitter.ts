@@ -26,7 +26,7 @@ export const AGENTS_SKILLS_GROUP = 'Agent skills (.agents/skills/)'
 
 /**
  * Format a role slug into a human-readable AEG role title.
- * e.g. "developer" -> "Developer", "brief-author" -> "Brief Author", "tranche-archivist" -> "Tranche Archivist"
+ * e.g. "developer" -> "Developer", "planner" -> "Planner", "tranche-archivist" -> "Tranche Archivist"
  */
 export function formatRoleTitle(roleName: string): string {
   return roleName
@@ -37,10 +37,29 @@ export function formatRoleTitle(roleName: string): string {
 }
 
 /**
+ * Roles this codebase has retired, declared rather than inferred.
+ *
+ * Retirement is a STATED fact, never derived from a role file's absence. The
+ * doctrine file may legitimately outlive the code's knowledge of the role —
+ * `aeg-root/roles/brief-author.md` stays on disk until the doctrine task
+ * deletes it, because `registry-gates`' G5 refuses a contract naming a role
+ * with no file. Inferring "retired" from a missing file therefore gets BOTH
+ * consumers of `discoverRoleNames` wrong while that window is open:
+ * `staleAgentSkillPaths` would keep reading an adopter's stale skill as live
+ * and never clean it up, and `agentSkillsArtifacts` would keep GENERATING a
+ * skill whose embedded `vinaya doctrine --role brief-author` this same release
+ * makes refuse — an artifact broken by construction the moment it is written.
+ *
+ * A name here stays correct, merely redundant, once its role file is deleted.
+ */
+export const RETIRED_ROLE_NAMES: ReadonlySet<string> = new Set(['brief-author'])
+
+/**
  * Discover role names available under `<doctrineRoot>/roles/`, from `*.md` filenames —
  * excluding any role whose frontmatter declares `actor: human` (agent-skill files are
- * only ever generated for `agent` or `either` actors). Results are sorted alphabetically
- * for deterministic, idempotent output.
+ * only ever generated for `agent` or `either` actors) and any role named in
+ * `RETIRED_ROLE_NAMES`. Results are sorted alphabetically for deterministic,
+ * idempotent output.
  */
 export function discoverRoleNames(doctrineRoot: string): string[] {
   const rolesDir = join(doctrineRoot, 'roles')
@@ -48,6 +67,7 @@ export function discoverRoleNames(doctrineRoot: string): string[] {
   return readdirSync(rolesDir)
     .filter((name) => name.endsWith('.md'))
     .map((name) => name.slice(0, -'.md'.length))
+    .filter((roleName) => !RETIRED_ROLE_NAMES.has(roleName))
     .filter((roleName) => {
       const { data } = matter(readFileSync(join(rolesDir, `${roleName}.md`), 'utf8'))
       return data.actor !== 'human'
@@ -91,4 +111,23 @@ export function buildAgentsSkillsOps(doctrineRoot: string, selfHost: VendoredVin
     content: renderAgentSkill(role, selfHost),
     group: AGENTS_SKILLS_GROUP
   }))
+}
+
+/** Matches `agentSkillPath`'s own shape, capturing the role slug back out. */
+const AGENT_SKILL_PATH_PATTERN = /^\.agents\/skills\/vinaya-([^/]+)\/SKILL\.md$/
+
+/**
+ * Manifest-recorded agent-skill paths whose role no longer resolves under
+ * `<doctrineRoot>/roles/` (deleted outright, or now `actor: human`) — a
+ * generated skill left pointing at `vinaya doctrine --role <retired>`, which
+ * now refuses. Never hardcodes a role name: the same live-scan
+ * `discoverRoleNames` already uses, diffed against what a past `init`/`upgrade`
+ * actually wrote, so any future retired role is caught the same way.
+ */
+export function staleAgentSkillPaths(doctrineRoot: string, manifestFiles: readonly string[]): string[] {
+  const liveRoles = new Set(discoverRoleNames(doctrineRoot))
+  return manifestFiles.filter((path) => {
+    const match = AGENT_SKILL_PATH_PATTERN.exec(path)
+    return match !== null && !liveRoles.has(match[1] as string)
+  })
 }

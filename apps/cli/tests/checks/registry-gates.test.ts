@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
@@ -71,4 +71,34 @@ describe('registry-gates — task vinaya-adopter-portability-v1 2 (Issue #232)',
     const stderr = result.stderr.toString()
     expect(stderr).not.toContain('registry-gates.dormant')
   }, 20_000)
+})
+
+describe('registry-gates — brief-author retirement (plan-brief-v1 3, Issue #428)', () => {
+  // `brief-developer.md` and `planner-brief.md` still legitimately name
+  // `brief-author` as producer/consumer: `roles/brief-author.md` itself is
+  // task 4's deletion, not this task's, and G5 (checkG5) refuses a contract
+  // naming a non-role — renaming these two files' fields is task 4's job.
+  // This test tolerates exactly those two by name, so any OTHER contract
+  // added or edited to name the retired role is caught here rather than
+  // waiting on task 4 to land.
+  const TOLERATED_CONTRACTS = new Set(['brief-developer.md', 'planner-brief.md'])
+
+  it('no contract other than the two task 4 will delete/rename names brief-author as producer or consumer', () => {
+    const contractsDir = join(import.meta.dir, '..', '..', '..', '..', 'aeg-root', 'contracts')
+    const offenders: string[] = []
+    for (const file of readdirSync(contractsDir)) {
+      if (!file.endsWith('.md') || TOLERATED_CONTRACTS.has(file)) continue
+      const content = readFileSync(join(contractsDir, file), 'utf8')
+      if (/^(?:producer|consumer):\s*brief-author\s*$/m.test(content)) offenders.push(file)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('the two tolerated contracts still name brief-author, exactly as expected — this test itself goes stale (not silently green) the day task 4 renames them', () => {
+    const contractsDir = join(import.meta.dir, '..', '..', '..', '..', 'aeg-root', 'contracts')
+    for (const file of TOLERATED_CONTRACTS) {
+      const content = readFileSync(join(contractsDir, file), 'utf8')
+      expect(content).toMatch(/^(?:producer|consumer):\s*brief-author\s*$/m)
+    }
+  })
 })

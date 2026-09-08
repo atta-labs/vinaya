@@ -31,7 +31,7 @@ subject: {
 }
 ```
 
-`Role` is the doctrine-facing spelling from the spec's Role union: `planner | brief-author | developer | code-reviewer | security | principal | archivist | architect` — not the `roles/*.md` filenames `resolveDoctrineRootInfo` resolves those names to.
+`Role` is the doctrine-facing spelling from the spec's Role union: `planner | developer | code-reviewer | security | principal | archivist | architect` — not the `roles/*.md` filenames `resolveDoctrineRootInfo` resolves those names to.
 
 ## The three families shipped so far
 

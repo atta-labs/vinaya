@@ -224,7 +224,7 @@ export const LABELS: Label[] = [
     id: 'vinaya/needs:brief-correction',
     category: 'needs',
     form: 'literal',
-    carries: 'Waiting on the Brief Author — the brief contradicts the surface it describes.'
+    carries: 'Waiting on the Planner — the brief contradicts the surface it describes.'
   },
   {
     key: 'waiver-docs',

@@ -105,6 +105,18 @@ export function resolveDoctrineRootInfo(
 const ROLE_ALIASES: Readonly<Record<string, string>> = { 'code-reviewer': 'reviewer' }
 
 /**
+ * Retired role spellings that must refuse rather than resolve, even while
+ * `roles/<name>.md` still exists on disk. `brief-author` is retired: the
+ * brief is now dispatched by the Planner, not authored by a separate role
+ * (`author-the-brief` in `actions.ts` is `performedBy: ['planner']`), but
+ * `roles/brief-author.md` itself is a later task's deletion — until then
+ * `listRoleNames()` would still enumerate it as live. The refusal points the
+ * caller at its replacement instead of silently handing back doctrine for a
+ * role nothing dispatches anymore.
+ */
+const RETIRED_ROLES: Readonly<Record<string, string>> = { 'brief-author': 'planner' }
+
+/**
  * Whether `root` is itself a real doctrine root — i.e. `<root>/skills/aeg/SKILL.md`
  * exists. Exported so a caller resolving `root` by a DIFFERENT anchor than
  * `resolveDoctrineRoot`'s own package-relative default (e.g. the repo actually
@@ -165,6 +177,12 @@ export function doctrineCommand(args: string[]): void {
           ? (ROLE_ALIASES[requested] as string)
           : requested
         : undefined
+    if (roleName !== undefined && Object.hasOwn(RETIRED_ROLES, roleName)) {
+      process.stderr.write(
+        `vinaya doctrine --role: '${roleName}' has been retired — use --role ${RETIRED_ROLES[roleName]}.\n`
+      )
+      process.exit(1)
+    }
     const validRoleNames = listRoleNames(root)
     if (roleName === undefined || roleName.startsWith('--') || !validRoleNames.includes(roleName)) {
       process.stderr.write(

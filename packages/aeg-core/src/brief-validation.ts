@@ -736,7 +736,7 @@ function isStep0Block(content: string): boolean {
  * Deliberately loose about what sits *between* the two fences (the prose
  * separating them, never counted) — this brief's own pre-flight steps
  * (`§5` items 4-9) interleave a sentence of prose between a command fence
- * and its output fence ("Output the Brief Author obtained at authoring
+ * and its output fence ("Output the Planner obtained at authoring
  * time…"), and the rule must not fail the brief that documents it.
  */
 export function checkCommandsCarryOutput(prBody: string): BriefSectionResult {
@@ -1002,4 +1002,34 @@ export function checkBriefSections(
     ...(requireClosesN ? [checkClosesN(prBody)] : [])
   ]
   return { errors: results.flatMap((r) => r.errors) }
+}
+
+/**
+ * The marker line a dispatched task's frozen `aeg:brief:v1` Issue comment
+ * starts with (`dispatch-task.ts`'s `dispatchTask`, `apps/cli`). Promoted
+ * here (plan-brief-v1 task 3, #428) so the comment-resolution logic that
+ * needs it — `packages/aeg-core/bin/verify-brief.ts` (this package, cannot
+ * import `apps/cli`) and `apps/cli`'s own `dispatch-task.ts`/
+ * `check-brief-shape.ts` — read the SAME constant rather than four copies of
+ * the same string that could quietly drift out of agreement.
+ */
+export const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
+
+/**
+ * Everything in a posted `aeg:brief:v1` comment after its marker line and
+ * `Brief hash:` line, as a raw substring — never a line-split-then-rejoin,
+ * which would silently renormalize whatever separates the two header lines
+ * from the brief body beneath them. The one canonical implementation
+ * (plan-brief-v1 task 3, #428): `dispatch-task.ts`, `verify-dispatch.ts` and
+ * `archive-task.ts` each carried their own copy before this promotion —
+ * found live (code review), the exact "N copies of hash-contract-critical
+ * logic with nothing proving they agree" failure `edge-resolve.ts`'s own
+ * doc comment already warns this codebase about.
+ */
+export function contentAfterTwoLines(body: string): string {
+  const first = body.indexOf('\n')
+  if (first === -1) return ''
+  const second = body.indexOf('\n', first + 1)
+  if (second === -1) return ''
+  return body.slice(second + 1)
 }

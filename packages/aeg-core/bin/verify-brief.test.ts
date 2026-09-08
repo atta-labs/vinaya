@@ -125,6 +125,23 @@ const TASK_BRIEF_CLOSING_500 = FIX_BRIEF.replace(
   'git worktree add .worktrees/task/iter/3 -b task/iter/3 origin/main'
 ).replace('## Summary', 'Closes #500\n\n## Summary')
 
+/** A fake `gh` on PATH whose `issue view --json comments` returns exactly one comment with `commentBody`. */
+function fakeGhWithComments(commentBody: string): string {
+  const dir = mkdtempSync(join(tmp, 'fake-gh-comments-'))
+  const gh = join(dir, 'gh')
+  const responseFile = join(dir, 'response.json')
+  writeFileSync(responseFile, JSON.stringify({ comments: [{ body: commentBody }] }))
+  writeFileSync(gh, `#!/bin/sh\ncat "${responseFile}"\n`)
+  chmodSync(gh, 0o755)
+  return `${dir}:${process.env.PATH}`
+}
+
+/** A complete task-branch brief closing Issue #12 — below `OBJECTIVES_SINCE_ISSUE` (404), so the Objectives fetch never fires and these tests exercise only `resolveGradedBody`'s own `gh` call. */
+const TASK_BRIEF_CLOSING_12 = FIX_BRIEF.replace(
+  'git worktree add .worktrees/fix/x -b fix/x origin/main',
+  'git worktree add .worktrees/task/iter/12 -b task/iter/12 origin/main'
+).replace('## Summary', 'Closes #12\n\n## Summary')
+
 describe('verify-brief — brief-shaped bodies are validated on any branch', () => {
   it('FAILS a brief-shaped body missing its doc-update list on a fix/* branch (was silently bypassed)', () => {
     const { code, output } = runCli([], { BRANCH: 'fix/x', PR_BODY: FIX_BRIEF_NO_DOC_LIST })
@@ -203,6 +220,32 @@ describe('verify-brief — Objectives fetch failure on a task branch (review rou
   })
 })
 
+describe('verify-brief — grades the dispatched Issue comment, not PR_BODY, on a task branch (plan-brief-v1 task 3, #428)', () => {
+  it('grades the frozen aeg:brief:v1 Issue comment body instead of PR_BODY when the two disagree', () => {
+    const commentBody = `<!-- aeg:brief:v1 -->\nBrief hash: abc123\n${TASK_BRIEF_CLOSING_12}`
+    const path = fakeGhWithComments(commentBody)
+    // PR_BODY carries only `Closes #12` — nothing else. If verify-brief
+    // graded PR_BODY directly (the old behavior) this would fail on every
+    // missing section; it must grade the Issue comment instead and pass.
+    const { code, output } = runCli([], { BRANCH: 'task/iter/12', PR_BODY: 'Closes #12\n', PATH: path })
+    expect(code).toBe(0)
+    expect(output).toMatch(/PASS/)
+  })
+
+  it('fails with a clear message, never silently falling back to PR_BODY, when the Issue carries no aeg:brief:v1 comment', () => {
+    const path = fakeGhWithComments('some other unrelated comment, no marker line')
+    const { code, output } = runCli([], { BRANCH: 'task/iter/12', PR_BODY: 'Closes #12\n', PATH: path })
+    expect(code).toBe(1)
+    expect(output).toMatch(/not dispatched.*no `aeg:brief:v1` comment on Issue #12/)
+  })
+
+  it('fails before ever attempting to fetch the Issue when `Closes #N` is missing on a task branch', () => {
+    const { code, output } = runCli([], { BRANCH: 'task/iter/12', PR_BODY: 'no closes field at all' })
+    expect(code).toBe(1)
+    expect(output).toMatch(/not dispatched.*no `Closes #N`/)
+  })
+})
+
 describe('verify-brief --body-file (authoring-time gate)', () => {
   it('PASSES a complete brief file', () => {
     const { code, output } = runCli(['--body-file', briefFile('complete.md', FIX_BRIEF)])
@@ -245,7 +288,7 @@ describe('verify-brief --body-file (authoring-time gate)', () => {
   it('FAILS loudly when --body-file is passed with no value, instead of degrading to PR_BODY', () => {
     // Silent-green path (PR #631 review MAJOR): a fumbled path used to leave
     // `--body-file` ignored, fall through to an empty PR_BODY, and exit 0 —
-    // handing a Brief Author a green on a brief nobody graded.
+    // handing the Planner a green on a brief nobody graded.
     const bare = runCli(['--body-file'])
     expect(bare.code).toBe(1)
     expect(bare.output).toMatch(/`--body-file` was passed with no value/)

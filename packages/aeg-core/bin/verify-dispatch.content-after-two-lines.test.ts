@@ -1,19 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { contentAfterTwoLines } from './verify-dispatch'
+import { contentAfterTwoLines } from '../src/index'
 
 /**
- * Pinned identically in
- * `apps/cli/tests/lib/dispatch-task.test.ts`'s own `contentAfterTwoLines`
- * suite, against `dispatch-task.ts`'s copy of this same function —
- * `verify-dispatch.ts` lives in a genuinely separate package and cannot
- * import `apps/cli` at all, so this file keeps its own implementation
- * rather than sharing one. Found live (code review): a hash-contract-
- * critical slice duplicated with zero test proving the two copies agree is
- * exactly the "three copies disagreeing for months" failure class
- * `edge-resolve.ts`'s own doc comment already warns this codebase about.
- * These identical fixture vectors are what make a future drift between the
- * two copies fail a test on whichever side changed, instead of surviving
- * as an undetected mismatch.
+ * `contentAfterTwoLines` is now the ONE promoted `@attalabs/aeg-core` export
+ * (plan-brief-v1 task 3, #428) — `verify-dispatch.ts` imports it from
+ * `../src/index` rather than carrying its own copy, the same promoted
+ * export `apps/cli`'s `dispatch-task.ts` and `check-brief-shape.ts` import
+ * back. These vectors are pinned identically in
+ * `apps/cli/tests/lib/dispatch-task.test.ts`, proving both packages agree on
+ * the SAME function rather than on two implementations that happen to look
+ * alike — the exact "copies disagreeing for months" failure class
+ * `edge-resolve.ts`'s own doc comment warns this codebase about.
  */
 const CONTENT_AFTER_TWO_LINES_VECTORS: Array<{ name: string; input: string; expected: string }> = [
   {

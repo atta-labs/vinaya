@@ -36,7 +36,7 @@ export type Task = {
   /**
    * Raw markdown of the matching `### Task <id> — …` section, when present.
    * Empty string when there is no rationale block for this id (the rationale is
-   * captured verbatim, not deeply parsed — the Brief Author / UI consumes it).
+   * captured verbatim, not deeply parsed — the Planner / UI consumes it).
    */
   rationaleMarkdown: string
 }
