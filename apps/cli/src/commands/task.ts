@@ -10,7 +10,7 @@ export async function taskDispatchCommand(args: string[]): Promise<void> {
   const trancheSlug = args[0]
   const taskIdArg = args[1]
   if (!trancheSlug || !taskIdArg || trancheSlug.startsWith('--')) {
-    console.error(`Usage: vinaya task dispatch <tranche> <n> [--agent ${DISPATCH_AGENTS.join(' | ')}]`)
+    console.error(`Usage: vinaya task dispatch <tranche> <n> [--agent ${DISPATCH_AGENTS.join(' | ')}] [--model <name>]`)
     process.exit(2)
   }
 
@@ -36,7 +36,18 @@ export async function taskDispatchCommand(args: string[]): Promise<void> {
     agent = value as DispatchAgent
   }
 
-  const result = await dispatchTask({ tranche: trancheSlug, n, agent })
+  const modelIdx = rest.indexOf('--model')
+  let model: string | undefined
+  if (modelIdx !== -1) {
+    const value = rest[modelIdx + 1]
+    if (!value) {
+      console.error('--model requires a value')
+      process.exit(2)
+    }
+    model = value
+  }
+
+  const result = await dispatchTask({ tranche: trancheSlug, n, agent, model })
   process.stdout.write(`${result.brief}\n`)
   if (result.commentUrl) process.stdout.write(`\nPosted: ${result.commentUrl}\n`)
 }
