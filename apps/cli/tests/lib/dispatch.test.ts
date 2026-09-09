@@ -26,8 +26,10 @@ import { readdirSync, statSync } from 'node:fs'
 import {
   DEFAULT_TIMEOUT_MS,
   identifyVendorFromModelShape,
+  parseClaudeModel,
   parseClaudeResumeId,
   parseClaudeUsage,
+  parseGeminiModel,
   parseGeminiUsage,
   renderClaudeEvent,
   renderGeminiEvent,
@@ -1031,6 +1033,40 @@ describe('dispatch streaming output (#447 O5)', () => {
     expect(parseClaudeUsage('not json at all')).toBeNull()
   })
 
+  it("reads claude's genuine model receipt from modelUsage's own key, distinct from the requested alias (O2, #456)", () => {
+    const stream = [
+      JSON.stringify({ type: 'system', subtype: 'init' }),
+      JSON.stringify({
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 11, output_tokens: 22 },
+        modelUsage: { 'claude-sonnet-5': { canonicalModel: 'claude-sonnet-5' } }
+      })
+    ].join('\n')
+    expect(parseClaudeModel(stream)).toBe('claude-sonnet-5')
+    // No `modelUsage` field at all — no receipt to read.
+    expect(parseClaudeModel(JSON.stringify({ usage: { input_tokens: 3, output_tokens: 4 } }))).toBeNull()
+    expect(parseClaudeModel('not json at all')).toBeNull()
+  })
+
+  it("reads gemini's genuine model receipt from stats.models' own key(s), distinct from the requested alias (O2, #456)", () => {
+    const stream = [
+      JSON.stringify({ type: 'init' }),
+      JSON.stringify({
+        type: 'result',
+        status: 'success',
+        stats: { input_tokens: 8983, output_tokens: 36, models: { 'gemini-3.8-flash': { tokens: {} } } }
+      })
+    ].join('\n')
+    expect(parseGeminiModel(stream)).toBe('gemini-3.8-flash')
+    // More than one model key in one run — both are real, join rather than
+    // guessing which one to keep.
+    const multiModel = JSON.stringify({ stats: { models: { 'gemini-a': {}, 'gemini-b': {} } } })
+    expect(parseGeminiModel(multiModel)).toBe('gemini-a,gemini-b')
+    // No `models` key at all — no receipt to read.
+    expect(parseGeminiModel(JSON.stringify({ stats: { input_tokens: 1, output_tokens: 1 } }))).toBeNull()
+    expect(parseGeminiModel('not json')).toBeNull()
+  })
+
   it("reads the resume id from a stream's terminal event, and still from a whole-blob payload", () => {
     const stream = [
       JSON.stringify({ type: 'system', subtype: 'init', session_id: 'early-and-ignored' }),
@@ -1115,7 +1151,7 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     expect(readArgv(argvOut)).toEqual(['-p', '--verbose', '--output-format', 'stream-json'])
   })
 
-  it('O2: the outcome_received line records the named model, never the vendor name', () => {
+  it('O2: dispatched records the requested model as a marked request label, never bare (no receipt possible yet)', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
@@ -1133,9 +1169,64 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
 
     const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
     const dispatched = lines.find((l) => l.event === 'dispatched')
+    expect((dispatched as { model: string }).model).toBe('requested:claude-opus-5')
+  })
+
+  it('O2: outcome_received records the VENDOR-REPORTED model, not the requested one, when they differ', () => {
+    // This is the live bug O2 closes: the fake binary was asked for
+    // `claude-opus-5` but its own `modelUsage` receipt says `claude-opus-6`
+    // actually ran — the ledger must say what ran, not what was asked for.
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"usage":{"input_tokens":1,"output_tokens":1},"modelUsage":{"claude-opus-6":{"canonicalModel":"claude-opus-6"}}}'\nexit 0\n`
+    )
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--model', 'claude-opus-5'],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
+    const dispatched = lines.find((l) => l.event === 'dispatched')
     const outcome = lines.find((l) => l.event === 'outcome_received')
-    expect((dispatched as { model: string }).model).toBe('claude-opus-5')
-    expect((outcome as { model: string }).model).toBe('claude-opus-5')
+    // Pre-completion, still just the request label — no receipt exists yet.
+    expect((dispatched as { model: string }).model).toBe('requested:claude-opus-5')
+    // Post-completion, the vendor's own bare, unprefixed receipt wins.
+    expect((outcome as { model: string }).model).toBe('claude-opus-6')
+  })
+
+  it('O2: outcome_received falls back to the marked request label when the vendor emits no receipt', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    // No `modelUsage` field at all — Codex's own real shape, and what any
+    // vendor's stdout looks like before it ever reports a model receipt.
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\ncat > /dev/null\necho '{}'\nexit 0\n`)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--model', 'claude-opus-5'],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const outcome = (outboxLines(home, 'none') as Array<Record<string, unknown>>).find(
+      (l) => l.event === 'outcome_received'
+    )
+    // Marked as a request, not presented as a confirmed observation.
+    expect((outcome as { model: string }).model).toBe('requested:claude-opus-5')
   })
 
   it('O4: a Claude-shaped model passed to codex is refused before any spawn, naming the vendor and the mismatch', () => {
@@ -1162,7 +1253,7 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     expect(lines).toHaveLength(1)
     expect(lines[0]?.event).toBe('dispatch_failed')
     expect((lines[0] as { reason: string }).reason).toBe('refused')
-    expect((lines[0] as { model: string }).model).toBe('claude-opus-5')
+    expect((lines[0] as { model: string }).model).toBe('requested:claude-opus-5')
   })
 
   it('O4: a Gemini-shaped model passed to claude is refused the same way', () => {

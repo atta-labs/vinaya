@@ -249,6 +249,69 @@ export function openOutputTee(effectId: string): {
 
 type UsageParser = (stdout: string) => { input: number; output: number } | null
 
+/** A vendor's own genuine receipt of which model executed (O2), or `null` when this vendor's stdout carries no such field — never guessed from the requested `--model` value. */
+type ModelParser = (stdout: string) => string | null
+
+/**
+ * Claude's own confirmed-live receipt of which model actually ran: a real
+ * `claude -p --output-format json` run's stdout carries a top-level
+ * `modelUsage` object whose key IS the resolved, canonical model name —
+ * `{"modelUsage":{"claude-sonnet-5":{"canonicalModel":"claude-sonnet-5",…}}}`
+ * even when the alias `sonnet` (never `claude-sonnet-5`) was the requested
+ * `--model` value (confirmed live: requesting `sonnet` still keys
+ * `modelUsage` by `claude-sonnet-5`). Scanned from the end, same reason
+ * `parseClaudeUsage` is. More than one key (a run spanning two models) joins
+ * both rather than picking one arbitrarily.
+ */
+export function parseClaudeModel(stdout: string): string | null {
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as { modelUsage?: Record<string, unknown> }
+      const keys = obj.modelUsage ? Object.keys(obj.modelUsage) : []
+      if (keys.length > 0) return keys.join(',')
+    } catch {
+      // not a JSON line — keep scanning backwards, never a guessed shape
+    }
+  }
+  return null
+}
+
+/**
+ * Codex's own `--json` stream carries no model field in any event, at any
+ * verbosity — confirmed live against a real `codex exec --json --model
+ * gpt-5.6-sol -` run's full event stream (`thread.started`, `turn.started`,
+ * `item.completed`, `turn.completed`): none of the four carries a `model`
+ * key anywhere. There is no vendor receipt to read for this vendor, ever —
+ * this is a fact about Codex's own output shape, not a gap in this parser.
+ */
+function parseCodexModel(_stdout: string): string | null {
+  return null
+}
+
+/**
+ * Gemini's own confirmed-live receipt: the terminal `result` event's
+ * `stats.models` object is keyed by the resolved model name(s) that actually
+ * ran — confirmed live: requesting the alias `--model gemini-flash-latest`
+ * produced `stats.models` keyed by `gemini-3.8-flash`, a DIFFERENT string
+ * than the one requested. Scanned from the end, same reason `parseGeminiUsage`
+ * is. More than one key (a run spanning two models, observed live after a
+ * mid-run retry) joins both rather than picking one arbitrarily.
+ */
+export function parseGeminiModel(stdout: string): string | null {
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as { stats?: { models?: Record<string, unknown> } }
+      const keys = obj.stats?.models ? Object.keys(obj.stats.models) : []
+      if (keys.length > 0) return keys.join(',')
+    } catch {
+      // not a JSON line — keep scanning backwards, never a guessed shape
+    }
+  }
+  return null
+}
+
 export function parseClaudeUsage(stdout: string): { input: number; output: number } | null {
   // `stream-json` prints one event per line and the terminal event carries
   // `usage`; scanned from the end for the same reason `parseCodexUsage` is.
@@ -460,6 +523,8 @@ type VendorSpec = {
   args: (model?: string) => string[]
   resumeArgs: (id: string, model?: string) => string[]
   parseUsage: UsageParser
+  /** This vendor's own genuine receipt of which model ran (O2), or `null` when it emits none — never the requested `--model` value echoed back. */
+  parseModel: ModelParser
   parseResumeId: (stdout: string) => string | null
   /** One line of this vendor's own stream, rendered for a human, or `null` for an event worth nothing on screen. */
   renderEvent: (obj: Record<string, unknown>) => string | null
@@ -579,6 +644,7 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
       ...(model ? ['--model', model] : [])
     ],
     parseUsage: parseClaudeUsage,
+    parseModel: parseClaudeModel,
     parseResumeId: parseClaudeResumeId,
     renderEvent: renderClaudeEvent,
     // Confirmed live (`claude --help`): these are the vendor's own aliases
@@ -594,6 +660,7 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
     args: (model) => ['exec', ...(model ? ['--model', model] : []), '--json', '-'],
     resumeArgs: (id, model) => ['exec', 'resume', id, ...(model ? ['--model', model] : []), '--json', '-'],
     parseUsage: parseCodexUsage,
+    parseModel: parseCodexModel,
     parseResumeId: parseCodexResumeId,
     renderEvent: renderCodexEvent,
     // No non-stale alias layer to resolve a class into (see `VendorSpec`'s
@@ -621,6 +688,7 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
       '--skip-trust'
     ],
     parseUsage: parseGeminiUsage,
+    parseModel: parseGeminiModel,
     parseResumeId: parseGeminiResumeId,
     renderEvent: renderGeminiEvent,
     // No non-stale alias layer either — a real run's own default (confirmed
@@ -798,12 +866,16 @@ export async function dispatchRole(
   const start = Date.now()
   const roundField = opts.round !== undefined ? { round: opts.round } : {}
   // O2: never the vendor name (`agent`) — that is the defect this task
-  // closes. `'default'` is an explicitly labeled placeholder for "no model
-  // was named; the vendor ran whatever its own default is", matching this
-  // module's existing disclosed-placeholder convention (see the
-  // `outcome_received` doc comment above) — never to be read as a real
-  // model name.
-  const resolvedModel = opts.model ?? 'default'
+  // closes. This is a REQUEST label, never an observation: `requested:<x>`
+  // when a model was named, `'default'` when none was — both explicitly
+  // marked placeholders for "here is what was asked for, not confirmed as
+  // what ran," distinguishable on read from the bare, unprefixed model name
+  // `outcomeModel` below records once the vendor's own receipt confirms it.
+  // Used for every log line before the child's own report can be read
+  // (`dispatched`, every `dispatch_failed` path) and as the fallback for
+  // `outcome_received` when the vendor gives no receipt at all (Codex,
+  // always; Claude/Gemini, on an unparseable payload).
+  const resolvedModel = opts.model !== undefined ? `requested:${opts.model}` : 'default'
 
   // O4: refused before any spawn, by name, naming the vendor that rejected
   // it and what it accepts — never a bare rejection. Checked before the
@@ -1096,13 +1168,21 @@ export async function dispatchRole(
           )
         }
       }
+      // O2: the vendor's own genuine receipt of what ran, read only now that
+      // the child has actually produced output — never guessed from the
+      // requested `--model` value, and always preferred over it when present,
+      // even when no model was named at all (a vendor's own default is still
+      // a real observation once reported). Falls back to the pre-completion
+      // request label (`resolvedModel`) only when this vendor emits no
+      // receipt (Codex, always) or the payload didn't parse.
+      const reportedModel = vendor.parseModel(stdoutBuf)
       const priorSize = sizeOfSafe(outboxPath)
       log({
         kind: 'dispatch',
         event: 'outcome_received',
         payload: {},
         target_role: role,
-        model: resolvedModel,
+        model: reportedModel ?? resolvedModel,
         ...roundField,
         effect_id: effectId,
         // See module doc: placeholder pending a generic `DispatchOutcome`
