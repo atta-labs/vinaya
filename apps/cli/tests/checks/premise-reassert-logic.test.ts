@@ -56,3 +56,50 @@ describe('reassertPremiseFile', () => {
     }
   })
 })
+
+/**
+ * MAJOR (round 1 review, PR #473): `reassertPremiseFile` now has two real
+ * callers registered under two different names — `dispatch-readiness`'s
+ * `PREMISE_FILE` path and `pr-premise-reassert`'s PR-body path. Each
+ * caller's own recovery prompt must cite ITS OWN `checkName`, in all three
+ * failure shapes, never a sibling caller's — a prompt naming the wrong
+ * check sends an agent to re-run a check that never failed.
+ */
+describe('reassertPremiseFile — recovery prompts name the caller that emitted them', () => {
+  const OTHER_CHECK_NAME = 'pr-premise-reassert'
+
+  it('unreadable-file shape: the prompt cites the caller-supplied checkName, not a hardcoded one', () => {
+    const dispatchResult = reassertPremiseFile(CHECK_NAME, '/tmp/does-not-exist.md', null, () => null)
+    expect(dispatchResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya check ${CHECK_NAME}`)
+    expect(dispatchResult.errors[0]?.agent_recovery_prompt).not.toContain(OTHER_CHECK_NAME)
+
+    const otherResult = reassertPremiseFile(OTHER_CHECK_NAME, '/tmp/does-not-exist.md', null, () => null)
+    expect(otherResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya check ${OTHER_CHECK_NAME}`)
+    expect(otherResult.errors[0]?.agent_recovery_prompt).not.toContain(CHECK_NAME)
+  })
+
+  it('zero-pins shape: the prompt cites the caller-supplied checkName, not a hardcoded one', () => {
+    const body = ['## Summary', '', 'No premise block here at all.', ''].join('\n')
+
+    const dispatchResult = reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', body, () => null)
+    expect(dispatchResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya check ${CHECK_NAME}`)
+    expect(dispatchResult.errors[0]?.agent_recovery_prompt).not.toContain(OTHER_CHECK_NAME)
+
+    const otherResult = reassertPremiseFile(OTHER_CHECK_NAME, '/tmp/brief.md', body, () => null)
+    expect(otherResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya check ${OTHER_CHECK_NAME}`)
+    expect(otherResult.errors[0]?.agent_recovery_prompt).not.toContain(CHECK_NAME)
+  })
+
+  it('failed-pin shape: the prompt cites the caller-supplied checkName, not a hardcoded one', () => {
+    const body = bodyWithPin('src/thing.ts contains: export function thing')
+    const files: Record<string, string> = { 'src/thing.ts': 'export function somethingElse() {}\n' }
+
+    const dispatchResult = reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', body, (p) => files[p] ?? null)
+    expect(dispatchResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya check ${CHECK_NAME}`)
+    expect(dispatchResult.errors[0]?.agent_recovery_prompt).not.toContain(OTHER_CHECK_NAME)
+
+    const otherResult = reassertPremiseFile(OTHER_CHECK_NAME, '/tmp/brief.md', body, (p) => files[p] ?? null)
+    expect(otherResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya check ${OTHER_CHECK_NAME}`)
+    expect(otherResult.errors[0]?.agent_recovery_prompt).not.toContain(CHECK_NAME)
+  })
+})
