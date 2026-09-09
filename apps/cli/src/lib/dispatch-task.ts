@@ -110,13 +110,41 @@ export function extractAgentClass(rawRationaleField: string): AgentClass | null 
 }
 
 /**
- * O3 — an explicit `--model` always wins (never re-derived or overridden);
- * absent that, the task's own Issue rationale is read for its suggested
- * class and resolved through this vendor's own class-to-model table
- * (`resolveClassModel`). `undefined` when no explicit model was given AND
- * either the class can't be read or this vendor has no verified mapping for
- * it — `dispatchRole` then omits `--model` entirely, the same as today,
- * rather than inventing a value.
+ * O3 — the pure resolution core, exported so it is directly testable with no
+ * forge I/O (MAJOR 2, #456 round 1: every existing `dispatchTask` test fakes
+ * this decision out entirely, so this real logic was never exercised). An
+ * explicit `--model` always wins (never re-derived or overridden) — that
+ * includes an "unacceptable" one: this function never refuses or sanitizes a
+ * model by its shape, it only decides which value reaches `dispatchRole`;
+ * the actual by-name refusal is `dispatchRole`'s own job (`dispatch.ts`'s
+ * `identifyVendorFromModelShape`, O4), so an explicit value is passed through
+ * completely unchanged, wrong-vendor-shaped or not, rather than laundered
+ * into something that would slip past that check. Absent an explicit model,
+ * `rawRationaleField` (the Issue's own already-fetched "Suggested
+ * agent-class" text, or `undefined` when it couldn't be fetched/doesn't
+ * exist) is parsed for its class and resolved through this vendor's own
+ * class-to-model table (`resolveClassModel`). `undefined` when no explicit
+ * model was given AND either the class can't be read or this vendor has no
+ * verified mapping for it — `dispatchRole` then omits `--model` entirely,
+ * the same as today, rather than inventing a value.
+ */
+export function resolveModelFromRationale(
+  agent: DispatchAgent,
+  rawRationaleField: string | undefined,
+  explicitModel: string | undefined
+): string | undefined {
+  if (explicitModel !== undefined) return explicitModel
+  const agentClass = rawRationaleField !== undefined ? extractAgentClass(rawRationaleField) : null
+  if (agentClass === null) return undefined
+  return resolveClassModel(agent, agentClass) ?? undefined
+}
+
+/**
+ * The forge-reading wrapper around `resolveModelFromRationale` — fetches
+ * this task's own Issue body only when an explicit model wasn't already
+ * given (the same short-circuit `resolveModelFromRationale` itself performs,
+ * kept here too so a `--model`-naming caller never pays for a `gh issue
+ * view` call it doesn't need).
  */
 function resolveModelForDispatch(
   agent: DispatchAgent,
@@ -125,9 +153,7 @@ function resolveModelForDispatch(
 ): string | undefined {
   if (explicitModel !== undefined) return explicitModel
   const raw = parseRationaleFields(fetchIssueBody(issue)).suggestedAgentClass
-  const agentClass = raw !== undefined ? extractAgentClass(raw) : null
-  if (agentClass === null) return undefined
-  return resolveClassModel(agent, agentClass) ?? undefined
+  return resolveModelFromRationale(agent, raw, undefined)
 }
 
 /** The comment's first line is the whole check — a marker-shaped string
@@ -300,18 +326,33 @@ export async function dispatchTask(
     throw new DispatchTaskError(`Task ${n} in tranche \`${tranche}\` is already dispatched — see ${existing.url}`)
   }
 
-  const hash = briefHash(result.brief)
-  const commentBody = `Brief hash: ${hash}\n${result.brief}`
-  const url = deps.postMarkedComment('issue', String(issue), AEG_BRIEF_V1_MARKER, commentBody)
-
+  // MAJOR 1 (#456 round 1, related to #465, not fixed here): resolved and
+  // validated BEFORE the brief is posted, not after. `resolveModelForDispatch`
+  // can throw (a `gh issue view` failure fetching this task's own rationale)
+  // — if that happened after `postMarkedComment` below, the frozen
+  // `aeg:brief:v1` comment would already exist, and the "already dispatched"
+  // guard above keys on that comment's mere existence with no flag to
+  // override it: the task would become permanently undispatchable. Resolving
+  // here means a bad model refuses with nothing yet written to the forge.
+  let dispatchRole: DispatchRoleFn | null = null
+  let resolvedModel: string | undefined
   if (agent) {
-    const dispatchRole = await deps.resolveDispatchRole()
+    dispatchRole = await deps.resolveDispatchRole()
     if (dispatchRole) {
       // O3: an explicit `--model` always wins; absent that, resolved from
       // this task's own Issue rationale against this vendor's own
       // class-to-model table — `undefined` either way falls through to
       // `dispatchRole`'s existing "no --model flag added" behavior.
-      const resolvedModel = deps.resolveModelForDispatch(agent, issue, model)
+      resolvedModel = deps.resolveModelForDispatch(agent, issue, model)
+    }
+  }
+
+  const hash = briefHash(result.brief)
+  const commentBody = `Brief hash: ${hash}\n${result.brief}`
+  const url = deps.postMarkedComment('issue', String(issue), AEG_BRIEF_V1_MARKER, commentBody)
+
+  if (agent) {
+    if (dispatchRole) {
       // O5, Issue #456: `issue`, never `n` — `dispatchRole`'s own `task`
       // opt is the resolved forge Issue number end to end (`VINAYA_TASK`
       // parses to `subject.issue`, `packages/aeg-core/src/log/envelope.ts`;
@@ -320,7 +361,11 @@ export async function dispatchTask(
       // already fixed for posting now applies here too: two tranches'
       // task-N runs on different Issues must never share one record.
       await withPromptFile(result.brief, (promptFile) =>
-        dispatchRole('developer', agent, result.brief, { task: issue, promptFile, model: resolvedModel })
+        (dispatchRole as DispatchRoleFn)('developer', agent, result.brief, {
+          task: issue,
+          promptFile,
+          model: resolvedModel
+        })
       )
     } else {
       printManualDispatchInstruction(tranche, n, agent)

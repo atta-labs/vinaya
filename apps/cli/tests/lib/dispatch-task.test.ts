@@ -6,7 +6,8 @@ import {
   type DispatchTaskDeps,
   DispatchTaskError,
   dispatchTask,
-  extractAgentClass
+  extractAgentClass,
+  resolveModelFromRationale
 } from '../../src/lib/dispatch-task.js'
 
 const BRIEF_TEXT = '**For:** Sonnet\n**Tier:** 1\n\nCloses #427\n\nYou are the AEG Developer.'
@@ -244,6 +245,36 @@ describe('dispatchTask', () => {
     expect(opts.model).toBe('sonnet')
   })
 
+  it('MAJOR 1 (#456 round 1): a throwing model resolution posts nothing — the frozen brief never exists to make the task undispatchable', async () => {
+    let postCalled = false
+    await expect(
+      dispatchTask(
+        { tranche: 'plan-brief-v1', n: 427, agent: 'claude' },
+        postingDeps({
+          postMarkedComment: () => {
+            postCalled = true
+            return 'https://github.com/acme/widget/issues/427#issuecomment-1'
+          },
+          resolveDispatchRole: async () => {
+            return async () => {
+              throw new Error('dispatchRole should never be reached')
+            }
+          },
+          resolveModelForDispatch: () => {
+            // The live bug this regresses: this throwing today, AFTER the
+            // brief was already posted, left the task permanently
+            // undispatchable — the "already dispatched" guard keys on the
+            // comment's mere existence, with no flag to override it (#465).
+            throw new DispatchTaskError(
+              "could not fetch Issue #427's body (`gh issue view`) to resolve its suggested agent-class: boom"
+            )
+          }
+        })
+      )
+    ).rejects.toThrow(DispatchTaskError)
+    expect(postCalled).toBe(false)
+  })
+
   it('with --agent and dispatchRole unavailable, prints the manual instruction and resolves cleanly', async () => {
     const originalWrite = process.stdout.write.bind(process.stdout)
     let printed = ''
@@ -342,5 +373,36 @@ describe('extractAgentClass (O3, #456)', () => {
   it('returns null when the field is missing entirely', () => {
     expect(extractAgentClass('')).toBeNull()
     expect(extractAgentClass('**Boundary** — some unrelated field.')).toBeNull()
+  })
+})
+
+describe('resolveModelFromRationale (O3/MAJOR 2, #456 round 1) — the real resolution wiring, no faked deps', () => {
+  const MID_RATIONALE = '**Suggested agent-class** — mid — the wiring is mechanical.'
+
+  it('an explicit model wins over a resolved class', () => {
+    expect(resolveModelFromRationale('claude', MID_RATIONALE, 'opus')).toBe('opus')
+  })
+
+  it('a resolved class is used when no model is named', () => {
+    expect(resolveModelFromRationale('claude', MID_RATIONALE, undefined)).toBe('sonnet')
+    // No verified, non-stale class-to-model table exists for these two
+    // (`dispatch.ts`'s own `classModels` doc comment) — `undefined`, never a
+    // guessed, version-pinned name.
+    expect(resolveModelFromRationale('codex', MID_RATIONALE, undefined)).toBeUndefined()
+    expect(resolveModelFromRationale('gemini', MID_RATIONALE, undefined)).toBeUndefined()
+  })
+
+  it('no rationale field at all, and no explicit model, resolves to undefined rather than guessing', () => {
+    expect(resolveModelFromRationale('claude', undefined, undefined)).toBeUndefined()
+  })
+
+  it('an unacceptable (wrong-vendor-shaped) explicit model reaches dispatchRole unchanged — this layer never refuses or sanitizes by shape', () => {
+    // `dispatch.ts`'s own `identifyVendorFromModelShape`/O4 refusal is what
+    // actually blocks a model like this, by name, before any spawn — tested
+    // directly there. This layer's own job is narrower: decide which value
+    // reaches `dispatchRole` at all, and an explicit caller value always
+    // passes through exactly as given, never quietly corrected or dropped
+    // just because it looks wrong for the vendor.
+    expect(resolveModelFromRationale('codex', MID_RATIONALE, 'claude-opus-5')).toBe('claude-opus-5')
   })
 })
