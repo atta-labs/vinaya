@@ -64,6 +64,22 @@ export function readTierFromPrBody(prBody: string): 0 | 1 | 3 | null {
 }
 
 /**
+ * The floor-raise combinator (task 12, Issue #469, O1): a declared tier is
+ * never lowered, only raised to the mechanically-derived floor when that
+ * floor is higher — a Planner's judgment is never silently overridden by a
+ * derivation that cannot see it. `declared: null` means the source (an
+ * Issue, a PR body) declared no `Tier:` field at all, or an invalid one —
+ * the derived floor is the only signal, same as before this combinator
+ * existed. `derivedFloor` never exceeds `1` (`deriveTierFromDiff`'s own
+ * range) — Tier 3 only ever reaches the result by way of `declared`, never
+ * by derivation.
+ */
+export function applyTierFloor(declared: 0 | 1 | 3 | null, derivedFloor: 0 | 1): 0 | 1 | 3 {
+  if (declared === null) return derivedFloor
+  return declared >= derivedFloor ? declared : derivedFloor
+}
+
+/**
  * The body token that activates the override — the label name in brackets, so
  * the two spellings cannot drift. Built from the code-owned vocabulary rather
  * than written as a literal (#614): `override:docs` was the one §14 system
