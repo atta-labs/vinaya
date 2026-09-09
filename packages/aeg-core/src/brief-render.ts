@@ -22,6 +22,7 @@
 import { deriveSection7 } from './derive-section7'
 import {
   BRIEF_SECTIONS_SINCE_ISSUE,
+  globCoversPath,
   type IssuePart,
   type IssueSurface,
   type IssueTestPlan,
@@ -221,6 +222,23 @@ export type BriefFacts = {
 }
 
 export type RenderResult = { ok: true; brief: string } | { ok: false; missing: string[] }
+
+/**
+ * §4's surface map lists only what the Issue's own `## Surface` admits (task
+ * 12, Issue #469, O2) — a path the Boundary named inside its `Out:` clause
+ * was named in order to exclude it, and prose position is not a reliable
+ * signal of that, so the `## Surface` globs are the authority. Admitted
+ * means covered by at least one `in:` glob and by no `out:` glob;
+ * `globCoversPath` (`issue-validation.ts`) is the same glob matcher
+ * `checkSurfaceScope` already uses, consumed here rather than reimplemented.
+ */
+function admittedSurfaceFiles(surfaceFiles: SurfaceFileFact[], surface: IssueSurface): SurfaceFileFact[] {
+  return surfaceFiles.filter((f) => {
+    const admitted = surface.in.some((g) => globCoversPath(g, f.path))
+    const excluded = surface.out.some((g) => globCoversPath(g, f.path))
+    return admitted && !excluded
+  })
+}
 
 function bulletList(items: string[]): string {
   return items.map((i) => `- ${i}`).join('\n')
@@ -611,28 +629,43 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
     if (!facts.rationale[key]) missing.push(RATIONALE_FIELD_NAMES[key])
   }
 
+  // O2/O3 (task 12, Issue #469): the surface map lists only what `## Surface`
+  // admits. When the Boundary named files but the Issue's own Surface admits
+  // none of them, that is the Boundary and Surface genuinely disagreeing —
+  // refuse at render (naming it) rather than dispatch a brief whose surface
+  // map would be empty, or whose Modify list would argue with its own
+  // Out-of-surface line.
+  const filteredSurfaceFiles = admittedSurfaceFiles(facts.surfaceFiles, facts.surface)
+  if (facts.surface.in.length > 0 && facts.surfaceFiles.length > 0 && filteredSurfaceFiles.length === 0) {
+    missing.push(
+      "Surface map (every file the Boundary named is excluded by the Issue's own `## Surface` `in:`/`out:` globs — Boundary and Surface disagree; fix the Issue rather than render an empty surface map)"
+    )
+  }
+
   if (missing.length > 0) return { ok: false, missing }
+
+  const scopedFacts: BriefFacts = { ...facts, surfaceFiles: filteredSurfaceFiles }
 
   const section7Pointers = facts.docOwnersContent
     ? deriveSection7Pointers(
-        facts.surfaceFiles.map((f) => f.path),
+        filteredSurfaceFiles.map((f) => f.path),
         facts.docOwnersContent
       )
     : []
 
   const brief = [
-    renderHeader(facts, template),
+    renderHeader(scopedFacts, template),
     '',
     ...(facts.objectives.length > 0 ? [renderObjectives(facts.objectives), ''] : []),
     renderSection2(facts),
     '',
     renderSection3(facts),
     '',
-    renderSection4(facts),
+    renderSection4(scopedFacts),
     '',
     renderSection5(facts),
     '',
-    renderSection6(facts),
+    renderSection6(scopedFacts),
     '',
     renderSection7(section7Pointers),
     '',

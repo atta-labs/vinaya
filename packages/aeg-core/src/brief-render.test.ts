@@ -123,6 +123,7 @@ describe('renderBrief', () => {
     // (this same task) accepts — see this task's own §9 self-render proof in
     // the PR's round-1 comment for that path exercised end-to-end.
     const facts = baseFacts({
+      surface: { in: ['aeg-root'], out: [] },
       surfaceFiles: [{ path: 'aeg-root/roles/developer.md', sha256: 'a'.repeat(64), packageName: null }]
     })
     const result = renderBrief(facts, TEMPLATE)
@@ -242,6 +243,57 @@ describe('renderBrief', () => {
       expect(result.ok).toBe(true)
       if (!result.ok) return
       expect(readTierFromPrBody(result.brief)).toBe(1)
+    })
+  })
+
+  describe('surface-filtered surface map (task 12, Issue #469, O2, O3)', () => {
+    it('excludes a Boundary-named file the Issue Surface out: glob covers, even though in: would otherwise admit it', () => {
+      const facts = baseFacts({
+        surface: { in: ['packages/aeg-core'], out: ['packages/aeg-core/bin'] },
+        surfaceFiles: [
+          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' },
+          { path: 'packages/aeg-core/bin/open-pr.ts', sha256: 'b'.repeat(64), packageName: '@attalabs/aeg-core' }
+        ]
+      })
+      const result = renderBrief(facts, TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('packages/aeg-core/src/fixture.ts')
+      expect(result.brief).not.toContain('packages/aeg-core/bin/open-pr.ts')
+    })
+
+    it('excludes a Boundary-named file no in: glob covers at all', () => {
+      const facts = baseFacts({
+        surface: { in: ['packages/aeg-core/src'], out: [] },
+        surfaceFiles: [
+          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' },
+          { path: 'apps/cli/src/lib/unrelated-file.ts', sha256: 'b'.repeat(64), packageName: '@attalabs/aeg-cli' }
+        ]
+      })
+      const result = renderBrief(facts, TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('packages/aeg-core/src/fixture.ts')
+      expect(result.brief).not.toContain('apps/cli/src/lib/unrelated-file.ts')
+    })
+
+    it('refuses rather than rendering an empty surface map when Surface admits none of the Boundary-named files', () => {
+      const facts = baseFacts({
+        surface: { in: ['aeg-root'], out: [] },
+        surfaceFiles: [
+          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' }
+        ]
+      })
+      const result = renderBrief(facts, TEMPLATE)
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.missing.some((m) => /Surface map/.test(m))).toBe(true)
+    })
+
+    it('does not refuse when the Boundary legitimately named zero files (an administrative-only task)', () => {
+      const facts = baseFacts({ surface: { in: ['aeg-root'], out: [] }, surfaceFiles: [] })
+      const result = renderBrief(facts, TEMPLATE)
+      expect(result.ok).toBe(true)
     })
   })
 
