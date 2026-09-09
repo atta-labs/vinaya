@@ -24,9 +24,13 @@ export type PremiseReassertResult = { pass: boolean; errors: CheckError[] }
 /**
  * Re-asserts `PREMISE_FILE`'s `Premise:` pins.
  *
- * @param checkName the emitting check's name (`CheckError.check`) — passed
- *   in rather than hardcoded so this module stays free of any one check's
- *   identity.
+ * @param checkName the emitting check's name (`CheckError.check`), ALSO the
+ *   command name every recovery prompt below tells the agent to re-run
+ *   (`vinaya check <checkName>`) — passed in rather than hardcoded so this
+ *   module stays free of any one check's identity. Two callers register
+ *   under different names (`dispatch-readiness`'s `PREMISE_FILE` path,
+ *   `pr-premise-reassert`'s PR-body path); a prompt naming the wrong one
+ *   sends an agent to re-run a check that was never the one that failed.
  * @param premiseFilePath the `PREMISE_FILE` path, for error messages only.
  * @param body the file's already-read content, or `null` when it does not
  *   exist or could not be read.
@@ -48,8 +52,7 @@ export function reassertPremiseFile(
           check: checkName,
           severity: 'error',
           message: `dispatch-gate premise: PREMISE_FILE "${premiseFilePath}" does not exist or is unreadable.`,
-          agent_recovery_prompt:
-            'Confirm the path passed via PREMISE_FILE is correct and readable, then re-run `vinaya check dispatch-readiness`.'
+          agent_recovery_prompt: `Confirm the path passed via PREMISE_FILE is correct and readable, then re-run \`vinaya check ${checkName}\`.`
         }
       ]
     }
@@ -65,8 +68,7 @@ export function reassertPremiseFile(
           check: checkName,
           severity: 'error',
           message: `dispatch-gate premise: PREMISE_FILE "${premiseFilePath}" carries no \`Premise:\` assertions — a premise file with no pins is a mistake, not a pass.`,
-          agent_recovery_prompt:
-            'Add a `Premise:` block with at least one `contains`/`absent`/`sha256` pin to the brief file, then re-run `vinaya check dispatch-readiness`.'
+          agent_recovery_prompt: `Add a \`Premise:\` block with at least one \`contains\`/\`absent\`/\`sha256\` pin to the brief file, then re-run \`vinaya check ${checkName}\`.`
         }
       ]
     }
@@ -81,8 +83,7 @@ export function reassertPremiseFile(
         check: checkName,
         severity: 'error' as const,
         message: `dispatch-gate premise: ${failure}`,
-        agent_recovery_prompt:
-          'The surface moved since this brief was authored — re-dig the affected pin, correct the brief, and re-run `vinaya check dispatch-readiness` before continuing.'
+        agent_recovery_prompt: `The surface moved since this brief was authored — re-dig the affected pin, correct the brief, and re-run \`vinaya check ${checkName}\` before continuing.`
       }))
     }
   }

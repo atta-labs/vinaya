@@ -149,7 +149,8 @@ export const CLI_CHECK_RING: Readonly<Record<string, 0 | 1 | 2>> = {
   'quoted-command': 0,
   'main-branch-refusal': 0,
   'token-collection-wired': 0,
-  'token-report': 1
+  'token-report': 1,
+  'pr-premise-reassert': 0
 }
 
 /**
