@@ -428,6 +428,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `dispatchTask` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `DispatchTaskError` | class | `apps/cli/src/lib/dispatch-task.ts` |
 | `extractAgentClass` | function | `apps/cli/src/lib/dispatch-task.ts` |
+| `resolveModelFromRationale` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `AGENT_CLASS_VALUES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `AGENT_VENDOR_NAMES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `DEFAULT_TIMEOUT_MS` | const | `apps/cli/src/lib/dispatch.ts` |
@@ -438,8 +439,10 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `isAgentVendor` | function | `apps/cli/src/lib/dispatch.ts` |
 | `MAX_TEE_BYTES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `openOutputTee` | function | `apps/cli/src/lib/dispatch.ts` |
+| `parseClaudeModel` | function | `apps/cli/src/lib/dispatch.ts` |
 | `parseClaudeResumeId` | function | `apps/cli/src/lib/dispatch.ts` |
 | `parseClaudeUsage` | function | `apps/cli/src/lib/dispatch.ts` |
+| `parseGeminiModel` | function | `apps/cli/src/lib/dispatch.ts` |
 | `parseGeminiUsage` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderClaudeEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderCodexEvent` | function | `apps/cli/src/lib/dispatch.ts` |
