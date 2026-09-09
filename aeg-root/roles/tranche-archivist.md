@@ -178,7 +178,7 @@ FORGE VERIFICATION:
 
 RETROSPECTIVE: posted to pinned lessons Issue ✓ | INCOMPLETE (reason)
 
-ARCHIVED: aeg-root/tranches/completed/<name>.md ✓ | FAILED (reason)
+ARCHIVED: Milestone closed (forge-native) — or `aeg-root/tranches/completed/<name>.md` for a legacy pre-cutover tranche — ✓ | FAILED (reason)
 
 PENDING RATIFICATIONS: [list with one-line description] | none
 
