@@ -69,13 +69,19 @@ function tempDir(prefix: string): string {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
-function runDispatch(args: string[], cwd: string, home: string, path: string): CliResult {
+function runDispatch(
+  args: string[],
+  cwd: string,
+  home: string,
+  path: string,
+  extraEnv: Record<string, string> = {}
+): CliResult {
   try {
     const stdout = execFileSync('bun', [INDEX, 'dispatch', ...args], {
       encoding: 'utf8',
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, HOME: home, PATH: path }
+      env: { ...process.env, HOME: home, PATH: path, ...extraEnv }
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {
@@ -571,7 +577,7 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
     const path = `${binDir}:${pathWithoutRealVendors()}`
-    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'developer-claude-issue454.json')
+    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-issue454.json')
 
     writeFakeBinary(
       binDir,
@@ -642,10 +648,75 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     const result = runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
     expect(result.status).toBe(0)
 
-    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'developer-claude-unscoped.json')
+    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-unscoped.json')
     const record = JSON.parse(readFileSync(recordPath, 'utf8')) as { resumeId: string; task: number | null }
     expect(record.resumeId).toBe(synthId)
     expect(record.task).toBeNull()
+  })
+
+  it('two different repos dispatching the same task number get two distinct records, keyed by repo (O5, #456)', () => {
+    const synthIdA = '55555555-5555-5555-5555-555555555555'
+    const synthIdB = '66666666-6666-6666-6666-666666666666'
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"session_id":"${synthIdA}","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+    )
+    runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '9'], cwd, home, path, {
+      AEG_REPO: 'acme/tranche-a'
+    })
+
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"session_id":"${synthIdB}","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+    )
+    runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '9'], cwd, home, path, {
+      AEG_REPO: 'acme/tranche-b'
+    })
+
+    // Same tranche-local-looking task number (9), two different repos —
+    // this is the live bug O5 closes: before the repo segment existed, the
+    // second dispatch's record would have overwritten the first's.
+    const recordA = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'dispatch-resume', 'acme-tranche-a', 'developer-claude-issue9.json'), 'utf8')
+    ) as { resumeId: string }
+    const recordB = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'dispatch-resume', 'acme-tranche-b', 'developer-claude-issue9.json'), 'utf8')
+    ) as { resumeId: string }
+    expect(recordA.resumeId).toBe(synthIdA)
+    expect(recordB.resumeId).toBe(synthIdB)
+  })
+
+  it('an unsafe AEG_REPO value falls back to the unresolved bucket rather than escaping it (O5, #456)', () => {
+    const synthId = '77777777-7777-7777-7777-777777777777'
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"session_id":"${synthId}","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+    )
+    runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '9'], cwd, home, path, {
+      AEG_REPO: 'acme/../../../etc'
+    })
+
+    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-issue9.json')
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')) as { resumeId: string }
+    expect(record.resumeId).toBe(synthId)
+    expect(existsSync(join(home, '.vinaya', 'dispatch-resume', 'etc'))).toBe(false)
   })
 
   it('a crashing child writes no resume record — there is no session to resume', () => {

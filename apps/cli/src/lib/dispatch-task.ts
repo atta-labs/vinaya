@@ -312,8 +312,15 @@ export async function dispatchTask(
       // class-to-model table — `undefined` either way falls through to
       // `dispatchRole`'s existing "no --model flag added" behavior.
       const resolvedModel = deps.resolveModelForDispatch(agent, issue, model)
+      // O5, Issue #456: `issue`, never `n` — `dispatchRole`'s own `task`
+      // opt is the resolved forge Issue number end to end (`VINAYA_TASK`
+      // parses to `subject.issue`, `packages/aeg-core/src/log/envelope.ts`;
+      // its resume-record key is `issue<n>`, `dispatch.ts`'s own
+      // `resumeRecordPathFor`) — the same live-bug shape the comment above
+      // already fixed for posting now applies here too: two tranches'
+      // task-N runs on different Issues must never share one record.
       await withPromptFile(result.brief, (promptFile) =>
-        dispatchRole('developer', agent, result.brief, { task: n, promptFile, model: resolvedModel })
+        dispatchRole('developer', agent, result.brief, { task: issue, promptFile, model: resolvedModel })
       )
     } else {
       printManualDispatchInstruction(tranche, n, agent)

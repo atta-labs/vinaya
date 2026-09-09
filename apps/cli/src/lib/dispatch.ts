@@ -61,7 +61,7 @@ import { redact } from '@attalabs/aeg-core'
 import type { Role } from '@attalabs/aeg-core'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 export const AGENT_VENDOR_NAMES = ['claude', 'codex', 'gemini'] as const
 export type AgentVendor = (typeof AGENT_VENDOR_NAMES)[number]
@@ -358,14 +358,25 @@ function parseGeminiResumeId(stdout: string): string | null {
 
 /**
  * Where a successful dispatch's own vendor resume identifier is durably
- * recorded, keyed by role + vendor + the task/PR this run was attributed to
- * — so a later, separate `vinaya dispatch` invocation (a different
- * terminal, possibly days later) can find the id needed to answer a stopped
- * agent through `--resume <id> --prompt-file <answer>`, instead of the id
- * living only in the window that printed it (O8, Issue #454; Principal
- * ruling: answer through the resume path that already exists — `--resume`/
- * `--prompt-file` are already parsed — never a live channel held open on a
- * blocking read).
+ * recorded, keyed by repo + role + vendor + the task/PR this run was
+ * attributed to — so a later, separate `vinaya dispatch` invocation (a
+ * different terminal, possibly days later) can find the id needed to
+ * answer a stopped agent through `--resume <id> --prompt-file <answer>`,
+ * instead of the id living only in the window that printed it (O8, Issue
+ * #454; Principal ruling: answer through the resume path that already
+ * exists — `--resume`/`--prompt-file` are already parsed — never a live
+ * channel held open on a blocking read).
+ *
+ * The repo segment (O5, Issue #456) — `${owner}-${repo}`, or `unresolved`
+ * when `resolveRepo()` can't (mirrors `outboxPathFor`'s own repo-null
+ * convention, `log-sink.ts`) — is load-bearing, not decoration: `task` here
+ * is the caller's resolved forge Issue number (`dispatchTask` passes its
+ * own `issue`, never the tranche-local ordinal `n` — see its own call
+ * site), and two DIFFERENT repositories can both have an Issue numbered the
+ * same. Without the repo segment, tranche A's task 9 (repo X, Issue #12)
+ * and tranche B's task 9 (repo Y, Issue #12) would overwrite the same
+ * `developer-claude-issue12.json`, handing an operator resuming one the
+ * other's session.
  *
  * Deliberately NOT the Vinaya Log's own `dispatch` family:
  * `DispatchOutcomeSchema` (`packages/aeg-core/src/log/schema.ts`) has no
@@ -376,15 +387,40 @@ function parseGeminiResumeId(stdout: string): string | null {
  * machine-local, the same `~/.vinaya/` home `dispatch-output`'s tee already
  * uses — is the destination that needs no schema change.
  */
-function resumeRecordPathFor(role: Role, agent: AgentVendor, task?: number, pr?: number): string {
+/**
+ * Same guard `log-sink.ts`'s private `isSafeRepoSegment` applies before
+ * splicing a `resolveRepo()` result into its own outbox path — duplicated
+ * here rather than imported, since `log-sink.ts` is out of this task's
+ * `## Surface`. `resolveRepo()` can return an `AEG_REPO` env value parsed by
+ * `parseOwnerRepo` (`@attalabs/aeg-forge-state`), which accepts anything
+ * shaped `owner/repo` — including a `repo` half containing `../` — so a
+ * segment failing this check is treated exactly like a null `resolveRepo()`
+ * result (`unresolved`), never spliced unchecked into a filesystem path.
+ */
+const SAFE_REPO_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
+
+function isSafeRepoSegment(segment: string): boolean {
+  return SAFE_REPO_SEGMENT.test(segment) && !segment.includes('..')
+}
+
+function resumeRecordPathFor(
+  role: Role,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null,
+  task?: number,
+  pr?: number
+): string {
+  const repoSegment =
+    repo && isSafeRepoSegment(repo.owner) && isSafeRepoSegment(repo.repo) ? `${repo.owner}-${repo.repo}` : 'unresolved'
   const scope = task !== undefined ? `issue${task}` : pr !== undefined ? `pr${pr}` : 'unscoped'
-  return join(GLOBAL_VINAYA_HOME, 'dispatch-resume', `${role}-${agent}-${scope}.json`)
+  return join(GLOBAL_VINAYA_HOME, 'dispatch-resume', repoSegment, `${role}-${agent}-${scope}.json`)
 }
 
 type ResumeRecord = {
   resumeId: string
   role: Role
   agent: AgentVendor
+  repo: { owner: string; repo: string } | null
   task: number | null
   pr: number | null
   round: number | null
@@ -393,7 +429,7 @@ type ResumeRecord = {
 }
 
 /**
- * Overwrites the one record for this role+vendor+scope with the latest
+ * Overwrites the one record for this repo+role+vendor+scope with the latest
  * resume id — only the most recently produced session is ever the one worth
  * resuming, so there is nothing to append to. Never throws, matching this
  * module's "never throws" posture: an unwritable home degrades to no durable
@@ -402,10 +438,15 @@ type ResumeRecord = {
  */
 function recordResumeState(record: ResumeRecord): string | null {
   try {
-    const dir = join(GLOBAL_VINAYA_HOME, 'dispatch-resume')
-    mkdirSync(dir, { recursive: true, mode: 0o700 })
-    chmodSync(dir, 0o700)
-    const path = resumeRecordPathFor(record.role, record.agent, record.task ?? undefined, record.pr ?? undefined)
+    const path = resumeRecordPathFor(
+      record.role,
+      record.agent,
+      record.repo,
+      record.task ?? undefined,
+      record.pr ?? undefined
+    )
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    chmodSync(dirname(path), 0o700)
     writeFileSync(path, JSON.stringify(record, null, 2), { mode: 0o600 })
     return path
   } catch {
@@ -1042,6 +1083,7 @@ export async function dispatchRole(
           resumeId,
           role,
           agent,
+          repo,
           task: opts.task ?? null,
           pr: opts.pr ?? null,
           round: opts.round ?? null,
