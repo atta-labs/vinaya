@@ -167,12 +167,12 @@ If any fails: post a comment listing the exact items missing. The Principal deci
 - Worktree Step 0: `git worktree add .worktrees/task/<it>/<n> -b task/<it>/<n> --no-track origin/main && cd .worktrees/task/<it>/<n> && git config push.autoSetupRemote true`, do the work, open the PR.
 - Done-checklist: **the PR body carries the Developer's report** (the brief itself is already frozen on the task Issue's comment; the `Ticket:`/`Project:` lines are restated in the PR body from the brief). That's it for state — opening the PR *is* the status transition. The Developer writes no status anywhere.
 
-**Reviewer (code)** — requires an open PR with the brief in its body. Refuses: no PR → *"Nothing to review."* No brief → *"This PR has no brief; I can't judge scope against intent."* Authored it → *"I can't review my own work."* Checks brief-conformance **and** spec-conformance (the `Project:` spec in the unit's `specs/`). Produces APPROVE | REQUEST CHANGES (per `roles/reviewer.md`).
+**Reviewer (code)** — requires an open PR AND the frozen `aeg:brief:v1` comment on the task Issue. Refuses: no PR → *"Nothing to review."* No brief comment → *"This task's Issue has no `aeg:brief:v1` comment; I can't judge scope against intent."* Authored it → *"I can't review my own work."* Checks brief-conformance **and** spec-conformance (the `Project:` spec in the unit's `specs/`). Produces APPROVE | REQUEST CHANGES (per `roles/reviewer.md`).
 
 **Security** — same gate as Reviewer; produces PASS | FAIL (per `roles/security.md`).
 
 **Verification** (the phase, two halves, `roles/developer.md` § Verification)
-- Requires an open PR with the brief in its body AND a §9 Test Plan in that brief. Refuses if either is missing — *"This PR has no Test Plan; without one I cannot judge what 'verified' means. Flag the brief malformed (`needs:brief-correction`)."*
+- Requires an open PR AND the frozen `aeg:brief:v1` comment on the task Issue, with a §9 Test Plan in that comment. Refuses if either is missing — *"This PR has no Test Plan; without one I cannot judge what 'verified' means. Flag the brief malformed (`needs:brief-correction`)."*
 - **Agent half:** the Developer-agent boots the relevant dev server(s) from the PR's branch, runs each `[agent]` item in the Test Plan, and posts the actual command output as evidence on the PR (paraphrase is not evidence). Re-runs after a fix append a new comment; they do not edit the previous one.
 - **Principal half:** the Principal runs each `[principal]` item in a real signed-in browser and ticks the checkbox on the PR. The agent does not tick `[principal]` boxes; the Principal does not tick `[agent]` boxes — the asymmetry is the gate's whole shape.
 - `Test Plan: unit-tests-only` (a first-class allowed value, for pure-logic briefs with no runtime surface in §4) satisfies the phase by the CI unit-test gate alone.
@@ -180,7 +180,7 @@ If any fails: post a comment listing the exact items missing. The Principal deci
 
 **Archivist** (close-out)
 - Requires a **merged** PR. Refuses: not merged → *"Nothing to close out; merge first."*
-- Confirms: Issue closed (the merge auto-closes it if linked), docs updated. Sets the tranche's `Lifecycle: complete` marker and moves the file to `tranches/completed/` when every task is merged (`tranche-model.md` §11). (`now.md` and the hand-edited per-project state Issue are both retired — non-derivable facts live as ordinary open Issues, closed when resolved.)
+- Confirms: Issue closed (the merge auto-closes it if linked), docs updated. Closes the tranche's Milestone when every task is merged (`tranche-model.md` §11) — the legacy exception additionally sets the `Lifecycle: complete` marker and moves the file to `tranches/completed/`, for a tranche still carrying a pre-cutover topology file. (`now.md` and the hand-edited per-project state Issue are both retired — non-derivable facts live as ordinary open Issues, closed when resolved.)
 - Assembles the **provenance block** from frozen facts (brief, PR reviews, merge metadata) and posts it to the merged PR (append-only, never a status field) — see `roles/archivist.md`.
 - Flags — does not perform — orphaned branches (branch with no/stale PR) and local worktree removal as cleanup candidates for the human. Writes no status (the merge already is the status).
 - Produces a close-out report listing anything dangling.
@@ -207,7 +207,7 @@ In observe mode:
 
 The value in observe mode is exactly the thing companies are afraid of losing: **visibility without disruption.** The team sees what AEG *would* say — which PRs lack a brief, which changes drift from the spec, which tasks would collide — while nothing is taken away from them. This is the "start with monitoring, not restriction" on-ramp.
 
-From there, adoption **tightens one gate at a time**, along the advisory → enforced gradient already in `state-machine.md` §12: turn on `verify-docs` as blocking, then require the brief-in-PR, then enforce the dispatch gates. Each step is a deliberate decision, not a big-bang switch. Observe mode is the floor; full AEG is the ceiling; a team climbs at its own pace.
+From there, adoption **tightens one gate at a time**, along the advisory → enforced gradient already in `state-machine.md` §12: turn on `verify-docs` as blocking, then require the frozen brief comment, then enforce the dispatch gates. Each step is a deliberate decision, not a big-bang switch. Observe mode is the floor; full AEG is the ceiling; a team climbs at its own pace.
 
 A team can sit in observe mode indefinitely and still get the audit-by-construction provenance — which, for a regulated team, may itself be the whole reason to adopt.
 

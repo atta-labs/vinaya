@@ -100,7 +100,7 @@ Work through this checklist for the merged task. Confirm each against reality �
 
 At close-out you assemble one **provenance record** for the task and post it as a comment on the merged PR (the PR is a frozen truth domain once merged; the comment is append-only). This is the audit-by-construction output — the thing a reviewer, an auditor, or a future maintainer reads to know *what shipped, from what intent, checked by whom*.
 
-**The cardinal constraint: you ASSEMBLE, you do not author.** Every field is **copied from a fact the merge already froze** — the brief (in the PR body), the PR's reviews, the forge's own merge metadata. You compute nothing new and you store no new state. The provenance block is a **projection of frozen facts**, exactly like derived status is a projection of forge state — which is why it does **not** violate the anti-regression rule against storing execution metadata: it lives on the merged PR, not in the tranche file or the Issue, and it is written once, never updated.
+**The cardinal constraint: you ASSEMBLE, you do not author.** Every field is **copied from a fact the merge already froze** — the brief (frozen on the task Issue's `aeg:brief:v1` comment), the PR's reviews, the forge's own merge metadata. You compute nothing new and you store no new state. The provenance block is a **projection of frozen facts**, exactly like derived status is a projection of forge state — which is why it does **not** violate the anti-regression rule against storing execution metadata: it lives on the merged PR, not in the tranche file or the Issue, and it is written once, never updated.
 
 Fields (omit any whose source fact is genuinely absent; never invent one):
 
@@ -108,7 +108,7 @@ Fields (omit any whose source fact is genuinely absent; never invent one):
 ### AEG provenance — task <n> (tranche <name>)
 - Issue:        #N  (closed by merge)
 - Tier:         0|1|3
-- Brief:        in this PR body (the frozen intent)
+- Brief:        frozen on the task Issue's `aeg:brief:v1` comment
 - Project(s):   <from the brief's Project: field, resolved via projects.md>
 - Model/agent:  <from the brief's `For:` line — AEG forbids commit-trailer attribution, so this is the source>
 - Code review:  APPROVE | REQUEST CHANGES→resolved   (PR review by <reviewer>)

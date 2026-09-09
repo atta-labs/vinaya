@@ -262,7 +262,7 @@ When the last task of a tranche has merged, the Principal declares it done and d
 
 2. **Write the retrospective** — append a new section to `aeg-project/lessons.md` with observations on what went well, what stalled, carry-forward lessons, decisions made, and unbuilt tasks. Assembled from merged PR summaries and topology — not invented.
 
-3. **Archive the tranche** — set `Lifecycle: complete` as the first line after the tranche file's heading, move the file from `aeg-root/tranches/` to `aeg-root/tranches/completed/` (one commit: `git mv`). This signals to the AEG Studio and any reader that the tranche is no longer active.
+3. **Archive the tranche** — close the tranche's Milestone. That closed Milestone is the current signal to the Planner's readiness gate (`contracts/tranche-archivist-planner.md`) and to any reader that the tranche is no longer active. **Legacy exception:** for a tranche still carrying a pre-cutover topology file, also set `Lifecycle: complete` as the first line after the file's heading and move it from `aeg-root/tranches/` to `aeg-root/tranches/completed/` (one commit: `git mv`) — kept for tranches created before the forge-native cutover; a forge-native tranche carries no such file to move.
 
 4. **Update state docs** — refresh `aeg-project/state.md` (last-updated date, current focus pointer, recently shipped section, clear any resolved pending-manual-ops). Active-work state is derived from the forge — no `now.md`.
 
