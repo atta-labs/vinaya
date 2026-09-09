@@ -22,13 +22,14 @@
 import { deriveSection7 } from './derive-section7'
 import {
   BRIEF_SECTIONS_SINCE_ISSUE,
+  globCoversPath,
   type IssuePart,
   type IssueSurface,
   type IssueTestPlan,
   OBJECTIVES_SINCE_ISSUE
 } from './issue-validation'
 import { type Objective, renderObjectives } from './objectives'
-import { deriveTierFromDiff } from './pr-tier'
+import { applyTierFloor, deriveTierFromDiff, readTierFromPrBody } from './pr-tier'
 
 export type RationaleFieldKey =
   | 'boundary'
@@ -91,6 +92,21 @@ function sliceRationaleField(text: string, labelPattern: string): string {
 }
 
 /**
+ * `parseRationaleFields`' result — the five rationale fields plus the
+ * Issue's own declared `Tier:` field (task 12, Issue #469, O1), read from
+ * the same `body` this function already receives. Piggybacked on this
+ * existing call rather than added as a new `BriefFacts` property threaded in
+ * by the caller: `rationale: parseRationaleFields(issueBody)` is already the
+ * one call site (in `apps/cli` and in this file's own tests) that has the
+ * raw Issue body in hand, so extending its return shape reaches
+ * `renderBrief` without a second, caller-side wire to keep in sync.
+ */
+export type ParsedRationale = Partial<Record<RationaleFieldKey, string>> & {
+  /** `readTierFromPrBody(body)` — `null` when the Issue declares no `Tier:` field, or an invalid one. */
+  declaredTier?: 0 | 1 | 3 | null
+}
+
+/**
  * Reads the five rationale fields this renderer needs out of a task Issue's
  * body, tolerant of both live serializations `checkIssueRationale` accepts
  * (`**Field** — …` bold-inline, `### Field` heading). A field absent from the
@@ -98,13 +114,13 @@ function sliceRationaleField(text: string, labelPattern: string): string {
  * so `renderBrief`'s missing-fact check can tell "absent" from "present but
  * empty".
  */
-export function parseRationaleFields(body: string): Partial<Record<RationaleFieldKey, string>> {
+export function parseRationaleFields(body: string): ParsedRationale {
   const out: Partial<Record<RationaleFieldKey, string>> = {}
   for (const key of Object.keys(RATIONALE_FIELD_PATTERNS) as RationaleFieldKey[]) {
     const text = sliceRationaleField(body, RATIONALE_FIELD_PATTERNS[key])
     if (text) out[key] = text
   }
-  return out
+  return { ...out, declaredTier: readTierFromPrBody(body) }
 }
 
 /**
@@ -163,7 +179,7 @@ export type BriefFacts = {
   projects: string[]
   dependsOn: string[]
   conflictsWith: string[]
-  rationale: Partial<Record<RationaleFieldKey, string>>
+  rationale: ParsedRationale
   /** The Issue's `## Objectives` list (`objectives.ts`'s `objectivesOf`), copied into the brief verbatim between the header and §2. */
   objectives: Objective[]
   /**
@@ -207,6 +223,23 @@ export type BriefFacts = {
 
 export type RenderResult = { ok: true; brief: string } | { ok: false; missing: string[] }
 
+/**
+ * §4's surface map lists only what the Issue's own `## Surface` admits (task
+ * 12, Issue #469, O2) — a path the Boundary named inside its `Out:` clause
+ * was named in order to exclude it, and prose position is not a reliable
+ * signal of that, so the `## Surface` globs are the authority. Admitted
+ * means covered by at least one `in:` glob and by no `out:` glob;
+ * `globCoversPath` (`issue-validation.ts`) is the same glob matcher
+ * `checkSurfaceScope` already uses, consumed here rather than reimplemented.
+ */
+function admittedSurfaceFiles(surfaceFiles: SurfaceFileFact[], surface: IssueSurface): SurfaceFileFact[] {
+  return surfaceFiles.filter((f) => {
+    const admitted = surface.in.some((g) => globCoversPath(g, f.path))
+    const excluded = surface.out.some((g) => globCoversPath(g, f.path))
+    return admitted && !excluded
+  })
+}
+
 function bulletList(items: string[]): string {
   return items.map((i) => `- ${i}`).join('\n')
 }
@@ -225,11 +258,13 @@ function renderHeader(facts: BriefFacts, template: string): string {
     : 'You are the AEG Developer. Read `aeg-root/roles/developer.md` first. Mandatory.'
 
   const reason = facts.rationale.suggestedAgentClass ?? ''
-  // `deriveTierFromDiff` never returns `3` — Tier 3 stays a judgment call the
-  // Planner raises by hand; the mechanical floor this renderer can prove
-  // is 0 or 1, exactly the two values that check itself is capable of ruling
-  // out for a doc/spec-touching surface.
-  const tier = deriveTierFromDiff(facts.surfaceFiles.map((f) => f.path))
+  // The declared tier is a floor, not a default: raised to the mechanical
+  // derivation only when that derivation is higher, never lowered — a
+  // Planner's judgment (including a hand-raised Tier 3, which no derivation
+  // can reach) is never silently overridden by a derivation that cannot see
+  // it (task 12, Issue #469, O1).
+  const derivedFloor = deriveTierFromDiff(facts.surfaceFiles.map((f) => f.path))
+  const tier = applyTierFloor(facts.rationale.declaredTier ?? null, derivedFloor)
   const lines = [
     '**For:** [model] (coding-agent CLI on a dev machine, dispatched locally, unattended)',
     `**Reason:** ${reason}`,
@@ -594,28 +629,43 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
     if (!facts.rationale[key]) missing.push(RATIONALE_FIELD_NAMES[key])
   }
 
+  // O2/O3 (task 12, Issue #469): the surface map lists only what `## Surface`
+  // admits. When the Boundary named files but the Issue's own Surface admits
+  // none of them, that is the Boundary and Surface genuinely disagreeing —
+  // refuse at render (naming it) rather than dispatch a brief whose surface
+  // map would be empty, or whose Modify list would argue with its own
+  // Out-of-surface line.
+  const filteredSurfaceFiles = admittedSurfaceFiles(facts.surfaceFiles, facts.surface)
+  if (facts.surface.in.length > 0 && facts.surfaceFiles.length > 0 && filteredSurfaceFiles.length === 0) {
+    missing.push(
+      "Surface map (every file the Boundary named is excluded by the Issue's own `## Surface` `in:`/`out:` globs — Boundary and Surface disagree; fix the Issue rather than render an empty surface map)"
+    )
+  }
+
   if (missing.length > 0) return { ok: false, missing }
+
+  const scopedFacts: BriefFacts = { ...facts, surfaceFiles: filteredSurfaceFiles }
 
   const section7Pointers = facts.docOwnersContent
     ? deriveSection7Pointers(
-        facts.surfaceFiles.map((f) => f.path),
+        filteredSurfaceFiles.map((f) => f.path),
         facts.docOwnersContent
       )
     : []
 
   const brief = [
-    renderHeader(facts, template),
+    renderHeader(scopedFacts, template),
     '',
     ...(facts.objectives.length > 0 ? [renderObjectives(facts.objectives), ''] : []),
     renderSection2(facts),
     '',
     renderSection3(facts),
     '',
-    renderSection4(facts),
+    renderSection4(scopedFacts),
     '',
     renderSection5(facts),
     '',
-    renderSection6(facts),
+    renderSection6(scopedFacts),
     '',
     renderSection7(section7Pointers),
     '',
