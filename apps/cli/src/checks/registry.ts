@@ -220,6 +220,26 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   ],
   [
     {
+      // Second caller of `../premise-reassert-logic.ts`'s `reassertPremiseFile`
+      // (task 1, #466) — re-asserts a pull request BODY's `Premise:` pins,
+      // where `dispatch-readiness`'s `PREMISE_FILE` above re-asserts a FILE
+      // handed to a dispatch. Triggered by the block's presence alone, on
+      // any branch: `PR_BODY` is the same absence-tolerant fall-through
+      // `brief-shape`/`pr-report-density` above use, so a PR with no
+      // `Premise:` block (the overwhelming majority) is silent, and there is
+      // no branch condition anywhere in this check.
+      name: 'pr-premise-reassert',
+      run: bin('check-pr-premise-reassert'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      env: {
+        PR_BODY: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
       name: 'dispatch-readiness',
       run: bin('check-dispatch-readiness'),
       scope: 'full',
