@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -338,22 +338,21 @@ describe('vinaya issue create --validate-only — briefSections builtin', () => 
   })
 
   it('passes a task Issue carrying all four sections', () => {
-    // O6 — the shared fixture's own "Docs to keep coherent" pointer
+    // O1 — the shared fixture's own "Docs to keep coherent" pointer
     // (`apps/cli/README.md`) falls outside its declared `## Surface` `in:`
-    // globs, which `checkDocsWithinSurface` now correctly refuses. Patched
-    // to a covered path HERE, in a scratch copy under `cwd` (never editing
-    // the shared fixture file itself, which this task's own Issue declares
-    // out of scope) — the same real repo/tracked-files setup `beforeEach`
-    // already establishes covers this patched path too.
-    const patchedBody = readFileSync(join(FORGE_FIXTURES, 'issue-brief-sections-valid.md'), 'utf8').replace(
-      '`apps/cli/README.md`',
-      '`apps/cli/src/lib/README.md`'
-    )
-    const bodyPath = join(cwd, 'body.md')
-    writeFileSync(bodyPath, patchedBody, 'utf8')
-
+    // globs but inside no `out:` glob either — `checkDocsWithinSurface`
+    // accepts a pointer the surface simply does not enclose, so the fixture
+    // is used as-is, no patched copy needed.
     const r = runCli(
-      ['issue', 'create', '--validate-only', '--body-file', bodyPath, '--label', 'vinaya/tranche:demo'],
+      [
+        'issue',
+        'create',
+        '--validate-only',
+        '--body-file',
+        join(FORGE_FIXTURES, 'issue-brief-sections-valid.md'),
+        '--label',
+        'vinaya/tranche:demo'
+      ],
       cwd
     )
     expect(r.status).toBe(0)
