@@ -194,11 +194,55 @@ describe('renderBrief', () => {
     expect(result.missing.some((m) => m.includes('Project'))).toBe(true)
   })
 
-  it('derives Tier 0 for a surface with no spec/doc file, via deriveTierFromDiff', () => {
-    const result = renderBrief(baseFacts(), TEMPLATE)
+  it('derives Tier 0 for a surface with no spec/doc file and no declared tier, via deriveTierFromDiff', () => {
+    const facts = baseFacts({ rationale: { ...parseRationaleFields(ISSUE_BODY), declaredTier: null } })
+    const result = renderBrief(facts, TEMPLATE)
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(readTierFromPrBody(result.brief)).toBe(0)
+  })
+
+  describe('tier floor (task 12, Issue #469, O1)', () => {
+    it('carries the Issue-declared tier when it is higher than the derived floor', () => {
+      // ISSUE_BODY declares `**Tier:** 1`; the default surfaceFiles fixture
+      // (fixture.ts, not a spec/doc file) derives 0 — the declared value wins.
+      const result = renderBrief(baseFacts(), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(readTierFromPrBody(result.brief)).toBe(1)
+    })
+
+    it('raises a declared tier to the derived floor when the floor is higher', () => {
+      const facts = baseFacts({
+        rationale: { ...parseRationaleFields(ISSUE_BODY), declaredTier: 0 },
+        surface: { in: ['aeg-root'], out: [] },
+        surfaceFiles: [{ path: 'aeg-root/roles/developer.md', sha256: 'a'.repeat(64), packageName: null }]
+      })
+      const result = renderBrief(facts, TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(readTierFromPrBody(result.brief)).toBe(1)
+    })
+
+    it('never lowers a declared Tier 3 — the derivation cannot reach 3 at all', () => {
+      const facts = baseFacts({ rationale: { ...parseRationaleFields(ISSUE_BODY), declaredTier: 3 } })
+      const result = renderBrief(facts, TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(readTierFromPrBody(result.brief)).toBe(3)
+    })
+
+    it('falls back to the derived floor alone when the Issue declares no Tier field', () => {
+      const facts = baseFacts({
+        rationale: { ...parseRationaleFields(ISSUE_BODY), declaredTier: null },
+        surface: { in: ['aeg-root'], out: [] },
+        surfaceFiles: [{ path: 'aeg-root/roles/developer.md', sha256: 'a'.repeat(64), packageName: null }]
+      })
+      const result = renderBrief(facts, TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(readTierFromPrBody(result.brief)).toBe(1)
+    })
   })
 
   it('declares Test Plan: unit-tests-only when the Issue Test plan section is the sentinel', () => {
