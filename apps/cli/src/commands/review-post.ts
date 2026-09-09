@@ -716,9 +716,14 @@ function checkExtraction(
  * extractor (the #806 verdict-author-verification fix) — a non-allowlisted
  * "VERDICT:"-shaped comment must never count toward self-verification either,
  * or "self-verified: clean" would not be a faithful proxy for what the real
- * merge gate concludes at CI time.
+ * merge gate concludes at CI time. Exported so `dev-review-loop.ts`'s
+ * publication self-check (task 6, `#416`) can apply the SAME filter rather
+ * than re-deriving one — see that file's `publishRound` doc comment.
  */
-function principalBodies(comments: readonly ReviewGateComment[], principalAllowlist: readonly string[]): string[] {
+export function principalBodies(
+  comments: readonly ReviewGateComment[],
+  principalAllowlist: readonly string[]
+): string[] {
   return comments.filter((c) => isPrincipal(c.author, principalAllowlist as string[])).map((c) => c.body)
 }
 

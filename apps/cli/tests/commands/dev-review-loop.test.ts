@@ -72,4 +72,20 @@ describe('vinaya dev-review-loop — argv refusals', () => {
     expect(r.status).not.toBe(0)
     expect(r.stderr).toMatch(/invalid vendor 'chatgpt'/)
   })
+
+  it('refuses when --resume is not a positive integer PR number', () => {
+    const r = run(['--resume', 'nope', '--agent', 'claude'])
+    expect(r.status).not.toBe(0)
+    expect(r.stderr).toMatch(/--resume <pr> requires a positive integer PR number/)
+  })
+
+  it('does not require --task when --resume is given', () => {
+    // No fake `gh`/`git` on PATH here — `devReviewLoop` itself will fail
+    // trying to resolve the PR, but that failure happens INSIDE the lib
+    // call, well past this file's job (argv parsing/refusal only). The
+    // point of this test is narrower: `--task` is not required for this
+    // command to accept `--resume` and proceed past argv parsing.
+    const r = run(['--resume', '123', '--agent', 'claude'])
+    expect(r.stderr).not.toMatch(/--task <n> is required/)
+  })
 })
