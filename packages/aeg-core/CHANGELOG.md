@@ -1,5 +1,31 @@
 # @atta/aeg-core
 
+## 0.26.0
+
+### Minor Changes
+
+- 252d2c8: `vinaya task dispatch` posts and reads the dispatched brief on the task's real forge Issue, not on an Issue whose number happens to equal the task id — fixes a bug where a task id that was itself a valid, unrelated Issue number (e.g. task 3) could post the brief on that unrelated Issue instead.
+  
+  A task branch created by a brief's Step 0 (`git worktree add ... --no-track origin/main`, then `git config push.autoSetupRemote true`) no longer tracks the branch it was cut from — a plain `git push` now reaches the task's own remote ref instead of failing with an upstream-name-mismatch error that suggests pushing onto the default branch.
+  
+  A rendered brief's §4 Technical surface map and premise pins now name only the files the Planner's Boundary rationale actually calls out, resolved against the tracked tree, instead of every file under the task's declared `## Surface` directory globs — a task touching a dozen files in a large directory no longer renders a brief instructing hundreds of unrelated modifications. `vinaya brief render` no longer requires `--surfaces`; omitted, it derives the surface from the Issue's own `## Surface` section, the same source `vinaya task dispatch` already reads.
+- d4ab022: `vinaya issue create`/`vinaya issue edit` now refuse a task Issue whose `## Surface` `in:` glob matches no tracked file (naming the glob), whose `## Parts` cite an `O<n>` the Issue's own `## Objectives` never defines (naming the part and the citation), and whose "Docs to keep coherent" field names a path outside its own `## Surface` `in:` globs or inside its `out:` globs (naming the pointer and the excluding glob). The Surface-glob resolution predicate is injected from the caller (`forge-write.ts`'s `expandGlob`) — the same implementation `brief-assembly.ts`'s render path already uses — so the authoring gate and the brief renderer can never disagree about whether a glob resolves.
+  
+  For a task Issue at or above the brief-sections cutover (`BRIEF_SECTIONS_SINCE_ISSUE`), `checkBlastRadiusScope` now decides an under-declared blast radius from the `## Surface` `in:` glob list alone, never from a prose scan of the rationale — naming a shared package in order to explicitly exclude it can no longer trip the gate. Below the cutover, the original prose scan is unchanged.
+  
+  A dot-prefixed directory (`.claude`, `.github`) is now usable in a `## Surface` glob: the file-path heuristic no longer misreads a dot-directory's leading dot as a file extension.
+- 529fa54: The Brief Author role is retired: the brief is dispatched by the Planner, not authored by a separate role. `author-the-brief` (`ACTIONS`) is now `performedBy: ['planner']`. The `needs-brief-correction` label keeps its id — Issues in flight carry it — but its copy now names the Planner. `vinaya doctrine --role brief-author` refuses, pointing the caller at `--role planner`, even while `aeg-root/roles/brief-author.md` still exists on disk. `vinaya upgrade` now removes a generated `.agents/skills/vinaya-<role>/SKILL.md` for a role this codebase has retired, and no longer generates one. Retirement is DECLARED (`RETIRED_ROLE_NAMES`), never inferred from a role file's absence — `aeg-root/roles/brief-author.md` deliberately outlives this change, so an emitter that read the file as proof of liveness would both skip the cleanup and keep writing a skill whose embedded `vinaya doctrine --role brief-author` this same release refuses. `eject` is unchanged.
+  
+  `AEG_BRIEF_V1_MARKER` and `contentAfterTwoLines` are promoted into `@attalabs/aeg-core`'s exports — the single implementation `packages/aeg-core/bin/verify-brief.ts`, `verify-dispatch.ts`, `archive-task.ts` and `apps/cli`'s `dispatch-task.ts`/`check-brief-shape.ts` all now share, replacing four independent copies. `brief-author` is removed from `@attalabs/aeg-core`'s `ROLE_VALUES`, the log schema's dispatchable-role union, so a log line claiming that role no longer validates. `verify-brief.ts` now grades the task Issue's frozen `aeg:brief:v1` comment on a task branch — the same body `vinaya check brief-shape` already grades since the brief was moved off the PR body — instead of `PR_BODY`, so the authoring-time gate and the CI gate cannot disagree about a post-split brief.
+
+### Patch Changes
+
+- 7e260fd: `checkDocsWithinSurface` no longer refuses a "Docs to keep coherent" pointer for sitting outside every `## Surface` `in:` glob. The pull-request-time gate this check anticipates (`checkSurfaceScope`) only ever refuses a changed file against `out:` and never consults `in:`, so that branch enforced a premise nothing downstream shared — it only forced a Planner to widen a surface around a single doc pointer. A pointer that falls inside an `out:` glob is still refused by name.
+- a6dbfb5: Registers `pr-premise-reassert` in `CLI_CHECK_RING` (`@attalabs/aeg-core`), the mirror table every `apps/cli` check bin needs an entry in. The check itself, shipped in `@attalabs/vinaya`, re-asserts a pull request body's `Premise:` pins against the real tree whenever the block is present — no branch-name condition — so a pin the pull request's own diff falsifies fails instead of merging as decoration.
+- Updated dependencies [529fa54]
+  - @attalabs/aeg-forge-state@0.26.0
+  - @attalabs/aeg-types@0.26.0
+
 ## 0.25.0
 
 ### Minor Changes
