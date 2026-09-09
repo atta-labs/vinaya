@@ -63,7 +63,7 @@ function containedRealPath(root: string, p: string): string | null {
   }
 }
 
-function fileReader(p: string): string | null {
+function defaultFileReader(p: string): string | null {
   const real = containedRealPath(process.cwd(), p)
   if (real === null) return null
   try {
@@ -77,8 +77,22 @@ function fileReader(p: string): string | null {
  * `null` means "no `Premise:` block in this body — nothing to reassert",
  * the O3 silent case. A non-null result is `reassertPremiseFile`'s own
  * verdict over the pins the body actually carries.
+ *
+ * `fileReader` defaults to the real, cwd-rooted, symlink-safe reader — real
+ * callers (`main()` below) never pass a second argument. Tests inject a
+ * fixture map instead of the real filesystem, the same way
+ * `premise-reassert-logic.test.ts` tests `reassertPremiseFile` directly: the
+ * real reader is `process.cwd()`-relative, which is the repo root when
+ * `vinaya check` spawns this bin for real (no chdir — see
+ * `check-dispatch-readiness.ts`'s identical reasoning) but is this PACKAGE's
+ * own root when a monorepo test runner invokes `apps/cli`'s `bun test`
+ * directly — a real-filesystem-dependent test would pass or fail by which of
+ * those happened to be cwd, not by what this function does.
  */
-export function reassertPrBodyPremise(prBody: string): PremiseReassertResult | null {
+export function reassertPrBodyPremise(
+  prBody: string,
+  fileReader: (path: string) => string | null = defaultFileReader
+): PremiseReassertResult | null {
   const assertions = parsePremiseBlock(prBody)
   if (assertions.length === 0) return null
 
