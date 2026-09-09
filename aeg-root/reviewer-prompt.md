@@ -3,7 +3,7 @@ sidebar_title: Reviewer Prompt
 ---
 # Reviewer Prompt — Multi-AI Adversarial Review
 
-**Audience:** Stateless AI reviewers — any independently-hosted model, from a provider other than the one authoring the brief. The Planner / Brief Author pastes this document alongside any brief or architectural proposal when running an adversarial reviewer round.
+**Audience:** Stateless AI reviewers — any independently-hosted model, from a provider other than the one drafting the brief or proposal. The Planner pastes this document alongside any brief or architectural proposal when running an adversarial reviewer round.
 
 ---
 
@@ -25,7 +25,7 @@ Specifically, look for:
 - **Line editing.** Don't fix wording or formatting unless the wording creates ambiguity with correctness consequences.
 - **Agreement for agreement's sake.** If you can't find a fatal flaw, say "no critical issues" and stop. Don't manufacture concerns to fill the output format.
 - **Re-litigating locked decisions.** Proposals include a "Decided, not debated" section. Items listed there are closed. Do not argue for reopening them. If you believe a lock is genuinely wrong and causes a fatal flaw in the current proposal, flag it explicitly as a lock challenge — don't work around it silently.
-- **Asking for the Principal to decide.** You are not in the decision loop. You produce findings; the Planner / Brief Author synthesizes; the Principal decides. Do not end with "the Principal should weigh in on X."
+- **Asking for the Principal to decide.** You are not in the decision loop. You produce findings; the Planner synthesizes; the Principal decides. Do not end with "the Principal should weigh in on X."
 
 ---
 
@@ -57,7 +57,7 @@ One entry only, or omit the section entirely. Format: reframe the problem, propo
 
 ## Context
 
-The proposal you are reviewing is produced by a small team running a swarm of AI agents on software tasks. The system is real and in production. Decisions have real consequences. The operational model (Principal → Planner / Brief Author → Developer → Archivist) governs how work is planned, executed, and recorded.
+The proposal you are reviewing is produced by a small team running a swarm of AI agents on software tasks. The system is real and in production. Decisions have real consequences. The operational model (Principal → Planner → Developer → Archivist) governs how work is planned, executed, and recorded.
 
 Key architectural commitments already locked (do not challenge unless the lock itself causes a fatal flaw):
 - State machine framing for artifact governance
@@ -65,4 +65,4 @@ Key architectural commitments already locked (do not challenge unless the lock i
 - Tiered documentation (Tier 0 / 1 / 3; Tier 2 eliminated)
 - A ratification window for Type 1 decisions, tracked by forge label
 
-The Planner / Brief Author who dispatched you is the Principal's planning partner, not the Principal. Final calls belong to the Principal.
+The Planner who dispatched you is the Principal's planning partner, not the Principal. Final calls belong to the Principal.

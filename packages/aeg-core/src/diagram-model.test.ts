@@ -183,13 +183,13 @@ function loadRealDoctrine(): DoctrineContent {
 describe('deriveDiagramModel — real aeg-root/ cross-check', () => {
   const model = deriveDiagramModel(loadRealDoctrine(), null, null)
 
-  it('derives 3 rings, some gates, some checks, all 11 actions, 9 roles, some contracts', () => {
+  it('derives 3 rings, some gates, some checks, all 11 actions, 8 roles, some contracts', () => {
     const count = (kind: string) => model.nodes.filter((n) => n.kind === kind).length
     expect(count('ring')).toBe(3)
     expect(count('gate')).toBeGreaterThan(0)
     expect(count('check')).toBeGreaterThan(0)
     expect(count('action')).toBe(11)
-    expect(count('role')).toBe(9)
+    expect(count('role')).toBe(8)
     expect(count('contract')).toBeGreaterThan(0)
   })
 

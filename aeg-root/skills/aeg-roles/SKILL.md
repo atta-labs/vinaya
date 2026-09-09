@@ -20,8 +20,8 @@ Role is determined by **how you were invoked** — the *kind* of surface and the
 |---|---|---|
 | A **coding-agent surface** (CLI / IDE), executing a dispatched brief | **Developer** | `roles/developer.md` |
 | A **chat / planning surface**, talking strategy / architecture | **Planner** | `roles/planner.md` |
-| A **chat / planning surface**, turning intent + a backlog slice into a tranche | **Planner / Brief Author — Planner** | `roles/brief-author.md` + `roles/planner.md` |
-| A **chat / planning surface**, authoring a task brief | **Planner / Brief Author — Brief Author** | `roles/brief-author.md` + the `brief-authoring` skill |
+| A **chat / planning surface**, turning intent + a backlog slice into a tranche | **Planner — plan act** | `roles/planner.md` |
+| A **chat / planning surface**, dispatching one task's rendered brief | **Planner — dispatch act** | `roles/planner.md` § The dispatch act |
 | Invoked specifically to **review an open PR** (fresh context) | **Reviewer — code** | `roles/reviewer.md` |
 | Invoked specifically to **security-review an open PR** | **Reviewer — security** | `roles/security.md` |
 | Executing an **open PR's runtime Test Plan before merge** (the `[agent]` half is your Developer session; the Principal runs the `[principal]` half) | **Developer — Verification phase** (not a separate role) | `roles/developer.md` § Verification |
@@ -36,10 +36,10 @@ Always also skim `roles/principal.md` to know what sits in the Principal's seat 
 ## 2. One line + entry gate per role (then open the doc)
 
 - **Principal** — owns direction, ratifies Type 1 decisions and Tier 3 merges. The only role that ratifies irreversible decisions.
-- **Planner** — intent + backlog slice → a thin tranche of sibling-aware tasks (a Milestone and labeled Issues; writes no briefs, no status). Architecture and design conversation with the Principal happens here, before anything is cut. May make Type 2 decisions ACTIVE immediately; Type 1 → PENDING.
-- **Brief Author** — the just-in-time brief for one task (→ `brief-authoring`). **Spec-check gate:** if asked a strategic/architectural question about a named project and you haven't read its specs, STOP and read them first.
+- **Planner (plan act)** — intent + backlog slice → a thin tranche of sibling-aware tasks (a Milestone and labeled Issues; writes no briefs, no status). Architecture and design conversation with the Principal happens here, before anything is cut. May make Type 2 decisions ACTIVE immediately; Type 1 → PENDING.
+- **Planner (dispatch act)** — checks one task's dispatch gates (Issue exists, dependencies merged, no open conflicting sibling, render complete), then runs `vinaya task dispatch` (see `roles/planner.md` § The dispatch act) — there is no separate brief to hand-write, the render is mechanical. **Spec-check gate:** if asked a strategic/architectural question about a named project and you haven't read its specs, STOP and read them first.
 - **Developer** — executes ONE dispatched brief. **Entry gate:** read the brief fully; confirm dispatch gates against the forge (`depends-on` merged, no `conflicts-with` sibling PR open); **Step 0 = create the worktree** (`task/<tranche>/<n>`); then pre-flight. Opens the PR and stops — does not merge, does not review itself, never writes status.
-- **Reviewer (code)** — invoked fresh on an open PR. **Entry gate:** an open PR with the brief in its body, else refuse. Reads the diff + the brief + (advisory) the project spec; emits a VERDICT; read + review-comment authority only; does not edit code, does not merge.
+- **Reviewer (code)** — invoked fresh on an open PR. **Entry gate:** an open PR whose task Issue carries the frozen `aeg:brief:v1` comment, else refuse. Reads the diff + the brief (from that comment) + (advisory) the project spec; emits a VERDICT; read + review-comment authority only; does not edit code, does not merge.
 - **Reviewer (security)** — as above, security lens; runs a config-security scan if agent/MCP config changed.
 - **Archivist** — **entry gate:** the PR is merged, else refuse. Works the close-out checklist (Issue closed, changelog appended, per-unit `state.md` updated, provenance block posted, orphan branch/worktree flagged). Writes **no** task status — the merge *is* the status. (`now.md` is retired.)
 - **Verification** — a **phase**, not a role: nobody is dispatched as a Verifier. It runs on an open PR after the code-review and security passes and before merge. **Entry gate:** an open PR whose brief carries a tagged Test Plan; refuse if there is no open PR, no brief, no Test Plan section, or the plan is declared `unit-tests-only` while the diff touches a runtime surface. The Developer session executes the `[agent]` items (boots the app, pastes real output); the Principal executes the `[principal]` items in a browser; both halves must pass before merge. Writes no status. Documented in `roles/developer.md` § Verification, because the Developer is the actor that runs its agent half.
@@ -47,11 +47,11 @@ Always also skim `roles/principal.md` to know what sits in the Principal's seat 
 
 ## 3. Authority boundaries (so roles don't bleed)
 
-- Only the **Principal** ratifies Type 1 (irreversible) decisions. The **Planner** and **Brief Author** may ratify Type 2 (reversible) — ACTIVE immediately.
+- Only the **Principal** ratifies Type 1 (irreversible) decisions. The **Planner** (either act) may ratify Type 2 (reversible) — ACTIVE immediately.
 - The **Developer** mutates code on its branch only; it never merges, never reviews its own work, never writes status.
 - **Reviewers** have read + PR-review-comment authority only — no code edits, no merge. Review is always a **separate, fresh-context** invocation from the Developer.
 - The **Archivist** updates living-state PM docs at close-out but writes no task status and authors no code.
-- **Escalation severity** routes the ask: `execution` and `strategy` → Brief Author (how to run the task vs which design path to take), `product` → Principal. Labels `needs:execution-input` / `needs:strategy-input` / `needs:principal-input`.
+- **Escalation severity** routes the ask: `execution` and `strategy` → Planner (how to run the task vs which design path to take), `product` → Principal. Labels `needs:execution-input` / `needs:strategy-input` / `needs:principal-input`.
 
 ## 4. Reminder
 

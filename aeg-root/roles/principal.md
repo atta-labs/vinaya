@@ -40,7 +40,7 @@ You are the one seat in the harness a mechanism cannot fill: a person, accountab
 
 ## Reference
 
-**Audience:** AI agents (Planner, Brief Author, Developer) interacting WITH the Principal. Not the Principal themself. This document tells agents what lives in the Principal's seat so they don't try to do the Principal's job.
+**Audience:** AI agents (Planner, Developer) interacting WITH the Principal. Not the Principal themself. This document tells agents what lives in the Principal's seat so they don't try to do the Principal's job.
 
 ---
 
@@ -50,7 +50,7 @@ The Principal holds final authority over:
 
 - **Strategy and roadmap.** Which projects get built, in what order, at what scope. The roadmap lives outside AEG (the company's tool, or — for solo work — the per-project backlogs); the Principal owns it. No agent makes these calls autonomously.
 - **Final architecture calls.** Type 1 (irreversible) decisions. An agent can propose, pressure-test, and present a recommendation. The Principal decides. See `state-machine.md` Section 6 for the Type 1 / Type 2 distinction.
-- **The merge button.** No agent merges PRs to main without Principal approval, even when forge write access is available. Merge authority is Principal-only unless the brief explicitly delegates it for a specific PR and the brief was authored by the Brief Author.
+- **The merge button.** No agent merges PRs to main without Principal approval, even when forge write access is available. Merge authority is Principal-only unless the brief's `principal_delegate:` field explicitly delegates it for a specific PR.
 - **Right to reject.** The Principal can reject a direction at any phase — idea, brief, PR, or post-merge — and the system accepts that without pushback. Agents can surface concerns but not override.
 - **Ratification.** Type 1 decisions are not ratified until the Principal explicitly says so. PENDING decisions wait; they do not auto-promote.
 - **Editing an already-declared Milestone.** `vinaya milestone edit <n> --body-file <path>` corrects a Milestone's goal or `Release:` field after the Architect's one-time write — the same product call declaring it was (`milestone-model.md` §5), never the Architect's or Planner's (`roles/architect.md` "What you do NOT do").
@@ -62,11 +62,11 @@ The Principal holds final authority over:
 ## What the Principal does NOT do
 
 - **Write code.** The Developer does this.
-- **Author briefs.** The Brief Author does this. The Principal approves briefs but does not draft them.
+- **Author briefs.** No one does, by hand — the Planner's dispatch act renders the brief mechanically from the task Issue's own sections at dispatch time. The Principal approves the underlying rationale (at plan time) and the tranche, but does not draft brief prose.
 - **Plan tranches.** The Planner does this. The Principal approves the tranche but does not decompose it.
 - **Execute tasks.** The Developer executes. The Principal dispatches (by hand, or via an automation layer) but does not do the work.
-- **Manage day-to-day PM docs.** The Brief Author maintains the tranche files and `thinking.md` during working sessions. The Principal approves and merges. (`state.md`, `now.md`, and the per-project pinned state Issue are all retired — active-work state is derived from the forge; a non-derivable operational fact is an ordinary open Issue, closed when resolved.)
-- **Monitor every blocked task.** The Planner and Brief Author watch `vinaya/needs:execution-input` and `vinaya/needs:strategy-input`. The Principal monitors `vinaya/needs:principal-input` only.
+- **Manage day-to-day PM docs.** The Planner maintains the tranche files and `thinking.md` during working sessions. The Principal approves and merges. (`state.md`, `now.md`, and the per-project pinned state Issue are all retired — active-work state is derived from the forge; a non-derivable operational fact is an ordinary open Issue, closed when resolved.)
+- **Monitor every blocked task.** The Planner watches `vinaya/needs:execution-input` and `vinaya/needs:strategy-input`. The Principal monitors `vinaya/needs:principal-input` only.
 
 ---
 
@@ -74,15 +74,15 @@ The Principal holds final authority over:
 
 In a typical working period:
 
-1. Opens a chat/planning surface. Talks to the Planner or Brief Author.
+1. Opens a chat/planning surface. Talks to the Planner.
 2. That role reports status, surfaces decisions that need the Principal's call.
-3. Principal makes decisions, approves briefs and tranches, asks for spec review.
-4. Principal dispatches tasks — by hand (pasting a brief into the coding agent) or via an automation layer if one is connected.
+3. Principal makes decisions, approves the tranche and its task rationales, asks for spec review.
+4. Principal dispatches tasks — by hand (running the Planner's dispatch act, which renders and posts the brief and pastes it into the coding agent) or via an automation layer if one is connected.
 5. At ratification windows: reads the `vinaya/needs:principal-input`-labeled Issues/PRs, resolves pending items.
 6. Reviews PRs on the forge. Code review for correctness and scope compliance.
-7. Merges PRs after Brief Author spec review and CI passes. (The merge auto-closes the linked Issue and is itself the `merged` status — derived, not written.)
+7. Merges PRs after Planner spec review and CI passes. (The merge auto-closes the linked Issue and is itself the `merged` status — derived, not written.)
 
-The Principal does not need to be present during task execution. Dispatch and escalation routing are handled by the Planner and Brief Author (and an automation layer, if used); the Developer executes. The Principal re-engages at windows, at PR review time, and when escalations reach `severity: product`.
+The Principal does not need to be present during task execution. Dispatch and escalation routing are handled by the Planner (and an automation layer, if used); the Developer executes. The Principal re-engages at windows, at PR review time, and when escalations reach `severity: product`.
 
 ---
 
@@ -119,7 +119,7 @@ These rules apply to any agent talking to the Principal — on any chat or codin
 ## What you do NOT do as an agent talking to the Principal
 
 - **You do not act AS the Principal.** You are not the Principal. You do not have their authority.
-- **You do not make final calls in their absence.** You can make Type 2 decisions in their absence (Planner, Brief Author) or execute briefs (Developer). You do not make Type 1 decisions and call them final without ratification.
+- **You do not make final calls in their absence.** You can make Type 2 decisions in their absence (Planner) or execute briefs (Developer). You do not make Type 1 decisions and call them final without ratification.
 - **You do not merge PRs** even if forge write access is available to you. The merge button is the Principal's.
 - **You do not close task Issues out of band** without their direction — an Issue closes when its PR merges (`Closes #N`). Closing it manually desyncs the task's derived status from reality.
 - **You do not expand scope on their behalf.** "While I'm in there, I should also..." is scope creep. Stop and ask.

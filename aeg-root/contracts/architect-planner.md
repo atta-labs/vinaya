@@ -35,7 +35,7 @@ This seam sits between declaring a product goal and planning the tranches that s
 
 ## Why this file exists
 
-A Milestone that names tranche intents is a claim about *why several tranches matter together* — a fact one altitude above any single tranche's own plan. Without a contract, that claim has no defined shape, and a Planner reading a Milestone's description free-form would either re-derive the product goal from scratch (duplicating the Architect's work) or invent detail the Architect never wrote (the same false-precision failure `contracts/planner-brief.md` guards against one seam down). This contract keeps the crossing to exactly one field, matched by exactly one key — a slug — so the two roles can never disagree about what crossed.
+A Milestone that names tranche intents is a claim about *why several tranches matter together* — a fact one altitude above any single tranche's own plan. Without a contract, that claim has no defined shape, and a Planner reading a Milestone's description free-form would either re-derive the product goal from scratch (duplicating the Architect's work) or invent detail the Architect never wrote (the same false-precision failure `contracts/planner-developer.md` guards against one seam down). This contract keeps the crossing to exactly one field, matched by exactly one key — a slug — so the two roles can never disagree about what crossed.
 
 ---
 
@@ -45,27 +45,27 @@ A Milestone that names tranche intents is a claim about *why several tranches ma
 |---|---|---|
 | **`### Tranche intents` bullet** (`- <slug>: <intent text>`) | The tranche's derived **goal** (read via `intentGoalForSlug`, never stored) | The Planner does nothing to consume this — it is automatic, the same read path that gives an unmilestoned tranche its empty goal. The Planner never copies the intent text onto the Issue or into the rationale; the goal is derived at read time from the Milestone, always. |
 
-That is the entire table. Compare `contracts/planner-brief.md`'s eight-field table — this seam is one field because the Architect's whole output is one field. Adding a second field to what the Architect emits is a Type 1 decision (`roles/architect.md`'s "one role, one job" constraint) and changes this contract, not a workaround inside it.
+That is the entire table. Compare `roles/planner.md`'s eight-field rationale — this seam is one field because the Architect's whole output is one field. Adding a second field to what the Architect emits is a Type 1 decision (`roles/architect.md`'s "one role, one job" constraint) and changes this contract, not a workaround inside it.
 
 ---
 
 ## Producer obligations (the Architect)
 
 - Write an intent line for a slug only when the goal genuinely names that tranche — not speculatively, and not to reserve a name. An intent naming a slug the Planner never plans just sits there, `planned` forever, misleading a reader of the Milestone.
-- Never write sizing, dependency edges, traps, agent class, or stop conditions into the Milestone. Those are entirely the Planner's, per `contracts/planner-brief.md`, whether or not this contract's seam is in play.
+- Never write sizing, dependency edges, traps, agent class, or stop conditions into the Milestone. Those are entirely the Planner's, per `roles/planner.md`, whether or not this contract's seam is in play.
 - Never write status. A Milestone's own lifecycle, like a tranche's, is derived — never a field either role sets by hand (`milestone-model.md` §4).
 
 ## Consumer obligations (the Planner)
 
 - Read a tranche's derived goal (if any) at planning time as context, the same way an unmilestoned tranche's empty goal is context — never as a directive that changes sizing, boundary, or dependency edges. Those come from reading the code, always, per `roles/planner.md`'s mandatory deep-dig.
 - Never edit a Milestone's description to add, correct, or remove an intent line. If an intent line is wrong or stale, that is escalated to whoever the Architect's output goes to next — not silently fixed mid-plan.
-- Never treat an intent line as a substitute for the Planner's own rationale. The Issue still carries all eight `contracts/planner-brief.md` fields regardless of whether this Milestone-level seam is in play.
+- Never treat an intent line as a substitute for the Planner's own rationale. The Issue still carries all eight of `roles/planner.md`'s rationale fields regardless of whether this Milestone-level seam is in play.
 
 ---
 
 ## Changing this contract
 
-A contract changes **as a unit**, same discipline as `contracts/planner-brief.md`. A change to this file is a **Tier 1** change (the seam is thin enough that widening it does not by itself alter a cross-role authority boundary the way `planner-brief.md`'s eight fields do) — but it still changes what `roles/architect.md` may emit and what `roles/planner.md` may consume, so both role docs must still point here rather than restate the mapping.
+A contract changes **as a unit**, same discipline as `contracts/planner-developer.md`. A change to this file is a **Tier 1** change (the seam is thin enough that widening it does not by itself alter a cross-role authority boundary the way the Planner's eight rationale fields do) — but it still changes what `roles/architect.md` may emit and what `roles/planner.md` may consume, so both role docs must still point here rather than restate the mapping.
 
 ---
 

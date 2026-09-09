@@ -132,7 +132,7 @@ describe('nodeDocRoute: against the real model', () => {
         'check:g4-cited-forge-numbers-resolve',
         'check:g5-role-contract-integrity',
         'check:g6-doctrine-registry-parity',
-        'gate:starting-the-dig-before-authoring-a-brief-starting-step-0-before-executing-one-every-push-on-a-task-branch-before-its-pr-exists'
+        'gate:starting-the-planner-s-dispatch-act-before-dispatching-a-task-s-brief-starting-step-0-before-executing-one-every-push-on-a-task-branch-before-its-pr-exists'
       ].sort()
     )
   })
@@ -163,11 +163,11 @@ describe('nodeDocRoute: against the real model', () => {
     expect(model.nodes.some((n) => n.kind === 'action' && nodeDocRoute(n)?.slug === 'commit-the-work')).toBe(true)
   })
 
-  it('all 9 roles and 8 contracts get their own anchorless page', () => {
+  it('all 8 roles and 7 contracts get their own anchorless page', () => {
     const roles = model.nodes.filter((n) => n.kind === 'role')
     const contracts = model.nodes.filter((n) => n.kind === 'contract')
-    expect(roles.length).toBe(9)
-    expect(contracts.length).toBe(8)
+    expect(roles.length).toBe(8)
+    expect(contracts.length).toBe(7)
     for (const n of [...roles, ...contracts]) {
       const r = nodeDocRoute(n)
       expect(r?.slug).toBeNull()

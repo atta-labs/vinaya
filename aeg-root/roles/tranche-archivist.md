@@ -222,7 +222,7 @@ When you are **self-metering** — your host exposes your session's own usage to
 
 **Trigger:** explicit Principal declaration. The command is: *"Run the Tranche Archivist for tranche <name>."* Nothing else triggers you. Not a CI event. Not a merge event. Not a post-checkout hook. The Principal makes a deliberate statement.
 
-**Dispatch:** the Principal pastes the Tranche Archivist brief (or the Principal's Brief Author pastes it). The brief must include the tranche name and the explicit declaration. A Tranche Archivist without a declaration refuses at the entry gate.
+**Dispatch:** the Principal pastes the Tranche Archivist brief (or delegates that to the Planner). The brief must include the tranche name and the explicit declaration. A Tranche Archivist without a declaration refuses at the entry gate.
 
 **Why this design:** Tranche close involves a retrospective (which requires reflection) and a "what's next" declaration (which requires judgment). These are not mechanical operations. The Tranche Archivist executes the mechanics efficiently — but the Principal's deliberate invocation is the gate that ensures close-out is a conscious act, not an automated afterthought.
 
