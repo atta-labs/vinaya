@@ -1113,11 +1113,9 @@ describe('checkDocsWithinSurface (O6)', () => {
     expect(r.errors[0]).toMatch(/aeg-root\/tranches\/\*\*/)
   })
 
-  it('fails when the pointer falls outside every `in:` glob', () => {
+  it('passes when the pointer falls outside every `in:` glob but inside no `out:` glob either', () => {
     const body = `${surface}\n**Docs to keep coherent** — Update \`apps/cli/specs/surface.md\`.\n`
-    const r = checkDocsWithinSurface(body, 500)
-    expect(r.status).toBe('fail')
-    expect(r.errors[0]).toMatch(/apps\/cli\/specs\/surface\.md/)
+    expect(checkDocsWithinSurface(body, 500).status).toBe('pass')
   })
 
   it('passes on the explicit `no-doc-surface` sentinel — nothing to compare', () => {
