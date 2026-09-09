@@ -1132,14 +1132,27 @@ export function checkRationaleNamesDocs(body: string): IssueSectionResult {
 }
 
 /**
- * **O6 — a "Docs to keep coherent" pointer must fall inside this task's own
- * declared surface.** A doc a task claims to keep coherent, but that its
- * own `## Surface` excludes (an `out:` glob) or never reaches (no `in:`
- * glob covers it), is a pointer this task cannot act on — the widening move
- * (grow the surface until the pointer fits) is the wrong direction here:
- * that is what renders an unusable brief, the exact failure the sibling
- * sibling task exists to fix on the render side. This gate is the
- * authoring-time twin: catch the mismatch before it ever reaches a brief.
+ * **O6 — a "Docs to keep coherent" pointer must not fall inside this task's
+ * own declared `out:` surface.** A doc a task claims to keep coherent, but
+ * that its own `## Surface` explicitly excludes (an `out:` glob), is a
+ * contradiction: the task disclaims touching that doc's directory in the
+ * same breath it claims to keep the doc itself coherent. This gate catches
+ * that contradiction at authoring time, before it ever reaches a brief.
+ *
+ * **The premise this gate rests on is narrower than it once was: absence
+ * from `in:` is not checked here, because nothing at pull-request time
+ * enforces it either.** A pointer's own file is never itself a `## Surface`
+ * entry — Surface globs are directory-level only (`parseIssueSurface`'s own
+ * rule) — so a doc pointer can sit outside every `in:` glob while still
+ * being a single-file edit `checkSurfaceScope` (the pull-request-time gate
+ * this authoring-time check exists to anticipate) would never catch: that
+ * gate refuses a changed file only against `out:`, and never consults `in:`
+ * at all. Refusing "outside `in:`" here bought no real enforcement — it only
+ * forced a Planner to widen a surface around a single doc pointer to satisfy
+ * a check the pull-request gate was never going to make anyway, which is
+ * what rendered an unusable, over-wide brief. So a pointer the surface
+ * simply does not enclose is now accepted; a pointer the surface explicitly
+ * excludes still is not.
  *
  * At or above `BRIEF_SECTIONS_SINCE_ISSUE` only — below it an Issue
  * legitimately carries no `## Surface` to compare against, same cutover
@@ -1164,13 +1177,6 @@ export function checkDocsWithinSurface(body: string, issueNumber: number | null)
     if (excludingGlob) {
       errors.push(
         `issue-validation Docs to keep coherent: \`${pointer}\` falls inside \`## Surface\`'s \`out:\` glob \`${excludingGlob}\` — this task's own declared surface explicitly excludes the doc it claims to keep coherent.`
-      )
-      continue
-    }
-    const coveredByIn = surface.value.in.some((glob) => globCoversPath(glob, pointer))
-    if (!coveredByIn) {
-      errors.push(
-        `issue-validation Docs to keep coherent: \`${pointer}\` falls outside every \`## Surface\` \`in:\` glob — this task's own declared surface never reaches the doc it claims to keep coherent.`
       )
     }
   }
