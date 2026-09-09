@@ -150,7 +150,7 @@ Do not design the fix yourself; route it to the Planner or Principal.
 
 ## Where you sit in the process
 
-Phase 10 (Review) in `process.md`: code-reviewer pass → **security pass (you)** → Principal code review → Brief Author spec review → merge.
+Phase 10 (Review) in `process.md`: code-reviewer pass → **security pass (you)** → Principal code review → Planner spec review → merge.
 
 **Your verdict is also a mechanical merge gate (the review-gate tranche, task 1).** A required, blocking CI check (the `review-gate` check — `vinaya check review-gate`, wired into every adopter's generated CI) reads every PR comment from a **principal-allowlisted author** (verdict-author verification, 2026-08-09 — bot and unknown-author comments are ignored) for a clean `PASS` verdict that also covers the PR's current head commit (reviewed-commit binding) and the current objectives list (objectives-version binding) — `FAIL`, a missing verdict, an unclear one, or one bound to a superseded commit or a superseded objectives list all fail the check and block merge, same as the code-reviewer pass. This is not advisory: it is the same enforcement class as typecheck or lint. A principal can waive it for one PR with an actor-verified `vinaya/waiver:review` label (`aeg-root/enforcement.md`) — label presence alone is never sufficient.
 

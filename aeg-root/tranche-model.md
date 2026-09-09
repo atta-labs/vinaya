@@ -29,7 +29,7 @@ Every fact in AEG lives in exactly **one** place. Nothing is duplicated; no arti
 | **The forge Issue** | Task identity + metadata (project label, ticket link, dependency/conflict references) | Planner (at plan time) |
 | **The thin tranche file** | Planning *topology* only — task→issue mapping, dependency graph, conflict graph, tranche grouping | Planner (at plan time) |
 | **The Git forge** (branch / PR / review / merge state) | All live execution *status* — derived, never stored | the act of working (opening a branch, a PR, a review, a merge) |
-| **The PR body** | The just-in-time brief — the task's full execution context | Brief Author, once, when work starts |
+| **The task Issue's `aeg:brief:v1` comment** | The just-in-time brief — the task's full execution context | The Planner's dispatch act, once, when work starts (mechanically rendered, never hand-typed) |
 
 The cardinal rule, stated once and enforced everywhere below: **the forge holds what is happening; the file and the issue hold the plan. Never copy "what is happening" into the file or the issue.**
 
@@ -39,14 +39,14 @@ The cardinal rule, stated once and enforced everywhere below: **the forge holds 
 
 The roadmap — what to build, why, in what priority — belongs to the company and lives in the company's tool (Jira, Linear, a doc they own). **AEG never holds it.** The moment AEG stores a roadmap it competes with Jira, loses, and creates a second rotting source of truth.
 
-What AEG holds is the **tranche**: the bounded set of tasks currently being turned into merged code. The link from roadmap → tranche is a **human** — the Planner / Brief Author translating tickets into agent-shaped tasks. There is no file for that link, because the link is a person's judgment.
+What AEG holds is the **tranche**: the bounded set of tasks currently being turned into merged code. The link from roadmap → tranche is a **human** — the Planner translating tickets into agent-shaped tasks. There is no file for that link, because the link is a person's judgment.
 
 ```
 Company roadmap / Jira / project backlog   ← NOT in AEG. Reference only. The human reads it.
-        │  (human translation — Planner / Brief Author / Planner)
+        │  (human translation — Planner, plan act)
         ▼
 Tranche  =  a set of forge Issues  +  a thin topology file        ← TOP of AEG.
-   ├─ Task (Issue) ── brief written just-in-time → lands in its PR body
+   ├─ Task (Issue) ── brief rendered mechanically at dispatch → posted as the Issue's frozen comment
    ├─ Task (Issue)
    └─ …          edges (depends-on / conflicts-with) declared in the thin file
         │
@@ -88,7 +88,7 @@ So: there is **no status column anywhere.** The Developer does not "flip to in-r
 
 The file held **only** what the forge models poorly: the task→Issue mapping and the dependency/conflict graph. It contains **no status, no PR numbers, no merge dates, no timestamps — nothing the forge already knows. It contains no task prose, no boundary descriptions, no rationale — nothing that belongs on the Issue.** Its task topology was edited only by the Planner, at plan time, so it could not race and could not drift on status (it stored none). The same rule now binds the Milestone and its Issues: the Planner cuts them, and nothing downstream writes status back. The one exception is the tranche's own **lifecycle marker** (active/complete — §12), a single header line the Archivist sets at close-out; this is the tranche's lifecycle, not per-task execution status, and it is set once when the whole tranche ends.
 
-**`#TBD` is still forbidden, wherever a task is recorded.** Every task must carry a real forge Issue number. A tranche that contains `#TBD` is an incomplete plan — the Planner has not cut the Issues, which is the canonical plan act. **The Planner's rationale (Boundary, Sizing, Project(s)+blast radius, Dependency rationale, Traps to avoid, Suggested agent-class, Stop-and-escalate) lives on the Issue body.** Nothing outside the Issue repeats the rationale. Brief Authors read it from the Issue, which is now its only home.
+**`#TBD` is still forbidden, wherever a task is recorded.** Every task must carry a real forge Issue number. A tranche that contains `#TBD` is an incomplete plan — the Planner has not cut the Issues, which is the canonical plan act. **The Planner's rationale (Boundary, Sizing, Project(s)+blast radius, Dependency rationale, Traps to avoid, Suggested agent-class, Stop-and-escalate) lives on the Issue body.** Nothing outside the Issue repeats the rationale. The dispatch act's render reads it from the Issue, which is now its only home.
 
 `dependsOn`/`conflictsWith` for every active tranche is now genuinely forge-derived, no file fallback anywhere. `completed/*.md` files are never deleted, by design (§11) — the birth rule never applied to them.
 
@@ -99,7 +99,7 @@ Template:
 Lifecycle: active            ← active | complete (§12). Set to complete by the Archivist when every task is merged.
 
 Goal (execution, not roadmap-why): <what ships, end to end>
-Repo: <repo>   ·   Planner / Brief Author: <name>
+Repo: <repo>   ·   Planner: <name>
 
 ## Tasks (topology)
 | # | Task                          | Issue | Project(s)      | Depends-on | Conflicts-with |
@@ -143,7 +143,7 @@ Two tasks conflict if they touch the same **collision domain** and therefore mus
 
 ## 6. The Planner
 
-The **Planner** is a mode of the Planner / Brief Author — same intelligence as Brief Author, one altitude up. Brief Author: intent → one brief. Planner: intent + a slice of tickets → a whole tranche (a set of Issues + the thin topology file).
+The **Planner** has two acts, same intelligence, two altitudes (`roles/planner.md`). Dispatch act: one task's Issue → a rendered, gate-checked brief. Plan act: intent + a slice of tickets → a whole tranche (a set of Issues + the thin topology file).
 
 The Planner's job — the reason the tranche exists — is the relationships a brief-in-isolation can't see: decompose the ticket slice into agent-sized tasks (Issues), declare `depends-on` and `conflicts-with` edges, and decide **split vs. combine** by the **verification-coupling** test:
 
@@ -156,14 +156,14 @@ The Planner writes no briefs (those are just-in-time, §7), writes no status (th
 
 ## 7. Where briefs live
 
-The brief is the task's full execution context. It has two homes:
+The brief is the task's full execution context. It has one home, and it is not the PR:
 
-- **Before work starts — nowhere persistent.** It does not exist yet. It is written (human + Brief Author) when the task is picked up, tranche-aware. Pasted, not committed. **Never in the Issue** — the Issue is task identity + metadata only; a brief in the Issue would age, attract edits, and become stale planning documentation. (The Issue *does* carry the Planner's rationale — durable conclusions — which the Brief Author consumes via the `planner-brief` contract; the brief itself is the perishable execution detail and lives only in the PR.)
-- **From PR-open onward — the PR body.** The Developer pastes the brief into the PR description when opening the PR. That is its permanent, durable home, attached to exactly the work it governed, and what the Reviewer and Archivist read.
+- **Before dispatch — nowhere persistent.** It does not exist yet. The task Issue carries the Planner's rationale (durable conclusions, written at plan time), never the brief itself — a brief in the Issue's own body would age, attract edits, and become stale planning documentation.
+- **At dispatch — the task Issue's `aeg:brief:v1` comment, posted once, frozen.** The Planner's dispatch act runs `vinaya task dispatch`, which mechanically renders the brief from the Issue's rationale and judgment sections (consuming the `planner-developer` contract) and posts it as a comment on that same Issue, before the Developer's worktree exists. That comment is the brief's permanent, durable home, attached to exactly the work it governs, and what the Developer, Reviewer, and Archivist all read. It is never carried in the PR body, which holds only the Developer's report; a reference copy may ride along inside a collapsed `<details>` block there, but the frozen comment is the source of truth.
 
-Retry reuses the same PR body; no rewrite.
+Retry reads the same frozen comment; no re-render, no rewrite.
 
-For who reads and who writes documentation at each seam of this flow (Planner's whole-tranche read, Brief Author's task-scoped re-read + §7, Developer's execution, Reviewer's dual check, Archivist's confirmation), see `documentation-coherence.md`.
+For who reads and who writes documentation at each seam of this flow (the Planner's whole-tranche read at plan time, its task-scoped re-read + §7 at dispatch time, Developer's execution, Reviewer's dual check, Archivist's confirmation), see `documentation-coherence.md`.
 
 ---
 
@@ -266,13 +266,13 @@ Append-only. Each row records one role's turn at a phase. Re-entry appends a **n
 | Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |
 |-------|------|-------------|-----------|------------|------|------|
 | planning       | Planner      | claude-opus-4-7 (chat) |    —   |    —  |    —    | 2026-06-13 |
-| 9: brief       | Brief Author | claude-opus-4-7 (chat) |    —   |    —  |    —    | 2026-06-15 |
+| 9: dispatch    | Planner      | claude-opus-4-7 (chat) |    —   |    —  |    —    | 2026-06-15 |
 | 9: develop     | Developer    | claude-opus-4-7 (CC)   | 184327 | 12502 | $3.4781 | 2026-06-15 |
 | 9: review      | Reviewer     | claude-opus-4-7 (chat) |    —   |    —  |    —    | 2026-06-15 |
 ```
 
 - **Phase** — free-text. Convention: `<task-id>: <phase>` for per-task work (e.g. `9: develop`, `9: review`), or a bare phase for tranche-wide work (e.g. `planning`). Phase is opaque to the parser; the convention exists so a future view can pivot by task.
-- **Role** — the AEG role doing the work (`Planner`, `Brief Author`, `Developer`, `Reviewer`, `Security`, `Archivist`).
+- **Role** — the AEG role doing the work (`Planner`, `Developer`, `Reviewer`, `Security`, `Archivist`).
 - **Agent/Model** — free text: the role's agent + model, with a short tag for the host surface in parentheses (`claude-opus-4-7 (CC)` for a coding-agent session, `claude-opus-4-7 (chat)` for a conversational one — the tags the archived ledgers already use). Nothing parses the tag; it is there because the surface is what tells a reader which collection capability applied (below), and therefore whether a `—` cell was sanctioned.
 - **Tokens in / Tokens out** — integers from the meter, or `—` for "not yet known."
 - **Cost** — USD as `$X.XXXX`, or `—`. *(V1 honesty: no maintained $/token pricing table for current models ships in this package, so `formatTokensLine` renders this cell as `—` on every row it emits. Historical rows may carry a `$X.XXXX` value supplied by hand or by an earlier table. Tokens are still exact; pricing is a known backlog dependency, not a ledger bug.)*
@@ -280,7 +280,7 @@ Append-only. Each row records one role's turn at a phase. Re-entry appends a **n
 
 ### The append rule (read this exactly the way you read derived status)
 
-- **No role appends its own row on a task branch.** Two live-fire incidents forced this: read-only roles (Reviewer, Security, Planner, Brief Author) structurally cannot append — they hold no task branch, and some never touch the repo's filesystem at all; and parallel Developer sessions on different tasks collided appending to the same shared `tokens.md` file. Instead, every role **reports** its token spend in the artifact its turn already produces — the PR body ("Token report" section) for a role holding a branch, the verdict comment for a reviewing role, the plan PR or planning report for the Planner — and the per-task **Archivist appends every row at task close-out**, one row per role-turn, including its own.
+- **No role appends its own row on a task branch.** Two live-fire incidents forced this: read-only roles (Reviewer, Security, Planner) structurally cannot append — they hold no task branch, and some never touch the repo's filesystem at all; and parallel Developer sessions on different tasks collided appending to the same shared `tokens.md` file. Instead, every role **reports** its token spend in the artifact its turn already produces — the PR body ("Token report" section) for a role holding a branch, the verdict comment for a reviewing role, the plan PR or planning report for the Planner (either act) — and the per-task **Archivist appends every row at task close-out**, one row per role-turn, including its own.
 - **Never edit** an existing row. If you discover a mistake, append a new row that supersedes it in prose (or fix the source file in a separate, declared edit — same exception that `state-machine.md` §13 carves for forward-reference fields).
 - **Re-entry appends.** A Developer dispatched for `9: develop`, asked for changes, and re-running for `9: develop` again produces a **second** `9: develop` report, which the Archivist appends as a **second** row — never a sum, never an overwrite. The two rows both count.
 - The **tranche total is `sum(rows)`**, derived at read time, never stored. This is the same philosophy as forge-derived status (don't store the aggregate; sum the immutable entries). A stored total reintroduces the merge-collision + stale-aggregate problem.
@@ -302,13 +302,13 @@ Token reporting is asymmetric — and any honest design has to encode that, beca
 The split is **operator vs. agent, not terminal vs. chat** — a figure a human reads off an interactive prompt or a usage dashboard is not reachable from an unattended agent session (dispatched, automated, no human at the keyboard), whatever kind of surface it runs on. (2026-08-08: retracted — an earlier revision of this section claimed a terminal role reports exact numbers "from `/cost`", an operator-typed slash command in one particular host; no agent session ever could, in that host or any other.)
 
 - **Self-metering** — a role whose host exposes the running session's own usage to the agent itself, so the role can collect real figures with no operator step. Typically the Developer, and the Archivist when it runs as automation. The role collects through its host's layer-2 mechanism and reports the exact numbers in its PR body; the Archivist copies them verbatim into the row it appends at close-out. **A self-metering role may not report `—` in the `Tokens in` or `Tokens out` cells** — real figures, or the collection step is broken and *that* is what to report. The `Cost` cell is outside this rule: it reads `—` on every row the shipped renderer emits, for the pricing-table reason given above.
-- **Operator-metered** — a role whose host exposes no usage to the agent, leaving a human the only source of the figure. Typically the Planner, Brief Author, Reviewer and Security, which run in conversational surfaces with no session record the agent can read and no meter it can query. The role **still reports at turn-end** — phase, role, model, date, in its verdict comment or planning report — and leaves the numeric cells as `—` when no figure reached it. The blank is licensed by the **absence of a figure**, not by the role's label: where an operator hands the role real numbers at report time (a route layer 2 explicitly allows), those numbers go in the cells and `—` is not correct. The Archivist copies the report as-is; the **Principal** may later supply the real figures from whatever usage view the host does offer a human, filling a previously-`—` cell (the one narrow forward-reference exception `state-machine.md` §13 allows).
+- **Operator-metered** — a role whose host exposes no usage to the agent, leaving a human the only source of the figure. Typically the Planner (either act), Reviewer and Security, which run in conversational surfaces with no session record the agent can read and no meter it can query. The role **still reports at turn-end** — phase, role, model, date, in its verdict comment or planning report — and leaves the numeric cells as `—` when no figure reached it. The blank is licensed by the **absence of a figure**, not by the role's label: where an operator hands the role real numbers at report time (a route layer 2 explicitly allows), those numbers go in the cells and `—` is not correct. The Archivist copies the report as-is; the **Principal** may later supply the real figures from whatever usage view the host does offer a human, filling a previously-`—` cell (the one narrow forward-reference exception `state-machine.md` §13 allows).
 
 **Per-cell optionality is conditioned on host capability, never on convenience.** `—` in a **token** cell is sanctioned in exactly one situation: the host cannot expose the figure to the agent. (The **Cost** cell is separate and is always `—` while this package carries no maintained $/token table — see the Cost bullet above.) It is never a shortcut for a role that could have collected the number, and no role ever estimates a figure or fills in another role's cell — an invented number in an append-only ledger is worse than an honest unknown, because nothing downstream can tell the two apart.
 
 Which capability applies is a fact about the **host**, not a fixed property of the role: the same role is self-metering on a harness that exposes usage and operator-metered on one that does not. Read the role names above as today's common case, not as an allocation.
 
-Self-metering capture is real, not estimated: the adapter sums the session's own usage records, so a Developer or automated Archivist turn's numbers are exact rather than approximated. Whether it also runs with *no* operator step depends on the host's wiring — where a Stop hook writes a transcript pointer — configured in the repo or in the operator's own host settings — the adapter finds it unaided; with no pointer written, the caller names the transcript with `--transcript <path>`. Either way the figures are read, never guessed. The remaining manual seam is operator-metered roles only — closing it depends on the host giving a session a way to read its own usage, which conversational surfaces generally do not today. **Known gap — now partly closed:** tranche-wide operator-metered turns with no task PR to report into no longer lack a destination across the board. A Planner session outside a plan PR now reports into a comment on the pinned lessons Issue — the existing forge object, never a new one (`roles/planner.md` "Turn-end: report your tokens, don't append them"). A Brief Author session already has a destination when a plan PR exists — the same plan PR the Planner reports into (`roles/brief-author.md`) — unchanged by this fix. The Archivist's own `<task-id>: archive` row was never actually homeless either: `vinaya archive` folds the Archivist's `Tokens: …` line into the same provenance comment it posts on the merged task PR (`roles/archivist.md` "The provenance block") — a different fact from the narrower Studio live-read caveat that same file still carries, which is about re-deriving ledger totals from a PR's own body/comments, not about where the row is written. What remains genuinely open: a Brief Author session that ends with no PR of any kind yet to write into — mid-authoring, before a plan PR exists — still has nowhere durable to report; it falls back to an ephemeral report to the Principal, and that fallback is not fixed here.
+Self-metering capture is real, not estimated: the adapter sums the session's own usage records, so a Developer or automated Archivist turn's numbers are exact rather than approximated. Whether it also runs with *no* operator step depends on the host's wiring — where a Stop hook writes a transcript pointer — configured in the repo or in the operator's own host settings — the adapter finds it unaided; with no pointer written, the caller names the transcript with `--transcript <path>`. Either way the figures are read, never guessed. The remaining manual seam is operator-metered roles only — closing it depends on the host giving a session a way to read its own usage, which conversational surfaces generally do not today. **Known gap — now partly closed:** tranche-wide operator-metered turns with no task PR to report into no longer lack a destination across the board. A Planner plan-act session outside a plan PR now reports into a comment on the pinned lessons Issue — the existing forge object, never a new one (`roles/planner.md` "Turn-end: report your tokens, don't append them"). A Planner dispatch-act session already has a destination when a plan PR exists — the same plan PR the plan act reports into — unchanged by this fix. The Archivist's own `<task-id>: archive` row was never actually homeless either: `vinaya archive` folds the Archivist's `Tokens: …` line into the same provenance comment it posts on the merged task PR (`roles/archivist.md` "The provenance block") — a different fact from the narrower Studio live-read caveat that same file still carries, which is about re-deriving ledger totals from a PR's own body/comments, not about where the row is written. What remains genuinely open: a dispatch-act session that ends with no PR of any kind yet to write into — mid-dispatch, before a plan PR exists — still has nowhere durable to report; it falls back to an ephemeral report to the Principal, and that fallback is not fixed here.
 
 ### The collection adapter AEG ships (one layer-2 instance, not the requirement)
 
