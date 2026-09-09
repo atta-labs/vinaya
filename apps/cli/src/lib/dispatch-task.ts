@@ -21,7 +21,8 @@ import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AEG_BRIEF_V1_MARKER, isPrincipal } from '@attalabs/aeg-core'
+import { AEG_BRIEF_V1_MARKER, isPrincipal, parseRationaleFields } from '@attalabs/aeg-core'
+import { isAgentClass, resolveClassModel, type AgentClass } from './dispatch.js'
 import { assembleAndRenderBrief } from './brief-assembly.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { currentGhLogin, postMarkedComment } from './forge-write.js'
@@ -40,7 +41,7 @@ export { AEG_BRIEF_V1_MARKER, contentAfterTwoLines } from '@attalabs/aeg-core'
 export const DISPATCH_AGENTS = ['claude', 'codex', 'gemini'] as const
 export type DispatchAgent = (typeof DISPATCH_AGENTS)[number]
 
-export type DispatchTaskInput = { tranche: string; n: number; agent?: DispatchAgent }
+export type DispatchTaskInput = { tranche: string; n: number; agent?: DispatchAgent; model?: string }
 export type DispatchTaskResult = { posted: boolean; commentUrl: string | null; brief: string }
 
 /** Thrown for every refusal — the CLI shim (`taskDispatchCommand`) lets it
@@ -83,6 +84,78 @@ function fetchIssueComments(n: number): IssueComment[] {
   }
 }
 
+function fetchIssueBody(n: number): string {
+  try {
+    return JSON.parse(sh('gh', ['issue', 'view', String(n), '--json', 'body'])).body as string
+  } catch (err) {
+    throw new DispatchTaskError(
+      `could not fetch Issue #${n}'s body (\`gh issue view\`) to resolve its suggested agent-class: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+}
+
+/**
+ * Pulls the leading `high`/`mid`/`fast` word out of the Issue's own
+ * "Suggested agent-class" rationale field (`**Suggested agent-class** —
+ * mid — <reason>`, `aeg-root/roles/planner.md`) — `parseRationaleFields`
+ * (`@attalabs/aeg-core`) returns the whole labeled field, label included, so
+ * this strips the label and keeps only the class word. `null` when the
+ * field is absent, unparseable, or names a word outside the three-value
+ * vocabulary — never a guess.
+ */
+export function extractAgentClass(rawRationaleField: string): AgentClass | null {
+  const m = /agent-class\**\s*[—–-]\s*(\w+)/i.exec(rawRationaleField)
+  const word = m?.[1]?.toLowerCase()
+  return word !== undefined && isAgentClass(word) ? word : null
+}
+
+/**
+ * O3 — the pure resolution core, exported so it is directly testable with no
+ * forge I/O (MAJOR 2, #456 round 1: every existing `dispatchTask` test fakes
+ * this decision out entirely, so this real logic was never exercised). An
+ * explicit `--model` always wins (never re-derived or overridden) — that
+ * includes an "unacceptable" one: this function never refuses or sanitizes a
+ * model by its shape, it only decides which value reaches `dispatchRole`;
+ * the actual by-name refusal is `dispatchRole`'s own job (`dispatch.ts`'s
+ * `identifyVendorFromModelShape`, O4), so an explicit value is passed through
+ * completely unchanged, wrong-vendor-shaped or not, rather than laundered
+ * into something that would slip past that check. Absent an explicit model,
+ * `rawRationaleField` (the Issue's own already-fetched "Suggested
+ * agent-class" text, or `undefined` when it couldn't be fetched/doesn't
+ * exist) is parsed for its class and resolved through this vendor's own
+ * class-to-model table (`resolveClassModel`). `undefined` when no explicit
+ * model was given AND either the class can't be read or this vendor has no
+ * verified mapping for it — `dispatchRole` then omits `--model` entirely,
+ * the same as today, rather than inventing a value.
+ */
+export function resolveModelFromRationale(
+  agent: DispatchAgent,
+  rawRationaleField: string | undefined,
+  explicitModel: string | undefined
+): string | undefined {
+  if (explicitModel !== undefined) return explicitModel
+  const agentClass = rawRationaleField !== undefined ? extractAgentClass(rawRationaleField) : null
+  if (agentClass === null) return undefined
+  return resolveClassModel(agent, agentClass) ?? undefined
+}
+
+/**
+ * The forge-reading wrapper around `resolveModelFromRationale` — fetches
+ * this task's own Issue body only when an explicit model wasn't already
+ * given (the same short-circuit `resolveModelFromRationale` itself performs,
+ * kept here too so a `--model`-naming caller never pays for a `gh issue
+ * view` call it doesn't need).
+ */
+function resolveModelForDispatch(
+  agent: DispatchAgent,
+  issue: number,
+  explicitModel: string | undefined
+): string | undefined {
+  if (explicitModel !== undefined) return explicitModel
+  const raw = parseRationaleFields(fetchIssueBody(issue)).suggestedAgentClass
+  return resolveModelFromRationale(agent, raw, undefined)
+}
+
 /** The comment's first line is the whole check — a marker-shaped string
  * anywhere else in a comment's body (including the newly-rendered brief's
  * own text, which this function never scans) is never mistaken for a real
@@ -102,7 +175,7 @@ function findExistingV1Comment(n: number): IssueComment | null {
  * actually exports, so a real value is always supplied — see
  * `withPromptFile`.
  */
-type DispatchRoleOpts = { task: number; promptFile: string }
+type DispatchRoleOpts = { task: number; promptFile: string; model?: string }
 type DispatchRoleFn = (role: string, agent: DispatchAgent, prompt: string, opts: DispatchRoleOpts) => Promise<unknown>
 
 /**
@@ -192,6 +265,11 @@ export type DispatchTaskDeps = {
   postMarkedComment: typeof postMarkedComment
   resolveDispatchRole: () => Promise<DispatchRoleFn | null>
   resolveDispatchAuthorization: () => DispatchAuthorization
+  resolveModelForDispatch: (
+    agent: DispatchAgent,
+    issue: number,
+    explicitModel: string | undefined
+  ) => string | undefined
 }
 
 const defaultDeps: DispatchTaskDeps = {
@@ -199,7 +277,8 @@ const defaultDeps: DispatchTaskDeps = {
   findExistingV1Comment,
   postMarkedComment,
   resolveDispatchRole,
-  resolveDispatchAuthorization
+  resolveDispatchAuthorization,
+  resolveModelForDispatch
 }
 
 /**
@@ -213,7 +292,7 @@ export async function dispatchTask(
   input: DispatchTaskInput,
   deps: DispatchTaskDeps = defaultDeps
 ): Promise<DispatchTaskResult> {
-  const { tranche, n, agent } = input
+  const { tranche, n, agent, model } = input
 
   // Authorization is checked before anything else — no render, no forge
   // read, no post — for the whole command, not only the `--agent` path.
@@ -247,15 +326,46 @@ export async function dispatchTask(
     throw new DispatchTaskError(`Task ${n} in tranche \`${tranche}\` is already dispatched — see ${existing.url}`)
   }
 
+  // MAJOR 1 (#456 round 1, related to #465, not fixed here): resolved and
+  // validated BEFORE the brief is posted, not after. `resolveModelForDispatch`
+  // can throw (a `gh issue view` failure fetching this task's own rationale)
+  // — if that happened after `postMarkedComment` below, the frozen
+  // `aeg:brief:v1` comment would already exist, and the "already dispatched"
+  // guard above keys on that comment's mere existence with no flag to
+  // override it: the task would become permanently undispatchable. Resolving
+  // here means a bad model refuses with nothing yet written to the forge.
+  let dispatchRole: DispatchRoleFn | null = null
+  let resolvedModel: string | undefined
+  if (agent) {
+    dispatchRole = await deps.resolveDispatchRole()
+    if (dispatchRole) {
+      // O3: an explicit `--model` always wins; absent that, resolved from
+      // this task's own Issue rationale against this vendor's own
+      // class-to-model table — `undefined` either way falls through to
+      // `dispatchRole`'s existing "no --model flag added" behavior.
+      resolvedModel = deps.resolveModelForDispatch(agent, issue, model)
+    }
+  }
+
   const hash = briefHash(result.brief)
   const commentBody = `Brief hash: ${hash}\n${result.brief}`
   const url = deps.postMarkedComment('issue', String(issue), AEG_BRIEF_V1_MARKER, commentBody)
 
   if (agent) {
-    const dispatchRole = await deps.resolveDispatchRole()
     if (dispatchRole) {
+      // O5, Issue #456: `issue`, never `n` — `dispatchRole`'s own `task`
+      // opt is the resolved forge Issue number end to end (`VINAYA_TASK`
+      // parses to `subject.issue`, `packages/aeg-core/src/log/envelope.ts`;
+      // its resume-record key is `issue<n>`, `dispatch.ts`'s own
+      // `resumeRecordPathFor`) — the same live-bug shape the comment above
+      // already fixed for posting now applies here too: two tranches'
+      // task-N runs on different Issues must never share one record.
       await withPromptFile(result.brief, (promptFile) =>
-        dispatchRole('developer', agent, result.brief, { task: n, promptFile })
+        (dispatchRole as DispatchRoleFn)('developer', agent, result.brief, {
+          task: issue,
+          promptFile,
+          model: resolvedModel
+        })
       )
     } else {
       printManualDispatchInstruction(tranche, n, agent)
