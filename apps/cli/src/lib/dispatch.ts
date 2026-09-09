@@ -61,7 +61,7 @@ import { redact } from '@attalabs/aeg-core'
 import type { Role } from '@attalabs/aeg-core'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 export const AGENT_VENDOR_NAMES = ['claude', 'codex', 'gemini'] as const
 export type AgentVendor = (typeof AGENT_VENDOR_NAMES)[number]
@@ -70,12 +70,37 @@ export function isAgentVendor(value: string): value is AgentVendor {
   return (AGENT_VENDOR_NAMES as readonly string[]).includes(value)
 }
 
+/**
+ * The three-value vocabulary `aeg-root/roles/planner.md` names for a task's
+ * "Suggested agent-class" (high/mid/fast) — the Planner's sizing judgment,
+ * confirmed or overridden by whoever dispatches at brief time
+ * (`aeg-root/skills/brief-authoring/SKILL.md`). Not a model catalogue: this
+ * is the fixed, small vocabulary a rationale field is written in, never an
+ * enumeration of every model any vendor accepts.
+ */
+export const AGENT_CLASS_VALUES = ['high', 'mid', 'fast'] as const
+export type AgentClass = (typeof AGENT_CLASS_VALUES)[number]
+
+export function isAgentClass(value: string): value is AgentClass {
+  return (AGENT_CLASS_VALUES as readonly string[]).includes(value)
+}
+
 export type DispatchOpts = {
   task?: number
   pr?: number
   round?: number
   /** The vendor's own session/thread identifier from a prior dispatch's `resumeId`, to resume that exact session instead of starting fresh. */
   resumeId?: string
+  /**
+   * The model to run, passed to `agent`'s own binary through that vendor's
+   * own `--model` flag (O1) — confirmed present on all three vendors' own
+   * `--help` output, not assumed. Omitted entirely (no flag added) when the
+   * caller names none: the vendor then runs whatever its own default model
+   * is, exactly as before this task. The caller's choice here always wins
+   * over any class-derived default a higher layer (`dispatch-task.ts`)
+   * might otherwise have resolved — this function never re-derives one.
+   */
+  model?: string
   /**
    * The prompt's source file path — required by the brief's stated shape.
    * Unused by any of the three vendors' own invocation today (all three
@@ -224,6 +249,69 @@ export function openOutputTee(effectId: string): {
 
 type UsageParser = (stdout: string) => { input: number; output: number } | null
 
+/** A vendor's own genuine receipt of which model executed (O2), or `null` when this vendor's stdout carries no such field — never guessed from the requested `--model` value. */
+type ModelParser = (stdout: string) => string | null
+
+/**
+ * Claude's own confirmed-live receipt of which model actually ran: a real
+ * `claude -p --output-format json` run's stdout carries a top-level
+ * `modelUsage` object whose key IS the resolved, canonical model name —
+ * `{"modelUsage":{"claude-sonnet-5":{"canonicalModel":"claude-sonnet-5",…}}}`
+ * even when the alias `sonnet` (never `claude-sonnet-5`) was the requested
+ * `--model` value (confirmed live: requesting `sonnet` still keys
+ * `modelUsage` by `claude-sonnet-5`). Scanned from the end, same reason
+ * `parseClaudeUsage` is. More than one key (a run spanning two models) joins
+ * both rather than picking one arbitrarily.
+ */
+export function parseClaudeModel(stdout: string): string | null {
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as { modelUsage?: Record<string, unknown> }
+      const keys = obj.modelUsage ? Object.keys(obj.modelUsage) : []
+      if (keys.length > 0) return keys.join(',')
+    } catch {
+      // not a JSON line — keep scanning backwards, never a guessed shape
+    }
+  }
+  return null
+}
+
+/**
+ * Codex's own `--json` stream carries no model field in any event, at any
+ * verbosity — confirmed live against a real `codex exec --json --model
+ * gpt-5.6-sol -` run's full event stream (`thread.started`, `turn.started`,
+ * `item.completed`, `turn.completed`): none of the four carries a `model`
+ * key anywhere. There is no vendor receipt to read for this vendor, ever —
+ * this is a fact about Codex's own output shape, not a gap in this parser.
+ */
+function parseCodexModel(_stdout: string): string | null {
+  return null
+}
+
+/**
+ * Gemini's own confirmed-live receipt: the terminal `result` event's
+ * `stats.models` object is keyed by the resolved model name(s) that actually
+ * ran — confirmed live: requesting the alias `--model gemini-flash-latest`
+ * produced `stats.models` keyed by `gemini-3.8-flash`, a DIFFERENT string
+ * than the one requested. Scanned from the end, same reason `parseGeminiUsage`
+ * is. More than one key (a run spanning two models, observed live after a
+ * mid-run retry) joins both rather than picking one arbitrarily.
+ */
+export function parseGeminiModel(stdout: string): string | null {
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as { stats?: { models?: Record<string, unknown> } }
+      const keys = obj.stats?.models ? Object.keys(obj.stats.models) : []
+      if (keys.length > 0) return keys.join(',')
+    } catch {
+      // not a JSON line — keep scanning backwards, never a guessed shape
+    }
+  }
+  return null
+}
+
 export function parseClaudeUsage(stdout: string): { input: number; output: number } | null {
   // `stream-json` prints one event per line and the terminal event carries
   // `usage`; scanned from the end for the same reason `parseCodexUsage` is.
@@ -333,14 +421,25 @@ function parseGeminiResumeId(stdout: string): string | null {
 
 /**
  * Where a successful dispatch's own vendor resume identifier is durably
- * recorded, keyed by role + vendor + the task/PR this run was attributed to
- * — so a later, separate `vinaya dispatch` invocation (a different
- * terminal, possibly days later) can find the id needed to answer a stopped
- * agent through `--resume <id> --prompt-file <answer>`, instead of the id
- * living only in the window that printed it (O8, Issue #454; Principal
- * ruling: answer through the resume path that already exists — `--resume`/
- * `--prompt-file` are already parsed — never a live channel held open on a
- * blocking read).
+ * recorded, keyed by repo + role + vendor + the task/PR this run was
+ * attributed to — so a later, separate `vinaya dispatch` invocation (a
+ * different terminal, possibly days later) can find the id needed to
+ * answer a stopped agent through `--resume <id> --prompt-file <answer>`,
+ * instead of the id living only in the window that printed it (O8, Issue
+ * #454; Principal ruling: answer through the resume path that already
+ * exists — `--resume`/`--prompt-file` are already parsed — never a live
+ * channel held open on a blocking read).
+ *
+ * The repo segment (O5, Issue #456) — `${owner}-${repo}`, or `unresolved`
+ * when `resolveRepo()` can't (mirrors `outboxPathFor`'s own repo-null
+ * convention, `log-sink.ts`) — is load-bearing, not decoration: `task` here
+ * is the caller's resolved forge Issue number (`dispatchTask` passes its
+ * own `issue`, never the tranche-local ordinal `n` — see its own call
+ * site), and two DIFFERENT repositories can both have an Issue numbered the
+ * same. Without the repo segment, tranche A's task 9 (repo X, Issue #12)
+ * and tranche B's task 9 (repo Y, Issue #12) would overwrite the same
+ * `developer-claude-issue12.json`, handing an operator resuming one the
+ * other's session.
  *
  * Deliberately NOT the Vinaya Log's own `dispatch` family:
  * `DispatchOutcomeSchema` (`packages/aeg-core/src/log/schema.ts`) has no
@@ -351,15 +450,40 @@ function parseGeminiResumeId(stdout: string): string | null {
  * machine-local, the same `~/.vinaya/` home `dispatch-output`'s tee already
  * uses — is the destination that needs no schema change.
  */
-function resumeRecordPathFor(role: Role, agent: AgentVendor, task?: number, pr?: number): string {
+/**
+ * Same guard `log-sink.ts`'s private `isSafeRepoSegment` applies before
+ * splicing a `resolveRepo()` result into its own outbox path — duplicated
+ * here rather than imported, since `log-sink.ts` is out of this task's
+ * `## Surface`. `resolveRepo()` can return an `AEG_REPO` env value parsed by
+ * `parseOwnerRepo` (`@attalabs/aeg-forge-state`), which accepts anything
+ * shaped `owner/repo` — including a `repo` half containing `../` — so a
+ * segment failing this check is treated exactly like a null `resolveRepo()`
+ * result (`unresolved`), never spliced unchecked into a filesystem path.
+ */
+const SAFE_REPO_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
+
+function isSafeRepoSegment(segment: string): boolean {
+  return SAFE_REPO_SEGMENT.test(segment) && !segment.includes('..')
+}
+
+function resumeRecordPathFor(
+  role: Role,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null,
+  task?: number,
+  pr?: number
+): string {
+  const repoSegment =
+    repo && isSafeRepoSegment(repo.owner) && isSafeRepoSegment(repo.repo) ? `${repo.owner}-${repo.repo}` : 'unresolved'
   const scope = task !== undefined ? `issue${task}` : pr !== undefined ? `pr${pr}` : 'unscoped'
-  return join(GLOBAL_VINAYA_HOME, 'dispatch-resume', `${role}-${agent}-${scope}.json`)
+  return join(GLOBAL_VINAYA_HOME, 'dispatch-resume', repoSegment, `${role}-${agent}-${scope}.json`)
 }
 
 type ResumeRecord = {
   resumeId: string
   role: Role
   agent: AgentVendor
+  repo: { owner: string; repo: string } | null
   task: number | null
   pr: number | null
   round: number | null
@@ -368,7 +492,7 @@ type ResumeRecord = {
 }
 
 /**
- * Overwrites the one record for this role+vendor+scope with the latest
+ * Overwrites the one record for this repo+role+vendor+scope with the latest
  * resume id — only the most recently produced session is ever the one worth
  * resuming, so there is nothing to append to. Never throws, matching this
  * module's "never throws" posture: an unwritable home degrades to no durable
@@ -377,10 +501,15 @@ type ResumeRecord = {
  */
 function recordResumeState(record: ResumeRecord): string | null {
   try {
-    const dir = join(GLOBAL_VINAYA_HOME, 'dispatch-resume')
-    mkdirSync(dir, { recursive: true, mode: 0o700 })
-    chmodSync(dir, 0o700)
-    const path = resumeRecordPathFor(record.role, record.agent, record.task ?? undefined, record.pr ?? undefined)
+    const path = resumeRecordPathFor(
+      record.role,
+      record.agent,
+      record.repo,
+      record.task ?? undefined,
+      record.pr ?? undefined
+    )
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    chmodSync(dirname(path), 0o700)
     writeFileSync(path, JSON.stringify(record, null, 2), { mode: 0o600 })
     return path
   } catch {
@@ -390,12 +519,31 @@ function recordResumeState(record: ResumeRecord): string | null {
 
 type VendorSpec = {
   binary: string
-  args: readonly string[]
-  resumeArgs: (id: string) => string[]
+  /** `model` appended via this vendor's own `--model` flag when given, omitted entirely otherwise — never a separate switch elsewhere (O1). */
+  args: (model?: string) => string[]
+  resumeArgs: (id: string, model?: string) => string[]
   parseUsage: UsageParser
+  /** This vendor's own genuine receipt of which model ran (O2), or `null` when it emits none — never the requested `--model` value echoed back. */
+  parseModel: ModelParser
   parseResumeId: (stdout: string) => string | null
   /** One line of this vendor's own stream, rendered for a human, or `null` for an event worth nothing on screen. */
   renderEvent: (obj: Record<string, unknown>) => string | null
+  /**
+   * This vendor's own model for each `AgentClass`, used only when a caller
+   * names no explicit model and a task's rationale resolves to a class
+   * (O3). Deliberately partial, not a model catalogue: filled only where a
+   * real, non-stale mapping exists — Claude's own `--model` help text
+   * documents these three as aliases that always track its "latest" model
+   * per tier, so the mapping never goes stale as new Claude models ship.
+   * Codex and Gemini publish no such alias layer (`codex --help`/
+   * `gemini --help` show a bare `--model <value>` with no enumerated or
+   * aliased values, confirmed live) — inventing a version-pinned mapping
+   * for either would be exactly the stale catalogue this task's own
+   * Stop-and-escalate condition names, so both stay empty: a task naming
+   * neither vendor's own model runs that vendor's default, same as before
+   * this task, rather than resolving to a name that will go stale.
+   */
+  classModels: Partial<Record<AgentClass, string>>
 }
 
 /**
@@ -479,31 +627,106 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
     // operator sees the work and `parseUsage` still reads real figures.
     // `--verbose` is required by the CLI whenever `-p` is paired with
     // `stream-json`; without it the flag combination is refused.
-    args: ['-p', '--verbose', '--output-format', 'stream-json'],
-    resumeArgs: (id) => ['-p', '-r', id, '--verbose', '--output-format', 'stream-json'],
+    // `--model <model>` confirmed live via `claude --help`: "Provide an
+    // alias for the latest model (e.g. 'fable', 'opus', or 'sonnet') or a
+    // model's full name (e.g. 'claude-fable-5')." Placed after the
+    // established flags, never before them — no vendor here parses these
+    // options positionally, confirmed by the existing resume-argv tests
+    // this task leaves passing unchanged when no model is given.
+    args: (model) => ['-p', '--verbose', '--output-format', 'stream-json', ...(model ? ['--model', model] : [])],
+    resumeArgs: (id, model) => [
+      '-p',
+      '-r',
+      id,
+      '--verbose',
+      '--output-format',
+      'stream-json',
+      ...(model ? ['--model', model] : [])
+    ],
     parseUsage: parseClaudeUsage,
+    parseModel: parseClaudeModel,
     parseResumeId: parseClaudeResumeId,
-    renderEvent: renderClaudeEvent
+    renderEvent: renderClaudeEvent,
+    // Confirmed live (`claude --help`): these are the vendor's own aliases
+    // for "the latest model at this tier" — never a version-pinned name, so
+    // this mapping does not go stale as Claude ships new models.
+    classModels: { high: 'opus', mid: 'sonnet', fast: 'haiku' }
   },
   codex: {
     binary: 'codex',
-    args: ['exec', '--json', '-'],
-    resumeArgs: (id) => ['exec', 'resume', id, '--json', '-'],
+    // `-m, --model <MODEL>` confirmed live via `codex exec --help` — a bare
+    // string with no enumerated or aliased values (unlike `--sandbox`,
+    // which does list `[possible values: ...]` in the same help output).
+    args: (model) => ['exec', ...(model ? ['--model', model] : []), '--json', '-'],
+    resumeArgs: (id, model) => ['exec', 'resume', id, ...(model ? ['--model', model] : []), '--json', '-'],
     parseUsage: parseCodexUsage,
+    parseModel: parseCodexModel,
     parseResumeId: parseCodexResumeId,
-    renderEvent: renderCodexEvent
+    renderEvent: renderCodexEvent,
+    // No non-stale alias layer to resolve a class into (see `VendorSpec`'s
+    // own doc comment) — a real invocation's own configured model
+    // (`codex doctor`) is a version-pinned string, not a "latest" alias.
+    classModels: {}
   },
   gemini: {
     binary: 'gemini',
     // Verified against a real run, not assumed (the Issue's own trap): gemini
     // emits `init`, then a `message` per turn carrying `role`/`content`, then
     // a terminal `result` whose `stats` holds the token counts.
-    args: ['-p', '', '--output-format', 'stream-json', '--skip-trust'],
-    resumeArgs: (id) => ['-p', '', '--resume', id, '--output-format', 'stream-json', '--skip-trust'],
+    // `-m, --model <string>` confirmed live via `gemini --help` — same bare,
+    // unaliased shape as Codex's (contrast `--output-format`, which does
+    // list `[choices: ...]` in the same help output).
+    args: (model) => ['-p', '', ...(model ? ['--model', model] : []), '--output-format', 'stream-json', '--skip-trust'],
+    resumeArgs: (id, model) => [
+      '-p',
+      '',
+      '--resume',
+      id,
+      ...(model ? ['--model', model] : []),
+      '--output-format',
+      'stream-json',
+      '--skip-trust'
+    ],
     parseUsage: parseGeminiUsage,
+    parseModel: parseGeminiModel,
     parseResumeId: parseGeminiResumeId,
-    renderEvent: renderGeminiEvent
+    renderEvent: renderGeminiEvent,
+    // No non-stale alias layer either — a real run's own default (confirmed
+    // live) is a dated model string, not a "latest" alias.
+    classModels: {}
   }
+}
+
+/**
+ * Confirmed live, not assumed: `claude --model`'s own help text names
+ * `fable`/`opus`/`sonnet` as aliases (haiku is the same family's fourth
+ * tier), and its "full name" example (`claude-fable-5`) establishes the
+ * `claude-` prefix every full Claude model name carries. A real `gemini`
+ * run's own `stats.models` keys (`gemini-3.1-flash-lite`,
+ * `gemini-3.5-flash`) confirm its own `gemini-`/`gemma-` prefix
+ * (`gemini gemma` is a documented subcommand for the latter family).
+ * Codex publishes no equivalent naming convention to check against — a real
+ * run's own configured model (`codex doctor`: `gpt-5.6-sol`) is one instance,
+ * not a rule, so Codex is never treated as a shape to detect, only as the
+ * vendor a wrongly-shaped Claude/Gemini model can be refused FROM.
+ */
+const CLAUDE_MODEL_ALIASES = new Set(['fable', 'opus', 'sonnet', 'haiku'])
+
+export function identifyVendorFromModelShape(model: string): AgentVendor | null {
+  const lower = model.toLowerCase()
+  if (CLAUDE_MODEL_ALIASES.has(lower) || lower.startsWith('claude-')) return 'claude'
+  if (lower.startsWith('gemini-') || lower.startsWith('gemma-')) return 'gemini'
+  return null
+}
+
+/**
+ * A task's suggested agent-class resolved to this vendor's own concrete
+ * model (O3) — `null` when this vendor has no verified, non-stale mapping
+ * for that class (see `VendorSpec.classModels`'s own doc comment), never a
+ * guessed model name.
+ */
+export function resolveClassModel(agent: AgentVendor, agentClass: AgentClass): string | null {
+  return VENDOR_TABLE[agent].classModels[agentClass] ?? null
 }
 
 /**
@@ -642,6 +865,48 @@ export async function dispatchRole(
   const vendor = VENDOR_TABLE[agent]
   const start = Date.now()
   const roundField = opts.round !== undefined ? { round: opts.round } : {}
+  // O2: never the vendor name (`agent`) — that is the defect this task
+  // closes. This is a REQUEST label, never an observation: `requested:<x>`
+  // when a model was named, `'default'` when none was — both explicitly
+  // marked placeholders for "here is what was asked for, not confirmed as
+  // what ran," distinguishable on read from the bare, unprefixed model name
+  // `outcomeModel` below records once the vendor's own receipt confirms it.
+  // Used for every log line before the child's own report can be read
+  // (`dispatched`, every `dispatch_failed` path) and as the fallback for
+  // `outcome_received` when the vendor gives no receipt at all (Codex,
+  // always; Claude/Gemini, on an unparseable payload).
+  const resolvedModel = opts.model !== undefined ? `requested:${opts.model}` : 'default'
+
+  // O4: refused before any spawn, by name, naming the vendor that rejected
+  // it and what it accepts — never a bare rejection. Checked before the
+  // binary-on-PATH check below so a wrongly-shaped model is refused even
+  // when the vendor binary itself is present and executable.
+  if (opts.model !== undefined) {
+    const foreignVendor = identifyVendorFromModelShape(opts.model)
+    if (foreignVendor !== null && foreignVendor !== agent) {
+      const durationMs = Date.now() - start
+      const priorSize = sizeOfSafe(outboxPath)
+      log({
+        kind: 'dispatch',
+        event: 'dispatch_failed',
+        payload: {},
+        target_role: role,
+        model: resolvedModel,
+        ...roundField,
+        effect_id: effectId,
+        reason: 'refused',
+        usage: null,
+        duration_ms: durationMs
+      })
+      process.stderr.write(
+        `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — model '${opts.model}' is a ${foreignVendor} model; ` +
+          `${agent} does not accept it. ${agent} accepts its own model names (never a ${foreignVendor} alias or a ` +
+          `'${foreignVendor}-'/'gemma-' full name).\n`
+      )
+      await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
+      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
+    }
+  }
 
   const binaryPath = resolveExecutable(vendor.binary)
   if (binaryPath === null) {
@@ -652,7 +917,7 @@ export async function dispatchRole(
       event: 'dispatch_failed',
       payload: {},
       target_role: role,
-      model: agent,
+      model: resolvedModel,
       ...roundField,
       effect_id: effectId,
       reason: 'refused',
@@ -670,7 +935,7 @@ export async function dispatchRole(
       event: 'dispatched',
       payload: {},
       target_role: role,
-      model: agent,
+      model: resolvedModel,
       ...roundField,
       effect_id: effectId,
       prompt_hash: promptHashOf(prompt)
@@ -681,16 +946,20 @@ export async function dispatchRole(
   const timeoutMs = loadConfig()?.dispatch?.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
   return new Promise<DispatchHandle>((resolve) => {
-    const child = spawn(binaryPath, opts.resumeId ? vendor.resumeArgs(opts.resumeId) : vendor.args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        VINAYA_RUN_ID: runId,
-        VINAYA_ROLE: role,
-        VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
-        VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined
+    const child = spawn(
+      binaryPath,
+      opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model),
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          VINAYA_RUN_ID: runId,
+          VINAYA_ROLE: role,
+          VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
+          VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined
+        }
       }
-    })
+    )
 
     let settled = false
     let timedOut = false
@@ -796,7 +1065,7 @@ export async function dispatchRole(
         event: 'dispatch_failed',
         payload: {},
         target_role: role,
-        model: agent,
+        model: resolvedModel,
         ...roundField,
         effect_id: effectId,
         reason: 'crash',
@@ -843,7 +1112,7 @@ export async function dispatchRole(
           event: 'dispatch_failed',
           payload: {},
           target_role: role,
-          model: agent,
+          model: resolvedModel,
           ...roundField,
           effect_id: effectId,
           reason: 'timeout',
@@ -865,7 +1134,7 @@ export async function dispatchRole(
           event: 'dispatch_failed',
           payload: {},
           target_role: role,
-          model: agent,
+          model: resolvedModel,
           ...roundField,
           effect_id: effectId,
           reason: 'crash',
@@ -886,6 +1155,7 @@ export async function dispatchRole(
           resumeId,
           role,
           agent,
+          repo,
           task: opts.task ?? null,
           pr: opts.pr ?? null,
           round: opts.round ?? null,
@@ -898,13 +1168,21 @@ export async function dispatchRole(
           )
         }
       }
+      // O2: the vendor's own genuine receipt of what ran, read only now that
+      // the child has actually produced output — never guessed from the
+      // requested `--model` value, and always preferred over it when present,
+      // even when no model was named at all (a vendor's own default is still
+      // a real observation once reported). Falls back to the pre-completion
+      // request label (`resolvedModel`) only when this vendor emits no
+      // receipt (Codex, always) or the payload didn't parse.
+      const reportedModel = vendor.parseModel(stdoutBuf)
       const priorSize = sizeOfSafe(outboxPath)
       log({
         kind: 'dispatch',
         event: 'outcome_received',
         payload: {},
         target_role: role,
-        model: agent,
+        model: reportedModel ?? resolvedModel,
         ...roundField,
         effect_id: effectId,
         // See module doc: placeholder pending a generic `DispatchOutcome`

@@ -25,11 +25,15 @@ import { homedir } from 'node:os'
 import { readdirSync, statSync } from 'node:fs'
 import {
   DEFAULT_TIMEOUT_MS,
+  identifyVendorFromModelShape,
+  parseClaudeModel,
   parseClaudeResumeId,
   parseClaudeUsage,
+  parseGeminiModel,
   parseGeminiUsage,
   renderClaudeEvent,
   renderGeminiEvent,
+  resolveClassModel,
   HEARTBEAT_INTERVAL_MS,
   MAX_TEE_BYTES,
   openOutputTee,
@@ -67,13 +71,19 @@ function tempDir(prefix: string): string {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
-function runDispatch(args: string[], cwd: string, home: string, path: string): CliResult {
+function runDispatch(
+  args: string[],
+  cwd: string,
+  home: string,
+  path: string,
+  extraEnv: Record<string, string> = {}
+): CliResult {
   try {
     const stdout = execFileSync('bun', [INDEX, 'dispatch', ...args], {
       encoding: 'utf8',
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, HOME: home, PATH: path }
+      env: { ...process.env, HOME: home, PATH: path, ...extraEnv }
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {
@@ -147,7 +157,10 @@ describe('dispatchRole — a successful dispatch', () => {
     expect(outcome).toBeDefined()
     expect((outcome as { usage: { input: number; output: number } }).usage).toEqual({ input: 11, output: 22 })
     expect((outcome as { target_role: string }).target_role).toBe('developer')
-    expect((outcome as { model: string }).model).toBe('claude')
+    // O2: the vendor name is never recorded in this field — the defect this
+    // task closes. No `--model` was given here, so the placeholder for "the
+    // vendor's own default ran" is recorded instead of `'claude'`.
+    expect((outcome as { model: string }).model).toBe('default')
   })
 })
 
@@ -566,7 +579,7 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
     const path = `${binDir}:${pathWithoutRealVendors()}`
-    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'developer-claude-issue454.json')
+    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-issue454.json')
 
     writeFakeBinary(
       binDir,
@@ -637,10 +650,75 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     const result = runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
     expect(result.status).toBe(0)
 
-    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'developer-claude-unscoped.json')
+    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-unscoped.json')
     const record = JSON.parse(readFileSync(recordPath, 'utf8')) as { resumeId: string; task: number | null }
     expect(record.resumeId).toBe(synthId)
     expect(record.task).toBeNull()
+  })
+
+  it('two different repos dispatching the same task number get two distinct records, keyed by repo (O5, #456)', () => {
+    const synthIdA = '55555555-5555-5555-5555-555555555555'
+    const synthIdB = '66666666-6666-6666-6666-666666666666'
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"session_id":"${synthIdA}","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+    )
+    runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '9'], cwd, home, path, {
+      AEG_REPO: 'acme/tranche-a'
+    })
+
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"session_id":"${synthIdB}","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+    )
+    runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '9'], cwd, home, path, {
+      AEG_REPO: 'acme/tranche-b'
+    })
+
+    // Same tranche-local-looking task number (9), two different repos —
+    // this is the live bug O5 closes: before the repo segment existed, the
+    // second dispatch's record would have overwritten the first's.
+    const recordA = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'dispatch-resume', 'acme-tranche-a', 'developer-claude-issue9.json'), 'utf8')
+    ) as { resumeId: string }
+    const recordB = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'dispatch-resume', 'acme-tranche-b', 'developer-claude-issue9.json'), 'utf8')
+    ) as { resumeId: string }
+    expect(recordA.resumeId).toBe(synthIdA)
+    expect(recordB.resumeId).toBe(synthIdB)
+  })
+
+  it('an unsafe AEG_REPO value falls back to the unresolved bucket rather than escaping it (O5, #456)', () => {
+    const synthId = '77777777-7777-7777-7777-777777777777'
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"session_id":"${synthId}","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+    )
+    runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '9'], cwd, home, path, {
+      AEG_REPO: 'acme/../../../etc'
+    })
+
+    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-issue9.json')
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')) as { resumeId: string }
+    expect(record.resumeId).toBe(synthId)
+    expect(existsSync(join(home, '.vinaya', 'dispatch-resume', 'etc'))).toBe(false)
   })
 
   it('a crashing child writes no resume record — there is no session to resume', () => {
@@ -955,6 +1033,40 @@ describe('dispatch streaming output (#447 O5)', () => {
     expect(parseClaudeUsage('not json at all')).toBeNull()
   })
 
+  it("reads claude's genuine model receipt from modelUsage's own key, distinct from the requested alias (O2, #456)", () => {
+    const stream = [
+      JSON.stringify({ type: 'system', subtype: 'init' }),
+      JSON.stringify({
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 11, output_tokens: 22 },
+        modelUsage: { 'claude-sonnet-5': { canonicalModel: 'claude-sonnet-5' } }
+      })
+    ].join('\n')
+    expect(parseClaudeModel(stream)).toBe('claude-sonnet-5')
+    // No `modelUsage` field at all — no receipt to read.
+    expect(parseClaudeModel(JSON.stringify({ usage: { input_tokens: 3, output_tokens: 4 } }))).toBeNull()
+    expect(parseClaudeModel('not json at all')).toBeNull()
+  })
+
+  it("reads gemini's genuine model receipt from stats.models' own key(s), distinct from the requested alias (O2, #456)", () => {
+    const stream = [
+      JSON.stringify({ type: 'init' }),
+      JSON.stringify({
+        type: 'result',
+        status: 'success',
+        stats: { input_tokens: 8983, output_tokens: 36, models: { 'gemini-3.8-flash': { tokens: {} } } }
+      })
+    ].join('\n')
+    expect(parseGeminiModel(stream)).toBe('gemini-3.8-flash')
+    // More than one model key in one run — both are real, join rather than
+    // guessing which one to keep.
+    const multiModel = JSON.stringify({ stats: { models: { 'gemini-a': {}, 'gemini-b': {} } } })
+    expect(parseGeminiModel(multiModel)).toBe('gemini-a,gemini-b')
+    // No `models` key at all — no receipt to read.
+    expect(parseGeminiModel(JSON.stringify({ stats: { input_tokens: 1, output_tokens: 1 } }))).toBeNull()
+    expect(parseGeminiModel('not json')).toBeNull()
+  })
+
   it("reads the resume id from a stream's terminal event, and still from a whole-blob payload", () => {
     const stream = [
       JSON.stringify({ type: 'system', subtype: 'init', session_id: 'early-and-ignored' }),
@@ -963,5 +1075,226 @@ describe('dispatch streaming output (#447 O5)', () => {
     expect(parseClaudeResumeId(stream)).toBe('the-real-one')
     expect(parseClaudeResumeId(JSON.stringify({ session_id: 'single-blob' }))).toBe('single-blob')
     expect(parseClaudeResumeId('')).toBeNull()
+  })
+})
+
+/**
+ * O1/O2/O4 (Issue #456). A caller-named model reaches the chosen vendor
+ * through that vendor's own `--model` flag, the log records the model
+ * rather than the vendor, and a model shaped for a different vendor is
+ * refused before any spawn.
+ */
+describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
+  const MODEL_ARGV_FIXTURES: Array<{ agent: 'claude' | 'codex' | 'gemini'; model: string; argv: string[] }> = [
+    {
+      agent: 'claude',
+      model: 'opus',
+      argv: ['-p', '--verbose', '--output-format', 'stream-json', '--model', 'opus']
+    },
+    {
+      agent: 'codex',
+      model: 'gpt-5.6-sol',
+      argv: ['exec', '--model', 'gpt-5.6-sol', '--json', '-']
+    },
+    {
+      agent: 'gemini',
+      model: 'gemini-3.5-flash',
+      argv: ['-p', '', '--model', 'gemini-3.5-flash', '--output-format', 'stream-json', '--skip-trust']
+    }
+  ]
+
+  for (const fixture of MODEL_ARGV_FIXTURES) {
+    it(`${fixture.agent}: --model reaches the child as that vendor's own --model flag (O1)`, () => {
+      const home = tempDir('vinaya-dispatch-home-')
+      const cwd = tempDir('vinaya-dispatch-cwd-')
+      const binDir = tempDir('vinaya-dispatch-bin-')
+      const argvOut = join(cwd, 'argv.out')
+      const promptFile = join(cwd, 'prompt.txt')
+      writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+      writeFakeBinary(
+        binDir,
+        fixture.agent,
+        `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+      )
+
+      const r = runDispatch(
+        ['developer', '--agent', fixture.agent, '--prompt-file', promptFile, '--model', fixture.model],
+        cwd,
+        home,
+        `${binDir}:${pathWithoutRealVendors()}`
+      )
+      expect(r.status).toBe(0)
+      expect(readArgv(argvOut)).toEqual(fixture.argv)
+    })
+  }
+
+  it('no --model given: the vendor sees no --model flag at all, same argv as before this task', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+    expect(readArgv(argvOut)).toEqual(['-p', '--verbose', '--output-format', 'stream-json'])
+  })
+
+  it('O2: dispatched records the requested model as a marked request label, never bare (no receipt possible yet)', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\ncat > /dev/null\necho '{}'\nexit 0\n`)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--model', 'claude-opus-5'],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
+    const dispatched = lines.find((l) => l.event === 'dispatched')
+    expect((dispatched as { model: string }).model).toBe('requested:claude-opus-5')
+  })
+
+  it('O2: outcome_received records the VENDOR-REPORTED model, not the requested one, when they differ', () => {
+    // This is the live bug O2 closes: the fake binary was asked for
+    // `claude-opus-5` but its own `modelUsage` receipt says `claude-opus-6`
+    // actually ran — the ledger must say what ran, not what was asked for.
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"usage":{"input_tokens":1,"output_tokens":1},"modelUsage":{"claude-opus-6":{"canonicalModel":"claude-opus-6"}}}'\nexit 0\n`
+    )
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--model', 'claude-opus-5'],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
+    const dispatched = lines.find((l) => l.event === 'dispatched')
+    const outcome = lines.find((l) => l.event === 'outcome_received')
+    // Pre-completion, still just the request label — no receipt exists yet.
+    expect((dispatched as { model: string }).model).toBe('requested:claude-opus-5')
+    // Post-completion, the vendor's own bare, unprefixed receipt wins.
+    expect((outcome as { model: string }).model).toBe('claude-opus-6')
+  })
+
+  it('O2: outcome_received falls back to the marked request label when the vendor emits no receipt', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    // No `modelUsage` field at all — Codex's own real shape, and what any
+    // vendor's stdout looks like before it ever reports a model receipt.
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\ncat > /dev/null\necho '{}'\nexit 0\n`)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--model', 'claude-opus-5'],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const outcome = (outboxLines(home, 'none') as Array<Record<string, unknown>>).find(
+      (l) => l.event === 'outcome_received'
+    )
+    // Marked as a request, not presented as a confirmed observation.
+    expect((outcome as { model: string }).model).toBe('requested:claude-opus-5')
+  })
+
+  it('O4: a Claude-shaped model passed to codex is refused before any spawn, naming the vendor and the mismatch', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    // A binary that would prove it was spawned if it ever ran.
+    const spawnedMarker = join(cwd, 'spawned')
+    writeFakeBinary(binDir, 'codex', `#!/bin/sh\ntouch "${spawnedMarker}"\ncat > /dev/null\necho '{}'\nexit 0\n`)
+
+    const r = spawnSync(
+      'bun',
+      [INDEX, 'dispatch', 'developer', '--agent', 'codex', '--prompt-file', promptFile, '--model', 'claude-opus-5'],
+      { encoding: 'utf8', cwd, env: { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` } }
+    )
+    expect(r.status).toBe(1)
+    expect(existsSync(spawnedMarker)).toBe(false)
+    expect(r.stderr).toContain('claude')
+    expect(r.stderr).toContain('codex does not accept it')
+
+    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
+    expect(lines).toHaveLength(1)
+    expect(lines[0]?.event).toBe('dispatch_failed')
+    expect((lines[0] as { reason: string }).reason).toBe('refused')
+    expect((lines[0] as { model: string }).model).toBe('requested:claude-opus-5')
+  })
+
+  it('O4: a Gemini-shaped model passed to claude is refused the same way', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const spawnedMarker = join(cwd, 'spawned')
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\ntouch "${spawnedMarker}"\ncat > /dev/null\necho '{}'\nexit 0\n`)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--model', 'gemini-3.5-flash'],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(1)
+    expect(existsSync(spawnedMarker)).toBe(false)
+  })
+
+  it('a same-vendor model, and a vendor with no known naming convention (codex), are never refused for their shape', () => {
+    expect(identifyVendorFromModelShape('claude-sonnet-5')).toBe('claude')
+    expect(identifyVendorFromModelShape('sonnet')).toBe('claude')
+    expect(identifyVendorFromModelShape('gemini-3.5-flash')).toBe('gemini')
+    expect(identifyVendorFromModelShape('gemma-3-27b')).toBe('gemini')
+    // Codex publishes no naming convention to detect — never treated as a
+    // shape, only as a vendor a wrongly-shaped model can be refused FROM.
+    expect(identifyVendorFromModelShape('gpt-5.6-sol')).toBeNull()
+    expect(identifyVendorFromModelShape('o3')).toBeNull()
+    expect(identifyVendorFromModelShape('some-random-string')).toBeNull()
+  })
+
+  it('O3: class resolution is a verified, non-stale table for Claude, and deliberately empty for Codex/Gemini', () => {
+    expect(resolveClassModel('claude', 'high')).toBe('opus')
+    expect(resolveClassModel('claude', 'mid')).toBe('sonnet')
+    expect(resolveClassModel('claude', 'fast')).toBe('haiku')
+    // No non-stale alias layer exists for either vendor (verified against
+    // each CLI's own --help, see `VendorSpec`'s doc comment) — never a
+    // guessed, version-pinned model name.
+    expect(resolveClassModel('codex', 'high')).toBeNull()
+    expect(resolveClassModel('gemini', 'high')).toBeNull()
   })
 })

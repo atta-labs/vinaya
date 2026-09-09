@@ -30,6 +30,7 @@ import { logFlushCommand } from './log.js'
 type ParsedArgs = {
   role: string | undefined
   agent: string | undefined
+  model: string | undefined
   promptFile: string | undefined
   task: number | undefined
   pr: number | undefined
@@ -41,6 +42,7 @@ type ParsedArgs = {
 function parseArgs(args: string[]): ParsedArgs {
   const role = args[0]
   let agent: string | undefined
+  let model: string | undefined
   let promptFile: string | undefined
   let task: number | undefined
   let pr: number | undefined
@@ -50,6 +52,7 @@ function parseArgs(args: string[]): ParsedArgs {
   for (let i = 1; i < args.length; i++) {
     const a = args[i]
     if (a === '--agent') agent = args[++i]
+    else if (a === '--model') model = args[++i]
     else if (a === '--prompt-file') promptFile = args[++i]
     else if (a === '--task') task = Number(args[++i])
     else if (a === '--pr') pr = Number(args[++i])
@@ -57,7 +60,7 @@ function parseArgs(args: string[]): ParsedArgs {
     else if (a === '--resume') resume = args[++i]
     else if (a === '--json') json = true
   }
-  return { role, agent, promptFile, task, pr, round, resume, json }
+  return { role, agent, model, promptFile, task, pr, round, resume, json }
 }
 
 export async function dispatchCommand(args: string[]): Promise<void> {
@@ -115,6 +118,7 @@ export async function dispatchCommand(args: string[]): Promise<void> {
     pr: parsed.pr,
     round: parsed.round,
     resumeId: parsed.resume,
+    model: parsed.model,
     promptFile
   })
 
