@@ -74,7 +74,7 @@ Every item the Reviewer produces in the verdict (left) has exactly one obligatio
 ## Consumer obligations (the per-task Archivist)
 
 - Do not run close-out on unmerged PRs. The merge is the authorization signal — confirmed by querying the forge, not by reading a status field.
-- Assemble the provenance block from frozen PR facts (brief in PR body, verdict comment, merge metadata) — never fabricate a field whose source fact is absent. A missing source fact is a DANGLING item, not an opportunity to infer.
+- Assemble the provenance block from frozen facts (the brief, frozen on the task Issue's own `aeg:brief:v1` comment; the verdict comment; the merge metadata) — never fabricate a field whose source fact is absent. A missing source fact is a DANGLING item, not an opportunity to infer.
 - Post the provenance block as a comment on the merged PR (the PR is a frozen truth domain once merged; the provenance block is its permanent record).
 - **The provenance block comment is the forge-derived coherence signal that downstream roles depend on.** The next Developer to start a task in this tranche checks whether the most-recently-merged task PR carries a provenance block before executing step 0 — its absence is a hard STOP that blocks the next task from starting. Post it completely; a partial or absent block does not satisfy the Developer's entry gate (see `aeg-root/roles/developer.md` and `aeg-root/contracts/planner-developer.md`).
 - A `BLOCKER` finding present in the verdict of a merged PR means a deviation was approved. A `MAJOR` finding present in the verdict of a merged PR means the Principal accepted a surfaced finding at the go. Both are logged in the provenance block under DANGLING and both get a new comment on the pinned lessons Issue.

@@ -7,7 +7,7 @@ description: Carries finished work to its reviewer already accounted for, so rev
 status: active
 producer: developer
 consumer: reviewer
-carrier: pr-diff-and-body
+carrier: pr-diff-and-issue-comment
 summary: Ever had a reviewer waste time on basics instead of judging the actual work?
 ---
 # Contract: Developer → Reviewer
@@ -16,13 +16,13 @@ summary: Ever had a reviewer waste time on basics instead of judging the actual 
 
 This seam sits between finished work and the review of it. It exists so that an independent reviewer spends the session judging the work rather than verifying that it was ready to be looked at.
 
-**What crosses** — one open pull request, and everything that makes it reviewable. The brief in its body, pasted whole rather than summarised, because it is the statement of intent the diff has to be judged against. The impact tier, which sets how deep the review goes. Green checks: the type checker, the linter, the tests and the documentation gate all passing already, so a failure found in review is the work's, not the environment's. A diff that stayed inside the file surface the brief named. A completed checklist. Every test-plan item an agent can run, actually run, with the real command output posted rather than a claim about it. And every document the brief named, updated in the same change.
+**What crosses** — one open pull request, and everything that makes it reviewable. The brief, frozen on the task Issue's own `aeg:brief:v1` comment, read there rather than summarised, because it is the statement of intent the diff has to be judged against. The impact tier, which sets how deep the review goes. Green checks: the type checker, the linter, the tests and the documentation gate all passing already, so a failure found in review is the work's, not the environment's. A diff that stayed inside the file surface the brief named. A completed checklist. Every test-plan item an agent can run, actually run, with the real command output posted rather than a claim about it. And every document the brief named, updated in the same change.
 
 **The hand-off is malformed when** — the brief is missing, paraphrased or edited; when the checks are red; when the diff reaches outside the named surface; when a checklist item is ticked without evidence; when a test-plan item is claimed rather than shown; or when a promised document did not move. Each of those sends the change back rather than becoming a review finding, because none of them is a judgement call.
 
 **What it does not carry** — the authority to fix anything. The reviewer reports and the author repairs; the reviewer never edits the code, never merges, and never writes status. It also does not carry a second opinion on taste: a change is judged against its brief, the product's specification, and safety, not against how the reviewer would have written it.
 
-**How it physically runs** — the carrier is the open pull request: the diff, plus the body holding the brief. Coverage of the documents a change must touch is already enforced mechanically before review begins, which is why the reviewer's remaining job is the question no check can answer — whether the update is true, or a no-op edit that silenced the gate without describing the change. The verdict lands as comments on the pull request, with a severity on every finding, and a change cannot merge without a clean one.
+**How it physically runs** — the carrier is the open pull request plus the task Issue's frozen `aeg:brief:v1` comment: the diff, plus the brief that comment holds. Coverage of the documents a change must touch is already enforced mechanically before review begins, which is why the reviewer's remaining job is the question no check can answer — whether the update is true, or a no-op edit that silenced the gate without describing the change. The verdict lands as comments on the pull request, with a severity on every finding, and a change cannot merge without a clean one.
 
 
 ---
@@ -45,7 +45,7 @@ The failure mode this prevents: a Reviewer who begins reviewing a diff without r
 
 ## The hand-off carrier
 
-The **open PR** — the diff plus the PR body, which carries the brief verbatim. The PR is the Reviewer's primary artifact. The brief (in the PR body) is the intent document; the diff is the execution; the Reviewer's job is to judge whether the execution matched the intent, safely and correctly.
+The **open PR**, plus the task Issue's frozen `aeg:brief:v1` comment — the diff plus the brief. The PR is the Reviewer's primary artifact for the diff; the frozen Issue comment is the brief's permanent home. The brief is the intent document; the diff is the execution; the Reviewer's job is to judge whether the execution matched the intent, safely and correctly.
 
 ---
 
@@ -57,7 +57,7 @@ Every item the Developer produces in the open PR (left) has exactly one obligati
 
 | Developer produces in the PR | Reviewer consumes at | What the consumption means |
 |---|---|---|
-| **Brief in PR body** (the frozen brief, pasted verbatim) | Entry — read before looking at the diff | The Reviewer reads the brief first to understand intent, boundary, surface map, and traps. Reviewing a diff without the brief is not a valid review pass. |
+| **Frozen `aeg:brief:v1` comment on the task Issue** (the brief, posted verbatim by the dispatch act) | Entry — read before looking at the diff | The Reviewer reads the brief first to understand intent, boundary, surface map, and traps. Reviewing a diff without the brief is not a valid review pass. |
 | **Tier:** field in PR body | Determines review depth | Tier 0 → light pass; Tier 1 → standard including spec-conformance; Tier 3 → full including spec and state doc verification. |
 | **CI green** (typecheck, lint, tests, `verify-docs`) | Entry gate | The Reviewer does not start if CI is red. A red CI is a Developer problem, not a Reviewer finding. |
 | **Surface map respected** (diff touches only files named in the brief's surface map) | First diff check | If the diff touches files outside the surface map, that is a BLOCKER finding before reading any logic. |
@@ -77,7 +77,7 @@ Every item the Developer produces in the open PR (left) has exactly one obligati
 - **Documentation-update list honored.** Every doc named in the list must be updated in the diff before opening the PR. A PR with list items outstanding is not ready for review; do not open it and expect the Reviewer to discover the gap.
 - **`.vinaya/doc-owners` coverage satisfied.** For every binding fired by the diff: update the bound doc in this PR; or, for URL bindings, add `Doc-ack: <pointer> — <note>`; or have a principal apply the actor-verified `vinaya/waiver:docs` label — you cannot self-serve it, and there is no body-field waiver grammar anymore. `verify-docs` C5 enforces this mechanically — if it fails CI, do not request review.
 - CI must be green before requesting review. Do not request review with a red CI and expect the Reviewer to begin.
-- The brief must be in the PR body, unmodified — pasted verbatim, not summarized or paraphrased. The whole body is authored once, at open. After open the Developer changes nothing outside the `AEG:EVIDENCE` anchor and one appended `AEG:TOKENS` row. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. A review round's response and any re-run evidence are PR comments, not body edits.
+- The brief is already frozen, unmodified, on the task Issue's `aeg:brief:v1` comment before the Developer's worktree exists — the PR body carries only the Developer's report (optionally with a reference copy of the brief in a collapsed `<details>` block). The whole body is authored once, at open. After open the Developer changes nothing outside the `AEG:EVIDENCE` anchor and one appended `AEG:TOKENS` row. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. A review round's response and any re-run evidence are PR comments, not body edits.
 - The diff must touch only files in the brief's Technical Surface Map. Files outside it are a stop-and-escalate before opening the PR, not a finding for the Reviewer to catch.
 - The Task Done checklist must be ticked — all items, with actual verification evidence for each.
 - Every `[agent]` Test Plan item must have an evidence comment posted on the PR — the actual command output, not a paraphrase. A re-run after fixes posts a new comment; it never edits the one already there.
@@ -85,7 +85,7 @@ Every item the Developer produces in the open PR (left) has exactly one obligati
 
 ## Consumer obligations (the Reviewer)
 
-- Read the brief before the diff. This is not optional — the brief is the intent document; the diff without the brief is just code.
+- Read the brief — the task Issue's frozen `aeg:brief:v1` comment — before the diff. This is not optional — the brief is the intent document; the diff without the brief is just code.
 - Do not start if CI is red. Post a comment: *"CI is red — returning to Developer. Start review once CI is green."*
 - Check surface map compliance as the first diff-inspection step. A surface map violation is a BLOCKER before any logic review.
 - **Verify documentation-update-list compliance as a BLOCKER gate.** For every doc named in the list, confirm it appears in the diff AND is correct (not just present — `verify-docs` already checks presence). A named doc absent from the diff or present but wrong is a BLOCKER finding before reviewing logic. This is a hard gate, not an advisory; the list is a DoD commitment.
