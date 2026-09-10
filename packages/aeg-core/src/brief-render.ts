@@ -619,7 +619,9 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
 
   if (facts.projects.length === 0) missing.push('Project (task has no Project(s) declared)')
   if (!facts.sourceRevision) {
-    missing.push('Revision (no source revision resolved — the caller must refuse before render, never render with an empty one)')
+    missing.push(
+      'Revision (no source revision resolved — the caller must refuse before render, never render with an empty one)'
+    )
   }
   // Grandfathered the same as the Issue gate itself (`checkIssueObjectives`):
   // an Issue below `OBJECTIVES_SINCE_ISSUE` legitimately has no `## Objectives`

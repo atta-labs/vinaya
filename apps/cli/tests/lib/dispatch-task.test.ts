@@ -62,7 +62,9 @@ function deps(overrides: Partial<DispatchTaskDeps> = {}): DispatchTaskDeps {
     assembleAndRenderBrief: neverCalled(
       'assembleAndRenderBrief'
     ) as unknown as DispatchTaskDeps['assembleAndRenderBrief'],
-    findExistingFrozenBrief: neverCalled('findExistingFrozenBrief') as unknown as DispatchTaskDeps['findExistingFrozenBrief'],
+    findExistingFrozenBrief: neverCalled(
+      'findExistingFrozenBrief'
+    ) as unknown as DispatchTaskDeps['findExistingFrozenBrief'],
     postMarkedComment: neverCalled('postMarkedComment') as unknown as DispatchTaskDeps['postMarkedComment'],
     resolveDispatchRole: async () => null,
     resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' }),
@@ -366,7 +368,9 @@ function prepareDeps(overrides: Partial<PrepareTaskDeps> = {}): PrepareTaskDeps 
     assembleAndRenderBrief: neverCalled(
       'assembleAndRenderBrief'
     ) as unknown as PrepareTaskDeps['assembleAndRenderBrief'],
-    findExistingFrozenBrief: neverCalled('findExistingFrozenBrief') as unknown as PrepareTaskDeps['findExistingFrozenBrief'],
+    findExistingFrozenBrief: neverCalled(
+      'findExistingFrozenBrief'
+    ) as unknown as PrepareTaskDeps['findExistingFrozenBrief'],
     postMarkedComment: neverCalled('postMarkedComment') as unknown as PrepareTaskDeps['postMarkedComment'],
     resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' }),
     ...overrides

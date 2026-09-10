@@ -271,7 +271,9 @@ function fetchIssueComments(issueNumber: number, caller: string): MarkerComment[
   try {
     out = sh('gh', ['issue', 'view', String(issueNumber), '--json', 'comments'])
   } catch (err) {
-    throw new Error(`${caller}: could not fetch Issue #${issueNumber}'s comments: ${err instanceof Error ? err.message : String(err)}`)
+    throw new Error(
+      `${caller}: could not fetch Issue #${issueNumber}'s comments: ${err instanceof Error ? err.message : String(err)}`
+    )
   }
   return markerComments(out)
 }
