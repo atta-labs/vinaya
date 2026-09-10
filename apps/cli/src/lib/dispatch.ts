@@ -521,7 +521,7 @@ function recordResumeState(record: ResumeRecord): string | null {
  * Reads back the one durable record `recordResumeState` last wrote for this
  * exact repo+role+vendor+scope, or `null` when none exists, is unreadable,
  * or fails to parse — never throws (same posture as `recordResumeState`).
- * review-validity-v1 task 5 (`#488`, O4): the loop's round-1 entry reads
+ * Task `#488`, O4: the loop's round-1 entry reads
  * this to resume the SAME developer session on an attach (an already-open
  * PR) or a remote-branch-no-PR case, rather than starting fresh — the exact
  * path scheme `resumeRecordPathFor` already owns, never a second copy of it.

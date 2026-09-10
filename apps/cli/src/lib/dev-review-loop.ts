@@ -113,7 +113,7 @@ type RestCheckRun = { id: number; name: string; status: string; conclusion: stri
  * latest run per name, EXCLUDING `REVIEW_GATE_CHECK_RUN_NAME` — the same
  * exclusion `check-review-gate.ts` already applies to itself, imported from
  * the one shared constant rather than a second hardcoded name
- * (review-validity-v1 task 5, `#488`, O1, Traps to avoid). Excluded
+ * (task `#488`, O1, Traps to avoid). Excluded
  * entirely, in every status: a review gate that hasn't posted a verdict yet
  * (no check-run conclusion, or one still `in_progress`) must never read as
  * pending CI either — it is not CI at all. `null` on a genuine fetch
@@ -1233,7 +1233,7 @@ export function routeCompletionEvents(
 }
 
 /**
- * review-validity-v1 task 5 (`#488`, O2): the bound on consecutive
+ * Task `#488`, O2: the bound on consecutive
  * gate-red developer turns that produce no push on one head — small and
  * strict, since the failure mode this bounds (`#479`: five re-dispatches in
  * two minutes on one head) is a developer making no progress at all, not
