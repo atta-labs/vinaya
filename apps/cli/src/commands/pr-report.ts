@@ -11,6 +11,7 @@ import {
   resolveMeteringCapability
 } from '@attalabs/aeg-core'
 import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
+import { coreCheckRegistry } from '../checks/registry'
 import { buildCheckEnv } from '../checks/runner'
 import { ScanContext } from '../checks/scan-context'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../lib/numstat'
@@ -242,6 +243,53 @@ export type GateOutcome = { name: string; status: string; errors: { severity: st
 export type GateRunResult = { outcomes: GateOutcome[]; failed: boolean }
 export type GateRunner = () => GateRunResult | Promise<GateRunResult>
 
+/** Which body Group B's checks actually graded — named in the rendered block (O2) so a reader can never mistake a check that never ran against real text for one that passed against it. */
+export type GradedBodySource = 'write' | 'push' | 'ambient'
+
+function describeGradedBodySource(source: GradedBodySource): string {
+  switch (source) {
+    case 'write':
+      return 'the drafted body file (`--write`)'
+    case 'push':
+      return 'the live pull-request body (`--push`)'
+    case 'ambient':
+      return 'the ambient `PR_BODY` environment (no `--write`/`--push`)'
+  }
+}
+
+/**
+ * Names of every registered check that declares `PR_BODY` in its own `env`
+ * (`registry.ts`) — the check's own declared contract that it reads the PR
+ * body, not a guess made here. Computed once; the registry is static data.
+ */
+const BODY_READING_CHECK_NAMES: ReadonlySet<string> = new Set(
+  coreCheckRegistry()
+    .filter((spec) => {
+      const decl = spec.env?.PR_BODY
+      return decl === true || (typeof decl === 'object' && decl !== null && 'optional' in decl)
+    })
+    .map((spec) => spec.name)
+)
+
+/**
+ * A body-reading check handed an empty body exits 0 with no error — the
+ * same silent shape a genuine pass has (PR #481's incident: `pr-report-density`
+ * read `pass` on an empty body, then CI failed the same check against the
+ * real one). `gradedBody` is the exact text this run fed Group B, so when it
+ * is empty, any of THOSE checks reporting a clean pass graded nothing — shown
+ * here as `skipped`, never `pass`. A check outside this set, or one that
+ * itself emitted an error, is left untouched: it did something regardless of
+ * body content, or it already failed honestly.
+ */
+function shouldRenderAsSkipped(outcome: GateOutcome, gradedBody: string): boolean {
+  return (
+    gradedBody === '' &&
+    outcome.status === 'pass' &&
+    outcome.errors.length === 0 &&
+    BODY_READING_CHECK_NAMES.has(outcome.name)
+  )
+}
+
 /** `dist/index.js` when built, the raw `src/index.ts` entry otherwise — same fallback `checks/registry.ts` uses for its own bins. */
 function resolveSelfEntry(): string {
   const root = packageRoot(import.meta.url)
@@ -334,17 +382,25 @@ function renderGroupA(groupA: GroupA): string {
   ].join('\n')
 }
 
-/** Group B, rendered inside its fenced block — name/status/message only, no durations or cache-status lines, so two runs at the same sha are byte-identical. Sorted by name for determinism independent of registry order or completion order. */
-function renderGroupB(outcomes: GateOutcome[]): string {
+/** Group B, rendered inside its fenced block — name/status/message only, no durations or cache-status lines, so two runs at the same sha are byte-identical. Sorted by name for determinism independent of registry order or completion order. The `Graded body:` line (O2) sits outside the fence, before it, in a fixed position `compareEvidenceBlock` never parses (it only reads the fence contents and the `Head:`/`Summary:` lines) — reproducible byte-for-byte for the same `gradedBodySource`. */
+function renderGroupB(outcomes: GateOutcome[], gradedBodySource: GradedBodySource): string {
   const sorted = [...outcomes].sort((a, b) => a.name.localeCompare(b.name))
   const lines = sorted.flatMap((o) => {
     const rows = [`${o.name}: ${o.status}`]
     for (const e of o.errors) rows.push(`  ${e.severity}: ${e.message}`)
     return rows
   })
-  return ['### Group B — attested', '', '`vinaya check --all --diff-only`', '', '```', lines.join('\n'), '```'].join(
-    '\n'
-  )
+  return [
+    '### Group B — attested',
+    '',
+    '`vinaya check --all --diff-only`',
+    '',
+    `Graded body: ${describeGradedBodySource(gradedBodySource)}`,
+    '',
+    '```',
+    lines.join('\n'),
+    '```'
+  ].join('\n')
 }
 
 /**
@@ -503,14 +559,19 @@ export function renderGroupC(groupC: GroupC): string {
  * `check-evidence-fresh` byte-compares the whole line, backticks included,
  * locating it through `summaryLineIndex` on the masked view.
  */
-function buildBlockInner(groupA: GroupA, gateOutcomes: GateOutcome[], groupC: GroupC): string {
+function buildBlockInner(
+  groupA: GroupA,
+  gateOutcomes: GateOutcome[],
+  groupC: GroupC,
+  gradedBodySource: GradedBodySource
+): string {
   return [
     `Head: ${groupA.head}`,
     `${EVIDENCE_SUMMARY_PREFIX}\`${summariseNumstat(groupA.numstat)}\``,
     '',
     renderGroupA(groupA),
     '',
-    renderGroupB(gateOutcomes),
+    renderGroupB(gateOutcomes, gradedBodySource),
     '',
     renderGroupC(groupC)
   ].join('\n')
@@ -925,11 +986,19 @@ export type ReportResult = {
  * explicitly rather than relying on this default.
  */
 export async function buildReport(
-  opts: { groupA?: GroupA; gateRunner?: GateRunner; body?: string; groupC?: GroupC } = {}
+  opts: {
+    groupA?: GroupA
+    gateRunner?: GateRunner
+    body?: string
+    groupC?: GroupC
+    gradedBodySource?: GradedBodySource
+  } = {}
 ): Promise<ReportResult> {
   const groupA = opts.groupA ?? computeGroupA()
   const gateRunner = opts.gateRunner ?? runRealGates
   const gateResult = await gateRunner()
+  const gradedBody = opts.body ?? process.env.PR_BODY ?? ''
+  const gradedBodySource = opts.gradedBodySource ?? 'ambient'
   // O6 (found live 2026-09-04, misread on PR #409): this gate run happens
   // while the OLD AEG:EVIDENCE block is still the live/on-disk body —
   // `evidence-fresh` necessarily grades that stale block against a fresh
@@ -939,9 +1008,11 @@ export async function buildReport(
   // fact about the body BEFORE this write, not after. Excluded from both the
   // rendered outcomes and `gatesFailed` — a self-referential staleness
   // artifact must not itself redden a report that is otherwise clean.
-  const outcomes = gateResult.outcomes.filter((o) => o.name !== 'evidence-fresh')
-  const groupC = opts.groupC ?? computeGroupC(opts.body ?? process.env.PR_BODY ?? '')
-  const blockInner = buildBlockInner(groupA, outcomes, groupC)
+  const outcomes = gateResult.outcomes
+    .filter((o) => o.name !== 'evidence-fresh')
+    .map((o) => (shouldRenderAsSkipped(o, gradedBody) ? { ...o, status: 'skipped' } : o))
+  const groupC = opts.groupC ?? computeGroupC(gradedBody)
+  const blockInner = buildBlockInner(groupA, outcomes, groupC, gradedBodySource)
   const block = `${EVIDENCE_START}\n${blockInner}\n${EVIDENCE_END}`
   return {
     block,
@@ -968,7 +1039,15 @@ function ghEditBody(pr: string, body: string): void {
   }
 }
 
-export async function prReportCommand(args: string[]): Promise<void> {
+/**
+ * `testOverrides.gateRunner`, when passed, replaces the real subprocess gate
+ * runner `buildReport` would otherwise default to — the same injection seam
+ * `buildReport` itself exposes, threaded one layer further out so a test can
+ * prove THIS function's own env-setting statements (not just `buildReport`'s)
+ * without shelling out to the real `vinaya check --all --diff-only`. Absent
+ * in every real invocation; `index.ts` never passes it.
+ */
+export async function prReportCommand(args: string[], testOverrides?: { gateRunner?: GateRunner }): Promise<void> {
   const writeIdx = args.indexOf('--write')
   const writePath = writeIdx !== -1 ? args[writeIdx + 1] : undefined
   const pushIdx = args.indexOf('--push')
@@ -1032,9 +1111,26 @@ export async function prReportCommand(args: string[]): Promise<void> {
   const existingForWrite =
     writePath === undefined ? undefined : existsSync(writePath) ? readFileSync(writePath, 'utf8') : ''
 
+  // `--write` forwards the drafted body and branch to Group B the same way
+  // `--push` does above — set right before the gate run, so `runRealGates`'s
+  // `env: { ...process.env }` spread (read at call time, not construction
+  // time) picks these up. No `PR_NUMBER`: there is no pull request yet, and
+  // a `requiresOpenPr` check must keep skipping honestly rather than reading
+  // a fake number.
+  if (writePath !== undefined) {
+    process.env.PR_BODY = existingForWrite
+    process.env.BRANCH = git(['rev-parse', '--abbrev-ref', 'HEAD'])
+  }
+
+  const gradedBodySource: GradedBodySource = pushPr ? 'push' : writePath !== undefined ? 'write' : 'ambient'
+
   let result: ReportResult
   try {
-    result = await buildReport({ body: preEditBody ?? existingForWrite })
+    result = await buildReport({
+      body: preEditBody ?? existingForWrite,
+      gradedBodySource,
+      gateRunner: testOverrides?.gateRunner
+    })
   } catch (err) {
     if (err instanceof UnresolvableMergeBaseError || err instanceof GitCommandError) {
       // Refuse — write nothing, print nothing that looks like a block.
