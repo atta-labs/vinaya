@@ -189,7 +189,8 @@ export const COMMANDS: readonly Command[] = [
     flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1)' }],
     details: [
       'Read-only: one `gh issue list` for every open task Issue across every tranche (title/label resolved through the same `resolveTaskIssueRef` `list-tasks.ts` already uses), the open pull request per branch, and the driver pid record / pause record / publish effect markers under `<outboxRoot>/dev-review-loop/<task>/` — never a `ps` scan, never a re-parse of posted verdict comments to decide `published`.',
-      "`running` names the driver's pid (`review-validity-v1` task 7's pid record); `paused` names the reason from the pause record; `published` means the newest round's reviewer and security verdict effect markers both read `posted`; `no driver` is the fallback when none of the above holds."
+      "`running` names the driver's pid (`review-validity-v1` task 7's pid record); `paused` names the reason from the pause record; `published` means the newest round's reviewer and security verdict effect markers both read `posted`; `no driver` is the fallback when none of the above holds.",
+      "`vinaya task status <tranche> <n>` narrows to one task and adds the last round's held or published verdict lines (`round-<n>-reviewer.md`/`round-<n>-security.md`, whichever their outbox carries) plus the exact `vinaya dev-review-loop --resume <pr>` command when paused."
     ],
     status: 'shipped'
   },

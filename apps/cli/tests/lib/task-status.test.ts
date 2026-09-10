@@ -1,11 +1,11 @@
 /**
  * `task-status.ts`'s pure outbox-reading half — `deriveLoopState`,
- * `renderTaskStatusRow` — both take an explicit `root`, so these run
- * in-process against a plain temp directory rather than a subprocess with a
- * faked `$HOME` (unlike `dev-review-loop.test.ts`'s own driver-lock tests,
- * which must use a subprocess because `dev-review-loop.ts` reads
- * `outboxRoot()` — a module-level constant frozen at first import —
- * internally).
+ * `lastRoundVerdictLines`, `renderTaskStatusRow`, `resumeCommandFor` — all
+ * take an explicit `root`, so these run in-process against a plain temp
+ * directory rather than a subprocess with a faked `$HOME` (unlike
+ * `dev-review-loop.test.ts`'s own driver-lock tests, which must use a
+ * subprocess because `dev-review-loop.ts` reads `outboxRoot()` — a module-
+ * level constant frozen at first import — internally).
  *
  * The forge-reading half (`listOpenTaskIssues`, `hasFrozenBrief`,
  * `findPrForTask`) shells out to real `gh` and is exercised instead through
@@ -17,7 +17,13 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { deriveLoopState, renderTaskStatusRow, type TaskStatusRow } from '../../src/lib/task-status.js'
+import {
+  deriveLoopState,
+  lastRoundVerdictLines,
+  renderTaskStatusRow,
+  resumeCommandFor,
+  type TaskStatusRow
+} from '../../src/lib/task-status.js'
 
 const TASK = 515
 
@@ -166,6 +172,26 @@ describe('deriveLoopState', () => {
   })
 })
 
+describe('lastRoundVerdictLines', () => {
+  it('returns null when the outbox carries no round verdict files', () => {
+    const root = tempDir()
+    expect(lastRoundVerdictLines(root, TASK)).toBeNull()
+  })
+
+  it("reads the highest round's two verdict files, first line only", () => {
+    const root = tempDir()
+    writeOutboxFile(root, TASK, 'round-1-reviewer.md', 'VERDICT: APPROVE\n\nJudged head: abc\n')
+    writeOutboxFile(root, TASK, 'round-1-security.md', 'VERDICT: PASS\n\nJudged head: abc\n')
+    writeOutboxFile(root, TASK, 'round-2-reviewer.md', 'VERDICT: REQUEST CHANGES\n\nJudged head: def\n')
+    writeOutboxFile(root, TASK, 'round-2-security.md', 'VERDICT: PASS\n\nJudged head: def\n')
+    expect(lastRoundVerdictLines(root, TASK)).toEqual({
+      round: 2,
+      reviewer: 'VERDICT: REQUEST CHANGES',
+      security: 'VERDICT: PASS'
+    })
+  })
+})
+
 describe('renderTaskStatusRow', () => {
   const base: Omit<TaskStatusRow, 'state' | 'pr'> = { tranche: 'task-run-v1', id: '14', issue: 515 }
 
@@ -191,5 +217,11 @@ describe('renderTaskStatusRow', () => {
   it('renders no driver with no PR yet', () => {
     const row: TaskStatusRow = { ...base, pr: null, state: { kind: 'no_driver' } }
     expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR — — no driver')
+  })
+})
+
+describe('resumeCommandFor', () => {
+  it("renders the exact command the loop's own pause comment prints", () => {
+    expect(resumeCommandFor(517)).toBe('vinaya dev-review-loop --resume 517')
   })
 })

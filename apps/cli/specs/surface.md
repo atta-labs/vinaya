@@ -567,12 +567,15 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `RunTaskError` | class | `apps/cli/src/lib/task-run.ts` |
 | `runTask` | function | `apps/cli/src/lib/task-run.ts` |
 | `deriveLoopState` | function | `apps/cli/src/lib/task-status.ts` |
+| `gatherSingleTaskStatus` | function | `apps/cli/src/lib/task-status.ts` |
 | `gatherTaskStatusList` | function | `apps/cli/src/lib/task-status.ts` |
+| `lastRoundVerdictLines` | function | `apps/cli/src/lib/task-status.ts` |
 | `renderTaskStatusRow` | function | `apps/cli/src/lib/task-status.ts` |
+| `resumeCommandFor` | function | `apps/cli/src/lib/task-status.ts` |
 | `AEG_BRIEF_V1_MARKER` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(232 exports.)
+(235 exports.)
 
 ## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
@@ -591,7 +594,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `task dispatch` | `task.ts` | `taskDispatchCommand` | 1 | compliant | `dispatchTask` |
 | `task brief` | `task.ts` | `taskBriefCommand` | 1 | compliant | `prepareTask` |
 | `task run` | `task-run.ts` | `taskRunCommand` | 2 | exempt — see below | sharedCommandShell (target) |
-| `task status` | `task-status.ts` | `taskStatusCommand` | 2 | exempt — see below | taskStatus (target) |
+| `task status` | `task-status.ts` | `taskStatusCommand` | 3 | exempt — see below | taskStatus (target) |
 | `pr create` | `pr.ts` | `prCreateCommand` | 9 | exempt — see below | forgeWrite (target) |
 | `pr edit` | `pr.ts` | `prEditCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `pr report` | `pr-report.ts` | `prReportCommand` | 3 | exempt — see below | collectTokens (target) |
@@ -667,7 +670,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `dispatch` | 2026-09-07 | 5 — lib (4): `loadConfig`, `isAgentVendor`, `dispatchRole`, `printJson`; commands/\*.ts (refused outright): `logFlushCommand` (`log.ts`) | `sharedCommandShell` |
 | `dev-review-loop` | 2026-09-10 | 5 — lib: `loadConfig`, `isAgentVendor`, `devReviewLoop`, `printJson`, `colourLoopLine` | `sharedCommandShell` |
 | `task run` | 2026-09-10 | 2 — lib: `runTask`, `colourLoopLine` | `sharedCommandShell` |
-| `task status` | 2026-09-11 | 2 — lib: `printJson`, `gatherTaskStatusList` | `taskStatus` |
+| `task status` | 2026-09-11 | 3 — lib: `printJson`, `gatherTaskStatusList`, `gatherSingleTaskStatus` | `taskStatus` |
 
 `dispatchRole` retires no row today — its own command (`dispatch`) is new, not a retirement of an existing exempt row. `devReviewLoop` (this task) likewise retires no row today — it is itself a new named chokepoint (`## Effects` intro), and `dev-review-loop`'s own command calls it alongside the same three argv-plumbing calls `dispatch` already carries (`loadConfig`/`isAgentVendor`/`printJson`) — once `sharedCommandShell` absorbs those, this command is left calling only `devReviewLoop`, becoming compliant on its own rather than needing a second named target.
 

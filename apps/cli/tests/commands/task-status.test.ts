@@ -201,10 +201,55 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       state: { kind: 'running', pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' }
     })
   })
+})
 
-  it('refuses with usage on any positional argument — the single-task form lands in Part 2', () => {
+describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () => {
+  it('prints the resume command for a paused task', () => {
+    const { home, env } = setUp()
+    writeOutbox(home, 602, 'pause-state.json', {
+      task: 602,
+      round: 1,
+      head: 'abc123',
+      branch: 'task/demo/2',
+      prNumber: 702,
+      reason: 'escalation',
+      pausedAt: '2026-09-10T00:00:00.000Z'
+    })
+    writeOutbox(home, 602, 'round-1-reviewer.md', 'VERDICT: REQUEST CHANGES\n\nJudged head: abc123\n')
+    writeOutbox(home, 602, 'round-1-security.md', 'VERDICT: PASS\n\nJudged head: abc123\n')
+
+    const r = runCli(['task', 'status', 'demo', '2'], env)
+
+    expect(outputLines(r.stdout)).toEqual([
+      '[demo] 2 — Issue #602 — PR #702 — paused (escalation)',
+      'reviewer (round 1): VERDICT: REQUEST CHANGES',
+      'security (round 1): VERDICT: PASS',
+      'Resume with: vinaya dev-review-loop --resume 702'
+    ])
+    expect(r.status).toBe(0)
+  })
+
+  it('prints no resume line for a published task', () => {
+    const { home, env } = setUp()
+    writeOutbox(home, 603, 'effect-1-reviewer-verdict.json', { effectId: 'a', status: 'posted' })
+    writeOutbox(home, 603, 'effect-1-security-verdict.json', { effectId: 'b', status: 'posted' })
+
+    const r = runCli(['task', 'status', 'demo', '3'], env)
+
+    expect(outputLines(r.stdout)).toEqual(['[demo] 3 — Issue #603 — PR #703 — published'])
+    expect(r.status).toBe(0)
+  })
+
+  it('refuses naming the task when it is not an open task Issue', () => {
     const { env } = setUp()
-    const r = runCli(['task', 'status', 'demo', '1'], env)
+    const r = runCli(['task', 'status', 'demo', '99'], env)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('task 99 in tranche `demo` is not an open task Issue')
+  })
+
+  it('refuses with usage on a lone tranche argument', () => {
+    const { env } = setUp()
+    const r = runCli(['task', 'status', 'demo'], env)
     expect(r.status).toBe(2)
     expect(r.stderr).toContain('Usage: vinaya task status')
   })

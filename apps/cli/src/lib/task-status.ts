@@ -216,6 +216,52 @@ export function deriveLoopState(root: string, task: number): TaskLoopState {
   return { kind: 'no_driver' }
 }
 
+/** `vinaya dev-review-loop --resume <pr>` — the exact string `renderPauseComment`/`task run` already print, rendered fresh from the pr number rather than duplicated as a literal in each caller. */
+export function resumeCommandFor(prNumber: number): string {
+  return `vinaya dev-review-loop --resume ${prNumber}`
+}
+
+// --- O2: last round's verdict lines ---------------------------------------
+
+export type RoundVerdictLines = { round: number; reviewer: string | null; security: string | null }
+
+function firstLine(text: string): string {
+  return (text.split('\n')[0] ?? '').trim()
+}
+
+/**
+ * The last round this task's outbox carries a verdict file for —
+ * `round-<n>-reviewer.md` / `round-<n>-security.md`, whichever is highest —
+ * read regardless of whether that round has since published: `publishRound`
+ * only ever reads these files, it never moves or deletes them, so held and
+ * published verdicts are the same file, told apart only by
+ * `deriveLoopState`'s own published/paused reading.
+ */
+export function lastRoundVerdictLines(root: string, task: number): RoundVerdictLines | null {
+  let entries: string[]
+  try {
+    entries = readdirSync(taskOutboxDir(root, task))
+  } catch {
+    return null
+  }
+  let round: number | null = null
+  for (const name of entries) {
+    const m = /^round-(\d+)-(?:reviewer|security)\.md$/.exec(name)
+    if (m) {
+      const n = Number(m[1])
+      if (round === null || n > round) round = n
+    }
+  }
+  if (round === null) return null
+  const reviewerText = readIfExists(join(taskOutboxDir(root, task), `round-${round}-reviewer.md`))
+  const securityText = readIfExists(join(taskOutboxDir(root, task), `round-${round}-security.md`))
+  return {
+    round,
+    reviewer: reviewerText ? firstLine(reviewerText) : null,
+    security: securityText ? firstLine(securityText) : null
+  }
+}
+
 // --- rendering -------------------------------------------------------------
 
 export type TaskStatusRow = {
@@ -263,7 +309,9 @@ export type TaskStatusListRow = { row: TaskStatusRow; line: string }
 /**
  * O1/O3, the entire read for the list form — the ONE function
  * `commands/task-status.ts` calls for it (`apps/cli/specs/surface.md`'s
- * one-command-one-function discipline).
+ * one-command-one-function discipline; every smaller piece above stays
+ * unexported and reachable only from here or `gatherSingleTaskStatus`,
+ * same file, so it costs no extra boundary call there).
  */
 export function gatherTaskStatusList(): TaskStatusListRow[] {
   const allowlist = principalAllowlist()
@@ -273,4 +321,29 @@ export function gatherTaskStatusList(): TaskStatusListRow[] {
     if (row) rows.push({ row, line: renderTaskStatusRow(row) })
   }
   return rows
+}
+
+export type SingleTaskStatus =
+  | { kind: 'not_found' }
+  | { kind: 'no_brief' }
+  | {
+      kind: 'ok'
+      row: TaskStatusRow
+      line: string
+      verdictLines: RoundVerdictLines | null
+      resumeCommand: string | null
+    }
+
+/** O2's entire read for the single-task form — the ONE function `commands/task-status.ts` calls for it, same discipline as `gatherTaskStatusList`. */
+export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskStatus {
+  const ref = listOpenTaskIssues().find((r) => r.tranche === tranche && r.id === id)
+  if (!ref) return { kind: 'not_found' }
+
+  const row = buildRow(ref, principalAllowlist())
+  if (!row) return { kind: 'no_brief' }
+
+  const root = outboxRoot()
+  const verdictLines = lastRoundVerdictLines(root, ref.issue)
+  const resumeCommand = row.state.kind === 'paused' && row.pr ? resumeCommandFor(row.pr.number) : null
+  return { kind: 'ok', row, line: renderTaskStatusRow(row), verdictLines, resumeCommand }
 }
