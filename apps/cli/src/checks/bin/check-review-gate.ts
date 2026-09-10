@@ -65,12 +65,12 @@ import { execFileSync } from 'node:child_process'
 import {
   checkReviewGate,
   extractIssue,
-  hasObjectivesHeading,
   isIssueNotFoundError,
   isWaiverLabelActorVerified,
   OBJECTIVES_SINCE_ISSUE,
   objectivesOf,
   objectivesVersion,
+  resolveObjectivesSource,
   WAIVER_LABEL_REVIEW
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
@@ -167,23 +167,22 @@ function fetchIssueBodyForObjectives(issueNumber: number): string {
  */
 function resolveObjectivesVersion(pr: PrView): string | null {
   const { issue } = extractIssue(pr.body)
+  const source = resolveObjectivesSource(pr.body, issue, OBJECTIVES_SINCE_ISSUE)
 
-  // Checked first and unconditionally, exactly where `resolveObjectivesForPr`
-  // checks it: a pre-cutover Issue skips before ever considering the body.
-  if (issue !== null && issue < OBJECTIVES_SINCE_ISSUE) return null
+  if (source.kind === 'none') return null
 
-  if (issue !== null) {
+  if (source.kind === 'issue') {
     let issueBody: string
     try {
-      issueBody = fetchIssueBodyForObjectives(issue)
+      issueBody = fetchIssueBodyForObjectives(source.issue)
     } catch (err) {
       if (isIssueNotFoundError(err)) {
         emitCheckError({
           schema: CHECK_SCHEMA_VERSION,
           check: CHECK_NAME,
           severity: 'error',
-          message: `review-gate severity:infra — Issue #${issue} does not resolve via \`gh issue view\` — cannot verify the objectives-version binding for a PR whose linked Issue is at/above the objectives cutover.`,
-          agent_recovery_prompt: `Restore Issue #${issue}, fix \`Closes #N\` to name a real Issue, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya check review-gate\`.`
+          message: `review-gate severity:infra — Issue #${source.issue} does not resolve via \`gh issue view\` — cannot verify the objectives-version binding for a PR whose linked Issue is at/above the objectives cutover.`,
+          agent_recovery_prompt: `Restore Issue #${source.issue}, fix \`Closes #N\` to name a real Issue, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya check review-gate\`.`
         })
         process.exit(1)
       }
@@ -191,7 +190,7 @@ function resolveObjectivesVersion(pr: PrView): string | null {
         schema: CHECK_SCHEMA_VERSION,
         check: CHECK_NAME,
         severity: 'error',
-        message: `review-gate severity:infra — could not fetch Issue #${issue}'s body via \`gh issue view\` to resolve its objectives version: ${(err as Error).message}`,
+        message: `review-gate severity:infra — could not fetch Issue #${source.issue}'s body via \`gh issue view\` to resolve its objectives version: ${(err as Error).message}`,
         agent_recovery_prompt:
           'Confirm `gh auth status` passes and the Issue number is correct, then re-run `vinaya check review-gate`.'
       })
@@ -203,31 +202,28 @@ function resolveObjectivesVersion(pr: PrView): string | null {
         schema: CHECK_SCHEMA_VERSION,
         check: CHECK_NAME,
         severity: 'error',
-        message: `review-gate severity:infra — Issue #${issue}'s \`## Objectives\` section does not parse (${parsed.errors.join('; ')}) — cannot verify the objectives-version binding.`,
-        agent_recovery_prompt: `Fix Issue #${issue}'s \`## Objectives\` section, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya check review-gate\`.`
+        message: `review-gate severity:infra — Issue #${source.issue}'s \`## Objectives\` section does not parse (${parsed.errors.join('; ')}) — cannot verify the objectives-version binding.`,
+        agent_recovery_prompt: `Fix Issue #${source.issue}'s \`## Objectives\` section, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya check review-gate\`.`
       })
       process.exit(1)
     }
     return objectivesVersion(parsed.objectives)
   }
 
-  if (hasObjectivesHeading(pr.body)) {
-    const own = objectivesOf(pr.body)
-    if (!own.ok) {
-      emitCheckError({
-        schema: CHECK_SCHEMA_VERSION,
-        check: CHECK_NAME,
-        severity: 'error',
-        message: `review-gate severity:infra — this PR body's own \`## Objectives\` section does not parse (${own.errors.join('; ')}) — cannot verify the objectives-version binding.`,
-        agent_recovery_prompt:
-          "Fix the PR body's `## Objectives` section, or have a principal apply the `vinaya/waiver:review` label, then re-run `vinaya check review-gate`."
-      })
-      process.exit(1)
-    }
-    return objectivesVersion(own.objectives)
+  // source.kind === 'body'
+  const own = objectivesOf(pr.body)
+  if (!own.ok) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `review-gate severity:infra — this PR body's own \`## Objectives\` section does not parse (${own.errors.join('; ')}) — cannot verify the objectives-version binding.`,
+      agent_recovery_prompt:
+        "Fix the PR body's `## Objectives` section, or have a principal apply the `vinaya/waiver:review` label, then re-run `vinaya check review-gate`."
+    })
+    process.exit(1)
   }
-
-  return null
+  return objectivesVersion(own.objectives)
 }
 
 function shaFromLsRemote(branch: string): string | null {
