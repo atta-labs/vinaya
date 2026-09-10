@@ -82,7 +82,12 @@ describe('runTask — O1: fresh task, one developer started', () => {
         prepareTask: async (input) => {
           calls.push('prepareTask')
           expect(input).toEqual({ tranche: 'task-run-v1', n: 2 })
-          return { issue: 480, brief: 'brief text', commentUrl: 'https://github.com/x/y/issues/480#issuecomment-1' }
+          return {
+            issue: 480,
+            brief: 'brief text',
+            commentUrl: 'https://github.com/x/y/issues/480#issuecomment-1',
+            version: 1
+          }
         },
         developerBranchFor: (issueNumber) => {
           calls.push('developerBranchFor')
@@ -113,7 +118,7 @@ describe('runTask — O1: fresh task, one developer started', () => {
       deps({
         prepareTask: async (input) => {
           sawInput = input
-          return { issue: 1, brief: '', commentUrl: '' }
+          return { issue: 1, brief: '', commentUrl: '', version: 1 }
         },
         developerBranchFor: () => 'task/t/1',
         findOpenPrForBranch: () => null,
@@ -128,7 +133,7 @@ describe('runTask — O1: fresh task, one developer started', () => {
     const result = await runTask(
       { tranche: 't', n: 1, agent: 'gemini' },
       deps({
-        prepareTask: async () => ({ issue: 1, brief: '', commentUrl: '' }),
+        prepareTask: async () => ({ issue: 1, brief: '', commentUrl: '', version: 1 }),
         developerBranchFor: () => 'task/t/1',
         findOpenPrForBranch: () => null,
         devReviewLoop: async () => pauseResult
@@ -141,7 +146,7 @@ describe('runTask — O1: fresh task, one developer started', () => {
     const result = await runTask(
       { tranche: 't', n: 1, agent: 'claude' },
       deps({
-        prepareTask: async () => ({ issue: 1, brief: '', commentUrl: '' }),
+        prepareTask: async () => ({ issue: 1, brief: '', commentUrl: '', version: 1 }),
         developerBranchFor: () => 'task/t/1',
         findOpenPrForBranch: () => null,
         devReviewLoop: async () => PUBLISH_RESULT,
@@ -155,7 +160,7 @@ describe('runTask — O1: fresh task, one developer started', () => {
     const result = await runTask(
       { tranche: 't', n: 1, agent: 'claude' },
       deps({
-        prepareTask: async () => ({ issue: 1, brief: '', commentUrl: '' }),
+        prepareTask: async () => ({ issue: 1, brief: '', commentUrl: '', version: 1 }),
         developerBranchFor: () => 'task/t/1',
         findOpenPrForBranch: () => null,
         devReviewLoop: async () => PUBLISH_RESULT,
@@ -257,7 +262,7 @@ describe('runTask — O3: an open developer pull request refuses a second start'
       runTask(
         { tranche: 'task-run-v1', n: 2, agent: 'claude' },
         deps({
-          prepareTask: async () => ({ issue: 480, brief: '', commentUrl: '' }),
+          prepareTask: async () => ({ issue: 480, brief: '', commentUrl: '', version: 1 }),
           developerBranchFor: () => 'task/task-run-v1/2',
           findOpenPrForBranch: (branch) => {
             expect(branch).toBe('task/task-run-v1/2')
@@ -278,7 +283,7 @@ describe('runTask — O3: an open developer pull request refuses a second start'
       runTask(
         { tranche: 'task-run-v1', n: 2, agent: 'claude' },
         deps({
-          prepareTask: async () => ({ issue: 480, brief: '', commentUrl: '' }),
+          prepareTask: async () => ({ issue: 480, brief: '', commentUrl: '', version: 1 }),
           developerBranchFor: () => 'task/task-run-v1/2',
           findOpenPrForBranch: () => ({ number: 501, branch: 'task/task-run-v1/2' })
         })
