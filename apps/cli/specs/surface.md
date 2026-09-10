@@ -166,6 +166,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `checkPartsCiteDefinedObjectives` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkProjectsRegistered` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkRationaleNamesDocs` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkRationaleSurfaceCoverage` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkSurfaceExcludesBoundDoc` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkSurfaceGlobsResolve` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkSurfaceScope` | function | `packages/aeg-core/src/issue-validation.ts` |
@@ -307,7 +308,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `projectsFromBody` | function | `packages/aeg-forge-state/src/list-tasks.ts` |
 | `mapForgeFacts` | function | `packages/aeg-forge-state/src/map-forge-facts.ts` |
 
-(269 exports.)
+(270 exports.)
 
 ## Effects — `apps/cli/src/lib` public exports
 

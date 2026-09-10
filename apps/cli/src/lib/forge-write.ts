@@ -44,6 +44,7 @@ import {
   checkPrincipalPlaceholder,
   checkProjectField,
   checkRationaleNamesDocs,
+  checkRationaleSurfaceCoverage,
   checkStopConditions,
   checkSurfaceExcludesBoundDoc,
   checkSurfaceGlobsResolve,
@@ -710,7 +711,9 @@ const ISSUE_CONTENT_RECOVERY = {
   docsWithinSurface:
     'Move the named doc pointer to a path `## Surface`\'s `in:` globs actually cover (never widen the surface just to fit the pointer — that renders an unusable brief), or drop it from "Docs to keep coherent" if this task does not really keep it coherent, then re-run `{cmd}`.',
   surfaceExcludesBoundDoc:
-    'Either move the named `out:` glob so it no longer covers the bound document, or narrow the `in:` glob so it no longer reaches the doc-owners binding — the Issue cannot declare both at once. Then re-run `{cmd}`.'
+    'Either move the named `out:` glob so it no longer covers the bound document, or narrow the `in:` glob so it no longer reaches the doc-owners binding — the Issue cannot declare both at once. Then re-run `{cmd}`.',
+  rationaleSurfaceCoverage:
+    'Widen the named `## Surface` `in:` glob to cover the Boundary path (nearest entry named above), or correct the path if it was mistyped, then re-run `{cmd}`.'
 } as const
 
 export type IssueContentInput = {
@@ -745,7 +748,8 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [checkSurfaceGlobsResolve(input.body, input.resolvesToFile).errors, 'surfaceGlobsResolve'],
     [checkPartsCiteDefinedObjectives(input.body).errors, 'partsCiteObjectives'],
     [checkDocsWithinSurface(input.body, input.issueNumber).errors, 'docsWithinSurface'],
-    [checkSurfaceExcludesBoundDoc(input.body, input.docOwnersContent).errors, 'surfaceExcludesBoundDoc']
+    [checkSurfaceExcludesBoundDoc(input.body, input.docOwnersContent).errors, 'surfaceExcludesBoundDoc'],
+    [checkRationaleSurfaceCoverage(input.body, input.issueNumber).errors, 'rationaleSurfaceCoverage']
   ]
   const errors: CheckError[] = []
   for (const [messages, kind] of findings) {

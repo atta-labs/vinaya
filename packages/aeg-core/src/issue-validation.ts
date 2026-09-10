@@ -1216,6 +1216,86 @@ export function checkDocsWithinSurface(body: string, issueNumber: number | null)
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
 
+/** A backticked repo-path token — at least two `/`-separated segments, so a bare identifier or filename in backticks (`` `log()` ``, `` `foo.ts` ``) never matches. Never a URL (filtered by the caller). */
+const RATIONALE_PATH_RE_GLOBAL = /`([\w.@-]+(?:\/[\w.@-]+)+)`/g
+
+/** How many leading `/`-separated segments two paths/globs share — the "nearest" ranking O4's message uses. A trailing `/**`/`/*` is stripped from the glob side first so `packages/aeg-core/**` compares as `packages/aeg-core`. */
+function sharedLeadingSegments(path: string, glob: string): number {
+  const pathSegs = path.split('/')
+  const globSegs = glob.replace(/\/\*\*?$/, '').split('/')
+  let n = 0
+  while (n < pathSegs.length && n < globSegs.length && pathSegs[n] === globSegs[n]) n++
+  return n
+}
+
+/** The `in:` glob sharing the most leading path segments with `path` — ties broken by first occurrence. `inGlobs` is never empty when called (a well-formed `## Surface` always parses at least one `in:` glob). */
+function nearestInGlob(path: string, inGlobs: string[]): string {
+  let best = inGlobs[0] as string
+  let bestScore = -1
+  for (const glob of inGlobs) {
+    const score = sharedLeadingSegments(path, glob)
+    if (score > bestScore) {
+      bestScore = score
+      best = glob
+    }
+  }
+  return best
+}
+
+/**
+ * **O4 (task-run-v1 task 11) — a Boundary path must fall inside the task's
+ * own declared Surface.** The Boundary field is where a Planner names what a
+ * task touches (and, in the same breath, what it deliberately excludes —
+ * `checkBlastRadiusScope`'s own doc comment records Boundary prose naming a
+ * path precisely IN ORDER TO EXCLUDE it). A path Boundary names as touched
+ * that no `in:` glob covers is a rationale/Surface disagreement the
+ * Developer would otherwise discover only after Step 0; naming the nearest
+ * `in:` entry (`nearestInGlob`) makes the fix — widen that glob, or correct
+ * the path — obvious without a second round trip.
+ *
+ * A path covered by `out:` is not flagged: Boundary naming a path to
+ * disclaim it (the negation case above) is legitimate and already accounted
+ * for by the Surface's own `out:` declaration — refusing it here would
+ * misread a negation as an omission, the exact failure mode
+ * `checkBlastRadiusScope`'s O4 (a different, file-scoped check) moved off
+ * prose-scanning to avoid.
+ *
+ * Scoped to the Boundary field only, not the whole Planner's rationale
+ * section: "Docs to keep coherent"/"Traps to avoid" have their own,
+ * deliberately narrower doc-pointer check (`checkDocsWithinSurface`, above)
+ * that stopped enforcing `in:`-coverage for doc pointers specifically,
+ * because nothing at PR time enforces it either and doing so produced an
+ * unusably over-wide brief (see that function's own doc comment). Reusing
+ * this net over those fields would silently re-introduce the regression that
+ * decision undid; Boundary is where "what this task touches" is actually
+ * declared.
+ *
+ * At or above `BRIEF_SECTIONS_SINCE_ISSUE` only — below it an Issue
+ * legitimately carries no `## Surface` to compare against.
+ */
+export function checkRationaleSurfaceCoverage(body: string, issueNumber: number | null): IssueSectionResult {
+  if (issueNumber !== null && issueNumber < BRIEF_SECTIONS_SINCE_ISSUE) return { status: 'pass', errors: [] }
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return { status: 'pass', errors: [] }
+
+  const text = PATH_TEXT(body)
+  const scope = rationaleFieldText(text, 'Boundary')
+  const paths = [...new Set([...scope.matchAll(RATIONALE_PATH_RE_GLOBAL)].map((m) => m[1] as string))].filter(
+    (p) => !/^https?:\/\//i.test(p)
+  )
+
+  const errors: string[] = []
+  for (const path of paths) {
+    if (surface.value.in.some((g) => globCoversPath(g, path))) continue
+    if (surface.value.out.some((g) => globCoversPath(g, path))) continue
+    const nearest = nearestInGlob(path, surface.value.in)
+    errors.push(
+      `issue-validation Boundary: \`${path}\` is named in the Boundary rationale, but no \`## Surface\` \`in:\` glob covers it — nearest is \`${nearest}\`. Widen the Surface's \`in:\` list to cover it, or correct the path if it was mistyped.`
+    )
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
 /**
  * **O1/O2 — a task Issue's `## Surface` `out:` list must not exclude a
  * document `.vinaya/doc-owners` binds to a path the same Issue's `in:` list

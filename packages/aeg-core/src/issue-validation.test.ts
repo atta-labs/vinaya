@@ -16,6 +16,7 @@ import {
   checkPartsCiteDefinedObjectives,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
+  checkRationaleSurfaceCoverage,
   checkSurfaceExcludesBoundDoc,
   checkSurfaceGlobsResolve,
   checkSurfaceScope,
@@ -1166,6 +1167,59 @@ describe('checkDocsWithinSurface (O6)', () => {
   it('passes trivially when `## Surface` does not parse — reported elsewhere', () => {
     const body = '**Docs to keep coherent** — Update `apps/cli/specs/surface.md`.\n'
     expect(checkDocsWithinSurface(body, 500).status).toBe('pass')
+  })
+})
+
+describe('checkRationaleSurfaceCoverage (task-run-v1 11, O4)', () => {
+  const surface = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n'
+
+  it('passes when the Boundary path falls inside an `in:` glob', () => {
+    const body = `${surface}\n**Boundary** — Edits \`apps/cli/src/lib/forge-write.ts\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('fails, naming the path and the nearest `in:` entry, when no `in:` glob covers it', () => {
+    const body = `${surface}\n**Boundary** — Edits \`packages/aeg-core/src/issue-validation.ts\`.\n`
+    const r = checkRationaleSurfaceCoverage(body, 500)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/aeg-core\/src\/issue-validation\.ts/)
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/lib/)
+  })
+
+  it('picks the `in:` glob sharing the most leading path segments as "nearest"', () => {
+    const body =
+      '## Surface\n\nin: apps/cli/src/lib, apps/cli/src/commands\nout: —\n\n' +
+      '**Boundary** — Edits `apps/cli/src/checks/edge-resolve.ts`.\n'
+    const r = checkRationaleSurfaceCoverage(body, 500)
+    expect(r.status).toBe('fail')
+    // Both candidates share `apps/cli/src`; neither shares `checks` — first
+    // occurrence wins the tie, matching `nearestInGlob`'s own tie-break rule.
+    expect(r.errors[0]).toMatch(/nearest is `apps\/cli\/src\/lib`/)
+  })
+
+  it('passes when Boundary names a path to EXCLUDE it — covered by `out:`, not a gap', () => {
+    const body = `${surface}\n**Boundary** — Does NOT touch \`apps/cli/src/commands/task.ts\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('does not scan "Docs to keep coherent" — that field has its own, deliberately narrower check', () => {
+    const body = `${surface}\n**Docs to keep coherent** — See \`packages/aeg-core/src/issue-validation.ts\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('passes below the brief-sections cutover — no `## Surface` to compare against', () => {
+    const body = '**Boundary** — Edits `packages/aeg-core/src/issue-validation.ts`.\n'
+    expect(checkRationaleSurfaceCoverage(body, 425).status).toBe('pass')
+  })
+
+  it('passes trivially when `## Surface` does not parse — reported elsewhere', () => {
+    const body = '**Boundary** — Edits `packages/aeg-core/src/issue-validation.ts`.\n'
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('ignores a bare backticked identifier with no `/` — never a path', () => {
+    const body = `${surface}\n**Boundary** — Calls \`renderBrief()\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
   })
 })
 
