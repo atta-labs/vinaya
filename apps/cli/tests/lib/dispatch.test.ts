@@ -958,6 +958,17 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
 
   const ROLES = ['planner', 'developer', 'code-reviewer', 'security', 'principal', 'archivist', 'architect'] as const
 
+  // Built via `new RegExp` rather than a `/\x1b.../` literal — a regex
+  // LITERAL containing a raw control-character escape trips
+  // `lint/suspicious/noControlCharactersInRegex`; a pattern built from a
+  // string at runtime does not, and asserts exactly the same bytes.
+  const ANSI_ESC = '\x1b'
+  const ANSI_CODE_RE = new RegExp(`${ANSI_ESC}\\[\\d+m`)
+  const ANSI_CODE_RE_G = new RegExp(`${ANSI_ESC}\\[\\d+m`, 'g')
+  const ANSI_RESET_STR = `${ANSI_ESC}[0m`
+  const ANSI_RESET_RE_G = new RegExp(`${ANSI_ESC}\\[0m`, 'g')
+  const ANSI_ANY_RE = new RegExp(`${ANSI_ESC}\\[`)
+
   it('colourEnabled is true only on a live TTY with NO_COLOR unset', () => {
     delete process.env.NO_COLOR
     expect(colourEnabled({ isTTY: true })).toBe(true)
@@ -975,15 +986,15 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
       delete process.env.NO_COLOR
       const line = colourAgentLine(role, 'reading the brief', { isTTY: true })
       expect(line).toContain(`[${role}] reading the brief`)
-      expect(line).toMatch(/\x1b\[\d+m/)
-      expect(line.endsWith('\x1b[0m')).toBe(true)
+      expect(line).toMatch(ANSI_CODE_RE)
+      expect(line.endsWith(ANSI_RESET_STR)).toBe(true)
       // Every other role's own line carries a DIFFERENT colour code — the
       // reader is separating roles at a glance, not reading the same code
       // for two different speakers.
       for (const other of ROLES) {
         if (other === role) continue
         const otherLine = colourAgentLine(other, 'reading the brief', { isTTY: true })
-        const code = (s: string) => s.match(/\x1b\[\d+m/)?.[0]
+        const code = (s: string) => s.match(ANSI_CODE_RE)?.[0]
         expect(code(otherLine)).not.toBe(code(line))
       }
     })
@@ -993,12 +1004,12 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
     delete process.env.NO_COLOR
     const plain = colourAgentLine('code-reviewer', 'reading the brief', { isTTY: false })
     expect(plain).toBe('[code-reviewer] reading the brief')
-    expect(plain).not.toMatch(/\x1b\[/)
+    expect(plain).not.toMatch(ANSI_ANY_RE)
 
     process.env.NO_COLOR = '1'
     const noColour = colourAgentLine('code-reviewer', 'reading the brief', { isTTY: true })
     expect(noColour).toBe('[code-reviewer] reading the brief')
-    expect(noColour).not.toMatch(/\x1b\[/)
+    expect(noColour).not.toMatch(ANSI_ANY_RE)
   })
 
   it("colourLoopLine restyles the loop's own already-role-named text without stacking a second prefix", () => {
@@ -1006,10 +1017,10 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
     const text = '[vinaya dispatch abc-123] developer via claude: still running — 60s elapsed (ceiling 14400s)'
     const coloured = colourLoopLine(text, { isTTY: true })
     expect(coloured).toContain(text)
-    expect(coloured).toMatch(/\x1b\[\d+m/)
-    expect(coloured.endsWith('\x1b[0m')).toBe(true)
+    expect(coloured).toMatch(ANSI_CODE_RE)
+    expect(coloured.endsWith(ANSI_RESET_STR)).toBe(true)
     // No `[role]`-shaped prefix ADDED beyond the text's own existing naming.
-    expect(coloured.replace(/\x1b\[\d+m/g, '').replace(/\x1b\[0m/g, '')).toBe(text)
+    expect(coloured.replace(ANSI_CODE_RE_G, '').replace(ANSI_RESET_RE_G, '')).toBe(text)
 
     const plain = colourLoopLine(text, { isTTY: false })
     expect(plain).toBe(text)
@@ -1040,7 +1051,7 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
     // colour is TTY-gated, never the prefix) — and no escape sequence, since
     // `execFileSync`/`spawnSync` pipes are never a live terminal.
     expect(r.stderr).toContain('[developer] hello world')
-    expect(r.stderr).not.toMatch(/\x1b\[/)
+    expect(r.stderr).not.toMatch(ANSI_ANY_RE)
 
     // O2: the lifecycle line keeps its own existing role-naming text, with
     // no second `[developer]` prefix stacked in front of it.
@@ -1056,7 +1067,7 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
     const teeContents = readFileSync(join(teeDir, logs[0] as string), 'utf8')
     expect(teeContents).toContain(rawEvent)
     expect(teeContents).not.toContain('[developer]')
-    expect(teeContents).not.toMatch(/\x1b\[/)
+    expect(teeContents).not.toMatch(ANSI_ANY_RE)
   })
 })
 

@@ -1091,7 +1091,9 @@ export async function dispatchRole(
       writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: ceiling reached — sending SIGTERM`)
       child.kill('SIGTERM')
       killTimer = setTimeout(() => {
-        writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: still alive after SIGTERM — sending SIGKILL`)
+        writeLifecycle(
+          `[vinaya dispatch ${effectId}] ${role} via ${agent}: still alive after SIGTERM — sending SIGKILL`
+        )
         child.kill('SIGKILL')
       }, SIGKILL_GRACE_MS)
     }, timeoutMs)
