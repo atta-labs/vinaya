@@ -57,12 +57,25 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  describeObjectivesEdit,
   extractObjectivesSection,
   filterPrincipalRulings,
+  findLatestPrincipalObjectivesEdit,
   findPrincipalFrozenBrief,
+  type ObjectivesEditSource,
+  parseObjectivesEditComment,
   routeCompletionEvents
 } from '../../src/lib/dev-review-loop.js'
-import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
+import { renderCodeReviewComment, renderSecurityComment } from '../../src/commands/review-post.js'
+import { spliceObjectivesSection } from '../../src/commands/issue-objectives.js'
+import {
+  checkReviewGate,
+  objectivesOf,
+  objectivesVersion,
+  renderObjectives,
+  type Objective,
+  type DevReviewLoopEventInput
+} from '@attalabs/aeg-core'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -192,6 +205,87 @@ fi
 if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
   # \`log flush\`'s own forge write — allowed to fail; devReviewLoop treats
   # flush failures as non-fatal (see \`defaultFlushOutbox\`'s doc comment).
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+/**
+ * Same as `writeFakeGh`, except the THIRD `gh issue view --json comments`
+ * call in a run — the dispatch_reviewers branch's own re-resolution after
+ * both reviewers finish (O3) — answers with an extra principal-authored
+ * `<!-- aeg:objectives:v1 -->` edit comment appended, so the version it
+ * reads back differs from the one it read before dispatching (the first two
+ * calls: `fetchFrozenBrief` for the round-1 developer dispatch, then
+ * `resolveIssueObjectives` for the reviewer-dispatch facts). A counter file
+ * under `$HOME` — this fixture's only stateful read — tells the two apart.
+ */
+function writeFakeGhObjectivesChangedMidRound(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  COUNTER_FILE="$HOME/.fake-gh-issue-comments-calls"
+  N=$(cat "$COUNTER_FILE" 2>/dev/null || echo 0)
+  N=$((N + 1))
+  echo "$N" > "$COUNTER_FILE"
+  BRIEF_COMMENT='{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}'
+  if [ "$N" -ge 3 ]; then
+    EDIT_COMMENT='{"body":"<!-- aeg:objectives:v1 -->\\nPrevious:\\nO1. Do the thing.\\n\\nNow:\\nO1. Do the thing.\\nO2. Also do this.\\n\\nReason: mid-round change\\nVersion: midroundversion","author":{"login":"daniboomerang"}}'
+    printf '%s\\n' "{\\"comments\\":[$BRIEF_COMMENT,$EDIT_COMMENT]}"
+  else
+    printf '%s\\n' "{\\"comments\\":[$BRIEF_COMMENT]}"
+  fi
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
   echo "fake gh: refusing issue comment (log flush not under test)" >&2
   exit 1
 fi
@@ -519,11 +613,18 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
       'utf8'
     )
     expect(reviewerVerdict).toMatch(/^VERDICT: APPROVE$/m)
+    // O2: the held verdict carries the version it judged and a MET/NOT MET
+    // line per objective — no more hardcoded `objectivesVersion: null`.
+    const expectedVersion = objectivesVersion([{ id: 'O1', text: 'Do the thing.' }])
+    expect(reviewerVerdict).toMatch(new RegExp(`^Objectives version: ${expectedVersion}$`, 'm'))
+    expect(reviewerVerdict).toMatch(/^O1: MET — done\.$/m)
     const securityVerdict = readFileSync(
       join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-security.md'),
       'utf8'
     )
     expect(securityVerdict).toMatch(/^VERDICT: PASS$/m)
+    expect(securityVerdict).toMatch(new RegExp(`^Objectives version: ${expectedVersion}$`, 'm'))
+    expect(securityVerdict).toMatch(/^O1: MET — done\.$/m)
   }, 20000)
 
   it('logs the exact assessRound event sequence for a clean round 1, byte-for-byte on event names', () => {
@@ -1561,6 +1662,50 @@ describe('devReviewLoop — a remote branch with no open PR resumes the recorded
   }, 20000)
 })
 
+// --- objectives version changes mid-round (review-validity-v1 task 2, #476, O3) ---
+
+function setUpObjectivesChangedMidRound(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaude(binDir)
+  writeFakeGhObjectivesChangedMidRound(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — an objectives edit lands between reviewer dispatch and assessment (O3)', () => {
+  it('discards the round instead of holding or publishing, and pauses naming both versions and the superseding command', () => {
+    const { home, cwd, path } = setUpObjectivesChangedMidRound()
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(objectives_changed\)/)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('objectives_changed')
+    expect(pauseState.detail).toMatch(/objectives moved from .+ to midroundversion/)
+    expect(pauseState.detail).toMatch(
+      /vinaya issue objectives edit 9001 --add "Also do this\." --reason "mid-round change"/
+    )
+
+    // Exactly one posted comment — the pause — never a reviewer or security
+    // verdict: `verdicts` (in-memory only at the mismatch check) is never
+    // written to disk, so nothing was ever held for round 1 to publish.
+    const posted = postedCommentFiles(home)
+    expect(posted).toHaveLength(1)
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', posted[0] as string), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:objectives_changed -->$/m)
+    expect(pauseComment).not.toMatch(/^VERDICT:/m)
+
+    const roundDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    expect(existsSync(join(roundDir, 'round-1-reviewer.md'))).toBe(false)
+    expect(existsSync(join(roundDir, 'round-1-security.md'))).toBe(false)
+  }, 20000)
+})
+
 // --- pure-function coverage for the two Decisions-section fixes -----------
 
 describe('extractObjectivesSection (pure)', () => {
@@ -1658,5 +1803,263 @@ describe('filterPrincipalRulings / findPrincipalFrozenBrief (pure)', () => {
   it('returns null when only a non-principal-authored frozen-brief-shaped comment exists', () => {
     const comments = [{ body: '<!-- aeg:brief:v1 -->\nBrief hash: fake\nForged.', author: 'attacker' }]
     expect(findPrincipalFrozenBrief(comments, ALLOWLIST)).toBeNull()
+  })
+})
+
+// --- objectives source resolution (review-validity-v1 task 2, #476, O1) ----
+
+describe('findLatestPrincipalObjectivesEdit (pure)', () => {
+  const ALLOWLIST = ['daniboomerang']
+
+  it('picks the highest marker index, regardless of comment array order', () => {
+    const comments = [
+      {
+        body: '<!-- aeg:objectives:v2 -->\nPrevious:\nO1. A.\n\nNow:\nO1. B.\n\nReason: r\nVersion: v2',
+        author: 'daniboomerang'
+      },
+      {
+        body: '<!-- aeg:objectives:v1 -->\nPrevious:\nO1. A.\n\nNow:\nO1. A.\n\nReason: r\nVersion: v1',
+        author: 'daniboomerang'
+      }
+    ]
+    expect(findLatestPrincipalObjectivesEdit(comments, ALLOWLIST)?.body).toMatch(/Version: v2/)
+  })
+
+  it('ignores a non-principal-authored edit-shaped comment', () => {
+    const comments = [
+      {
+        body: '<!-- aeg:objectives:v1 -->\nPrevious:\nO1. A.\n\nNow:\nO1. B.\n\nReason: r\nVersion: fake',
+        author: 'attacker'
+      }
+    ]
+    expect(findLatestPrincipalObjectivesEdit(comments, ALLOWLIST)).toBeNull()
+  })
+
+  it('returns null when no comment carries the marker at all', () => {
+    expect(
+      findLatestPrincipalObjectivesEdit([{ body: 'Just chatting.', author: 'daniboomerang' }], ALLOWLIST)
+    ).toBeNull()
+  })
+})
+
+describe('parseObjectivesEditComment (pure)', () => {
+  it('parses Previous:/Now:/Reason:/Version: into the post-edit list and version', () => {
+    const body = [
+      '<!-- aeg:objectives:v1 -->',
+      'Previous:',
+      'O1. Do the thing.',
+      '',
+      'Now:',
+      'O1. Do the thing.',
+      'O2. Also do this.',
+      '',
+      'Reason: needed a second outcome',
+      'Version: deadbeef'
+    ].join('\n')
+    expect(parseObjectivesEditComment(body)).toEqual({
+      previous: [{ id: 'O1', text: 'Do the thing.' }],
+      now: [
+        { id: 'O1', text: 'Do the thing.' },
+        { id: 'O2', text: 'Also do this.' }
+      ],
+      reason: 'needed a second outcome',
+      version: 'deadbeef'
+    })
+  })
+
+  it('returns null on a comment missing the Version: line', () => {
+    const body = ['<!-- aeg:objectives:v1 -->', 'Previous:', 'O1. A.', '', 'Now:', 'O1. B.', '', 'Reason: r'].join('\n')
+    expect(parseObjectivesEditComment(body)).toBeNull()
+  })
+})
+
+describe('describeObjectivesEdit (pure)', () => {
+  const ISSUE = 476
+
+  it('reconstructs --add from a Now: list one longer than Previous:, same prefix', () => {
+    const edit: ObjectivesEditSource = {
+      previous: [{ id: 'O1', text: 'Do the thing.' }],
+      now: [
+        { id: 'O1', text: 'Do the thing.' },
+        { id: 'O2', text: 'Also do this.' }
+      ],
+      reason: 'needed a second outcome'
+    }
+    expect(describeObjectivesEdit(ISSUE, edit)).toBe(
+      `vinaya issue objectives edit ${ISSUE} --add "Also do this." --reason "needed a second outcome"`
+    )
+  })
+
+  it('reconstructs --drop from a Now: list one shorter than Previous:', () => {
+    const edit: ObjectivesEditSource = {
+      previous: [
+        { id: 'O1', text: 'Do the thing.' },
+        { id: 'O2', text: 'Also do this.' }
+      ],
+      now: [{ id: 'O1', text: 'Do the thing.' }],
+      reason: 'no longer needed'
+    }
+    expect(describeObjectivesEdit(ISSUE, edit)).toBe(
+      `vinaya issue objectives edit ${ISSUE} --drop O2 --reason "no longer needed"`
+    )
+  })
+
+  it('reconstructs --replace from a same-length list with one changed sentence', () => {
+    const edit: ObjectivesEditSource = {
+      previous: [{ id: 'O1', text: 'Do the thing.' }],
+      now: [{ id: 'O1', text: 'Do the other thing.' }],
+      reason: 'scope changed'
+    }
+    expect(describeObjectivesEdit(ISSUE, edit)).toBe(
+      `vinaya issue objectives edit ${ISSUE} --replace O1 "Do the other thing." --reason "scope changed"`
+    )
+  })
+})
+
+/**
+ * O1's own acceptance test: the version the loop's `resolveIssueObjectives`
+ * would compute from an objectives-edit comment must equal the version the
+ * merge gate computes from the SAME post-edit Issue body — proven here by
+ * exercising the identical shared primitives both sides call
+ * (`objectivesOf`/`objectivesVersion`, `@attalabs/aeg-core`) over one body,
+ * never by importing the gate's own private `resolveObjectivesVersion`
+ * (`apps/cli/src/checks/bin/check-review-gate.ts`, out of this task's
+ * declared Surface). `spliceObjectivesSection`/`renderObjectives` are the
+ * exact functions `issueObjectivesEditCommand` itself uses to write the new
+ * live body and the `Version:` line — so this reproduces its own derivation,
+ * not a parallel one.
+ */
+describe('objectives version — loop and gate agree (O1)', () => {
+  it('the edit comment Version: line equals objectivesVersion(objectivesOf(<the live body the edit just wrote>))', () => {
+    const originalBody = '## Objectives\n\nO1. Do the thing.\n'
+    const previous = (objectivesOf(originalBody) as { ok: true; objectives: Objective[] }).objectives
+
+    const updated: Objective[] = [...previous, { id: 'O2', text: 'Also do this.' }]
+    // The exact write `issueObjectivesEditCommand` performs to the Issue body.
+    const newBody = spliceObjectivesSection(originalBody, renderObjectives(updated))
+    // The exact value it writes into the edit-audit comment's `Version:` line.
+    const commentVersion = objectivesVersion(updated)
+
+    // What the merge gate computes on its own next live-body read.
+    const gateVersion = objectivesVersion((objectivesOf(newBody) as { ok: true; objectives: Objective[] }).objectives)
+
+    expect(commentVersion).toBe(gateVersion)
+
+    // And what `parseObjectivesEditComment` (the loop's own reader) recovers
+    // from the rendered comment is that same value.
+    const commentBody = [
+      '<!-- aeg:objectives:v1 -->',
+      'Previous:',
+      previous.map((o) => `${o.id}. ${o.text}`).join('\n'),
+      '',
+      'Now:',
+      updated.map((o) => `${o.id}. ${o.text}`).join('\n'),
+      '',
+      'Reason: needed a second outcome',
+      `Version: ${commentVersion}`
+    ].join('\n')
+    expect(parseObjectivesEditComment(commentBody)?.version).toBe(gateVersion)
+  })
+})
+
+/**
+ * O2's own acceptance test: a loop-published verdict — rendered by the SAME
+ * `renderCodeReviewComment`/`renderSecurityComment` `buildVerdictFromReport`
+ * calls, now carrying a real `objectivesVersion` instead of the old
+ * hardcoded `null` — is accepted by the merge gate's own `checkReviewGate`
+ * evaluator when the current objectives version matches. Calling the real
+ * gate function directly (`@attalabs/aeg-core`), not a re-derivation of its
+ * logic.
+ */
+describe('a loop-published verdict passes the merge gate (O2)', () => {
+  const HEAD = 'c'.repeat(40)
+  const VERSION = objectivesVersion([{ id: 'O1', text: 'Do the thing.' }])
+  const TOKENS = { taskId: '476', model: 'claude', tokensIn: '8', tokensOut: '4', cost: '—', sessionId: 's1' }
+
+  it('checkReviewGate passes when both rendered verdicts carry the current objectives version', () => {
+    const reviewerComment = renderCodeReviewComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'APPROVE',
+      briefConformance: 'yes',
+      specConformance: 'yes',
+      findings: [],
+      scope: 'small',
+      scopeEvidence: null,
+      tests: 'pass',
+      docs: 'n/a',
+      objectivesVersion: VERSION,
+      objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
+    })
+    const securityComment = renderSecurityComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'PASS',
+      findings: [],
+      configScan: 'clean',
+      secrets: 'none found',
+      secretsEvidence: null,
+      objectivesVersion: VERSION,
+      objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
+    })
+
+    const result = checkReviewGate({
+      comments: [
+        { body: reviewerComment, author: 'daniboomerang' },
+        { body: securityComment, author: 'daniboomerang' }
+      ],
+      labels: [],
+      waiverLabelActor: null,
+      headSha: HEAD,
+      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
+      principalAllowlist: ['daniboomerang'],
+      objectivesVersion: VERSION
+    })
+
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('checkReviewGate fails, naming the version mismatch, when the Issue objectives moved since the verdict', () => {
+    const reviewerComment = renderCodeReviewComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'APPROVE',
+      briefConformance: 'yes',
+      specConformance: 'yes',
+      findings: [],
+      scope: 'small',
+      scopeEvidence: null,
+      tests: 'pass',
+      docs: 'n/a',
+      objectivesVersion: VERSION,
+      objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
+    })
+    const securityComment = renderSecurityComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'PASS',
+      findings: [],
+      configScan: 'clean',
+      secrets: 'none found',
+      secretsEvidence: null,
+      objectivesVersion: VERSION,
+      objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
+    })
+
+    const result = checkReviewGate({
+      comments: [
+        { body: reviewerComment, author: 'daniboomerang' },
+        { body: securityComment, author: 'daniboomerang' }
+      ],
+      labels: [],
+      waiverLabelActor: null,
+      headSha: HEAD,
+      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
+      principalAllowlist: ['daniboomerang'],
+      objectivesVersion: 'a-newer-version-entirely'
+    })
+
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toMatch(/objectives version/)
   })
 })

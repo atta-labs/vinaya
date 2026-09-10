@@ -396,24 +396,27 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `DEV_REVIEW_LOOP_AGENTS` | const | `apps/cli/src/lib/dev-review-loop.ts` |
 | `developerBranchFor` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `devReviewLoop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `describeObjectivesEdit` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `DevReviewLoopResumeError` | class | `apps/cli/src/lib/dev-review-loop.ts` |
 | `extractObjectivesSection` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchCiConclusion` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchFailingCheckNames` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchIssueObjectives` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchIssueTitle` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `filterPrincipalRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `findLatestPrincipalObjectivesEdit` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `findOpenPrForBranch` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `findPrincipalFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `lintReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `outboxRoot` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `parseConfidenceReply` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `parseObjectivesEditComment` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `publishRound` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `renderPauseComment` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `renderReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `resolveHead` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `resolveIssueObjectives` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `ReviewerInfrastructureFailure` | class | `apps/cli/src/lib/dev-review-loop.ts` |
 | `routeCompletionEvents` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `taskFromPrBody` | function | `apps/cli/src/lib/dev-review-loop.ts` |
@@ -430,6 +433,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `dispatchTask` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `DispatchTaskError` | class | `apps/cli/src/lib/dispatch-task.ts` |
 | `extractAgentClass` | function | `apps/cli/src/lib/dispatch-task.ts` |
+| `prepareTask` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `resolveModelFromRationale` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `AGENT_CLASS_VALUES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `AGENT_VENDOR_NAMES` | const | `apps/cli/src/lib/dispatch.ts` |
@@ -545,7 +549,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 
 (226 exports.)
 
-## Commands — `apps/cli/src/commands` (42 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
+## Commands — `apps/cli/src/commands` (43 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
 | Command | File | Entry function | In-scope calls today | Status | One lib function (compliant) / retirement target (exempt) |
 |---|---|---|---|---|---|
@@ -560,6 +564,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `new role` | `new-role.ts` | `newRoleCommand` | 0 | compliant | — (self-contained) |
 | `brief render` | `brief.ts` | `briefRenderCommand` | 1 | compliant | `assembleAndRenderBrief` |
 | `task dispatch` | `task.ts` | `taskDispatchCommand` | 1 | compliant | `dispatchTask` |
+| `task brief` | `task.ts` | `taskBriefCommand` | 1 | compliant | `prepareTask` |
 | `pr create` | `pr.ts` | `prCreateCommand` | 9 | exempt — see below | forgeWrite (target) |
 | `pr edit` | `pr.ts` | `prEditCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `pr report` | `pr-report.ts` | `prReportCommand` | 3 | exempt — see below | collectTokens (target) |
@@ -592,7 +597,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `dispatch` | `dispatch.ts` | `dispatchCommand` | 5 | exempt — see below | sharedCommandShell (target) |
 | `dev-review-loop` | `dev-review-loop.ts` | `devReviewLoopCommand` | 5 | exempt — see below | sharedCommandShell (target) |
 
-(42 rows — all 42 shipped `COMMANDS` entries. Compliant: 11. Exempt: 31.)
+(43 rows — all 43 shipped `COMMANDS` entries. Compliant: 12. Exempt: 31.)
 
 `review post` refuses a `doc-correctness` finding whose description carries no `Search:` pattern, or whose pattern carries a path filter — a content rule on the existing description field, not a change to the `|`-delimited grammar. The `review post` and `pr rule` source comments describe the verdict-extraction read window, so they carry `AEG:CLAIM` markers pinning the code that proves each claim; `verify-docs` C8 verifies them, and a change to that window fails the check in every file stating it rather than only where a reviewer happened to look. See `aeg-root/documentation-coherence.md`.
 
@@ -607,7 +612,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `check` | 2026-09-05 | 3 — lib: `loadConfigChecked`, `configPath`, `printJson` | `runChecks` |
 | `pr create` | 2026-09-05 | 9 — lib (9): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `loadConfigChecked`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
 | `pr edit` | 2026-09-05 | 8 — lib (8): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
-| `pr report` | 2026-09-05 | 3 — lib: `summariseNumstat`; commands/\*.ts (refused outright): `realDeps`, `meteringRefusalMessage` (`tokens.ts`) | `collectTokens` |
+| `pr report` | 2026-09-10 | 3 — lib: `summariseNumstat`; commands/\*.ts (refused outright): `realDeps`, `meteringRefusalMessage` (`tokens.ts`) | `collectTokens` |
 | `pr verify-evidence` | 2026-09-05 | 3 — lib: none; commands/\*.ts (refused outright): `buildReport` (`pr-report.ts`), `compareEvidence`, `renderVerdict` (`pr-verify-evidence-logic.ts`) | `collectTokens` |
 | `pr rule` | 2026-09-05 | 6 — lib (6): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `countMarkerComments`, `postMarkedComment`, `printJson` | `forgeWrite` |
 | `issue create` | 2026-09-05 | 10 — lib (10): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `extractLabels`, `validateTaskIssue`, `printJson`, `ensureTrancheLabelExists`, `runGhWrite`, `resolveMilestoneAttachArgs` | `forgeWrite` |
@@ -644,4 +649,6 @@ Every non-compliant command from the table above, dated, with the count of disti
 `assembleAndRenderBrief`'s own resolved-Issue result field (Issue #447, O1) is a new field on its already-exported return type, not a new function/const/class export — per this file's own rule (`## The rule`), it needs no new row here. `task dispatch` (`taskDispatchCommand`) still calls only `dispatchTask`, unchanged.
 
 `dispatchRole` (Issue #491, role-prefixed and coloured terminal output) gains three exports — `colourEnabled`, `colourAgentLine`, `colourLoopLine`, all listed above — and drops none. Exported so a fixture stream can assert the TTY/`NO_COLOR` predicate and the per-role prefix directly, without spawning a real vendor process. Applied only at the point a line reaches `process.stderr`/`process.stdout` (never where a line is produced), so `openOutputTee`'s own tee and `dispatchRole`'s existing `[vinaya dispatch <id>] …` lifecycle-line text are unaffected by this addition; `dev-review-loop`'s own two `process.stdout.write` calls (`devReviewLoopCommand`) now route their text through `colourLoopLine`, calling only `dispatch.ts`'s already-exported surface — one new in-scope lib call, raising that command's own exemption row from 4 to 5 (both the Commands table and the Exemptions row below, updated together).
+
+`prepareTask` (task-run-v1 task 1, O1) is the preparation half extracted from what used to be all of `dispatchTask`'s body — it retires no row today (`dispatchTask` remains, deprecated, and stays `task dispatch`'s own one lib call, unchanged); it is the one lib function `task brief` (`taskBriefCommand`, this task's O2) calls.
 
