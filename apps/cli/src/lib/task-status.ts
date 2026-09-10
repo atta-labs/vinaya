@@ -7,11 +7,11 @@
  * `ps` scan (Traps to avoid), never a re-parse of posted verdict comments to
  * decide `published` (same).
  *
- * Task 7 (`review-validity-v1`, `#498`, merged as `a52619e9`)'s driver pid
- * record and `#415`'s pause/effect-marker shapes both live as private state
- * in `dev-review-loop.ts` — this file re-reads those exact same on-disk
- * paths and JSON shapes rather than exporting new surface from that file
- * (out of this task's Surface).
+ * The driver pid record (`#498`, merged as `a52619e9`) and the pause/
+ * effect-marker shapes (`#415`) both live as private state in
+ * `dev-review-loop.ts` — this file re-reads those exact same on-disk paths
+ * and JSON shapes rather than exporting new surface from that file (out of
+ * this task's Surface).
  */
 
 import { execFileSync } from 'node:child_process'
@@ -196,8 +196,8 @@ export type TaskLoopState =
 
 /**
  * `pause-state.json` is written on every pause but never cleared on resume
- * (today's outbox shape, ahead of the `control-store-v1` tranche that
- * consolidates it) — so it can still be sitting on disk naming an old round
+ * (today's outbox shape — a future consolidated control store is expected to
+ * change this) — so it can still be sitting on disk naming an old round
  * after that same task later resumed and published cleanly. A published
  * round at or past the paused round means that pause was resumed past;
  * `published` (derived from the effect markers alone) wins over a stale
