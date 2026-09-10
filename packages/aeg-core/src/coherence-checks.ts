@@ -12,6 +12,7 @@ import {
   checkIssueObjectives,
   checkIssueRationale,
   checkProjectsRegistered,
+  checkSurfaceExcludesBoundDoc,
   isTaskIssueLabelSet
 } from './issue-validation'
 import { isPrincipal, PRINCIPAL_ALLOWLIST } from './waiver-label'
@@ -495,6 +496,40 @@ export function checkR1(
         ? `${failures.length} grandfathered task Issue(s) predate this check's grammar (rationale fields and/or the project registry)`
         : undefined
   }
+}
+
+/**
+ * R2: The same `checkSurfaceExcludesBoundDoc` predicate (O1/task-run-v1 9),
+ * run over every open task Issue in an active tranche. This is O2's own
+ * obligation: a task Issue whose `## Surface` `out:` list excludes a
+ * `.vinaya/doc-owners`-bound document its `in:` list otherwise covers must be
+ * reported, not silently left to fail at the Developer's first commit — the
+ * ring-0 gate in `forge-write.ts` catches this at create/edit time going
+ * forward, but an Issue written before this gate shipped, or edited outside
+ * the validated path, needs the ring-1/2 half the way R1 does.
+ * Fail class: `surface-excludes-bound-doc`
+ *
+ * `docOwnersContent`: the caller's own tree read of `.vinaya/doc-owners` — a
+ * repo with no manifest, or one with no binding, leaves this dormant for
+ * every Issue (the predicate itself already returns `pass` in both cases).
+ * One grammar, one parser, same discipline as R1: this function never
+ * re-implements `checkSurfaceExcludesBoundDoc`'s matching.
+ */
+export function checkR2(issuesBySlug: Map<string, ForgeIssue[]>, docOwnersContent: string | null): CheckResult {
+  const failures: CheckFailure[] = []
+  for (const [slug, issues] of issuesBySlug) {
+    for (const issue of issues) {
+      if (!isTaskIssueLabelSet(issue.labels)) continue
+      const errors = checkSurfaceExcludesBoundDoc(issue.body, docOwnersContent).errors
+      if (errors.length === 0) continue
+      failures.push({
+        issue: issue.number,
+        tranche: slug,
+        reason: `Issue #${issue.number} fails the surface/doc-owners gate: ${errors.join(' | ')}`
+      })
+    }
+  }
+  return { check: 'R2', status: failures.length > 0 ? 'fail' : 'pass', failures }
 }
 
 /**

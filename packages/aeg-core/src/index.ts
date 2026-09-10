@@ -130,6 +130,7 @@ export {
   checkL4,
   checkL5,
   checkR1,
+  checkR2,
   checkT1,
   checkT2,
   checkT3,
