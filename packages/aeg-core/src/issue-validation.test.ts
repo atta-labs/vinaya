@@ -19,6 +19,7 @@ import {
   checkRationaleSurfaceCoverage,
   checkSurfaceExcludesBoundDoc,
   checkSurfaceGlobsResolve,
+  checkSurfaceOverlap,
   checkSurfaceScope,
   declaredProjects,
   isTaskIssueBodyShaped,
@@ -28,7 +29,8 @@ import {
   parseIssueStopConditions,
   parseIssueSurface,
   parseIssueTestPlan,
-  type TaskIssueFacts
+  type TaskIssueFacts,
+  type TaskSurfaceFacts
 } from './issue-validation'
 
 // Issue #404's real live body, verbatim (`gh issue view 404 --json body`, dev-review-loop-v1
@@ -749,6 +751,60 @@ describe('checkConflictCompleteness (C, warn-only)', () => {
         SHARED
       )
     ).toEqual([])
+  })
+})
+
+describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
+  const mk = (ref: string, surfaceIn: string[], conflictsWith: string[] = []): TaskSurfaceFacts => ({
+    ref,
+    surfaceIn,
+    conflictsWith
+  })
+
+  it('refuses, naming both overlapping globs and the other task, when two tasks overlap with no Conflicts-with edge', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'])
+    const r = checkSurfaceOverlap(subject, [mk('43', ['packages/aeg-core/src/issue-validation.ts'])])
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/aeg-core\/src\/\*\*/)
+    expect(r.errors[0]).toMatch(/packages\/aeg-core\/src\/issue-validation\.ts/)
+    expect(r.errors[0]).toMatch(/43/)
+  })
+
+  it('passes when both tasks name each other in Conflicts-with', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], ['43'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'], ['42'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('passes when only ONE side declares the edge — same one-sided-is-enough rule `checkConflictCompleteness` already applies', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], ['43'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts']) // does not name 42 back
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('passes when the Surface globs simply do not overlap', () => {
+    const subject = mk('42', ['apps/cli/src/lib/**'])
+    const sibling = mk('43', ['packages/aeg-core/src/**'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('never compares a task against itself, even if `siblings` includes it', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'])
+    expect(checkSurfaceOverlap(subject, [subject]).status).toBe('pass')
+  })
+
+  it('reports one finding per overlapping glob pair, not only the first', () => {
+    const subject = mk('42', ['packages/aeg-core/src/a/**', 'packages/aeg-core/src/b/**'])
+    const sibling = mk('43', ['packages/aeg-core/src/a/x.ts', 'packages/aeg-core/src/b/y.ts'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBe(2)
+  })
+
+  it('a `#`-prefixed ref in Conflicts-with still counts as the same task', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], ['#43'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'], ['#42'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
   })
 })
 

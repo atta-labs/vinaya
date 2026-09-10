@@ -169,8 +169,10 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `checkRationaleSurfaceCoverage` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkSurfaceExcludesBoundDoc` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkSurfaceGlobsResolve` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkSurfaceOverlap` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkSurfaceScope` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `declaredProjects` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `edgesNameEachOther` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `globCoversPath` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `isTaskIssueBodyShaped` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `isTaskIssueLabelSet` | function | `packages/aeg-core/src/issue-validation.ts` |
@@ -308,7 +310,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `projectsFromBody` | function | `packages/aeg-forge-state/src/list-tasks.ts` |
 | `mapForgeFacts` | function | `packages/aeg-forge-state/src/map-forge-facts.ts` |
 
-(270 exports.)
+(272 exports.)
 
 ## Effects — `apps/cli/src/lib` public exports
 

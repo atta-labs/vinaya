@@ -165,7 +165,9 @@ describe('validateIssueContent — the content checks', () => {
       retryCommand: cmd,
       issueNumber: null,
       resolvesToFile: () => true,
-      docOwnersContent: null
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: ''
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -183,7 +185,9 @@ describe('validateIssueContent — the content checks', () => {
       retryCommand: cmd,
       issueNumber: null,
       resolvesToFile: () => true,
-      docOwnersContent: null
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: ''
     })
     expect(errors).toEqual([])
   })
@@ -197,7 +201,9 @@ describe('validateIssueContent — the content checks', () => {
       retryCommand: cmd,
       issueNumber: null,
       resolvesToFile: () => true,
-      docOwnersContent: null
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: ''
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -213,7 +219,9 @@ describe('validateIssueContent — the content checks', () => {
       retryCommand: cmd,
       issueNumber: null,
       resolvesToFile: () => true,
-      docOwnersContent: null
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: ''
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -229,7 +237,9 @@ describe('validateIssueContent — the content checks', () => {
       retryCommand: cmd,
       issueNumber: null,
       resolvesToFile: () => true,
-      docOwnersContent: null
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: ''
     })
     expect(errors).toEqual([])
   })
@@ -245,7 +255,9 @@ describe('validateIssueContent — the content checks', () => {
       retryCommand: cmd,
       issueNumber: null,
       resolvesToFile: () => true,
-      docOwnersContent: 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n'
+      docOwnersContent: 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n',
+      milestoneSiblings: null,
+      subjectRef: ''
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -263,7 +275,9 @@ describe('validateIssueContent — the content checks', () => {
       retryCommand: cmd,
       issueNumber: null,
       resolvesToFile: () => true,
-      docOwnersContent: 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n'
+      docOwnersContent: 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n',
+      milestoneSiblings: null,
+      subjectRef: ''
     })
     expect(errors).toEqual([])
   })

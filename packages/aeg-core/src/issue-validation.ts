@@ -1355,8 +1355,8 @@ export type TaskIssueFacts = {
   conflictsWith: string[]
 }
 
-/** True when either side's declared edges name the other — `#621`, `621` and `8` all count. */
-function edgesNameEachOther(a: TaskIssueFacts, b: TaskIssueFacts): boolean {
+/** True when either side's declared edges name the other — `#621`, `621` and `8` all count. Structural on `{ ref, conflictsWith }` so both `TaskIssueFacts` and `TaskSurfaceFacts` satisfy it without a cast. */
+export function edgesNameEachOther(a: { ref: string; conflictsWith: string[] }, b: { ref: string; conflictsWith: string[] }): boolean {
   const norm = (s: string) => s.replace(/^#/, '').trim()
   return a.conflictsWith.map(norm).includes(norm(b.ref)) || b.conflictsWith.map(norm).includes(norm(a.ref))
 }
@@ -1395,4 +1395,64 @@ export function checkConflictCompleteness(
     )
   }
   return warnings
+}
+
+// ---------------------------------------------------------------------------
+// O5 (task-run-v1 task 11) — cross-task Surface overlap. Same shape as
+// `checkConflictCompleteness` above (a subject checked against sibling task
+// Issues, `edgesNameEachOther` the same mutual-declaration bypass), but a
+// HARD refusal rather than a warning: `## Surface` `in:` is a structured,
+// declared fact (the same authority `checkSurfaceGlobsResolve`/`renderBrief`
+// already treat it as), not a prose heuristic, so a genuine overlap here is
+// not a hint — it is two Developers about to dispatch onto the same files
+// with neither task declared as blocking the other.
+// ---------------------------------------------------------------------------
+
+/** One open task Issue, reduced to what O5's cross-task Surface-overlap check needs. */
+export type TaskSurfaceFacts = {
+  /** How the Issue is referred to in a `Conflicts-with` edge — its number, or its task id (mirrors `TaskIssueFacts.ref`). */
+  ref: string
+  /** `## Surface` `in:` globs (`parseIssueSurface`) — `[]` when the Issue carries no parseable Surface (nothing to overlap). */
+  surfaceIn: string[]
+  /** Already-parsed `Conflicts-with` ids (`parseRationaleDeps`). */
+  conflictsWith: string[]
+}
+
+/**
+ * **O5 — two open task Issues in the same Milestone whose declared
+ * `## Surface` `in:` lists overlap, and that do not name each other in
+ * `Conflicts-with`, are refused.** `globsOverlap` (`derive-section7.ts`) is
+ * the same symmetric glob-overlap test `checkSurfaceExcludesBoundDoc` already
+ * uses for a different glob pair (a Surface glob against a doc-owners
+ * binding glob) — reused here for two tasks' Surface glob lists, never a
+ * second matcher. `edgesNameEachOther` exempts the pair as soon as EITHER
+ * side names the other — the same one-sided-is-enough rule
+ * `checkConflictCompleteness` already applies (there, as a warning bypass;
+ * here, as the sanctioned exemption): the edge only needs to be declared
+ * once for both tasks to serialize correctly against it.
+ *
+ * Pure over its inputs — `siblings` is resolved by the caller (the
+ * write-time gate in `apps/cli`'s `forge-write.ts` resolves it from the live
+ * forge, scoped to the subject's own Milestone; the coherence sweep in
+ * `coherence-checks.ts` resolves it from its own already-fetched Issue set)
+ * — one predicate, shared rather than reimplemented at each call site, so
+ * the write-time gate and the coherence sweep can never disagree about what
+ * counts as an overlap.
+ */
+export function checkSurfaceOverlap(subject: TaskSurfaceFacts, siblings: TaskSurfaceFacts[]): IssueSectionResult {
+  const errors: string[] = []
+  for (const sibling of siblings) {
+    if (sibling.ref === subject.ref) continue
+    if (edgesNameEachOther(subject, sibling)) continue
+    for (const mine of subject.surfaceIn) {
+      for (const theirs of sibling.surfaceIn) {
+        if (globsOverlap(mine, theirs)) {
+          errors.push(
+            `issue-validation Surface overlap: this task's \`## Surface\` \`in:\` glob \`${mine}\` overlaps ${sibling.ref}'s \`in:\` glob \`${theirs}\` — both are open task Issues in the same Milestone and neither names the other in \`Conflicts-with\`.`
+          )
+        }
+      }
+    }
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }

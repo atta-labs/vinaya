@@ -187,8 +187,10 @@ export {
   checkRationaleSurfaceCoverage,
   checkSurfaceExcludesBoundDoc,
   checkSurfaceGlobsResolve,
+  checkSurfaceOverlap,
   checkSurfaceScope,
   declaredProjects,
+  edgesNameEachOther,
   globCoversPath,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
@@ -207,7 +209,8 @@ export type {
   SurfaceScopeResult,
   SurfaceScopeViolation,
   ProjectPath,
-  TaskIssueFacts
+  TaskIssueFacts,
+  TaskSurfaceFacts
 } from './issue-validation'
 export { findHeadingLine, findTable, rowToRecord } from './markdown-table'
 export type { ParsedTable, TableRow } from './markdown-table'
