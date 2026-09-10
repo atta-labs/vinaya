@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -44,8 +45,46 @@ import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
 import { printJson } from './lib/envelope.js'
 import { printHelp } from './lib/output.js'
+import { packageRoot } from './lib/package-root.js'
+import { resolveAuthorRepoSourceEntry } from './lib/self-host.js'
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+
+/**
+ * Inside the author repository the tree is the CLI: an installed `vinaya`
+ * re-executes `<toplevel>/apps/cli/src/index.ts` under `bun`, with the same
+ * argv/env/stdio, so the checkout's own doctrine and its own CLI are governed
+ * by the same tree (mirrors `resolveDoctrineRoot()`'s tree-first resolution,
+ * atta-labs/vinaya#408). `resolveAuthorRepoSourceEntry` carries the detection
+ * (including the self-guard against a re-executed process deferring to
+ * itself); this function carries only the process concerns the detection
+ * can't be unit-tested through: the escape hatch, the CI guard, the `bun`
+ * PATH check, the one stderr line, and the re-exec itself.
+ */
+function maybeDeferToAuthorRepoSource(): void {
+  if (process.env.VINAYA_NO_DEFER === '1') return
+  if (process.env.GITHUB_ACTIONS) return
+
+  const sourceEntry = resolveAuthorRepoSourceEntry(packageRoot(import.meta.url))
+  if (!sourceEntry) return
+
+  const bunCheck = spawnSync('bun', ['--version'], { stdio: 'ignore' })
+  if (bunCheck.error || bunCheck.status !== 0) {
+    process.stderr.write(
+      `vinaya: author repo detected, but 'bun' is not on PATH — running the installed build instead of ${sourceEntry}\n`
+    )
+    return
+  }
+
+  process.stderr.write(`vinaya: deferring to source at ${sourceEntry}\n`)
+  const result = spawnSync('bun', [sourceEntry, ...process.argv.slice(2)], {
+    stdio: 'inherit',
+    env: process.env
+  })
+  process.exit(result.status ?? 1)
+}
+
+maybeDeferToAuthorRepoSource()
 
 function readVersion(): string {
   const pkg = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf-8'))
