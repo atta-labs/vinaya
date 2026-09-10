@@ -446,6 +446,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `parseClaudeUsage` | function | `apps/cli/src/lib/dispatch.ts` |
 | `parseGeminiModel` | function | `apps/cli/src/lib/dispatch.ts` |
 | `parseGeminiUsage` | function | `apps/cli/src/lib/dispatch.ts` |
+| `readResumeRecord` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderClaudeEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderCodexEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderGeminiEvent` | function | `apps/cli/src/lib/dispatch.ts` |
@@ -538,7 +539,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `AEG_BRIEF_V1_MARKER` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(225 exports.)
+(226 exports.)
 
 ## Commands — `apps/cli/src/commands` (42 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 

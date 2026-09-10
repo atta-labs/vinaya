@@ -67,13 +67,16 @@ import {
   AGENT_VENDOR_NAMES,
   type AgentVendor,
   dispatchRole as realDispatchRole,
-  type DispatchHandle
+  type DispatchHandle,
+  readResumeRecord as realReadResumeRecord,
+  type ResumeRecord
 } from './dispatch.js'
 import { AEG_BRIEF_V1_MARKER, contentAfterTwoLines } from './dispatch-task.js'
 import { GLOBAL_VINAYA_HOME, loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { postMarkedComment } from './forge-write.js'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { packageRoot } from './package-root.js'
+import { REVIEW_GATE_CHECK_RUN_NAME } from './review-gate-check-name.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 
 // --- forge reads ---------------------------------------------------------
@@ -106,14 +109,18 @@ export function resolveHead(branch: string): string {
 type RestCheckRun = { id: number; name: string; status: string; conclusion: string | null }
 
 /**
- * The mechanical gate's own conclusion for `headSha`, read from CI's
- * check-runs (never run locally — Traps to avoid). `'pending'` when any
- * latest-per-name run has not completed, or the fetch itself fails (a
- * transient network hiccup reads the same as "not resolved yet", never as
- * red) — the driver is expected to poll this, not treat one `'pending'` read
- * as final.
+ * Every mechanical check-run GitHub reports for `headSha`, deduped to the
+ * latest run per name, EXCLUDING `REVIEW_GATE_CHECK_RUN_NAME` — the same
+ * exclusion `check-review-gate.ts` already applies to itself, imported from
+ * the one shared constant rather than a second hardcoded name
+ * (review-validity-v1 task 5, `#488`, O1, Traps to avoid). Excluded
+ * entirely, in every status: a review gate that hasn't posted a verdict yet
+ * (no check-run conclusion, or one still `in_progress`) must never read as
+ * pending CI either — it is not CI at all. `null` on a genuine fetch
+ * failure, read by both callers below as `'pending'` (a transient hiccup
+ * reads the same as "not resolved yet", never as red).
  */
-export function fetchCiConclusion(headSha: string): 'green' | 'red' | 'pending' {
+function fetchMechanicalCheckRuns(headSha: string): RestCheckRun[] | null {
   let out: string
   try {
     out = sh('gh', [
@@ -124,25 +131,54 @@ export function fetchCiConclusion(headSha: string): 'green' | 'red' | 'pending' 
       '.check_runs[] | {id, name, status, conclusion}'
     ])
   } catch {
-    return 'pending'
+    return null
   }
   const runs: RestCheckRun[] = out
     .split('\n')
     .filter((l) => l.trim().length > 0)
     .map((l) => JSON.parse(l) as RestCheckRun)
-  if (runs.length === 0) return 'pending'
 
   const latestByName = new Map<string, RestCheckRun>()
   for (const run of runs) {
     const seen = latestByName.get(run.name)
     if (!seen || run.id > seen.id) latestByName.set(run.name, run)
   }
-  const latest = Array.from(latestByName.values())
+  return Array.from(latestByName.values()).filter((r) => r.name !== REVIEW_GATE_CHECK_RUN_NAME)
+}
+
+/**
+ * The mechanical gate's own conclusion for `headSha` — never the review
+ * gate's own check-run (excluded by `fetchMechanicalCheckRuns`), so a head
+ * with green CI and no verdicts yet reads as green, never red (O1).
+ * `'pending'` when any latest-per-name mechanical run has not completed, the
+ * fetch fails, or no mechanical check-run exists at all yet — the driver is
+ * expected to poll this, not treat one `'pending'` read as final.
+ */
+export function fetchCiConclusion(headSha: string): 'green' | 'red' | 'pending' {
+  const latest = fetchMechanicalCheckRuns(headSha)
+  if (latest === null || latest.length === 0) return 'pending'
   if (latest.some((r) => r.status !== 'completed')) return 'pending'
   if (latest.every((r) => r.conclusion === 'success' || r.conclusion === 'neutral' || r.conclusion === 'skipped')) {
     return 'green'
   }
   return 'red'
+}
+
+/**
+ * The names of every completed, non-passing mechanical check-run for
+ * `headSha` — never the review gate's own (same exclusion as
+ * `fetchCiConclusion`). Used to tell the developer exactly what to fix (O3)
+ * instead of a bare "CI is red." Empty when the fetch fails or nothing has
+ * failed yet (a still-`pending` run names nothing — there is nothing to fix
+ * until it resolves).
+ */
+export function fetchFailingCheckNames(headSha: string): string[] {
+  const latest = fetchMechanicalCheckRuns(headSha)
+  if (latest === null) return []
+  return latest
+    .filter((r) => r.status === 'completed')
+    .filter((r) => r.conclusion !== 'success' && r.conclusion !== 'neutral' && r.conclusion !== 'skipped')
+    .map((r) => r.name)
 }
 
 const RULING_MARKER = /^<!-- aeg:principal:ruling:\d+-\d+ -->$/
@@ -753,11 +789,19 @@ export type LoopDeps = {
   dispatchRole: typeof realDispatchRole
   resolveHead: typeof resolveHead
   fetchCiConclusion: typeof fetchCiConclusion
+  /** O3: named check-runs, never the review gate's own (excluded upstream). */
+  fetchFailingCheckNames: typeof fetchFailingCheckNames
   fetchRulings: typeof fetchRulings
   fetchFrozenBrief: typeof fetchFrozenBrief
   fetchIssueObjectives: typeof fetchIssueObjectives
   developerBranchFor: (issueNumber: number) => string
   findOpenPrForBranch: typeof findOpenPrForBranch
+  /** O4: the durable session id `dispatch.ts` last recorded for this repo+role+vendor+task, or `null`. */
+  readResumeRecord: (
+    task: number,
+    agent: AgentVendor,
+    repo: { owner: string; repo: string } | null
+  ) => ResumeRecord | null
   outboxRoot: () => string
   repoRoot: () => string
   gitRevParseOriginMain: () => string
@@ -827,16 +871,34 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/**
+ * The gate poll budget is otherwise a fixed production constant (120 ×
+ * 15s) — this env var pair exists only so a real subprocess test (never an
+ * in-process call — see this file's test's own `GLOBAL_VINAYA_HOME`
+ * contamination warning) can exercise O2's head-change-wait/bounded-stall
+ * path in test time instead of the ~30 real minutes the production budget
+ * would otherwise take. Unset in every real invocation, so production
+ * behavior is unchanged.
+ */
+function gatePollEnvOverride(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (!raw) return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : fallback
+}
+
 function defaultDeps(): LoopDeps {
   return {
     dispatchRole: realDispatchRole,
     resolveHead,
     fetchCiConclusion,
+    fetchFailingCheckNames,
     fetchRulings,
     fetchFrozenBrief,
     fetchIssueObjectives,
     developerBranchFor: (n) => developerBranchFor(n),
     findOpenPrForBranch,
+    readResumeRecord: (task, agent, repo) => realReadResumeRecord('developer', agent, repo, task),
     outboxRoot,
     repoRoot: defaultRepoRoot,
     gitRevParseOriginMain: defaultGitRevParseOriginMain,
@@ -847,8 +909,8 @@ function defaultDeps(): LoopDeps {
     now: () => Date.now(),
     prPollMaxAttempts: 120,
     prPollIntervalMs: 15_000,
-    gatePollMaxAttempts: 120,
-    gatePollIntervalMs: 15_000
+    gatePollMaxAttempts: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS', 120),
+    gatePollIntervalMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS', 15_000)
   }
 }
 
@@ -1170,6 +1232,72 @@ export function routeCompletionEvents(
   }
 }
 
+/**
+ * review-validity-v1 task 5 (`#488`, O2): the bound on consecutive
+ * gate-red developer turns that produce no push on one head — small and
+ * strict, since the failure mode this bounds (`#479`: five re-dispatches in
+ * two minutes on one head) is a developer making no progress at all, not
+ * one that needs several genuine attempts. Driver-owned rather than a
+ * `packages/aeg-core` constant: this task's own Surface (Issue #488 §4)
+ * declares `packages` out of scope.
+ */
+const MAX_GATE_STALLED_TURNS = 2
+
+/**
+ * `stop_condition_met`/`paused`/`round_ended`/`journal_finalized` for a
+ * pause the DRIVER decides itself — O2's gate-stalled bound and O5's
+ * reviewer-infrastructure failure, neither of which corresponds to an
+ * `Observations` kind `assessRound` accepts (adding one would edit
+ * `packages/aeg-core`, out of this task's declared Surface, Issue #488 §4;
+ * `Decision`/`PauseReason` themselves are unchanged). Reuses
+ * `stop_condition_met`'s existing, otherwise-unused `'principal_stop'`
+ * condition and `paused`'s existing generic `'principal_item'` reason —
+ * the SAME schema enum members every policy-decided bounded pause already
+ * reuses for confidence/reappearance/no_progress/max_rounds — never a new
+ * schema value, so these events validate and land in the outbox exactly
+ * like a policy-decided pause's do (regression, PR #489 round 2, MAJOR:
+ * this pause used to skip the log entirely). `state` is read only for its
+ * running totals; it is never written back, since the loop returns
+ * immediately after this — a resume starts a fresh `LoopState` regardless
+ * (`initialLoopState`, called fresh in the `--resume` path above).
+ */
+function driverDecidedPauseEvents(
+  loopId: string,
+  state: LoopState,
+  round: number,
+  stats: RoundStats
+): DevReviewLoopEventInput[] {
+  const envelope = { kind: 'dev_review_loop' as const, payload: {} }
+  return [
+    { ...envelope, loop_id: loopId, event: 'stop_condition_met', round, condition: 'principal_stop' },
+    { ...envelope, loop_id: loopId, event: 'paused', round, reason: 'principal_item' },
+    {
+      ...envelope,
+      loop_id: loopId,
+      event: 'round_ended',
+      round,
+      base_head: stats.baseHead,
+      head: stats.head,
+      files_changed: stats.filesChanged,
+      insertions: stats.insertions,
+      deletions: stats.deletions,
+      wall_ms: stats.wallMs,
+      outcome: 'changes_requested'
+    },
+    {
+      ...envelope,
+      loop_id: loopId,
+      event: 'journal_finalized',
+      rounds: state.rounds.length + 1,
+      total_wall_ms: state.totalWallMs + stats.wallMs,
+      time_to_green_ms: null,
+      files_changed_total: state.totalFilesChanged + stats.filesChanged,
+      final_head: stats.head,
+      result: 'stopped'
+    }
+  ]
+}
+
 export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = {}): Promise<LoopResult> {
   const d: LoopDeps = { ...defaultDeps(), ...deps }
   const root = d.outboxRoot()
@@ -1277,6 +1405,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   let devDispatchSucceededBefore = false
   let lastReviewContext: string | null = null
   let resumedDispatch = resumeFrom !== null
+  /** O3: the last red gate's failing check-run names, for the next gate-red dispatch prompt and, if it stalls, the pause detail. */
+  let lastFailingChecks: string[] = []
+  /** O2: true iff the current `dispatch_developer` decision came from a red gate (never inferred from `decision` itself — see this branch's own comment, below). Reset to `false` by every genuine `gate` observation. */
+  let pendingGateRedRetry = false
+  /** O2: consecutive gate-red developer turns that produced no push on one head — reset to 0 by every genuine `gate` observation. */
+  let gateStalledStreak = 0
 
   async function dispatchDeveloper(prompt: string, roundNum: number): Promise<DispatchHandle> {
     const isResume = devResumeId !== null
@@ -1347,9 +1481,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     return { baseHead, head, filesChanged, insertions, deletions, wallMs: d.now() - roundStartMs }
   }
 
-  async function waitForGreenGate(
-    roundStartMs: number
-  ): Promise<{ green: boolean; stats: RoundStats; ciConclusion: 'green' | 'red' | 'pending' }> {
+  async function waitForGreenGate(roundStartMs: number): Promise<{
+    green: boolean
+    stats: RoundStats
+    ciConclusion: 'green' | 'red' | 'pending'
+    /** O3: the mechanical check-runs that actually failed, never the review gate's own — empty unless `ciConclusion === 'red'`. */
+    failingChecks: string[]
+  }> {
     const head = d.resolveHead(branch)
     const conclusion = await pollUntil(
       () => {
@@ -1361,7 +1499,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       d.sleep,
       `devReviewLoop: CI never resolved off 'pending' for head ${head} within the poll budget.`
     ).catch(() => 'red' as const)
-    return { green: conclusion === 'green', stats: computeStats(head, roundStartMs), ciConclusion: conclusion }
+    const failingChecks = conclusion === 'red' ? d.fetchFailingCheckNames(head) : []
+    return {
+      green: conclusion === 'green',
+      stats: computeStats(head, roundStartMs),
+      ciConclusion: conclusion,
+      failingChecks
+    }
   }
 
   function readAndClearConfidence(): Confidence {
@@ -1383,17 +1527,62 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     const rulings = d.fetchRulings(prNumber)
     lastReviewContext = rulings.map((r, i) => `${i + 1}. ${r}`).join('\n')
   } else {
-    // Round 1: fresh dispatch, brief read from the frozen Issue comment (O1).
-    const brief = d.fetchFrozenBrief(task)
-    await dispatchDeveloper(brief, round)
+    // O4: round-1 entry — attach to an existing open PR, resume once to open
+    // one on a remote branch that has none, or dispatch fresh. Checked in
+    // that order: an open PR on the exact branch `developerBranchFor`
+    // derives is the strongest signal (Traps: never attach to a closed or
+    // merged one — `findOpenPrForBranch`'s own `--state open` filter already
+    // guarantees that); only then does a remote-branch-with-no-PR check make
+    // sense, since a branch with an open PR obviously also exists remotely.
+    const existingPr = d.findOpenPrForBranch(branch)
+    if (existingPr) {
+      // Attach: no developer dispatch here at all — the recorded session is
+      // read now so a LATER round's resume (if one is ever needed) resumes
+      // the SAME session rather than starting fresh; round 1's own gate runs
+      // next, unmodified, straight off `firstPass`.
+      prNumber = existingPr.number
+      const rec = d.readResumeRecord(task, input.agent, repo)
+      if (rec) devResumeId = rec.resumeId
+    } else {
+      let branchExists = true
+      try {
+        d.resolveHead(branch)
+      } catch {
+        branchExists = false
+      }
+      if (branchExists) {
+        // Remote branch, no open PR yet: resume the recorded developer
+        // session ONCE, instructed to open the PR through the validated
+        // path, and wait for it — never a fresh developer (Traps).
+        const rec = d.readResumeRecord(task, input.agent, repo)
+        if (rec) devResumeId = rec.resumeId
+        const openPrPrompt = [
+          'This branch already exists with no open pull request for it.',
+          'Open the pull request through the validated path per aeg-root/roles/developer.md:',
+          '`bun apps/cli/src/index.ts pr create --body-file <path> --title "<title>"`.'
+        ].join('\n\n')
+        await dispatchDeveloper(openPrPrompt, round)
+        prNumber = await pollUntil(
+          () => d.findOpenPrForBranch(branch),
+          d.prPollMaxAttempts,
+          d.prPollIntervalMs,
+          d.sleep,
+          `devReviewLoop: no open PR appeared for branch \`${branch}\` within the poll budget after resuming to open one.`
+        ).then((pr) => pr.number)
+      } else {
+        // Round 1: fresh dispatch, brief read from the frozen Issue comment (O1).
+        const brief = d.fetchFrozenBrief(task)
+        await dispatchDeveloper(brief, round)
 
-    prNumber = await pollUntil(
-      () => d.findOpenPrForBranch(branch),
-      d.prPollMaxAttempts,
-      d.prPollIntervalMs,
-      d.sleep,
-      `devReviewLoop: no open PR appeared for branch \`${branch}\` within the poll budget.`
-    ).then((pr) => pr.number)
+        prNumber = await pollUntil(
+          () => d.findOpenPrForBranch(branch),
+          d.prPollMaxAttempts,
+          d.prPollIntervalMs,
+          d.sleep,
+          `devReviewLoop: no open PR appeared for branch \`${branch}\` within the poll budget.`
+        ).then((pr) => pr.number)
+      }
+    }
   }
 
   let decision: Decision = { type: 'dispatch_developer' }
@@ -1426,25 +1615,76 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // eslint-disable-next-line no-constant-condition
   while (true) {
     if (decision.type === 'dispatch_developer') {
+      // O2: `pendingGateRedRetry` (set below, at this round's own two `gate`
+      // observation call sites — never inferred from `decision` itself,
+      // since `assessGate`'s red branch returns a bare `dispatch_developer`
+      // with no reason tag: `Decision`/`PauseReason` live in
+      // `packages/aeg-core`, out of this task's declared Surface, Issue
+      // #488 §4) is true exactly when THIS dispatch is the driver sending
+      // the developer back for a red mechanical gate — the one case that
+      // needs the head-change wait (Traps: never re-read the gate in a
+      // tight loop on an unchanged head — `#479`'s own five-re-dispatches-
+      // in-two-minutes failure).
+      const isGateRedRetry = pendingGateRedRetry
       if (!firstPass) {
         const prompt = [
           resumedDispatch
             ? `Principal ruling on this pause:\n\n${lastReviewContext}\n`
-            : lastReviewContext
-              ? `Round ${round} review findings:\n\n${lastReviewContext}\n`
-              : 'CI was red on the last head — fix and push.',
+            : isGateRedRetry
+              ? `CI is red on the last head. Failing check-run(s): ${
+                  lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
+                }. Fix and push.`
+              : lastReviewContext
+                ? `Round ${round} review findings:\n\n${lastReviewContext}\n`
+                : 'CI was red on the last head — fix and push.',
           'Address the findings above per aeg-root/roles/developer.md. Push fixes as new commits on the SAME branch; do not open a new PR.',
           round >= 2 ? CONFIDENCE_PROMPT_LINE : ''
         ]
           .filter(Boolean)
           .join('\n\n')
+        const headBeforeDispatch = isGateRedRetry ? d.resolveHead(branch) : null
         roundStartMs = d.now()
         await dispatchDeveloper(prompt, round)
         resumedDispatch = false
+
+        if (headBeforeDispatch !== null) {
+          const changedHead = await pollUntil(
+            () => {
+              const h = d.resolveHead(branch)
+              return h !== headBeforeDispatch ? h : null
+            },
+            d.gatePollMaxAttempts,
+            d.gatePollIntervalMs,
+            d.sleep,
+            'devReviewLoop: head-change wait timed out'
+          ).catch(() => null)
+
+          if (changedHead === null) {
+            // The developer returned without pushing — not a fresh gate
+            // read (the head never moved), so this feeds the DRIVER's own
+            // bounded stall counter instead of `fetchCiConclusion` again.
+            gateStalledStreak += 1
+            const stats = computeStats(headBeforeDispatch, roundStartMs)
+            const detail = `head ${headBeforeDispatch} unchanged after dispatch; failing check-run(s): ${
+              lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
+            }`
+            if (gateStalledStreak < MAX_GATE_STALLED_TURNS) {
+              d.flushOutbox(task)
+              continue
+            }
+            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+            decision = { type: 'pause', reason: 'infrastructure', detail }
+            d.flushOutbox(task)
+            continue
+          }
+        }
       }
       firstPass = false
 
       const gate = await waitForGreenGate(roundStartMs)
+      lastFailingChecks = gate.failingChecks
+      pendingGateRedRetry = !gate.green
+      gateStalledStreak = 0
       const confidence = round >= 2 && gate.green ? readAndClearConfidence() : undefined
       const obs: Observations = { kind: 'gate', round, green: gate.green, confidence, stats: gate.stats }
       const result = assessRound(state, obs)
@@ -1462,6 +1702,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const result = assessRound(state, obs)
       state = result.state
       decision = result.decision
+      pendingGateRedRetry = false
+      gateStalledStreak = 0
       await logEvents(result.events)
       d.flushOutbox(task)
     } else if (decision.type === 'dispatch_reviewers') {
@@ -1471,10 +1713,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const rulings = d.fetchRulings(prNumber)
       const facts: ReviewerPromptFacts = { objectives, rulings, head, ciConclusion }
 
-      // O2: an infrastructure outcome from either role (after its own
-      // one-retry inside `dispatchReviewer`) short-circuits straight to a
-      // pause — `assessRound` is never called for this round, so no verdict
-      // is held or published and the round number does not advance.
+      // O5: an infrastructure outcome from either role (after its own
+      // one-retry inside `dispatchReviewer`) is a driver-decided pause —
+      // there is no `Observations` kind for it (adding one would edit
+      // `packages/aeg-core`, out of this task's declared Surface, Issue
+      // #488 §4) — but `driverDecidedPauseEvents` logs the same
+      // `stop_condition_met`/`paused`/`round_ended`/`journal_finalized`
+      // events every policy-decided pause gets (code review, PR #489 round
+      // 2, MAJOR: the driver used to build this `pause` decision by hand
+      // and skip the log entirely). No verdict is held or published for
+      // this round, and the round number does not advance.
       let verdicts: [RoundVerdictParse, RoundVerdictParse] | null = null
       try {
         verdicts = await Promise.all([
@@ -1483,6 +1731,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         ])
       } catch (err) {
         if (!(err instanceof ReviewerInfrastructureFailure)) throw err
+        const stats = computeStats(head, roundStartMs)
+        await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
         decision = { type: 'pause', reason: 'infrastructure', detail: err.message }
       }
 
