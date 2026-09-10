@@ -38,6 +38,9 @@ import {
   extractSecurityReviewVerdict,
   initialLoopState,
   isPrincipal,
+  type Objective,
+  objectivesOf,
+  objectivesVersion,
   renderSummary,
   type Confidence,
   type Decision,
@@ -305,24 +308,169 @@ export function extractObjectivesSection(body: string): string {
 }
 
 /**
- * Security review, PR #445 round 2, HIGH: the round-1 fix for the OBJECTIVES
- * BLOCKER read the ISSUE BODY directly (`gh issue view --json body`) with no
- * author check at all — reopening the identical injection class the round-1
- * HIGH fix had just closed for comments, through a different door: any
- * collaborator with plain write access can edit an Issue body (no comment,
- * no marker, nothing `isPrincipal` could filter) and land content in every
- * round's prompt. The fix is not a new author check on the Issue body —
- * GitHub exposes no reliable "who last edited this section" signal to check
- * — it's sourcing from a document that is ALREADY principal-gated:
- * `renderObjectives` (`@attalabs/aeg-core`) copies the Issue's `## Objectives`
- * section into the frozen brief VERBATIM, same heading, same text
- * (`brief-render.ts`'s own doc comment). `fetchFrozenBrief` already requires
- * a principal-authored `aeg:brief:v1` comment; extracting Objectives from
- * THAT text, never a fresh ungated Issue-body read, closes this with no new
- * gh call and no new trust-boundary code at all.
+ * `<!-- aeg:objectives:v<k> -->` — the marker `issue-objectives.ts`'s
+ * `issueObjectivesEditCommand` posts on every edit-audit comment (`MARKER_PREFIX`
+ * there). Duplicated here as a literal, not imported, the same way that
+ * file's own `HEADING_RE` duplicates `objectives.ts`'s internal heading
+ * regex (its own doc comment): the marker string is this module's public
+ * surface (the shape every edit comment carries), never the command's
+ * internals.
  */
-export function fetchIssueObjectives(issueNumber: number): string {
-  return extractObjectivesSection(fetchFrozenBrief(issueNumber))
+const OBJECTIVES_EDIT_MARKER_RE = /^<!--\s*aeg:objectives:v(\d+)\s*-->$/
+
+/** Pure: the newest principal-authored `<!-- aeg:objectives:v<k> -->` comment among `comments` — "newest" by marker index `k`, which `issueObjectivesEditCommand` assigns strictly increasing — or `null` when none exists. */
+export function findLatestPrincipalObjectivesEdit(
+  comments: readonly MarkerComment[],
+  allowlist: readonly string[]
+): MarkerComment | null {
+  let best: { k: number; comment: MarkerComment } | null = null
+  for (const c of comments) {
+    if (!isPrincipal(c.author, allowlist as string[])) continue
+    const m = OBJECTIVES_EDIT_MARKER_RE.exec((c.body.split('\n')[0] ?? '').trim())
+    if (!m) continue
+    const k = Number.parseInt(m[1] as string, 10)
+    if (best === null || k > best.k) best = { k, comment: c }
+  }
+  return best?.comment ?? null
+}
+
+function parseObjectiveLines(raw: string): Objective[] | null {
+  const parsed = objectivesOf(['## Objectives', '', raw].join('\n'))
+  return parsed.ok ? parsed.objectives : null
+}
+
+export type ObjectivesEditParse = { previous: Objective[]; now: Objective[]; reason: string; version: string }
+
+/**
+ * Pure: parses an objectives-edit comment's body (the `Previous:`/`Now:`/
+ * `Reason:`/`Version:` shape `issueObjectivesEditCommand` composes) into its
+ * post-edit objectives list and the version it recorded — or `null` when the
+ * body doesn't have that shape (defensive; every comment this driver ever
+ * matches via `findLatestPrincipalObjectivesEdit` was posted by that command,
+ * so this should not happen in practice).
+ */
+export function parseObjectivesEditComment(body: string): ObjectivesEditParse | null {
+  const lines = body.split('\n')
+  const previousIdx = lines.findIndex((l) => l.trim() === 'Previous:')
+  const nowIdx = lines.findIndex((l) => l.trim() === 'Now:')
+  const reasonLine = lines.find((l) => l.startsWith('Reason:'))
+  const versionLine = lines.find((l) => l.startsWith('Version:'))
+  if (previousIdx === -1 || nowIdx === -1 || nowIdx < previousIdx || !reasonLine || !versionLine) return null
+
+  const previousBlock = lines
+    .slice(previousIdx + 1, nowIdx)
+    .join('\n')
+    .trim()
+  const nowRest = lines.slice(nowIdx + 1)
+  const nowEnd = nowRest.findIndex((l) => l.trim() === '')
+  const nowBlock = (nowEnd === -1 ? nowRest : nowRest.slice(0, nowEnd)).join('\n').trim()
+
+  const previous = parseObjectiveLines(previousBlock)
+  const now = parseObjectiveLines(nowBlock)
+  if (!previous || !now) return null
+
+  return {
+    previous,
+    now,
+    reason: reasonLine.slice('Reason:'.length).trim(),
+    version: versionLine.slice('Version:'.length).trim()
+  }
+}
+
+/** The `Objective[]` diff `parseObjectivesEditComment` recorded, kept alongside the resolved text/version so a mid-round change can name what caused it (O3). */
+export type ObjectivesEditSource = { previous: Objective[]; now: Objective[]; reason: string }
+
+export type ObjectivesResolution = {
+  /** The `## Objectives` section text (`O<n>. <sentence>` lines, no heading) — same shape `extractObjectivesSection` returns. */
+  text: string
+  /** `null` exactly when `text` is empty — no `## Objectives` section resolvable from either source. */
+  version: string | null
+  /** Present only when `text`/`version` came from an objectives-edit comment, not the frozen brief. */
+  edit: ObjectivesEditSource | null
+}
+
+/**
+ * O1: the loop's one source of objectives, principal-gated end to end. The
+ * newest principal-authored objectives-edit comment wins when one exists —
+ * its `Version:` line is the authority (never recomputed here: it was
+ * written by `issueObjectivesEditCommand` from the exact post-edit list it
+ * had just spliced into the Issue body, the same input the merge gate's own
+ * live-body re-read parses, so the two are identical by construction).
+ * Otherwise, the principal-authored frozen brief's verbatim copy of the
+ * Issue's `## Objectives` section (same trust boundary `fetchFrozenBrief`
+ * already enforces), with the version computed from it via the same
+ * `objectivesOf`/`objectivesVersion` pair the gate calls. Never the live
+ * Issue body directly (Traps to avoid; PR #445's security round).
+ *
+ * One `gh issue view --json comments` call serves both sources.
+ */
+export function resolveIssueObjectives(issueNumber: number): ObjectivesResolution {
+  let out: string
+  try {
+    out = sh('gh', ['issue', 'view', String(issueNumber), '--json', 'comments'])
+  } catch (err) {
+    throw new Error(
+      `resolveIssueObjectives: could not fetch Issue #${issueNumber}'s comments: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+  const comments = markerComments(out)
+  const allowlist = principalAllowlist()
+
+  const latestEdit = findLatestPrincipalObjectivesEdit(comments, allowlist)
+  if (latestEdit) {
+    const parsed = parseObjectivesEditComment(latestEdit.body)
+    if (parsed) {
+      return {
+        text: parsed.now.map((o) => `${o.id}. ${o.text}`).join('\n'),
+        version: parsed.version,
+        edit: { previous: parsed.previous, now: parsed.now, reason: parsed.reason }
+      }
+    }
+  }
+
+  const brief = findPrincipalFrozenBrief(comments, allowlist)
+  if (!brief) {
+    throw new Error(
+      `resolveIssueObjectives: Issue #${issueNumber} carries no principal-authored, frozen \`aeg:brief:v1\` comment — \`vinaya task dispatch\` must post the brief before this loop can start.`
+    )
+  }
+  const text = extractObjectivesSection(contentAfterTwoLines(brief.body))
+  if (text.length === 0) return { text: '', version: null, edit: null }
+  const parsedObjectives = objectivesOf(['## Objectives', '', text].join('\n'))
+  return { text, version: parsedObjectives.ok ? objectivesVersion(parsedObjectives.objectives) : null, edit: null }
+}
+
+/**
+ * O3: reconstructs the exact `vinaya issue objectives edit` invocation an
+ * edit-audit comment records, from the `previous`/`now` lists
+ * `parseObjectivesEditComment` already parsed — one of `--add`/`--drop`/
+ * `--replace`, matching `applyOp`'s own three cases exactly
+ * (`issue-objectives.ts`). Used only to name, in a pause detail, the command
+ * that superseded a round's dispatch-time objectives — never executed.
+ */
+export function describeObjectivesEdit(issueNumber: number, edit: ObjectivesEditSource): string {
+  const { previous, now, reason } = edit
+  const base = `vinaya issue objectives edit ${issueNumber}`
+  const sameThrough = (n: number) =>
+    previous.slice(0, n).every((o, i) => o.id === now[i]?.id && o.text === now[i]?.text)
+
+  if (now.length === previous.length + 1 && sameThrough(previous.length)) {
+    const added = now[now.length - 1] as Objective
+    return `${base} --add "${added.text}" --reason "${reason}"`
+  }
+  if (now.length === previous.length - 1) {
+    const missing = previous.find((p) => !now.some((n) => n.id === p.id))
+    if (missing && now.every((n, i) => n.id === previous.filter((p) => p.id !== missing.id)[i]?.id)) {
+      return `${base} --drop ${missing.id} --reason "${reason}"`
+    }
+  }
+  if (now.length === previous.length) {
+    const changed = now.find((n, i) => previous[i]?.id === n.id && previous[i]?.text !== n.text)
+    if (changed && now.every((n, i) => n.id === previous[i]?.id)) {
+      return `${base} --replace ${changed.id} "${changed.text}" --reason "${reason}"`
+    }
+  }
+  return `${base} — could not reconstruct the exact flags from the edit comment's Previous:/Now: diff; Reason: ${reason}`
 }
 
 const ISSUE_TITLE_SHAPE = /^\[([^\]]+)\]\s+(\d+)\s+[—-]/
@@ -357,6 +505,8 @@ export function findOpenPrForBranch(branch: string): PrRef | null {
 
 export type ReviewerPromptFacts = {
   objectives: string
+  /** `resolveIssueObjectives`'s version for `objectives`, captured at dispatch time — threaded into the held verdict (O2) and re-checked at assessment time (O3). `null` alongside an empty `objectives`. */
+  objectivesVersion: string | null
   rulings: string[]
   head: string
   ciConclusion: 'green' | 'red' | 'pending'
@@ -793,7 +943,7 @@ export type LoopDeps = {
   fetchFailingCheckNames: typeof fetchFailingCheckNames
   fetchRulings: typeof fetchRulings
   fetchFrozenBrief: typeof fetchFrozenBrief
-  fetchIssueObjectives: typeof fetchIssueObjectives
+  resolveIssueObjectives: typeof resolveIssueObjectives
   developerBranchFor: (issueNumber: number) => string
   findOpenPrForBranch: typeof findOpenPrForBranch
   /** O4: the durable session id `dispatch.ts` last recorded for this repo+role+vendor+task, or `null`. */
@@ -895,7 +1045,7 @@ function defaultDeps(): LoopDeps {
     fetchFailingCheckNames,
     fetchRulings,
     fetchFrozenBrief,
-    fetchIssueObjectives,
+    resolveIssueObjectives,
     developerBranchFor: (n) => developerBranchFor(n),
     findOpenPrForBranch,
     readResumeRecord: (task, agent, repo) => realReadResumeRecord('developer', agent, repo, task),
@@ -1047,7 +1197,8 @@ function buildVerdictFromReport(
   headSha: string,
   agent: AgentVendor,
   taskId: number,
-  handle: DispatchHandle
+  handle: DispatchHandle,
+  objectivesVersionAtDispatch: string | null
 ): RoundVerdictParse {
   const reportRaw = readIfExists(join(workDir, 'report.txt')) ?? ''
   const report = parseReport(reportRaw)
@@ -1069,7 +1220,7 @@ function buildVerdictFromReport(
       summary: report.SUMMARY ?? '(no summary given)',
       role: role === 'reviewer' ? 'review' : 'security',
       roleLabel,
-      objectivesVersion: null,
+      objectivesVersion: objectivesVersionAtDispatch,
       taskId: String(taskId),
       model: agent,
       tokensIn,
@@ -1088,6 +1239,10 @@ function buildVerdictFromReport(
   const objectivesRaw = readIfExists(join(workDir, 'objectives.txt'))
   const objectiveResults = objectivesRaw?.trim() ? parseObjectivesFile(objectivesRaw) : []
   const objectives = objectiveResults.map((o) => ({ id: o.id, met: o.status === 'MET' }))
+  // O2: a version renders alongside its `OBJECTIVES:` block, or neither
+  // renders — `review-post.ts`'s `CodeReviewInput`/`SecurityInput` contract
+  // (`objectiveResults` non-null iff `objectivesVersion` non-null).
+  const renderedObjectiveResults = objectivesVersionAtDispatch !== null ? objectiveResults : null
 
   const findingObservations = findings.map((f, i) => ({ id: `F${i + 1}`, severity: f.severity, state: null }))
 
@@ -1103,8 +1258,8 @@ function buildVerdictFromReport(
       scopeEvidence: null,
       tests: report.TESTS ?? '(not reported)',
       docs: report.DOCS ?? '(not reported)',
-      objectivesVersion: null,
-      objectiveResults: null,
+      objectivesVersion: objectivesVersionAtDispatch,
+      objectiveResults: renderedObjectiveResults,
       taskId: String(taskId),
       model: agent,
       tokensIn,
@@ -1131,8 +1286,8 @@ function buildVerdictFromReport(
     configScan: report.CONFIG_SCAN ?? '(not reported)',
     secrets: report.SECRETS ?? 'none found',
     secretsEvidence: null,
-    objectivesVersion: null,
-    objectiveResults: null,
+    objectivesVersion: objectivesVersionAtDispatch,
+    objectiveResults: renderedObjectiveResults,
     taskId: String(taskId),
     model: agent,
     tokensIn,
@@ -1469,7 +1624,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         lastMissing = missing
         continue
       }
-      return buildVerdictFromReport(role, workDir, facts.head, input.agent, task, handle)
+      return buildVerdictFromReport(role, workDir, facts.head, input.agent, task, handle, facts.objectivesVersion)
     }
     throw new ReviewerInfrastructureFailure(role, lastMissing)
   }
@@ -1712,9 +1867,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     } else if (decision.type === 'dispatch_reviewers') {
       const head = d.resolveHead(branch)
       const ciConclusion = d.fetchCiConclusion(head)
-      const objectives = d.fetchIssueObjectives(task)
+      const resolvedObjectives = d.resolveIssueObjectives(task)
       const rulings = d.fetchRulings(prNumber)
-      const facts: ReviewerPromptFacts = { objectives, rulings, head, ciConclusion }
+      const facts: ReviewerPromptFacts = {
+        objectives: resolvedObjectives.text,
+        objectivesVersion: resolvedObjectives.version,
+        rulings,
+        head,
+        ciConclusion
+      }
 
       // O5: an infrastructure outcome from either role (after its own
       // one-retry inside `dispatchReviewer`) is a driver-decided pause —
@@ -1740,24 +1901,44 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
 
       if (verdicts) {
-        const [reviewer, security] = verdicts
-        // Both roles genuinely finished (`Promise.all` did not reject) —
-        // only now is it safe to hold either verdict on disk (O2's "nothing
-        // is held … for that round" invariant; see `dispatchReviewer`'s doc
-        // comment, above).
-        writeHeldVerdict(root, task, round, 'reviewer', reviewer.rendered)
-        writeHeldVerdict(root, task, round, 'security', security.rendered)
-        lastReviewContext = `${reviewer.rendered}\n\n---\n\n${security.rendered}`
+        // O3: objectives may have moved between the dispatch above (`facts`,
+        // captured before either reviewer ran) and now, right after both
+        // finished — a principal's `issue objectives edit` can land mid-round.
+        // Re-resolved BEFORE either verdict is held: neither `verdicts` value
+        // (still in-memory only) is ever written to disk on the mismatch path,
+        // so "the held verdicts … are discarded" holds by never holding them.
+        const reassessed = d.resolveIssueObjectives(task)
+        if (reassessed.version !== facts.objectivesVersion) {
+          const command = reassessed.edit
+            ? describeObjectivesEdit(task, reassessed.edit)
+            : `vinaya issue objectives edit ${task} ... (edit comment not found on re-read)`
+          const detail = `objectives moved from ${facts.objectivesVersion ?? 'none'} to ${
+            reassessed.version ?? 'none'
+          } between reviewer dispatch and assessment — superseded by \`${command}\``
+          const stats = computeStats(head, roundStartMs)
+          await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+          decision = { type: 'pause', reason: 'objectives_changed', detail }
+          d.flushOutbox(task)
+        } else {
+          const [reviewer, security] = verdicts
+          // Both roles genuinely finished (`Promise.all` did not reject) —
+          // only now is it safe to hold either verdict on disk (O2's "nothing
+          // is held … for that round" invariant; see `dispatchReviewer`'s doc
+          // comment, above).
+          writeHeldVerdict(root, task, round, 'reviewer', reviewer.rendered)
+          writeHeldVerdict(root, task, round, 'security', security.rendered)
+          lastReviewContext = `${reviewer.rendered}\n\n---\n\n${security.rendered}`
 
-        const obs: Observations = { kind: 'verdicts', round, verdicts: [reviewer.observation, security.observation] }
-        const result = assessRound(state, obs)
-        state = result.state
-        decision = result.decision
-        const routed = routeCompletionEvents(result.events, decision.type)
-        pendingCompletionEvents = routed.toDeferUntilPublish
-        await logEvents(routed.toLogNow)
-        d.flushOutbox(task)
-        if (decision.type === 'dispatch_developer') round += 1
+          const obs: Observations = { kind: 'verdicts', round, verdicts: [reviewer.observation, security.observation] }
+          const result = assessRound(state, obs)
+          state = result.state
+          decision = result.decision
+          const routed = routeCompletionEvents(result.events, decision.type)
+          pendingCompletionEvents = routed.toDeferUntilPublish
+          await logEvents(routed.toLogNow)
+          d.flushOutbox(task)
+          if (decision.type === 'dispatch_developer') round += 1
+        }
       } else {
         d.flushOutbox(task)
       }
