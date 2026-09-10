@@ -560,12 +560,15 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `STUDIO_ARTIFACT_RELEASE_TAG` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_ARTIFACT_REPO` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_NODE_MODULES_PACKED_DIRNAME` | const | `apps/cli/src/lib/studio-bundle.ts` |
+| `isAlreadyDispatchedError` | function | `apps/cli/src/lib/task-run.ts` |
+| `RunTaskError` | class | `apps/cli/src/lib/task-run.ts` |
+| `runTask` | function | `apps/cli/src/lib/task-run.ts` |
 | `AEG_BRIEF_V1_MARKER` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(226 exports.)
+(229 exports.)
 
-## Commands — `apps/cli/src/commands` (43 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
+## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
 | Command | File | Entry function | In-scope calls today | Status | One lib function (compliant) / retirement target (exempt) |
 |---|---|---|---|---|---|
@@ -581,6 +584,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `brief render` | `brief.ts` | `briefRenderCommand` | 1 | compliant | `assembleAndRenderBrief` |
 | `task dispatch` | `task.ts` | `taskDispatchCommand` | 1 | compliant | `dispatchTask` |
 | `task brief` | `task.ts` | `taskBriefCommand` | 1 | compliant | `prepareTask` |
+| `task run` | `task-run.ts` | `taskRunCommand` | 2 | exempt — see below | sharedCommandShell (target) |
 | `pr create` | `pr.ts` | `prCreateCommand` | 9 | exempt — see below | forgeWrite (target) |
 | `pr edit` | `pr.ts` | `prEditCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `pr report` | `pr-report.ts` | `prReportCommand` | 3 | exempt — see below | collectTokens (target) |
@@ -655,8 +659,9 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `pr-verify-evidence-logic.ts` (not a command — see note) | 2026-09-05 | n/a — lib code (`publishedMergeBase`, `normaliseLines`, `compareEvidence`, `renderVerdict`) colocated in `apps/cli/src/commands/` instead of `apps/cli/src/lib/` | moves to `apps/cli/src/lib/` in the next task touching `pr-verify-evidence` |
 | `dispatch` | 2026-09-07 | 5 — lib (4): `loadConfig`, `isAgentVendor`, `dispatchRole`, `printJson`; commands/\*.ts (refused outright): `logFlushCommand` (`log.ts`) | `sharedCommandShell` |
 | `dev-review-loop` | 2026-09-10 | 5 — lib: `loadConfig`, `isAgentVendor`, `devReviewLoop`, `printJson`, `colourLoopLine` | `sharedCommandShell` |
+| `task run` | 2026-09-10 | 2 — lib: `runTask`, `colourLoopLine` | `sharedCommandShell` |
 
-`dispatchRole` retires no row today — its own command (`dispatch`) is new, not a retirement of an existing exempt row; `runTask` remains forward-looking, with no shipped command yet. `devReviewLoop` (this task) likewise retires no row today — it is itself a new named chokepoint (`## Effects` intro), and `dev-review-loop`'s own command calls it alongside the same three argv-plumbing calls `dispatch` already carries (`loadConfig`/`isAgentVendor`/`printJson`) — once `sharedCommandShell` absorbs those, this command is left calling only `devReviewLoop`, becoming compliant on its own rather than needing a second named target.
+`dispatchRole` retires no row today — its own command (`dispatch`) is new, not a retirement of an existing exempt row. `devReviewLoop` (this task) likewise retires no row today — it is itself a new named chokepoint (`## Effects` intro), and `dev-review-loop`'s own command calls it alongside the same three argv-plumbing calls `dispatch` already carries (`loadConfig`/`isAgentVendor`/`printJson`) — once `sharedCommandShell` absorbs those, this command is left calling only `devReviewLoop`, becoming compliant on its own rather than needing a second named target.
 
 `issue create`/`issue edit` re-verified after `BRIEF_BUILTINS` (`apps/cli/src/lib/config.ts`) and its `runBuiltin` table (`apps/cli/src/lib/forge-write.ts`) gained a `briefSections` entry: both rows' own in-scope call count is unchanged — `validateTaskIssue` was already the one call either row lists, and a new entry inside that function's internal table is not a new call site in either command's own body.
 
@@ -669,4 +674,10 @@ Every non-compliant command from the table above, dated, with the count of disti
 `dispatchRole` (Issue #491, role-prefixed and coloured terminal output) gains three exports — `colourEnabled`, `colourAgentLine`, `colourLoopLine`, all listed above — and drops none. Exported so a fixture stream can assert the TTY/`NO_COLOR` predicate and the per-role prefix directly, without spawning a real vendor process. Applied only at the point a line reaches `process.stderr`/`process.stdout` (never where a line is produced), so `openOutputTee`'s own tee and `dispatchRole`'s existing `[vinaya dispatch <id>] …` lifecycle-line text are unaffected by this addition; `dev-review-loop`'s own two `process.stdout.write` calls (`devReviewLoopCommand`) now route their text through `colourLoopLine`, calling only `dispatch.ts`'s already-exported surface — one new in-scope lib call, raising that command's own exemption row from 4 to 5 (both the Commands table and the Exemptions row below, updated together).
 
 `prepareTask` (task-run-v1 task 1, O1) is the preparation half extracted from what used to be all of `dispatchTask`'s body — it retires no row today (`dispatchTask` remains, deprecated, and stays `task dispatch`'s own one lib call, unchanged); it is the one lib function `task brief` (`taskBriefCommand`, this task's O2) calls.
+
+`runTask` (task-run-v1 task 2) is the new named chokepoint the `## Effects` intro already anticipated — the "forward-looking, no shipped command yet" caveat above no longer applies. It composes `prepareTask` (`dispatch-task.ts`, unchanged) with `devReviewLoop` (`dev-review-loop.ts`, unchanged — this task calls it, never edits it). Retires no row: neither composed function's own exemption/compliance status changes.
+
+`task run` (`taskRunCommand`) is **exempt**, not compliant — round 2 review (MAJOR): the fresh-task publish/pause summary lines needed role-colouring through `colourLoopLine` (`dispatch.ts`, already exported), the same treatment `dev-review-loop`'s own equivalent lines already carry, raising this command's own in-scope call count from `1` to `2` (`runTask` plus `colourLoopLine`) — both the Commands table row and the new Exemptions row above updated together, same convention the `dev-review-loop` colour addition itself used one commit earlier. `RunTaskResult` (`task-run.ts`) also gained a `prUrl: string | null` field, built from `resolveRepo()` (`@attalabs/aeg-forge-state`, already used by `dev-review-loop.ts`) plus the loop's own `prNumber` — round 2 review, MAJOR: Issue #480's own Sizing story promises the publish path "printing the PR URL," which the shipped command did not do. `null` only when the repo cannot be resolved, never thrown — a display-only nicety, not a new refusal.
+
+Round 2 review, second round (security, HIGH/MEDIUM): `taskRunCommand` now catches every `runTask` failure itself and exits `3` (a new, distinct exit code — never `1`, which pause alone owns), and its own argv parser (`parseFlags`) now collects unrecognized flags into an explicit refusal (exit `2`) instead of silently dropping them, mirroring the fix `dispatch.ts`'s own `parseArgs`/`KNOWN_FLAGS` already made for the identical gap on that sibling command. Neither change touches this command's in-scope lib-call count (still `2`: `runTask`, `colourLoopLine`) or its exemption status.
 

@@ -165,6 +165,24 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'task run',
+    description: 'One command from a planned Issue to a reviewed pull request — exactly one developer started',
+    flags: [
+      {
+        flag: '--agent <claude|codex|gemini>',
+        description: 'Vendor for the developer and both reviewers this run dispatches'
+      }
+    ],
+    details: [
+      // AEG:CLAIM: apps/cli/src/lib/task-run.ts contains:export async function runTask(
+      "Composes `task brief`'s own preparation (`prepareTask`) with `dev-review-loop` (`devReviewLoop`) — nothing else. Preparation starts no agent; the loop's own round 1 reads the frozen brief off the Issue and is the only place a developer is ever dispatched from a fresh task, so exactly one developer is started by construction.",
+      'A brief already frozen on the Issue is reused, never re-posted — the second `task dispatch`/`task brief` call this composes around does not fail the whole run, it just skips straight to running the loop. A task whose Issue refuses preparation (a missing brief section, an unmet dispatch gate) is refused before any agent starts, with nothing posted.',
+      "Refuses when the frozen brief's developer branch already has an open pull request — the old `task dispatch` followed by `task run` cannot start two developers this way.",
+      "Exit and printed summary distinguish a published, reviewed pull request (exit `0`, the PR URL) from a pause (exit `1`, with the exact `vinaya dev-review-loop --resume <pr>` command to continue), a usage/argv error (exit `2`), and any other failure (exit `3`) — never sharing `1` with a pause, so an unattended host tells them apart from the exit code alone. A run that pauses is resumed with the loop's own existing `--resume <pr>` flag, never a flag on this command."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'pr create',
     description: 'Open a pull request after full brief-schema validation',
     flags: [
