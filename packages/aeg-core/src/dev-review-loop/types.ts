@@ -71,8 +71,24 @@ export type Observations =
  * all); this member exists so the pause it falls back to on a second
  * failure shares the same vocabulary and rendering path every other pause
  * reason already uses, rather than a second, parallel pause shape.
+ *
+ * `'objectives_changed'` (task `review-validity-v1` 2, `#476`, O3): the
+ * objectives version the driver resolved when it dispatched this round's
+ * reviewers no longer matches the version it resolves once their verdicts
+ * are back — a principal posted an objectives edit mid-round. Like
+ * `'infrastructure'`, the driver detects and decides this itself (comparing
+ * two resolutions it fetched is not something `assessRound` can do from an
+ * `Observations` value); this member exists so that pause shares the same
+ * vocabulary and rendering path every other pause reason already uses.
  */
-export type PauseReason = 'escalation' | 'max_rounds' | 'no_progress' | 'confidence' | 'reappearance' | 'infrastructure'
+export type PauseReason =
+  | 'escalation'
+  | 'max_rounds'
+  | 'no_progress'
+  | 'confidence'
+  | 'reappearance'
+  | 'infrastructure'
+  | 'objectives_changed'
 
 export type Decision =
   | { type: 'dispatch_developer'; reason?: 'confidence' }

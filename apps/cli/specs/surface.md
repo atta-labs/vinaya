@@ -396,24 +396,27 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `DEV_REVIEW_LOOP_AGENTS` | const | `apps/cli/src/lib/dev-review-loop.ts` |
 | `developerBranchFor` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `devReviewLoop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `describeObjectivesEdit` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `DevReviewLoopResumeError` | class | `apps/cli/src/lib/dev-review-loop.ts` |
 | `extractObjectivesSection` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchCiConclusion` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchFailingCheckNames` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchIssueObjectives` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchIssueTitle` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `filterPrincipalRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `findLatestPrincipalObjectivesEdit` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `findOpenPrForBranch` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `findPrincipalFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `lintReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `outboxRoot` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `parseConfidenceReply` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `parseObjectivesEditComment` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `publishRound` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `renderPauseComment` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `renderReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `resolveHead` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `resolveIssueObjectives` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `ReviewerInfrastructureFailure` | class | `apps/cli/src/lib/dev-review-loop.ts` |
 | `routeCompletionEvents` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `taskFromPrBody` | function | `apps/cli/src/lib/dev-review-loop.ts` |
@@ -648,6 +651,8 @@ Every non-compliant command from the table above, dated, with the count of disti
 `dispatchRole` (Issue #450, dispatch observability) gained five exports — `DEFAULT_TIMEOUT_MS`, `HEARTBEAT_INTERVAL_MS`, `MAX_TEE_BYTES`, `openOutputTee` and `timeoutWarningLeadMs`, all listed above — and dropped none. They are exported to be reachable from a test at all: the observability behaviours cannot be asserted through `dispatchRole` alone without spawning a real vendor process. `AGENT_VENDOR_NAMES`/`dispatchRole`/`isAgentVendor` are unchanged. Issue #447's O5 adds five more — `parseClaudeUsage` and `parseClaudeResumeId`, exported so a test can assert they read a stream's terminal event as well as a single whole-blob payload, and the three `render*Event` functions, one per vendor, that turn that vendor's own stream into the lines an operator reads while the agent works.
 
 `assembleAndRenderBrief`'s own resolved-Issue result field (Issue #447, O1) is a new field on its already-exported return type, not a new function/const/class export — per this file's own rule (`## The rule`), it needs no new row here. `task dispatch` (`taskDispatchCommand`) still calls only `dispatchTask`, unchanged.
+
+`dispatch-task.ts`'s `dispatchTask` (Issue #492, task-run-v1 task 8) now reaches `dispatchRole` through a static import from `dispatch.ts`, not the runtime-built `import('./dispatch.js')` lookup it used before — that lookup never resolved inside the single-file bundle `apps/cli/scripts/build.ts` produces, so the published CLI's `task dispatch --agent` always fell back to a printed manual-recovery instruction. The fallback function and its hand-rolled `DispatchRoleFn`/`DispatchRoleOpts` mirror types are deleted; `dispatchTask`'s own exported surface and `task dispatch`'s one-lib-call count (`dispatchTask`, above) are unchanged — the composition inside `dispatchTask` changed, not what it exposes or what `taskDispatchCommand` calls.
 
 `dispatchRole` (Issue #491, role-prefixed and coloured terminal output) gains three exports — `colourEnabled`, `colourAgentLine`, `colourLoopLine`, all listed above — and drops none. Exported so a fixture stream can assert the TTY/`NO_COLOR` predicate and the per-role prefix directly, without spawning a real vendor process. Applied only at the point a line reaches `process.stderr`/`process.stdout` (never where a line is produced), so `openOutputTee`'s own tee and `dispatchRole`'s existing `[vinaya dispatch <id>] …` lifecycle-line text are unaffected by this addition; `dev-review-loop`'s own two `process.stdout.write` calls (`devReviewLoopCommand`) now route their text through `colourLoopLine`, calling only `dispatch.ts`'s already-exported surface — one new in-scope lib call, raising that command's own exemption row from 4 to 5 (both the Commands table and the Exemptions row below, updated together).
 

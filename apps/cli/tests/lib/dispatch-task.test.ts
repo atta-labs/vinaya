@@ -64,7 +64,7 @@ function deps(overrides: Partial<DispatchTaskDeps> = {}): DispatchTaskDeps {
     ) as unknown as DispatchTaskDeps['assembleAndRenderBrief'],
     findExistingV1Comment: neverCalled('findExistingV1Comment') as unknown as DispatchTaskDeps['findExistingV1Comment'],
     postMarkedComment: neverCalled('postMarkedComment') as unknown as DispatchTaskDeps['postMarkedComment'],
-    resolveDispatchRole: async () => null,
+    dispatchRole: neverCalled('dispatchRole') as unknown as DispatchTaskDeps['dispatchRole'],
     resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' }),
     resolveModelForDispatch: () => undefined,
     ...overrides
@@ -180,17 +180,15 @@ describe('dispatchTask', () => {
     expect(existingCheckCalled).toBe(false)
   })
 
-  it('with --agent and dispatchRole available, calls it with the posted brief and a real promptFile', async () => {
+  it('with --agent, calls the statically-imported dispatchRole with the posted brief and a real promptFile', async () => {
     const calls: unknown[][] = []
     await dispatchTask(
       { tranche: 'plan-brief-v1', n: 427, agent: 'claude' },
       postingDeps({
         postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-1',
-        resolveDispatchRole: async () => {
-          return async (...args: unknown[]) => {
-            calls.push(args)
-          }
-        }
+        dispatchRole: (async (...args: unknown[]) => {
+          calls.push(args)
+        }) as unknown as DispatchTaskDeps['dispatchRole']
       })
     )
     expect(calls.length).toBe(1)
@@ -200,8 +198,9 @@ describe('dispatchTask', () => {
     expect(prompt).toBe(BRIEF_TEXT)
     expect(opts.task).toBe(427)
     // `dispatchRole`'s real `DispatchOpts.promptFile` is required — this is
-    // the exact gap a signature mismatch across the dynamic-import boundary
-    // let through uncaught by `tsc` (found live, security/code review).
+    // the exact gap a signature mismatch across the old dynamic-import
+    // boundary let through uncaught by `tsc` (found live, security/code
+    // review) — the static import now makes any such mismatch a build error.
     expect(typeof opts.promptFile).toBe('string')
     expect(opts.promptFile.length).toBeGreaterThan(0)
   })
@@ -213,11 +212,9 @@ describe('dispatchTask', () => {
       { tranche: 'plan-brief-v1', n: 427, agent: 'claude', model: 'opus' },
       postingDeps({
         postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-1',
-        resolveDispatchRole: async () => {
-          return async (...args: unknown[]) => {
-            calls.push(args)
-          }
-        },
+        dispatchRole: (async (...args: unknown[]) => {
+          calls.push(args)
+        }) as unknown as DispatchTaskDeps['dispatchRole'],
         resolveModelForDispatch: (agent, issue, explicitModel) => {
           resolveArgs = [agent, issue, explicitModel]
           return explicitModel
@@ -235,11 +232,9 @@ describe('dispatchTask', () => {
       { tranche: 'plan-brief-v1', n: 427, agent: 'claude' },
       postingDeps({
         postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-1',
-        resolveDispatchRole: async () => {
-          return async (...args: unknown[]) => {
-            calls.push(args)
-          }
-        },
+        dispatchRole: (async (...args: unknown[]) => {
+          calls.push(args)
+        }) as unknown as DispatchTaskDeps['dispatchRole'],
         resolveModelForDispatch: () => 'sonnet'
       })
     )
@@ -257,11 +252,9 @@ describe('dispatchTask', () => {
             postCalled = true
             return 'https://github.com/acme/widget/issues/427#issuecomment-1'
           },
-          resolveDispatchRole: async () => {
-            return async () => {
-              throw new Error('dispatchRole should never be reached')
-            }
-          },
+          dispatchRole: (async () => {
+            throw new Error('dispatchRole should never be reached')
+          }) as unknown as DispatchTaskDeps['dispatchRole'],
           resolveModelForDispatch: () => {
             // The live bug this regresses: this throwing today, AFTER the
             // brief was already posted, left the task permanently
@@ -275,29 +268,6 @@ describe('dispatchTask', () => {
       )
     ).rejects.toThrow(DispatchTaskError)
     expect(postCalled).toBe(false)
-  })
-
-  it('with --agent and dispatchRole unavailable, prints the manual instruction and resolves cleanly', async () => {
-    const originalWrite = process.stdout.write.bind(process.stdout)
-    let printed = ''
-    process.stdout.write = ((chunk: string) => {
-      printed += chunk
-      return true
-    }) as typeof process.stdout.write
-    try {
-      const result = await dispatchTask(
-        { tranche: 'plan-brief-v1', n: 427, agent: 'codex' },
-        postingDeps({
-          postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-1',
-          resolveDispatchRole: async () => null
-        })
-      )
-      expect(result.posted).toBe(true)
-    } finally {
-      process.stdout.write = originalWrite
-    }
-    expect(printed).toContain('dispatchRole` is not available yet')
-    expect(printed).toContain('--agent codex')
   })
 
   describe('dispatch authorization — Principal-only, with or without --agent', () => {
@@ -352,7 +322,7 @@ describe('dispatchTask', () => {
 /**
  * O1 (task-run-v1 task 1) — `prepareTask` is `dispatchTask` minus the
  * developer-start half: its own deps type (`PrepareTaskDeps`) has no
- * `DispatchAgent`, no model, no `resolveDispatchRole` field at all, so
+ * `DispatchAgent`, no model, no `dispatchRole` field at all, so
  * there is structurally nothing here that could start a worker — the type
  * itself is the "starts no agent" proof, not merely an assertion at runtime.
  */
