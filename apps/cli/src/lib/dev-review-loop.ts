@@ -1634,9 +1634,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               ? `CI is red on the last head. Failing check-run(s): ${
                   lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
                 }. Fix and push.`
-              : lastReviewContext
-                ? `Round ${round} review findings:\n\n${lastReviewContext}\n`
-                : 'CI was red on the last head — fix and push.',
+              : // `isGateRedRetry` is false here only when this dispatch came from
+                // `assessVerdicts`' review-findings fallback, which requires
+                // `dispatch_reviewers` to have already run and set `lastReviewContext`
+                // — so it is never null in this branch (code review, round 1, MINOR:
+                // the prior 'CI was red...' fallback below this was unreachable).
+                `Round ${round} review findings:\n\n${lastReviewContext}\n`,
           'Address the findings above per aeg-root/roles/developer.md. Push fixes as new commits on the SAME branch; do not open a new PR.',
           round >= 2 ? CONFIDENCE_PROMPT_LINE : ''
         ]
