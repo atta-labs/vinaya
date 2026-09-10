@@ -16,10 +16,12 @@ import {
   computeGroupC,
   extractAgentCommandLines,
   type GateOutcome,
+  type GateRunner,
   type GateRunResult,
   GitCommandError,
   groupCFailed,
   MissingEvidenceAnchorError,
+  prReportCommand,
   prReportExitCode,
   replaceEvidenceBlock,
   runAgentCommand,
@@ -82,7 +84,15 @@ const FAILING_GATES: GateRunResult = {
 
 describe('buildReport', () => {
   it('emits Group A and Group B as distinguishable, anchor-wrapped sections', async () => {
-    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES, body: '' })
+    // Non-empty body: a `pr-report-density`/`doc-coverage`-shaped pass on an
+    // EMPTY body renders `skipped` (O3, see the dedicated describe block
+    // below) — this test is about section shape, not that distinction, so it
+    // uses a real body like any actual invocation would carry.
+    const result = await buildReport({
+      groupA: FIXED_GROUP_A,
+      gateRunner: () => PASSING_GATES,
+      body: 'a real PR body'
+    })
     expect(result.block).toStartWith('<!-- AEG:EVIDENCE:START -->')
     expect(result.block).toEndWith('<!-- AEG:EVIDENCE:END -->')
     expect(result.block).toContain('### Group A — recomputable')
@@ -177,6 +187,153 @@ describe('buildReport', () => {
     expect(result.gatesFailed).toBe(true)
     expect(result.block).toContain('doc-coverage: fail')
     expect(result.block).not.toContain('evidence-fresh')
+  })
+})
+
+describe('buildReport — graded body source (O2)', () => {
+  it('names the drafted file as the graded source in --write mode', async () => {
+    const result = await buildReport({
+      groupA: FIXED_GROUP_A,
+      gateRunner: () => PASSING_GATES,
+      body: 'a real drafted body',
+      gradedBodySource: 'write'
+    })
+    expect(result.block).toContain('Graded body: the drafted body file (`--write`)')
+  })
+
+  it('names the live pull-request body as the graded source in --push mode', async () => {
+    const result = await buildReport({
+      groupA: FIXED_GROUP_A,
+      gateRunner: () => PASSING_GATES,
+      body: 'a real live body',
+      gradedBodySource: 'push'
+    })
+    expect(result.block).toContain('Graded body: the live pull-request body (`--push`)')
+  })
+})
+
+describe('buildReport — no-body checks render skipped, never pass (O3)', () => {
+  it('a body-reading check that passed on an empty body renders skipped, never pass', async () => {
+    const emptyBodyGates: GateRunResult = {
+      outcomes: [
+        // `pr-report-density` declares `PR_BODY` in its registry env and
+        // exits 0 with no error when handed an empty body — the exact shape
+        // of PR #481's incident.
+        { name: 'pr-report-density', status: 'pass', errors: [] },
+        // Doesn't read PR_BODY at all — a real pass, must stay pass.
+        { name: 'exec-bits', status: 'pass', errors: [] }
+      ],
+      failed: false
+    }
+    const result = await buildReport({
+      groupA: FIXED_GROUP_A,
+      gateRunner: () => emptyBodyGates,
+      body: '',
+      gradedBodySource: 'write'
+    })
+    expect(result.block).toContain('pr-report-density: skipped')
+    expect(result.block).not.toContain('pr-report-density: pass')
+    expect(result.block).toContain('exec-bits: pass')
+    expect(result.gateOutcomes.find((o) => o.name === 'pr-report-density')?.status).toBe('skipped')
+  })
+
+  it('a body-reading check that genuinely FAILED on an empty body is left alone — never upgraded to skipped', async () => {
+    const emptyBodyGates: GateRunResult = {
+      outcomes: [
+        {
+          name: 'closes-n',
+          status: 'fail',
+          errors: [{ severity: 'error', message: 'no Closes #N in the PR body' }]
+        }
+      ],
+      failed: true
+    }
+    const result = await buildReport({
+      groupA: FIXED_GROUP_A,
+      gateRunner: () => emptyBodyGates,
+      body: '',
+      gradedBodySource: 'write'
+    })
+    expect(result.block).toContain('closes-n: fail')
+    expect(result.gatesFailed).toBe(true)
+  })
+
+  it('a body-reading check is NOT rendered skipped when the graded body is non-empty — a real pass stays pass', async () => {
+    const result = await buildReport({
+      groupA: FIXED_GROUP_A,
+      gateRunner: () => PASSING_GATES,
+      body: 'a real drafted body',
+      gradedBodySource: 'write'
+    })
+    expect(result.block).toContain('brief-shape: pass')
+    expect(result.block).not.toContain('brief-shape: skipped')
+  })
+})
+
+describe('prReportCommand — --write forwards PR_BODY/BRANCH to Group B, never PR_NUMBER (O1)', () => {
+  class ExitCalled extends Error {
+    constructor(public code: number | undefined) {
+      super(`process.exit(${code})`)
+    }
+  }
+
+  async function runCapturingExit(args: string[], testOverrides?: { gateRunner?: GateRunner }): Promise<void> {
+    const originalExit = process.exit
+    process.exit = ((code?: number) => {
+      throw new ExitCalled(code)
+    }) as never
+    try {
+      await prReportCommand(args, testOverrides)
+    } catch (err) {
+      if (!(err instanceof ExitCalled)) throw err
+    } finally {
+      process.exit = originalExit
+    }
+  }
+
+  it("forwards the drafted body file's text and the current branch to Group B the same way --push forwards the live body, and never sets PR_NUMBER", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-write-env-'))
+    const originalCwd = process.cwd()
+    const originalPrBody = process.env.PR_BODY
+    const originalBranch = process.env.BRANCH
+    const originalPrNumber = process.env.PR_NUMBER
+    try {
+      execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir })
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir })
+      execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'init'], { cwd: dir })
+      execFileSync('git', ['checkout', '-q', '-b', 'task/task-run-v1/5'], { cwd: dir })
+
+      const bodyPath = join(dir, 'body.md')
+      writeFileSync(bodyPath, 'a real drafted body\n')
+
+      let capturedEnv: { PR_BODY?: string; BRANCH?: string; PR_NUMBER?: string } = {}
+      const recordingRunner: GateRunner = () => {
+        capturedEnv = {
+          PR_BODY: process.env.PR_BODY,
+          BRANCH: process.env.BRANCH,
+          PR_NUMBER: process.env.PR_NUMBER
+        }
+        return PASSING_GATES
+      }
+
+      delete process.env.PR_NUMBER
+      process.chdir(dir)
+      await runCapturingExit(['--write', bodyPath], { gateRunner: recordingRunner })
+
+      expect(capturedEnv.PR_BODY).toBe('a real drafted body\n')
+      expect(capturedEnv.BRANCH).toBe('task/task-run-v1/5')
+      expect(capturedEnv.PR_NUMBER).toBeUndefined()
+    } finally {
+      process.chdir(originalCwd)
+      if (originalPrBody === undefined) delete process.env.PR_BODY
+      else process.env.PR_BODY = originalPrBody
+      if (originalBranch === undefined) delete process.env.BRANCH
+      else process.env.BRANCH = originalBranch
+      if (originalPrNumber === undefined) delete process.env.PR_NUMBER
+      else process.env.PR_NUMBER = originalPrNumber
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
