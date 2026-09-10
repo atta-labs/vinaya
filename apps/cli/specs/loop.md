@@ -8,12 +8,14 @@ Status: draft
 
 ## The command
 
+`vinaya task run <tranche> <n> --agent <claude|codex|gemini>` (`apps/cli/src/commands/task-run.ts`, `taskRunCommand`, task-run-v1 task 2) is the normal entry: it composes `task brief`'s own preparation (renders and freezes the brief, starts no agent) with this loop, so one command runs the whole way from a planned Issue — `n` a tranche task ordinal there, resolved to its real forge Issue by preparation — to a reviewed pull request, exactly one developer started. `dev-review-loop` below is `task run`'s own debug/direct entry, kept for resuming a paused run and for driving the loop straight off an Issue number without going through preparation:
+
 ```
 vinaya dev-review-loop --task <n> --agent claude|codex|gemini [--json]
 vinaya dev-review-loop --resume <pr> --agent claude|codex|gemini [--json]
 ```
 
-`--task <n>` starts a fresh loop against task Issue `<n>` — `n` is a GitHub Issue number, not a tranche task ordinal. `--resume <pr>` continues a previously paused loop from its held state (see "Pause and `--resume`" below); it takes a pull-request number, since a paused loop is anchored to an already-open PR, not an Issue. `--agent` falls back to `dispatch.agent` in `vinaya.config.json` when omitted. Both forms build the same `LoopInput` union and make exactly one call into `devReviewLoop` — `apps/cli/specs/surface.md`'s one-command-one-effects-call rule.
+`--task <n>` starts a fresh loop against task Issue `<n>` — `n` is a GitHub Issue number, not a tranche task ordinal. `--resume <pr>` continues a previously paused loop from its held state (see "Pause and `--resume`" below); it takes a pull-request number, since a paused loop is anchored to an already-open PR, not an Issue. `--agent` falls back to `dispatch.agent` in `vinaya.config.json` when omitted. Both forms build the same `LoopInput` union and make exactly one call into `devReviewLoop` — `apps/cli/specs/surface.md`'s one-command-one-effects-call rule. `task run` never grows a `--resume` flag of its own (O2): a paused run is resumed through this SAME `--resume <pr>` path directly, since `runTask` (`task-run.ts`) composes `devReviewLoop` fresh every call and carries no resume state of its own.
 
 ## Rounds
 
