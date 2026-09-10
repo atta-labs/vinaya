@@ -350,6 +350,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `resolveBoundaryPaths` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `resolveRemoteDefaultBranch` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `sha256OfFile` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `taskNotFoundMessage` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `buildClaudeCommandOps` | function | `apps/cli/src/lib/claude-command-emitter.ts` |
 | `CLAUDE_COMMAND_GROUP` | const | `apps/cli/src/lib/claude-command-emitter.ts` |
 | `CLAUDE_COMMAND_PATH` | const | `apps/cli/src/lib/claude-command-emitter.ts` |
@@ -570,7 +571,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `AEG_BRIEF_V1_MARKER` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(230 exports.)
+(231 exports.)
 
 ## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 

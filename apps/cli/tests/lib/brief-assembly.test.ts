@@ -7,8 +7,30 @@ import {
   checkDirtyPinnedFiles,
   checkStaleAgainstRemote,
   resolveBoundaryPaths,
-  resolveRemoteDefaultBranch
+  resolveRemoteDefaultBranch,
+  taskNotFoundMessage
 } from '../../src/lib/brief-assembly.js'
+
+/**
+ * O2 (task-run-v1 task 11) — a dispatch not-found message names the title
+ * form, the label, and the count of open Issues carrying it, so the three
+ * distinct causes (no Issue yet, wrong label, wrong title) are
+ * distinguishable from the message alone.
+ */
+describe('taskNotFoundMessage (O2)', () => {
+  it('names the title form, the label, and the open-Issue count', () => {
+    const msg = taskNotFoundMessage('task-run-v1', '11', 3)
+    expect(msg).toContain('task "11" is not present in tranche "task-run-v1"')
+    expect(msg).toContain('[task-run-v1] 11 —')
+    expect(msg).toContain('vinaya/tranche:task-run-v1')
+    expect(msg).toContain('3 open Issue(s) carry that label')
+  })
+
+  it('reports zero cleanly when no open Issue carries the label at all', () => {
+    const msg = taskNotFoundMessage('task-run-v1', '99', 0)
+    expect(msg).toContain('0 open Issue(s) carry that label')
+  })
+})
 
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
