@@ -123,7 +123,12 @@ export function main(prNumber: number): void {
     // This shim does not resolve an Issue's objectives list (dev-review-loop-v1
     // task 2, #412, out of this bin's brief-scoped surface) — `null` skips the
     // objectives binding entirely, the same as a pre-cutover PR.
-    objectivesVersion: null
+    objectivesVersion: null,
+    // Nor does it count principal rulings on the PR (review-validity-v1 task 3,
+    // #477, same out-of-surface reasoning) — `0` is the documented "this PR
+    // never had a ruling" value, never a skip, but it is indistinguishable from
+    // a real absence for a shim that never looked.
+    rulingOrdinal: 0
   })
 
   if (result.verdict === 'fail') {

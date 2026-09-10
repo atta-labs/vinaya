@@ -68,6 +68,7 @@ import {
   hasObjectivesHeading,
   isIssueNotFoundError,
   isWaiverLabelActorVerified,
+  newestPrincipalRulingOrdinal,
   OBJECTIVES_SINCE_ISSUE,
   objectivesOf,
   objectivesVersion,
@@ -492,7 +493,17 @@ function main(): void {
     // from `main` or a rebase that leaves the patch untouched must not void
     // a review that already read exactly those changes.
     patchIdOf: (sha: string) => patchIdAt(pr.baseRefName, sha),
-    objectivesVersion: waived ? null : resolveObjectivesVersion(pr)
+    objectivesVersion: waived ? null : resolveObjectivesVersion(pr),
+    // The newest principal ruling ordinal on this PR (task 3, #477, O2) —
+    // a pure count over `pr.comments`, already fetched
+    // above, so unlike `resolveObjectivesVersion` this never fetches
+    // anything and never fails closed; it is computed unconditionally, even
+    // under a waiver, since it can never itself be the reason a resolution
+    // fails.
+    rulingOrdinal: newestPrincipalRulingOrdinal(
+      pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
+      principalAllowlist
+    )
   })
 
   if (result.verdict === 'fail') {

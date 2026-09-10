@@ -51,6 +51,18 @@
  *    `vinaya/waiver:review` actor-verified label, applied by a principal, the
  *    same mechanism that already exists for any other one-off skip.
  *
+ * Ruling-freshness binding (`review-validity-v1` task 3, `#477`, O2). A
+ * verdict is also bound to the newest PRINCIPAL RULING on the PR at cast
+ * time, the same shape as the objectives-version binding above but with
+ * `0` (never `null`) standing in for "nothing to bind against yet" — a
+ * ruling's existence on a PR is never ambiguous the way an Issue's
+ * objectives-cutover status is, so there is no "skip this binding" input
+ * value here. `input.rulingOrdinal` is the caller-resolved newest ordinal
+ * (`isBoundToRulings`, below); a verdict cast against an older ordinal, or
+ * carrying no `Ruling ordinal:` line at all on a PR that now has one,
+ * reads as unbound — a ruling posted after approval turns a previously
+ * clean gate red until reviewers re-cast against it.
+ *
  * Pure — no `fs`, no `fetch`, no `process.env`. The CLI shim
  * (`bin/verify-review-gate.ts`) resolves the PR's comments/labels/label-actor/
  * head sha via `gh` and calls `checkReviewGate`.
@@ -162,6 +174,21 @@ export type ReviewGateInput = {
    * all) reads as unbound, the same fail-closed shape as a stale head.
    */
   objectivesVersion: string | null
+  /**
+   * The newest principal ruling ordinal on this PR (`review-validity-v1`
+   * task 3, `#477`, O2) — `0` when the PR carries no ruling at all, NEVER
+   * `null`: unlike `objectivesVersion`, there is no "skip this binding"
+   * case here — a PR either has rulings or it doesn't, and `0` says so.
+   * Resolved by the caller (never here; this stays pure) by counting
+   * principal-authored `<!-- aeg:principal:ruling:<pr>-<k> -->` comments.
+   * A verdict's own `extraction.rulingOrdinal` binds only when it equals
+   * this value exactly — `null` (pre-cutover stock, no `Ruling ordinal:`
+   * line at all) binds only when this value is `0`, the same "the PR truly
+   * had nothing to see" case `isBoundToObjectives`'s `null`-current-version
+   * skip covers for objectives, but expressed as equality rather than an
+   * unconditional skip, since a ruling's existence is never ambiguous.
+   */
+  rulingOrdinal: number
 }
 
 /**
@@ -238,12 +265,29 @@ function isBoundToObjectives(extraction: { objectivesVersion: string | null }, c
 }
 
 /**
+ * True when the verdict's ruling ordinal covers the PR's current newest
+ * ruling ordinal (`review-validity-v1` task 3, `#477`, O2). `null` on the
+ * extraction (pre-cutover stock — no `Ruling ordinal:` line at all) binds
+ * only when `currentOrdinal` is `0`: a verdict cast before this feature
+ * existed is still valid on a PR that has never had a ruling, but not on
+ * one that has, since that verdict's reviewers structurally never saw it.
+ * Otherwise the ordinals must match exactly — a verdict cast against ruling
+ * 1 does not cover a PR whose newest ruling is now 2, and a ruling posted
+ * after approval is exactly what turns a previously-bound verdict unbound.
+ */
+function isBoundToRulings(extraction: { rulingOrdinal: number | null }, currentOrdinal: number): boolean {
+  if (extraction.rulingOrdinal === null) return currentOrdinal === 0
+  return extraction.rulingOrdinal === currentOrdinal
+}
+
+/**
  * `pass` when either (a) `vinaya/waiver:review` is present and actor-verified against
  * `PRINCIPAL_ALLOWLIST`, or (b) both verdicts are clean AND bound — code-reviewer
  * `APPROVE` (not `REQUEST_CHANGES`, not missing, not unclear) covering the PR's
  * current `headSha` — by that sha, or by an equal patch identity when
  * `patchIdOf` is supplied — and security-review `PASS` (not `FAIL`, not
- * missing, not unclear) covering it too — AND every reported mechanical check-run for that
+ * missing, not unclear) covering it too, both also bound to the current
+ * objectives version and the current newest ruling ordinal — AND every reported mechanical check-run for that
  * same head is green, a `skipping`/`neutral` entry (a job whose own `if:`
  * was false for this event) filtered out first as absent rather than
  * counted either way (`mechanicalChecks`, after that filter, non-empty and
@@ -310,14 +354,18 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const securityBound = isBoundToPatch(security, input.headSha, input.patchIdOf)
   const codeReviewObjectivesBound = isBoundToObjectives(codeReview, input.objectivesVersion)
   const securityObjectivesBound = isBoundToObjectives(security, input.objectivesVersion)
+  const codeReviewRulingsBound = isBoundToRulings(codeReview, input.rulingOrdinal)
+  const securityRulingsBound = isBoundToRulings(security, input.rulingOrdinal)
 
   if (
     codeReviewClean &&
     codeReviewBound &&
     codeReviewObjectivesBound &&
+    codeReviewRulingsBound &&
     securityClean &&
     securityBound &&
     securityObjectivesBound &&
+    securityRulingsBound &&
     mechanicalChecksClean
   ) {
     return {
@@ -338,6 +386,10 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
     problems.push(
       `the newest code-review verdict was cast against objectives version ${codeReview.objectivesVersion ?? 'none'}, the Issue's list is now ${input.objectivesVersion}`
     )
+  } else if (!codeReviewRulingsBound) {
+    problems.push(
+      `the newest code-review verdict was cast against ruling ordinal ${codeReview.rulingOrdinal ?? 'none'}, a newer ruling (ruling ${input.rulingOrdinal}) is now posted on this PR`
+    )
   }
   if (!securityClean) {
     problems.push(`security-review verdict is not a clean PASS (found: ${security.value})`)
@@ -348,6 +400,10 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   } else if (!securityObjectivesBound) {
     problems.push(
       `the newest security-review verdict was cast against objectives version ${security.objectivesVersion ?? 'none'}, the Issue's list is now ${input.objectivesVersion}`
+    )
+  } else if (!securityRulingsBound) {
+    problems.push(
+      `the newest security-review verdict was cast against ruling ordinal ${security.rulingOrdinal ?? 'none'}, a newer ruling (ruling ${input.rulingOrdinal}) is now posted on this PR`
     )
   }
   if (!mechanicalChecksClean) {
