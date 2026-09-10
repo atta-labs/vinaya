@@ -1,16 +1,25 @@
 /**
  * `vinaya task dispatch <tranche> <n> [--agent claude | codex | gemini]`
  * — argv parsing only, around `dispatchTask` (`lib/dispatch-task.ts`), the
- * one lib function this command calls.
+ * one lib function this command calls. `@deprecated` in favor of
+ * `vinaya task brief` (preparation only, below) and `vinaya task run` (the
+ * future unattended loop) — kept for a documented compatibility window.
+ *
+ * `vinaya task brief <tranche> <n>` — argv parsing only, around
+ * `prepareTask` (`lib/dispatch-task.ts`), the one lib function it calls.
+ * Preparation only: it renders and freezes the brief and starts no worker.
  */
 
-import { DISPATCH_AGENTS, type DispatchAgent, dispatchTask } from '../lib/dispatch-task.js'
+import { DISPATCH_AGENTS, type DispatchAgent, dispatchTask, prepareTask } from '../lib/dispatch-task.js'
 
 export async function taskDispatchCommand(args: string[]): Promise<void> {
   const trancheSlug = args[0]
   const taskIdArg = args[1]
   if (!trancheSlug || !taskIdArg || trancheSlug.startsWith('--')) {
-    console.error(`Usage: vinaya task dispatch <tranche> <n> [--agent ${DISPATCH_AGENTS.join(' | ')}] [--model <name>]`)
+    console.error(
+      `Usage: vinaya task dispatch <tranche> <n> [--agent ${DISPATCH_AGENTS.join(' | ')}] [--model <name>]\n` +
+        'Deprecated: prefer `vinaya task brief` (preparation only) or `vinaya task run` (the full unattended loop).'
+    )
     process.exit(2)
   }
 
@@ -50,4 +59,23 @@ export async function taskDispatchCommand(args: string[]): Promise<void> {
   const result = await dispatchTask({ tranche: trancheSlug, n, agent, model })
   process.stdout.write(`${result.brief}\n`)
   if (result.commentUrl) process.stdout.write(`\nPosted: ${result.commentUrl}\n`)
+}
+
+export async function taskBriefCommand(args: string[]): Promise<void> {
+  const trancheSlug = args[0]
+  const taskIdArg = args[1]
+  if (!trancheSlug || !taskIdArg || trancheSlug.startsWith('--')) {
+    console.error('Usage: vinaya task brief <tranche> <n>')
+    process.exit(2)
+  }
+
+  const n = Number.parseInt(taskIdArg, 10)
+  if (!Number.isInteger(n) || String(n) !== taskIdArg) {
+    console.error(`vinaya task brief: task id must be numeric — got "${taskIdArg}".`)
+    process.exit(2)
+  }
+
+  const result = await prepareTask({ tranche: trancheSlug, n })
+  process.stdout.write(`${result.brief}\n`)
+  process.stdout.write(`\nPosted: ${result.commentUrl}\n`)
 }
