@@ -20,6 +20,7 @@ import {
   checkSurfaceGlobsResolve,
   checkSurfaceScope,
   declaredProjects,
+  isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   OBJECTIVES_SINCE_ISSUE,
   parseIssueParts,
@@ -167,6 +168,39 @@ describe('isTaskIssueLabelSet', () => {
   })
   it('is false for no labels', () => {
     expect(isTaskIssueLabelSet([])).toBe(false)
+  })
+})
+
+describe('isTaskIssueBodyShaped (O1)', () => {
+  it('is true when the body carries a real `## Objectives` heading', () => {
+    expect(isTaskIssueBodyShaped('## Objectives\n\nO1. Do the thing.\n')).toBe(true)
+  })
+
+  it('is true when the body carries any ONE of the eight Planner rationale fields, bold-inline', () => {
+    expect(isTaskIssueBodyShaped('**Boundary** — the thing.\n')).toBe(true)
+    expect(isTaskIssueBodyShaped('**Stop-and-escalate** — n/a.\n')).toBe(true)
+  })
+
+  it('is true on the heading-style rationale fields too (Issue #219 style)', () => {
+    expect(isTaskIssueBodyShaped('### Boundary\n\nthe thing.\n')).toBe(true)
+  })
+
+  it('is true under a non-literal parent heading, as long as a real field is present — the live #issue-valid.md shape', () => {
+    // `checkIssueRationale` never requires the literal heading "## Planner's
+    // rationale" — only the eight fields underneath it — so a body titled
+    // "## Task Issue — Planner rationale" (a real fixture shape) must still
+    // read as task-shaped.
+    const body = '## Task Issue — Planner rationale\n\n**Boundary** — Ship the thing.\n'
+    expect(isTaskIssueBodyShaped(body)).toBe(true)
+  })
+
+  it('is false for an ordinary, non-task-shaped body', () => {
+    expect(isTaskIssueBodyShaped('Fix a typo in the README.\n')).toBe(false)
+  })
+
+  it('is false when the only match appears inside a fenced code block', () => {
+    const body = '```\n## Objectives\n\nO1. example inside a fence.\n\n**Boundary** — n/a.\n```\n'
+    expect(isTaskIssueBodyShaped(body)).toBe(false)
   })
 })
 

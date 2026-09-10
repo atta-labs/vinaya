@@ -59,6 +59,7 @@ import {
   isBriefShaped,
   isPrincipal,
   isTaskBranch,
+  isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   parsePnpmWorkspaceYaml,
   parseRegistry,
@@ -273,6 +274,38 @@ export function resolveMilestoneAttachArgs(ghArgs: string[], labels: string[]): 
     return ghArgs
   }
   return target ? [...ghArgs, '--milestone', target.title] : ghArgs
+}
+
+const CHECK_ISSUE_LABEL = 'issue-label'
+
+/**
+ * **O1 (task-run-v1 task 11) — refuses a task-shaped body with no
+ * `vinaya/tranche:*` label, naming the label.** `isTaskIssueLabelSet`-gated
+ * validation (`validateTaskIssue`, below) never runs at all for a body with
+ * no tranche label — by design, a genuinely non-task Issue must pass through
+ * unvalidated. That design has a hole: a body that actually carries the
+ * Planner's `## Objectives`/`## Planner's rationale` sections but was posted
+ * with no label reads, to that same gate, as "not a task Issue" and sails
+ * through unvalidated too — a task Issue reaching the forge unlabeled. This
+ * runs BEFORE the `isTaskIssueLabelSet` branch at every call site, closing
+ * that hole without loosening the branch itself: a genuinely non-task body
+ * (`isTaskIssueBodyShaped` false) is untouched.
+ *
+ * Deliberately never infers the label from the body/title and adds it
+ * silently — the Planner types the label; this only refuses and names what's
+ * missing.
+ */
+export function refuseUnlabeledTaskShapedBody(body: string | null, labels: string[], retryCommand: string): void {
+  if (body === null) return
+  if (isTaskIssueLabelSet(labels)) return
+  if (!isTaskIssueBodyShaped(body)) return
+  refuse([
+    makeCheckError(
+      CHECK_ISSUE_LABEL,
+      "This body carries task-Issue sections (`## Objectives` / `## Planner's rationale`) but no `vinaya/tranche:*` label was given — a task Issue never reaches the forge unlabeled.",
+      `Add a \`vinaya/tranche:<slug>\` label (e.g. \`--label vinaya/tranche:<slug>\`), then re-run \`${retryCommand}\`.`
+    )
+  ])
 }
 
 /**
@@ -883,6 +916,8 @@ export function writeValidatedIssueEdit(input: {
   // Union the forge's real labels with any passed on argv — argv is normally
   // silent on edit, so the forge is what decides task-Issue applicability.
   const labels = [...new Set([...fetchForgeLabels(issueRef, retryCommand), ...extractLabels(ghArgs)])]
+
+  refuseUnlabeledTaskShapedBody(body, labels, retryCommand)
 
   if (isTaskIssueLabelSet(labels)) {
     validateTaskIssue(body, title, labels, retryCommand, parseIssueNumberFromRef(issueRef))

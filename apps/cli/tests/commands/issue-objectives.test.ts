@@ -36,8 +36,31 @@ function runCli(args: string[], cwd: string, env: Record<string, string | undefi
   }
 }
 
+// Task-run-v1 task 11's O1 refuses a task-shaped body (carrying `##
+// Objectives`/`## Planner's rationale`) with no `vinaya/tranche:*` label —
+// this fixture's body always carries both headings, so it must be a real,
+// fully-rationale'd, labeled task Issue (`stubGh`'s default labels below)
+// rather than the bare single-paragraph rationale this file used before that
+// gate existed. The eight rationale fields are new; the one paragraph the
+// byte-identity assertion checks for is unchanged and still present verbatim.
 const RATIONALE_TAIL = [
   "## Planner's rationale",
+  '',
+  '**Boundary** — Amend the Objectives section only.',
+  '',
+  '**Sizing** — n/a, test fixture.',
+  '',
+  '**Project(s) + blast radius** — `Project: cli`. No shared-primitive fan-out.',
+  '',
+  '**Dependency rationale** — `Depends-on: —`; `Conflicts-with: —`.',
+  '',
+  '**Traps to avoid** — n/a.',
+  '',
+  '**Suggested agent-class** — fast — test fixture.',
+  '',
+  '**Stop-and-escalate** — n/a.',
+  '',
+  '**Docs to keep coherent** — no-doc-surface.',
   '',
   'This paragraph must survive byte-for-byte across every objectives edit.',
   ''
@@ -65,11 +88,16 @@ const THREE_OBJECTIVES = [
 
 /**
  * A `gh` stub answering `issue view <n> --json body,comments` and
- * `issue view <n> --json labels` (empty labels — not a task Issue, so
- * `writeValidatedIssueEdit` skips the rationale gate entirely, keeping this
- * file's fixtures scoped to the objectives grammar itself), `issue edit <n>
- * --body-file <path>` (captured to a log, never a real write), and `issue
- * comment <n> --body-file <path>` (captured to a log, printing `commentUrl`).
+ * `issue view <n> --json labels` (a real `vinaya/tranche:*` label — this
+ * file's fixture body always carries `## Objectives`/`## Planner's
+ * rationale`, and O1 (task-run-v1 task 11) now refuses that shape unlabeled,
+ * so the label and the fixture's full eight-field rationale must both be
+ * real for `writeValidatedIssueEdit`'s validated-write path to succeed),
+ * `issue edit <n> --body-file <path>` (captured to a log, never a real
+ * write), and `issue comment <n> --body-file <path>` (captured to a log,
+ * printing `commentUrl`). `issue view <n> --json milestone` (O5's best-effort
+ * read) falls through to the same `body-comments.json` payload, which
+ * carries no `milestone` key — read as "no Milestone", O5 dormant.
  */
 function stubGh(opts: {
   body: string
@@ -88,7 +116,7 @@ function stubGh(opts: {
   const editedBodyLogPath = join(dir, 'edited-body.log')
   const commentsLogPath = join(dir, 'posted-comments.log')
   writeFileSync(bodyCommentsJsonPath, JSON.stringify({ body: opts.body, comments: opts.comments }))
-  writeFileSync(labelsJsonPath, JSON.stringify({ labels: [] }))
+  writeFileSync(labelsJsonPath, JSON.stringify({ labels: [{ name: 'vinaya/tranche:demo' }] }))
   writeFileSync(editedBodyLogPath, '')
   writeFileSync(commentsLogPath, '')
   const login = opts.login ?? 'daniboomerang'
@@ -98,6 +126,10 @@ function stubGh(opts: {
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "$2" = "user" ]; then
   echo "${login}"
+  exit 0
+fi
+if [ "$1" = "label" ] && [ "$2" = "list" ]; then
+  echo '[{"name":"vinaya/tranche:demo"}]'
   exit 0
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then

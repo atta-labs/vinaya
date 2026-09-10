@@ -171,6 +171,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `checkSurfaceScope` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `declaredProjects` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `globCoversPath` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `isTaskIssueBodyShaped` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `isTaskIssueLabelSet` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `OBJECTIVES_SINCE_ISSUE` | const | `packages/aeg-core/src/issue-validation.ts` |
 | `parseIssueParts` | function | `packages/aeg-core/src/issue-validation.ts` |
@@ -306,7 +307,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `projectsFromBody` | function | `packages/aeg-forge-state/src/list-tasks.ts` |
 | `mapForgeFacts` | function | `packages/aeg-forge-state/src/map-forge-facts.ts` |
 
-(268 exports.)
+(269 exports.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
@@ -501,6 +502,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `readProjectPaths` | function | `apps/cli/src/lib/forge-write.ts` |
 | `readSharedPackages` | function | `apps/cli/src/lib/forge-write.ts` |
 | `refuse` | function | `apps/cli/src/lib/forge-write.ts` |
+| `refuseUnlabeledTaskShapedBody` | function | `apps/cli/src/lib/forge-write.ts` |
 | `refuseUnlessPrincipal` | function | `apps/cli/src/lib/forge-write.ts` |
 | `resolveMilestoneAttachArgs` | function | `apps/cli/src/lib/forge-write.ts` |
 | `resolveSections` | function | `apps/cli/src/lib/forge-write.ts` |
@@ -568,7 +570,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `AEG_BRIEF_V1_MARKER` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(229 exports.)
+(230 exports.)
 
 ## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 

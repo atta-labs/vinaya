@@ -189,6 +189,7 @@ export {
   checkSurfaceScope,
   declaredProjects,
   globCoversPath,
+  isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   BRIEF_SECTIONS_SINCE_ISSUE,
   OBJECTIVES_SINCE_ISSUE,

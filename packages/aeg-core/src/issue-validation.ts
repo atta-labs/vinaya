@@ -498,6 +498,37 @@ export function isTaskIssueLabelSet(labels: string[]): boolean {
   return hasLabel('tranche', labels)
 }
 
+/** The literal `## Objectives` heading — independent of whether the section that follows it actually parses (a malformed one is still evidence of task-shape, and is `checkIssueObjectives`'s own concern, not this detector's). */
+const OBJECTIVES_HEADING_RE = /^##[ \t]*Objectives[ \t]*$/im
+
+/**
+ * **O1 (task-run-v1 task 11) — is this body task-Issue-shaped at all?** The
+ * forge-write label gate (`forge-write.ts`'s `refuseUnlabeledTaskShapedBody`,
+ * and `bin/open-issue.ts`'s mirrored inline check) uses this to catch a
+ * Planner's mistake `isTaskIssueLabelSet`-gated validation cannot see: a body
+ * that carries the Planner's judgment sections but no `vinaya/tranche:*`
+ * label reads, to every check gated behind `isTaskIssueLabelSet`, as "not a
+ * task Issue" and sails through unvalidated — the exact hole a task Issue
+ * never reaching the forge unlabeled falls through.
+ *
+ * Two signals, either sufficient: a real `## Objectives` heading, or any ONE
+ * of the eight Planner's-rationale fields (`hasRationaleField` — the same
+ * tolerant bold-inline-or-heading detector `checkIssueRationale` itself
+ * checks all eight with). Reusing that detector, rather than a third
+ * "does this look like a rationale section" heuristic, is deliberate: a body
+ * this function calls task-shaped is, by construction, exactly the set of
+ * bodies `checkIssueRationale` would go on to grade — a real Issue can carry
+ * its rationale under a heading `checkIssueRationale` never requires to be
+ * literally "## Planner's rationale" (`apps/cli/tests/fixtures/forge/issue-valid.md`
+ * uses "## Task Issue — Planner rationale"), so gating on that literal
+ * heading text alone under-detects.
+ */
+export function isTaskIssueBodyShaped(body: string): boolean {
+  const text = stripCode(body)
+  if (OBJECTIVES_HEADING_RE.test(text)) return true
+  return RATIONALE_FIELDS.some((f) => hasRationaleField(text, f.pattern))
+}
+
 /** Every `vinaya/type:*` label id, in `labels.ts` order — the source of truth this check reads, never a second list. */
 const TYPE_LABEL_IDS = LABELS.filter((l) => l.category === 'type').map((l) => l.id)
 
