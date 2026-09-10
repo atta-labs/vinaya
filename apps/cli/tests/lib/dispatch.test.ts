@@ -37,7 +37,10 @@ import {
   HEARTBEAT_INTERVAL_MS,
   MAX_TEE_BYTES,
   openOutputTee,
-  timeoutWarningLeadMs
+  timeoutWarningLeadMs,
+  colourAgentLine,
+  colourEnabled,
+  colourLoopLine
 } from '../../src/lib/dispatch.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -937,6 +940,123 @@ describe('dispatch observability — wired through a real run (#450)', () => {
     expect(contents).toContain('GITHUB_TOKEN=')
 
     expect(statSync(join(teeDir, logs[0] as string)).mode & 0o777).toBe(0o600)
+  })
+})
+
+/**
+ * Role-prefixed, per-role-coloured terminal output (Issue #491, O1/O2/O3).
+ * `colourEnabled`/`colourAgentLine`/`colourLoopLine` are exported for
+ * exactly this reason — asserting the TTY/`NO_COLOR` predicate and the
+ * per-role prefix needs no real vendor process, just a fixture stream.
+ */
+describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () => {
+  const priorNoColor = process.env.NO_COLOR
+  afterEach(() => {
+    if (priorNoColor === undefined) delete process.env.NO_COLOR
+    else process.env.NO_COLOR = priorNoColor
+  })
+
+  const ROLES = ['planner', 'developer', 'code-reviewer', 'security', 'principal', 'archivist', 'architect'] as const
+
+  it('colourEnabled is true only on a live TTY with NO_COLOR unset', () => {
+    delete process.env.NO_COLOR
+    expect(colourEnabled({ isTTY: true })).toBe(true)
+    expect(colourEnabled({ isTTY: false })).toBe(false)
+    expect(colourEnabled({})).toBe(false)
+    // Presence alone disables it (https://no-color.org) — even an empty value.
+    process.env.NO_COLOR = ''
+    expect(colourEnabled({ isTTY: true })).toBe(false)
+    process.env.NO_COLOR = '1'
+    expect(colourEnabled({ isTTY: true })).toBe(false)
+  })
+
+  for (const role of ROLES) {
+    it(`colourAgentLine prefixes and colours a ${role} fixture line on a TTY, and gives every role a different colour`, () => {
+      delete process.env.NO_COLOR
+      const line = colourAgentLine(role, 'reading the brief', { isTTY: true })
+      expect(line).toContain(`[${role}] reading the brief`)
+      expect(line).toMatch(/\x1b\[\d+m/)
+      expect(line.endsWith('\x1b[0m')).toBe(true)
+      // Every other role's own line carries a DIFFERENT colour code — the
+      // reader is separating roles at a glance, not reading the same code
+      // for two different speakers.
+      for (const other of ROLES) {
+        if (other === role) continue
+        const otherLine = colourAgentLine(other, 'reading the brief', { isTTY: true })
+        const code = (s: string) => s.match(/\x1b\[\d+m/)?.[0]
+        expect(code(otherLine)).not.toBe(code(line))
+      }
+    })
+  }
+
+  it('colourAgentLine carries the prefix with NO escape codes off a TTY or under NO_COLOR', () => {
+    delete process.env.NO_COLOR
+    const plain = colourAgentLine('code-reviewer', 'reading the brief', { isTTY: false })
+    expect(plain).toBe('[code-reviewer] reading the brief')
+    expect(plain).not.toMatch(/\x1b\[/)
+
+    process.env.NO_COLOR = '1'
+    const noColour = colourAgentLine('code-reviewer', 'reading the brief', { isTTY: true })
+    expect(noColour).toBe('[code-reviewer] reading the brief')
+    expect(noColour).not.toMatch(/\x1b\[/)
+  })
+
+  it("colourLoopLine restyles the loop's own already-role-named text without stacking a second prefix", () => {
+    delete process.env.NO_COLOR
+    const text = '[vinaya dispatch abc-123] developer via claude: still running — 60s elapsed (ceiling 14400s)'
+    const coloured = colourLoopLine(text, { isTTY: true })
+    expect(coloured).toContain(text)
+    expect(coloured).toMatch(/\x1b\[\d+m/)
+    expect(coloured.endsWith('\x1b[0m')).toBe(true)
+    // No `[role]`-shaped prefix ADDED beyond the text's own existing naming.
+    expect(coloured.replace(/\x1b\[\d+m/g, '').replace(/\x1b\[0m/g, '')).toBe(text)
+
+    const plain = colourLoopLine(text, { isTTY: false })
+    expect(plain).toBe(text)
+  })
+
+  it('a real dispatch (non-TTY, as every spawned child always is) writes the `[role]` prefix with no escape codes to stderr, and the dispatch-output tee stays byte-identical to the raw agent line — no prefix, no colour', () => {
+    const home = tempDir('vinaya-colour-home-')
+    const cwd = tempDir('vinaya-colour-cwd-')
+    const binDir = tempDir('vinaya-colour-bin-')
+    const rawEvent = '{"type":"assistant","message":{"content":[{"type":"text","text":"hello world"}]}}'
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\necho '${rawEvent}'\n` +
+        'echo \'{"usage":{"input_tokens":1,"output_tokens":2}}\'\nexit 0\n'
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = spawnSync('bun', [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', promptFile], {
+      encoding: 'utf8',
+      cwd,
+      env: { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+    })
+    expect(r.status).toBe(0)
+
+    // O1: the rendered line carries the role prefix even off a TTY (only
+    // colour is TTY-gated, never the prefix) — and no escape sequence, since
+    // `execFileSync`/`spawnSync` pipes are never a live terminal.
+    expect(r.stderr).toContain('[developer] hello world')
+    expect(r.stderr).not.toMatch(/\x1b\[/)
+
+    // O2: the lifecycle line keeps its own existing role-naming text, with
+    // no second `[developer]` prefix stacked in front of it.
+    expect(r.stderr).toMatch(/\[vinaya dispatch [0-9a-f-]{36}\] developer via claude: output teed to/)
+    expect(r.stderr).not.toContain('[developer] [vinaya dispatch')
+
+    // O3: the tee file never sees the rendered/prefixed stderr lines at
+    // all — it tees the child's raw stdout/stderr chunks — so it carries the
+    // exact bytes the fake agent printed, byte-identical to before this task.
+    const teeDir = join(home, '.vinaya', 'dispatch-output')
+    const logs = readdirSync(teeDir)
+    expect(logs).toHaveLength(1)
+    const teeContents = readFileSync(join(teeDir, logs[0] as string), 'utf8')
+    expect(teeContents).toContain(rawEvent)
+    expect(teeContents).not.toContain('[developer]')
+    expect(teeContents).not.toMatch(/\x1b\[/)
   })
 })
 
