@@ -83,6 +83,7 @@ describe('router -> COMMANDS coverage', () => {
         'task dispatch',
         'task brief',
         'task run',
+        'task status',
         'log flush',
         'milestone create',
         'milestone adopt',
