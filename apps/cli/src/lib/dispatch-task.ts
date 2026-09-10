@@ -265,9 +265,9 @@ export type PrepareTaskResult = { issue: number; brief: string; commentUrl: stri
  * `DispatchAgent`, no model, nothing about starting a developer. `dispatchTask`
  * (O3) is the only caller that ever supplies it, closing over its own
  * `agent`/`model` to resolve and validate the model there; `prepareTask`
- * itself never learns what the hook does, which is what keeps it agent-free
- * (task-run-v1's own stop condition: if staying byte-identical required this
- * function to know about agents, the seam would be in the wrong place).
+ * itself never learns what the hook does, which is what keeps it agent-free —
+ * a preparation function that had to know about agents to keep `dispatchTask`
+ * byte-identical would mean the seam belonged somewhere else entirely.
  */
 export type PrepareTaskDeps = {
   assembleAndRenderBrief: typeof assembleAndRenderBrief
@@ -285,8 +285,8 @@ const defaultPrepareTaskDeps: PrepareTaskDeps = {
 }
 
 /**
- * O1 (task-run-v1 task 1) — the preparation half extracted from what used to
- * be all of `dispatchTask`: resolves the task's Issue, renders the brief,
+ * O1 — the preparation half extracted from what used to be all of
+ * `dispatchTask`: resolves the task's Issue, renders the brief,
  * refuses on any gap, refuses when a frozen brief already exists, and posts
  * the brief as the frozen `aeg:brief:v1` Issue comment. Starts no agent under
  * any circumstances — that is `dispatchTask`'s job (O3), composed from this
@@ -379,7 +379,7 @@ const defaultDeps: DispatchTaskDeps = {
 }
 
 /**
- * O3 (task-run-v1 task 1) — `task dispatch`'s exact current behaviour,
+ * O3 — `task dispatch`'s exact current behaviour,
  * rewritten as a thin composition of `prepareTask` (O1, above) plus the
  * existing developer-start half: renders and posts the frozen brief, then
  * starts the Developer when `--agent` is given and `dispatchRole` is

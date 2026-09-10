@@ -140,7 +140,8 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'task dispatch',
-    description: 'Render, pin, and post the brief on the Issue as the frozen original; start the developer',
+    description:
+      'Deprecated — render, pin, and post the brief on the Issue as the frozen original; start the developer',
     flags: [
       { flag: '--agent <claude|codex|gemini>', description: 'Start the developer through dispatchRole once posted' }
     ],
@@ -148,7 +149,18 @@ export const COMMANDS: readonly Command[] = [
       // AEG:CLAIM: apps/cli/src/lib/dispatch-task.ts contains:export const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
       "Renders the brief from the Issue and the tree (the same assembly `brief render` uses) and posts it once as an Issue comment whose first line is `<!-- aeg:brief:v1 -->` and whose second line is `Brief hash: <sha256>` — the hash covers only the body below those two lines, so any reader recomputes it. Refuses outright, naming the existing comment's URL, when a `v1` comment already exists on the Issue — the brief is frozen by design, never overwritten or silently reissued.",
       'With `--agent`, starts the Developer through `dispatchRole` when `apps/cli/src/lib/dispatch.ts` exports it; otherwise prints the rendered brief and the manual dispatch instruction and exits `0` — a soft dependency, never a hard block.',
-      'Principal-only, with or without `--agent`: refuses before any render, forge read, or post when the authenticated `gh` identity is not on the Principal allowlist (or cannot be resolved at all) — dispatching is the `todo → in-flight` transition, not a general-purpose comment poster.'
+      'Principal-only, with or without `--agent`: refuses before any render, forge read, or post when the authenticated `gh` identity is not on the Principal allowlist (or cannot be resolved at all) — dispatching is the `todo → in-flight` transition, not a general-purpose comment poster.',
+      'Deprecated in favor of `task brief` (preparation only) and `task run` (the full unattended loop) — kept for a documented compatibility window while callers migrate.'
+    ],
+    status: 'shipped'
+  },
+  {
+    name: 'task brief',
+    description: "Render and freeze the brief as the Issue's original comment — preparation only, starts nobody",
+    details: [
+      // AEG:CLAIM: apps/cli/src/lib/dispatch-task.ts contains:export async function prepareTask(
+      "The preparation half of `task dispatch`, extracted so it is callable on its own: resolves the task's Issue, renders the brief, refuses on any gap, refuses when a frozen brief already exists, and posts it once as the same `aeg:brief:v1` Issue comment `task dispatch` posts. Starts no agent under any circumstances — there is no `--agent` flag here at all.",
+      'Successor to `task dispatch` for the preparation step; the full unattended run (preparation, then the developer, then the review loop) is `task run`.'
     ],
     status: 'shipped'
   },

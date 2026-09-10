@@ -450,7 +450,7 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
 
   it('calls beforePost with the resolved Issue number, after the existing-comment guard, before the post', async () => {
     const order: string[] = []
-    let hookIssue: number | null = null
+    const captured: { issue: number | null } = { issue: null }
     await prepareTask(
       { tranche: 'task-run-v1', n: 1 },
       preparePostingDeps({
@@ -460,7 +460,7 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
         },
         beforePost: (issue) => {
           order.push('beforePost')
-          hookIssue = issue
+          captured.issue = issue
         },
         postMarkedComment: () => {
           order.push('post')
@@ -469,7 +469,7 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
       })
     )
     expect(order).toEqual(['existing-check', 'beforePost', 'post'])
-    expect(hookIssue).toBe(427)
+    expect(captured.issue).toBe(427)
   })
 
   it('a throwing beforePost posts nothing — the ordering guarantee MAJOR 1 (#456) relies on', async () => {

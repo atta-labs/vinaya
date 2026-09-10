@@ -542,7 +542,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 
 (223 exports.)
 
-## Commands — `apps/cli/src/commands` (42 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
+## Commands — `apps/cli/src/commands` (43 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
 | Command | File | Entry function | In-scope calls today | Status | One lib function (compliant) / retirement target (exempt) |
 |---|---|---|---|---|---|
@@ -557,6 +557,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `new role` | `new-role.ts` | `newRoleCommand` | 0 | compliant | — (self-contained) |
 | `brief render` | `brief.ts` | `briefRenderCommand` | 1 | compliant | `assembleAndRenderBrief` |
 | `task dispatch` | `task.ts` | `taskDispatchCommand` | 1 | compliant | `dispatchTask` |
+| `task brief` | `task.ts` | `taskBriefCommand` | 1 | compliant | `prepareTask` |
 | `pr create` | `pr.ts` | `prCreateCommand` | 9 | exempt — see below | forgeWrite (target) |
 | `pr edit` | `pr.ts` | `prEditCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `pr report` | `pr-report.ts` | `prReportCommand` | 3 | exempt — see below | collectTokens (target) |
@@ -589,7 +590,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `dispatch` | `dispatch.ts` | `dispatchCommand` | 5 | exempt — see below | sharedCommandShell (target) |
 | `dev-review-loop` | `dev-review-loop.ts` | `devReviewLoopCommand` | 5 | exempt — see below | sharedCommandShell (target) |
 
-(42 rows — all 42 shipped `COMMANDS` entries. Compliant: 11. Exempt: 31.)
+(43 rows — all 43 shipped `COMMANDS` entries. Compliant: 12. Exempt: 31.)
 
 `review post` refuses a `doc-correctness` finding whose description carries no `Search:` pattern, or whose pattern carries a path filter — a content rule on the existing description field, not a change to the `|`-delimited grammar. The `review post` and `pr rule` source comments describe the verdict-extraction read window, so they carry `AEG:CLAIM` markers pinning the code that proves each claim; `verify-docs` C8 verifies them, and a change to that window fails the check in every file stating it rather than only where a reviewer happened to look. See `aeg-root/documentation-coherence.md`.
 
