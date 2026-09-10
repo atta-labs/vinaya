@@ -44,12 +44,10 @@ import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import {
-  AEG_BRIEF_V1_MARKER,
   buildConsumersOf,
   checkBriefSections,
   checkForgeTitle,
   checkPlanPrNoCloses,
-  contentAfterTwoLines,
   extractIssue,
   hasObjectivesHeading,
   inferBranchFromBody,
@@ -59,7 +57,9 @@ import {
   OBJECTIVES_SINCE_ISSUE,
   type PackageManifest,
   objectivesOf,
-  readTierFromPrBody
+  PRINCIPAL_ALLOWLIST,
+  readTierFromPrBody,
+  resolveNewestFrozenBrief
 } from '../src/index'
 
 /** Immediate child directory names of `dir` — `deriveWorkspaceMemberDirs`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */
@@ -143,7 +143,7 @@ function fetchIssueBodyForObjectives(issueNumber: number): string {
   })
 }
 
-type IssueCommentsJson = { comments: Array<{ body: string }> }
+type IssueCommentsJson = { comments: Array<{ body: string; author?: { login?: string } | null }> }
 
 /** `gh issue view <n> --json comments` — the one live read `resolveGradedBody` needs. */
 function fetchIssueCommentsForGrading(issueNumber: number): IssueCommentsJson {
@@ -190,11 +190,12 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
       message: `could not fetch Issue #${issue}'s comments (\`gh issue view\`) to grade the dispatched brief: ${err instanceof Error ? err.message : String(err)}`
     }
   }
-  const comment = json.comments.find((c) => c.body.split('\n')[0] === AEG_BRIEF_V1_MARKER)
+  const comments = json.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
+  const comment = resolveNewestFrozenBrief(comments, PRINCIPAL_ALLOWLIST)
   if (!comment) {
-    return { ok: false, message: `not dispatched — no \`aeg:brief:v1\` comment on Issue #${issue}.` }
+    return { ok: false, message: `not dispatched — no \`aeg:brief:v<k>\` comment on Issue #${issue}.` }
   }
-  return { ok: true, body: contentAfterTwoLines(comment.body) }
+  return { ok: true, body: comment.content }
 }
 
 /**

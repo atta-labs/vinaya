@@ -36,12 +36,14 @@ import {
   assessRound,
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
+  extractSourceRevision,
   initialLoopState,
   isPrincipal,
   type Objective,
   objectivesOf,
   objectivesVersion,
   renderSummary,
+  resolveNewestFrozenBrief,
   type Confidence,
   type Decision,
   type DevReviewLoopEventInput,
@@ -74,7 +76,6 @@ import {
   readResumeRecord as realReadResumeRecord,
   type ResumeRecord
 } from './dispatch.js'
-import { AEG_BRIEF_V1_MARKER, contentAfterTwoLines } from './dispatch-task.js'
 import { GLOBAL_VINAYA_HOME, loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { postMarkedComment } from './forge-write.js'
 import { createLogSink, outboxPathFor } from './log-sink.js'
@@ -238,16 +239,21 @@ export function filterPrincipalRulings(comments: readonly MarkerComment[], allow
     .map((c) => contentAfterOneLine(c.body).trim())
 }
 
-/** Pure: the principal-authored `aeg:brief:v1` comment among `comments`, or `null` — unit-testable with no `gh` call. */
+/**
+ * Pure: the NEWEST principal-authored `aeg:brief:v<k>` comment among
+ * `comments`, or `null` — unit-testable with no `gh` call. task
+ * 4 (Issue #483, O3) widened this from a `v1`-only lookup to
+ * `@attalabs/aeg-core`'s `resolveNewestFrozenBrief`, the single resolver
+ * every frozen-brief reader (this loop, `resolveIssueObjectives` below, and
+ * `check-brief-shape.ts`'s own Issue-comment read) now shares — a
+ * supersession is an APPENDED comment, never an edit to the one it
+ * replaces, so "the frozen brief" is always the highest version found here.
+ */
 export function findPrincipalFrozenBrief(
   comments: readonly MarkerComment[],
   allowlist: readonly string[]
-): MarkerComment | null {
-  return (
-    comments.find(
-      (c) => c.body.split('\n')[0] === AEG_BRIEF_V1_MARKER && isPrincipal(c.author, allowlist as string[])
-    ) ?? null
-  )
+): (MarkerComment & { version: number; content: string }) | null {
+  return resolveNewestFrozenBrief(comments, allowlist)
 }
 
 /** Every ruling comment's body (after its marker line) on PR `prNumber`, in the forge's own comment order — principal-authored only. */
@@ -263,23 +269,50 @@ export function fetchRulings(prNumber: number): string[] {
   return filterPrincipalRulings(markerComments(out), principalAllowlist())
 }
 
-/** The Issue's frozen `aeg:brief:v1` comment's brief text, principal-authored only — refuses (throws) rather than inventing a brief when none exists yet. */
-export function fetchFrozenBrief(issueNumber: number): string {
+function fetchIssueComments(issueNumber: number, caller: string): MarkerComment[] {
   let out: string
   try {
     out = sh('gh', ['issue', 'view', String(issueNumber), '--json', 'comments'])
   } catch (err) {
     throw new Error(
-      `fetchFrozenBrief: could not fetch Issue #${issueNumber}'s comments: ${err instanceof Error ? err.message : String(err)}`
+      `${caller}: could not fetch Issue #${issueNumber}'s comments: ${err instanceof Error ? err.message : String(err)}`
     )
   }
-  const found = findPrincipalFrozenBrief(markerComments(out), principalAllowlist())
+  return markerComments(out)
+}
+
+/**
+ * The Issue's frozen brief comment's text — the NEWEST principal-authored
+ * `aeg:brief:v<k>` version, content already stripped of its header lines
+ * (`resolveNewestFrozenBrief`'s own `.content`, task 4, Issue
+ * #483, O3). Refuses (throws) rather than inventing a brief when none
+ * exists yet.
+ */
+export function fetchFrozenBrief(issueNumber: number): string {
+  const found = resolveNewestFrozenBrief(fetchIssueComments(issueNumber, 'fetchFrozenBrief'), principalAllowlist())
   if (!found) {
     throw new Error(
-      `fetchFrozenBrief: Issue #${issueNumber} carries no principal-authored, frozen \`aeg:brief:v1\` comment — \`vinaya task dispatch\` must post the brief before this loop can start.`
+      `fetchFrozenBrief: Issue #${issueNumber} carries no principal-authored, frozen \`aeg:brief:v<k>\` comment — \`vinaya task brief\` must post the brief before this loop can start.`
     )
   }
-  return contentAfterTwoLines(found.body)
+  return found.content
+}
+
+/** The sentinel `fetchSourceRevision` returns for a frozen brief posted before task 4 ever rendered a `**Revision:**` line — a real fact ("this brief predates the guarantee"), never a thrown refusal: an in-flight task's loop dispatched against an older brief must keep running after this task merges, not break on its very next reviewer round. */
+export const NO_SOURCE_REVISION = '(none — pre-task-4 frozen brief)'
+
+/**
+ * The revision the frozen brief's facts were read at (task 4,
+ * Issue #483, O2) — read back out of the brief text itself
+ * (`extractSourceRevision`), never re-derived fresh from `git`: the loop
+ * judges the developer's work against the facts the brief actually stated,
+ * not a revision the tree has since moved past. `NO_SOURCE_REVISION` on a
+ * pre-task-4 brief with no such line — every brief frozen from here on
+ * always carries one (`renderBrief`'s own missing-fact refusal), so this is
+ * a migration window, not a permanent case.
+ */
+export function fetchSourceRevision(issueNumber: number): string {
+  return extractSourceRevision(fetchFrozenBrief(issueNumber)) ?? NO_SOURCE_REVISION
 }
 
 export function fetchIssueTitle(issueNumber: number): string {
@@ -434,7 +467,7 @@ export function resolveIssueObjectives(issueNumber: number): ObjectivesResolutio
       `resolveIssueObjectives: Issue #${issueNumber} carries no principal-authored, frozen \`aeg:brief:v1\` comment — \`vinaya task dispatch\` must post the brief before this loop can start.`
     )
   }
-  const text = extractObjectivesSection(contentAfterTwoLines(brief.body))
+  const text = extractObjectivesSection(brief.content)
   if (text.length === 0) return { text: '', version: null, edit: null }
   const parsedObjectives = objectivesOf(['## Objectives', '', text].join('\n'))
   return { text, version: parsedObjectives.ok ? objectivesVersion(parsedObjectives.objectives) : null, edit: null }
@@ -510,6 +543,8 @@ export type ReviewerPromptFacts = {
   rulings: string[]
   head: string
   ciConclusion: 'green' | 'red' | 'pending'
+  /** The frozen brief's own `**Revision:**` fact (task 4, Issue #483, O2) — `fetchSourceRevision`. */
+  revision: string
 }
 
 /**
@@ -546,7 +581,8 @@ export function renderReviewerPrompt(facts: ReviewerPromptFacts): string {
     facts.rulings.length > 0 ? facts.rulings.map((r, i) => `${i + 1}. ${r}`).join('\n') : '(none)',
     '',
     `HEAD: ${facts.head}`,
-    `CI: ${facts.ciConclusion}`
+    `CI: ${facts.ciConclusion}`,
+    `BRIEF REVISION: ${facts.revision}`
   ].join('\n')
 }
 
@@ -944,6 +980,8 @@ export type LoopDeps = {
   fetchRulings: typeof fetchRulings
   fetchFrozenBrief: typeof fetchFrozenBrief
   resolveIssueObjectives: typeof resolveIssueObjectives
+  /** O2 (task 4, Issue #483): the frozen brief's own source revision, named to the reviewer as a fact. */
+  fetchSourceRevision: typeof fetchSourceRevision
   developerBranchFor: (issueNumber: number) => string
   findOpenPrForBranch: typeof findOpenPrForBranch
   /** O4: the durable session id `dispatch.ts` last recorded for this repo+role+vendor+task, or `null`. */
@@ -1046,6 +1084,7 @@ function defaultDeps(): LoopDeps {
     fetchRulings,
     fetchFrozenBrief,
     resolveIssueObjectives,
+    fetchSourceRevision,
     developerBranchFor: (n) => developerBranchFor(n),
     findOpenPrForBranch,
     readResumeRecord: (task, agent, repo) => realReadResumeRecord('developer', agent, repo, task),
@@ -1869,12 +1908,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const ciConclusion = d.fetchCiConclusion(head)
       const resolvedObjectives = d.resolveIssueObjectives(task)
       const rulings = d.fetchRulings(prNumber)
+      const revision = d.fetchSourceRevision(task)
       const facts: ReviewerPromptFacts = {
         objectives: resolvedObjectives.text,
         objectivesVersion: resolvedObjectives.version,
         rulings,
         head,
-        ciConclusion
+        ciConclusion,
+        revision
       }
 
       // O5: an infrastructure outcome from either role (after its own

@@ -16,6 +16,7 @@ import {
   checkPartsCiteDefinedObjectives,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
+  checkSurfaceExcludesBoundDoc,
   checkSurfaceGlobsResolve,
   checkSurfaceScope,
   declaredProjects,
@@ -1131,6 +1132,55 @@ describe('checkDocsWithinSurface (O6)', () => {
   it('passes trivially when `## Surface` does not parse — reported elsewhere', () => {
     const body = '**Docs to keep coherent** — Update `apps/cli/specs/surface.md`.\n'
     expect(checkDocsWithinSurface(body, 500).status).toBe('pass')
+  })
+})
+
+describe('checkSurfaceExcludesBoundDoc (task-run-v1 9, O1/O2/O3)', () => {
+  // The Planner's own sizing example (Issue #493): `apps/cli/src/lib/**` binds
+  // to `apps/cli/specs/surface.md`, and a Surface that pulls the code glob
+  // into `in:` while excluding the doc via `out:` is the contradiction.
+  const manifest = 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n'
+
+  it('refuses, naming the binding and the two contradicting Surface lines', () => {
+    const body = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/specs\n'
+    const r = checkSurfaceExcludesBoundDoc(body, manifest)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/lib/)
+    expect(r.errors[0]).toMatch(/\.vinaya\/doc-owners:1/)
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/lib\/\*\*/)
+    expect(r.errors[0]).toMatch(/apps\/cli\/specs\/surface\.md/)
+    expect(r.errors[0]).toMatch(/apps\/cli\/specs/)
+  })
+
+  it('passes (O3) once the bound document is moved inside `in:`', () => {
+    const body = '## Surface\n\nin: apps/cli/src/lib, apps/cli/specs\nout: —\n'
+    expect(checkSurfaceExcludesBoundDoc(body, manifest).status).toBe('pass')
+  })
+
+  it('passes (O3) when no doc-owners binding matches the `in:` list at all', () => {
+    const body = '## Surface\n\nin: packages/aeg-forge-state\nout: apps/cli/specs\n'
+    expect(checkSurfaceExcludesBoundDoc(body, manifest).status).toBe('pass')
+  })
+
+  it('passes when the bound document is simply absent from both `in:` and `out:`', () => {
+    const body = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n'
+    expect(checkSurfaceExcludesBoundDoc(body, manifest).status).toBe('pass')
+  })
+
+  it('skips a URL-pointer binding — no repo path an `out:` glob could cover', () => {
+    const urlManifest = 'apps/cli/src/lib/**  https://example.com/docs\n'
+    const body = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/specs\n'
+    expect(checkSurfaceExcludesBoundDoc(body, urlManifest).status).toBe('pass')
+  })
+
+  it('passes trivially when `.vinaya/doc-owners` is absent', () => {
+    const body = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/specs\n'
+    expect(checkSurfaceExcludesBoundDoc(body, null).status).toBe('pass')
+  })
+
+  it('passes trivially when `## Surface` does not parse — reported elsewhere', () => {
+    const body = '**Docs to keep coherent** — no `## Surface` heading here.\n'
+    expect(checkSurfaceExcludesBoundDoc(body, manifest).status).toBe('pass')
   })
 })
 

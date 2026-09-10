@@ -5,9 +5,13 @@
  * `vinaya task brief` (preparation only, below) and `vinaya task run` (the
  * future unattended loop) — kept for a documented compatibility window.
  *
- * `vinaya task brief <tranche> <n>` — argv parsing only, around
- * `prepareTask` (`lib/dispatch-task.ts`), the one lib function it calls.
- * Preparation only: it renders and freezes the brief and starts no worker.
+ * `vinaya task brief <tranche> <n> [--supersede --reason <text>]`
+ * — argv parsing only, around `prepareTask` (`lib/dispatch-task.ts`), the
+ * one lib function it calls. Preparation only: it renders and freezes the
+ * brief and starts no worker. `--supersede` (task 4, Issue
+ * #483, O3) posts a new, higher-versioned frozen brief naming its
+ * predecessor and `--reason`'s text, instead of refusing on the one that's
+ * already there — always paired with `--reason`, never accepted alone.
  */
 
 import { DISPATCH_AGENTS, type DispatchAgent, dispatchTask, prepareTask } from '../lib/dispatch-task.js'
@@ -65,7 +69,7 @@ export async function taskBriefCommand(args: string[]): Promise<void> {
   const trancheSlug = args[0]
   const taskIdArg = args[1]
   if (!trancheSlug || !taskIdArg || trancheSlug.startsWith('--')) {
-    console.error('Usage: vinaya task brief <tranche> <n>')
+    console.error('Usage: vinaya task brief <tranche> <n> [--supersede --reason <text>]')
     process.exit(2)
   }
 
@@ -75,7 +79,25 @@ export async function taskBriefCommand(args: string[]): Promise<void> {
     process.exit(2)
   }
 
-  const result = await prepareTask({ tranche: trancheSlug, n })
+  const rest = args.slice(2)
+  const hasSupersede = rest.includes('--supersede')
+  const reasonIdx = rest.indexOf('--reason')
+  const reason = reasonIdx !== -1 ? rest[reasonIdx + 1] : undefined
+
+  if (hasSupersede && !reason) {
+    console.error('vinaya task brief: --supersede requires --reason <text>.')
+    process.exit(2)
+  }
+  if (!hasSupersede && reasonIdx !== -1) {
+    console.error('vinaya task brief: --reason is only meaningful with --supersede.')
+    process.exit(2)
+  }
+
+  const result = await prepareTask({
+    tranche: trancheSlug,
+    n,
+    supersede: hasSupersede ? { reason: reason as string } : undefined
+  })
   process.stdout.write(`${result.brief}\n`)
-  process.stdout.write(`\nPosted: ${result.commentUrl}\n`)
+  process.stdout.write(`\nPosted (v${result.version}): ${result.commentUrl}\n`)
 }

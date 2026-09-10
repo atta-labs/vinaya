@@ -16,6 +16,7 @@ import { type AnchorField, anchoredRegion, stripCode } from './anchored-region'
 import { type Objective, objectivesVersion, objectivesOf } from './objectives'
 import { parsePremiseBlock, premiseBlockText } from './premise-check'
 import { locateTestPlanSection } from './test-plan-section'
+import { isPrincipal } from './waiver-label'
 
 export type BriefSectionResult = { status: 'pass' | 'fail'; errors: string[] }
 
@@ -1023,20 +1024,90 @@ export function checkBriefSections(
 export const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
 
 /**
- * Everything in a posted `aeg:brief:v1` comment after its marker line and
- * `Brief hash:` line, as a raw substring — never a line-split-then-rejoin,
- * which would silently renormalize whatever separates the two header lines
- * from the brief body beneath them. The one canonical implementation
- * (plan-brief-v1 task 3, #428): `dispatch-task.ts`, `verify-dispatch.ts` and
- * `archive-task.ts` each carried their own copy before this promotion —
- * found live (code review), the exact "N copies of hash-contract-critical
- * logic with nothing proving they agree" failure `edge-resolve.ts`'s own
- * doc comment already warns this codebase about.
+ * Everything in a posted comment after its first `n` lines, as a raw
+ * substring — never a line-split-then-rejoin, which would silently
+ * renormalize whatever separates the header lines from the body beneath
+ * them. The one canonical implementation (plan-brief-v1 task 3, #428, widened
+ * task-run-v1 task 4, #483 O3 to a variable header length): `dispatch-task.ts`,
+ * `verify-dispatch.ts` and `archive-task.ts` each carried their own
+ * fixed-two-line copy before the first promotion — found live (code review),
+ * the exact "N copies of hash-contract-critical logic with nothing proving
+ * they agree" failure `edge-resolve.ts`'s own doc comment already warns this
+ * codebase about.
+ */
+export function contentAfterNLines(body: string, n: number): string {
+  let idx = -1
+  for (let i = 0; i < n; i++) {
+    idx = body.indexOf('\n', idx + 1)
+    if (idx === -1) return ''
+  }
+  return body.slice(idx + 1)
+}
+
+/**
+ * A frozen `aeg:brief:v1` comment's header is exactly two lines (the marker,
+ * then `Brief hash: …`) — `contentAfterNLines(body, 2)`, kept as its own name
+ * because every existing caller already spells it this way and a v1 comment's
+ * shape is permanent (superseding never edits it). A superseding `v2`+
+ * comment carries one more header line (`Supersedes: …`) — see
+ * `frozenBriefContent`, the version-aware sibling of this function.
  */
 export function contentAfterTwoLines(body: string): string {
-  const first = body.indexOf('\n')
-  if (first === -1) return ''
-  const second = body.indexOf('\n', first + 1)
-  if (second === -1) return ''
-  return body.slice(second + 1)
+  return contentAfterNLines(body, 2)
+}
+
+/** The marker line a dispatched task's `k`th frozen brief comment starts with — `k=1` is `AEG_BRIEF_V1_MARKER` itself. */
+export function briefMarkerFor(version: number): string {
+  return `<!-- aeg:brief:v${version} -->`
+}
+
+const BRIEF_MARKER_LINE_RE = /^<!-- aeg:brief:v(\d+) -->$/
+
+/** Parses a comment's first line as an `aeg:brief:v<k>` marker — the version `k`, or `null` when the line isn't shaped like one (including `v0` or non-numeric). */
+export function parseBriefMarkerVersion(firstLine: string): number | null {
+  const m = BRIEF_MARKER_LINE_RE.exec(firstLine.trim())
+  if (!m) return null
+  const version = Number.parseInt(m[1] as string, 10)
+  return Number.isInteger(version) && version >= 1 ? version : null
+}
+
+/**
+ * A superseding comment (`version` ≥ 2) carries a third header line
+ * (`Supersedes: <predecessor url> — <reason>`) that a plain `v1` comment
+ * never has — `contentAfterNLines(body, version === 1 ? 2 : 3)`.
+ */
+export function frozenBriefContent(body: string, version: number): string {
+  return contentAfterNLines(body, version === 1 ? 2 : 3)
+}
+
+/** The shape every frozen-brief-comment reader (`gh {issue,pr} view --json comments`) already has in hand: a comment's body and its author login, `null` when the forge reports no author (a deleted account). */
+export type FrozenBriefCandidate = { body: string; author: string | null }
+
+/** `resolveNewestFrozenBrief`'s return: the winning candidate, its parsed `version`, and its header-stripped `content` — never re-derived by a second caller-side slice. */
+export type ResolvedFrozenBrief<C extends FrozenBriefCandidate> = C & { version: number; content: string }
+
+/**
+ * The single resolver every reader of "the frozen brief" uses (task-run-v1
+ * task 4, Issue #483, O3): the loop (`dev-review-loop.ts`'s
+ * `fetchFrozenBrief`), the objectives reader built on top of it, and
+ * `check-brief-shape.ts`'s own Issue-comment read all call this instead of
+ * each independently re-deriving "which comment is the frozen brief" — a
+ * supersession is an APPENDED comment, never an edit to the one it replaces
+ * (`dispatch-task.ts`'s `prepareTask`, `--supersede`), so "the frozen brief"
+ * is always the highest `aeg:brief:v<k>` version found here among
+ * principal-authored comments, never the first one posted. `null` when no
+ * candidate qualifies (unauthored by a principal, or not marker-shaped).
+ */
+export function resolveNewestFrozenBrief<C extends FrozenBriefCandidate>(
+  comments: readonly C[],
+  allowlist: readonly string[]
+): ResolvedFrozenBrief<C> | null {
+  let best: (C & { version: number }) | null = null
+  for (const c of comments) {
+    if (!isPrincipal(c.author, allowlist as string[])) continue
+    const version = parseBriefMarkerVersion(c.body.split('\n')[0] ?? '')
+    if (version === null) continue
+    if (best === null || version > best.version) best = { ...c, version }
+  }
+  return best === null ? null : { ...best, content: frozenBriefContent(best.body, best.version) }
 }

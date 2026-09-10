@@ -19,6 +19,8 @@
 import { hasLabel, LABELS, projectFieldFromBody, projectsFromBody, SECTION_HEADER } from '@attalabs/aeg-forge-state'
 import { stripCode } from './anchored-region'
 import { checkTestPlan, extractFencedBlocks } from './brief-validation'
+import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from './doc-owners'
+import { globsOverlap } from './derive-section7'
 import { objectivesOf } from './objectives'
 import { locateTestPlanSection } from './test-plan-section'
 
@@ -1179,6 +1181,56 @@ export function checkDocsWithinSurface(body: string, issueNumber: number | null)
         `issue-validation Docs to keep coherent: \`${pointer}\` falls inside \`## Surface\`'s \`out:\` glob \`${excludingGlob}\` — this task's own declared surface explicitly excludes the doc it claims to keep coherent.`
       )
     }
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+/**
+ * **O1/O2 — a task Issue's `## Surface` `out:` list must not exclude a
+ * document `.vinaya/doc-owners` binds to a path the same Issue's `in:` list
+ * covers.** A binding whose code-glob overlaps an `in:` glob (`globsOverlap`,
+ * `derive-section7.ts` — the same matcher `deriveSection7` uses to relate
+ * Surface globs to doc-owners bindings) commits this task to keeping its
+ * pointer coherent; if that pointer also falls inside an `out:` glob
+ * (`globCoversPath`, this module's own Surface-vs-path matcher —
+ * `checkDocsWithinSurface` above uses the same one), the task cannot satisfy
+ * both `doc-coverage` (C5) and `surface-scope` (O7) at once, and the
+ * Developer discovers the contradiction only at the first commit. Refusing
+ * here catches it at authoring time instead (Issue #491, task-run-v1 9's own
+ * origin).
+ *
+ * No second glob matcher is introduced: `globsOverlap` and `globCoversPath`
+ * are the two the product already has, reused verbatim.
+ *
+ * A URL pointer is never a repo path an `out:` glob could cover, so it is
+ * skipped (`isUrlPointer`) — this gate is about the tree, not external docs.
+ * Absence of a binding for any `in:` path, or a bound pointer that simply
+ * isn't excluded, both pass (O3): only an explicit `out:` exclusion of a
+ * bound pointer is a contradiction.
+ *
+ * `docOwnersContent === null` (repo has no manifest) or a `## Surface` that
+ * doesn't parse both pass trivially — nothing to compare, and
+ * `checkIssueBriefSections` already reports a malformed Surface.
+ */
+export function checkSurfaceExcludesBoundDoc(body: string, docOwnersContent: string | null): IssueSectionResult {
+  if (docOwnersContent === null) return { status: 'pass', errors: [] }
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return { status: 'pass', errors: [] }
+
+  const { bindings } = parseDocOwners(docOwnersContent)
+  if (bindings.length === 0) return { status: 'pass', errors: [] }
+
+  const errors: string[] = []
+  for (const binding of bindings) {
+    if (isUrlPointer(binding.pointer)) continue
+    const inGlob = surface.value.in.find((g) => globsOverlap(binding.glob, g))
+    if (!inGlob) continue
+    const pointerPath = pointerToPath(binding.pointer)
+    const outGlob = surface.value.out.find((g) => globCoversPath(g, pointerPath))
+    if (!outGlob) continue
+    errors.push(
+      `issue-validation Surface: \`${inGlob}\` in \`## Surface\`'s \`in:\` list matches ${DOC_OWNERS_PATH}:${binding.lineNum} (glob \`${binding.glob}\` → ${binding.pointer}), but \`${outGlob}\` in \`## Surface\`'s \`out:\` list excludes ${binding.pointer} — this task's own surface cannot satisfy doc-coverage and surface-scope at once.`
+    )
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }

@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
+import { PRINCIPAL_ALLOWLIST } from '../src/index'
 
 /**
  * CLI-level coverage for the two behaviors that live in the shim rather than in
@@ -125,12 +126,20 @@ const TASK_BRIEF_CLOSING_500 = FIX_BRIEF.replace(
   'git worktree add .worktrees/task/iter/3 -b task/iter/3 origin/main'
 ).replace('## Summary', 'Closes #500\n\n## Summary')
 
-/** A fake `gh` on PATH whose `issue view --json comments` returns exactly one comment with `commentBody`. */
+/**
+ * A fake `gh` on PATH whose `issue view --json comments` returns exactly one
+ * comment with `commentBody`, authored by `PRINCIPAL_ALLOWLIST[0]` —
+ * `resolveNewestFrozenBrief` (task 4, Issue #483, O3) requires a
+ * principal-authored comment, unlike the old raw marker-match this replaced.
+ */
 function fakeGhWithComments(commentBody: string): string {
   const dir = mkdtempSync(join(tmp, 'fake-gh-comments-'))
   const gh = join(dir, 'gh')
   const responseFile = join(dir, 'response.json')
-  writeFileSync(responseFile, JSON.stringify({ comments: [{ body: commentBody }] }))
+  writeFileSync(
+    responseFile,
+    JSON.stringify({ comments: [{ body: commentBody, author: { login: PRINCIPAL_ALLOWLIST[0] } }] })
+  )
   writeFileSync(gh, `#!/bin/sh\ncat "${responseFile}"\n`)
   chmodSync(gh, 0o755)
   return `${dir}:${process.env.PATH}`
@@ -236,7 +245,7 @@ describe('verify-brief — grades the dispatched Issue comment, not PR_BODY, on 
     const path = fakeGhWithComments('some other unrelated comment, no marker line')
     const { code, output } = runCli([], { BRANCH: 'task/iter/12', PR_BODY: 'Closes #12\n', PATH: path })
     expect(code).toBe(1)
-    expect(output).toMatch(/not dispatched.*no `aeg:brief:v1` comment on Issue #12/)
+    expect(output).toMatch(/not dispatched.*no `aeg:brief:v<k>` comment on Issue #12/)
   })
 
   it('fails before ever attempting to fetch the Issue when `Closes #N` is missing on a task branch', () => {
