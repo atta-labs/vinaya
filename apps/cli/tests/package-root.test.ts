@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { packageRoot } from '../src/lib/package-root'
@@ -105,5 +105,64 @@ describe('resolveAuthorRepoSourceEntry', () => {
     const installedPkg = join(tmpdir(), 'fake-install', 'node_modules', '@attalabs', 'vinaya')
 
     expect(resolveAuthorRepoSourceEntry(installedPkg, repoRoot)).toBeNull()
+  })
+})
+
+/**
+ * O2 end to end, against this real checkout: a copy of the built,
+ * self-contained `dist/index.js` placed under a `node_modules` segment (the
+ * published-tarball shape) — run with `node`, cwd inside this repo — must
+ * defer to this repo's own `apps/cli/src/index.ts`, producing stdout
+ * byte-identical to running that source file directly, an exit code that
+ * matches, and exactly one deferral line on stderr, never on stdout.
+ */
+describe('vinaya: an installed build defers to this repo’s own source (Issue #505)', () => {
+  const CLI_ROOT = join(import.meta.dir, '..')
+  const REPO_ROOT = join(CLI_ROOT, '..', '..')
+  const SRC_INDEX = join(CLI_ROOT, 'src', 'index.ts')
+  const DIST_INDEX = join(CLI_ROOT, 'dist', 'index.js')
+
+  function run(cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
+    const result = spawnSync(cmd, args, { cwd, encoding: 'utf8', env: env ?? process.env })
+    return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
+  }
+
+  it('an installed dist build, run from this repo, prints the same stdout as running the source directly, via exactly one stderr deferral line', () => {
+    const buildResult = spawnSync('bun', ['run', 'build'], { cwd: CLI_ROOT, encoding: 'utf8' })
+    expect(buildResult.status, `apps/cli build failed:\n${buildResult.stdout}\n${buildResult.stderr}`).toBe(0)
+
+    // Nested inside THIS repo's own real `node_modules` (rather than an
+    // unrelated tmp dir) so the bundle's externalized npm dependencies
+    // (workspace deps are inlined; real npm deps are not, per
+    // scripts/build.ts) resolve exactly as they would for a real hoisted
+    // install — Node's module resolution walks up from the requiring file
+    // to each ancestor's `node_modules`, and this repo's root `node_modules`
+    // is one such ancestor here. The path still carries a `node_modules`
+    // segment, which is the only thing `resolveAuthorRepoSourceEntry` reads.
+    const installedPkgDir = join(REPO_ROOT, 'node_modules', '.vinaya-defer-fixture')
+    mkdirSync(join(installedPkgDir, 'dist'), { recursive: true })
+    // `type: module` matches the real package.json's own declaration — the
+    // bundle is emitted as ESM (`import`/`export`), and Node picks CJS vs
+    // ESM parsing from the nearest ancestor package.json's `type` field.
+    writeFileSync(join(installedPkgDir, 'package.json'), JSON.stringify({ name: '@attalabs/vinaya', type: 'module' }))
+    copyFileSync(DIST_INDEX, join(installedPkgDir, 'dist', 'index.js'))
+
+    try {
+      const direct = run('bun', [SRC_INDEX, 'version'], REPO_ROOT, { ...process.env, VINAYA_NO_DEFER: '1' })
+      const deferred = run('node', [join(installedPkgDir, 'dist', 'index.js'), 'version'], REPO_ROOT, {
+        ...process.env,
+        GITHUB_ACTIONS: ''
+      })
+
+      expect(deferred.status).toBe(direct.status)
+      expect(deferred.stdout).toBe(direct.stdout)
+      expect(deferred.stdout).not.toContain('deferring to source')
+
+      const deferralLines = deferred.stderr.split('\n').filter((l) => l.includes('deferring to source at'))
+      expect(deferralLines.length).toBe(1)
+      expect(deferralLines[0]).toContain(SRC_INDEX)
+    } finally {
+      rmSync(installedPkgDir, { recursive: true, force: true })
+    }
   })
 })
