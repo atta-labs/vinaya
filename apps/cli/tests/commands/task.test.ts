@@ -74,3 +74,30 @@ describe('vinaya task dispatch — argv parsing', () => {
     expect(r.stderr).toContain('--model')
   })
 })
+
+describe('vinaya task brief --supersede — argv parsing (task-run-v1 task 4, #483, O3)', () => {
+  it('refuses with no tranche/task id', () => {
+    const r = runCli(['task', 'brief'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('Usage: vinaya task brief')
+    expect(r.stderr).toContain('--supersede')
+  })
+
+  it('refuses a non-numeric task id', () => {
+    const r = runCli(['task', 'brief', 'plan-brief-v1', 'two'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('task id must be numeric')
+  })
+
+  it('refuses --supersede with no --reason', () => {
+    const r = runCli(['task', 'brief', 'plan-brief-v1', '427', '--supersede'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--supersede requires --reason')
+  })
+
+  it('refuses a bare --reason with no --supersede', () => {
+    const r = runCli(['task', 'brief', 'plan-brief-v1', '427', '--reason', 'wrong tier'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--reason is only meaningful with --supersede')
+  })
+})

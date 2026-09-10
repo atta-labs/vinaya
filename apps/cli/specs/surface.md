@@ -413,10 +413,12 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `fetchIssueObjectives` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchIssueTitle` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchSourceRevision` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `filterPrincipalRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `findOpenPrForBranch` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `findPrincipalFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `lintReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `NO_SOURCE_REVISION` | const | `apps/cli/src/lib/dev-review-loop.ts` |
 | `outboxRoot` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `parseConfidenceReply` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `publishRound` | function | `apps/cli/src/lib/dev-review-loop.ts` |
