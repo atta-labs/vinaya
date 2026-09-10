@@ -78,10 +78,10 @@
  *      for a body's own mandatory metadata fields, same reasoning as layer
  *      4.
  *   6. Blank each `O<n>.` list-marker PREFIX (id only, never the sentence
- *      after it) inside a `## Objectives` section (task-run-v1, O2) — the
+ *      after it) inside a `## Objectives` section (Issue #494, O2) — the
  *      same structure-not-prose treatment the Issue objectives grammar
  *      already gives it, extended to a pull-request body now that one may
- *      carry its own `## Objectives` section (task-run-v1, O1/O3).
+ *      carry its own `## Objectives` section (Issue #494, O1/O3).
  *
  * What survives that pipeline is scanned for digit-bearing tokens; every
  * surviving one is a violation, full stop — no shape it could take makes it
@@ -504,7 +504,7 @@ function blankUnanchoredStructuralFields(body: string): string {
 }
 
 /**
- * A pull request may now carry its own `## Objectives` section (task-run-v1,
+ * A pull request may now carry its own `## Objectives` section (Issue #494,
  * O1/O3 — a PR closing no Issue, or an Issue with its own section, reads its
  * objectives from the PR body itself). Its `O<n>.` list-marker lines already
  * count as structure, never prose, in an Issue body — the Issue objectives
@@ -512,8 +512,8 @@ function blankUnanchoredStructuralFields(body: string): string {
  * must hold in a PR body: `O1. …` under `## Objectives` is not a countable
  * claim.
  *
- * Bounded on purpose, per task-run-v1 task 10's own boundary — blanks ONLY
- * the `O<n>.` prefix (the id marker), never the sentence after it, and only
+ * Bounded on purpose, per Issue #494's own boundary — blanks ONLY the
+ * `O<n>.` prefix (the id marker), never the sentence after it, and only
  * inside the `## Objectives` section itself (`objectivesSectionBounds` —
  * `@attalabs/aeg-core`'s own objectives-grammar module, so this check and
  * the grammar that owns `O<n>.`'s meaning locate the identical span and can

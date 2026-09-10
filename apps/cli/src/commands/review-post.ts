@@ -1150,12 +1150,12 @@ export type ObjectivesResolution =
 /**
  * Uses `@attalabs/aeg-core`'s `resolveObjectivesSource` — the one function
  * `check-review-gate.ts`'s `resolveObjectivesVersion` also switches on
- * (task-run-v1, O3) — to decide WHERE this PR's objectives come from:
+ * (Issue #494, O3) — to decide WHERE this PR's objectives come from:
  * `Closes #N`'s Issue when it resolves and is at/above `OBJECTIVES_SINCE_ISSUE`,
  * the PR body's own `## Objectives` section when the PR closes no Issue at
  * all, or neither. `{ kind: 'skip' }` is the non-refusing "nothing to judge
  * against" case — an Issue below the cutover, OR a PR closing no Issue with
- * no `## Objectives` section of its own (task-run-v1, O1: this second case
+ * no `## Objectives` section of its own (Issue #494, O1: this second case
  * used to refuse; it now renders a verdict with no objectives block, exactly
  * the case the gate already treats as binding-skipped). Every OTHER
  * "nothing resolvable" case still refuses here, never returns a silently
