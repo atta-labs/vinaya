@@ -37,7 +37,17 @@ type ParsedArgs = {
   round: number | undefined
   resume: string | undefined
   json: boolean
+  /** Any `--flag`-shaped or stray positional token this parser does not
+   * recognize — `dispatchCommand` refuses rather than silently dropping it.
+   * Found live: an unrecognized `--tranche` flag on this command was
+   * silently ignored while every other flag still took effect, so a
+   * malformed manual-recovery command actually started a real developer
+   * while appearing (by the presence of an unknown flag) like it might not
+   * have. */
+  unknown: string[]
 }
+
+const KNOWN_FLAGS = ['--agent', '--model', '--prompt-file', '--task', '--pr', '--round', '--resume', '--json']
 
 function parseArgs(args: string[]): ParsedArgs {
   const role = args[0]
@@ -49,6 +59,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let round: number | undefined
   let resume: string | undefined
   let json = false
+  const unknown: string[] = []
   for (let i = 1; i < args.length; i++) {
     const a = args[i]
     if (a === '--agent') agent = args[++i]
@@ -59,12 +70,20 @@ function parseArgs(args: string[]): ParsedArgs {
     else if (a === '--round') round = Number(args[++i])
     else if (a === '--resume') resume = args[++i]
     else if (a === '--json') json = true
+    else if (a !== undefined) unknown.push(a)
   }
-  return { role, agent, model, promptFile, task, pr, round, resume, json }
+  return { role, agent, model, promptFile, task, pr, round, resume, json, unknown }
 }
 
 export async function dispatchCommand(args: string[]): Promise<void> {
   const parsed = parseArgs(args)
+
+  if (parsed.unknown.length > 0) {
+    process.stderr.write(
+      `vinaya dispatch: unrecognized flag${parsed.unknown.length > 1 ? 's' : ''} ${parsed.unknown.map((f) => `'${f}'`).join(', ')} — expected one of ${KNOWN_FLAGS.join(', ')}\n`
+    )
+    process.exit(1)
+  }
 
   if (!parsed.role || !(ROLE_VALUES as readonly string[]).includes(parsed.role)) {
     process.stderr.write(
