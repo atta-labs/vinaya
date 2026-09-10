@@ -4,7 +4,7 @@
  * (`$VINAYA_ROLE`) to play the developer and both reviewers, plus fake
  * `gh`/`git` binaries answering every forge/git read the driver makes.
  * Exercised through the REAL `vinaya dev-review-loop` CLI entry point
- * (`execFileSync('bun', [INDEX, ...])`), never by importing `devReviewLoop`
+ * (`spawnSync('bun', [INDEX, ...])`), never by importing `devReviewLoop`
  * in-process — same discipline as `apps/cli/tests/lib/dispatch.test.ts`'s
  * own doc comment explains: `config.ts`'s `GLOBAL_VINAYA_HOME` is a
  * module-level constant frozen at first import, and `dispatchRole` (called
@@ -42,7 +42,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { execFileSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
@@ -635,18 +635,17 @@ function runDevReviewLoopArgs(
   args: string[],
   extraEnv: Record<string, string> = {}
 ): CliResult {
-  try {
-    const stdout = execFileSync('bun', [INDEX, 'dev-review-loop', ...args], {
-      encoding: 'utf8',
-      cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, HOME: home, PATH: path, ...extraEnv }
-    })
-    return { status: 0, stdout, stderr: '' }
-  } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string }
-    return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
-  }
+  // `spawnSync` (never `execFileSync`) — it hands back stdout AND stderr on
+  // BOTH the success and the non-zero-exit path; `execFileSync` only
+  // surfaces piped stderr via the thrown error, so a passing run's own
+  // stderr (task 7, #498: the stale-takeover line prints there even on a
+  // clean publish) would otherwise be silently discarded.
+  const r = spawnSync('bun', [INDEX, 'dev-review-loop', ...args], {
+    encoding: 'utf8',
+    cwd,
+    env: { ...process.env, HOME: home, PATH: path, ...extraEnv }
+  })
+  return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
 }
 
 function postedCommentFiles(home: string): string[] {
@@ -831,6 +830,60 @@ exit 0
 `
   )
 }
+
+function driverLockPath(home: string): string {
+  return join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'driver.pid.json')
+}
+
+function writeDriverLockFixture(home: string, lock: { pid: number; startedAt: string }): void {
+  const path = driverLockPath(home)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, JSON.stringify(lock), 'utf8')
+}
+
+/** A pid that has definitely already exited — `spawnSync` blocks until the child is gone before returning its pid. */
+function deadPid(): number {
+  const r = spawnSync('true', [])
+  if (typeof r.pid !== 'number') throw new Error('spawnSync did not report a pid')
+  return r.pid
+}
+
+describe('devReviewLoop — one driver per task (review-validity-v1 task 7, #498)', () => {
+  it('O1: refuses to start, naming the live pid and start time, dispatching nothing', () => {
+    const { home, cwd, path } = setUp()
+    const startedAt = '2026-09-10T00:00:00.000Z'
+    writeDriverLockFixture(home, { pid: process.pid, startedAt })
+
+    const r = runLoop(home, cwd, path)
+
+    expect(r.status).not.toBe(0)
+    expect(r.stderr).toContain('vinaya dev-review-loop:')
+    expect(r.stderr).toContain('refuses to start')
+    expect(r.stderr).toContain(String(process.pid))
+    expect(r.stderr).toContain(startedAt)
+    // Nothing dispatched: the fake claude binary's own invocation marker never appears.
+    expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(false)
+  })
+
+  it('O2: a dead pid record is treated as absent — takes over, runs, and clears the lock on exit', () => {
+    const { home, cwd, path } = setUp()
+    const startedAt = '2026-09-10T00:00:00.000Z'
+    const stalePid = deadPid()
+    writeDriverLockFixture(home, { pid: stalePid, startedAt })
+
+    const r = runLoop(home, cwd, path)
+
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+    // O3: the stale takeover is visible on stderr, naming the stale pid and start time.
+    expect(r.stderr).toContain('vinaya dev-review-loop:')
+    expect(r.stderr).toContain('no longer alive')
+    expect(r.stderr).toContain(String(stalePid))
+    expect(r.stderr).toContain(startedAt)
+    // O2: cleared on the normal-exit path, same as every other exit.
+    expect(existsSync(driverLockPath(home))).toBe(false)
+  })
+})
 
 function setUpPauseResume(): { home: string; cwd: string; path: string } {
   const home = tempDir('vinaya-drl-home-')
