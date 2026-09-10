@@ -81,6 +81,15 @@ function maybeDeferToAuthorRepoSource(): void {
     stdio: 'inherit',
     env: process.env
   })
+  // A signal-terminated child reports `status: null` with `signal` set —
+  // collapsing that to a fixed exit code would be a different exit than the
+  // child actually had (code-review finding, PR #513). Re-raising the same
+  // signal on this process is the closest a re-exec can get to reproducing
+  // it without a real `execve`.
+  if (result.signal) {
+    process.kill(process.pid, result.signal)
+    return
+  }
   process.exit(result.status ?? 1)
 }
 
