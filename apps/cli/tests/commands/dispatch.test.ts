@@ -233,6 +233,42 @@ describe('vinaya dispatch — invalid role/vendor', () => {
   })
 })
 
+describe('vinaya dispatch — unknown flags', () => {
+  it('refuses `--tranche` (not a real flag this command accepts) and never spawns the vendor — the manual-recovery probe this replaces used to silently drop it and start a real developer', () => {
+    const home = tempDir('vinaya-dispatch-cmd-home-')
+    const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
+    const binDir = tempDir('vinaya-dispatch-cmd-bin-')
+    writeFakeVendor(binDir)
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, 'p')
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--tranche', 'task-run-v1', '--task', '8', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${process.env.PATH}`
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/unrecognized flag.*--tranche/)
+    // Nothing was dispatched — no outbox lines at all for this issue.
+    expect(outboxLines(home, 8).length).toBe(0)
+  })
+
+  it('names every unrecognized token when more than one is given', () => {
+    const home = tempDir('vinaya-dispatch-cmd-home-')
+    const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', '/dev/null', '--bogus', 'stray-positional'],
+      cwd,
+      home,
+      process.env.PATH ?? ''
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/--bogus/)
+    expect(r.stderr).toMatch(/stray-positional/)
+  })
+})
+
 describe('vinaya dispatch --resume', () => {
   it("reaches the child argv and resumeId appears in --json output — per-vendor argv shape is lib/dispatch.test.ts's job", () => {
     const home = tempDir('vinaya-dispatch-cmd-home-')
