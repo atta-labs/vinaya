@@ -37,7 +37,7 @@ import { releaseCommand } from './commands/release.js'
 import { reviewPostCommand } from './commands/review-post.js'
 import { reviewStatusCommand } from './commands/review-status.js'
 import { runStudio } from './commands/studio.js'
-import { taskDispatchCommand } from './commands/task.js'
+import { taskBriefCommand, taskDispatchCommand } from './commands/task.js'
 import { tokensCommand } from './commands/tokens.js'
 import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
@@ -191,8 +191,10 @@ try {
       const [subcommand, ...rest] = args
       if (subcommand === 'dispatch') {
         await taskDispatchCommand(rest)
+      } else if (subcommand === 'brief') {
+        await taskBriefCommand(rest)
       } else {
-        console.error(`Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch')`)
+        console.error(`Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch' or 'brief')`)
         process.exit(2)
       }
       break
