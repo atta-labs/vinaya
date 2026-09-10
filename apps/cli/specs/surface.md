@@ -413,6 +413,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `renderPauseComment` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `renderReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `resolveHead` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `ReviewerInfrastructureFailure` | class | `apps/cli/src/lib/dev-review-loop.ts` |
 | `routeCompletionEvents` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `taskFromPrBody` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `writeHeldVerdict` | function | `apps/cli/src/lib/dev-review-loop.ts` |

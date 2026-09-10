@@ -29,7 +29,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
@@ -388,8 +388,61 @@ export function writeHeldVerdict(
   writeFileSync(heldVerdictPath(root, task, round, role), renderedComment, 'utf8')
 }
 
-function reviewerWorkDir(root: string, task: number, round: number, role: 'reviewer' | 'security'): string {
-  return join(root, 'dev-review-loop', String(task), `round-${round}-${role}-work`)
+/**
+ * `attempt` 1 is the round's normal work directory (unchanged path, so an
+ * existing fixture/fake that never retries keeps working unmodified);
+ * `attempt` 2 is a genuinely fresh directory for O2's one retry — never the
+ * same directory a failed first attempt already touched, per the loop
+ * spec's collect rule (Traps to avoid: never resume a crashed reviewer).
+ */
+function reviewerWorkDir(
+  root: string,
+  task: number,
+  round: number,
+  role: 'reviewer' | 'security',
+  attempt = 1
+): string {
+  const suffix = attempt > 1 ? `-retry${attempt - 1}` : ''
+  return join(root, 'dev-review-loop', String(task), `round-${round}-${role}-work${suffix}`)
+}
+
+/**
+ * O1/O3: `findings.txt` and `report.txt` are always required; `objectives.txt`
+ * is required only when the task carries objectives (`hasObjectives`) AND the
+ * report is a real verdict rather than an escalation — `buildVerdictFromReport`
+ * never reads objectives (or findings) for an `ESCALATE:` report at all
+ * (`objectives: []` unconditionally on that path), so a reviewer that
+ * deliberately escalates instead of judging objectives has not "written
+ * nothing"; requiring `objectives.txt` there would misfile a real,
+ * contract-sanctioned escalation as an infrastructure failure. On a task with
+ * no `## Objectives` section, `objectives.txt`'s absence is the existing,
+ * sanctioned optional case (Traps to avoid: empty is clean, absent is
+ * failure — checked by existence here, never by a `readFileSync(...) ?? ''`
+ * default that would make a missing file indistinguishable from an empty one).
+ */
+function missingReviewerArtifacts(workDir: string, hasObjectives: boolean): string[] {
+  const missing: string[] = []
+  const reportRaw = readIfExists(join(workDir, 'report.txt'))
+  if (reportRaw === null) missing.push('report.txt')
+  if (!existsSync(join(workDir, 'findings.txt'))) missing.push('findings.txt')
+  const isEscalation = reportRaw !== null && parseReport(reportRaw).ESCALATE !== undefined
+  if (hasObjectives && !isEscalation && !existsSync(join(workDir, 'objectives.txt'))) missing.push('objectives.txt')
+  return missing
+}
+
+/**
+ * Thrown by `dispatchReviewer` when a role's work directory is still missing
+ * a required artifact after its one fresh retry (O2) — caught by the loop
+ * and turned into `{ type: 'pause', reason: 'infrastructure' }`, never read
+ * as a clean verdict on any path.
+ */
+export class ReviewerInfrastructureFailure extends Error {
+  constructor(
+    public readonly role: 'reviewer' | 'security',
+    public readonly missing: readonly string[]
+  ) {
+    super(`${role}'s work directory carried no ${missing.join(' and no ')} after a fresh dispatch and one fresh retry.`)
+  }
 }
 
 // --- publication (O1) -------------------------------------------------------
@@ -541,10 +594,16 @@ function pauseMarker(reason: PauseReason): string {
   return `<!-- aeg:loop:paused:${reason} -->`
 }
 
-/** The pause comment's body — the reason and the exact resume command, nothing verdict-shaped. */
-export function renderPauseComment(prNumber: number, reason: PauseReason): string {
+/**
+ * The pause comment's body — the reason and the exact resume command,
+ * nothing verdict-shaped. `detail` is set only for `reason: 'infrastructure'`
+ * (O2) — the role and missing artifact(s) the driver observed on both
+ * dispatch attempts — and is appended to the first line; every other reason
+ * carries no detail and renders exactly as before.
+ */
+export function renderPauseComment(prNumber: number, reason: PauseReason, detail?: string): string {
   return [
-    `The dev-review-loop paused: ${reason}.`,
+    `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
     '',
     'A Principal ruling is needed before this can continue. Once one is posted on this PR, resume with:',
     '',
@@ -571,10 +630,11 @@ function postPauseComment(
   round: number,
   head: string,
   prNumber: number,
-  reason: PauseReason
+  reason: PauseReason,
+  detail?: string
 ): void {
   postForgeEffectOnce(root, task, `pause-${round}-${head}`, () =>
-    postMarkedComment('pr', String(prNumber), pauseMarker(reason), renderPauseComment(prNumber, reason))
+    postMarkedComment('pr', String(prNumber), pauseMarker(reason), renderPauseComment(prNumber, reason, detail))
   )
 }
 
@@ -585,6 +645,7 @@ type PauseState = {
   branch: string
   prNumber: number
   reason: PauseReason
+  detail?: string
   pausedAt: string
 }
 
@@ -1020,6 +1081,11 @@ function buildVerdictFromReport(
   return { observation: { role, verdict, objectives, findings: findingObservations }, rendered }
 }
 
+/** Whether `facts.objectives` (the Issue's `## Objectives` section text, O3) carries anything at all. */
+function hasObjectivesFacts(facts: ReviewerPromptFacts): boolean {
+  return facts.objectives.trim().length > 0
+}
+
 function renderReviewerDispatchPrompt(
   role: 'reviewer' | 'security',
   facts: ReviewerPromptFacts,
@@ -1041,6 +1107,11 @@ function renderReviewerDispatchPrompt(
     role === 'reviewer'
       ? '(severities: BLOCKER, MAJOR, MINOR — leave the file empty if there are none).'
       : '(severities: CRITICAL, HIGH, MEDIUM, LOW — leave the file empty if there are none).',
+    ...(hasObjectivesFacts(facts)
+      ? [
+          `Write one line per objective listed above to ${join(workDir, 'objectives.txt')}: O<n>|MET|<evidence> or O<n>|NOT MET|<evidence>.`
+        ]
+      : []),
     `Write a short report to ${join(workDir, 'report.txt')} as one \`KEY: value\` line per field:`,
     role === 'reviewer' ? '  BRIEF_CONFORMANCE, SPEC_CONFORMANCE, SCOPE, TESTS, DOCS' : '  CONFIG_SCAN, SECRETS',
     'To escalate instead of casting a verdict, write only `ESCALATE: authority|strategy|product` and `SUMMARY: <text>` to report.txt.'
@@ -1225,22 +1296,48 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     return handle
   }
 
+  /**
+   * O1/O2: a dispatch whose work directory is still missing a required
+   * artifact is an infrastructure outcome, never a clean verdict — retried
+   * once with a fresh dispatch into a fresh work directory (`attempt` 2,
+   * never the first attempt's own directory); a second miss throws
+   * `ReviewerInfrastructureFailure`, which the caller turns into a pause
+   * rather than a held or published verdict for this round.
+   *
+   * Deliberately does NOT call `writeHeldVerdict` itself (round 1 review
+   * finding, BLOCKER, PR #489): both roles run inside one `Promise.all` in
+   * the caller, so a role that finishes clean can resolve before its
+   * sibling's own retry exhausts and throws — writing the held verdict file
+   * here would leave one on disk for a round that pauses as infrastructure,
+   * violating O2's "nothing is held … for that round" the moment the two
+   * roles finish in that order. The caller writes both held verdicts only
+   * after `Promise.all` itself resolves — i.e. only once it knows neither
+   * role failed.
+   */
   async function dispatchReviewer(
     role: 'reviewer' | 'security',
     roundNum: number,
     facts: ReviewerPromptFacts
   ): Promise<RoundVerdictParse> {
-    const workDir = reviewerWorkDir(root, task, roundNum, role)
-    mkdirSync(workDir, { recursive: true })
+    const hasObjectives = hasObjectivesFacts(facts)
     const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
-    const prompt = renderReviewerDispatchPrompt(role, facts, workDir)
-    const handle = await withPromptFile(prompt, (promptFile) =>
-      d.dispatchRole(dispatchRoleName, input.agent, prompt, { task: task, round: roundNum, promptFile })
-    )
-    await assertDispatchOrEscalate(handle, input.agent, false, false)
-    const parsed = buildVerdictFromReport(role, workDir, facts.head, input.agent, task, handle)
-    writeHeldVerdict(root, task, roundNum, role, parsed.rendered)
-    return parsed
+    let lastMissing: string[] = []
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const workDir = reviewerWorkDir(root, task, roundNum, role, attempt)
+      mkdirSync(workDir, { recursive: true })
+      const prompt = renderReviewerDispatchPrompt(role, facts, workDir)
+      const handle = await withPromptFile(prompt, (promptFile) =>
+        d.dispatchRole(dispatchRoleName, input.agent, prompt, { task: task, round: roundNum, promptFile })
+      )
+      await assertDispatchOrEscalate(handle, input.agent, false, false)
+      const missing = missingReviewerArtifacts(workDir, hasObjectives)
+      if (missing.length > 0) {
+        lastMissing = missing
+        continue
+      }
+      return buildVerdictFromReport(role, workDir, facts.head, input.agent, task, handle)
+    }
+    throw new ReviewerInfrastructureFailure(role, lastMissing)
   }
 
   function computeStats(head: string, roundStartMs: number): RoundStats {
@@ -1374,21 +1471,43 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const rulings = d.fetchRulings(prNumber)
       const facts: ReviewerPromptFacts = { objectives, rulings, head, ciConclusion }
 
-      const [reviewer, security] = await Promise.all([
-        dispatchReviewer('reviewer', round, facts),
-        dispatchReviewer('security', round, facts)
-      ])
-      lastReviewContext = `${reviewer.rendered}\n\n---\n\n${security.rendered}`
+      // O2: an infrastructure outcome from either role (after its own
+      // one-retry inside `dispatchReviewer`) short-circuits straight to a
+      // pause — `assessRound` is never called for this round, so no verdict
+      // is held or published and the round number does not advance.
+      let verdicts: [RoundVerdictParse, RoundVerdictParse] | null = null
+      try {
+        verdicts = await Promise.all([
+          dispatchReviewer('reviewer', round, facts),
+          dispatchReviewer('security', round, facts)
+        ])
+      } catch (err) {
+        if (!(err instanceof ReviewerInfrastructureFailure)) throw err
+        decision = { type: 'pause', reason: 'infrastructure', detail: err.message }
+      }
 
-      const obs: Observations = { kind: 'verdicts', round, verdicts: [reviewer.observation, security.observation] }
-      const result = assessRound(state, obs)
-      state = result.state
-      decision = result.decision
-      const routed = routeCompletionEvents(result.events, decision.type)
-      pendingCompletionEvents = routed.toDeferUntilPublish
-      await logEvents(routed.toLogNow)
-      d.flushOutbox(task)
-      if (decision.type === 'dispatch_developer') round += 1
+      if (verdicts) {
+        const [reviewer, security] = verdicts
+        // Both roles genuinely finished (`Promise.all` did not reject) —
+        // only now is it safe to hold either verdict on disk (O2's "nothing
+        // is held … for that round" invariant; see `dispatchReviewer`'s doc
+        // comment, above).
+        writeHeldVerdict(root, task, round, 'reviewer', reviewer.rendered)
+        writeHeldVerdict(root, task, round, 'security', security.rendered)
+        lastReviewContext = `${reviewer.rendered}\n\n---\n\n${security.rendered}`
+
+        const obs: Observations = { kind: 'verdicts', round, verdicts: [reviewer.observation, security.observation] }
+        const result = assessRound(state, obs)
+        state = result.state
+        decision = result.decision
+        const routed = routeCompletionEvents(result.events, decision.type)
+        pendingCompletionEvents = routed.toDeferUntilPublish
+        await logEvents(routed.toLogNow)
+        d.flushOutbox(task)
+        if (decision.type === 'dispatch_developer') round += 1
+      } else {
+        d.flushOutbox(task)
+      }
     }
 
     if (decision.type === 'publish') {
@@ -1417,9 +1536,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         branch,
         prNumber,
         reason: decision.reason,
+        detail: decision.detail,
         pausedAt: new Date().toISOString()
       })
-      postPauseComment(root, task, round, pauseHead, prNumber, decision.reason)
+      postPauseComment(root, task, round, pauseHead, prNumber, decision.reason, decision.detail)
       d.flushOutbox(task)
       return { finalDecision: decision, prNumber, task }
     }

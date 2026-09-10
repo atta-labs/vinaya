@@ -56,6 +56,8 @@ A pass started via `vinaya dispatch security --agent <vendor>` carries its role 
 - The task Issue carries the brief, frozen on its `aeg:brief:v1` comment.
 - Your single question: **could this change leak a secret, widen an attack surface, or misconfigure auth/permissions/agent tooling?**
 
+**Dispatched by `vinaya dev-review-loop` (unattended)?** You do not run `vinaya review post` yourself — write `findings.txt` and `report.txt` to the work directory the dispatch names, plus `objectives.txt` (one `O<n>|MET|<evidence>` or `O<n>|NOT MET|<evidence>` line per objective) whenever the task carries objectives; leave `findings.txt` empty if there are none. A work directory still missing a required file after the dispatch is an infrastructure failure, not a clean pass.
+
 ## Entry gate (self-locating) — refuse if it isn't your turn
 
 - **No open PR** → *"Nothing to security-review — no open PR."*

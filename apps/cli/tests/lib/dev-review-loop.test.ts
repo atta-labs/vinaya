@@ -98,6 +98,7 @@ case "$VINAYA_ROLE" in
     WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
     printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
@@ -105,6 +106,7 @@ case "$VINAYA_ROLE" in
     WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
     printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
     echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
@@ -485,6 +487,7 @@ case "$VINAYA_ROLE" in
     mkdir -p "$WD"
     if [ -f "$HOME/.escalated-once" ]; then
       : > "$WD/findings.txt"
+      printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
       printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
     else
       touch "$HOME/.escalated-once"
@@ -497,6 +500,7 @@ case "$VINAYA_ROLE" in
     WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
     printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
     echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
@@ -604,6 +608,7 @@ case "$VINAYA_ROLE" in
     else
       : > "$WD/findings.txt"
     fi
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
     printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
     echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
@@ -611,6 +616,7 @@ case "$VINAYA_ROLE" in
     WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
     printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
     echo '{"session_id":"sec-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
@@ -724,6 +730,7 @@ case "$VINAYA_ROLE" in
     WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
     mkdir -p "$WD"
     printf 'BLOCKER|smoke.ts:1|persistent blocker, never resolved\\n' > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
     printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
     echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
@@ -731,6 +738,7 @@ case "$VINAYA_ROLE" in
     WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
     printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
     echo '{"session_id":"sec-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
@@ -777,6 +785,199 @@ describe('devReviewLoop — a paused loop for reason no_progress still logs its 
       | undefined
     expect(journalFinalized).toBeDefined()
     expect(journalFinalized?.result).toBe('stopped')
+  }, 20000)
+})
+
+// --- a reviewer that writes nothing is infrastructure, never approval (O1/O2) ---
+
+/**
+ * Security never writes anything to its own work directory, on either the
+ * first dispatch or the retry (task `review-validity-v1` 1, `#475`, O1/O2) —
+ * the exact "clean exit, no files" shape the origin finding describes:
+ * `dev-review-loop.ts`'s prior report reader defaulted a missing file to an
+ * empty string and read that as APPROVE/PASS. Each invocation appends a line
+ * to `$HOME/.security-invocations` so the test can prove genuinely TWO fresh
+ * dispatches happened (one attempt, one retry), never a single call read
+ * twice or a resumed session. The code-reviewer half stays clean throughout —
+ * this scenario isolates the failure to one role, the way `Promise.all`
+ * actually runs them.
+ */
+function writeFakeClaudeReviewerWritesNothingScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+cat > /dev/null
+WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    echo "invocation" >> "$HOME/.security-invocations"
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+function setUpReviewerWritesNothing(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeReviewerWritesNothingScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2)', () => {
+  it('retries once into a fresh work directory, then pauses naming the role and the missing artifacts — nothing held or published', () => {
+    const { home, cwd, path } = setUpReviewerWritesNothing()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // Two genuinely separate dispatches for the failing role — one attempt,
+    // one fresh retry — never the same call read twice.
+    const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
+    expect(invocations).toHaveLength(2)
+
+    // The retry used a genuinely fresh directory — the first attempt's own
+    // directory is never reused or resumed.
+    const drlRoot = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    expect(existsSync(join(drlRoot, 'round-1-security-work'))).toBe(true)
+    expect(existsSync(join(drlRoot, 'round-1-security-work-retry1'))).toBe(true)
+
+    // Nothing held or published for this round: no security verdict file
+    // ever got written, and the round never advanced past 1. The code-review
+    // role finishes clean well before security's own retry exhausts — its
+    // held verdict must not survive on disk either (round 1 review finding,
+    // BLOCKER, PR #489: `writeHeldVerdict` used to run inside `dispatchReviewer`
+    // itself, so the succeeding role's file was already written by the time
+    // `Promise.all` rejected on its sibling).
+    expect(existsSync(join(drlRoot, 'round-1-reviewer.md'))).toBe(false)
+    expect(existsSync(join(drlRoot, 'round-1-security.md'))).toBe(false)
+    const pauseState = JSON.parse(readFileSync(join(drlRoot, 'pause-state.json'), 'utf8')) as Record<string, unknown>
+    expect(pauseState.round).toBe(1)
+    expect(pauseState.reason).toBe('infrastructure')
+
+    // One comment only — the pause — never a verdict.
+    const pausedFiles = postedCommentFiles(home)
+    expect(pausedFiles).toHaveLength(1)
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[0] as string), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    expect(pauseComment).toMatch(/security/)
+    expect(pauseComment).toMatch(/findings\.txt/)
+    expect(pauseComment).toMatch(/report\.txt/)
+    expect(pauseComment).not.toMatch(/^VERDICT:/m)
+  }, 20000)
+})
+
+// --- an empty findings file is still a clean verdict (O1, contrast case) ---
+//
+// Already proven by 'devReviewLoop — round 1 clean, ends on publish', above:
+// both roles there write an EMPTY findings.txt (`: > "$WD/findings.txt"`, a
+// real, existing, zero-byte file) and the loop still reaches `publish` with
+// `VERDICT: APPROVE`/`VERDICT: PASS` — the exact contrast the Traps to avoid
+// section requires: empty is clean, absent (this section, above) is not.
+
+// --- the objectives file, when the task carries objectives (O3) -----------
+
+/**
+ * Security writes `findings.txt` and `report.txt` — a real, complete-looking
+ * report — but never `objectives.txt`, on either attempt, even though this
+ * suite's shared `writeFakeGh` brief carries a real `## Objectives` section
+ * (task `review-validity-v1` 1, `#475`, O3). This is the same infrastructure
+ * outcome as the findings/report case, above — a task with objectives that
+ * gets no answer on them is not a clean, silently-vacuous APPROVE. The
+ * code-reviewer half captures its own received prompt so the test can
+ * confirm the prompt itself named `objectives.txt` — O3's other half: the
+ * ask, not just the enforcement.
+ */
+function writeFakeClaudeMissingObjectivesScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+PROMPT="$(cat)"
+WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    printf '%s' "$PROMPT" > "$WORKROOT/round-$VINAYA_ROUND-reviewer-prompt.txt"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo "invocation" >> "$HOME/.security-invocations"
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+function setUpMissingObjectives(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeMissingObjectivesScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — the reviewer prompt names the objectives file, and omitting it is the O1 infrastructure outcome (O3)', () => {
+  it('names objectives.txt in the prompt when the task carries objectives, and pauses as infrastructure when security omits it', () => {
+    const { home, cwd, path } = setUpMissingObjectives()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    const reviewerPrompt = readFileSync(
+      join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-reviewer-prompt.txt'),
+      'utf8'
+    )
+    expect(reviewerPrompt).toMatch(/objectives\.txt/)
+    expect(reviewerPrompt).toMatch(/O<n>\|MET\|<evidence>/)
+
+    const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
+    expect(invocations).toHaveLength(2)
+
+    const pausedFiles = postedCommentFiles(home)
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[0] as string), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    expect(pauseComment).toMatch(/security/)
+    expect(pauseComment).toMatch(/objectives\.txt/)
+
+    // The code-reviewer half finishes clean, well before security's own
+    // retry exhausts — its held verdict must not survive on disk either
+    // (round 1 review finding, BLOCKER, PR #489).
+    const drlRoot = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    expect(existsSync(join(drlRoot, 'round-1-reviewer.md'))).toBe(false)
+    expect(existsSync(join(drlRoot, 'round-1-security.md'))).toBe(false)
   }, 20000)
 })
 

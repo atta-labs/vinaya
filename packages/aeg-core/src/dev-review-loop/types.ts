@@ -62,14 +62,29 @@ export type Observations =
   | ({ kind: 'gate' } & { round: number; green: boolean; confidence?: Confidence; stats: RoundStats })
   | ({ kind: 'verdicts' } & { round: number; verdicts: VerdictObservation[] })
 
-export type PauseReason = 'escalation' | 'max_rounds' | 'no_progress' | 'confidence' | 'reappearance'
+/**
+ * `'infrastructure'` (task `review-validity-v1` 1, `#475`, O2): a review
+ * role's work directory carried no `findings.txt`/`report.txt` (or, on a
+ * task with objectives, no `objectives.txt`) on two consecutive fresh
+ * dispatches — never a verdict, a mechanical-gate stall, or an escalation.
+ * The driver detects and retries this itself (it reads no verdict here at
+ * all); this member exists so the pause it falls back to on a second
+ * failure shares the same vocabulary and rendering path every other pause
+ * reason already uses, rather than a second, parallel pause shape.
+ */
+export type PauseReason = 'escalation' | 'max_rounds' | 'no_progress' | 'confidence' | 'reappearance' | 'infrastructure'
 
 export type Decision =
   | { type: 'dispatch_developer'; reason?: 'confidence' }
   | { type: 'dispatch_reviewers' }
   | { type: 'ask_confidence' }
   | { type: 'publish' }
-  | { type: 'pause'; reason: PauseReason }
+  | {
+      type: 'pause'
+      reason: PauseReason
+      /** Set only for `'infrastructure'` — the role and missing artifact(s) the driver observed; every other reason omits it. */
+      detail?: string
+    }
 
 /**
  * The summary's own outcome vocabulary (O4) — wider than `round_ended`'s
