@@ -103,6 +103,58 @@ describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)',
   })
 })
 
+describe('compareEvidenceBlock — patch-identity fallback on a stale Head (#497)', () => {
+  const staleHead = 'b'.repeat(40)
+
+  it('a stored head differing from the real head passes when both share the same patch identity — a clean rebase', () => {
+    const body = evidenceBody(staleHead, NUMSTAT)
+    const samePatchId = () => 'same-patch-id'
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, undefined, samePatchId)
+    expect(result.status).toBe('pass')
+  })
+
+  it('a stored head differing from the real head still fails, naming both shas and stating the patch changed, when patch identities differ', () => {
+    const body = evidenceBody(staleHead, NUMSTAT)
+    const differentPatchId = (sha: string) => `patch-of-${sha}`
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, undefined, differentPatchId)
+    expect(result.status).toBe('fail')
+    const message = result.status === 'fail' ? result.errors.join('\n') : ''
+    expect(message).toContain(staleHead)
+    expect(message).toContain(HEAD)
+    expect(message).toContain('Group B is stale')
+    expect(message).toContain('the patch changed')
+  })
+
+  it('a stored head whose commit is unreachable (`patchIdOf` returns null) still fails, never treated as a match', () => {
+    const body = evidenceBody(staleHead, NUMSTAT)
+    const unreachablePatchId = () => null
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, undefined, unreachablePatchId)
+    expect(result.status).toBe('fail')
+    const message = result.status === 'fail' ? result.errors.join('\n') : ''
+    expect(message).toContain('the patch changed')
+  })
+
+  it('no `patchIdOf` supplied falls back to sha equality alone, unchanged from before this task', () => {
+    const body = evidenceBody(staleHead, NUMSTAT)
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT)
+    expect(result.status).toBe('fail')
+    const message = result.status === 'fail' ? result.errors.join('\n') : ''
+    expect(message).not.toContain('the patch changed')
+  })
+
+  it('a matching head is never run through `patchIdOf` at all', () => {
+    const body = evidenceBody(HEAD, NUMSTAT)
+    let calls = 0
+    const countingPatchId = () => {
+      calls += 1
+      return 'irrelevant'
+    }
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, undefined, countingPatchId)
+    expect(result.status).toBe('pass')
+    expect(calls).toBe(0)
+  })
+})
+
 function groupCResult(command: string, output: string): GroupCCommandResult {
   return { command, output, exitCode: 0, timedOut: false }
 }

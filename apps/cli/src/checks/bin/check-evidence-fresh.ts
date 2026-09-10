@@ -54,6 +54,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { agentCommandText, extractAgentCommandLines } from '../../commands/pr-report'
+import { patchIdAt } from '../../lib/patch-id'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { compareEvidenceBlock } from '../evidence-fresh-logic'
 import { ScanContext, resolveAnchoredRegion } from '../scan-context'
@@ -119,13 +120,24 @@ function resolveMergeBase(head: string): string {
   throw new UnresolvableMergeBaseError(tried)
 }
 
-function fetchHeadSha(prNumber: number): string | null {
+type PrRefs = { head: string; base: string }
+
+/**
+ * The PR's real head sha and base branch name in one `gh` call. The base
+ * branch is what `patchIdAt` needs (`origin/<base>...<sha>`) to compute a
+ * patch identity comparable to `check-review-gate.ts`'s own binding — the
+ * same `pr.baseRefName` field that check reads off the identical `gh pr
+ * view` shape.
+ */
+function fetchPrRefs(prNumber: number): PrRefs | null {
   try {
-    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'headRefOid', '-q', '.headRefOid'], {
+    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'headRefOid,baseRefName'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
-    }).trim()
-    return out || null
+    })
+    const parsed = JSON.parse(out) as { headRefOid?: string; baseRefName?: string }
+    if (!parsed.headRefOid || !parsed.baseRefName) return null
+    return { head: parsed.headRefOid, base: parsed.baseRefName }
   } catch {
     return null
   }
@@ -175,18 +187,19 @@ function main(): void {
     process.exit(0)
   }
 
-  const resolvedHead = fetchHeadSha(Number(prNumberStr))
-  if (resolvedHead === null) {
+  const prRefs = fetchPrRefs(Number(prNumberStr))
+  if (prRefs === null) {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
       severity: 'error',
-      message: `evidence-fresh: could not resolve PR #${prNumberStr}'s head via \`gh pr view --json headRefOid\`.`,
+      message: `evidence-fresh: could not resolve PR #${prNumberStr}'s head and base via \`gh pr view --json headRefOid,baseRefName\`.`,
       agent_recovery_prompt:
         'Confirm `gh auth status` passes and PR_NUMBER is correct, then re-run `vinaya check evidence-fresh`.'
     })
     process.exit(1)
   }
+  const resolvedHead = prRefs.head
 
   let base: string
   let actualNumstat: string
@@ -217,7 +230,12 @@ function main(): void {
   // why re-running Group C here was the defect this ruling closes.
   const expectedGroupCCommandLines = extractAgentCommandLines(body).map(agentCommandText)
 
-  const result = compareEvidenceBlock(resolved, resolvedHead, actualNumstat, expectedGroupCCommandLines)
+  // A verdict binds to a PATCH, not a sha (`check-review-gate.ts`'s own
+  // `patchIdOf` binding, `#497`) — this check's `Head:` binding uses the
+  // identical rule, computed against the PR's real base branch.
+  const patchIdOf = (sha: string) => patchIdAt(prRefs.base, sha)
+
+  const result = compareEvidenceBlock(resolved, resolvedHead, actualNumstat, expectedGroupCCommandLines, patchIdOf)
   if (result.status === 'fail') {
     for (const message of result.errors) {
       emitCheckError({
