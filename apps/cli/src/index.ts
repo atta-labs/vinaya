@@ -40,6 +40,7 @@ import { reviewStatusCommand } from './commands/review-status.js'
 import { runStudio } from './commands/studio.js'
 import { taskBriefCommand, taskDispatchCommand } from './commands/task.js'
 import { taskRunCommand } from './commands/task-run.js'
+import { taskStatusCommand } from './commands/task-status.js'
 import { tokensCommand } from './commands/tokens.js'
 import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
@@ -244,8 +245,12 @@ try {
         await taskBriefCommand(rest)
       } else if (subcommand === 'run') {
         await taskRunCommand(rest)
+      } else if (subcommand === 'status') {
+        await taskStatusCommand(rest)
       } else {
-        console.error(`Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch', 'brief', or 'run')`)
+        console.error(
+          `Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch', 'brief', 'run', or 'status')`
+        )
         process.exit(2)
       }
       break
