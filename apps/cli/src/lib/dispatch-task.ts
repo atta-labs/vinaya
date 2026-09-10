@@ -1,11 +1,16 @@
 /**
- * dispatchTask — renders the brief from the Issue and the tree
- * (`assembleAndRenderBrief`, `lib/brief-assembly.ts`),
- * posts it once as the frozen `aeg:brief:v1` Issue comment, and starts the
- * Developer through `dispatchRole` when that function is available, else
- * prints the brief and the manual dispatch instruction.
+ * `prepareTask` — renders the brief from the Issue and the tree
+ * (`assembleAndRenderBrief`, `lib/brief-assembly.ts`), refuses on any gap or
+ * on an already-frozen brief, and posts it once as the frozen `aeg:brief:v1`
+ * Issue comment. Starts no agent — see its own doc comment.
  *
- * The brief is frozen by design: this function refuses a second post on the
+ * `dispatchTask` composes `prepareTask` with the existing developer-start
+ * half: with `--agent` and `dispatchRole` available, it starts the Developer
+ * through `dispatchRole`; otherwise it prints the brief and the manual
+ * dispatch instruction. `@deprecated` in favor of `task brief`
+ * (`prepareTask` alone) and `task run` (the future unattended loop).
+ *
+ * The brief is frozen by design: `prepareTask` refuses a second post on the
  * same Issue rather than ever overwriting or appending a `v2` — a changed
  * brief is a changed Issue, re-dispatched only by a later escalation path
  * this task does not build (see `taskDispatchCommand`'s own doc comment).
@@ -251,6 +256,98 @@ function resolveDispatchAuthorization(): DispatchAuthorization {
   return { authorized: login !== null && isPrincipal(login, allowlist), login }
 }
 
+export type PrepareTaskInput = { tranche: string; n: number }
+export type PrepareTaskResult = { issue: number; brief: string; commentUrl: string }
+
+/**
+ * Injection seam for `apps/cli/tests/lib/dispatch-task.test.ts`. `beforePost`
+ * is an opaque hook, not an agent-shaped one — this type carries no
+ * `DispatchAgent`, no model, nothing about starting a developer. `dispatchTask`
+ * (O3) is the only caller that ever supplies it, closing over its own
+ * `agent`/`model` to resolve and validate the model there; `prepareTask`
+ * itself never learns what the hook does, which is what keeps it agent-free
+ * (task-run-v1's own stop condition: if staying byte-identical required this
+ * function to know about agents, the seam would be in the wrong place).
+ */
+export type PrepareTaskDeps = {
+  assembleAndRenderBrief: typeof assembleAndRenderBrief
+  findExistingV1Comment: (n: number) => IssueComment | null
+  postMarkedComment: typeof postMarkedComment
+  resolveDispatchAuthorization: () => DispatchAuthorization
+  beforePost?: (issue: number) => void | Promise<void>
+}
+
+const defaultPrepareTaskDeps: PrepareTaskDeps = {
+  assembleAndRenderBrief,
+  findExistingV1Comment,
+  postMarkedComment,
+  resolveDispatchAuthorization
+}
+
+/**
+ * O1 (task-run-v1 task 1) — the preparation half extracted from what used to
+ * be all of `dispatchTask`: resolves the task's Issue, renders the brief,
+ * refuses on any gap, refuses when a frozen brief already exists, and posts
+ * the brief as the frozen `aeg:brief:v1` Issue comment. Starts no agent under
+ * any circumstances — that is `dispatchTask`'s job (O3), composed from this
+ * function plus the existing developer-start half below.
+ *
+ * `beforePost`, when given, runs after the already-dispatched guard passes
+ * but before the comment is posted — `dispatchTask` uses this to resolve and
+ * validate `--agent`'s model BEFORE the frozen post exists, preserving MAJOR
+ * 1's ordering guarantee (#456 round 1: a bad model must never leave a
+ * permanently-dispatched task) without this function itself needing to know
+ * why the hook exists.
+ */
+export async function prepareTask(
+  input: PrepareTaskInput,
+  deps: PrepareTaskDeps = defaultPrepareTaskDeps
+): Promise<PrepareTaskResult> {
+  const { tranche, n } = input
+
+  // Authorization is checked before anything else — no render, no forge
+  // read, no post.
+  {
+    const { authorized, login } = deps.resolveDispatchAuthorization()
+    if (!authorized) {
+      throw new DispatchTaskError(
+        login === null
+          ? 'could not resolve the identity `gh` is authenticated as — preparing a task is Principal-only and refuses rather than proceeding with an unverified actor.'
+          : `\`${login}\` is not on the Principal allowlist — preparing a task is Principal-only.`
+      )
+    }
+  }
+
+  const result = await deps.assembleAndRenderBrief(tranche, String(n))
+  if (!result.ok) {
+    throw new DispatchTaskError(
+      `cannot dispatch — brief render refused:\n${result.missing.map((m) => `  - ${m}`).join('\n')}`
+    )
+  }
+
+  // `result.issue` is the real forge Issue number the render step already
+  // resolved from the task id — used for every forge read/write below,
+  // never `n` (the task id) again. Reusing `n` as an Issue number here was
+  // the live bug: dispatching task 3 posted its brief on Issue #3, an
+  // unrelated merged Issue, because this code used to read `n` here.
+  const issue = result.issue
+
+  const existing = deps.findExistingV1Comment(issue)
+  if (existing) {
+    throw new DispatchTaskError(`Task ${n} in tranche \`${tranche}\` is already dispatched — see ${existing.url}`)
+  }
+
+  if (deps.beforePost) {
+    await deps.beforePost(issue)
+  }
+
+  const hash = briefHash(result.brief)
+  const commentBody = `Brief hash: ${hash}\n${result.brief}`
+  const url = deps.postMarkedComment('issue', String(issue), AEG_BRIEF_V1_MARKER, commentBody)
+
+  return { issue, brief: result.brief, commentUrl: url }
+}
+
 /**
  * Injection seam for `apps/cli/tests/lib/dispatch-task.test.ts` — same
  * convention `commands/archive.ts`'s `ArchiveDeps` already uses in this
@@ -282,11 +379,17 @@ const defaultDeps: DispatchTaskDeps = {
 }
 
 /**
- * Renders the brief, posts it as the frozen `aeg:brief:v1` Issue comment
- * (refusing a second one), and starts the Developer when `--agent` is given
- * and `dispatchRole` is available. Dispatching at all — posting the brief,
- * with or without `--agent` — is Principal-only; see
- * `resolveDispatchAuthorization`'s own doc comment.
+ * O3 (task-run-v1 task 1) — `task dispatch`'s exact current behaviour,
+ * rewritten as a thin composition of `prepareTask` (O1, above) plus the
+ * existing developer-start half: renders and posts the frozen brief, then
+ * starts the Developer when `--agent` is given and `dispatchRole` is
+ * available. Dispatching at all — posting the brief, with or without
+ * `--agent` — is Principal-only; see `resolveDispatchAuthorization`'s own
+ * doc comment.
+ *
+ * @deprecated in favor of `task brief` (preparation only) and `task run`
+ * (preparation, then the full unattended loop) — kept for a documented
+ * compatibility window while callers migrate.
  */
 export async function dispatchTask(
   input: DispatchTaskInput,
@@ -294,75 +397,53 @@ export async function dispatchTask(
 ): Promise<DispatchTaskResult> {
   const { tranche, n, agent, model } = input
 
-  // Authorization is checked before anything else — no render, no forge
-  // read, no post — for the whole command, not only the `--agent` path.
-  {
-    const { authorized, login } = deps.resolveDispatchAuthorization()
-    if (!authorized) {
-      throw new DispatchTaskError(
-        login === null
-          ? 'could not resolve the identity `gh` is authenticated as — `task dispatch` is Principal-only and refuses rather than proceeding with an unverified actor.'
-          : `\`${login}\` is not on the Principal allowlist — \`task dispatch\` is Principal-only.`
-      )
-    }
-  }
-
-  const result = await deps.assembleAndRenderBrief(tranche, String(n))
-  if (!result.ok) {
-    throw new DispatchTaskError(
-      `cannot dispatch — brief render refused:\n${result.missing.map((m) => `  - ${m}`).join('\n')}`
-    )
-  }
-
-  // `result.issue` is the real forge Issue number the render step already
-  // resolved from the task id — used for every forge read/write below,
-  // never `n` (the task id) again. Reusing `n` as an Issue number here was
-  // the live bug: dispatching task 3 posted its brief on Issue #3, an
-  // unrelated merged Issue, because this code used to read `n` here.
-  const issue = result.issue
-
-  const existing = deps.findExistingV1Comment(issue)
-  if (existing) {
-    throw new DispatchTaskError(`Task ${n} in tranche \`${tranche}\` is already dispatched — see ${existing.url}`)
-  }
-
   // MAJOR 1 (#456 round 1, related to #465, not fixed here): resolved and
-  // validated BEFORE the brief is posted, not after. `resolveModelForDispatch`
-  // can throw (a `gh issue view` failure fetching this task's own rationale)
-  // — if that happened after `postMarkedComment` below, the frozen
-  // `aeg:brief:v1` comment would already exist, and the "already dispatched"
-  // guard above keys on that comment's mere existence with no flag to
-  // override it: the task would become permanently undispatchable. Resolving
-  // here means a bad model refuses with nothing yet written to the forge.
+  // validated BEFORE the brief is posted, not after, via `prepareTask`'s
+  // `beforePost` hook — `resolveModelForDispatch` can throw (a `gh issue
+  // view` failure fetching this task's own rationale) and if that happened
+  // after the frozen comment existed, the "already dispatched" guard keys on
+  // its mere existence with no flag to override it: the task would become
+  // permanently undispatchable. Resolving inside the hook means a bad model
+  // refuses with nothing yet written to the forge — the same guarantee the
+  // un-extracted function used to provide directly.
   let dispatchRole: DispatchRoleFn | null = null
   let resolvedModel: string | undefined
-  if (agent) {
-    dispatchRole = await deps.resolveDispatchRole()
-    if (dispatchRole) {
-      // O3: an explicit `--model` always wins; absent that, resolved from
-      // this task's own Issue rationale against this vendor's own
-      // class-to-model table — `undefined` either way falls through to
-      // `dispatchRole`'s existing "no --model flag added" behavior.
-      resolvedModel = deps.resolveModelForDispatch(agent, issue, model)
+
+  const prep = await prepareTask(
+    { tranche, n },
+    {
+      assembleAndRenderBrief: deps.assembleAndRenderBrief,
+      findExistingV1Comment: deps.findExistingV1Comment,
+      postMarkedComment: deps.postMarkedComment,
+      resolveDispatchAuthorization: deps.resolveDispatchAuthorization,
+      beforePost: agent
+        ? async (issue) => {
+            dispatchRole = await deps.resolveDispatchRole()
+            if (dispatchRole) {
+              // O3: an explicit `--model` always wins; absent that, resolved
+              // from this task's own Issue rationale against this vendor's
+              // own class-to-model table — `undefined` either way falls
+              // through to `dispatchRole`'s existing "no --model flag added"
+              // behavior.
+              resolvedModel = deps.resolveModelForDispatch(agent, issue, model)
+            }
+          }
+        : undefined
     }
-  }
-
-  const hash = briefHash(result.brief)
-  const commentBody = `Brief hash: ${hash}\n${result.brief}`
-  const url = deps.postMarkedComment('issue', String(issue), AEG_BRIEF_V1_MARKER, commentBody)
+  )
 
   if (agent) {
     if (dispatchRole) {
-      // O5, Issue #456: `issue`, never `n` — `dispatchRole`'s own `task`
+      // O5, Issue #456: `prep.issue`, never `n` — `dispatchRole`'s own `task`
       // opt is the resolved forge Issue number end to end (`VINAYA_TASK`
       // parses to `subject.issue`, `packages/aeg-core/src/log/envelope.ts`;
       // its resume-record key is `issue<n>`, `dispatch.ts`'s own
       // `resumeRecordPathFor`) — the same live-bug shape the comment above
       // already fixed for posting now applies here too: two tranches'
       // task-N runs on different Issues must never share one record.
-      await withPromptFile(result.brief, (promptFile) =>
-        (dispatchRole as DispatchRoleFn)('developer', agent, result.brief, {
-          task: issue,
+      await withPromptFile(prep.brief, (promptFile) =>
+        (dispatchRole as DispatchRoleFn)('developer', agent, prep.brief, {
+          task: prep.issue,
           promptFile,
           model: resolvedModel
         })
@@ -372,5 +453,5 @@ export async function dispatchTask(
     }
   }
 
-  return { posted: true, commentUrl: url, brief: result.brief }
+  return { posted: true, commentUrl: prep.commentUrl, brief: prep.brief }
 }

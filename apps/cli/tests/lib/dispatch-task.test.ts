@@ -7,6 +7,8 @@ import {
   DispatchTaskError,
   dispatchTask,
   extractAgentClass,
+  type PrepareTaskDeps,
+  prepareTask,
   resolveModelFromRationale
 } from '../../src/lib/dispatch-task.js'
 
@@ -344,6 +346,149 @@ describe('dispatchTask', () => {
       )
       expect(result.posted).toBe(true)
     })
+  })
+})
+
+/**
+ * O1 (task-run-v1 task 1) — `prepareTask` is `dispatchTask` minus the
+ * developer-start half: its own deps type (`PrepareTaskDeps`) has no
+ * `DispatchAgent`, no model, no `resolveDispatchRole` field at all, so
+ * there is structurally nothing here that could start a worker — the type
+ * itself is the "starts no agent" proof, not merely an assertion at runtime.
+ */
+function prepareDeps(overrides: Partial<PrepareTaskDeps> = {}): PrepareTaskDeps {
+  const neverCalled = (name: string) => () => {
+    throw new Error(`${name} should not have been called`)
+  }
+  return {
+    assembleAndRenderBrief: neverCalled(
+      'assembleAndRenderBrief'
+    ) as unknown as PrepareTaskDeps['assembleAndRenderBrief'],
+    findExistingV1Comment: neverCalled('findExistingV1Comment') as unknown as PrepareTaskDeps['findExistingV1Comment'],
+    postMarkedComment: neverCalled('postMarkedComment') as unknown as PrepareTaskDeps['postMarkedComment'],
+    resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' }),
+    ...overrides
+  }
+}
+
+function preparePostingDeps(overrides: Partial<PrepareTaskDeps> = {}): PrepareTaskDeps {
+  return prepareDeps({
+    assembleAndRenderBrief: async () => ({ ok: true, brief: BRIEF_TEXT, issue: 427 }),
+    findExistingV1Comment: () => null,
+    ...overrides
+  })
+}
+
+describe('prepareTask (O1, task-run-v1 task 1)', () => {
+  it('renders, posts the frozen comment, and returns the Issue, brief and comment url — no beforePost given', async () => {
+    let posted: { kind: string; ref: string; marker: string; body: string } | null = null
+    const result = await prepareTask(
+      { tranche: 'task-run-v1', n: 1 },
+      preparePostingDeps({
+        postMarkedComment: (kind, ref, marker, body) => {
+          posted = { kind, ref, marker, body }
+          return 'https://github.com/acme/widget/issues/427#issuecomment-1'
+        }
+      })
+    )
+    expect(result).toEqual({
+      issue: 427,
+      brief: BRIEF_TEXT,
+      commentUrl: 'https://github.com/acme/widget/issues/427#issuecomment-1'
+    })
+    expect(posted).not.toBeNull()
+  })
+
+  it('refuses before any render, comment check, or post when the actor is not on the Principal allowlist', async () => {
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1 },
+        prepareDeps({ resolveDispatchAuthorization: () => ({ authorized: false, login: 'random-collaborator' }) })
+      )
+    ).rejects.toThrow(/random-collaborator.*Principal allowlist/s)
+  })
+
+  it('refuses before ever checking for an existing comment when the render itself refuses', async () => {
+    let existingCheckCalled = false
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1 },
+        preparePostingDeps({
+          assembleAndRenderBrief: async () => ({
+            ok: false,
+            missing: ['Test plan (Issue has no `## Test plan` section)']
+          }),
+          findExistingV1Comment: () => {
+            existingCheckCalled = true
+            return null
+          }
+        })
+      )
+    ).rejects.toThrow(DispatchTaskError)
+    expect(existingCheckCalled).toBe(false)
+  })
+
+  it('refuses when a frozen brief already exists, naming the existing comment url — nothing posted', async () => {
+    let postCalled = false
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1 },
+        preparePostingDeps({
+          findExistingV1Comment: () => ({
+            body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+            url: 'https://github.com/acme/widget/issues/427#issuecomment-1'
+          }),
+          postMarkedComment: () => {
+            postCalled = true
+            return 'unused'
+          }
+        })
+      )
+    ).rejects.toThrow(/already dispatched.*issuecomment-1/s)
+    expect(postCalled).toBe(false)
+  })
+
+  it('calls beforePost with the resolved Issue number, after the existing-comment guard, before the post', async () => {
+    const order: string[] = []
+    let hookIssue: number | null = null
+    await prepareTask(
+      { tranche: 'task-run-v1', n: 1 },
+      preparePostingDeps({
+        findExistingV1Comment: () => {
+          order.push('existing-check')
+          return null
+        },
+        beforePost: (issue) => {
+          order.push('beforePost')
+          hookIssue = issue
+        },
+        postMarkedComment: () => {
+          order.push('post')
+          return 'https://github.com/acme/widget/issues/427#issuecomment-1'
+        }
+      })
+    )
+    expect(order).toEqual(['existing-check', 'beforePost', 'post'])
+    expect(hookIssue).toBe(427)
+  })
+
+  it('a throwing beforePost posts nothing — the ordering guarantee MAJOR 1 (#456) relies on', async () => {
+    let postCalled = false
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1 },
+        preparePostingDeps({
+          beforePost: () => {
+            throw new DispatchTaskError('boom')
+          },
+          postMarkedComment: () => {
+            postCalled = true
+            return 'unused'
+          }
+        })
+      )
+    ).rejects.toThrow(DispatchTaskError)
+    expect(postCalled).toBe(false)
   })
 })
 

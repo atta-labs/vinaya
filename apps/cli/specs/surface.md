@@ -429,6 +429,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `dispatchTask` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `DispatchTaskError` | class | `apps/cli/src/lib/dispatch-task.ts` |
 | `extractAgentClass` | function | `apps/cli/src/lib/dispatch-task.ts` |
+| `prepareTask` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `resolveModelFromRationale` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `AGENT_CLASS_VALUES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `AGENT_VENDOR_NAMES` | const | `apps/cli/src/lib/dispatch.ts` |
@@ -640,4 +641,6 @@ Every non-compliant command from the table above, dated, with the count of disti
 `assembleAndRenderBrief`'s own resolved-Issue result field (Issue #447, O1) is a new field on its already-exported return type, not a new function/const/class export — per this file's own rule (`## The rule`), it needs no new row here. `task dispatch` (`taskDispatchCommand`) still calls only `dispatchTask`, unchanged.
 
 `dispatchRole` (Issue #491, role-prefixed and coloured terminal output) gains three exports — `colourEnabled`, `colourAgentLine`, `colourLoopLine`, all listed above — and drops none. Exported so a fixture stream can assert the TTY/`NO_COLOR` predicate and the per-role prefix directly, without spawning a real vendor process. Applied only at the point a line reaches `process.stderr`/`process.stdout` (never where a line is produced), so `openOutputTee`'s own tee and `dispatchRole`'s existing `[vinaya dispatch <id>] …` lifecycle-line text are unaffected by this addition; `dev-review-loop`'s own two `process.stdout.write` calls (`devReviewLoopCommand`) now route their text through `colourLoopLine`, calling only `dispatch.ts`'s already-exported surface — one new in-scope lib call, raising that command's own exemption row from 4 to 5 (both the Commands table and the Exemptions row below, updated together).
+
+`prepareTask` (task-run-v1 task 1, O1) is the preparation half extracted from what used to be all of `dispatchTask`'s body — it retires no row today (`dispatchTask` remains, deprecated, and stays `task dispatch`'s own one lib call, unchanged); it is the one lib function `task brief` (`taskBriefCommand`, this task's O2) calls.
 
