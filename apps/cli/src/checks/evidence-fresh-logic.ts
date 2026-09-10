@@ -25,6 +25,12 @@
  * boundary. A block whose Group B or Group C section was fabricated
  * outright (never actually run) is NOT detected by this function; only a
  * STALE or MISMATCHED one is.
+ *
+ * Group B's `Head:` comparison (`#497`) accepts a stored sha that differs
+ * from the PR's real head when the caller's `patchIdOf` reports the same
+ * patch identity for both — the identical rule `check-review-gate.ts` binds
+ * a verdict by. A rebase, a merge from the base, or a whitespace-only push
+ * changes the sha without changing the patch and must not void the block.
  */
 
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../lib/numstat'
@@ -69,7 +75,8 @@ export function compareEvidenceBlock(
   resolved: ResolvedRegion,
   resolvedHead: string,
   actualNumstat: string,
-  expectedGroupCCommandLines?: string[]
+  expectedGroupCCommandLines?: string[],
+  patchIdOf?: (sha: string) => string | null
 ): EvidenceCompareResult {
   const region = resolved.region
   const headMatch = region.match(HEAD_LINE)
@@ -90,11 +97,26 @@ export function compareEvidenceBlock(
   const errors: string[] = []
 
   if (storedHead !== resolvedHead) {
-    errors.push(
-      `evidence-fresh: Group B is stale — the block's Head (${storedHead}) does not match the PR's real head (${resolvedHead}). Re-run `.concat(
-        '`vinaya pr report --write` against the current head, commit, and push again.'
+    // A verdict binds to a PATCH, not a sha (`check-review-gate.ts`'s own
+    // `patchIdOf` binding) — the freshness check binds by the identical
+    // rule (`#497`). A clean rebase, a merge from the base, or a
+    // whitespace-only push changes the sha without changing the patch, and
+    // must keep this block green. `patchIdOf` is supplied by the caller
+    // (`check-evidence-fresh.ts`), never computed here — this module stays
+    // `fs`/`git`-free. `null` from either side means "cannot answer" and is
+    // never treated as a match.
+    let samePatch = false
+    if (patchIdOf) {
+      const storedPatchId = patchIdOf(storedHead)
+      const resolvedPatchId = patchIdOf(resolvedHead)
+      samePatch = storedPatchId !== null && resolvedPatchId !== null && storedPatchId === resolvedPatchId
+    }
+    if (!samePatch) {
+      const patchNote = patchIdOf ? ', and the patch changed' : ''
+      errors.push(
+        `evidence-fresh: Group B is stale — the block's Head (${storedHead}) does not match the PR's real head (${resolvedHead})${patchNote}. Re-run \`vinaya pr report --write\` against the current head, commit, and push again.`
       )
-    )
+    }
   }
 
   if (storedNumstat !== actual) {

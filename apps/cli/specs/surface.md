@@ -538,6 +538,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `writeFileWithDirs` | function | `apps/cli/src/lib/ops.ts` |
 | `printHelp` | function | `apps/cli/src/lib/output.ts` |
 | `packageRoot` | function | `apps/cli/src/lib/package-root.ts` |
+| `patchIdAt` | function | `apps/cli/src/lib/patch-id.ts` |
 | `__resetStdinForTest` | function | `apps/cli/src/lib/prompt.ts` |
 | `closeStdin` | function | `apps/cli/src/lib/prompt.ts` |
 | `prompt` | function | `apps/cli/src/lib/prompt.ts` |
