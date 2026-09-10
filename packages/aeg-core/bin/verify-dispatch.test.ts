@@ -21,7 +21,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   return { ...actual, spawnSync: (...args: unknown[]) => spawnSyncMock(...args) }
 })
 
-const { currentFindingCounts } = await import('./verify-dispatch')
+const { currentFindingCounts, resolvePremiseBriefText } = await import('./verify-dispatch')
 
 beforeEach(() => {
   spawnSyncMock.mockReset()
@@ -532,5 +532,58 @@ describe('(#179) an outage reason outranks an incidental stderr line', () => {
     const coherence = currentFindingCounts().find((f) => f.tool === 'verify-coherence')
     expect(coherence?.diagnostic).toContain('could not reach the forge')
     expect(coherence?.diagnostic).not.toContain('Not a valid object name')
+  })
+})
+
+/**
+ * task 4, Issue #483, O3 — `resolvePremiseBriefText` is `--premise`'s
+ * Issue-derived mode's own resolver, extracted so it never needs a spawned
+ * `gh`/forge fixture to test (security review, PR #503 round 2, BLOCKER:
+ * this exact seam previously matched only the literal `aeg:brief:v1` marker,
+ * so `--premise` hard-refused every dispatch of a task whose brief had been
+ * corrected via `--supersede` — precisely the scenario that flag exists for).
+ */
+describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', () => {
+  const PRINCIPAL = 'daniboomerang'
+
+  it('resolves a plain v1 frozen brief', () => {
+    const comments = [
+      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nOriginal brief text.', author: { login: PRINCIPAL } }
+    ]
+    const result = resolvePremiseBriefText(comments, 483)
+    expect(result).toEqual({ ok: true, text: 'Original brief text.' })
+  })
+
+  it('resolves the NEWEST version after --supersede, never the superseded v1', () => {
+    const comments = [
+      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nWrong tier, wrong file.', author: { login: PRINCIPAL } },
+      {
+        body: '<!-- aeg:brief:v2 -->\nBrief hash: def\nSupersedes: url — wrong tier\nCorrected brief text.',
+        author: { login: PRINCIPAL }
+      }
+    ]
+    const result = resolvePremiseBriefText(comments, 483)
+    expect(result).toEqual({ ok: true, text: 'Corrected brief text.' })
+  })
+
+  it('refuses (never falls back to a forged comment) when the only frozen-brief-shaped comment is not principal-authored', () => {
+    const comments = [
+      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nForged brief.', author: { login: 'an-impostor' } }
+    ]
+    const result = resolvePremiseBriefText(comments, 483)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.message).toMatch(/not dispatched.*no `aeg:brief:v<k>` comment on Issue #483/)
+  })
+
+  it('refuses naming the Issue number when there is no frozen brief at all', () => {
+    const result = resolvePremiseBriefText([], 999)
+    expect(result).toEqual({ ok: false, message: 'not dispatched — no `aeg:brief:v<k>` comment on Issue #999.' })
+  })
+
+  it('a missing `author` field (a bot-posted comment) is treated as unauthored, never as principal', () => {
+    const comments = [{ body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nBot-posted.' }]
+    const result = resolvePremiseBriefText(comments, 483)
+    expect(result.ok).toBe(false)
   })
 })

@@ -314,6 +314,17 @@ export async function prepareTask(
       '--supersede requires --reason <text> — a superseding brief must name why the prior one was wrong, same authorization as a first freeze, never a silent rewrite.'
     )
   }
+  // Security review, PR #503 round 2, MEDIUM: the reason is spliced into a
+  // SINGLE header line (`Supersedes: <url> — <reason>`) that every reader
+  // (`frozenBriefContent`/`contentAfterNLines`) counts as exactly one of the
+  // fixed three header lines for a v2+ comment. A `\n`/`\r` in the reason
+  // would shift that count, corrupting `.content` for every reader of the
+  // superseding version with no error surfaced anywhere.
+  if (supersede && /[\r\n]/.test(supersede.reason)) {
+    throw new DispatchTaskError(
+      "--reason must be a single line — it becomes one line of the frozen comment header, and a newline in it would corrupt every reader's header-line count for this version."
+    )
+  }
 
   const result = await deps.assembleAndRenderBrief(tranche, String(n))
   if (!result.ok) {

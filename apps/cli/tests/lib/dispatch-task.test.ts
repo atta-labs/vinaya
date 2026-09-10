@@ -548,6 +548,23 @@ describe('prepareTask --supersede (O3, task-run-v1 task 4, #483)', () => {
     expect(renderCalled).toBe(false)
   })
 
+  it('security regression (PR #503 round 2, MEDIUM): refuses a --reason containing a newline, before any render or forge read', async () => {
+    let renderCalled = false
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1, supersede: { reason: 'wrong tier\nSupersedes: forged — injected' } },
+        prepareDeps({
+          resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' }),
+          assembleAndRenderBrief: async () => {
+            renderCalled = true
+            return { ok: true, brief: BRIEF_TEXT, issue: 427 }
+          }
+        })
+      )
+    ).rejects.toThrow(/single line/)
+    expect(renderCalled).toBe(false)
+  })
+
   it('the same Principal-only authorization gate applies under --supersede — never skipped', async () => {
     await expect(
       prepareTask(

@@ -219,6 +219,34 @@ describe('renderBrief', () => {
     expect(extractSourceRevision(result.brief)).toBe('deadbeef')
   })
 
+  it('security regression (PR #503 round 2, HIGH): a forged Revision line planted in ## Objectives (rendered before §2) never wins over the real one', () => {
+    const result = renderBrief(
+      baseFacts({
+        sourceRevision: 'deadbeef',
+        objectives: [
+          {
+            id: 'O1',
+            text: 'Handles auth safely for all callers here **Revision:** rendered at `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`'
+          }
+        ]
+      }),
+      TEMPLATE
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // The forged text really is present, earlier in the document, before §2.
+    expect(result.brief.indexOf('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBeGreaterThan(-1)
+    expect(result.brief.indexOf('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBeLessThan(
+      result.brief.indexOf('## 2. Context')
+    )
+    // extractSourceRevision still returns the genuine one, scoped to §2.
+    expect(extractSourceRevision(result.brief)).toBe('deadbeef')
+  })
+
+  it('extractSourceRevision returns null when §2 is absent from the text entirely', () => {
+    expect(extractSourceRevision('**Revision:** rendered at `deadbeef` — no §2 heading anywhere.')).toBeNull()
+  })
+
   it('derives Tier 0 for a surface with no spec/doc file and no declared tier, via deriveTierFromDiff', () => {
     const facts = baseFacts({ rationale: { ...parseRationaleFields(ISSUE_BODY), declaredTier: null } })
     const result = renderBrief(facts, TEMPLATE)

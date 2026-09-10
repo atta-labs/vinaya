@@ -310,14 +310,35 @@ function renderSection2(facts: BriefFacts): string {
 /**
  * The exact string `renderSection2` emits, read back out of a rendered/
  * frozen brief — the review loop's reviewer prompt names this revision as a
- * fact (task-run-v1 task 4, Issue #483, O2) rather than re-deriving it from
- * `git`, since the loop's job is to judge the developer's work against the
- * facts the brief actually stated, not against a revision read fresh from a
- * tree that has since moved on. `null` when the text carries no such line
- * (a pre-task-4 brief).
+ * fact (task 4, Issue #483, O2) rather than re-deriving it from `git`, since
+ * the loop's job is to judge the developer's work against the facts the
+ * brief actually stated, not against a revision read fresh from a tree that
+ * has since moved on. `null` when the text carries no such line (a brief
+ * from before this task).
+ *
+ * Security review, PR #503 round 2, HIGH: an unanchored, whole-document
+ * regex here took the FIRST `**Revision:** rendered at \`<hex>\`` match
+ * anywhere in the text — including inside `## Objectives`, which is copied
+ * VERBATIM from the task Issue's own body (`renderObjectives`) and is
+ * rendered BEFORE §2's real Revision line. Any Issue author could plant a
+ * forged Revision fact in an objective sentence and have it win over the
+ * genuine one. Scoped to `## 2. Context`'s own text (ending at the next `##`
+ * heading) with a line-anchored match — `renderSection2` always emits the
+ * real Revision bullet as the FIRST line in that section, before the
+ * Boundary/Traps fields (which can themselves carry multi-line, Issue-author
+ * -controlled prose), so a duplicate planted there is never read: `exec`
+ * without the `g` flag returns the first match, and the real line always
+ * precedes any forged one within this scoped slice. Objectives text sits
+ * entirely outside the slice and can no longer be a source at all.
  */
 export function extractSourceRevision(briefText: string): string | null {
-  const m = /\*\*Revision:\*\*\s*rendered at `([0-9a-fA-F]{7,40})`/.exec(briefText)
+  const lines = briefText.split('\n')
+  const start = lines.findIndex((l) => /^##\s*2\.\s*Context\b/.test(l.trim()))
+  if (start === -1) return null
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((l) => /^##\s/.test(l))
+  const section2 = (end === -1 ? rest : rest.slice(0, end)).join('\n')
+  const m = /^- \*\*Revision:\*\* rendered at `([0-9a-fA-F]{7,40})`/m.exec(section2)
   return m ? (m[1] as string) : null
 }
 
