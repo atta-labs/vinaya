@@ -14,6 +14,7 @@
  * carries it, exactly once.
  */
 
+import { resolveRepo as realResolveRepo, type RepoRef } from '@attalabs/aeg-forge-state'
 import {
   type AssembleAndRenderBriefResult,
   assembleAndRenderBrief as realAssembleAndRenderBrief
@@ -53,7 +54,18 @@ export function isAlreadyDispatchedError(err: unknown): boolean {
 }
 
 export type RunTaskInput = { tranche: string; n: number; agent: AgentVendor }
-export type RunTaskResult = LoopResult
+/**
+ * `prUrl` — the published/paused PR's real `https://github.com/<owner>/<repo>/pull/<n>`
+ * URL, per Issue #480's own Sizing story ("...runs the loop to publish and
+ * exits zero printing the PR URL"). `LoopResult` itself carries no URL field
+ * (`dev-review-loop.ts` is unmodified — out of this task's Surface), so it is
+ * constructed here from `resolveRepo()` plus the loop's own `prNumber`.
+ * `null` only when the repo genuinely cannot be resolved (no git remote, an
+ * unparseable `AEG_REPO`) — the same tolerance `dev-review-loop.ts`'s own
+ * `resolveRepo().catch(() => null)` already extends to this exact failure,
+ * never a thrown error over a display-only nicety.
+ */
+export type RunTaskResult = LoopResult & { prUrl: string | null }
 
 /**
  * Injection seam for `apps/cli/tests/lib/task-run.test.ts` — same convention
@@ -67,6 +79,7 @@ export type RunTaskDeps = {
   developerBranchFor: (issueNumber: number) => string
   findOpenPrForBranch: (branch: string) => OpenPrRef | null
   devReviewLoop: (input: { task: number; agent: AgentVendor }) => Promise<LoopResult>
+  resolveRepo: () => Promise<RepoRef | null>
 }
 
 const defaultRunTaskDeps: RunTaskDeps = {
@@ -74,7 +87,14 @@ const defaultRunTaskDeps: RunTaskDeps = {
   assembleAndRenderBrief: realAssembleAndRenderBrief,
   developerBranchFor: realDeveloperBranchFor,
   findOpenPrForBranch: realFindOpenPrForBranch,
-  devReviewLoop: realDevReviewLoop
+  devReviewLoop: realDevReviewLoop,
+  resolveRepo: () => realResolveRepo()
+}
+
+/** `null` on any resolution failure — a display-only nicety never worth failing `runTask` over. */
+async function resolvePrUrl(resolveRepo: () => Promise<RepoRef | null>, prNumber: number): Promise<string | null> {
+  const repo = await resolveRepo().catch(() => null)
+  return repo ? `https://github.com/${repo.owner}/${repo.repo}/pull/${prNumber}` : null
 }
 
 /**
@@ -121,5 +141,7 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
     )
   }
 
-  return deps.devReviewLoop({ task: issue, agent })
+  const loopResult = await deps.devReviewLoop({ task: issue, agent })
+  const prUrl = await resolvePrUrl(deps.resolveRepo, loopResult.prNumber)
+  return { ...loopResult, prUrl }
 }

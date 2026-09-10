@@ -43,6 +43,12 @@ function deps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
     developerBranchFor: neverCalled('developerBranchFor') as unknown as RunTaskDeps['developerBranchFor'],
     findOpenPrForBranch: neverCalled('findOpenPrForBranch') as unknown as RunTaskDeps['findOpenPrForBranch'],
     devReviewLoop: neverCalled('devReviewLoop') as unknown as RunTaskDeps['devReviewLoop'],
+    // Not `neverCalled`: `runTask` always calls this once `devReviewLoop`
+    // resolves (to build `prUrl`), so every test that reaches that point
+    // needs a real, non-throwing default — `null` mirrors the production
+    // fallback for an unresolvable repo, same as `resolvePrUrl`'s own
+    // `.catch(() => null)`.
+    resolveRepo: async () => null,
     ...overrides
   }
 }
@@ -97,7 +103,7 @@ describe('runTask — O1: fresh task, one developer started', () => {
     )
 
     expect(calls).toEqual(['prepareTask', 'developerBranchFor', 'findOpenPrForBranch', 'devReviewLoop'])
-    expect(result).toBe(PUBLISH_RESULT)
+    expect(result).toEqual({ ...PUBLISH_RESULT, prUrl: null })
   })
 
   it('never passes --agent-shaped data into prepareTask (Traps to avoid) — prepareTask only ever sees { tranche, n }', async () => {
@@ -117,7 +123,7 @@ describe('runTask — O1: fresh task, one developer started', () => {
     expect(Object.keys(sawInput as object).sort()).toEqual(['n', 'tranche'])
   })
 
-  it('propagates whatever devReviewLoop returns (publish or pause) unchanged', async () => {
+  it('propagates whatever devReviewLoop returns (publish or pause) unchanged, plus prUrl', async () => {
     const pauseResult: LoopResult = { finalDecision: { type: 'pause', reason: 'max_rounds' }, prNumber: 5, task: 1 }
     const result = await runTask(
       { tranche: 't', n: 1, agent: 'gemini' },
@@ -128,7 +134,37 @@ describe('runTask — O1: fresh task, one developer started', () => {
         devReviewLoop: async () => pauseResult
       })
     )
-    expect(result).toBe(pauseResult)
+    expect(result).toEqual({ ...pauseResult, prUrl: null })
+  })
+
+  it('prUrl is the real https://github.com/<owner>/<repo>/pull/<n> URL when the repo resolves', async () => {
+    const result = await runTask(
+      { tranche: 't', n: 1, agent: 'claude' },
+      deps({
+        prepareTask: async () => ({ issue: 1, brief: '', commentUrl: '' }),
+        developerBranchFor: () => 'task/t/1',
+        findOpenPrForBranch: () => null,
+        devReviewLoop: async () => PUBLISH_RESULT,
+        resolveRepo: async () => ({ owner: 'acme', repo: 'widget' })
+      })
+    )
+    expect(result.prUrl).toBe(`https://github.com/acme/widget/pull/${PUBLISH_RESULT.prNumber}`)
+  })
+
+  it('prUrl is null, never thrown, when resolveRepo rejects', async () => {
+    const result = await runTask(
+      { tranche: 't', n: 1, agent: 'claude' },
+      deps({
+        prepareTask: async () => ({ issue: 1, brief: '', commentUrl: '' }),
+        developerBranchFor: () => 'task/t/1',
+        findOpenPrForBranch: () => null,
+        devReviewLoop: async () => PUBLISH_RESULT,
+        resolveRepo: async () => {
+          throw new Error('git remote get-url origin failed')
+        }
+      })
+    )
+    expect(result.prUrl).toBeNull()
   })
 })
 
@@ -162,7 +198,7 @@ describe('runTask — O3: already-frozen brief is reused, not re-posted', () => 
     )
 
     expect(calls).toEqual(['prepareTask', 'assembleAndRenderBrief', 'devReviewLoop'])
-    expect(result).toBe(PUBLISH_RESULT)
+    expect(result).toEqual({ ...PUBLISH_RESULT, prUrl: null })
   })
 
   it('fails clearly (never starts the loop) when the already-dispatched re-resolution itself cannot derive the Issue', async () => {
