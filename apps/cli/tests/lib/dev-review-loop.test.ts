@@ -860,7 +860,13 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
     expect(existsSync(join(drlRoot, 'round-1-security-work-retry1'))).toBe(true)
 
     // Nothing held or published for this round: no security verdict file
-    // ever got written, and the round never advanced past 1.
+    // ever got written, and the round never advanced past 1. The code-review
+    // role finishes clean well before security's own retry exhausts — its
+    // held verdict must not survive on disk either (round 1 review finding,
+    // BLOCKER, PR #489: `writeHeldVerdict` used to run inside `dispatchReviewer`
+    // itself, so the succeeding role's file was already written by the time
+    // `Promise.all` rejected on its sibling).
+    expect(existsSync(join(drlRoot, 'round-1-reviewer.md'))).toBe(false)
     expect(existsSync(join(drlRoot, 'round-1-security.md'))).toBe(false)
     const pauseState = JSON.parse(readFileSync(join(drlRoot, 'pause-state.json'), 'utf8')) as Record<string, unknown>
     expect(pauseState.round).toBe(1)
@@ -965,6 +971,13 @@ describe('devReviewLoop — the reviewer prompt names the objectives file, and o
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
     expect(pauseComment).toMatch(/security/)
     expect(pauseComment).toMatch(/objectives\.txt/)
+
+    // The code-reviewer half finishes clean, well before security's own
+    // retry exhausts — its held verdict must not survive on disk either
+    // (round 1 review finding, BLOCKER, PR #489).
+    const drlRoot = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    expect(existsSync(join(drlRoot, 'round-1-reviewer.md'))).toBe(false)
+    expect(existsSync(join(drlRoot, 'round-1-security.md'))).toBe(false)
   }, 20000)
 })
 

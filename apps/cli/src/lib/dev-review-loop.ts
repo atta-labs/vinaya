@@ -1303,6 +1303,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
    * never the first attempt's own directory); a second miss throws
    * `ReviewerInfrastructureFailure`, which the caller turns into a pause
    * rather than a held or published verdict for this round.
+   *
+   * Deliberately does NOT call `writeHeldVerdict` itself (round 1 review
+   * finding, BLOCKER, PR #489): both roles run inside one `Promise.all` in
+   * the caller, so a role that finishes clean can resolve before its
+   * sibling's own retry exhausts and throws — writing the held verdict file
+   * here would leave one on disk for a round that pauses as infrastructure,
+   * violating O2's "nothing is held … for that round" the moment the two
+   * roles finish in that order. The caller writes both held verdicts only
+   * after `Promise.all` itself resolves — i.e. only once it knows neither
+   * role failed.
    */
   async function dispatchReviewer(
     role: 'reviewer' | 'security',
@@ -1325,9 +1335,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         lastMissing = missing
         continue
       }
-      const parsed = buildVerdictFromReport(role, workDir, facts.head, input.agent, task, handle)
-      writeHeldVerdict(root, task, roundNum, role, parsed.rendered)
-      return parsed
+      return buildVerdictFromReport(role, workDir, facts.head, input.agent, task, handle)
     }
     throw new ReviewerInfrastructureFailure(role, lastMissing)
   }
@@ -1480,6 +1488,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
       if (verdicts) {
         const [reviewer, security] = verdicts
+        // Both roles genuinely finished (`Promise.all` did not reject) —
+        // only now is it safe to hold either verdict on disk (O2's "nothing
+        // is held … for that round" invariant; see `dispatchReviewer`'s doc
+        // comment, above).
+        writeHeldVerdict(root, task, round, 'reviewer', reviewer.rendered)
+        writeHeldVerdict(root, task, round, 'security', security.rendered)
         lastReviewContext = `${reviewer.rendered}\n\n---\n\n${security.rendered}`
 
         const obs: Observations = { kind: 'verdicts', round, verdicts: [reviewer.observation, security.observation] }

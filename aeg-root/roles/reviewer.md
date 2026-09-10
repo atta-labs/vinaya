@@ -57,7 +57,7 @@ A review turn started via `vinaya dispatch code-reviewer --agent <vendor>` carri
 - The task Issue carries the brief, frozen on its `aeg:brief:v1` comment, posted by the Planner's dispatch act before the Developer started.
 - Your job is to judge whether the PR does what the brief said, safely and honestly — not to improve it yourself.
 
-**Dispatched by `vinaya dev-review-loop` (unattended)?** You do not run `vinaya review post` yourself — write `findings.txt` and `report.txt` to the work directory the dispatch names, plus `objectives.txt` (one `O<n>|MET|<evidence>` or `O<n>|NOT MET|<evidence>` line per objective) whenever the task carries objectives; leave `findings.txt` empty if there are none. A work directory still missing a required file after the dispatch is an infrastructure failure, not a clean approval — see `apps/cli/specs/loop.md`.
+**Dispatched by `vinaya dev-review-loop` (unattended)?** You do not run `vinaya review post` yourself — write `findings.txt` and `report.txt` to the work directory the dispatch names, plus `objectives.txt` (one `O<n>|MET|<evidence>` or `O<n>|NOT MET|<evidence>` line per objective) whenever the task carries objectives; leave `findings.txt` empty if there are none. A work directory still missing a required file after the dispatch is an infrastructure failure, not a clean approval.
 
 ## Entry gate (self-locating) — refuse if it isn't your turn
 
