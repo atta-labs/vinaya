@@ -63,6 +63,56 @@ import { createLogSink, outboxPathFor } from './log-sink.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
 import { dirname, join } from 'node:path'
 
+/**
+ * Terminal colour, applied only at the point a line is written to a real
+ * interactive stream (O3; Issue #491) — never where the line is produced, so
+ * the dispatch-output tee (`openOutputTee`, which never sees these lines at
+ * all) and any piped/non-TTY consumer keep reading exactly the bytes they
+ * read before this task. `NO_COLOR` (https://no-color.org) is honored by
+ * presence alone, any value including empty, not by its truthiness.
+ */
+const ANSI_RESET = '\x1b[0m'
+
+/** One fixed colour per role, never per vendor (O1) — the reader is separating who is speaking, not which binary ran. */
+const ROLE_ANSI: Record<Role, string> = {
+  planner: '\x1b[34m', // blue
+  developer: '\x1b[36m', // cyan
+  'code-reviewer': '\x1b[35m', // magenta
+  security: '\x1b[31m', // red
+  principal: '\x1b[33m', // yellow
+  archivist: '\x1b[32m', // green
+  architect: '\x1b[93m' // bright yellow
+}
+
+/** The coordinator's own colour (O2) — distinct from every role above, so a lifecycle/loop line reads as the loop's without reading the text. */
+const LOOP_ANSI = '\x1b[90m' // bright black / grey
+
+export function colourEnabled(stream: { isTTY?: boolean }): boolean {
+  return Boolean(stream.isTTY) && process.env.NO_COLOR === undefined
+}
+
+/**
+ * `[role] <line>` — one call per already-split physical line; a caller with
+ * multi-line rendered text splits it first so every line carries its own
+ * prefix (O1). Coloured only when `stream` is a live TTY and `NO_COLOR` is
+ * unset (`colourEnabled`); otherwise the same prefixed text with no escape
+ * codes, which is what a piped consumer or a non-interactive run sees.
+ */
+export function colourAgentLine(role: Role, line: string, stream: { isTTY?: boolean }): string {
+  const prefixed = `[${role}] ${line}`
+  return colourEnabled(stream) ? `${ROLE_ANSI[role]}${prefixed}${ANSI_RESET}` : prefixed
+}
+
+/**
+ * The loop/lifecycle style (O2) — no added prefix, since this family's own
+ * text already names the role (`[vinaya dispatch <id>] <role> via <agent>:
+ * …`, or the loop's own `vinaya dev-review-loop: …`); restyled, never
+ * stacked with a second prefix. Same TTY/`NO_COLOR` gate as `colourAgentLine`.
+ */
+export function colourLoopLine(line: string, stream: { isTTY?: boolean }): string {
+  return colourEnabled(stream) ? `${LOOP_ANSI}${line}${ANSI_RESET}` : line
+}
+
 export const AGENT_VENDOR_NAMES = ['claude', 'codex', 'gemini'] as const
 export type AgentVendor = (typeof AGENT_VENDOR_NAMES)[number]
 
@@ -864,6 +914,10 @@ export async function dispatchRole(
   const effectId = randomUUID()
   const vendor = VENDOR_TABLE[agent]
   const start = Date.now()
+  /** Every lifecycle line this call writes goes through this one point (O2) — restyled, never re-prefixed. */
+  const writeLifecycle = (msg: string): void => {
+    process.stderr.write(`${colourLoopLine(msg, process.stderr)}\n`)
+  }
   const roundField = opts.round !== undefined ? { round: opts.round } : {}
   // O2: never the vendor name (`agent`) — that is the defect this task
   // closes. This is a REQUEST label, never an observation: `requested:<x>`
@@ -898,10 +952,10 @@ export async function dispatchRole(
         usage: null,
         duration_ms: durationMs
       })
-      process.stderr.write(
+      writeLifecycle(
         `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — model '${opts.model}' is a ${foreignVendor} model; ` +
           `${agent} does not accept it. ${agent} accepts its own model names (never a ${foreignVendor} alias or a ` +
-          `'${foreignVendor}-'/'gemma-' full name).\n`
+          `'${foreignVendor}-'/'gemma-' full name).`
       )
       await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
       return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
@@ -969,7 +1023,7 @@ export async function dispatchRole(
 
     const outputTee = openOutputTee(effectId)
     if (outputTee.path !== null) {
-      process.stderr.write(`[vinaya dispatch ${effectId}] ${role} via ${agent}: output teed to ${outputTee.path}\n`)
+      writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: output teed to ${outputTee.path}`)
     }
 
     // Whatever has arrived since the last complete line. The vendor's stream
@@ -992,7 +1046,13 @@ export async function dispatchRole(
         if (line.trim().length === 0) continue
         try {
           const rendered = vendor.renderEvent(JSON.parse(line) as Record<string, unknown>)
-          if (rendered) process.stderr.write(`${rendered}\n`)
+          if (rendered) {
+            const out = rendered
+              .split('\n')
+              .map((l) => colourAgentLine(role, l, process.stderr))
+              .join('\n')
+            process.stderr.write(`${out}\n`)
+          }
         } catch {
           // not a JSON line, or a renderer that refused it — never fatal
         }
@@ -1011,16 +1071,16 @@ export async function dispatchRole(
     // nothing yet to tee.
     const heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {
       const elapsedS = Math.round((Date.now() - start) / 1000)
-      process.stderr.write(
-        `[vinaya dispatch ${effectId}] ${role} via ${agent}: still running — ${elapsedS}s elapsed (ceiling ${Math.round(timeoutMs / 1000)}s)\n`
+      writeLifecycle(
+        `[vinaya dispatch ${effectId}] ${role} via ${agent}: still running — ${elapsedS}s elapsed (ceiling ${Math.round(timeoutMs / 1000)}s)`
       )
     }, HEARTBEAT_INTERVAL_MS)
 
     const warnLeadMs = timeoutWarningLeadMs(timeoutMs)
     const warnTimer: ReturnType<typeof setTimeout> = setTimeout(
       () => {
-        process.stderr.write(
-          `[vinaya dispatch ${effectId}] ${role} via ${agent}: approaching timeout — SIGTERM in ~${Math.round(warnLeadMs / 1000)}s unless it finishes first\n`
+        writeLifecycle(
+          `[vinaya dispatch ${effectId}] ${role} via ${agent}: approaching timeout — SIGTERM in ~${Math.round(warnLeadMs / 1000)}s unless it finishes first`
         )
       },
       Math.max(timeoutMs - warnLeadMs, 0)
@@ -1028,11 +1088,11 @@ export async function dispatchRole(
 
     const timeoutTimer = setTimeout(() => {
       timedOut = true
-      process.stderr.write(`[vinaya dispatch ${effectId}] ${role} via ${agent}: ceiling reached — sending SIGTERM\n`)
+      writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: ceiling reached — sending SIGTERM`)
       child.kill('SIGTERM')
       killTimer = setTimeout(() => {
-        process.stderr.write(
-          `[vinaya dispatch ${effectId}] ${role} via ${agent}: still alive after SIGTERM — sending SIGKILL\n`
+        writeLifecycle(
+          `[vinaya dispatch ${effectId}] ${role} via ${agent}: still alive after SIGTERM — sending SIGKILL`
         )
         child.kill('SIGKILL')
       }, SIGKILL_GRACE_MS)
@@ -1163,8 +1223,8 @@ export async function dispatchRole(
           capturedAt: new Date().toISOString()
         })
         if (resumeRecordPath !== null) {
-          process.stderr.write(
-            `[vinaya dispatch ${effectId}] ${role} via ${agent}: resumable — session recorded at ${resumeRecordPath}\n`
+          writeLifecycle(
+            `[vinaya dispatch ${effectId}] ${role} via ${agent}: resumable — session recorded at ${resumeRecordPath}`
           )
         }
       }
