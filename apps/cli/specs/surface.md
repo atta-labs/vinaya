@@ -399,6 +399,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `DevReviewLoopResumeError` | class | `apps/cli/src/lib/dev-review-loop.ts` |
 | `extractObjectivesSection` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchCiConclusion` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchFailingCheckNames` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchIssueObjectives` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchIssueTitle` | function | `apps/cli/src/lib/dev-review-loop.ts` |
@@ -526,6 +527,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `PROJECTS_REGISTRY_PATH` | const | `apps/cli/src/lib/registry-write.ts` |
 | `renderConfigProjectEntryDiffLine` | function | `apps/cli/src/lib/registry-write.ts` |
 | `renderRegistryRowDiffLine` | function | `apps/cli/src/lib/registry-write.ts` |
+| `REVIEW_GATE_CHECK_RUN_NAME` | const | `apps/cli/src/lib/review-gate-check-name.ts` |
 | `detectVendoredVinaya` | function | `apps/cli/src/lib/self-host.ts` |
 | `VINAYA_PACKAGE_NAME` | const | `apps/cli/src/lib/self-host.ts` |
 | `STUDIO_ARTIFACT_ASSET_NAME` | const | `apps/cli/src/lib/studio-bundle.ts` |
@@ -536,7 +538,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `AEG_BRIEF_V1_MARKER` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(223 exports.)
+(225 exports.)
 
 ## Commands — `apps/cli/src/commands` (42 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
