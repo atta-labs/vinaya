@@ -25,10 +25,16 @@ import {
   checkTestPlanExclusivity,
   checkTierField,
   checkWorktreeStep0,
+  briefMarkerFor,
+  contentAfterNLines,
+  contentAfterTwoLines,
+  frozenBriefContent,
   headerRegion,
   inferBranchFromBody,
   isBriefShaped,
-  partitionBriefErrorsByRollout
+  parseBriefMarkerVersion,
+  partitionBriefErrorsByRollout,
+  resolveNewestFrozenBrief
 } from './brief-validation'
 import { type Objective, objectivesOf } from './objectives'
 import { EOLS, FENCE_DELIMS, fenceShapes } from '../tests/fixtures/fence-shapes'
@@ -1074,5 +1080,87 @@ describe('checkObjectivesCoverage', () => {
     expect(result.errors.join(' ')).toMatch(/cites O9, but the Objectives section ends at O4/)
     // O4 itself is now uncited too — both halves of coverage fire independently.
     expect(result.errors.join(' ')).toMatch(/O4 is not cited/)
+  })
+})
+
+describe('briefMarkerFor / parseBriefMarkerVersion (task-run-v1 task 4, #483, O3)', () => {
+  it('round-trips version numbers through the marker line', () => {
+    expect(briefMarkerFor(1)).toBe('<!-- aeg:brief:v1 -->')
+    expect(briefMarkerFor(2)).toBe('<!-- aeg:brief:v2 -->')
+    expect(parseBriefMarkerVersion('<!-- aeg:brief:v1 -->')).toBe(1)
+    expect(parseBriefMarkerVersion('<!-- aeg:brief:v2 -->')).toBe(2)
+    expect(parseBriefMarkerVersion('<!-- aeg:brief:v12 -->')).toBe(12)
+  })
+
+  it('rejects a v0 marker and any non-marker-shaped line', () => {
+    expect(parseBriefMarkerVersion('<!-- aeg:brief:v0 -->')).toBeNull()
+    expect(parseBriefMarkerVersion('not a marker')).toBeNull()
+    expect(parseBriefMarkerVersion('<!-- aeg:principal:ruling -->')).toBeNull()
+  })
+})
+
+describe('contentAfterNLines / frozenBriefContent', () => {
+  it('contentAfterTwoLines is contentAfterNLines(body, 2) — same behavior, unchanged v1 contract', () => {
+    const body = '<!-- aeg:brief:v1 -->\nBrief hash: abc\nThe brief text.\n'
+    expect(contentAfterTwoLines(body)).toBe(contentAfterNLines(body, 2))
+    expect(contentAfterTwoLines(body)).toBe('The brief text.\n')
+  })
+
+  it('frozenBriefContent strips two header lines for v1, three for v2+ (the Supersedes line)', () => {
+    const v1 = '<!-- aeg:brief:v1 -->\nBrief hash: abc\nThe v1 brief text.\n'
+    expect(frozenBriefContent(v1, 1)).toBe('The v1 brief text.\n')
+
+    const v2 =
+      '<!-- aeg:brief:v2 -->\nBrief hash: def\nSupersedes: https://github.com/acme/widget/issues/1#issuecomment-1 — wrong tier\nThe v2 brief text.\n'
+    expect(frozenBriefContent(v2, 2)).toBe('The v2 brief text.\n')
+  })
+})
+
+describe('resolveNewestFrozenBrief (task-run-v1 task 4, #483, O3) — the single frozen-brief resolver', () => {
+  const ALLOWLIST = ['a-principal']
+
+  it('returns null when no comment is marker-shaped', () => {
+    expect(resolveNewestFrozenBrief([{ body: 'just a comment', author: 'a-principal' }], ALLOWLIST)).toBeNull()
+  })
+
+  it('returns null when the only marker-shaped comment is not principal-authored', () => {
+    const comments = [{ body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nbrief text', author: 'random-collaborator' }]
+    expect(resolveNewestFrozenBrief(comments, ALLOWLIST)).toBeNull()
+  })
+
+  it('picks the newest version among several principal-authored frozen-brief comments, never the first posted', () => {
+    const comments = [
+      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nfirst version', author: 'a-principal' },
+      { body: 'unrelated chatter', author: 'a-principal' },
+      {
+        body: '<!-- aeg:brief:v2 -->\nBrief hash: def\nSupersedes: url — wrong tier\nsecond version',
+        author: 'a-principal'
+      }
+    ]
+    const resolved = resolveNewestFrozenBrief(comments, ALLOWLIST)
+    expect(resolved?.version).toBe(2)
+    expect(resolved?.content).toBe('second version')
+  })
+
+  it('ignores a marker-shaped comment from a non-principal even when it claims a higher version', () => {
+    const comments = [
+      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nreal version', author: 'a-principal' },
+      { body: '<!-- aeg:brief:v9 -->\nBrief hash: xyz\nSupersedes: url — fake\nforged version', author: 'an-impostor' }
+    ]
+    const resolved = resolveNewestFrozenBrief(comments, ALLOWLIST)
+    expect(resolved?.version).toBe(1)
+    expect(resolved?.content).toBe('real version')
+  })
+
+  it('carries through extra fields on the candidate (e.g. url) unchanged', () => {
+    const comments = [
+      {
+        body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nbrief text',
+        author: 'a-principal',
+        url: 'https://github.com/acme/widget/issues/1#issuecomment-1'
+      }
+    ]
+    const resolved = resolveNewestFrozenBrief(comments, ALLOWLIST)
+    expect(resolved?.url).toBe('https://github.com/acme/widget/issues/1#issuecomment-1')
   })
 })

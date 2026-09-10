@@ -96,6 +96,99 @@ export function sha256OfFile(path: string): string {
 }
 
 /**
+ * `git ls-remote --symref origin HEAD` — the remote's default branch name
+ * and the sha it currently points at, in one network round trip that
+ * touches no local ref (no `git fetch`). `null` when the remote cannot be
+ * reached (offline) — `assembleAndRenderBrief` refuses preparation rather
+ * than rendering from a checkout of unknown freshness (task 4,
+ * Issue #483, O1; Stop condition: "The remote default branch cannot be
+ * resolved — refuse preparation").
+ */
+export function resolveRemoteDefaultBranch(cwd?: string): { branch: string; sha: string } | null {
+  let out: string
+  try {
+    out = execFileSync('git', ['ls-remote', '--symref', 'origin', 'HEAD'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  } catch {
+    return null
+  }
+  const lines = out.split('\n')
+  const symrefLine = lines.find((l) => l.startsWith('ref:'))
+  const shaLine = lines.find((l) => !l.startsWith('ref:') && /\tHEAD$/.test(l))
+  const branch = symrefLine ? /^ref:\s*refs\/heads\/(\S+)/.exec(symrefLine)?.[1] : undefined
+  const sha = shaLine?.split('\t')[0]
+  return branch && sha ? { branch, sha } : null
+}
+
+/**
+ * A frozen brief always states the revision its facts were read at
+ * (task 4, Issue #483, O1) — the first of the two guarantees:
+ * `headSha` must equal the remote default branch's current tip, "compare
+ * HEAD to the fetched remote default branch" per the Boundary. `resolveRemote`
+ * is injected so this is testable against a fixture repo with no real
+ * network dependency. Returns a `missing`-shaped reason, never throws — the
+ * caller decides what a non-empty return means.
+ */
+export function checkStaleAgainstRemote(
+  headSha: string,
+  resolveRemote: () => { branch: string; sha: string } | null = resolveRemoteDefaultBranch
+): string[] {
+  const remote = resolveRemote()
+  if (!remote) {
+    return [
+      'the remote default branch could not be resolved (`git ls-remote origin HEAD` failed — offline?) — refusing rather than rendering from a checkout of unknown freshness.'
+    ]
+  }
+  if (headSha !== remote.sha) {
+    return [
+      `checkout HEAD \`${headSha}\` is behind the remote default branch \`${remote.branch}\` at \`${remote.sha}\` — fetch and update before preparing a brief.`
+    ]
+  }
+  return []
+}
+
+/**
+ * The second of the two guarantees (task 4, Issue #483, O1): a
+ * checkout can equal the remote default branch's tip and still carry
+ * uncommitted edits to a file the brief pins — exactly the case that froze a
+ * wrong tier and a forbidden file in a prior task (Traps to avoid). Scoped
+ * to `pinnedPaths` only — `git status --porcelain -- <pinnedPaths>` — so an
+ * operator's unrelated scratch file never blocks preparation.
+ */
+export function checkDirtyPinnedFiles(pinnedPaths: string[], cwd?: string): string[] {
+  if (pinnedPaths.length === 0) return []
+  let out: string
+  try {
+    // Never `.trim()` the raw output: porcelain's status codes occupy the
+    // FIRST two columns (e.g. ` M pinned.md`), and trimming the whole blob
+    // would eat that leading space, shifting every line's slice and
+    // clipping a character off the real filename — found live writing this
+    // test.
+    out = execFileSync('git', ['status', '--porcelain', '--', ...pinnedPaths], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch (err) {
+    return [
+      `could not check working-tree status for the brief's pinned files: ${err instanceof Error ? err.message : String(err)}`
+    ]
+  }
+  if (!out.trim()) return []
+  const dirty = out
+    .split('\n')
+    .filter((l) => l.length > 0)
+    .map((l) => l.slice(3).trim())
+    .filter(Boolean)
+  return [
+    `checkout carries uncommitted changes to pinned file(s): ${dirty.join(', ')} — commit or discard them before preparing a brief.`
+  ]
+}
+
+/**
  * Resolves each `extractBoundaryFilePaths` token to a real tracked path
  * against `allTrackedFiles` (a `git ls-files` snapshot, injected rather than
  * read here so this stays testable without a real repo) — an exact match, or
@@ -193,6 +286,14 @@ export async function assembleAndRenderBrief(
       missing: ['could not resolve owner/repo (set AEG_REPO=owner/repo, or confirm `git remote get-url origin`).']
     }
   }
+
+  // O1 (task 4, Issue #483) — the first of the two guarantees on
+  // the instruction version: a frozen brief is rendered from a known tree.
+  // Checked here, before any forge read, so a stale checkout never pays for
+  // a Tranche/Issue fetch it is about to refuse anyway.
+  const headSha = git(['rev-parse', 'HEAD'])
+  const staleness = checkStaleAgainstRemote(headSha)
+  if (staleness.length > 0) return { ok: false, missing: staleness }
 
   const source = createForgeSource({ owner: repo.owner, repo: repo.repo })
   let tranche: Awaited<ReturnType<typeof source.getTranche>>
@@ -301,6 +402,13 @@ export async function assembleAndRenderBrief(
     .sort()
     .map((path) => ({ path, sha256: sha256OfFile(path), packageName: packageNameForPath(path) }))
 
+  // O1 — the second of the two guarantees: HEAD can equal the remote
+  // default branch's tip and the tree can still be dirty on a file the
+  // brief pins. Scoped to `surfaceFiles`' own paths, never the whole tree
+  // (Traps to avoid: an unrelated scratch file must never block).
+  const dirtiness = checkDirtyPinnedFiles(surfaceFiles.map((f) => f.path))
+  if (dirtiness.length > 0) return { ok: false, missing: dirtiness }
+
   const workspaces = workspaceGlobs()
   const consumersOf = buildConsumersOf(workspaces, listDirs, readManifest)
 
@@ -334,7 +442,8 @@ export async function assembleAndRenderBrief(
     dispatchBlockers: gate.blockers,
     surfaceFiles,
     consumersOf,
-    docOwnersContent: existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null
+    docOwnersContent: existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null,
+    sourceRevision: headSha
   }
 
   const template = readFileSync(TEMPLATE_PATH, 'utf8')
