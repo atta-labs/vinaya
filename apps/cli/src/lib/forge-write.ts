@@ -287,7 +287,7 @@ export function resolveMilestoneAttachArgs(ghArgs: string[], labels: string[]): 
 const CHECK_ISSUE_LABEL = 'issue-label'
 
 /**
- * **O1 (task-run-v1 task 11) — refuses a task-shaped body with no
+ * **O1 (Issue #502) — refuses a task-shaped body with no
  * `vinaya/tranche:*` label, naming the label.** `isTaskIssueLabelSet`-gated
  * validation (`validateTaskIssue`, below) never runs at all for a body with
  * no tranche label — by design, a genuinely non-task Issue must pass through

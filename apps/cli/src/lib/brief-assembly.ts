@@ -263,7 +263,7 @@ function workspaceGlobs(): string[] {
 export type AssembleAndRenderBriefResult = { ok: true; brief: string; issue: number } | { ok: false; missing: string[] }
 
 /**
- * **O2 (task-run-v1 task 11) — names what dispatch looked for.** A bare "not
+ * **O2 (Issue #502) — names what dispatch looked for.** A bare "not
  * present in the forge-derived task list" message leaves the operator
  * guessing whether the Issue was never cut, mislabeled, or the title doesn't
  * match — this names the exact title form `vinaya task dispatch` expects,
