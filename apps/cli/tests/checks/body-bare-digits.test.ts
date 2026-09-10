@@ -157,6 +157,11 @@ describe('body-bare-digits — O<n>. objective markers under ## Objectives (task
     const body = ['## Objectives', '', 'O10. The tenth objective.'].join('\n')
     expect(violationLines(body)).toEqual([])
   })
+
+  it('a non-ASCII (fullwidth) digit marker is NOT exempt — it is not a real objective id (security review, LOW)', () => {
+    const body = ['## Objectives', '', 'O１２. Not a real objective per objectivesOf.'].join('\n')
+    expect(violationLines(body).length).toBe(1)
+  })
 })
 
 // ---------- must fail — every identifier-shape classifier the redesign removed, paired with the same claim once backtick-wrapped ----------

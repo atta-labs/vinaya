@@ -523,8 +523,15 @@ function blankUnanchoredStructuralFields(body: string): string {
  * backticks. Same discipline as the line-leading ordered-list-marker
  * carve-out below: line-start only, so a mid-sentence `O1.`-shaped token has
  * zero laundering surface.
+ *
+ * ASCII `\d`, not `\p{Nd}` — matching `objectives.ts`'s own
+ * `OBJECTIVE_LINE_RE` (`/^O(\d+)\./`) exactly (security review, LOW). The two
+ * definitions of "what counts as an objective marker" must agree: a
+ * fullwidth- or other-script-digit line (`O１２. …`) is not a real objective
+ * `objectivesOf` will ever parse, so exempting it here as if it were
+ * structure would let this scanner and the grammar it mirrors disagree.
  */
-const OBJECTIVE_MARKER_LINE = /^ {0,3}O\p{Nd}{1,9}\./u
+const OBJECTIVE_MARKER_LINE = /^ {0,3}O\d{1,9}\./
 
 function blankObjectiveMarkerLine(line: string): string {
   const m = OBJECTIVE_MARKER_LINE.exec(line)
