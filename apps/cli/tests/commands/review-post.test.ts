@@ -1975,11 +1975,27 @@ describe('review post — objectives resolution and refusals end-to-end (#412, O
     }
   })
 
-  it('refuses when the PR closes no Issue and has no ## Objectives section at all', () => {
+  it('renders a verdict with no objectives block, no refusal, when the PR closes no Issue and has no ## Objectives section at all (task-run-v1, O1)', () => {
     const { dir, env } = workingGhPathWithObjectives(stateDir, HEAD, 'daniboomerang', 'no Closes, no Objectives here.')
     const cwd = mkdtempSync(join(tmpdir(), 'vinaya-review-post-objectives-'))
     try {
       const r = runCli(baseArgs([]), { cwd, env: { ...process.env, ...env } })
+      expect(r.status).toBe(0)
+      expect(r.stdout).not.toContain('Objectives version:')
+      expect(r.stdout).not.toContain('OBJECTIVES:')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('still refuses `--objectives-file` on a PR that closes no Issue and has no ## Objectives section — nothing to judge it against', () => {
+    const { dir, env } = workingGhPathWithObjectives(stateDir, HEAD, 'daniboomerang', 'no Closes, no Objectives here.')
+    const cwd = mkdtempSync(join(tmpdir(), 'vinaya-review-post-objectives-'))
+    const objectivesFile = join(cwd, 'objectives.txt')
+    writeFileSync(objectivesFile, 'O1|MET|x\n')
+    try {
+      const r = runCli(baseArgs(['--objectives-file', objectivesFile]), { cwd, env: { ...process.env, ...env } })
       expect(r.status).not.toBe(0)
       expect(r.stderr).toContain('no objectives to judge against')
     } finally {

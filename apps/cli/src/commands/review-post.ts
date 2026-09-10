@@ -84,7 +84,6 @@ import {
   extractCodeReviewVerdict,
   extractIssue,
   extractSecurityReviewVerdict,
-  hasObjectivesHeading,
   isIssueNotFoundError,
   isPrincipal,
   OBJECTIVES_SINCE_ISSUE,
@@ -92,6 +91,7 @@ import {
   objectivesOf,
   objectivesVersion,
   type ReviewGateComment,
+  resolveObjectivesSource,
   type VerdictExtraction
 } from '@attalabs/aeg-core'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config'
@@ -1148,64 +1148,62 @@ export type ObjectivesResolution =
   | { kind: 'skip' }
 
 /**
- * Mirrors `verify-brief.ts`'s `resolveIssueObjectives`/`check-review-gate.ts`'s
- * `resolveObjectivesVersion`: `Closes #N`'s Issue wins when it resolves and is
- * at/above `OBJECTIVES_SINCE_ISSUE`; the PR body's own `## Objectives` section
- * is the fallback when the PR closes no Issue at all. `{ kind: 'skip' }` is
- * the ONE non-refusing "nothing to judge against" case — an Issue below the
- * cutover — matching the gate's own null-skip rule exactly (a pre-cutover PR
- * must keep passing unchanged). Every OTHER "nothing resolvable" case refuses
- * here, never returns a silently empty list — an Issue that does not resolve,
- * an Issue whose `## Objectives` section does not parse, or a PR closing no
- * Issue with no `## Objectives` section of its own.
+ * Uses `@attalabs/aeg-core`'s `resolveObjectivesSource` — the one function
+ * `check-review-gate.ts`'s `resolveObjectivesVersion` also switches on
+ * (Issue #494, O3) — to decide WHERE this PR's objectives come from:
+ * `Closes #N`'s Issue when it resolves and is at/above `OBJECTIVES_SINCE_ISSUE`,
+ * the PR body's own `## Objectives` section when the PR closes no Issue at
+ * all, or neither. `{ kind: 'skip' }` is the non-refusing "nothing to judge
+ * against" case — an Issue below the cutover, OR a PR closing no Issue with
+ * no `## Objectives` section of its own (Issue #494, O1: this second case
+ * used to refuse; it now renders a verdict with no objectives block, exactly
+ * the case the gate already treats as binding-skipped). Every OTHER
+ * "nothing resolvable" case still refuses here, never returns a silently
+ * empty list — an Issue at/above the cutover that does not resolve, or an
+ * Issue/body `## Objectives` section that exists but does not parse.
  */
 function resolveObjectivesForPr(pr: string): ObjectivesResolution {
   const prBody = fetchPrBody(pr)
   const { issue } = extractIssue(prBody)
+  const source = resolveObjectivesSource(prBody, issue, OBJECTIVES_SINCE_ISSUE)
 
-  if (issue !== null && issue < OBJECTIVES_SINCE_ISSUE) return { kind: 'skip' }
+  if (source.kind === 'none') return { kind: 'skip' }
 
-  if (issue !== null) {
+  if (source.kind === 'issue') {
     let issueBody: string
     try {
-      issueBody = fetchIssueBodyForObjectives(issue)
+      issueBody = fetchIssueBodyForObjectives(source.issue)
     } catch (err) {
       if (isIssueNotFoundError(err)) {
         refuseCmd(
-          `Issue #${issue} does not resolve via \`gh issue view\` — no objectives to judge against.`,
+          `Issue #${source.issue} does not resolve via \`gh issue view\` — no objectives to judge against.`,
           'Confirm the Issue exists, or fix `Closes #N` in the PR body, then re-run.'
         )
       }
       refuseCmd(
-        `Could not fetch Issue #${issue}'s body via \`gh issue view\` to resolve its objectives — no objectives to judge against: ${err instanceof Error ? err.message : String(err)}`,
+        `Could not fetch Issue #${source.issue}'s body via \`gh issue view\` to resolve its objectives — no objectives to judge against: ${err instanceof Error ? err.message : String(err)}`,
         'Confirm `gh auth status` passes, then re-run.'
       )
     }
     const parsed = objectivesOf(issueBody)
     if (!parsed.ok) {
       refuseCmd(
-        `Issue #${issue}'s \`## Objectives\` section does not parse (${parsed.errors.join('; ')}) — no objectives to judge against.`,
+        `Issue #${source.issue}'s \`## Objectives\` section does not parse (${parsed.errors.join('; ')}) — no objectives to judge against.`,
         'Fix the Issue body, then re-run.'
       )
     }
     return { kind: 'list', objectives: parsed.objectives, version: objectivesVersion(parsed.objectives) }
   }
 
-  if (hasObjectivesHeading(prBody)) {
-    const parsed = objectivesOf(prBody)
-    if (!parsed.ok) {
-      refuseCmd(
-        `This PR body's own \`## Objectives\` section does not parse (${parsed.errors.join('; ')}) — no objectives to judge against.`,
-        "Fix the PR body's Objectives section, then re-run."
-      )
-    }
-    return { kind: 'list', objectives: parsed.objectives, version: objectivesVersion(parsed.objectives) }
+  // source.kind === 'body'
+  const parsed = objectivesOf(prBody)
+  if (!parsed.ok) {
+    refuseCmd(
+      `This PR body's own \`## Objectives\` section does not parse (${parsed.errors.join('; ')}) — no objectives to judge against.`,
+      "Fix the PR body's Objectives section, then re-run."
+    )
   }
-
-  refuseCmd(
-    'no objectives to judge against — this PR closes no Issue and its body carries no `## Objectives` section.',
-    'Add `Closes #N` pointing at an Issue with an `## Objectives` list, or add a `## Objectives` section to the PR body, then re-run.'
-  )
+  return { kind: 'list', objectives: parsed.objectives, version: objectivesVersion(parsed.objectives) }
 }
 
 function readObjectivesFile(path: string): ObjectiveResult[] {
@@ -1243,8 +1241,8 @@ function resolveObjectiveResultsForCommand(
   if (resolution.kind === 'skip') {
     if (objectivesFileRaw !== undefined) {
       refuseCmd(
-        '`--objectives-file` was given, but no objectives to judge against exist for this PR (its Issue predates the objectives cutover).',
-        'Drop `--objectives-file` for this PR, or judge against a post-cutover Issue.'
+        '`--objectives-file` was given, but no objectives to judge against exist for this PR (either its Issue predates the objectives cutover, or it closes no Issue and its body carries no `## Objectives` section).',
+        'Drop `--objectives-file` for this PR, judge against a post-cutover Issue, or add a `## Objectives` section to the PR body.'
       )
     }
     return { objectivesVersion: null, objectiveResults: null }

@@ -117,6 +117,53 @@ describe('body-bare-digits — must NOT fail: the masking pipeline', () => {
   })
 })
 
+// ---------- task-run-v1, O2: `O<n>.` objective markers are structure, not prose, only under `## Objectives` ----------
+
+describe('body-bare-digits — O<n>. objective markers under ## Objectives (task-run-v1, O2)', () => {
+  it('a well-formed Objectives section: every O<n>. prefix is exempt', () => {
+    const body = ['## Objectives', '', 'O1. Renders a clean verdict.', 'O2. Exempts the marker prefix.'].join('\n')
+    expect(violationLines(body)).toEqual([])
+  })
+
+  it('a digit inside the objective SENTENCE itself still needs its own backticks', () => {
+    const body = ['## Objectives', '', 'O1. Fixes bug in file 7 of the pipeline.'].join('\n')
+    expect(violationLines(body).length).toBe(1)
+  })
+
+  it('an O<n>.-shaped token mid-sentence (not line-leading) is not exempt', () => {
+    const body = ['## Objectives', '', 'See the note about O1. it explains the rest.'].join('\n')
+    expect(violationLines(body).length).toBeGreaterThan(0)
+  })
+
+  it('an O<n>. line OUTSIDE any ## Objectives section is not exempt', () => {
+    const body = ['## Decisions', '', 'O1. This is prose here, not a heading section.'].join('\n')
+    expect(violationLines(body).length).toBe(1)
+  })
+
+  it('the exemption stops at the next heading, same as every other section-bounded mask', () => {
+    const body = [
+      '## Objectives',
+      '',
+      'O1. Inside the section.',
+      '',
+      '## Decisions',
+      '',
+      'O1. Outside the section now — a bare digit.'
+    ].join('\n')
+    expect(violationLines(body).length).toBe(1)
+  })
+
+  it('a multi-digit objective id (O10.) is exempt too', () => {
+    const body = ['## Objectives', '', 'O10. The tenth objective.'].join('\n')
+    expect(violationLines(body)).toEqual([])
+  })
+
+  it('a non-ASCII (fullwidth) digit marker is NOT exempt — it is not a real objective id (security review, LOW)', () => {
+    const body = ['## Objectives', '', 'O１２. Not a real objective per objectivesOf.'].join('\n')
+    expect(violationLines(body).length).toBe(1)
+  })
+})
+
 // ---------- must fail — every identifier-shape classifier the redesign removed, paired with the same claim once backtick-wrapped ----------
 
 /**

@@ -367,11 +367,13 @@ export type { BriefFacts, RationaleFieldKey, RenderResult, SurfaceFileFact } fro
 export {
   hasObjectivesHeading,
   isIssueNotFoundError,
+  objectivesSectionBounds,
   objectivesVersion,
   objectivesOf,
-  renderObjectives
+  renderObjectives,
+  resolveObjectivesSource
 } from './objectives'
-export type { Objective, ParsedObjectives } from './objectives'
+export type { Objective, ObjectivesSource, ParsedObjectives } from './objectives'
 export { assessRound, initialLoopState, renderSummary } from './dev-review-loop'
 export type {
   Confidence,

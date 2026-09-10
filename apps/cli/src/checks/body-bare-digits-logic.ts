@@ -77,6 +77,11 @@
  *      already inside their `AEG:*` anchor — the anchor-optional fallback
  *      for a body's own mandatory metadata fields, same reasoning as layer
  *      4.
+ *   6. Blank each `O<n>.` list-marker PREFIX (id only, never the sentence
+ *      after it) inside a `## Objectives` section (Issue #494, O2) — the
+ *      same structure-not-prose treatment the Issue objectives grammar
+ *      already gives it, extended to a pull-request body now that one may
+ *      carry its own `## Objectives` section (Issue #494, O1/O3).
  *
  * What survives that pipeline is scanned for digit-bearing tokens; every
  * surviving one is a violation, full stop — no shape it could take makes it
@@ -95,7 +100,7 @@
  * carve-out from reopening that exact class.
  */
 
-import { anchoredRegionBounds, TIER_FIELD } from '@attalabs/aeg-core'
+import { anchoredRegionBounds, objectivesSectionBounds, TIER_FIELD } from '@attalabs/aeg-core'
 import { PROJECT_SLUG, unwrapValue } from '@attalabs/aeg-forge-state'
 import { ScanContext } from './scan-context'
 
@@ -499,6 +504,50 @@ function blankUnanchoredStructuralFields(body: string): string {
 }
 
 /**
+ * A pull request may now carry its own `## Objectives` section (Issue #494,
+ * O1/O3 — a PR closing no Issue, or an Issue with its own section, reads its
+ * objectives from the PR body itself). Its `O<n>.` list-marker lines already
+ * count as structure, never prose, in an Issue body — the Issue objectives
+ * grammar (`objectivesOf`) parses them as ids, not sentences — and the same
+ * must hold in a PR body: `O1. …` under `## Objectives` is not a countable
+ * claim.
+ *
+ * Bounded on purpose, per Issue #494's own boundary — blanks ONLY the
+ * `O<n>.` prefix (the id marker), never the sentence after it, and only
+ * inside the `## Objectives` section itself (`objectivesSectionBounds` —
+ * `@attalabs/aeg-core`'s own objectives-grammar module, so this check and
+ * the grammar that owns `O<n>.`'s meaning locate the identical span and can
+ * never disagree on where "under the heading" starts or ends). A digit
+ * inside an objective's own sentence — a file count, a version, a path — is
+ * scanned exactly like everywhere else in the body and needs its own
+ * backticks. Same discipline as the line-leading ordered-list-marker
+ * carve-out below: line-start only, so a mid-sentence `O1.`-shaped token has
+ * zero laundering surface.
+ *
+ * ASCII `\d`, not `\p{Nd}` — matching `objectives.ts`'s own
+ * `OBJECTIVE_LINE_RE` (`/^O(\d+)\./`) exactly (security review, LOW). The two
+ * definitions of "what counts as an objective marker" must agree: a
+ * fullwidth- or other-script-digit line (`O１２. …`) is not a real objective
+ * `objectivesOf` will ever parse, so exempting it here as if it were
+ * structure would let this scanner and the grammar it mirrors disagree.
+ */
+const OBJECTIVE_MARKER_LINE = /^ {0,3}O\d{1,9}\./
+
+function blankObjectiveMarkerLine(line: string): string {
+  const m = OBJECTIVE_MARKER_LINE.exec(line)
+  if (!m) return line
+  return ' '.repeat(m[0].length) + line.slice(m[0].length)
+}
+
+function blankObjectiveMarkers(body: string): string {
+  const bounds = objectivesSectionBounds(body)
+  if (!bounds) return body
+  const section = body.slice(bounds.start, bounds.end)
+  const blanked = section.split('\n').map(blankObjectiveMarkerLine).join('\n')
+  return body.slice(0, bounds.start) + blanked + body.slice(bounds.end)
+}
+
+/**
  * Self-discovered proactive audit (not yet reported by any review round):
  * checking a signature is merely PRESENT inside an anchor's content is not
  * the same as the content BEING just that value — a "trojan" anchor can
@@ -597,6 +646,7 @@ function buildScanMask(ctx: ScanContext): string {
   masked = blankPremiseValues(masked)
   masked = blankTokenReportSection(masked)
   masked = blankUnanchoredStructuralFields(masked)
+  masked = blankObjectiveMarkers(masked)
   return masked
 }
 

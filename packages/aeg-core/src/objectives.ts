@@ -15,6 +15,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
 
 export type Objective = { id: string; text: string }
 
@@ -23,6 +24,30 @@ export type ParsedObjectives = { ok: true; objectives: Objective[] } | { ok: fal
 const HEADING_RE = /^##[ \t]*Objectives[ \t]*$/im
 const NEXT_HEADING_RE = /^##[ \t]/m
 const OBJECTIVE_LINE_RE = /^O(\d+)\.[ \t]*(.*)$/
+
+/**
+ * `body` with every fenced/inline code span and collapsed `<details>` block
+ * blanked to same-length filler — index-preserving, so a position found here
+ * maps 1:1 onto `body` itself. Composed as `maskDetailsBlocks(maskCode(body))`
+ * per `maskDetailsBlocks`'s own documented call order (`strip-code.ts`).
+ *
+ * Every heading search in this module runs against this masked view, never
+ * the raw body: a pull request following this repo's own deliverable
+ * template (`aeg-root/templates/pr-report-template.md`) pastes the full,
+ * frozen brief — which, for a task with `O<n>.` objectives, always carries
+ * its OWN `## Objectives` heading — inside a collapsed `<details>`
+ * reference-copy block below the live report. Searching the raw body let
+ * that reference-copy heading be mistaken for a live objectives section
+ * (found live, security review: `hasObjectivesHeading`/`resolveObjectivesSource`
+ * returned true/`{kind:'body'}` for a no-Issue PR carrying only the
+ * reference copy, and `objectivesOf` then failed to parse the `</details>`
+ * line it hit, refusing a verdict `review post` should have rendered with no
+ * objectives block at all). One masked view, used everywhere this module
+ * looks for a heading, closes the class rather than the one instance.
+ */
+function maskedForHeadingSearch(body: string): string {
+  return maskDetailsBlocks(maskCode(body))
+}
 
 /**
  * True iff `text` contains a backticked span with a `/` inside it — one
@@ -68,13 +93,28 @@ function wordCount(text: string): number {
   return text.split(/\s+/).filter((w) => /[a-z]/i.test(w)).length
 }
 
+/**
+ * `[start, end)` char offsets of the `## Objectives` section — from its
+ * heading line to the next `##` heading, or the end of `body` — or `null`
+ * when no heading is found. `objectivesSectionText` and
+ * `body-bare-digits-logic.ts`'s `O<n>.`-prefix exemption (task-run-v1, O2)
+ * both locate the identical span through this one function, so the two
+ * can never disagree on where the section starts or ends.
+ */
+export function objectivesSectionBounds(body: string): { start: number; end: number } | null {
+  const masked = maskedForHeadingSearch(body)
+  const heading = HEADING_RE.exec(masked)
+  if (!heading) return null
+  const start = heading.index + heading[0].length
+  const afterHeading = masked.slice(start)
+  const next = NEXT_HEADING_RE.exec(afterHeading)
+  return { start, end: next ? start + next.index : body.length }
+}
+
 /** The `## Objectives` section's raw text (from its heading line to the next `##` heading, or the end), or `null` when no heading is found. */
 function objectivesSectionText(body: string): string | null {
-  const heading = HEADING_RE.exec(body)
-  if (!heading) return null
-  const afterHeading = body.slice(heading.index + heading[0].length)
-  const next = NEXT_HEADING_RE.exec(afterHeading)
-  return next ? afterHeading.slice(0, next.index) : afterHeading
+  const bounds = objectivesSectionBounds(body)
+  return bounds === null ? null : body.slice(bounds.start, bounds.end)
 }
 
 /**
@@ -87,7 +127,7 @@ function objectivesSectionText(body: string): string | null {
  * `ok: false`.
  */
 export function hasObjectivesHeading(body: string): boolean {
-  return HEADING_RE.test(body)
+  return HEADING_RE.test(maskedForHeadingSearch(body))
 }
 
 /**
@@ -206,4 +246,44 @@ export function isIssueNotFoundError(err: unknown): boolean {
     typeof stderr === 'string' ? stderr : (stderr?.toString() ?? '')
   ].join('\n')
   return /could not resolve to an (?:issue|pull request)|\b404\b|not found/i.test(haystack)
+}
+
+/**
+ * WHERE a pull request's objectives come from — before anything is fetched
+ * or parsed (task-run-v1, O3, Issue #494). `check-review-gate.ts`'s
+ * `resolveObjectivesVersion` and `review-post.ts`'s `resolveObjectivesForPr`
+ * had each hand-rolled this identical three-way branch — an Issue at/above
+ * the cutover wins, then the PR body's own `## Objectives` heading, then
+ * neither — with the Issue-vs-cutover branch order kept in sync by hand
+ * between the two files (`#412`'s own history: a missing early pre-cutover
+ * return in one of them let a pre-cutover Issue fall through to the body's
+ * section). One function, one place the three-way decision is made; both
+ * callers switch on its result instead of re-deriving it.
+ *
+ * Pure and I/O-free by design — it takes the already-extracted Issue number
+ * and the PR body text, never fetches either. Fetching the Issue body,
+ * parsing it, and turning a parse failure into a refusal are each caller's
+ * OWN concern (a check-run emits `emitCheckError`+`process.exit`, the CLI
+ * command calls `refuseCmd`) and stay out of this function on purpose — see
+ * `aeg-root/tranches/task-run-v1.md` task 10's boundary: this resolver
+ * decides the SOURCE, not what the gate requires once a source exists, and
+ * the loop's own principal-gated Issue read (`review-validity-v1` task 2)
+ * substitutes its own fetcher for the `'issue'` case rather than this
+ * function reading anything itself.
+ *
+ * `cutoverIssue` is `OBJECTIVES_SINCE_ISSUE` (`issue-validation.ts`) — passed
+ * in, not imported, because `issue-validation.ts` already imports FROM this
+ * module (`objectivesOf`); importing the constant back would be circular.
+ */
+export type ObjectivesSource = { kind: 'issue'; issue: number } | { kind: 'body' } | { kind: 'none' }
+
+export function resolveObjectivesSource(prBody: string, issue: number | null, cutoverIssue: number): ObjectivesSource {
+  // Checked first and unconditionally: a pre-cutover Issue is `'none'`
+  // regardless of what the PR body itself carries — a pre-cutover PR must
+  // keep passing unchanged, never picking up a body-level objectives list
+  // the Issue-linked case was never subject to.
+  if (issue !== null && issue < cutoverIssue) return { kind: 'none' }
+  if (issue !== null) return { kind: 'issue', issue }
+  if (hasObjectivesHeading(prBody)) return { kind: 'body' }
+  return { kind: 'none' }
 }
