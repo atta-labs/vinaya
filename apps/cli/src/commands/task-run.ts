@@ -12,11 +12,46 @@
  * `vinaya dev-review-loop --resume <pr>` — never a `--resume` flag on this
  * command (`runTask` composes `devReviewLoop` fresh every call, it does not
  * carry resume state of its own).
+ *
+ * Exit codes (round 2 security review, HIGH): `0` publish, `1` pause, `2`
+ * a usage/argv error, `3` any other failure (a refused preparation, an
+ * open-PR refusal, an internal contract violation) — never sharing `1`
+ * with pause, so an unattended host tells "resume with the printed command"
+ * apart from "this run genuinely failed" from the exit code alone.
+ * Cancellation (`SIGINT`) is Node's own ambient default disposition (exit
+ * `130`) — no handler was added for it, matching the boundary's exclusion
+ * of process-supervision/unattended-mode work.
  */
 
 import { colourLoopLine } from '../lib/dispatch.js'
 import { DISPATCH_AGENTS, type DispatchAgent } from '../lib/dispatch-task.js'
-import { runTask } from '../lib/task-run.js'
+import { runTask, type RunTaskResult } from '../lib/task-run.js'
+
+/** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */
+const TASK_RUN_FAILURE_EXIT_CODE = 3
+
+const KNOWN_FLAGS = ['--agent']
+
+type ParsedFlags = { agent: string | undefined; unknown: string[] }
+
+/**
+ * `unknown` collects any `--flag`-shaped or stray token this parser does
+ * not recognize — round 2 security review, MEDIUM: this command was not
+ * given the same treatment `dispatch.ts`'s own `parseArgs` was, found live
+ * on that sibling command, where an unrecognized flag was silently dropped
+ * while every other flag still took effect. Refusing here closes the same
+ * gap rather than reintroducing it on a second command.
+ */
+function parseFlags(rest: string[]): ParsedFlags {
+  let agent: string | undefined
+  const unknown: string[] = []
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]
+    if (a === '--agent') agent = rest[++i]
+    else if (a !== undefined) unknown.push(a)
+  }
+  return { agent, unknown }
+}
 
 export async function taskRunCommand(args: string[]): Promise<void> {
   const trancheSlug = args[0]
@@ -32,16 +67,27 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     process.exit(2)
   }
 
-  const rest = args.slice(2)
-  const agentIdx = rest.indexOf('--agent')
-  const agentValue = agentIdx === -1 ? undefined : rest[agentIdx + 1]
-  if (!agentValue || !(DISPATCH_AGENTS as readonly string[]).includes(agentValue)) {
+  const parsed = parseFlags(args.slice(2))
+  if (parsed.unknown.length > 0) {
+    console.error(
+      `vinaya task run: unrecognized flag${parsed.unknown.length > 1 ? 's' : ''} ${parsed.unknown.map((f) => `'${f}'`).join(', ')} — expected one of ${KNOWN_FLAGS.join(', ')}`
+    )
+    process.exit(2)
+  }
+  if (!parsed.agent || !(DISPATCH_AGENTS as readonly string[]).includes(parsed.agent)) {
     console.error(`vinaya task run: --agent <${DISPATCH_AGENTS.join('|')}> is required.`)
     process.exit(2)
   }
-  const agent = agentValue as DispatchAgent
+  const agent = parsed.agent as DispatchAgent
 
-  const result = await runTask({ tranche: trancheSlug, n, agent })
+  let result: RunTaskResult
+  try {
+    result = await runTask({ tranche: trancheSlug, n, agent })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    process.stderr.write(`Error: ${message}\n`)
+    process.exit(TASK_RUN_FAILURE_EXIT_CODE)
+  }
 
   // `prUrl` is `null` only when the repo genuinely could not be resolved
   // (`lib/task-run.ts`'s own `resolvePrUrl` doc comment) — falls back to the
@@ -59,8 +105,12 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     // `devReviewLoop` only ever RETURNS on `publish` or `pause` (its own doc
     // comment) — every other `Decision` member is an intermediate step the
     // loop acts on internally and never hands back. Reaching this branch
-    // would mean that contract broke, which is a failure, not a pause.
-    throw new Error(`vinaya task run: devReviewLoop returned an unexpected final decision type \`${decision.type}\`.`)
+    // would mean that contract broke, which is a failure, never a pause —
+    // the same distinct failure exit the `catch` above uses, not `1`.
+    process.stderr.write(
+      `Error: vinaya task run: devReviewLoop returned an unexpected final decision type \`${decision.type}\`.\n`
+    )
+    process.exit(TASK_RUN_FAILURE_EXIT_CODE)
   }
 
   // O2: a paused loop's exit and summary are distinct from a published run —

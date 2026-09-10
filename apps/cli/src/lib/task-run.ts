@@ -133,6 +133,16 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
     issue = rendered.issue
   }
 
+  // Round 2 security review, LOW: this check-then-act read has a real, accepted
+  // race window — two concurrent `runTask` calls for the same task can both
+  // read no open PR here and both proceed. O3's own guarantee names the
+  // SEQUENTIAL case (`task dispatch` then a later `task run`), which this
+  // closes completely; closing the concurrent case too needs a forge-side
+  // atomic reservation or a cross-process lock, both new infrastructure this
+  // "thin composition" task's Surface never named. `devReviewLoop`'s own
+  // round-1 entry re-reads this same fact immediately before it would ever
+  // dispatch fresh, narrowing the real double-dispatch window to the few
+  // milliseconds between this read and that one, on both sides of the race.
   const branch = deps.developerBranchFor(issue)
   const existingPr = deps.findOpenPrForBranch(branch)
   if (existingPr) {

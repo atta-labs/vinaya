@@ -66,4 +66,19 @@ describe('vinaya task run — argv parsing', () => {
     const r = runCli(['task', 'run'])
     expect(r.stderr).not.toContain('--resume')
   })
+
+  it('refuses an unrecognized flag rather than silently dropping it (round 2 security review, MEDIUM)', () => {
+    const r = runCli(['task', 'run', 'task-run-v1', '2', '--agent', 'claude', '--bogus'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('unrecognized flag')
+    expect(r.stderr).toContain("'--bogus'")
+  })
+
+  it('refuses an unrecognized flag even when a valid --agent is also present, plural wording for two+', () => {
+    const r = runCli(['task', 'run', 'task-run-v1', '2', '--agent', 'claude', '--one', '--two'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('unrecognized flags')
+    expect(r.stderr).toContain("'--one'")
+    expect(r.stderr).toContain("'--two'")
+  })
 })
