@@ -38,6 +38,7 @@ import {
   extractSecurityReviewVerdict,
   initialLoopState,
   isPrincipal,
+  newestPrincipalRulingOrdinal,
   type Objective,
   objectivesOf,
   objectivesVersion,
@@ -261,6 +262,26 @@ export function fetchRulings(prNumber: number): string[] {
     )
   }
   return filterPrincipalRulings(markerComments(out), principalAllowlist())
+}
+
+/**
+ * The newest principal ruling ordinal on PR `prNumber` — `0` when none
+ * (task 3, `#477`, O1/O3). A separate `gh pr view`
+ * call from `fetchRulings`' own, the same tolerated-redundancy shape this
+ * file's `fetchFrozenBrief`/`resolveIssueObjectives` pair already uses for
+ * Issue comments — never a shared cache, so each call reflects the forge at
+ * the moment it runs, which is exactly what O3's mid-round re-check needs.
+ */
+export function fetchNewestRulingOrdinal(prNumber: number): number {
+  let out: string
+  try {
+    out = sh('gh', ['pr', 'view', String(prNumber), '--json', 'comments'])
+  } catch (err) {
+    throw new Error(
+      `fetchNewestRulingOrdinal: could not fetch PR #${prNumber}'s comments: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+  return newestPrincipalRulingOrdinal(markerComments(out), principalAllowlist())
 }
 
 /** The Issue's frozen `aeg:brief:v1` comment's brief text, principal-authored only — refuses (throws) rather than inventing a brief when none exists yet. */
@@ -508,6 +529,8 @@ export type ReviewerPromptFacts = {
   /** `resolveIssueObjectives`'s version for `objectives`, captured at dispatch time — threaded into the held verdict (O2) and re-checked at assessment time (O3). `null` alongside an empty `objectives`. */
   objectivesVersion: string | null
   rulings: string[]
+  /** The newest principal ruling ordinal on this PR, captured at dispatch time (task 3, `#477`, O1) — `0` when `rulings` is empty. Threaded into the held verdict and re-checked at assessment time (O3), same shape as `objectivesVersion`. */
+  rulingOrdinal: number
   head: string
   ciConclusion: 'green' | 'red' | 'pending'
 }
@@ -942,6 +965,7 @@ export type LoopDeps = {
   /** O3: named check-runs, never the review gate's own (excluded upstream). */
   fetchFailingCheckNames: typeof fetchFailingCheckNames
   fetchRulings: typeof fetchRulings
+  fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   fetchFrozenBrief: typeof fetchFrozenBrief
   resolveIssueObjectives: typeof resolveIssueObjectives
   developerBranchFor: (issueNumber: number) => string
@@ -1044,6 +1068,7 @@ function defaultDeps(): LoopDeps {
     fetchCiConclusion,
     fetchFailingCheckNames,
     fetchRulings,
+    fetchNewestRulingOrdinal,
     fetchFrozenBrief,
     resolveIssueObjectives,
     developerBranchFor: (n) => developerBranchFor(n),
@@ -1198,7 +1223,8 @@ function buildVerdictFromReport(
   agent: AgentVendor,
   taskId: number,
   handle: DispatchHandle,
-  objectivesVersionAtDispatch: string | null
+  objectivesVersionAtDispatch: string | null,
+  rulingOrdinalAtDispatch: number
 ): RoundVerdictParse {
   const reportRaw = readIfExists(join(workDir, 'report.txt')) ?? ''
   const report = parseReport(reportRaw)
@@ -1221,6 +1247,7 @@ function buildVerdictFromReport(
       role: role === 'reviewer' ? 'review' : 'security',
       roleLabel,
       objectivesVersion: objectivesVersionAtDispatch,
+      rulingOrdinal: rulingOrdinalAtDispatch,
       taskId: String(taskId),
       model: agent,
       tokensIn,
@@ -1260,6 +1287,7 @@ function buildVerdictFromReport(
       docs: report.DOCS ?? '(not reported)',
       objectivesVersion: objectivesVersionAtDispatch,
       objectiveResults: renderedObjectiveResults,
+      rulingOrdinal: rulingOrdinalAtDispatch,
       taskId: String(taskId),
       model: agent,
       tokensIn,
@@ -1288,6 +1316,7 @@ function buildVerdictFromReport(
     secretsEvidence: null,
     objectivesVersion: objectivesVersionAtDispatch,
     objectiveResults: renderedObjectiveResults,
+    rulingOrdinal: rulingOrdinalAtDispatch,
     taskId: String(taskId),
     model: agent,
     tokensIn,
@@ -1624,7 +1653,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         lastMissing = missing
         continue
       }
-      return buildVerdictFromReport(role, workDir, facts.head, input.agent, task, handle, facts.objectivesVersion)
+      return buildVerdictFromReport(
+        role,
+        workDir,
+        facts.head,
+        input.agent,
+        task,
+        handle,
+        facts.objectivesVersion,
+        facts.rulingOrdinal
+      )
     }
     throw new ReviewerInfrastructureFailure(role, lastMissing)
   }
@@ -1869,10 +1907,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const ciConclusion = d.fetchCiConclusion(head)
       const resolvedObjectives = d.resolveIssueObjectives(task)
       const rulings = d.fetchRulings(prNumber)
+      const rulingOrdinal = d.fetchNewestRulingOrdinal(prNumber)
       const facts: ReviewerPromptFacts = {
         objectives: resolvedObjectives.text,
         objectivesVersion: resolvedObjectives.version,
         rulings,
+        rulingOrdinal,
         head,
         ciConclusion
       }
@@ -1907,17 +1947,28 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // Re-resolved BEFORE either verdict is held: neither `verdicts` value
         // (still in-memory only) is ever written to disk on the mismatch path,
         // so "the held verdicts … are discarded" holds by never holding them.
-        const reassessed = d.resolveIssueObjectives(task)
-        if (reassessed.version !== facts.objectivesVersion) {
-          const command = reassessed.edit
-            ? describeObjectivesEdit(task, reassessed.edit)
+        const reassessedObjectives = d.resolveIssueObjectives(task)
+        // task 3 (#477, O3): a ruling can land in that
+        // same window. Re-fetched the same way, before either verdict is
+        // held — the discard mechanism is identical to the objectives one:
+        // in-memory-only values are simply never written.
+        const reassessedRulingOrdinal = d.fetchNewestRulingOrdinal(prNumber)
+        if (reassessedObjectives.version !== facts.objectivesVersion) {
+          const command = reassessedObjectives.edit
+            ? describeObjectivesEdit(task, reassessedObjectives.edit)
             : `vinaya issue objectives edit ${task} ... (edit comment not found on re-read)`
           const detail = `objectives moved from ${facts.objectivesVersion ?? 'none'} to ${
-            reassessed.version ?? 'none'
+            reassessedObjectives.version ?? 'none'
           } between reviewer dispatch and assessment — superseded by \`${command}\``
           const stats = computeStats(head, roundStartMs)
           await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
           decision = { type: 'pause', reason: 'objectives_changed', detail }
+          d.flushOutbox(task)
+        } else if (reassessedRulingOrdinal !== facts.rulingOrdinal) {
+          const detail = `a new ruling landed between reviewer dispatch and assessment — ruling ordinal moved from ${facts.rulingOrdinal} to ${reassessedRulingOrdinal} — superseded by ruling ${prNumber}-${reassessedRulingOrdinal}`
+          const stats = computeStats(head, roundStartMs)
+          await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+          decision = { type: 'pause', reason: 'ruling_posted', detail }
           d.flushOutbox(task)
         } else {
           const [reviewer, security] = verdicts

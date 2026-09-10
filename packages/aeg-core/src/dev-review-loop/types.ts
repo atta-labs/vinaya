@@ -80,6 +80,14 @@ export type Observations =
  * two resolutions it fetched is not something `assessRound` can do from an
  * `Observations` value); this member exists so that pause shares the same
  * vocabulary and rendering path every other pause reason already uses.
+ *
+ * `'ruling_posted'` (task `review-validity-v1` 3, `#477`, O3): the newest
+ * principal ruling ordinal the driver resolved when it dispatched this
+ * round's reviewers no longer matches the ordinal it resolves once their
+ * verdicts are back — a principal posted a ruling mid-round. Same shape as
+ * `'objectives_changed'` in every respect: the driver detects and decides
+ * it itself, and this member exists only so the pause shares the same
+ * vocabulary and rendering path every other pause reason already uses.
  */
 export type PauseReason =
   | 'escalation'
@@ -89,6 +97,7 @@ export type PauseReason =
   | 'reappearance'
   | 'infrastructure'
   | 'objectives_changed'
+  | 'ruling_posted'
 
 export type Decision =
   | { type: 'dispatch_developer'; reason?: 'confidence' }

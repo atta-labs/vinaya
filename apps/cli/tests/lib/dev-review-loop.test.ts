@@ -296,6 +296,79 @@ exit 1
 }
 
 /**
+ * Same as `writeFakeGh`, except the THIRD `gh pr view --json comments` call
+ * in a run — `fetchRulings` and `fetchNewestRulingOrdinal` both run at
+ * reviewer-dispatch time (calls 1 and 2, both answering "no rulings yet"),
+ * then the dispatch_reviewers branch's own re-resolution after both
+ * reviewers finish (O3, call 3) answers with a principal-authored ruling
+ * comment now present, so the ordinal it reads back (1) differs from the
+ * one it read before dispatching (0). A counter file under `$HOME` — this
+ * fixture's only stateful read — tells the calls apart; nothing is ever
+ * actually posted in this scenario, so the real posted-comment replay
+ * machinery `writeFakeGh` uses for `pr view --json comments` is unneeded
+ * here.
+ */
+function writeFakeGhRulingPostedMidRound(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  COUNTER_FILE="$HOME/.fake-gh-pr-comments-calls"
+  N=$(cat "$COUNTER_FILE" 2>/dev/null || echo 0)
+  N=$((N + 1))
+  echo "$N" > "$COUNTER_FILE"
+  if [ "$N" -ge 3 ]; then
+    printf '%s\\n' '{"comments":[{"body":"<!-- aeg:principal:ruling:123-1 -->\\nHold off on this approach.","author":{"login":"daniboomerang"}}]}'
+  else
+    printf '%s\\n' '{"comments":[]}'
+  fi
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+/**
  * Same as `writeFakeGh`, except `gh api …/check-runs` answers with TWO
  * check-runs: a real mechanical one (`Vinaya CI`, success) and the review
  * gate's own (`vinaya review gate`, FAILURE — as it always reads before any
@@ -1706,6 +1779,48 @@ describe('devReviewLoop — an objectives edit lands between reviewer dispatch a
   }, 20000)
 })
 
+// --- a ruling lands mid-round (review-validity-v1 task 3, #477, O3) -------
+
+function setUpRulingPostedMidRound(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaude(binDir)
+  writeFakeGhRulingPostedMidRound(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a ruling lands between reviewer dispatch and assessment (review-validity-v1 task 3, #477, O3)', () => {
+  it('discards the round instead of holding or publishing, and pauses naming the ruling', () => {
+    const { home, cwd, path } = setUpRulingPostedMidRound()
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(ruling_posted\)/)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('ruling_posted')
+    expect(pauseState.detail).toMatch(/ruling ordinal moved from 0 to 1/)
+    expect(pauseState.detail).toMatch(/ruling 123-1/)
+
+    // Exactly one posted comment — the pause — never a reviewer or security
+    // verdict: `verdicts` (in-memory only at the mismatch check) is never
+    // written to disk, so nothing was ever held for round 1 to publish.
+    const posted = postedCommentFiles(home)
+    expect(posted).toHaveLength(1)
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', posted[0] as string), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:ruling_posted -->$/m)
+    expect(pauseComment).not.toMatch(/^VERDICT:/m)
+
+    const roundDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    expect(existsSync(join(roundDir, 'round-1-reviewer.md'))).toBe(false)
+    expect(existsSync(join(roundDir, 'round-1-security.md'))).toBe(false)
+  }, 20000)
+})
+
 // --- pure-function coverage for the two Decisions-section fixes -----------
 
 describe('extractObjectivesSection (pure)', () => {
@@ -1989,6 +2104,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       tests: 'pass',
       docs: 'n/a',
       objectivesVersion: VERSION,
+      rulingOrdinal: 0,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
     const securityComment = renderSecurityComment({
@@ -2000,6 +2116,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       secrets: 'none found',
       secretsEvidence: null,
       objectivesVersion: VERSION,
+      rulingOrdinal: 0,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
 
@@ -2013,7 +2130,8 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       headSha: HEAD,
       mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
       principalAllowlist: ['daniboomerang'],
-      objectivesVersion: VERSION
+      objectivesVersion: VERSION,
+      rulingOrdinal: 0
     })
 
     expect(result.verdict).toBe('pass')
@@ -2032,6 +2150,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       tests: 'pass',
       docs: 'n/a',
       objectivesVersion: VERSION,
+      rulingOrdinal: 0,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
     const securityComment = renderSecurityComment({
@@ -2043,6 +2162,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       secrets: 'none found',
       secretsEvidence: null,
       objectivesVersion: VERSION,
+      rulingOrdinal: 0,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
 
@@ -2056,10 +2176,119 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       headSha: HEAD,
       mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
       principalAllowlist: ['daniboomerang'],
-      objectivesVersion: 'a-newer-version-entirely'
+      objectivesVersion: 'a-newer-version-entirely',
+      rulingOrdinal: 0
     })
 
     expect(result.verdict).toBe('fail')
     expect(result.reason).toMatch(/objectives version/)
+  })
+})
+
+/**
+ * The ruling-ordinal mirror of the objectives-version acceptance test above
+ * (review-validity-v1 task 3, `#477`, O1/O2): a loop-published verdict —
+ * rendered by the same `renderCodeReviewComment`/`renderSecurityComment`
+ * `buildVerdictFromReport` calls, now carrying a real `rulingOrdinal`
+ * instead of the field not existing at all — is accepted by the merge
+ * gate's own `checkReviewGate` evaluator when the current newest ruling
+ * ordinal matches, and refused, naming the newer ruling, when it doesn't.
+ */
+describe('a loop-published verdict is bound to the newest ruling ordinal (review-validity-v1 task 3, #477, O2)', () => {
+  const HEAD = 'd'.repeat(40)
+  const TOKENS = { taskId: '477', model: 'claude', tokensIn: '8', tokensOut: '4', cost: '—', sessionId: 's1' }
+
+  it('checkReviewGate passes when both rendered verdicts carry the current newest ruling ordinal', () => {
+    const reviewerComment = renderCodeReviewComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'APPROVE',
+      briefConformance: 'yes',
+      specConformance: 'yes',
+      findings: [],
+      scope: 'small',
+      scopeEvidence: null,
+      tests: 'pass',
+      docs: 'n/a',
+      objectivesVersion: null,
+      rulingOrdinal: 1,
+      objectiveResults: null
+    })
+    const securityComment = renderSecurityComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'PASS',
+      findings: [],
+      configScan: 'clean',
+      secrets: 'none found',
+      secretsEvidence: null,
+      objectivesVersion: null,
+      rulingOrdinal: 1,
+      objectiveResults: null
+    })
+
+    const result = checkReviewGate({
+      comments: [
+        { body: reviewerComment, author: 'daniboomerang' },
+        { body: securityComment, author: 'daniboomerang' }
+      ],
+      labels: [],
+      waiverLabelActor: null,
+      headSha: HEAD,
+      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
+      principalAllowlist: ['daniboomerang'],
+      objectivesVersion: null,
+      rulingOrdinal: 1
+    })
+
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('checkReviewGate fails, naming the newer ruling, when a ruling posted after the verdict was cast', () => {
+    const reviewerComment = renderCodeReviewComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'APPROVE',
+      briefConformance: 'yes',
+      specConformance: 'yes',
+      findings: [],
+      scope: 'small',
+      scopeEvidence: null,
+      tests: 'pass',
+      docs: 'n/a',
+      objectivesVersion: null,
+      rulingOrdinal: 1,
+      objectiveResults: null
+    })
+    const securityComment = renderSecurityComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'PASS',
+      findings: [],
+      configScan: 'clean',
+      secrets: 'none found',
+      secretsEvidence: null,
+      objectivesVersion: null,
+      rulingOrdinal: 1,
+      objectiveResults: null
+    })
+
+    const result = checkReviewGate({
+      comments: [
+        { body: reviewerComment, author: 'daniboomerang' },
+        { body: securityComment, author: 'daniboomerang' }
+      ],
+      labels: [],
+      waiverLabelActor: null,
+      headSha: HEAD,
+      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
+      principalAllowlist: ['daniboomerang'],
+      objectivesVersion: null,
+      rulingOrdinal: 2
+    })
+
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toMatch(/ruling ordinal/)
+    expect(result.reason).toContain('ruling 2')
   })
 })
