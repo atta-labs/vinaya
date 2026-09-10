@@ -281,10 +281,15 @@ export function detectVendoredVinaya(repoRoot: string): VendoredVinaya | null {
  * `node_modules` tree — i.e. this is an installed copy, not a checkout
  * running from its own source — AND `cwd`'s git toplevel carries its own
  * `aeg-root/roles/` (the same tree `resolveDoctrineRootInfo` resolves, so
- * doctrine and CLI agree on what the author repo is), returns that
- * toplevel's own `apps/cli/src/index.ts`. Returns `null` otherwise —
- * including when that file doesn't exist, and, load-bearingly, when
- * `ownPackageRoot` shows this call is already running from source: a
+ * doctrine and CLI agree on what the author repo is) — AND that toplevel's
+ * `apps/cli/package.json` declares the name `detectVendoredVinaya` above
+ * already treats as this CLI's own identity, so a directory shape alone
+ * (any repo that merely happens to carry an `aeg-root/roles/` and an
+ * `apps/cli/src/index.ts`, e.g. a shared sample/tutorial/fork) cannot make
+ * an installed `vinaya` re-exec arbitrary code (security review, PR #513)
+ * — returns that toplevel's own `apps/cli/src/index.ts`. Returns `null`
+ * otherwise — including when that file doesn't exist, and, load-bearingly,
+ * when `ownPackageRoot` shows this call is already running from source: a
  * re-executed source process reports `ownPackageRoot` with no `node_modules`
  * segment, so it never re-enters this branch and cannot loop.
  */
@@ -294,6 +299,10 @@ export function resolveAuthorRepoSourceEntry(ownPackageRoot: string, cwd: string
   const info = resolveDoctrineRootInfo(undefined, cwd)
   if (info?.source !== 'tree') return null
 
-  const sourceEntry = join(dirname(info.root), 'apps', 'cli', 'src', 'index.ts')
+  const toplevel = dirname(info.root)
+  const cliPkg = readPackageJson(join(toplevel, 'apps', 'cli', 'package.json'))
+  if (cliPkg?.name !== VINAYA_PACKAGE_NAME) return null
+
+  const sourceEntry = join(toplevel, 'apps', 'cli', 'src', 'index.ts')
   return existsSync(sourceEntry) ? sourceEntry : null
 }

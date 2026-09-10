@@ -75,6 +75,7 @@ describe('resolveAuthorRepoSourceEntry', () => {
     const entry = join(repoRoot, 'apps', 'cli', 'src', 'index.ts')
     mkdirSync(dirname(entry), { recursive: true })
     writeFileSync(entry, '// fixture source entry\n')
+    writeFileSync(join(repoRoot, 'apps', 'cli', 'package.json'), JSON.stringify({ name: '@attalabs/vinaya' }))
     return entry
   }
 
@@ -102,6 +103,34 @@ describe('resolveAuthorRepoSourceEntry', () => {
   })
 
   it('returns null when cwd is an ordinary repo with no aeg-root/roles/ of its own', () => {
+    const installedPkg = join(tmpdir(), 'fake-install', 'node_modules', '@attalabs', 'vinaya')
+
+    expect(resolveAuthorRepoSourceEntry(installedPkg, repoRoot)).toBeNull()
+  })
+
+  it('returns null when the directory shape matches but apps/cli/package.json is not really @attalabs/vinaya (security review, PR #513)', () => {
+    // The exact spoof named in review: a repo that merely carries the two
+    // paths (a shared sample/tutorial/fork) must not be treated as the
+    // author repository just because the shape matches.
+    const roleFile = join(repoRoot, 'aeg-root', 'roles', 'x.md')
+    mkdirSync(dirname(roleFile), { recursive: true })
+    writeFileSync(roleFile, '# x\n')
+    const entry = join(repoRoot, 'apps', 'cli', 'src', 'index.ts')
+    mkdirSync(dirname(entry), { recursive: true })
+    writeFileSync(entry, '// fixture source entry\n')
+    writeFileSync(join(repoRoot, 'apps', 'cli', 'package.json'), JSON.stringify({ name: 'totally-not-vinaya' }))
+    const installedPkg = join(tmpdir(), 'fake-install', 'node_modules', '@attalabs', 'vinaya')
+
+    expect(resolveAuthorRepoSourceEntry(installedPkg, repoRoot)).toBeNull()
+  })
+
+  it('returns null when apps/cli/package.json is missing entirely, even though the directory shape matches', () => {
+    const roleFile = join(repoRoot, 'aeg-root', 'roles', 'x.md')
+    mkdirSync(dirname(roleFile), { recursive: true })
+    writeFileSync(roleFile, '# x\n')
+    const entry = join(repoRoot, 'apps', 'cli', 'src', 'index.ts')
+    mkdirSync(dirname(entry), { recursive: true })
+    writeFileSync(entry, '// fixture source entry\n')
     const installedPkg = join(tmpdir(), 'fake-install', 'node_modules', '@attalabs', 'vinaya')
 
     expect(resolveAuthorRepoSourceEntry(installedPkg, repoRoot)).toBeNull()
