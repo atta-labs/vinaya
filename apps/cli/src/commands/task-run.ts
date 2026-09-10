@@ -2,9 +2,8 @@
  * `vinaya task run <tranche> <n> --agent <claude|codex|gemini>` — argv
  * parsing around `runTask` (`lib/task-run.js`), plus `colourLoopLine`
  * (`lib/dispatch.js`) to role-colour its two summary lines the same way
- * `dev-review-loop`'s own equivalent lines already are (task-run-v1 task 2
- * round 2 review, MINOR) — two lib calls, exempt (see
- * `apps/cli/specs/surface.md`'s Exemptions table), the same
+ * `dev-review-loop`'s own equivalent lines already are — two lib calls,
+ * exempt (see `apps/cli/specs/surface.md`'s Exemptions table), the same
  * `sharedCommandShell` retirement target `dev-review-loop`'s own command
  * already carries. One command, from a planned Issue to a reviewed pull
  * request, exactly one developer started.
