@@ -33,8 +33,9 @@
 // `doctor`'s drift comparison needs — the same repo always regenerates the
 // same bytes.
 
-import { readdirSync, readFileSync, realpathSync } from 'node:fs'
-import { join, sep } from 'node:path'
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
+import { dirname, join, sep } from 'node:path'
+import { resolveDoctrineRootInfo } from '../commands/doctrine.js'
 
 /** The published name whose presence in the workspace is what breaks `npx`. */
 export const VINAYA_PACKAGE_NAME = '@attalabs/vinaya'
@@ -268,4 +269,40 @@ export function detectVendoredVinaya(repoRoot: string): VendoredVinaya | null {
     }
   }
   return null
+}
+
+/**
+ * The re-exec target for "inside the author repository the tree is the
+ * CLI" (Issue #505) — the opposite direction from `detectVendoredVinaya`
+ * above, but the same question in spirit: does the checkout at `cwd` own a
+ * copy of this CLI's own source that an installed `vinaya` should defer to?
+ *
+ * When `ownPackageRoot` (this CLI's own resolved `packageRoot`) sits inside a
+ * `node_modules` tree — i.e. this is an installed copy, not a checkout
+ * running from its own source — AND `cwd`'s git toplevel carries its own
+ * `aeg-root/roles/` (the same tree `resolveDoctrineRootInfo` resolves, so
+ * doctrine and CLI agree on what the author repo is) — AND that toplevel's
+ * `apps/cli/package.json` declares the name `detectVendoredVinaya` above
+ * already treats as this CLI's own identity, so a directory shape alone
+ * (any repo that merely happens to carry an `aeg-root/roles/` and an
+ * `apps/cli/src/index.ts`, e.g. a shared sample/tutorial/fork) cannot make
+ * an installed `vinaya` re-exec arbitrary code (security review, PR #513)
+ * — returns that toplevel's own `apps/cli/src/index.ts`. Returns `null`
+ * otherwise — including when that file doesn't exist, and, load-bearingly,
+ * when `ownPackageRoot` shows this call is already running from source: a
+ * re-executed source process reports `ownPackageRoot` with no `node_modules`
+ * segment, so it never re-enters this branch and cannot loop.
+ */
+export function resolveAuthorRepoSourceEntry(ownPackageRoot: string, cwd: string = process.cwd()): string | null {
+  if (!ownPackageRoot.split(sep).includes('node_modules')) return null
+
+  const info = resolveDoctrineRootInfo(undefined, cwd)
+  if (info?.source !== 'tree') return null
+
+  const toplevel = dirname(info.root)
+  const cliPkg = readPackageJson(join(toplevel, 'apps', 'cli', 'package.json'))
+  if (cliPkg?.name !== VINAYA_PACKAGE_NAME) return null
+
+  const sourceEntry = join(toplevel, 'apps', 'cli', 'src', 'index.ts')
+  return existsSync(sourceEntry) ? sourceEntry : null
 }

@@ -562,6 +562,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `renderRegistryRowDiffLine` | function | `apps/cli/src/lib/registry-write.ts` |
 | `REVIEW_GATE_CHECK_RUN_NAME` | const | `apps/cli/src/lib/review-gate-check-name.ts` |
 | `detectVendoredVinaya` | function | `apps/cli/src/lib/self-host.ts` |
+| `resolveAuthorRepoSourceEntry` | function | `apps/cli/src/lib/self-host.ts` |
 | `VINAYA_PACKAGE_NAME` | const | `apps/cli/src/lib/self-host.ts` |
 | `STUDIO_ARTIFACT_ASSET_NAME` | const | `apps/cli/src/lib/studio-bundle.ts` |
 | `STUDIO_ARTIFACT_OWNER` | const | `apps/cli/src/lib/studio-bundle.ts` |
