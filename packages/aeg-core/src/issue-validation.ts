@@ -1356,7 +1356,10 @@ export type TaskIssueFacts = {
 }
 
 /** True when either side's declared edges name the other — `#621`, `621` and `8` all count. Structural on `{ ref, conflictsWith }` so both `TaskIssueFacts` and `TaskSurfaceFacts` satisfy it without a cast. */
-export function edgesNameEachOther(a: { ref: string; conflictsWith: string[] }, b: { ref: string; conflictsWith: string[] }): boolean {
+export function edgesNameEachOther(
+  a: { ref: string; conflictsWith: string[] },
+  b: { ref: string; conflictsWith: string[] }
+): boolean {
   const norm = (s: string) => s.replace(/^#/, '').trim()
   return a.conflictsWith.map(norm).includes(norm(b.ref)) || b.conflictsWith.map(norm).includes(norm(a.ref))
 }
