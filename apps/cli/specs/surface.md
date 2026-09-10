@@ -537,7 +537,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 
 (223 exports.)
 
-## Commands — `apps/cli/src/commands` (41 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
+## Commands — `apps/cli/src/commands` (42 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
 | Command | File | Entry function | In-scope calls today | Status | One lib function (compliant) / retirement target (exempt) |
 |---|---|---|---|---|---|
@@ -565,6 +565,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `milestone adopt` | `milestone.ts` | `milestoneAdoptCommand` | 4 | exempt — see below | forgeWrite (target) |
 | `milestone edit` | `milestone.ts` | `milestoneEditCommand` | 7 | exempt — see below | forgeWrite (target) |
 | `milestone close` | `milestone.ts` | `milestoneCloseCommand` | 4 | exempt — see below | forgeWrite (target) |
+| `milestone status` | `milestone.ts` | `milestoneStatusCommand` | 4 | exempt — see below | forgeWrite (target) |
 | `review status` | `review-status.ts` | `reviewStatusCommand` | 2 | exempt — see below | devReviewLoop (target) |
 | `review post` | `review-post.ts` | `reviewPostCommand` | 5 | exempt — see below | devReviewLoop (target) |
 | `doctor` | `doctor.ts` | `doctorCommand` | 17 | exempt — see below | sharedCommandShell (target) |
@@ -583,7 +584,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `dispatch` | `dispatch.ts` | `dispatchCommand` | 5 | exempt — see below | sharedCommandShell (target) |
 | `dev-review-loop` | `dev-review-loop.ts` | `devReviewLoopCommand` | 4 | exempt — see below | sharedCommandShell (target) |
 
-(40 rows — all 40 shipped `COMMANDS` entries. Compliant: 11. Exempt: 29.)
+(42 rows — all 42 shipped `COMMANDS` entries. Compliant: 11. Exempt: 31.)
 
 `review post` refuses a `doc-correctness` finding whose description carries no `Search:` pattern, or whose pattern carries a path filter — a content rule on the existing description field, not a change to the `|`-delimited grammar. The `review post` and `pr rule` source comments describe the verdict-extraction read window, so they carry `AEG:CLAIM` markers pinning the code that proves each claim; `verify-docs` C8 verifies them, and a change to that window fails the check in every file stating it rather than only where a reviewer happened to look. See `aeg-root/documentation-coherence.md`.
 
@@ -609,6 +610,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `milestone adopt` | 2026-09-05 | 4 — lib (4): `refuse`, `makeCheckError`, `detectGitRepo`, `printJson` | `forgeWrite` |
 | `milestone edit` | 2026-09-05 | 7 — lib (7): `refuse`, `makeCheckError`, `locateBody`, `resolveSections`, `validateForgeWrite`, `printJson`, `detectGitRepo` | `forgeWrite` |
 | `milestone close` | 2026-09-05 | 4 — lib (4): `refuse`, `makeCheckError`, `detectGitRepo`, `printJson` | `forgeWrite` |
+| `milestone status` | 2026-09-10 | 4 — lib (4): `detectGitRepo`, `refuse`, `makeCheckError`, `printJson` | `forgeWrite` |
 | `review status` | 2026-09-05 | 2 — lib: `resolvePrincipalAllowlist`, `loadTrustAnchorConfig` | `devReviewLoop` |
 | `review post` | 2026-09-05 | 5 — lib: `refuse`, `makeCheckError`, `printJson`, `resolvePrincipalAllowlist`, `loadTrustAnchorConfig` (re-verified after the `--objectives-file` addition — the new resolution/render path calls only `gh` directly and this file's own exported helpers, so the in-scope count is unchanged) | `devReviewLoop` |
 | `doctor` | 2026-09-05 | 17 — lib (16): `hookDirFromManifest`, `detectVendoredVinaya`, `readRepoCiSetup`, `resolveAgentVendors`, `buildInitOps`, `isDefaultedAgentVendorPath`, `resolveManagedBlockPath`, `markerLines`, `renderBlock`, `foreignRawHooks`, `starterConfig`, `checksMissingEnvDeclaration`, `envDeclarationWarning`, `lintEnvDeclarations`, `globalChecksIgnoredWarning`, `printJson`; commands/\*.ts (refused outright): `resolveDoctrineRootInfo` (`doctrine.ts`) | `sharedCommandShell` |

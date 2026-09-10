@@ -9,6 +9,7 @@ export {
   hasExplicitMilestoneFlag,
   indexTrancheMilestonesAsync,
   intentGoalForSlug,
+  intentLines,
   listActiveTrancheSlugs,
   listActiveTrancheSlugsAsync,
   listArchivedTrancheSlugs,
@@ -17,7 +18,13 @@ export {
   releaseFromDescription,
   resolveMilestoneAttachTarget
 } from './fetch-milestone'
-export type { ActiveTrancheRef, MilestoneAttachTarget, MilestoneFacts, TrancheMilestoneIndex } from './fetch-milestone'
+export type {
+  ActiveTrancheRef,
+  MilestoneAttachTarget,
+  MilestoneFacts,
+  MilestoneIntentLine,
+  TrancheMilestoneIndex
+} from './fetch-milestone'
 export type { GhIssue } from './gh'
 export { fetchProvenance } from './fetch-provenance'
 export { buildBranchName, fetchForgeFacts, fetchForgeTasksByLabel } from './fetch-forge-facts'

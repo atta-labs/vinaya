@@ -712,3 +712,206 @@ describe('vinaya milestone close', () => {
     expect(ghLog()).toBe('')
   })
 })
+
+// ---------------------------------------------------------------------------
+// `vinaya milestone status` — read-only: for each `- <slug>: …` line in a
+// Milestone's `### Tranche intents` section, prints the tranche's derived
+// lifecycle and issue counts. Same fake-`gh`-on-PATH technique as every
+// sibling `milestone` describe block above: the single-Milestone GET, and
+// one `--label`-filtered issue-list per declared slug — the same call
+// `deriveTrancheFromForge`'s own `findMilestoneForSlug` (sync) and
+// `fetchTrancheIssuesAsync` (async) halves both make, so one case answers
+// both.
+// ---------------------------------------------------------------------------
+
+type StatusIssueFixture = {
+  number: number
+  state: 'OPEN' | 'CLOSED'
+  stateReason?: 'COMPLETED' | 'NOT_PLANNED' | 'REOPENED' | null
+}
+
+function statusIssueJson(issues: StatusIssueFixture[]): string {
+  return JSON.stringify(
+    issues.map((i) => ({
+      number: i.number,
+      title: 'x',
+      body: '',
+      state: i.state,
+      labels: [],
+      milestone: null,
+      stateReason: i.stateReason ?? null
+    }))
+  )
+}
+
+function fakeStatusGh(
+  logPathArg: string,
+  opts: { milestone: MilestoneFixture; issuesBySlug: Record<string, StatusIssueFixture[]> }
+): string {
+  const milestoneJson = JSON.stringify(opts.milestone)
+  const issueCases = Object.entries(opts.issuesBySlug)
+    .map(([slug, issues]) => `  *"--label vinaya/tranche:${slug}"*) printf '%s\\n' '${statusIssueJson(issues)}' ;;`)
+    .join('\n')
+  return `#!/usr/bin/env sh
+echo "$@" >> "${logPathArg}"
+case "$*" in
+  *"milestones/${opts.milestone.number}"*) printf '%s\\n' '${milestoneJson}' ;;
+  *"milestones?state=all"*) printf '%s\\n' '[]' ;;
+${issueCases}
+  *) printf '%s\\n' '[]' ;;
+esac
+exit 0
+`
+}
+
+function installFakeStatusGh(opts: {
+  milestone: MilestoneFixture
+  issuesBySlug: Record<string, StatusIssueFixture[]>
+}): void {
+  const { dir, log } = newFakeGhBinDir('status')
+  binDir = dir
+  logPath = log
+  activateFakeGh(dir, fakeStatusGh(log, opts))
+}
+
+function installFake404StatusGh(number: number): void {
+  const { dir, log } = newFakeGhBinDir('status-404')
+  binDir = dir
+  logPath = log
+  activateFakeGh(
+    dir,
+    `#!/usr/bin/env sh
+echo "$@" >> "${log}"
+case "$*" in
+  *"milestones/${number}"*) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+  *) printf '%s\\n' '[]' ;;
+esac
+`
+  )
+}
+
+describe('vinaya milestone status', () => {
+  let cwd: string
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-milestone-status-test-'))
+    initGitRepo(cwd)
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+    process.env.PATH = originalPath
+    rmSync(binDir, { recursive: true, force: true })
+  })
+
+  it("prints lifecycle and issue counts for planned, active, and complete tranches (brief's own three-slug shape)", () => {
+    installFakeStatusGh({
+      milestone: {
+        number: 15,
+        title: 'A task finishes itself',
+        state: 'open',
+        description: [
+          'The goal.',
+          '',
+          '### Tranche intents',
+          '- planned-v1: not started yet.',
+          '- active-v1: in flight.',
+          '- complete-v1: shipped.'
+        ].join('\n')
+      },
+      issuesBySlug: {
+        'planned-v1': [],
+        'active-v1': [
+          { number: 1, state: 'CLOSED', stateReason: 'COMPLETED' },
+          { number: 2, state: 'OPEN' }
+        ],
+        'complete-v1': [
+          { number: 3, state: 'CLOSED', stateReason: 'COMPLETED' },
+          { number: 4, state: 'CLOSED', stateReason: 'COMPLETED' },
+          { number: 5, state: 'CLOSED', stateReason: 'NOT_PLANNED' }
+        ]
+      }
+    })
+
+    const r = runCli(['milestone', 'status', '15'], cwd)
+
+    expect(r.status).toBe(0)
+    const lines = r.stdout.trim().split('\n')
+    expect(lines[0]).toBe('A task finishes itself (#15, open)')
+    expect(lines).toContain('planned-v1 planned 0 issues')
+    expect(lines).toContain('active-v1 active 2 issues · 1 merged · 1 open')
+    expect(lines).toContain('complete-v1 complete 3 issues · 2 merged · 1 not planned')
+  })
+
+  it('--json prints the same rows enveloped, schema 1', () => {
+    installFakeStatusGh({
+      milestone: {
+        number: 15,
+        title: 'A task finishes itself',
+        state: 'open',
+        description: ['Goal.', '', '### Tranche intents', '- planned-v1: not started yet.'].join('\n')
+      },
+      issuesBySlug: { 'planned-v1': [] }
+    })
+
+    const r = runCli(['milestone', 'status', '15', '--json'], cwd)
+
+    expect(r.status).toBe(0)
+    const parsed = JSON.parse(r.stdout)
+    expect(parsed.schema).toBe(1)
+    expect(parsed.data.milestone).toEqual({ number: 15, title: 'A task finishes itself', state: 'open' })
+    expect(parsed.data.tranches).toEqual([
+      { slug: 'planned-v1', lifecycle: 'planned', issues: 0, counts: { merged: 0, open: 0, notPlanned: 0 } }
+    ])
+  })
+
+  it("a closed Milestone's header says closed", () => {
+    installFakeStatusGh({
+      milestone: {
+        number: 22,
+        title: 'Shipped goal',
+        state: 'closed',
+        description: ['Goal.', '', '### Tranche intents', '- done-v1: finished.'].join('\n')
+      },
+      issuesBySlug: { 'done-v1': [{ number: 1, state: 'CLOSED', stateReason: 'COMPLETED' }] }
+    })
+
+    const r = runCli(['milestone', 'status', '22'], cwd)
+
+    expect(r.status).toBe(0)
+    expect(r.stdout.trim().split('\n')[0]).toBe('Shipped goal (#22, closed)')
+  })
+
+  it('prints "no tranche intents declared" when the body has no Tranche intents section', () => {
+    installFakeStatusGh({
+      milestone: { number: 30, title: 'No intents yet', state: 'open', description: 'Just a goal, no intents.' },
+      issuesBySlug: {}
+    })
+
+    const r = runCli(['milestone', 'status', '30'], cwd)
+
+    expect(r.status).toBe(0)
+    expect(r.stdout.trim().split('\n')).toEqual(['No intents yet (#30, open)', 'no tranche intents declared'])
+  })
+
+  it('refuses with the number when the Milestone does not exist', () => {
+    installFake404StatusGh(999)
+
+    const r = runCli(['milestone', 'status', '999'], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('milestone-status')
+    expect(finding.message).toContain('999')
+  })
+
+  it('refuses when the number argument is missing or not digits', () => {
+    installFakeStatusGh({ milestone: { number: 1, title: 'x', state: 'open', description: '' }, issuesBySlug: {} })
+
+    const r = runCli(['milestone', 'status'], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('forge-args')
+    expect(ghLog()).toBe('')
+  })
+})

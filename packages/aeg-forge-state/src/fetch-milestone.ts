@@ -43,6 +43,20 @@ const NEXT_HEADING = /^#{1,6}\s+\S/m
 const INTENT_BULLET = /^-\s+([a-z0-9][a-z0-9-]*)\s*:\s*(.+)$/i
 
 /**
+ * The intents heading's own section body — from just after `### Tranche
+ * intents` to the next heading or end of text — or `null` when there is no
+ * such heading at all. Shared by every intents reader below so the
+ * section-slicing logic exists exactly once in this file.
+ */
+function intentsSection(text: string): string | null {
+  const start = text.match(INTENTS_HEADING)
+  if (!start || start.index === undefined) return null
+  const rest = text.slice(start.index + start[0].length)
+  const next = rest.match(NEXT_HEADING)
+  return rest.slice(0, next && next.index !== undefined ? next.index : rest.length)
+}
+
+/**
  * The tranche goal is never stored — it is the `### Tranche intents` line
  * matching `slug` in a Milestone's description (vinaya-milestone-model-v1
  * task 2, settled decision). A label with no intent line resolves to `''`,
@@ -52,11 +66,8 @@ const INTENT_BULLET = /^-\s+([a-z0-9][a-z0-9-]*)\s*:\s*(.+)$/i
  */
 export function intentGoalForSlug(description: string, slug: string): string {
   const text = stripCode(description, { inlineSpans: 'keep' })
-  const start = text.match(INTENTS_HEADING)
-  if (!start || start.index === undefined) return ''
-  const rest = text.slice(start.index + start[0].length)
-  const next = rest.match(NEXT_HEADING)
-  const section = rest.slice(0, next && next.index !== undefined ? next.index : rest.length)
+  const section = intentsSection(text)
+  if (section === null) return ''
 
   for (const line of section.split('\n')) {
     const trimmed = line.trim()
@@ -65,6 +76,35 @@ export function intentGoalForSlug(description: string, slug: string): string {
     if (m && (m[1] ?? '').toLowerCase() === slug.toLowerCase()) return (m[2] ?? '').trim()
   }
   return ''
+}
+
+export type MilestoneIntentLine = { slug: string; goal: string }
+
+/**
+ * Every `- <slug>: <goal>` bullet a Milestone's `### Tranche intents` section
+ * declares, in source order (`vinaya milestone status`) — the enumeration
+ * `intentGoalForSlug`'s reverse, per-slug lookup cannot answer on its own
+ * (it needs the slug already; this needs none). Shares `intentsSection` and
+ * `INTENT_BULLET` with `intentGoalForSlug` rather than re-deriving the
+ * section, so this is one parser read two ways, not a second one. A line
+ * that doesn't match the bullet grammar is silently skipped — the same
+ * permissiveness `intentGoalForSlug` already has (a malformed line simply
+ * never matches any slug there either); rejecting a genuinely malformed body
+ * is `checkMilestoneShape`'s job at write time, not this read-side reader's.
+ */
+export function intentLines(description: string): MilestoneIntentLine[] {
+  const text = stripCode(description, { inlineSpans: 'keep' })
+  const section = intentsSection(text)
+  if (section === null) return []
+
+  const lines: MilestoneIntentLine[] = []
+  for (const line of section.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) continue
+    const m = trimmed.match(INTENT_BULLET)
+    if (m) lines.push({ slug: (m[1] ?? '').toLowerCase(), goal: (m[2] ?? '').trim() })
+  }
+  return lines
 }
 
 /**
