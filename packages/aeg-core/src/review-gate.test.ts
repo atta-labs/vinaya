@@ -34,7 +34,8 @@ describe('checkReviewGate', () => {
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('pass')
     expect(result.waived).toBe(false)
@@ -47,7 +48,8 @@ describe('checkReviewGate', () => {
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain('code-reviewer verdict is not a clean APPROVE')
@@ -61,7 +63,8 @@ describe('checkReviewGate', () => {
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain('code-reviewer verdict is not a clean APPROVE (found: REQUEST CHANGES)')
@@ -74,7 +77,8 @@ describe('checkReviewGate', () => {
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain('security-review verdict is not a clean PASS (found: FAIL)')
@@ -87,7 +91,8 @@ describe('checkReviewGate', () => {
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain('security-review verdict is not a clean PASS')
@@ -100,7 +105,8 @@ describe('checkReviewGate', () => {
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('pass')
   })
@@ -114,7 +120,8 @@ describe('checkReviewGate', () => {
         waiverLabelActor: null,
         mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('fail')
       expect(result.reason).toContain(`the newest code-review verdict covers ${staleSha}, head is ${HEAD_SHA}`)
@@ -127,7 +134,8 @@ describe('checkReviewGate', () => {
         waiverLabelActor: null,
         mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('fail')
       expect(result.reason).toContain(
@@ -146,7 +154,8 @@ describe('checkReviewGate', () => {
         waiverLabelActor: null,
         mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('pass')
     })
@@ -159,7 +168,8 @@ describe('checkReviewGate', () => {
         waiverLabelActor: null,
         mechanicalChecks: CLEAN_CHECKS,
         headSha: newHeadAfterPush,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('fail')
       expect(result.reason).toContain(`the newest code-review verdict covers ${HEAD_SHA}, head is ${newHeadAfterPush}`)
@@ -181,7 +191,8 @@ describe('checkReviewGate', () => {
         waiverLabelActor: null,
         mechanicalChecks: CLEAN_CHECKS,
         headSha: newHeadAfterPush,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('pass')
     })
@@ -195,7 +206,8 @@ describe('checkReviewGate', () => {
         waiverLabelActor: 'daniboomerang',
         mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('fail')
       expect(result.waived).toBe(false)
@@ -208,7 +220,8 @@ describe('checkReviewGate', () => {
         waiverLabelActor: 'some-agent-bot',
         mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('fail')
       expect(result.waived).toBe(false)
@@ -221,7 +234,8 @@ describe('checkReviewGate', () => {
         waiverLabelActor: null,
         mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('fail')
       expect(result.waived).toBe(false)
@@ -234,7 +248,8 @@ describe('checkReviewGate', () => {
         waiverLabelActor: 'daniboomerang',
         mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('pass')
       expect(result.waived).toBe(true)
@@ -247,7 +262,8 @@ describe('checkReviewGate', () => {
         waiverLabelActor: 'daniboomerang',
         mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('fail')
       expect(result.waived).toBe(false)
@@ -265,7 +281,8 @@ describe('checkReviewGate', () => {
           { name: 'vinaya check --all --diff-only', bucket: 'pass' }
         ],
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('pass')
     })
@@ -280,7 +297,8 @@ describe('checkReviewGate', () => {
           { name: 'vinaya check --all --diff-only', bucket: 'pass' }
         ],
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('fail')
       expect(result.reason).toContain('mechanical check(s) not green: Vinaya CI (fail)')
@@ -293,7 +311,8 @@ describe('checkReviewGate', () => {
         waiverLabelActor: null,
         mechanicalChecks: [],
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('fail')
       expect(result.reason).toContain('no mechanical checks have reported for this head yet')
@@ -306,7 +325,8 @@ describe('checkReviewGate', () => {
         waiverLabelActor: 'daniboomerang',
         mechanicalChecks: [],
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('pass')
       expect(result.waived).toBe(true)
@@ -328,7 +348,8 @@ describe('checkReviewGate', () => {
           { name: 'some other neutral job', bucket: 'neutral' }
         ],
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('pass')
     })
@@ -340,7 +361,8 @@ describe('checkReviewGate', () => {
         waiverLabelActor: null,
         mechanicalChecks: [{ name: 'vinaya review gate (retrigger on CI green)', bucket: 'skipping' }],
         headSha: HEAD_SHA,
-        objectivesVersion: null
+        objectivesVersion: null,
+        rulingOrdinal: 0
       })
       expect(result.verdict).toBe('fail')
       expect(result.reason).toContain('no mechanical checks have reported for this head yet')
@@ -378,7 +400,8 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain(
@@ -397,7 +420,8 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain('code-reviewer verdict is not a clean APPROVE')
@@ -410,7 +434,8 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
   })
@@ -426,7 +451,8 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).not.toContain('were ignored')
@@ -439,7 +465,8 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('pass')
   })
@@ -462,7 +489,8 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
       // no principalAllowlist passed
     })
     expect(result.verdict).toBe('fail') // 'someone-else' isn't the hardcoded default
@@ -476,7 +504,8 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: ['someone-else'],
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('pass')
   })
@@ -489,7 +518,8 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: ['Alice'],
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('pass')
   })
@@ -502,7 +532,8 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: ['Alice'],
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
   })
@@ -515,7 +546,8 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: ['someone-else'], // daniboomerang deliberately excluded
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain(
@@ -534,7 +566,8 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: [],
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.waived).toBe(false)
@@ -548,7 +581,8 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: [],
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.waived).toBe(false)
@@ -586,7 +620,8 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: PR_HEAD,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     // The verdict names a tree that is no longer the PR's head — the gate now
     // sees exactly that and refuses, naming both values.
@@ -612,7 +647,8 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: newHead,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain(`the newest code-review verdict covers no recorded commit, head is ${newHead}`)
@@ -637,7 +673,8 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: PR_HEAD,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain('security-review verdict is not a clean PASS (found: FAIL)')
@@ -658,7 +695,8 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: VERSION_A
+      objectivesVersion: VERSION_A,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('pass')
   })
@@ -670,7 +708,8 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: VERSION_B
+      objectivesVersion: VERSION_B,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain(
@@ -685,7 +724,8 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: VERSION_A
+      objectivesVersion: VERSION_A,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain(
@@ -700,7 +740,8 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('pass')
   })
@@ -712,11 +753,91 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
-      objectivesVersion: VERSION_B
+      objectivesVersion: VERSION_B,
+      rulingOrdinal: 0
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain('code-review verdict was cast against objectives version')
     expect(result.reason).toContain('security-review verdict was cast against objectives version')
+  })
+})
+
+describe('checkReviewGate — ruling-freshness binding (review-validity-v1 task 3, #477, O2)', () => {
+  const boundComment = (verdict: string, ordinal: number) =>
+    principal(`VERDICT: ${verdict}\n\nJudged head: ${HEAD_SHA}\n\nRuling ordinal: ${ordinal}`)
+
+  it('passes when both verdicts carry the current newest ruling ordinal', () => {
+    const result = checkReviewGate({
+      comments: [boundComment('APPROVE', 1), boundComment('PASS', 1)],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 1
+    })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('fails, naming the newer ruling, when a clean verdict was cast against an older ruling ordinal — a ruling posted after approval turns the gate red', () => {
+    const result = checkReviewGate({
+      comments: [boundComment('APPROVE', 1), boundComment('PASS', 1)],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 2
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain(
+      'the newest code-review verdict was cast against ruling ordinal 1, a newer ruling (ruling 2) is now posted on this PR'
+    )
+    expect(result.reason).toContain(
+      'the newest security-review verdict was cast against ruling ordinal 1, a newer ruling (ruling 2) is now posted on this PR'
+    )
+  })
+
+  it('fails, naming "none", when a clean verdict carries no Ruling ordinal: line at all but the PR now has a ruling', () => {
+    const result = checkReviewGate({
+      comments: [APPROVE_COMMENT, PASS_COMMENT],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 1
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain(
+      'the newest code-review verdict was cast against ruling ordinal none, a newer ruling (ruling 1) is now posted on this PR'
+    )
+  })
+
+  it('a verdict with no Ruling ordinal: line still binds when the PR has never had a ruling (pre-cutover stock, current ordinal 0)', () => {
+    const result = checkReviewGate({
+      comments: [APPROVE_COMMENT, PASS_COMMENT],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0
+    })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('an explicit Ruling ordinal: 0 verdict still binds against a PR with no rulings', () => {
+    const result = checkReviewGate({
+      comments: [boundComment('APPROVE', 0), boundComment('PASS', 0)],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0
+    })
+    expect(result.verdict).toBe('pass')
   })
 })
 
@@ -761,7 +882,8 @@ describe('checkReviewGate — patch-identity binding', () => {
     waiverLabelActor: null,
     principalAllowlist: ['daniboomerang'],
     mechanicalChecks: [{ name: 'ci', bucket: 'pass' }],
-    objectivesVersion: null as string | null
+    objectivesVersion: null as string | null,
+    rulingOrdinal: 0
   }
 
   it('counts a verdict bound to a superseded sha whose patch identity is unchanged', () => {

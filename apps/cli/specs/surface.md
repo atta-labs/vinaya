@@ -263,6 +263,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `deriveReviewStatus` | function | `packages/aeg-core/src/review-status.ts` |
 | `parseDeveloperRoundMarker` | function | `packages/aeg-core/src/review-status.ts` |
 | `renderReviewStatus` | function | `packages/aeg-core/src/review-status.ts` |
+| `newestPrincipalRulingOrdinal` | function | `packages/aeg-core/src/ruling-ordinal.ts` |
 | `checkSinglePlanPr` | function | `packages/aeg-core/src/single-plan-pr.ts` |
 | `touchesAnyTopology` | function | `packages/aeg-core/src/single-plan-pr.ts` |
 | `trancheSlugFromTopologyPath` | function | `packages/aeg-core/src/single-plan-pr.ts` |
@@ -416,6 +417,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `fetchFailingCheckNames` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchIssueTitle` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchNewestRulingOrdinal` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchSourceRevision` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `filterPrincipalRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |

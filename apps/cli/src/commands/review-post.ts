@@ -86,6 +86,7 @@ import {
   extractSecurityReviewVerdict,
   isIssueNotFoundError,
   isPrincipal,
+  newestPrincipalRulingOrdinal,
   OBJECTIVES_SINCE_ISSUE,
   type Objective,
   objectivesOf,
@@ -223,7 +224,8 @@ export type ObjectiveResult = { id: string; status: ObjectiveStatus; evidence: s
 export class ObjectivesParseError extends Error {}
 
 const OBJECTIVE_ID_ONLY = /^O\d+$/
-const STRUCTURAL_MARKER_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?(?:VERDICT|Judged head|Objectives version):/i
+const STRUCTURAL_MARKER_PATTERN =
+  /^[ \t]*(?:\*{1,3}|_{1,3})?(?:VERDICT|Judged head|Objectives version|Ruling ordinal):/i
 
 /**
  * `null` when `evidence` is safe to render as one objective's evidence field;
@@ -240,7 +242,7 @@ export function invalidObjectiveEvidenceReason(evidence: string): string | null 
     return 'evidence contains a newline — each objective renders as exactly one line'
   }
   if (STRUCTURAL_MARKER_PATTERN.test(evidence)) {
-    return "evidence looks like a VERDICT:/Judged head:/Objectives version: line, which would corrupt the rendered comment's structural markers"
+    return "evidence looks like a VERDICT:/Judged head:/Objectives version:/Ruling ordinal: line, which would corrupt the rendered comment's structural markers"
   }
   return null
 }
@@ -372,6 +374,8 @@ export type CodeReviewInput = TokensInput & {
   objectivesVersion: string | null
   /** `null` alongside `objectivesVersion === null` — no `OBJECTIVES:` block renders. Non-null is always non-empty by construction (`objectivesOf` refuses an empty list). */
   objectiveResults: readonly ObjectiveResult[] | null
+  /** The newest principal ruling ordinal on this PR at cast time — `0` when none, RENDERS UNCONDITIONALLY, never omitted the way `objectivesVersion` is pre-cutover (task 3, `#477`, O1). */
+  rulingOrdinal: number
 }
 
 const CODE_REVIEW_VERDICT_TEXT: Record<CodeReviewVerdict, string> = {
@@ -408,14 +412,18 @@ export function deriveCodeReviewVerdict(findings: readonly Finding[]): CodeRevie
 
 /**
  * Renders `reviewer.md`'s exact bare template. `VERDICT:`/`Judged head:`/
- * `Objectives version:` are built from `input.verdict`/`input.headSha`/
- * `input.objectivesVersion` through this function's own literal strings —
- * there is no code path by which a caller-supplied string can land in any of
- * the three positions. `Objectives version:` renders as line 5 (blank line 6)
- * only when `input.objectivesVersion` is non-null (`#412`, O2) — a pre-cutover
- * PR renders exactly as before this task. The `OBJECTIVES:` block
- * (`renderObjectivesBlock`) renders after `SPEC CONFORMANCE:` (O1), only when
- * `input.objectiveResults` is non-null.
+ * `Objectives version:`/`Ruling ordinal:` are built from `input.verdict`/
+ * `input.headSha`/`input.objectivesVersion`/`input.rulingOrdinal` through
+ * this function's own literal strings — there is no code path by which a
+ * caller-supplied string can land in any of those positions. `Objectives
+ * version:` renders as line 5 (blank line 6) only when
+ * `input.objectivesVersion` is non-null (`#412`, O2) — a pre-cutover PR
+ * renders exactly as before this task. `Ruling ordinal:` renders
+ * UNCONDITIONALLY right after it (line 5, or line 7 when `Objectives
+ * version:` also renders) — never omitted (task 3, `#477`, O1). The
+ * `OBJECTIVES:` block (`renderObjectivesBlock`) renders
+ * after `SPEC CONFORMANCE:` (O1), only when `input.objectiveResults` is
+ * non-null.
  */
 export function renderCodeReviewComment(input: CodeReviewInput): string {
   const sorted = sortBySeverity(input.findings, CODE_REVIEW_SEVERITIES)
@@ -423,6 +431,7 @@ export function renderCodeReviewComment(input: CodeReviewInput): string {
   if (input.objectivesVersion !== null) {
     lines.push(`Objectives version: ${input.objectivesVersion}`, '')
   }
+  lines.push(`Ruling ordinal: ${input.rulingOrdinal}`, '')
   if (input.scopeEvidence !== null) {
     // AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
     // Directly below the verdict block, per `reviewer.md`'s own evidence
@@ -467,6 +476,8 @@ export type SecurityInput = TokensInput & {
   objectivesVersion: string | null
   /** `null` alongside `objectivesVersion === null` — no `OBJECTIVES:` block renders. */
   objectiveResults: readonly ObjectiveResult[] | null
+  /** The newest principal ruling ordinal on this PR at cast time — `0` when none, RENDERS UNCONDITIONALLY, never omitted the way `objectivesVersion` is pre-cutover (task 3, `#477`, O1). */
+  rulingOrdinal: number
 }
 
 /**
@@ -486,8 +497,11 @@ export function isNoneFoundClaim(value: string): boolean {
 /**
  * Renders `security.md`'s exact bare template. Same no-caller-injection
  * guarantee as `renderCodeReviewComment` for `VERDICT:`/`Judged head:`/
- * `Objectives version:`. The `OBJECTIVES:` block renders BEFORE
- * `CONFIG SCAN:` (O1), only when `input.objectiveResults` is non-null. When
+ * `Objectives version:`/`Ruling ordinal:` — the last renders
+ * UNCONDITIONALLY, right after the (conditional) `Objectives version:`
+ * block (task 3, `#477`, O1). The `OBJECTIVES:` block
+ * renders BEFORE `CONFIG SCAN:` (O1), only when `input.objectiveResults`
+ * is non-null. When
  * `secretsEvidence` is supplied, the scanner's raw output is pasted in a
  * fenced block ABOVE the `SECRETS:` line, per `security.md`'s own rule that
  * the pasted evidence must appear there to back the claim.
@@ -498,6 +512,7 @@ export function renderSecurityComment(input: SecurityInput): string {
   if (input.objectivesVersion !== null) {
     lines.push(`Objectives version: ${input.objectivesVersion}`, '')
   }
+  lines.push(`Ruling ordinal: ${input.rulingOrdinal}`, '')
   lines.push('FINDINGS (ordered by severity):', renderFindingsSection(sorted), '')
   if (input.objectiveResults !== null) {
     lines.push(renderObjectivesBlock(input.objectiveResults), '')
@@ -626,6 +641,8 @@ export type EscalationInput = TokensInput & {
   roleLabel: 'Reviewer' | 'Security'
   /** Same resolution as the verdict shapes (`#412`, O2) — an escalation carries the version line but never an `OBJECTIVES:` block. */
   objectivesVersion: string | null
+  /** Same resolution as the verdict shapes (task 3, `#477`, O1) — an escalation carries this line too, unconditionally, even though it carries no verdict at all. */
+  rulingOrdinal: number
 }
 
 /**
@@ -635,11 +652,13 @@ export type EscalationInput = TokensInput & {
  * substring `VERDICT` alone (`.github/workflows/vinaya-review-verdict.yml`),
  * and an escalation must never be mistaken for "a pass ran". `input.summary`
  * is free caller text, and it is NOT reliably kept out of the extractors'
- * five-line read window by construction: pre-cutover (no `Objectives
- * version:` line), `input.summary` becomes line 5 itself — no fixed label
- * precedes it here, unlike `renderCodeReviewComment`'s `BRIEF CONFORMANCE:`
- * — so a summary whose own first line happened to read `VERDICT: APPROVE`
- * would extract as a real code-review verdict through this exact render.
+ * five-line read window by construction alone: `Ruling ordinal:` now
+ * renders unconditionally ahead of it (task 3, `#477`, O1), so
+ * `input.summary`'s minimum position moved from line 5 to line 7 —
+ * past `firstFiveLines`'s own window — but no fixed label precedes it here,
+ * unlike `renderCodeReviewComment`'s `BRIEF CONFORMANCE:`, so a summary
+ * whose own first line happened to read `VERDICT: APPROVE` is still a
+ * caller-controlled line this render does not itself foreclose.
  * What actually makes this safe is `reviewPostCommand`'s mechanical
  * self-check, not line position: `checkRenderedComment` runs both
  * extractors over this exact rendered text before any `gh` call and refuses
@@ -652,6 +671,7 @@ export function renderEscalationComment(input: EscalationInput): string {
   if (input.objectivesVersion !== null) {
     lines.push(`Objectives version: ${input.objectivesVersion}`, '')
   }
+  lines.push(`Ruling ordinal: ${input.rulingOrdinal}`, '')
   lines.push(
     input.summary,
     '',
@@ -679,7 +699,8 @@ function checkExtraction(
   extraction: VerdictExtraction,
   expectedValue: string,
   headSha: string,
-  expectedObjectivesVersion: string | null
+  expectedObjectivesVersion: string | null,
+  expectedRulingOrdinal: number
 ): SelfVerifyResult {
   if (extraction.danglingNote) {
     return {
@@ -706,6 +727,12 @@ function checkExtraction(
     return {
       ok: false,
       reason: `re-extraction found objectives version ${extraction.objectivesVersion ?? 'none'}, expected ${expectedObjectivesVersion ?? 'none'} — the posted comment's Objectives version: line does not match what this command rendered.`
+    }
+  }
+  if (extraction.rulingOrdinal !== expectedRulingOrdinal) {
+    return {
+      ok: false,
+      reason: `re-extraction found ruling ordinal ${extraction.rulingOrdinal ?? 'none'}, expected ${expectedRulingOrdinal} — the posted comment's Ruling ordinal: line does not match what this command rendered.`
     }
   }
   return { ok: true, reason: 'clean' }
@@ -759,13 +786,15 @@ export function verifyPostedCodeReview(
   headSha: string,
   principalAllowlist: readonly string[],
   postedBody: string,
-  objectivesVersion: string | null
+  objectivesVersion: string | null,
+  rulingOrdinal: number
 ): SelfVerifyResult {
   const own = checkExtraction(
     extractCodeReviewVerdict(principalBodies(comments, principalAllowlist)),
     CODE_REVIEW_VERDICT_TEXT[verdict],
     headSha,
-    objectivesVersion
+    objectivesVersion,
+    rulingOrdinal
   )
   if (!own.ok) return own
   return checkNoCrossRoleVerdict(postedBody, extractSecurityReviewVerdict, 'security') ?? own
@@ -777,13 +806,15 @@ export function verifyPostedSecurity(
   headSha: string,
   principalAllowlist: readonly string[],
   postedBody: string,
-  objectivesVersion: string | null
+  objectivesVersion: string | null,
+  rulingOrdinal: number
 ): SelfVerifyResult {
   const own = checkExtraction(
     extractSecurityReviewVerdict(principalBodies(comments, principalAllowlist)),
     verdict,
     headSha,
-    objectivesVersion
+    objectivesVersion,
+    rulingOrdinal
   )
   if (!own.ok) return own
   return checkNoCrossRoleVerdict(postedBody, extractCodeReviewVerdict, 'code-review') ?? own
@@ -1206,6 +1237,25 @@ function resolveObjectivesForPr(pr: string): ObjectivesResolution {
   return { kind: 'list', objectives: parsed.objectives, version: objectivesVersion(parsed.objectives) }
 }
 
+/**
+ * The newest principal ruling ordinal on `pr` (task 3, `#477`, O1) —
+ * `0` when the PR carries no ruling, never a refusal: unlike
+ * `resolveObjectivesForPr`, there is no "nothing to judge against" case for
+ * rulings, so this never throws on a legitimate PR with none.
+ */
+function resolveRulingOrdinalForPr(pr: string): number {
+  let comments: ReviewGateComment[]
+  try {
+    comments = fetchComments(pr)
+  } catch (err) {
+    refuseCmd(
+      `Could not fetch PR ${pr}'s comments via \`gh pr view --json comments\` to resolve the newest ruling ordinal: ${err instanceof Error ? err.message : String(err)}`,
+      'Confirm `gh auth status` passes, then re-run.'
+    )
+  }
+  return newestPrincipalRulingOrdinal(comments, resolvePrincipalAllowlist(loadTrustAnchorConfig()))
+}
+
 function readObjectivesFile(path: string): ObjectiveResult[] {
   if (path.trim() === '') {
     refuseCmd('`--objectives-file` was given with no path.', 'Pass the path to the objectives file, then re-run.')
@@ -1604,6 +1654,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     const escalationObjectivesResolution = resolveObjectivesForPr(pr)
     const escalationObjectivesVersion =
       escalationObjectivesResolution.kind === 'list' ? escalationObjectivesResolution.version : null
+    const escalationRulingOrdinal = resolveRulingOrdinalForPr(pr)
     const body = renderEscalationComment({
       ...tokens,
       headSha,
@@ -1611,7 +1662,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       summary,
       role: tokensRole,
       roleLabel,
-      objectivesVersion: escalationObjectivesVersion
+      objectivesVersion: escalationObjectivesVersion,
+      rulingOrdinal: escalationRulingOrdinal
     })
     checkRenderedCommentOrRefuse(body, { kind: 'escalation' })
     if (printOnly) {
@@ -1684,6 +1736,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       flags.get('--objectives-file')
     )
     refuseIfCleanVerdictHasNotMetObjective(isCleanVerdict(verdict), 'APPROVE', objectiveResults)
+    const resolvedRulingOrdinal = resolveRulingOrdinalForPr(pr)
 
     let comments: ReviewGateComment[]
     try {
@@ -1717,7 +1770,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       tests,
       docs,
       objectivesVersion: resolvedObjectivesVersion,
-      objectiveResults
+      objectiveResults,
+      rulingOrdinal: resolvedRulingOrdinal
     }
     const body = renderCodeReviewComment(input)
     checkRenderedCommentOrRefuse(body, { kind: 'code-review', verdict })
@@ -1742,7 +1796,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       headSha,
       principalAllowlist,
       body,
-      resolvedObjectivesVersion
+      resolvedObjectivesVersion,
+      resolvedRulingOrdinal
     )
     if (!result.ok) {
       refuseCmd(
@@ -1802,6 +1857,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     flags.get('--objectives-file')
   )
   refuseIfCleanVerdictHasNotMetObjective(isCleanVerdict(verdict), 'PASS', objectiveResults)
+  const resolvedRulingOrdinal = resolveRulingOrdinalForPr(pr)
 
   let comments: ReviewGateComment[]
   try {
@@ -1832,7 +1888,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     secrets,
     secretsEvidence,
     objectivesVersion: resolvedObjectivesVersion,
-    objectiveResults
+    objectiveResults,
+    rulingOrdinal: resolvedRulingOrdinal
   }
   const body = renderSecurityComment(input)
   checkRenderedCommentOrRefuse(body, { kind: 'security', verdict })
@@ -1857,7 +1914,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     headSha,
     principalAllowlist,
     body,
-    resolvedObjectivesVersion
+    resolvedObjectivesVersion,
+    resolvedRulingOrdinal
   )
   if (!result.ok) {
     refuseCmd(

@@ -480,7 +480,8 @@ describe('renderEscalationComment — never a line the gate reads as a verdict',
       summary: 'the brief assumes approach A but the codebase went a different way',
       role: 'review',
       roleLabel: 'Reviewer',
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(body).toContain('ESCALATE: strategy')
     expect(body).toContain(`Judged head: ${HEAD}`)
@@ -495,7 +496,8 @@ describe('renderEscalationComment — never a line the gate reads as a verdict',
       summary: 'x',
       role: 'security',
       roleLabel: 'Security',
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(extractCodeReviewVerdict([body]).danglingNote).not.toBeNull()
     expect(extractSecurityReviewVerdict([body]).danglingNote).not.toBeNull()
@@ -510,7 +512,8 @@ describe('renderEscalationComment — never a line the gate reads as a verdict',
       summary: 'x',
       role: 'review',
       roleLabel: 'Reviewer',
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     const result = verifyPostedEscalation([{ body: 'VERDICT: APPROVE', author: 'daniboomerang' }], escalation)
     expect(result.ok).toBe(false)
@@ -1330,36 +1333,36 @@ describe('self-verification refuses cross-role contamination', () => {
   // actually exercise the check; a line past it would extract as no verdict
   // by construction, proving nothing about the cross-role check itself.
   it('a code-review post that also re-parses as a security VERDICT fails self-verification', () => {
-    const body = `VERDICT: APPROVE\nVERDICT: PASS\nJudged head: ${HEAD}`
-    const result = verifyPostedCodeReview(asComment(body), 'APPROVE', HEAD, PRINCIPALS, body, null)
+    const body = `VERDICT: APPROVE\nVERDICT: PASS\nJudged head: ${HEAD}\n\nRuling ordinal: 0`
+    const result = verifyPostedCodeReview(asComment(body), 'APPROVE', HEAD, PRINCIPALS, body, null, 0)
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('cross-role contamination')
     expect(result.reason).toContain('security')
   })
 
   it('a security post that also re-parses as a code-review VERDICT fails self-verification', () => {
-    const body = `VERDICT: PASS\nVERDICT: APPROVE\nJudged head: ${HEAD}`
-    const result = verifyPostedSecurity(asComment(body), 'PASS', HEAD, PRINCIPALS, body, null)
+    const body = `VERDICT: PASS\nVERDICT: APPROVE\nJudged head: ${HEAD}\n\nRuling ordinal: 0`
+    const result = verifyPostedSecurity(asComment(body), 'PASS', HEAD, PRINCIPALS, body, null, 0)
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('cross-role contamination')
     expect(result.reason).toContain('code-review')
   })
 
   it('an ordinary clean code-review post does not trip the cross-role check', () => {
-    const body = `VERDICT: APPROVE\n\nJudged head: ${HEAD}`
-    expect(verifyPostedCodeReview(asComment(body), 'APPROVE', HEAD, PRINCIPALS, body, null).ok).toBe(true)
+    const body = `VERDICT: APPROVE\n\nJudged head: ${HEAD}\n\nRuling ordinal: 0`
+    expect(verifyPostedCodeReview(asComment(body), 'APPROVE', HEAD, PRINCIPALS, body, null, 0).ok).toBe(true)
   })
 
   it('an ordinary clean security post does not trip the cross-role check', () => {
-    const body = `VERDICT: PASS\n\nJudged head: ${HEAD}`
-    expect(verifyPostedSecurity(asComment(body), 'PASS', HEAD, PRINCIPALS, body, null).ok).toBe(true)
+    const body = `VERDICT: PASS\n\nJudged head: ${HEAD}\n\nRuling ordinal: 0`
+    expect(verifyPostedSecurity(asComment(body), 'PASS', HEAD, PRINCIPALS, body, null, 0).ok).toBe(true)
   })
 
   it('a security PASS never cross-reads as a code-review LGTM even though both extractors could plausibly hit unrelated text', () => {
     // Sanity check on the disjoint value vocabularies (APPROVE/REQUEST_CHANGES/LGTM
     // vs PASS/FAIL) — an ordinary security post must never fail this check.
-    const body = `VERDICT: PASS\n\nJudged head: ${HEAD}\n\nCONFIG SCAN: clean\nSECRETS: none found`
-    expect(verifyPostedSecurity(asComment(body), 'PASS', HEAD, PRINCIPALS, body, null).ok).toBe(true)
+    const body = `VERDICT: PASS\n\nJudged head: ${HEAD}\n\nRuling ordinal: 0\n\nCONFIG SCAN: clean\nSECRETS: none found`
+    expect(verifyPostedSecurity(asComment(body), 'PASS', HEAD, PRINCIPALS, body, null, 0).ok).toBe(true)
   })
 })
 
@@ -1377,6 +1380,7 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       tests: 'x',
       docs: 'x',
       objectivesVersion: null,
+      rulingOrdinal: 0,
       objectiveResults: null
     })
     expect(checkRenderedComment(body, { kind: 'code-review', verdict: 'APPROVE' })).toEqual({ ok: true })
@@ -1392,6 +1396,7 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       secrets: 'none found',
       secretsEvidence: '(scanner ran, 0 findings)',
       objectivesVersion: null,
+      rulingOrdinal: 0,
       objectiveResults: null
     })
     expect(checkRenderedComment(body, { kind: 'security', verdict: 'PASS' })).toEqual({ ok: true })
@@ -1405,7 +1410,8 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       summary: 'x',
       role: 'review',
       roleLabel: 'Reviewer',
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(checkRenderedComment(body, { kind: 'escalation' })).toEqual({ ok: true })
   })
@@ -1428,6 +1434,7 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       tests: 'x',
       docs: 'x',
       objectivesVersion: null,
+      rulingOrdinal: 0,
       objectiveResults: null
     })
     expect(checkRenderedComment(body, { kind: 'code-review', verdict: 'APPROVE' })).toEqual({ ok: true })
@@ -1451,7 +1458,7 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
     expect(result.ok).toBe(false)
   })
 
-  it('refuses a REAL renderEscalationComment render whose free-text summary collides with a marker on line 5 (pre-cutover — no fixed label precedes summary here, unlike BRIEF CONFORMANCE)', () => {
+  it("a REAL renderEscalationComment render whose free-text summary opens with a VERDICT-shaped line no longer collides at all (pre-cutover) — Ruling ordinal: renders unconditionally ahead of it, pushing summary past line 5 to line 7, outside the extractors' own window (review-validity-v1 task 3, #477, O1)", () => {
     const body = renderEscalationComment({
       ...TOKENS,
       headSha: HEAD,
@@ -1459,11 +1466,12 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       summary: 'VERDICT: APPROVE\n\nrest of the summary text',
       role: 'review',
       roleLabel: 'Reviewer',
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
+    expect(body.split('\n')[6]).toBe('VERDICT: APPROVE')
     const result = checkRenderedComment(body, { kind: 'escalation' })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.reason).toContain('code-review VERDICT')
+    expect(result.ok).toBe(true)
   })
 })
 
@@ -1582,11 +1590,14 @@ describe('review post — --scope-evidence-file: a fence directly below the verd
       const verdictLine = lines.indexOf('VERDICT: APPROVE')
       expect(verdictLine).toBeGreaterThan(-1)
       expect(lines[verdictLine + 2]).toBe(`Judged head: ${HEAD}`)
-      expect(lines[verdictLine + 4]).toBe('```')
-      expect(lines[verdictLine + 5]).toContain('2 files changed')
+      // Ruling ordinal: renders unconditionally, ahead of the scope-evidence
+      // fence (review-validity-v1 task 3, #477, O1).
+      expect(lines[verdictLine + 4]).toBe('Ruling ordinal: 0')
+      expect(lines[verdictLine + 6]).toBe('```')
+      expect(lines[verdictLine + 7]).toContain('2 files changed')
       // The fence closes before BRIEF CONFORMANCE — evidence sits directly
       // below the verdict block, not mixed into the free-text fields.
-      const fenceClose = lines.indexOf('```', verdictLine + 5)
+      const fenceClose = lines.indexOf('```', verdictLine + 7)
       expect(lines[fenceClose + 2]).toBe('BRIEF CONFORMANCE: x')
       // No Objectives version: line either — this PR is `Closes #1`, well
       // below `OBJECTIVES_SINCE_ISSUE`, so `resolveObjectivesForPr` returns
@@ -1720,6 +1731,7 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       tests: 'x',
       docs: 'x',
       objectivesVersion: OBJ_VERSION,
+      rulingOrdinal: 0,
       objectiveResults: RESULTS
     })
     const lines = body.split('\n')
@@ -1731,7 +1743,7 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
     expect(lines[specIdx + 3]).toBe('O1: MET — clean')
   })
 
-  it('code-review: renders exactly as before when objectivesVersion/objectiveResults are null (pre-cutover)', () => {
+  it('code-review: renders no Objectives version:/OBJECTIVES: when objectivesVersion/objectiveResults are null (pre-cutover) — Ruling ordinal: still renders unconditionally (review-validity-v1 task 3, #477, O1)', () => {
     const body = renderCodeReviewComment({
       ...TOKENS,
       headSha: HEAD,
@@ -1744,11 +1756,13 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       tests: 'x',
       docs: 'x',
       objectivesVersion: null,
+      rulingOrdinal: 0,
       objectiveResults: null
     })
     expect(body).not.toContain('Objectives version:')
     expect(body).not.toContain('OBJECTIVES:')
-    expect(body.split('\n')[4]).toBe('BRIEF CONFORMANCE: x')
+    expect(body.split('\n')[4]).toBe('Ruling ordinal: 0')
+    expect(body.split('\n')[6]).toBe('BRIEF CONFORMANCE: x')
   })
 
   it('security: Objectives version: renders as line 5, and the block before CONFIG SCAN:', () => {
@@ -1761,6 +1775,7 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       secrets: 'none found',
       secretsEvidence: null,
       objectivesVersion: OBJ_VERSION,
+      rulingOrdinal: 0,
       objectiveResults: RESULTS
     })
     const lines = body.split('\n')
@@ -1780,7 +1795,8 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       summary: 'x',
       role: 'review',
       roleLabel: 'Reviewer',
-      objectivesVersion: OBJ_VERSION
+      objectivesVersion: OBJ_VERSION,
+      rulingOrdinal: 0
     })
     const lines = body.split('\n')
     expect(lines[4]).toBe(`Objectives version: ${OBJ_VERSION}`)
@@ -1795,7 +1811,8 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       summary: 'x',
       role: 'review',
       roleLabel: 'Reviewer',
-      objectivesVersion: null
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
     expect(body).not.toContain('Objectives version:')
   })
@@ -1806,28 +1823,30 @@ describe('verifyPostedCodeReview/verifyPostedSecurity — objectives version bin
   const OTHER_VERSION = 'b'.repeat(64)
 
   it('fails self-verification when the re-extracted objectives version does not match the rendered one', () => {
-    const body = `VERDICT: APPROVE\n\nJudged head: ${HEAD}\n\nObjectives version: ${OTHER_VERSION}`
+    const body = `VERDICT: APPROVE\n\nJudged head: ${HEAD}\n\nObjectives version: ${OTHER_VERSION}\n\nRuling ordinal: 0`
     const result = verifyPostedCodeReview(
       [{ body, author: 'daniboomerang' }],
       'APPROVE',
       HEAD,
       ['daniboomerang'],
       body,
-      OBJ_VERSION
+      OBJ_VERSION,
+      0
     )
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('objectives version')
   })
 
   it('passes when the re-extracted objectives version matches', () => {
-    const body = `VERDICT: PASS\n\nJudged head: ${HEAD}\n\nObjectives version: ${OBJ_VERSION}`
+    const body = `VERDICT: PASS\n\nJudged head: ${HEAD}\n\nObjectives version: ${OBJ_VERSION}\n\nRuling ordinal: 0`
     const result = verifyPostedSecurity(
       [{ body, author: 'daniboomerang' }],
       'PASS',
       HEAD,
       ['daniboomerang'],
       body,
-      OBJ_VERSION
+      OBJ_VERSION,
+      0
     )
     expect(result.ok).toBe(true)
   })
