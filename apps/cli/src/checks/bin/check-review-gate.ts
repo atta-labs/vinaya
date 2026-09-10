@@ -75,6 +75,7 @@ import {
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { REVIEW_GATE_CHECK_RUN_NAME as OWN_CHECK_RUN_NAME } from '../../lib/review-gate-check-name'
 
 const CHECK_NAME = 'review-gate'
 
@@ -85,7 +86,9 @@ const CHECK_NAME = 'review-gate'
 // too — there is only ever one review-gate check-run name to exclude. The
 // exclusion lives HERE, never inside `checkReviewGate` itself: `aeg-core`
 // ships to every adopter, and an adopter's workflow will not be named this.
-const OWN_CHECK_RUN_NAME = 'vinaya review gate'
+// Promoted to `../../lib/review-gate-check-name` (`#488`, O1) so
+// `dev-review-loop.ts`'s mechanical gate reads the identical constant
+// rather than a second hardcoded copy.
 
 type PrView = {
   number: number

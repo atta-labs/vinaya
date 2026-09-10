@@ -99,6 +99,8 @@ Until a coordinator program exists, the Principal is the loop's coordinator, per
 
 A coordinator program replaces this by-hand duty when one exists.
 
+**Recovering the automated loop.** `vinaya dev-review-loop --task <n>` is that coordinator. If it crashes, or a poll (waiting for the PR to appear, or for the branch head to change after a gate-red dispatch) times out, the recovery is simply re-running the same command against the same task. Round `1`'s own entry checks the forge first: an already-open pull request on the developer's branch means it attaches — no developer is started — and a remote branch with no open pull request yet resumes the recorded developer session once, instructed to open it. Either way, a re-run never starts a second developer.
+
 ---
 
 ## Communication style with the Principal

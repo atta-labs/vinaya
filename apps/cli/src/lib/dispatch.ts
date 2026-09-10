@@ -529,7 +529,7 @@ function resumeRecordPathFor(
   return join(GLOBAL_VINAYA_HOME, 'dispatch-resume', repoSegment, `${role}-${agent}-${scope}.json`)
 }
 
-type ResumeRecord = {
+export type ResumeRecord = {
   resumeId: string
   role: Role
   agent: AgentVendor
@@ -562,6 +562,30 @@ function recordResumeState(record: ResumeRecord): string | null {
     chmodSync(dirname(path), 0o700)
     writeFileSync(path, JSON.stringify(record, null, 2), { mode: 0o600 })
     return path
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Reads back the one durable record `recordResumeState` last wrote for this
+ * exact repo+role+vendor+scope, or `null` when none exists, is unreadable,
+ * or fails to parse — never throws (same posture as `recordResumeState`).
+ * Task `#488`, O4: the loop's round-1 entry reads
+ * this to resume the SAME developer session on an attach (an already-open
+ * PR) or a remote-branch-no-PR case, rather than starting fresh — the exact
+ * path scheme `resumeRecordPathFor` already owns, never a second copy of it.
+ */
+export function readResumeRecord(
+  role: Role,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null,
+  task?: number,
+  pr?: number
+): ResumeRecord | null {
+  try {
+    const path = resumeRecordPathFor(role, agent, repo, task, pr)
+    return JSON.parse(readFileSync(path, 'utf8')) as ResumeRecord
   } catch {
     return null
   }
