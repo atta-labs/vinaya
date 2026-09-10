@@ -38,6 +38,7 @@ import { reviewPostCommand } from './commands/review-post.js'
 import { reviewStatusCommand } from './commands/review-status.js'
 import { runStudio } from './commands/studio.js'
 import { taskBriefCommand, taskDispatchCommand } from './commands/task.js'
+import { taskRunCommand } from './commands/task-run.js'
 import { tokensCommand } from './commands/tokens.js'
 import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
@@ -193,8 +194,10 @@ try {
         await taskDispatchCommand(rest)
       } else if (subcommand === 'brief') {
         await taskBriefCommand(rest)
+      } else if (subcommand === 'run') {
+        await taskRunCommand(rest)
       } else {
-        console.error(`Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch' or 'brief')`)
+        console.error(`Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch', 'brief', or 'run')`)
         process.exit(2)
       }
       break
