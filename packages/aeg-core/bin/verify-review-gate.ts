@@ -38,7 +38,7 @@
 
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
-import { checkReviewGate, WAIVER_LABEL_REVIEW } from '../src/index'
+import { checkReviewGate, newestPrincipalRulingOrdinal, PRINCIPAL_ALLOWLIST, WAIVER_LABEL_REVIEW } from '../src/index'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)
@@ -124,11 +124,16 @@ export function main(prNumber: number): void {
     // task 2, #412, out of this bin's brief-scoped surface) — `null` skips the
     // objectives binding entirely, the same as a pre-cutover PR.
     objectivesVersion: null,
-    // Nor does it count principal rulings on the PR (review-validity-v1 task 3,
-    // #477, same out-of-surface reasoning) — `0` is the documented "this PR
-    // never had a ruling" value, never a skip, but it is indistinguishable from
-    // a real absence for a shim that never looked.
-    rulingOrdinal: 0
+    // Unlike objectivesVersion, this has no unconditional-skip value and needs
+    // no extra fetch: `pr.comments` is already in scope, and
+    // `newestPrincipalRulingOrdinal`/`PRINCIPAL_ALLOWLIST` are already imported
+    // from this same module (review-validity-v1 task 3, #477, O2 — review
+    // round 2, BLOCKER: a hardcoded `0` here fails both directions, reading a
+    // stale pre-ruling verdict as bound and a correctly re-cast one as not).
+    rulingOrdinal: newestPrincipalRulingOrdinal(
+      pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
+      PRINCIPAL_ALLOWLIST
+    )
   })
 
   if (result.verdict === 'fail') {
