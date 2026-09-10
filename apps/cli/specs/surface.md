@@ -159,6 +159,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `checkPartsCiteDefinedObjectives` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkProjectsRegistered` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkRationaleNamesDocs` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkSurfaceExcludesBoundDoc` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkSurfaceGlobsResolve` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkSurfaceScope` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `declaredProjects` | function | `packages/aeg-core/src/issue-validation.ts` |
@@ -476,6 +477,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `makeCheckError` | function | `apps/cli/src/lib/forge-write.ts` |
 | `parseIssueNumberFromRef` | function | `apps/cli/src/lib/forge-write.ts` |
 | `postMarkedComment` | function | `apps/cli/src/lib/forge-write.ts` |
+| `readDocOwnersContent` | function | `apps/cli/src/lib/forge-write.ts` |
 | `readProjectPaths` | function | `apps/cli/src/lib/forge-write.ts` |
 | `readSharedPackages` | function | `apps/cli/src/lib/forge-write.ts` |
 | `refuse` | function | `apps/cli/src/lib/forge-write.ts` |

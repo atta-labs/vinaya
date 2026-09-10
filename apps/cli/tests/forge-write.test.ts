@@ -146,13 +146,14 @@ describe('validateForgeWrite — milestoneShape builtin', () => {
   })
 })
 
-// The three Issue-only content checks `packages/aeg-core/bin/open-issue.ts`
-// gates task Issues on — never wired into `apps/cli`'s real validation path
-// until this task. `validateIssueContent` is pure over its inputs;
-// `sharedPackages`/`projectPaths` are supplied directly here rather than
-// resolved from disk (that resolution is exercised end-to-end by
-// `tests/commands/issue.test.ts`'s "content gate" suite instead).
-describe('validateIssueContent — the three content checks', () => {
+// The Issue-only content checks `packages/aeg-core/bin/open-issue.ts` gates
+// task Issues on, plus `checkSurfaceExcludesBoundDoc` (task-run-v1 9) —
+// wired into `apps/cli`'s real validation path. `validateIssueContent` is
+// pure over its inputs; `sharedPackages`/`projectPaths`/`docOwnersContent`
+// are supplied directly here rather than resolved from disk (that
+// resolution is exercised end-to-end by `tests/commands/issue.test.ts`'s
+// "content gate" suite instead).
+describe('validateIssueContent — the content checks', () => {
   const cmd = 'vinaya issue create --validate-only …'
 
   it('refuses a rationale naming a shared domain no declared project owns', () => {
@@ -163,7 +164,8 @@ describe('validateIssueContent — the three content checks', () => {
       projectPaths: [{ name: 'vinaya', path: '.' }],
       retryCommand: cmd,
       issueNumber: null,
-      resolvesToFile: () => true
+      resolvesToFile: () => true,
+      docOwnersContent: null
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -180,7 +182,8 @@ describe('validateIssueContent — the three content checks', () => {
       projectPaths: [{ name: 'vinaya', path: '.' }],
       retryCommand: cmd,
       issueNumber: null,
-      resolvesToFile: () => true
+      resolvesToFile: () => true,
+      docOwnersContent: null
     })
     expect(errors).toEqual([])
   })
@@ -193,7 +196,8 @@ describe('validateIssueContent — the three content checks', () => {
       projectPaths: [],
       retryCommand: cmd,
       issueNumber: null,
-      resolvesToFile: () => true
+      resolvesToFile: () => true,
+      docOwnersContent: null
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -208,7 +212,8 @@ describe('validateIssueContent — the three content checks', () => {
       projectPaths: [],
       retryCommand: cmd,
       issueNumber: null,
-      resolvesToFile: () => true
+      resolvesToFile: () => true,
+      docOwnersContent: null
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -223,7 +228,42 @@ describe('validateIssueContent — the three content checks', () => {
       projectPaths: [],
       retryCommand: cmd,
       issueNumber: null,
-      resolvesToFile: () => true
+      resolvesToFile: () => true,
+      docOwnersContent: null
+    })
+    expect(errors).toEqual([])
+  })
+
+  it('refuses a Surface `out:` excluding a doc-owners-bound document its `in:` covers', () => {
+    const body =
+      '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/specs\n\n**Docs to keep coherent** — no-doc-surface.\n'
+    const errors = validateIssueContent({
+      body,
+      labels: ['vinaya/tranche:demo'],
+      sharedPackages: [],
+      projectPaths: [],
+      retryCommand: cmd,
+      issueNumber: null,
+      resolvesToFile: () => true,
+      docOwnersContent: 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n'
+    })
+    expect(errors.length).toBe(1)
+    expect(errors[0]?.check).toBe('issue-content')
+    expect(errors[0]?.message).toContain('apps/cli/specs/surface.md')
+  })
+
+  it('passes the same Surface once the bound document is moved inside `in:`', () => {
+    const body =
+      '## Surface\n\nin: apps/cli/src/lib, apps/cli/specs\nout: —\n\n**Docs to keep coherent** — no-doc-surface.\n'
+    const errors = validateIssueContent({
+      body,
+      labels: ['vinaya/tranche:demo'],
+      sharedPackages: [],
+      projectPaths: [],
+      retryCommand: cmd,
+      issueNumber: null,
+      resolvesToFile: () => true,
+      docOwnersContent: 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n'
     })
     expect(errors).toEqual([])
   })

@@ -170,6 +170,7 @@ export {
   checkPartsCiteDefinedObjectives,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
+  checkSurfaceExcludesBoundDoc,
   checkSurfaceGlobsResolve,
   checkSurfaceScope,
   declaredProjects,
