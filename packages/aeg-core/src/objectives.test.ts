@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   hasObjectivesHeading,
   isIssueNotFoundError,
+  objectivesSectionBounds,
   objectivesVersion,
   objectivesOf,
-  renderObjectives
+  renderObjectives,
+  resolveObjectivesSource
 } from './objectives'
 
 const WELL_FORMED = `## Objectives
@@ -169,5 +171,48 @@ describe('isIssueNotFoundError', () => {
   it('does NOT treat a real failure (auth, network) as not-found', () => {
     expect(isIssueNotFoundError(new Error('gh: authentication failed'))).toBe(false)
     expect(isIssueNotFoundError(new Error('connect ETIMEDOUT'))).toBe(false)
+  })
+})
+
+describe('objectivesSectionBounds', () => {
+  it('returns null for a body with no heading', () => {
+    expect(objectivesSectionBounds('no heading here.')).toBeNull()
+  })
+
+  it('bounds the section from just after the heading line to the next heading', () => {
+    const bounds = objectivesSectionBounds(WELL_FORMED) as { start: number; end: number }
+    expect(WELL_FORMED.slice(bounds.start, bounds.end)).toBe(
+      '\n\nO1. A task Issue carries a section.\nO2. The parser is the only reader.\n\n'
+    )
+  })
+
+  it('bounds to end-of-body when there is no following heading', () => {
+    const body = '## Objectives\n\nO1. Only section here.\n'
+    const bounds = objectivesSectionBounds(body) as { start: number; end: number }
+    expect(bounds.end).toBe(body.length)
+  })
+})
+
+describe('resolveObjectivesSource', () => {
+  const CUTOVER = 404
+
+  it('an Issue at the cutover resolves to the issue source, even when the body also has a heading', () => {
+    expect(resolveObjectivesSource('## Objectives\n\nO1. x.\n', 404, CUTOVER)).toEqual({ kind: 'issue', issue: 404 })
+  })
+
+  it('an Issue above the cutover resolves to the issue source', () => {
+    expect(resolveObjectivesSource('no heading.', 500, CUTOVER)).toEqual({ kind: 'issue', issue: 500 })
+  })
+
+  it('an Issue below the cutover resolves to none, even when the body has its own heading', () => {
+    expect(resolveObjectivesSource('## Objectives\n\nO1. x.\n', 1, CUTOVER)).toEqual({ kind: 'none' })
+  })
+
+  it('no Issue, PR body carries a heading — resolves to the body source', () => {
+    expect(resolveObjectivesSource('## Objectives\n\nO1. x.\n', null, CUTOVER)).toEqual({ kind: 'body' })
+  })
+
+  it('no Issue, no heading — resolves to none', () => {
+    expect(resolveObjectivesSource('nothing here.', null, CUTOVER)).toEqual({ kind: 'none' })
   })
 })

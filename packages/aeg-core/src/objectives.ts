@@ -68,13 +68,27 @@ function wordCount(text: string): number {
   return text.split(/\s+/).filter((w) => /[a-z]/i.test(w)).length
 }
 
-/** The `## Objectives` section's raw text (from its heading line to the next `##` heading, or the end), or `null` when no heading is found. */
-function objectivesSectionText(body: string): string | null {
+/**
+ * `[start, end)` char offsets of the `## Objectives` section — from its
+ * heading line to the next `##` heading, or the end of `body` — or `null`
+ * when no heading is found. `objectivesSectionText` and
+ * `body-bare-digits-logic.ts`'s `O<n>.`-prefix exemption (task-run-v1, O2)
+ * both locate the identical span through this one function, so the two
+ * can never disagree on where the section starts or ends.
+ */
+export function objectivesSectionBounds(body: string): { start: number; end: number } | null {
   const heading = HEADING_RE.exec(body)
   if (!heading) return null
-  const afterHeading = body.slice(heading.index + heading[0].length)
+  const start = heading.index + heading[0].length
+  const afterHeading = body.slice(start)
   const next = NEXT_HEADING_RE.exec(afterHeading)
-  return next ? afterHeading.slice(0, next.index) : afterHeading
+  return { start, end: next ? start + next.index : body.length }
+}
+
+/** The `## Objectives` section's raw text (from its heading line to the next `##` heading, or the end), or `null` when no heading is found. */
+function objectivesSectionText(body: string): string | null {
+  const bounds = objectivesSectionBounds(body)
+  return bounds === null ? null : body.slice(bounds.start, bounds.end)
 }
 
 /**
@@ -206,4 +220,44 @@ export function isIssueNotFoundError(err: unknown): boolean {
     typeof stderr === 'string' ? stderr : (stderr?.toString() ?? '')
   ].join('\n')
   return /could not resolve to an (?:issue|pull request)|\b404\b|not found/i.test(haystack)
+}
+
+/**
+ * WHERE a pull request's objectives come from — before anything is fetched
+ * or parsed (task-run-v1, O3, Issue #494). `check-review-gate.ts`'s
+ * `resolveObjectivesVersion` and `review-post.ts`'s `resolveObjectivesForPr`
+ * had each hand-rolled this identical three-way branch — an Issue at/above
+ * the cutover wins, then the PR body's own `## Objectives` heading, then
+ * neither — with the Issue-vs-cutover branch order kept in sync by hand
+ * between the two files (`#412`'s own history: a missing early pre-cutover
+ * return in one of them let a pre-cutover Issue fall through to the body's
+ * section). One function, one place the three-way decision is made; both
+ * callers switch on its result instead of re-deriving it.
+ *
+ * Pure and I/O-free by design — it takes the already-extracted Issue number
+ * and the PR body text, never fetches either. Fetching the Issue body,
+ * parsing it, and turning a parse failure into a refusal are each caller's
+ * OWN concern (a check-run emits `emitCheckError`+`process.exit`, the CLI
+ * command calls `refuseCmd`) and stay out of this function on purpose — see
+ * `aeg-root/tranches/task-run-v1.md` task 10's boundary: this resolver
+ * decides the SOURCE, not what the gate requires once a source exists, and
+ * the loop's own principal-gated Issue read (`review-validity-v1` task 2)
+ * substitutes its own fetcher for the `'issue'` case rather than this
+ * function reading anything itself.
+ *
+ * `cutoverIssue` is `OBJECTIVES_SINCE_ISSUE` (`issue-validation.ts`) — passed
+ * in, not imported, because `issue-validation.ts` already imports FROM this
+ * module (`objectivesOf`); importing the constant back would be circular.
+ */
+export type ObjectivesSource = { kind: 'issue'; issue: number } | { kind: 'body' } | { kind: 'none' }
+
+export function resolveObjectivesSource(prBody: string, issue: number | null, cutoverIssue: number): ObjectivesSource {
+  // Checked first and unconditionally: a pre-cutover Issue is `'none'`
+  // regardless of what the PR body itself carries — a pre-cutover PR must
+  // keep passing unchanged, never picking up a body-level objectives list
+  // the Issue-linked case was never subject to.
+  if (issue !== null && issue < cutoverIssue) return { kind: 'none' }
+  if (issue !== null) return { kind: 'issue', issue }
+  if (hasObjectivesHeading(prBody)) return { kind: 'body' }
+  return { kind: 'none' }
 }

@@ -198,8 +198,10 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `hasObjectivesHeading` | function | `packages/aeg-core/src/objectives.ts` |
 | `isIssueNotFoundError` | function | `packages/aeg-core/src/objectives.ts` |
 | `objectivesOf` | function | `packages/aeg-core/src/objectives.ts` |
+| `objectivesSectionBounds` | function | `packages/aeg-core/src/objectives.ts` |
 | `objectivesVersion` | function | `packages/aeg-core/src/objectives.ts` |
 | `renderObjectives` | function | `packages/aeg-core/src/objectives.ts` |
+| `resolveObjectivesSource` | function | `packages/aeg-core/src/objectives.ts` |
 | `parseLedger` | function | `packages/aeg-core/src/parse-ledger.ts` |
 | `rowFromCells` | function | `packages/aeg-core/src/parse-ledger.ts` |
 | `parseRegistry` | function | `packages/aeg-core/src/parse-registry.ts` |
