@@ -432,6 +432,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `resolveModelFromRationale` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `AGENT_CLASS_VALUES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `AGENT_VENDOR_NAMES` | const | `apps/cli/src/lib/dispatch.ts` |
+| `colourAgentLine` | function | `apps/cli/src/lib/dispatch.ts` |
+| `colourEnabled` | function | `apps/cli/src/lib/dispatch.ts` |
+| `colourLoopLine` | function | `apps/cli/src/lib/dispatch.ts` |
 | `DEFAULT_TIMEOUT_MS` | const | `apps/cli/src/lib/dispatch.ts` |
 | `dispatchRole` | function | `apps/cli/src/lib/dispatch.ts` |
 | `HEARTBEAT_INTERVAL_MS` | const | `apps/cli/src/lib/dispatch.ts` |
@@ -635,4 +638,6 @@ Every non-compliant command from the table above, dated, with the count of disti
 `dispatchRole` (Issue #450, dispatch observability) gained five exports — `DEFAULT_TIMEOUT_MS`, `HEARTBEAT_INTERVAL_MS`, `MAX_TEE_BYTES`, `openOutputTee` and `timeoutWarningLeadMs`, all listed above — and dropped none. They are exported to be reachable from a test at all: the observability behaviours cannot be asserted through `dispatchRole` alone without spawning a real vendor process. `AGENT_VENDOR_NAMES`/`dispatchRole`/`isAgentVendor` are unchanged. Issue #447's O5 adds five more — `parseClaudeUsage` and `parseClaudeResumeId`, exported so a test can assert they read a stream's terminal event as well as a single whole-blob payload, and the three `render*Event` functions, one per vendor, that turn that vendor's own stream into the lines an operator reads while the agent works.
 
 `assembleAndRenderBrief`'s own resolved-Issue result field (Issue #447, O1) is a new field on its already-exported return type, not a new function/const/class export — per this file's own rule (`## The rule`), it needs no new row here. `task dispatch` (`taskDispatchCommand`) still calls only `dispatchTask`, unchanged.
+
+`dispatchRole` (Issue #491, role-prefixed and coloured terminal output) gains three exports — `colourEnabled`, `colourAgentLine`, `colourLoopLine`, all listed above — and drops none. Exported so a fixture stream can assert the TTY/`NO_COLOR` predicate and the per-role prefix directly, without spawning a real vendor process. Applied only at the point a line reaches `process.stderr`/`process.stdout` (never where a line is produced), so `openOutputTee`'s own tee and `dispatchRole`'s existing `[vinaya dispatch <id>] …` lifecycle-line text are unaffected by this addition; `dev-review-loop`'s own two `process.stdout.write` calls (`devReviewLoopCommand`) now route their text through `colourLoopLine`, calling only `dispatch.ts`'s already-exported surface — no new lib call added to that command's own body.
 

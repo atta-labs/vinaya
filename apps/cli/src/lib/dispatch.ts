@@ -63,6 +63,56 @@ import { createLogSink, outboxPathFor } from './log-sink.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
 import { dirname, join } from 'node:path'
 
+/**
+ * Terminal colour, applied only at the point a line is written to a real
+ * interactive stream (O3; Issue #491) — never where the line is produced, so
+ * the dispatch-output tee (`openOutputTee`, which never sees these lines at
+ * all) and any piped/non-TTY consumer keep reading exactly the bytes they
+ * read before this task. `NO_COLOR` (https://no-color.org) is honored by
+ * presence alone, any value including empty, not by its truthiness.
+ */
+const ANSI_RESET = '\x1b[0m'
+
+/** One fixed colour per role, never per vendor (O1) — the reader is separating who is speaking, not which binary ran. */
+const ROLE_ANSI: Record<Role, string> = {
+  planner: '\x1b[34m', // blue
+  developer: '\x1b[36m', // cyan
+  'code-reviewer': '\x1b[35m', // magenta
+  security: '\x1b[31m', // red
+  principal: '\x1b[33m', // yellow
+  archivist: '\x1b[32m', // green
+  architect: '\x1b[93m' // bright yellow
+}
+
+/** The coordinator's own colour (O2) — distinct from every role above, so a lifecycle/loop line reads as the loop's without reading the text. */
+const LOOP_ANSI = '\x1b[90m' // bright black / grey
+
+export function colourEnabled(stream: { isTTY?: boolean }): boolean {
+  return Boolean(stream.isTTY) && process.env.NO_COLOR === undefined
+}
+
+/**
+ * `[role] <line>` — one call per already-split physical line; a caller with
+ * multi-line rendered text splits it first so every line carries its own
+ * prefix (O1). Coloured only when `stream` is a live TTY and `NO_COLOR` is
+ * unset (`colourEnabled`); otherwise the same prefixed text with no escape
+ * codes, which is what a piped consumer or a non-interactive run sees.
+ */
+export function colourAgentLine(role: Role, line: string, stream: { isTTY?: boolean }): string {
+  const prefixed = `[${role}] ${line}`
+  return colourEnabled(stream) ? `${ROLE_ANSI[role]}${prefixed}${ANSI_RESET}` : prefixed
+}
+
+/**
+ * The loop/lifecycle style (O2) — no added prefix, since this family's own
+ * text already names the role (`[vinaya dispatch <id>] <role> via <agent>:
+ * …`, or the loop's own `vinaya dev-review-loop: …`); restyled, never
+ * stacked with a second prefix. Same TTY/`NO_COLOR` gate as `colourAgentLine`.
+ */
+export function colourLoopLine(line: string, stream: { isTTY?: boolean }): string {
+  return colourEnabled(stream) ? `${LOOP_ANSI}${line}${ANSI_RESET}` : line
+}
+
 export const AGENT_VENDOR_NAMES = ['claude', 'codex', 'gemini'] as const
 export type AgentVendor = (typeof AGENT_VENDOR_NAMES)[number]
 
@@ -992,7 +1042,13 @@ export async function dispatchRole(
         if (line.trim().length === 0) continue
         try {
           const rendered = vendor.renderEvent(JSON.parse(line) as Record<string, unknown>)
-          if (rendered) process.stderr.write(`${rendered}\n`)
+          if (rendered) {
+            const out = rendered
+              .split('\n')
+              .map((l) => colourAgentLine(role, l, process.stderr))
+              .join('\n')
+            process.stderr.write(`${out}\n`)
+          }
         } catch {
           // not a JSON line, or a renderer that refused it — never fatal
         }
