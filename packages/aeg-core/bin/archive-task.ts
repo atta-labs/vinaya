@@ -24,16 +24,17 @@
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
 import {
-  AEG_BRIEF_V1_MARKER,
   buildProvenanceBlock,
   extractIssue,
   hasProvenance,
   isEligibleForProvenance,
+  PRINCIPAL_ALLOWLIST,
+  resolveNewestFrozenBrief,
   taskRefFromBranch
 } from '../src/index'
 import type { MergedPrFacts } from '../src/index'
 
-const REPO_ROOT = join(import.meta.dir, '../../..')
+const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)
 
 function sh(cmd: string): string {
@@ -63,6 +64,22 @@ type PrView = {
   body: string
   mergedAt: string
   comments: { body: string; author?: { login?: string } | null }[]
+}
+
+/**
+ * The newest principal-authored frozen-brief comment's URL among a raw
+ * `gh issue view --json comments` payload, or `null` — extracted so this
+ * resolution is unit-testable without a spawned `gh` (security review, PR
+ * #503 round 2, BLOCKER: this previously matched only the literal
+ * `aeg:brief:v1` marker, so a task corrected via `--supersede` archived a
+ * link to the superseded, non-authoritative version instead of the newest).
+ */
+export function resolveNewestFrozenBriefCommentUrl(
+  comments: Array<{ body: string; url: string; author?: { login?: string } | null }>
+): string | null {
+  const normalized = comments.map((c) => ({ body: c.body, url: c.url, author: c.author?.login ?? null }))
+  const briefComment = resolveNewestFrozenBrief(normalized, PRINCIPAL_ALLOWLIST)
+  return briefComment?.url ?? null
 }
 
 export function main(): void {
@@ -108,19 +125,19 @@ export function main(): void {
     process.exit(0)
   }
 
-  // The task Issue's frozen `aeg:brief:v1` comment URL (plan-brief-v1 task 2,
-  // #427) — a best-effort resolution: no Issue, no such comment (a
+  // The task Issue's frozen brief comment URL — the NEWEST version, via
+  // `resolveNewestFrozenBrief` (task 4, Issue #483, O3), never a v1-only
+  // match: a best-effort resolution — no Issue, no such comment (a
   // pre-cutover task, or one dispatched by hand), or a failed fetch all
   // degrade to `null`, which `buildProvenanceBlock` reports as DANGLING
   // rather than blocking the merge-adjacent archival this shim runs after.
   let briefCommentUrl: string | null = null
   if (primaryIssue !== null) {
     try {
-      const issueComments = shJson<{ comments: { body: string; url: string }[] }>(
+      const issueComments = shJson<{ comments: { body: string; url: string; author?: { login?: string } | null }[] }>(
         `gh issue view ${primaryIssue} --json comments`
       )
-      const briefComment = issueComments.comments.find((c) => c.body.split('\n')[0] === AEG_BRIEF_V1_MARKER)
-      briefCommentUrl = briefComment?.url ?? null
+      briefCommentUrl = resolveNewestFrozenBriefCommentUrl(issueComments.comments)
     } catch {
       briefCommentUrl = null
     }

@@ -1,8 +1,8 @@
 /**
  * `prepareTask` — renders the brief from the Issue and the tree
- * (`assembleAndRenderBrief`, `lib/brief-assembly.ts`), refuses on any gap or
- * on an already-frozen brief, and posts it once as the frozen `aeg:brief:v1`
- * Issue comment. Starts no agent — see its own doc comment.
+ * (`assembleAndRenderBrief`, `lib/brief-assembly.ts`), refuses on any gap,
+ * and posts it as a frozen `aeg:brief:v<k>` Issue comment. Starts no agent —
+ * see its own doc comment.
  *
  * `dispatchTask` composes `prepareTask` with the existing developer-start
  * half: with `--agent` given, it starts the Developer through `dispatchRole`
@@ -11,10 +11,14 @@
  * of `task brief` (`prepareTask` alone) and `task run` (the future
  * unattended loop).
  *
- * The brief is frozen by design: `prepareTask` refuses a second post on the
- * same Issue rather than ever overwriting or appending a `v2` — a changed
- * brief is a changed Issue, re-dispatched only by a later escalation path
- * this task does not build (see `taskDispatchCommand`'s own doc comment).
+ * The frozen comment is never edited or deleted (task 4, Issue
+ * #483, O3): a plain call refuses a second post on the same Issue, naming
+ * the existing frozen brief; `--supersede` is the one sanctioned way to
+ * correct a wrong one — it APPENDS a new, higher-versioned comment naming
+ * its predecessor and a reason, never touching the original. Every reader of
+ * "the frozen brief" resolves the newest version (`@attalabs/aeg-core`'s
+ * `resolveNewestFrozenBrief`) — `dispatchTask` (below) and the review loop
+ * (`dev-review-loop.ts`'s `fetchFrozenBrief`) share the same resolver.
  *
  * Order matters: the brief is rendered FIRST, before the existing-comment
  * check even runs — a render that refuses posts nothing and never touches
@@ -27,7 +31,13 @@ import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AEG_BRIEF_V1_MARKER, isPrincipal, parseRationaleFields } from '@attalabs/aeg-core'
+import {
+  AEG_BRIEF_V1_MARKER,
+  briefMarkerFor,
+  isPrincipal,
+  parseRationaleFields,
+  resolveNewestFrozenBrief
+} from '@attalabs/aeg-core'
 import { dispatchRole, isAgentClass, resolveClassModel, type AgentClass } from './dispatch.js'
 import { assembleAndRenderBrief } from './brief-assembly.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
@@ -59,8 +69,8 @@ function sh(cmd: string, args: string[]): string {
   return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 }
 
-type IssueComment = { body: string; url: string }
-type IssueCommentsJson = { comments: IssueComment[] }
+type IssueComment = { body: string; url: string; author: string | null }
+type IssueCommentsJson = { comments: Array<{ body: string; url: string; author?: { login?: string } | null }> }
 
 /**
  * `sha256` of the brief text as it will appear below the two header lines
@@ -84,10 +94,19 @@ function fetchIssueComments(n: number): IssueComment[] {
     )
   }
   try {
-    return (JSON.parse(out) as IssueCommentsJson).comments
+    return (JSON.parse(out) as IssueCommentsJson).comments.map((c) => ({
+      body: c.body,
+      url: c.url,
+      author: c.author?.login ?? null
+    }))
   } catch {
     throw new DispatchTaskError(`could not parse \`gh issue view ${n} --json comments\` output.`)
   }
+}
+
+/** Same allowlist machinery every principal-authored-comment reader in this codebase shares (`dev-review-loop.ts`'s identical `principalAllowlist`). */
+function principalAllowlist(): string[] {
+  return resolvePrincipalAllowlist(loadTrustAnchorConfig())
 }
 
 function fetchIssueBody(n: number): string {
@@ -162,12 +181,15 @@ function resolveModelForDispatch(
   return resolveModelFromRationale(agent, raw, undefined)
 }
 
-/** The comment's first line is the whole check — a marker-shaped string
- * anywhere else in a comment's body (including the newly-rendered brief's
- * own text, which this function never scans) is never mistaken for a real
- * prior dispatch. */
-function findExistingV1Comment(n: number): IssueComment | null {
-  return fetchIssueComments(n).find((c) => c.body.split('\n')[0] === AEG_BRIEF_V1_MARKER) ?? null
+/**
+ * The NEWEST principal-authored frozen-brief comment on Issue `n`, or
+ * `null` — `@attalabs/aeg-core`'s `resolveNewestFrozenBrief` (task 4,
+ * Issue #483, O3), never a v1-only scan: a supersession is an
+ * APPENDED comment, so the guard below (and `--supersede`'s own predecessor
+ * lookup) must see the highest version posted, not the first.
+ */
+function findExistingFrozenBrief(n: number): (IssueComment & { version: number }) | null {
+  return resolveNewestFrozenBrief(fetchIssueComments(n), principalAllowlist())
 }
 
 /**
@@ -213,8 +235,19 @@ function resolveDispatchAuthorization(): DispatchAuthorization {
   return { authorized: login !== null && isPrincipal(login, allowlist), login }
 }
 
-export type PrepareTaskInput = { tranche: string; n: number }
-export type PrepareTaskResult = { issue: number; brief: string; commentUrl: string }
+export type PrepareTaskInput = {
+  tranche: string
+  n: number
+  /**
+   * `vinaya task brief <tranche> <n> --supersede --reason <text>`
+   * (task 4, Issue #483, O3) — posts a new, higher-versioned
+   * frozen brief naming its predecessor and this reason, instead of
+   * refusing on the existing one. Absent, `prepareTask` keeps its original
+   * behavior: refuse when any frozen brief already exists.
+   */
+  supersede?: { reason: string }
+}
+export type PrepareTaskResult = { issue: number; brief: string; commentUrl: string; version: number }
 
 /**
  * Injection seam for `apps/cli/tests/lib/dispatch-task.test.ts`. `beforePost`
@@ -228,7 +261,7 @@ export type PrepareTaskResult = { issue: number; brief: string; commentUrl: stri
  */
 export type PrepareTaskDeps = {
   assembleAndRenderBrief: typeof assembleAndRenderBrief
-  findExistingV1Comment: (n: number) => IssueComment | null
+  findExistingFrozenBrief: (n: number) => (IssueComment & { version: number }) | null
   postMarkedComment: typeof postMarkedComment
   resolveDispatchAuthorization: () => DispatchAuthorization
   beforePost?: (issue: number) => void | Promise<void>
@@ -236,21 +269,22 @@ export type PrepareTaskDeps = {
 
 const defaultPrepareTaskDeps: PrepareTaskDeps = {
   assembleAndRenderBrief,
-  findExistingV1Comment,
+  findExistingFrozenBrief,
   postMarkedComment,
   resolveDispatchAuthorization
 }
 
 /**
  * O1 — the preparation half extracted from what used to be all of
- * `dispatchTask`: resolves the task's Issue, renders the brief,
- * refuses on any gap, refuses when a frozen brief already exists, and posts
- * the brief as the frozen `aeg:brief:v1` Issue comment. Starts no agent under
- * any circumstances — that is `dispatchTask`'s job (O3), composed from this
- * function plus the existing developer-start half below.
+ * `dispatchTask`: resolves the task's Issue, renders the brief, refuses on
+ * any gap, and posts the brief as a frozen `aeg:brief:v<k>` Issue comment —
+ * `v1` on a first post, or `predecessor.version + 1` under `--supersede`
+ * (O3). Starts no agent under any circumstances — that is `dispatchTask`'s
+ * job (O3, developer-start half), composed from this function plus the
+ * existing developer-start half below.
  *
- * `beforePost`, when given, runs after the already-dispatched guard passes
- * but before the comment is posted — `dispatchTask` uses this to resolve and
+ * `beforePost`, when given, runs after the existing-brief guard passes but
+ * before the comment is posted — `dispatchTask` uses this to resolve and
  * validate `--agent`'s model BEFORE the frozen post exists, preserving MAJOR
  * 1's ordering guarantee (#456 round 1: a bad model must never leave a
  * permanently-dispatched task) without this function itself needing to know
@@ -260,7 +294,7 @@ export async function prepareTask(
   input: PrepareTaskInput,
   deps: PrepareTaskDeps = defaultPrepareTaskDeps
 ): Promise<PrepareTaskResult> {
-  const { tranche, n } = input
+  const { tranche, n, supersede } = input
 
   // Authorization is checked before anything else — no render, no forge
   // read, no post.
@@ -273,6 +307,23 @@ export async function prepareTask(
           : `\`${login}\` is not on the Principal allowlist — preparing a task is Principal-only.`
       )
     }
+  }
+
+  if (supersede && supersede.reason.trim().length === 0) {
+    throw new DispatchTaskError(
+      '--supersede requires --reason <text> — a superseding brief must name why the prior one was wrong, same authorization as a first freeze, never a silent rewrite.'
+    )
+  }
+  // Security review, PR #503 round 2, MEDIUM: the reason is spliced into a
+  // SINGLE header line (`Supersedes: <url> — <reason>`) that every reader
+  // (`frozenBriefContent`/`contentAfterNLines`) counts as exactly one of the
+  // fixed three header lines for a v2+ comment. A `\n`/`\r` in the reason
+  // would shift that count, corrupting `.content` for every reader of the
+  // superseding version with no error surfaced anywhere.
+  if (supersede && /[\r\n]/.test(supersede.reason)) {
+    throw new DispatchTaskError(
+      "--reason must be a single line — it becomes one line of the frozen comment header, and a newline in it would corrupt every reader's header-line count for this version."
+    )
   }
 
   const result = await deps.assembleAndRenderBrief(tranche, String(n))
@@ -289,20 +340,42 @@ export async function prepareTask(
   // unrelated merged Issue, because this code used to read `n` here.
   const issue = result.issue
 
-  const existing = deps.findExistingV1Comment(issue)
-  if (existing) {
-    throw new DispatchTaskError(`Task ${n} in tranche \`${tranche}\` is already dispatched — see ${existing.url}`)
+  const existing = deps.findExistingFrozenBrief(issue)
+  const hash = briefHash(result.brief)
+
+  let marker: string
+  let commentBody: string
+  let version: number
+
+  if (supersede) {
+    if (!existing) {
+      throw new DispatchTaskError(
+        `Task ${n} in tranche \`${tranche}\` has no frozen brief yet — nothing to supersede. Run \`vinaya task brief ${tranche} ${n}\` without --supersede first.`
+      )
+    }
+    // The original v1 (and every prior version) is never edited or deleted —
+    // only appended past. `Supersedes:` names the predecessor's own comment
+    // URL and the reason, so history stays and the mistake stops being
+    // authoritative (Traps to avoid).
+    version = existing.version + 1
+    marker = briefMarkerFor(version)
+    commentBody = `Brief hash: ${hash}\nSupersedes: ${existing.url} — ${supersede.reason}\n${result.brief}`
+  } else {
+    if (existing) {
+      throw new DispatchTaskError(`Task ${n} in tranche \`${tranche}\` is already dispatched — see ${existing.url}`)
+    }
+    version = 1
+    marker = AEG_BRIEF_V1_MARKER
+    commentBody = `Brief hash: ${hash}\n${result.brief}`
   }
 
   if (deps.beforePost) {
     await deps.beforePost(issue)
   }
 
-  const hash = briefHash(result.brief)
-  const commentBody = `Brief hash: ${hash}\n${result.brief}`
-  const url = deps.postMarkedComment('issue', String(issue), AEG_BRIEF_V1_MARKER, commentBody)
+  const url = deps.postMarkedComment('issue', String(issue), marker, commentBody)
 
-  return { issue, brief: result.brief, commentUrl: url }
+  return { issue, brief: result.brief, commentUrl: url, version }
 }
 
 /**
@@ -315,7 +388,7 @@ export async function prepareTask(
  */
 export type DispatchTaskDeps = {
   assembleAndRenderBrief: typeof assembleAndRenderBrief
-  findExistingV1Comment: (n: number) => IssueComment | null
+  findExistingFrozenBrief: (n: number) => (IssueComment & { version: number }) | null
   postMarkedComment: typeof postMarkedComment
   dispatchRole: typeof dispatchRole
   resolveDispatchAuthorization: () => DispatchAuthorization
@@ -328,7 +401,7 @@ export type DispatchTaskDeps = {
 
 const defaultDeps: DispatchTaskDeps = {
   assembleAndRenderBrief,
-  findExistingV1Comment,
+  findExistingFrozenBrief,
   postMarkedComment,
   dispatchRole,
   resolveDispatchAuthorization,
@@ -368,7 +441,7 @@ export async function dispatchTask(
     { tranche, n },
     {
       assembleAndRenderBrief: deps.assembleAndRenderBrief,
-      findExistingV1Comment: deps.findExistingV1Comment,
+      findExistingFrozenBrief: deps.findExistingFrozenBrief,
       postMarkedComment: deps.postMarkedComment,
       resolveDispatchAuthorization: deps.resolveDispatchAuthorization,
       beforePost: agent

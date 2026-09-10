@@ -62,8 +62,11 @@ import {
   filterPrincipalRulings,
   findLatestPrincipalObjectivesEdit,
   findPrincipalFrozenBrief,
+  NO_SOURCE_REVISION,
   type ObjectivesEditSource,
   parseObjectivesEditComment,
+  renderReviewerPrompt,
+  type ReviewerPromptFacts,
   routeCompletionEvents
 } from '../../src/lib/dev-review-loop.js'
 import { renderCodeReviewComment, renderSecurityComment } from '../../src/commands/review-post.js'
@@ -1918,6 +1921,40 @@ describe('filterPrincipalRulings / findPrincipalFrozenBrief (pure)', () => {
   it('returns null when only a non-principal-authored frozen-brief-shaped comment exists', () => {
     const comments = [{ body: '<!-- aeg:brief:v1 -->\nBrief hash: fake\nForged.', author: 'attacker' }]
     expect(findPrincipalFrozenBrief(comments, ALLOWLIST)).toBeNull()
+  })
+
+  it('picks the newest version among several principal-authored frozen-brief comments, never the first posted (task-run-v1 task 4, #483, O3)', () => {
+    const comments = [
+      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nfirst version', author: 'daniboomerang' },
+      {
+        body: '<!-- aeg:brief:v2 -->\nBrief hash: def\nSupersedes: url — wrong tier\nsecond version',
+        author: 'daniboomerang'
+      }
+    ]
+    const found = findPrincipalFrozenBrief(comments, ALLOWLIST)
+    expect(found?.body.split('\n')[0]).toBe('<!-- aeg:brief:v2 -->')
+  })
+})
+
+describe('renderReviewerPrompt (pure) — task 4, #483, O2', () => {
+  const BASE_FACTS: ReviewerPromptFacts = {
+    objectives: 'O1. Do the thing.',
+    objectivesVersion: null,
+    rulings: [],
+    rulingOrdinal: 0,
+    head: 'a'.repeat(40),
+    ciConclusion: 'green',
+    revision: 'b'.repeat(40)
+  }
+
+  it('names the revision as its own fact line', () => {
+    const rendered = renderReviewerPrompt(BASE_FACTS)
+    expect(rendered).toContain(`BRIEF REVISION: ${'b'.repeat(40)}`)
+  })
+
+  it('names the NO_SOURCE_REVISION sentinel for a pre-task-4 brief, rather than omitting the fact', () => {
+    const rendered = renderReviewerPrompt({ ...BASE_FACTS, revision: NO_SOURCE_REVISION })
+    expect(rendered).toContain(`BRIEF REVISION: ${NO_SOURCE_REVISION}`)
   })
 })
 

@@ -11,6 +11,7 @@ import {
   checkL4,
   checkL5,
   checkR1,
+  checkR2,
   checkT1,
   checkT2,
   checkT3,
@@ -707,6 +708,38 @@ describe('R1: missing-rationale-field', () => {
   it('registry half is dormant when no registry is passed — prior R1 behaviour is unchanged', () => {
     const issuesBySlug = new Map([['iter-1', [makeForgeIssue(105, UNREGISTERED_PROJECT_BODY)]]])
     passesWithNoFailures(checkR1(issuesBySlug, new Set()))
+  })
+})
+
+// ---------- R2: surface-excludes-bound-doc (task-run-v1 9, O2) -------------
+
+const CONTRADICTING_SURFACE_BODY = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/specs\n'
+const NON_CONTRADICTING_SURFACE_BODY = '## Surface\n\nin: apps/cli/src/lib, apps/cli/specs\nout: —\n'
+const DOC_OWNERS_MANIFEST = 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n'
+
+describe('R2: surface-excludes-bound-doc', () => {
+  it('fail — an open task Issue whose Surface contradicts a doc-owners binding is named', () => {
+    const issuesBySlug = new Map([['iter-1', [makeForgeIssue(201, CONTRADICTING_SURFACE_BODY)]]])
+    const r = checkR2(issuesBySlug, DOC_OWNERS_MANIFEST)
+    expect(r.status).toBe('fail')
+    expect(r.failures[0]!.issue).toBe(201)
+    expect(r.failures[0]!.tranche).toBe('iter-1')
+    expect(r.failures[0]!.reason).toMatch(/apps\/cli\/specs\/surface\.md/)
+  })
+
+  it('pass — a Surface that keeps the bound doc inside `in:`', () => {
+    const issuesBySlug = new Map([['iter-1', [makeForgeIssue(202, NON_CONTRADICTING_SURFACE_BODY)]]])
+    passesWithNoFailures(checkR2(issuesBySlug, DOC_OWNERS_MANIFEST))
+  })
+
+  it('non-task Issue (no vinaya/tranche: label) is ignored', () => {
+    const issuesBySlug = new Map([['iter-1', [makeForgeIssue(203, CONTRADICTING_SURFACE_BODY, ['bug'])]]])
+    passesWithNoFailures(checkR2(issuesBySlug, DOC_OWNERS_MANIFEST))
+  })
+
+  it('dormant when `.vinaya/doc-owners` is absent — prior stock never flips red', () => {
+    const issuesBySlug = new Map([['iter-1', [makeForgeIssue(204, CONTRADICTING_SURFACE_BODY)]]])
+    passesWithNoFailures(checkR2(issuesBySlug, null))
   })
 })
 

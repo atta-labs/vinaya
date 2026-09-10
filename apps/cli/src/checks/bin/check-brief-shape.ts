@@ -19,11 +19,9 @@
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import {
-  AEG_BRIEF_V1_MARKER,
   BRIEF_RULES_SINCE_PR,
   buildConsumersOf as buildConsumersOfShared,
   checkBriefSections,
-  contentAfterTwoLines,
   extractIssue,
   hasObjectivesHeading,
   isBriefShaped,
@@ -34,13 +32,15 @@ import {
   type PackageManifest,
   objectivesOf,
   partitionBriefErrorsByRollout,
-  readTierFromPrBody
+  readTierFromPrBody,
+  resolveNewestFrozenBrief
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 
 const CHECK_NAME = 'brief-shape'
 
-type IssueCommentsJson = { comments: Array<{ body: string }> }
+type IssueCommentsJson = { comments: Array<{ body: string; author?: { login?: string } | null }> }
 
 function fetchIssueComments(issueNumber: number): IssueCommentsJson {
   const out = execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'comments'], {
@@ -54,11 +54,16 @@ type GradedBodyResolution = { ok: true; body: string } | { ok: false; message: s
 
 /**
  * The body `checkBriefSections` actually grades. On a task branch, the
- * brief lives on the task Issue's frozen `aeg:brief:v1` comment, posted by
- * `dispatchTask` — never in the PR body — so that comment, not `PR_BODY`,
- * is what this check grades. A non-task (standalone `fix/*`) branch is
- * unchanged: its brief, if any, is still authored directly into the PR
- * body.
+ * brief lives on the task Issue's frozen `aeg:brief:v<k>` comment, posted by
+ * `vinaya task brief`/`dispatchTask` — never in the PR body — so that
+ * comment, not `PR_BODY`, is what this check grades. A non-task (standalone
+ * `fix/*`) branch is unchanged: its brief, if any, is still authored
+ * directly into the PR body.
+ *
+ * Resolved through `@attalabs/aeg-core`'s `resolveNewestFrozenBrief`
+ * (task 4, Issue #483, O3) — the same single resolver the review
+ * loop uses, so a supersession is picked up here too rather than this
+ * check grading a stale, since-corrected version.
  */
 function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResolution {
   if (!taskBranch) return { ok: true, body: prBody }
@@ -85,16 +90,14 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
       message: `could not fetch Issue #${issue}'s comments (\`gh issue view\`) to grade the dispatched brief: ${err instanceof Error ? err.message : String(err)}`
     }
   }
-  const comment = json.comments.find((c) => c.body.split('\n')[0] === AEG_BRIEF_V1_MARKER)
-  if (!comment) {
-    return { ok: false, message: `not dispatched — no \`aeg:brief:v1\` comment on Issue #${issue}.` }
+  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  const comments = json.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
+  const resolved = resolveNewestFrozenBrief(comments, allowlist)
+  if (!resolved) {
+    return { ok: false, message: `not dispatched — no \`aeg:brief:v<k>\` comment on Issue #${issue}.` }
   }
 
-  // Everything after the marker line and the `Brief hash:` line, as a raw
-  // substring. Imported from `@attalabs/aeg-core` — the same promoted export
-  // `packages/aeg-core/bin/verify-brief.ts` and `dispatch-task.ts` both use,
-  // so there is one canonical implementation rather than a same-package copy.
-  return { ok: true, body: contentAfterTwoLines(comment.body) }
+  return { ok: true, body: resolved.content }
 }
 
 /** Immediate child directory names of `dir` — `deriveWorkspaceMemberDirs`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */

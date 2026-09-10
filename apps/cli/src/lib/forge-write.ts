@@ -45,6 +45,7 @@ import {
   checkProjectField,
   checkRationaleNamesDocs,
   checkStopConditions,
+  checkSurfaceExcludesBoundDoc,
   checkSurfaceGlobsResolve,
   checkSurfaceMap,
   checkTestPlan,
@@ -53,6 +54,7 @@ import {
   checkWorktreeStep0,
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
+  DOC_OWNERS_PATH,
   findTrancheSlug,
   isBriefShaped,
   isPrincipal,
@@ -645,6 +647,20 @@ export function readProjectPaths(root: string = repoRoot()): ProjectPath[] {
   }
 }
 
+/**
+ * `.vinaya/doc-owners`, read the same way `doc-coverage` reads it — a tree
+ * file, never the forge — for `checkSurfaceExcludesBoundDoc`. Absent ⇒
+ * `null`, the same dormancy value `evaluateC5`'s own caller passes.
+ */
+export function readDocOwnersContent(root: string = repoRoot()): string | null {
+  if (!root) return null
+  try {
+    return readFileSync(join(root, DOC_OWNERS_PATH), 'utf8')
+  } catch {
+    return null
+  }
+}
+
 const CHECK_ISSUE_CONTENT = 'issue-content'
 
 const ISSUE_CONTENT_RECOVERY = {
@@ -659,7 +675,9 @@ const ISSUE_CONTENT_RECOVERY = {
   partsCiteObjectives:
     'Fix the named Part to cite an objective id the `## Objectives` section actually defines, or add the missing objective, then re-run `{cmd}`.',
   docsWithinSurface:
-    'Move the named doc pointer to a path `## Surface`\'s `in:` globs actually cover (never widen the surface just to fit the pointer — that renders an unusable brief), or drop it from "Docs to keep coherent" if this task does not really keep it coherent, then re-run `{cmd}`.'
+    'Move the named doc pointer to a path `## Surface`\'s `in:` globs actually cover (never widen the surface just to fit the pointer — that renders an unusable brief), or drop it from "Docs to keep coherent" if this task does not really keep it coherent, then re-run `{cmd}`.',
+  surfaceExcludesBoundDoc:
+    'Either move the named `out:` glob so it no longer covers the bound document, or narrow the `in:` glob so it no longer reaches the doc-owners binding — the Issue cannot declare both at once. Then re-run `{cmd}`.'
 } as const
 
 export type IssueContentInput = {
@@ -670,6 +688,7 @@ export type IssueContentInput = {
   retryCommand: string
   issueNumber: number | null
   resolvesToFile: (glob: string) => boolean
+  docOwnersContent: string | null
 }
 
 /**
@@ -692,7 +711,8 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [checkRationaleNamesDocs(input.body).errors, 'rationaleNamesDocs'],
     [checkSurfaceGlobsResolve(input.body, input.resolvesToFile).errors, 'surfaceGlobsResolve'],
     [checkPartsCiteDefinedObjectives(input.body).errors, 'partsCiteObjectives'],
-    [checkDocsWithinSurface(input.body, input.issueNumber).errors, 'docsWithinSurface']
+    [checkDocsWithinSurface(input.body, input.issueNumber).errors, 'docsWithinSurface'],
+    [checkSurfaceExcludesBoundDoc(input.body, input.docOwnersContent).errors, 'surfaceExcludesBoundDoc']
   ]
   const errors: CheckError[] = []
   for (const [messages, kind] of findings) {
@@ -834,7 +854,8 @@ export function validateTaskIssue(
     projectPaths: readProjectPaths(),
     retryCommand,
     issueNumber,
-    resolvesToFile: (glob) => expandGlob(glob).length > 0
+    resolvesToFile: (glob) => expandGlob(glob).length > 0,
+    docOwnersContent: readDocOwnersContent()
   })
   if (contentErrors.length > 0) refuse(contentErrors)
 }
