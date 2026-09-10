@@ -183,6 +183,17 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'task status',
+    description:
+      'Every open task with a frozen brief, its pull request, and whether its loop is running, paused, or published',
+    flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1)' }],
+    details: [
+      'Read-only: one `gh issue list` for every open task Issue across every tranche (title/label resolved through the same `resolveTaskIssueRef` `list-tasks.ts` already uses), the open pull request per branch, and the driver pid record / pause record / publish effect markers under `<outboxRoot>/dev-review-loop/<task>/` — never a `ps` scan, never a re-parse of posted verdict comments to decide `published`.',
+      "`running` names the driver's pid (`review-validity-v1` task 7's pid record); `paused` names the reason from the pause record; `published` means the newest round's reviewer and security verdict effect markers both read `posted`; `no driver` is the fallback when none of the above holds."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'pr create',
     description: 'Open a pull request after full brief-schema validation',
     flags: [
