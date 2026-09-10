@@ -790,6 +790,33 @@ esac
   )
 }
 
+/**
+ * `findMilestoneForSlug`'s own repo-wide Milestone-list fetch
+ * (`milestones?state=all`) fails while the per-slug `--label` issue-list
+ * fetch (both `fetchTrancheIssuesAsync`'s async call and
+ * `findMilestoneForSlug`'s own sync one) keeps succeeding — isolates a
+ * forge failure on the SECOND of the two fetches a per-slug iteration
+ * makes, distinct from `installFakeStatusGh`'s "everything succeeds" and
+ * `installFake404StatusGh`'s "the single-Milestone GET fails" cases.
+ */
+function installFakeMilestoneListFailureGh(milestoneNumber: number, slug: string): void {
+  const { dir, log } = newFakeGhBinDir('status-milestone-list-fail')
+  binDir = dir
+  logPath = log
+  activateFakeGh(
+    dir,
+    `#!/usr/bin/env sh
+echo "$@" >> "${log}"
+case "$*" in
+  *"milestones/${milestoneNumber}"*) printf '%s\\n' '{"number":${milestoneNumber},"title":"x","state":"open","description":"Goal.\\n\\n### Tranche intents\\n- ${slug}: real one."}' ;;
+  *"milestones?state=all"*) echo "gh: network error" >&2; exit 1 ;;
+  *"--label vinaya/tranche:${slug}"*) printf '%s\\n' '[]' ;;
+  *) printf '%s\\n' '[]' ;;
+esac
+`
+  )
+}
+
 describe('vinaya milestone status', () => {
   let cwd: string
 
@@ -902,6 +929,43 @@ describe('vinaya milestone status', () => {
     const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
     expect(finding.check).toBe('milestone-status')
     expect(finding.message).toContain('999')
+  })
+
+  it("refuses cleanly — a structured CheckError, never an uncaught JS exception — when findMilestoneForSlug's own forge fetch fails mid-loop", () => {
+    installFakeMilestoneListFailureGh(50, 'a-slug')
+
+    const r = runCli(['milestone', 'status', '50'], cwd)
+
+    expect(r.status).toBe(1)
+    // `@attalabs/aeg-forge-state`'s own `run()`/`runAsync()` (`gh.ts`) set no
+    // `stdio` override on `execFileSync`/`execFile` — unlike this file's own
+    // `sh()` — so under Bun a failing `gh` call's raw stderr line ALSO
+    // reaches this process's real stderr (a separate, pre-existing gap in
+    // that shared primitive, out of this fix's scope: every caller of
+    // `findMilestoneForSlug`/`fetchTrancheIssuesAsync` inherits it, not just
+    // this command). What this fix actually guarantees — a well-formed
+    // `CheckError` JSON line rather than an uncaught exception's raw stack
+    // trace — is what this test asserts: find the one line that parses, not
+    // that it's the only line.
+    const jsonLine = r.stderr
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .find((line) => {
+        try {
+          JSON.parse(line)
+          return true
+        } catch {
+          return false
+        }
+      })
+    expect(jsonLine, `no CheckError JSON line found in stderr:\n${r.stderr}`).toBeDefined()
+    const finding = JSON.parse(jsonLine as string)
+    expect(finding.check).toBe('forge-fetch')
+    expect(finding.message).toContain('a-slug')
+    // No JS stack trace frame anywhere — the try/catch this test guards
+    // against a regression of must never let one escape.
+    expect(r.stderr).not.toContain('.ts:')
   })
 
   it('refuses when the number argument is missing or not digits', () => {

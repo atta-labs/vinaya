@@ -843,7 +843,18 @@ export async function milestoneStatusCommand(args: string[]): Promise<void> {
         )
       ])
     }
-    const milestoneFacts = findMilestoneForSlug(owner, repo, intent.slug)
+    let milestoneFacts: ReturnType<typeof findMilestoneForSlug>
+    try {
+      milestoneFacts = findMilestoneForSlug(owner, repo, intent.slug)
+    } catch (e) {
+      refuse([
+        makeCheckError(
+          'forge-fetch',
+          `could not derive tranche \`${intent.slug}\`'s Milestone facts from the forge: ${ghErrorDetail(e)}`,
+          `Check \`gh auth status\` and network, then re-run \`${RETRY_STATUS}\`.`
+        )
+      ])
+    }
     const tranche = trancheFromIssues(intent.slug, issues, milestoneFacts)
     rows.push({
       slug: intent.slug,
