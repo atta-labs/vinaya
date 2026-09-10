@@ -58,6 +58,8 @@ The same three states a tranche derives (`tranche-model.md` §11, one altitude d
 
 Nobody sets this by hand and nothing writes it back to the Milestone object — it's asked of the forge the same way every other altitude is.
 
+`vinaya milestone status <n>` is that ask, made concrete: for every `- <slug>: …` line in a Milestone's `### Tranche intents` section, it prints the slug, its derived lifecycle, and its labeled Issues' counts (`merged`/`open`/`not planned`) — read-only, nothing written. A slug with an intent line and zero labeled Issues yet prints `planned` with `0 issues`, per §1: a real, not-yet-started tranche, never an error.
+
 ### The trap this level actually has: a closed legacy Milestone with real work still under it
 
 `vinaya milestone adopt` closes the old one-tranche Milestone it retires — closed, never deleted, so the provenance survives. The closed Milestone still legacy-title-matches its slug forever (§1's exception). Found live, `0.19.1`: a reader that trusts a closed legacy Milestone's own `state` unconditionally reports the tranche `complete` even when its real, still-open Issues have already moved to a new Milestone via `adopt` — the tranche's true lifecycle lives in the label population, not in the Milestone object `adopt` walked away from. The fix: when a legacy-matched Milestone is closed AND its slug's labeled Issues are non-empty, derive from those Issues, not from the closed Milestone's `state`. An empty label population under a closed legacy Milestone still means what it always meant — a genuinely historical tranche, or one nobody has adopted away from yet.

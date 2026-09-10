@@ -15,6 +15,7 @@ const {
   listActiveTrancheSlugs,
   listArchivedTrancheSlugs,
   intentGoalForSlug,
+  intentLines,
   milestoneLifecycleFromTrancheLifecycles,
   releaseFromDescription,
   resolveMilestoneAttachTarget
@@ -311,6 +312,49 @@ describe('intentGoalForSlug', () => {
   it('returns empty string when the section exists but no line matches this slug', () => {
     const description = ['Goal.', '', '### Tranche intents', '- other-slug: unrelated.'].join('\n')
     expect(intentGoalForSlug(description, 'a-slug')).toBe('')
+  })
+})
+
+describe('intentLines', () => {
+  it('returns an empty array when there is no Tranche intents section', () => {
+    expect(intentLines('Just a goal, no intents.')).toEqual([])
+  })
+
+  it('returns every bullet, in source order, lowercasing the slug', () => {
+    const description = [
+      'Ship the milestone model.',
+      '',
+      '### Tranche intents',
+      '- plan-brief-v1: the brief is a function of the task Issue. (complete 2026-09-09)',
+      '- Review-Validity-v1: a verdict binds to everything it judged.'
+    ].join('\n')
+    expect(intentLines(description)).toEqual([
+      { slug: 'plan-brief-v1', goal: 'the brief is a function of the task Issue. (complete 2026-09-09)' },
+      { slug: 'review-validity-v1', goal: 'a verdict binds to everything it judged.' }
+    ])
+  })
+
+  it("skips a non-bullet line rather than refusing — malformed-body rejection is checkMilestoneShape's job, not this reader's", () => {
+    const description = ['Goal.', '', '### Tranche intents', 'not a bullet at all', '- a-slug: real one.'].join('\n')
+    expect(intentLines(description)).toEqual([{ slug: 'a-slug', goal: 'real one.' }])
+  })
+
+  it('returns an empty array when the section heading exists but declares no bullets', () => {
+    const description = ['Goal.', '', '### Tranche intents', '', '## Next section', 'prose'].join('\n')
+    expect(intentLines(description)).toEqual([])
+  })
+
+  it("stops at the next heading, matching intentGoalForSlug's own section boundary", () => {
+    const description = [
+      'Goal.',
+      '',
+      '### Tranche intents',
+      '- a-slug: in section.',
+      '',
+      '## Not intents',
+      '- b-slug: outside the section, must not be read.'
+    ].join('\n')
+    expect(intentLines(description)).toEqual([{ slug: 'a-slug', goal: 'in section.' }])
   })
 })
 

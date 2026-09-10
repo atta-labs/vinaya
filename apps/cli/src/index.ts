@@ -22,7 +22,8 @@ import {
   milestoneAdoptCommand,
   milestoneCloseCommand,
   milestoneCreateCommand,
-  milestoneEditCommand
+  milestoneEditCommand,
+  milestoneStatusCommand
 } from './commands/milestone.js'
 import { newCheckCommand } from './commands/new-check.js'
 import { newNoopCheckCommand } from './commands/new-noop-check.js'
@@ -216,8 +217,12 @@ try {
         await milestoneEditCommand(rest)
       } else if (subcommand === 'close') {
         await milestoneCloseCommand(rest)
+      } else if (subcommand === 'status') {
+        await milestoneStatusCommand(rest)
       } else {
-        console.error(`Unknown 'milestone' subcommand: ${subcommand ?? '(none)'} (expected create/adopt/edit/close)`)
+        console.error(
+          `Unknown 'milestone' subcommand: ${subcommand ?? '(none)'} (expected create/adopt/edit/close/status)`
+        )
         process.exit(2)
       }
       break

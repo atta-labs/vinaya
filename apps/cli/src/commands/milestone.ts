@@ -18,7 +18,15 @@ import {
   checkAdoptable,
   checkMilestoneShape
 } from '@attalabs/aeg-core'
-import { checkMilestoneAttachment, resolveMilestoneAttachTarget, trancheLabel } from '@attalabs/aeg-forge-state'
+import {
+  checkMilestoneAttachment,
+  fetchTrancheIssuesAsync,
+  findMilestoneForSlug,
+  intentLines,
+  resolveMilestoneAttachTarget,
+  trancheFromIssues,
+  trancheLabel
+} from '@attalabs/aeg-forge-state'
 import { detectGitRepo } from '../lib/detect.js'
 import { printJson } from '../lib/envelope.js'
 import {
@@ -36,6 +44,7 @@ const RETRY_CREATE = 'vinaya milestone create --title <title> --body-file <path>
 const RETRY_ADOPT = 'vinaya milestone adopt --target <title> --slug <slug> [--slug <slug> ...]'
 const RETRY_EDIT = 'vinaya milestone edit <n> --body-file <path>'
 const RETRY_CLOSE = 'vinaya milestone close --slug <slug>'
+const RETRY_STATUS = 'vinaya milestone status <n>'
 
 function sh(args: string[], input?: string): string {
   // `env: process.env` is explicit, not redundant — same reason `waiver.ts`'s
@@ -75,6 +84,21 @@ function ghErrorDetail(e: unknown): string {
   const stderr = (e as { stderr?: Buffer | string })?.stderr
   const text = typeof stderr === 'string' ? stderr : stderr?.toString()
   return (text && text.trim().length > 0 ? text : ((e as Error)?.message ?? 'unknown error')).trim()
+}
+
+/**
+ * Is this failure just "no such Milestone", not a genuine forge-unreachable
+ * error? Same whole-message-plus-stderr scan `lib/config.ts`'s
+ * `isMissingFileError` already documents the need for: `execFileSync` throws
+ * with `message = "Command failed: <argv>\n<stderr>"`, so `gh`'s real `Not
+ * Found (HTTP 404)` text is never on line 1.
+ */
+function is404(e: unknown): boolean {
+  const stderr = (e as { stderr?: Buffer | string })?.stderr
+  const haystack = [(e as Error)?.message ?? '', typeof stderr === 'string' ? stderr : (stderr?.toString() ?? '')].join(
+    '\n'
+  )
+  return /\b404\b|not found/i.test(haystack)
 }
 
 /**
@@ -696,4 +720,156 @@ export async function milestoneCloseCommand(args: string[]): Promise<void> {
   const closed = JSON.parse(out) as { number: number; html_url: string }
   if (json) printJson({ validated: true, written: true, number: closed.number, url: closed.html_url })
   else process.stdout.write(`${closed.html_url}\n`)
+}
+
+// ---------------------------------------------------------------------------
+// `vinaya milestone status` — read-only: for each `- <slug>: …` line in a
+// Milestone's `### Tranche intents` section, print the tranche's lifecycle
+// and issue counts, derived from the forge. Nothing is written anywhere.
+//
+// The lifecycle/goal half reuses the exact composition
+// `deriveTrancheFromForge` performs (`findMilestoneForSlug` +
+// `fetchTrancheIssuesAsync` + `trancheFromIssues`, all already exported)
+// rather than calling that wrapper directly — calling it directly would
+// still leave this command needing its own second fetch of the same
+// label's Issues to build the merged/not-planned breakdown, since a `Task`
+// carries no close-reason field. Composing the same three primitives by
+// hand gets both halves from the ONE Issue fetch.
+//
+// The merged/not-planned breakdown itself reads GitHub's native
+// `stateReason` off the same labeled-Issue fetch — not
+// `fetchForgeFacts`/`deriveTranche` (`@attalabs/aeg-core`)'s heavier,
+// PR-merge-verifying dispatch-status pipeline, which queries
+// `@octokit/graphql` directly over HTTP rather than through a stubbable
+// `gh` binary (documented in `apps/cli/tests/commands/brief-render.test.ts`
+// and `apps/cli/tests/checks/branch-topology.test.ts`) and so cannot be
+// exercised by this file's fake-`gh`-on-PATH unit tests at all. "merged"
+// here means "closed, not explicitly `NOT_PLANNED`" — the same honest
+// terminal reading `derive-tranche.ts`'s own status derivation gives a
+// closed Issue with no verified merged PR — not proof a PR merged.
+// ---------------------------------------------------------------------------
+
+type StatusIssueCounts = { merged: number; open: number; notPlanned: number }
+
+function tallyIssueCounts(issues: Array<{ state: 'OPEN' | 'CLOSED'; stateReason?: string | null }>): StatusIssueCounts {
+  const counts: StatusIssueCounts = { merged: 0, open: 0, notPlanned: 0 }
+  for (const issue of issues) {
+    if (issue.state === 'OPEN') counts.open++
+    else if (issue.stateReason === 'NOT_PLANNED') counts.notPlanned++
+    else counts.merged++
+  }
+  return counts
+}
+
+function formatIssueCounts(total: number, counts: StatusIssueCounts): string {
+  if (total === 0) return '0 issues'
+  const parts: string[] = []
+  if (counts.merged > 0) parts.push(`${counts.merged} merged`)
+  if (counts.open > 0) parts.push(`${counts.open} open`)
+  if (counts.notPlanned > 0) parts.push(`${counts.notPlanned} not planned`)
+  return parts.length > 0 ? `${total} issues · ${parts.join(' · ')}` : `${total} issues`
+}
+
+/** `<n>` is the sole positional argument — digits only, same discipline `extractMilestoneNumber` uses. */
+function extractStatusNumber(rest: string[]): string | null {
+  const numberArg = rest[0]
+  if (!numberArg || numberArg.startsWith('-') || !/^\d+$/.test(numberArg)) return null
+  return numberArg
+}
+
+export async function milestoneStatusCommand(args: string[]): Promise<void> {
+  const json = args.includes('--json')
+  const rest = args.filter((a) => a !== '--json')
+
+  const numberArg = extractStatusNumber(rest)
+  if (!numberArg) {
+    refuse([
+      makeCheckError(
+        'forge-args',
+        '`vinaya milestone status` requires the target Milestone number (digits only) as the first argument.',
+        `Pass the Milestone number, e.g. \`${RETRY_STATUS}\`.`
+      )
+    ])
+  }
+
+  const repoFlag = await resolveRepoFlagOrRefuse(RETRY_STATUS)
+  const [owner, repo] = repoFlag.split('/') as [string, string]
+
+  let milestone: GhMilestoneEntry
+  try {
+    milestone = shJson<GhMilestoneEntry>(['gh', 'api', `repos/${repoFlag}/milestones/${numberArg}`])
+  } catch (e) {
+    if (is404(e)) {
+      refuse([
+        makeCheckError(
+          'milestone-status',
+          `Milestone #${numberArg} is not an open-or-closed Milestone in ${repoFlag}.`,
+          `Confirm the number with \`gh api repos/${repoFlag}/milestones\`, then re-run \`${RETRY_STATUS}\`.`
+        )
+      ])
+    }
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `could not fetch Milestone #${numberArg} from the forge: ${ghErrorDetail(e)}`,
+        `Check \`gh auth status\` and network, then re-run \`${RETRY_STATUS}\`.`
+      )
+    ])
+  }
+
+  const header = { number: milestone.number, title: milestone.title, state: milestone.state }
+  const intents = intentLines(milestone.description ?? '')
+
+  if (intents.length === 0) {
+    if (json) printJson({ milestone: header, tranches: [] })
+    else {
+      process.stdout.write(`${header.title} (#${header.number}, ${header.state})\n`)
+      process.stdout.write('no tranche intents declared\n')
+    }
+    return
+  }
+
+  const rows: Array<{ slug: string; lifecycle: string; issues: number; counts: StatusIssueCounts }> = []
+  for (const intent of intents) {
+    let issues: Awaited<ReturnType<typeof fetchTrancheIssuesAsync>>
+    try {
+      issues = await fetchTrancheIssuesAsync(owner, repo, intent.slug)
+    } catch (e) {
+      refuse([
+        makeCheckError(
+          'forge-fetch',
+          `could not fetch tranche \`${intent.slug}\`'s Issues from the forge: ${ghErrorDetail(e)}`,
+          `Check \`gh auth status\` and network, then re-run \`${RETRY_STATUS}\`.`
+        )
+      ])
+    }
+    let milestoneFacts: ReturnType<typeof findMilestoneForSlug>
+    try {
+      milestoneFacts = findMilestoneForSlug(owner, repo, intent.slug)
+    } catch (e) {
+      refuse([
+        makeCheckError(
+          'forge-fetch',
+          `could not derive tranche \`${intent.slug}\`'s Milestone facts from the forge: ${ghErrorDetail(e)}`,
+          `Check \`gh auth status\` and network, then re-run \`${RETRY_STATUS}\`.`
+        )
+      ])
+    }
+    const tranche = trancheFromIssues(intent.slug, issues, milestoneFacts)
+    rows.push({
+      slug: intent.slug,
+      lifecycle: tranche.lifecycle,
+      issues: issues.length,
+      counts: tallyIssueCounts(issues)
+    })
+  }
+
+  if (json) {
+    printJson({ milestone: header, tranches: rows })
+  } else {
+    process.stdout.write(`${header.title} (#${header.number}, ${header.state})\n`)
+    for (const row of rows) {
+      process.stdout.write(`${row.slug} ${row.lifecycle} ${formatIssueCounts(row.issues, row.counts)}\n`)
+    }
+  }
 }

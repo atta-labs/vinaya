@@ -133,6 +133,17 @@ export type GhIssue = {
   labels: Array<{ name: string }>
   /** GitHub-native milestone attachment, or `null` when unattached (aeg-review-gate-v1 task 1 follow-up). */
   milestone: { title: string } | null
+  /**
+   * GitHub's native close reason (`vinaya milestone status`) — optional
+   * (unlike `fetch-forge-facts.ts`'s own `IssueNode.stateReason`, which is
+   * required because that GraphQL query always asks for it): most existing
+   * callers of this type never request it and their fixtures predate this
+   * field, so an optional field keeps every one of them assignable to
+   * `GhIssue` unchanged. `null` while open; `undefined` only for a value that
+   * predates this field (never produced by `run`/`runAsync` themselves, which
+   * always request it below).
+   */
+  stateReason?: 'COMPLETED' | 'NOT_PLANNED' | 'REOPENED' | null
 }
 
 /** Single source for the `gh issue list` arg vector shared by the sync and
@@ -148,7 +159,7 @@ function issueListByLabelArgs(owner: string, repo: string, label: string): strin
     '--state',
     'all',
     '--json',
-    'number,title,body,state,labels,milestone',
+    'number,title,body,state,labels,milestone,stateReason',
     '--limit',
     '200'
   ]

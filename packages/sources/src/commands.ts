@@ -360,6 +360,15 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'milestone status',
+    description: "Print each of a Milestone's declared tranche intents with its derived lifecycle and issue counts",
+    flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1)' }],
+    details: [
+      "Read-only — writes nothing. For each `- <slug>: …` line in the Milestone's `### Tranche intents` section, prints the tranche's lifecycle (`planned`/`active`/`complete`) and its labeled Issues' counts (merged, open, not planned), all derived from the forge. Refuses if `<n>` isn't a real Milestone in this repo, or if the forge is unreachable."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'review status',
     description: "Print the review loop's own state for a PR, and its branch's distance from the base",
     details: [
