@@ -1,5 +1,26 @@
 # @atta/vinaya-sources
 
+## 0.27.0
+
+### Minor Changes
+
+- 6266fea: Adds `vinaya milestone status <n>` — read-only, prints each of a Milestone's declared `### Tranche intents` slugs with its forge-derived lifecycle (`planned`/`active`/`complete`) and its labeled Issues' counts (merged, open, not planned). `@attalabs/aeg-forge-state` gains `intentLines`, the enumeration sibling of `intentGoalForSlug`, and an optional `stateReason` field on `GhIssue`/`gh issue list`'s requested JSON fields.
+- 24953c1: Adds `vinaya task brief <tranche> <n>`, preparation only: it renders and freezes the task's brief as the same `aeg:brief:v1` Issue comment `task dispatch` posts, and starts no agent under any circumstances. `task dispatch` is deprecated in favor of `task brief` (preparation only) and the forthcoming `task run` (the full unattended loop), kept for a documented compatibility window with identical observable behaviour.
+- 2e3c92d: Adds `vinaya task run <tranche> <n> --agent <claude|codex|gemini>` — one command from a planned Issue to a reviewed pull request, exactly one developer started. Composes `task brief`'s own preparation (starts no agent) with `dev-review-loop` (whose own round 1 reads the frozen brief and is the only place a developer is ever dispatched from a fresh task). A brief already frozen on the Issue is reused, not re-posted; a task whose Issue refuses preparation is refused before any agent starts; a frozen brief whose developer branch already has an open pull request refuses a second start. Exit `0` with the PR URL on publish, exit `1` with the exact `vinaya dev-review-loop --resume <pr>` command on pause, exit `2` on a usage/argv error, exit `3` on any other failure.
+
+### Patch Changes
+
+- Updated dependencies [6266fea]
+- Updated dependencies [047b061]
+- Updated dependencies [a08c822]
+- Updated dependencies [ef00bec]
+- Updated dependencies [50791c2]
+- Updated dependencies [5435bb8]
+- Updated dependencies [9fee599]
+  - @attalabs/aeg-forge-state@0.27.0
+  - @attalabs/aeg-core@0.27.0
+  - @attalabs/aeg-types@0.27.0
+
 ## 0.26.0
 
 ### Patch Changes
