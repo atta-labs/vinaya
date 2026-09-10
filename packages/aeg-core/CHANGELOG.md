@@ -1,5 +1,22 @@
 # @atta/aeg-core
 
+## 0.27.0
+
+### Minor Changes
+
+- 9fee599: `vinaya task brief` refuses to render when the checkout is behind the fetched remote default branch or dirty on a file the brief pins, naming the drift; the frozen brief's own §2 now states the source revision its pins were computed from, and the dev-review-loop's reviewer prompt names that revision as a fact. `vinaya task brief <tranche> <n> --supersede --reason <text>` appends a new, higher-versioned frozen brief comment naming its predecessor and the reason — the original is never edited or deleted, and every reader of "the frozen brief" (the loop, `check-brief-shape`) resolves the newest version via `@attalabs/aeg-core`'s new `resolveNewestFrozenBrief`.
+
+### Patch Changes
+
+- 047b061: A pull request with no linked Issue at or above the objectives cutover, and no `## Objectives` section of its own, is now judged the same way by every gate: `vinaya review post` renders a verdict with no objectives block and no `Objectives version:` line instead of refusing, exactly matching what `vinaya check review-gate` already accepted. `body-bare-digits` now treats `O<n>.` list-marker prefixes under a pull request's own `## Objectives` heading as structure, not prose, the same way it already does for an Issue body, so a pull request may carry its own objectives list. Both the gate and `review post` now decide a pull request's objectives source (Issue, PR body, or none) through one new exported `@attalabs/aeg-core` function, `resolveObjectivesSource`.
+- a08c822: `devReviewLoop` (`@attalabs/vinaya`) now sources a task's objectives from the newest principal-authored `vinaya issue objectives edit` comment when one exists, and from the principal-authored frozen brief otherwise — never the live Issue body — with a version computed the same way the merge gate computes its own, so a loop-published verdict now carries a real `Objectives version:` line and `OBJECTIVES:` block instead of a hardcoded `null`, and passes the gate on a post-cutover task. If the objectives version changes between dispatching a round's reviewers and their verdicts coming back, the round's verdicts are discarded — never held, never published — and the loop pauses with a new `'objectives_changed'` pause reason (`@attalabs/aeg-core`) naming the old version, the new version, and the edit command that caused it.
+- ef00bec: `devReviewLoop` (`@attalabs/vinaya`) now tells a review dispatch that wrote nothing apart from one that wrote an empty, clean `findings.txt`: a work directory still missing `findings.txt`, `report.txt`, or (on a task with objectives) `objectives.txt` after a fresh dispatch is retried once into a fresh work directory, and a second miss pauses the loop through a new `'infrastructure'` pause reason (`@attalabs/aeg-core`) naming the role and the missing artifact — never held or published as a verdict. The reviewer/security dispatch prompt now names `objectives.txt` whenever the task carries objectives.
+- 50791c2: Every rendered verdict (`vinaya review post`, and `devReviewLoop`'s own published verdicts) now carries a `Ruling ordinal: <k>` line — `0` when the PR had no principal ruling at cast time, rendered unconditionally, never omitted the way `Objectives version:` is pre-cutover — read from its own first-seven-line window by the shared extractors. `checkReviewGate` (`@attalabs/aeg-core`) treats a verdict as clean only when its ruling ordinal covers the PR's current newest one, naming the newer ruling when it doesn't: a `vinaya pr rule` ruling posted after approval now turns the merge gate red until reviewers re-cast against it. If a ruling lands between a `dev-review-loop` round's reviewer dispatch and its verdicts coming back, the round's verdicts are discarded — never held, never published — and the loop pauses with a new `'ruling_posted'` pause reason (`@attalabs/aeg-core`) naming the old ordinal, the new ordinal, and the ruling's marker identifier.
+- 5435bb8: `vinaya issue create` and `vinaya issue edit` now refuse a task Issue whose `## Surface` `out:` list excludes a document `.vinaya/doc-owners` binds to a path its `in:` list covers, naming the binding and the two contradicting lines — the same predicate also runs as coherence check R2 over open task Issues, so an Issue written before this gate is reported instead of silently failing at the Developer's first commit.
+- Updated dependencies [6266fea]
+  - @attalabs/aeg-forge-state@0.27.0
+  - @attalabs/aeg-types@0.27.0
+
 ## 0.26.0
 
 ### Minor Changes
