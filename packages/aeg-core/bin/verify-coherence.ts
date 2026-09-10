@@ -55,6 +55,7 @@ import {
   checkL5,
   checkManifestValidity,
   checkR1,
+  checkR2,
   checkT1,
   checkT2,
   checkT3,
@@ -83,6 +84,17 @@ function readRegisteredProjectNames(): string[] {
   const abs = join(REPO_ROOT, '.vinaya/projects.md')
   if (!existsSync(abs)) return []
   return parseRegistry(readFileSync(abs, 'utf8')).map((p) => p.name)
+}
+
+/**
+ * `.vinaya/doc-owners`, read the same way `checkM1M2M3` reads it — a tree
+ * file, absolute-joined against `REPO_ROOT` — for R2's
+ * `checkSurfaceExcludesBoundDoc` half. Absent ⇒ `null`, same dormancy value
+ * `checkM1M2M3`'s own read passes to `checkManifestValidity`.
+ */
+function readDocOwnersContent(): string | null {
+  const abs = join(REPO_ROOT, DOC_OWNERS_PATH)
+  return existsSync(abs) ? readFileSync(abs, 'utf8') : null
 }
 
 /**
@@ -824,6 +836,7 @@ export async function runCoherenceChecks(
     )
   }
   results.push(checkR1(issuesBySlug, R1_GRANDFATHERED_ISSUES, registeredNames))
+  results.push(checkR2(issuesBySlug, readDocOwnersContent()))
 
   // D1 check
   results.push(checkD1(availableEntries, issueToEntry, taskToEntry))
