@@ -15,6 +15,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
 
 export type Objective = { id: string; text: string }
 
@@ -23,6 +24,30 @@ export type ParsedObjectives = { ok: true; objectives: Objective[] } | { ok: fal
 const HEADING_RE = /^##[ \t]*Objectives[ \t]*$/im
 const NEXT_HEADING_RE = /^##[ \t]/m
 const OBJECTIVE_LINE_RE = /^O(\d+)\.[ \t]*(.*)$/
+
+/**
+ * `body` with every fenced/inline code span and collapsed `<details>` block
+ * blanked to same-length filler — index-preserving, so a position found here
+ * maps 1:1 onto `body` itself. Composed as `maskDetailsBlocks(maskCode(body))`
+ * per `maskDetailsBlocks`'s own documented call order (`strip-code.ts`).
+ *
+ * Every heading search in this module runs against this masked view, never
+ * the raw body: a pull request following this repo's own deliverable
+ * template (`aeg-root/templates/pr-report-template.md`) pastes the full,
+ * frozen brief — which, for a task with `O<n>.` objectives, always carries
+ * its OWN `## Objectives` heading — inside a collapsed `<details>`
+ * reference-copy block below the live report. Searching the raw body let
+ * that reference-copy heading be mistaken for a live objectives section
+ * (found live, security review: `hasObjectivesHeading`/`resolveObjectivesSource`
+ * returned true/`{kind:'body'}` for a no-Issue PR carrying only the
+ * reference copy, and `objectivesOf` then failed to parse the `</details>`
+ * line it hit, refusing a verdict `review post` should have rendered with no
+ * objectives block at all). One masked view, used everywhere this module
+ * looks for a heading, closes the class rather than the one instance.
+ */
+function maskedForHeadingSearch(body: string): string {
+  return maskDetailsBlocks(maskCode(body))
+}
 
 /**
  * True iff `text` contains a backticked span with a `/` inside it — one
@@ -77,10 +102,11 @@ function wordCount(text: string): number {
  * can never disagree on where the section starts or ends.
  */
 export function objectivesSectionBounds(body: string): { start: number; end: number } | null {
-  const heading = HEADING_RE.exec(body)
+  const masked = maskedForHeadingSearch(body)
+  const heading = HEADING_RE.exec(masked)
   if (!heading) return null
   const start = heading.index + heading[0].length
-  const afterHeading = body.slice(start)
+  const afterHeading = masked.slice(start)
   const next = NEXT_HEADING_RE.exec(afterHeading)
   return { start, end: next ? start + next.index : body.length }
 }
@@ -101,7 +127,7 @@ function objectivesSectionText(body: string): string | null {
  * `ok: false`.
  */
 export function hasObjectivesHeading(body: string): boolean {
-  return HEADING_RE.test(body)
+  return HEADING_RE.test(maskedForHeadingSearch(body))
 }
 
 /**

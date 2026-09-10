@@ -114,6 +114,84 @@ describe('hasObjectivesHeading', () => {
   it('is false for a body with no heading at all', () => {
     expect(hasObjectivesHeading('## Summary\n\nNo objectives here.\n')).toBe(false)
   })
+
+  it('is false when the only heading is inside a collapsed <details> reference-copy block (round 2 review, BLOCKER)', () => {
+    const body = [
+      '## Scope',
+      '',
+      'No live objectives here — just the report.',
+      '',
+      '<details>',
+      '<summary>Full brief (reference copy)</summary>',
+      '',
+      '## Objectives',
+      '',
+      'O1. This is quoted history, not a live claim.',
+      '',
+      '</details>'
+    ].join('\n')
+    expect(hasObjectivesHeading(body)).toBe(false)
+  })
+
+  it('is false when the only heading is inside a fenced code block', () => {
+    const body = ['## Scope', '', '```', '## Objectives', '', 'O1. Example only.', '```'].join('\n')
+    expect(hasObjectivesHeading(body)).toBe(false)
+  })
+
+  it('is still true for a real heading that sits ALONGSIDE a decoy inside <details>', () => {
+    const body = [
+      '## Objectives',
+      '',
+      'O1. The real one.',
+      '',
+      '<details>',
+      '<summary>Full brief (reference copy)</summary>',
+      '',
+      '## Objectives',
+      '',
+      'O1. The decoy.',
+      '',
+      '</details>'
+    ].join('\n')
+    expect(hasObjectivesHeading(body)).toBe(true)
+  })
+})
+
+describe('objectivesSectionBounds — <details>/code masking (round 2 review, BLOCKER)', () => {
+  it('finds the real section, not a decoy inside a collapsed <details> block that comes first', () => {
+    const body = [
+      '<details>',
+      '<summary>Full brief (reference copy)</summary>',
+      '',
+      '## Objectives',
+      '',
+      'O1. The decoy, listed first in the raw body.',
+      '',
+      '</details>',
+      '',
+      '## Objectives',
+      '',
+      'O1. The real one.'
+    ].join('\n')
+    const bounds = objectivesSectionBounds(body) as { start: number; end: number }
+    expect(body.slice(bounds.start, bounds.end).trim()).toBe('O1. The real one.')
+  })
+
+  it('returns null, never the decoy, when the only heading is inside <details>', () => {
+    const body = [
+      '## Scope',
+      '',
+      '<details>',
+      '<summary>Full brief (reference copy)</summary>',
+      '',
+      '## Objectives',
+      '',
+      'O1. Quoted history.',
+      '',
+      '</details>'
+    ].join('\n')
+    expect(objectivesSectionBounds(body)).toBeNull()
+  })
 })
 
 describe('objectivesVersion', () => {
@@ -214,5 +292,23 @@ describe('resolveObjectivesSource', () => {
 
   it('no Issue, no heading — resolves to none', () => {
     expect(resolveObjectivesSource('nothing here.', null, CUTOVER)).toEqual({ kind: 'none' })
+  })
+
+  it('no Issue, only a collapsed <details> reference-copy heading — resolves to none, not body (round 2 review, BLOCKER)', () => {
+    const body = [
+      '## Scope',
+      '',
+      'No live objectives here — just the report.',
+      '',
+      '<details>',
+      '<summary>Full brief (reference copy)</summary>',
+      '',
+      '## Objectives',
+      '',
+      'O1. Quoted history from the frozen brief, not a live claim.',
+      '',
+      '</details>'
+    ].join('\n')
+    expect(resolveObjectivesSource(body, null, CUTOVER)).toEqual({ kind: 'none' })
   })
 })
