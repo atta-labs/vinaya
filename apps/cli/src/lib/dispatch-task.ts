@@ -5,10 +5,11 @@
  * see its own doc comment.
  *
  * `dispatchTask` composes `prepareTask` with the existing developer-start
- * half: with `--agent` and `dispatchRole` available, it starts the Developer
- * through `dispatchRole`; otherwise it prints the brief and the manual
- * dispatch instruction. `@deprecated` in favor of `task brief`
- * (`prepareTask` alone) and `task run` (the future unattended loop).
+ * half: with `--agent` given, it starts the Developer through `dispatchRole`
+ * (`./dispatch.js`, a static import — there is no fallback path; a build
+ * that cannot reach `dispatchRole` fails to compile). `@deprecated` in favor
+ * of `task brief` (`prepareTask` alone) and `task run` (the future
+ * unattended loop).
  *
  * The frozen comment is never edited or deleted (task 4, Issue
  * #483, O3): a plain call refuses a second post on the same Issue, naming
@@ -37,7 +38,7 @@ import {
   parseRationaleFields,
   resolveNewestFrozenBrief
 } from '@attalabs/aeg-core'
-import { isAgentClass, resolveClassModel, type AgentClass } from './dispatch.js'
+import { dispatchRole, isAgentClass, resolveClassModel, type AgentClass } from './dispatch.js'
 import { assembleAndRenderBrief } from './brief-assembly.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { currentGhLogin, postMarkedComment } from './forge-write.js'
@@ -189,50 +190,6 @@ function resolveModelForDispatch(
  */
 function findExistingFrozenBrief(n: number): (IssueComment & { version: number }) | null {
   return resolveNewestFrozenBrief(fetchIssueComments(n), principalAllowlist())
-}
-
-/**
- * Mirrors `dispatch.ts`'s real `DispatchOpts` — `promptFile` is REQUIRED
- * there, not optional: found live reviewing this
- * exact task, the first-cut type here omitted it entirely, a mismatch `tsc`
- * cannot catch across a dynamic import resolved by a runtime-built
- * specifier (see `resolveDispatchRole` below). `promptFile` is unused by
- * any vendor's invocation today per that file's own doc comment, but the
- * field is still required by the type this dynamically-loaded function
- * actually exports, so a real value is always supplied — see
- * `withPromptFile`.
- */
-type DispatchRoleOpts = { task: number; promptFile: string; model?: string }
-type DispatchRoleFn = (role: string, agent: DispatchAgent, prompt: string, opts: DispatchRoleOpts) => Promise<unknown>
-
-/**
- * `apps/cli/src/lib/dispatch.ts`'s `dispatchRole` export is a soft
- * dependency: it may not exist yet, or may exist without this export. A
- * dynamic import that fails to resolve is caught and treated as "not
- * available", never as a hard error — the whole point of the soft edge.
- *
- * The specifier is built at runtime, not written as a string literal
- * `import()` argument: a literal specifier is statically resolved by
- * `tsc`, which fails the whole build while `dispatch.ts` does not yet
- * exist. A variable specifier is opaque to that static resolution, exactly
- * as this soft dependency needs.
- */
-async function resolveDispatchRole(): Promise<DispatchRoleFn | null> {
-  const dispatchModulePath = './dispatch.js'
-  try {
-    const mod = (await import(dispatchModulePath)) as { dispatchRole?: unknown }
-    return typeof mod.dispatchRole === 'function' ? (mod.dispatchRole as DispatchRoleFn) : null
-  } catch {
-    return null
-  }
-}
-
-function printManualDispatchInstruction(tranche: string, n: number, agent: DispatchAgent): void {
-  process.stdout.write(
-    '\nvinaya task dispatch: `dispatchRole` is not available yet (apps/cli/src/lib/dispatch.ts has no such export) — the brief above is posted; start the developer yourself:\n\n' +
-      `  vinaya dispatch developer --agent ${agent} --tranche ${tranche} --task ${n}\n\n` +
-      'Once `dispatchRole` ships, the same `--agent` flag on `task dispatch` will start it automatically.\n'
-  )
 }
 
 /**
@@ -422,7 +379,7 @@ export type DispatchTaskDeps = {
   assembleAndRenderBrief: typeof assembleAndRenderBrief
   findExistingFrozenBrief: (n: number) => (IssueComment & { version: number }) | null
   postMarkedComment: typeof postMarkedComment
-  resolveDispatchRole: () => Promise<DispatchRoleFn | null>
+  dispatchRole: typeof dispatchRole
   resolveDispatchAuthorization: () => DispatchAuthorization
   resolveModelForDispatch: (
     agent: DispatchAgent,
@@ -435,7 +392,7 @@ const defaultDeps: DispatchTaskDeps = {
   assembleAndRenderBrief,
   findExistingFrozenBrief,
   postMarkedComment,
-  resolveDispatchRole,
+  dispatchRole,
   resolveDispatchAuthorization,
   resolveModelForDispatch
 }
@@ -444,10 +401,9 @@ const defaultDeps: DispatchTaskDeps = {
  * O3 — `task dispatch`'s exact current behaviour,
  * rewritten as a thin composition of `prepareTask` (O1, above) plus the
  * existing developer-start half: renders and posts the frozen brief, then
- * starts the Developer when `--agent` is given and `dispatchRole` is
- * available. Dispatching at all — posting the brief, with or without
- * `--agent` — is Principal-only; see `resolveDispatchAuthorization`'s own
- * doc comment.
+ * starts the Developer through `dispatchRole` whenever `--agent` is given.
+ * Dispatching at all — posting the brief, with or without `--agent` — is
+ * Principal-only; see `resolveDispatchAuthorization`'s own doc comment.
  *
  * @deprecated in favor of `task brief` (preparation only) and `task run`
  * (preparation, then the full unattended loop) — kept for a documented
@@ -468,7 +424,6 @@ export async function dispatchTask(
   // permanently undispatchable. Resolving inside the hook means a bad model
   // refuses with nothing yet written to the forge — the same guarantee the
   // un-extracted function used to provide directly.
-  let dispatchRole: DispatchRoleFn | null = null
   let resolvedModel: string | undefined
 
   const prep = await prepareTask(
@@ -480,39 +435,32 @@ export async function dispatchTask(
       resolveDispatchAuthorization: deps.resolveDispatchAuthorization,
       beforePost: agent
         ? async (issue) => {
-            dispatchRole = await deps.resolveDispatchRole()
-            if (dispatchRole) {
-              // O3: an explicit `--model` always wins; absent that, resolved
-              // from this task's own Issue rationale against this vendor's
-              // own class-to-model table — `undefined` either way falls
-              // through to `dispatchRole`'s existing "no --model flag added"
-              // behavior.
-              resolvedModel = deps.resolveModelForDispatch(agent, issue, model)
-            }
+            // O3: an explicit `--model` always wins; absent that, resolved
+            // from this task's own Issue rationale against this vendor's
+            // own class-to-model table — `undefined` either way falls
+            // through to `dispatchRole`'s existing "no --model flag added"
+            // behavior.
+            resolvedModel = deps.resolveModelForDispatch(agent, issue, model)
           }
         : undefined
     }
   )
 
   if (agent) {
-    if (dispatchRole) {
-      // O5, Issue #456: `prep.issue`, never `n` — `dispatchRole`'s own `task`
-      // opt is the resolved forge Issue number end to end (`VINAYA_TASK`
-      // parses to `subject.issue`, `packages/aeg-core/src/log/envelope.ts`;
-      // its resume-record key is `issue<n>`, `dispatch.ts`'s own
-      // `resumeRecordPathFor`) — the same live-bug shape the comment above
-      // already fixed for posting now applies here too: two tranches'
-      // task-N runs on different Issues must never share one record.
-      await withPromptFile(prep.brief, (promptFile) =>
-        (dispatchRole as DispatchRoleFn)('developer', agent, prep.brief, {
-          task: prep.issue,
-          promptFile,
-          model: resolvedModel
-        })
-      )
-    } else {
-      printManualDispatchInstruction(tranche, n, agent)
-    }
+    // O5, Issue #456: `prep.issue`, never `n` — `dispatchRole`'s own `task`
+    // opt is the resolved forge Issue number end to end (`VINAYA_TASK`
+    // parses to `subject.issue`, `packages/aeg-core/src/log/envelope.ts`;
+    // its resume-record key is `issue<n>`, `dispatch.ts`'s own
+    // `resumeRecordPathFor`) — the same live-bug shape the comment above
+    // already fixed for posting now applies here too: two tranches'
+    // task-N runs on different Issues must never share one record.
+    await withPromptFile(prep.brief, (promptFile) =>
+      deps.dispatchRole('developer', agent, prep.brief, {
+        task: prep.issue,
+        promptFile,
+        model: resolvedModel
+      })
+    )
   }
 
   return { posted: true, commentUrl: prep.commentUrl, brief: prep.brief }
