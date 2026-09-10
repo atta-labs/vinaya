@@ -914,6 +914,10 @@ export async function dispatchRole(
   const effectId = randomUUID()
   const vendor = VENDOR_TABLE[agent]
   const start = Date.now()
+  /** Every lifecycle line this call writes goes through this one point (O2) — restyled, never re-prefixed. */
+  const writeLifecycle = (msg: string): void => {
+    process.stderr.write(`${colourLoopLine(msg, process.stderr)}\n`)
+  }
   const roundField = opts.round !== undefined ? { round: opts.round } : {}
   // O2: never the vendor name (`agent`) — that is the defect this task
   // closes. This is a REQUEST label, never an observation: `requested:<x>`
@@ -948,10 +952,10 @@ export async function dispatchRole(
         usage: null,
         duration_ms: durationMs
       })
-      process.stderr.write(
+      writeLifecycle(
         `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — model '${opts.model}' is a ${foreignVendor} model; ` +
           `${agent} does not accept it. ${agent} accepts its own model names (never a ${foreignVendor} alias or a ` +
-          `'${foreignVendor}-'/'gemma-' full name).\n`
+          `'${foreignVendor}-'/'gemma-' full name).`
       )
       await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
       return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
@@ -1019,7 +1023,7 @@ export async function dispatchRole(
 
     const outputTee = openOutputTee(effectId)
     if (outputTee.path !== null) {
-      process.stderr.write(`[vinaya dispatch ${effectId}] ${role} via ${agent}: output teed to ${outputTee.path}\n`)
+      writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: output teed to ${outputTee.path}`)
     }
 
     // Whatever has arrived since the last complete line. The vendor's stream
@@ -1067,16 +1071,16 @@ export async function dispatchRole(
     // nothing yet to tee.
     const heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {
       const elapsedS = Math.round((Date.now() - start) / 1000)
-      process.stderr.write(
-        `[vinaya dispatch ${effectId}] ${role} via ${agent}: still running — ${elapsedS}s elapsed (ceiling ${Math.round(timeoutMs / 1000)}s)\n`
+      writeLifecycle(
+        `[vinaya dispatch ${effectId}] ${role} via ${agent}: still running — ${elapsedS}s elapsed (ceiling ${Math.round(timeoutMs / 1000)}s)`
       )
     }, HEARTBEAT_INTERVAL_MS)
 
     const warnLeadMs = timeoutWarningLeadMs(timeoutMs)
     const warnTimer: ReturnType<typeof setTimeout> = setTimeout(
       () => {
-        process.stderr.write(
-          `[vinaya dispatch ${effectId}] ${role} via ${agent}: approaching timeout — SIGTERM in ~${Math.round(warnLeadMs / 1000)}s unless it finishes first\n`
+        writeLifecycle(
+          `[vinaya dispatch ${effectId}] ${role} via ${agent}: approaching timeout — SIGTERM in ~${Math.round(warnLeadMs / 1000)}s unless it finishes first`
         )
       },
       Math.max(timeoutMs - warnLeadMs, 0)
@@ -1084,12 +1088,10 @@ export async function dispatchRole(
 
     const timeoutTimer = setTimeout(() => {
       timedOut = true
-      process.stderr.write(`[vinaya dispatch ${effectId}] ${role} via ${agent}: ceiling reached — sending SIGTERM\n`)
+      writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: ceiling reached — sending SIGTERM`)
       child.kill('SIGTERM')
       killTimer = setTimeout(() => {
-        process.stderr.write(
-          `[vinaya dispatch ${effectId}] ${role} via ${agent}: still alive after SIGTERM — sending SIGKILL\n`
-        )
+        writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: still alive after SIGTERM — sending SIGKILL`)
         child.kill('SIGKILL')
       }, SIGKILL_GRACE_MS)
     }, timeoutMs)
@@ -1219,8 +1221,8 @@ export async function dispatchRole(
           capturedAt: new Date().toISOString()
         })
         if (resumeRecordPath !== null) {
-          process.stderr.write(
-            `[vinaya dispatch ${effectId}] ${role} via ${agent}: resumable — session recorded at ${resumeRecordPath}\n`
+          writeLifecycle(
+            `[vinaya dispatch ${effectId}] ${role} via ${agent}: resumable — session recorded at ${resumeRecordPath}`
           )
         }
       }

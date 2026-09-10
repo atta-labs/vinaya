@@ -12,7 +12,7 @@
  * one-lib-call command.
  */
 
-import { isAgentVendor, type AgentVendor } from '../lib/dispatch.js'
+import { colourLoopLine, isAgentVendor, type AgentVendor } from '../lib/dispatch.js'
 import { loadConfig } from '../lib/config.js'
 import { printJson } from '../lib/envelope.js'
 import { devReviewLoop, type LoopInput } from '../lib/dev-review-loop.js'
@@ -70,10 +70,15 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
   if (parsed.json) {
     printJson({ finalDecision: result.finalDecision, prNumber: result.prNumber, task: result.task })
   } else if (result.finalDecision.type === 'publish') {
-    process.stdout.write(`vinaya dev-review-loop: task ${result.task}, PR #${result.prNumber} — publish\n`)
+    process.stdout.write(
+      `${colourLoopLine(`vinaya dev-review-loop: task ${result.task}, PR #${result.prNumber} — publish`, process.stdout)}\n`
+    )
   } else if (result.finalDecision.type === 'pause') {
     process.stdout.write(
-      `vinaya dev-review-loop: task ${result.task}, PR #${result.prNumber} — paused (${result.finalDecision.reason})\n`
+      `${colourLoopLine(
+        `vinaya dev-review-loop: task ${result.task}, PR #${result.prNumber} — paused (${result.finalDecision.reason})`,
+        process.stdout
+      )}\n`
     )
   }
 
