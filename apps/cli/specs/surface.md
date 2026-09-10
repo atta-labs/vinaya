@@ -13,7 +13,7 @@ The tables below index exported functions/consts/classes only — a change that 
 Three layers:
 
 - **Policy** — `@attalabs/aeg-core`. Pure functions: no filesystem, no network, no process. Read here, never written by this task.
-- **Effects** — `apps/cli/src/lib`. The chokepoints that touch the world: git, the filesystem, the forge, a child process. A future consolidated set (`log`, `flushLog`, `forgeWrite`, `forgeRead`, `runChecks`, `collectTokens`, `dispatchRole`, `devReviewLoop`, `runTask` — Tech Spec "A Task Finishes Itself" §2–§3) does not fully exist yet; today's `apps/cli/src/lib` is a wider micro-library commands compose directly.
+- **Effects** — `apps/cli/src/lib`. The chokepoints that touch the world: git, the filesystem, the forge, a child process. A future consolidated set (`log`, `flushLog`, `forgeWrite`, `forgeRead`, `runChecks`, `collectTokens`, `dispatchRole`, `devReviewLoop`, `runTask` — Tech Spec "A Task Finishes Itself" §2–§3) does not fully exist yet; today's `apps/cli/src/lib` is a wider micro-library commands compose directly. (`review-validity-v1` task 7, `#498`: `devReviewLoop`'s own one-driver-per-task pid-lock guard is entirely internal to this existing exported function — no new export, per line 11's rule above, so no new table row below.)
 - **Commands** — `apps/cli/src/commands`. One file per command (or per closely-related command family sharing a file, e.g. `milestone.ts`). Each command's entry function, reached from `apps/cli/src/index.ts`'s router, should call exactly one effects-layer function. `apps/cli/src/index.ts` itself is the router, not a command, and is exempt by construction.
 
 **Predicate the test enforces (per Principal ruling on Issue #418):** for a command's entry function, collect every call expression (transitively through same-file helpers) whose callee resolves to an export of `apps/cli/src/lib/**` or of another `apps/cli/src/commands/*.ts` file. A call into `apps/cli/src/lib` beyond the one named function is a violation. A call into another `commands/*.ts` file is refused outright — commands never call commands — with zero allowance beyond the same dated-exemption mechanism (no separate carve-out). `printJson`, `promptYesNo`/`closeStdin`, and `packageRoot` count toward the cap like any other call — no allowlist (see Open note below). Calls into `@attalabs/aeg-core` are unrestricted (policy is meant to be composed freely).
@@ -572,10 +572,16 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `isAlreadyDispatchedError` | function | `apps/cli/src/lib/task-run.ts` |
 | `RunTaskError` | class | `apps/cli/src/lib/task-run.ts` |
 | `runTask` | function | `apps/cli/src/lib/task-run.ts` |
+| `deriveLoopState` | function | `apps/cli/src/lib/task-status.ts` |
+| `gatherSingleTaskStatus` | function | `apps/cli/src/lib/task-status.ts` |
+| `gatherTaskStatusList` | function | `apps/cli/src/lib/task-status.ts` |
+| `lastRoundVerdictLines` | function | `apps/cli/src/lib/task-status.ts` |
+| `renderTaskStatusRow` | function | `apps/cli/src/lib/task-status.ts` |
+| `resumeCommandFor` | function | `apps/cli/src/lib/task-status.ts` |
 | `AEG_BRIEF_V1_MARKER` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(231 exports.)
+(237 exports.)
 
 ## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
@@ -594,6 +600,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `task dispatch` | `task.ts` | `taskDispatchCommand` | 1 | compliant | `dispatchTask` |
 | `task brief` | `task.ts` | `taskBriefCommand` | 1 | compliant | `prepareTask` |
 | `task run` | `task-run.ts` | `taskRunCommand` | 2 | exempt — see below | sharedCommandShell (target) |
+| `task status` | `task-status.ts` | `taskStatusCommand` | 3 | exempt — see below | taskStatus (target) |
 | `pr create` | `pr.ts` | `prCreateCommand` | 9 | exempt — see below | forgeWrite (target) |
 | `pr edit` | `pr.ts` | `prEditCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `pr report` | `pr-report.ts` | `prReportCommand` | 3 | exempt — see below | collectTokens (target) |
@@ -626,7 +633,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `dispatch` | `dispatch.ts` | `dispatchCommand` | 5 | exempt — see below | sharedCommandShell (target) |
 | `dev-review-loop` | `dev-review-loop.ts` | `devReviewLoopCommand` | 5 | exempt — see below | sharedCommandShell (target) |
 
-(43 rows — all 43 shipped `COMMANDS` entries. Compliant: 12. Exempt: 31.)
+(44 rows — all 44 shipped `COMMANDS` entries. Compliant: 12. Exempt: 32.)
 
 `review post` refuses a `doc-correctness` finding whose description carries no `Search:` pattern, or whose pattern carries a path filter — a content rule on the existing description field, not a change to the `|`-delimited grammar. The `review post` and `pr rule` source comments describe the verdict-extraction read window, so they carry `AEG:CLAIM` markers pinning the code that proves each claim; `verify-docs` C8 verifies them, and a change to that window fails the check in every file stating it rather than only where a reviewer happened to look. See `aeg-root/documentation-coherence.md`.
 
@@ -669,6 +676,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `dispatch` | 2026-09-07 | 5 — lib (4): `loadConfig`, `isAgentVendor`, `dispatchRole`, `printJson`; commands/\*.ts (refused outright): `logFlushCommand` (`log.ts`) | `sharedCommandShell` |
 | `dev-review-loop` | 2026-09-10 | 5 — lib: `loadConfig`, `isAgentVendor`, `devReviewLoop`, `printJson`, `colourLoopLine` | `sharedCommandShell` |
 | `task run` | 2026-09-10 | 2 — lib: `runTask`, `colourLoopLine` | `sharedCommandShell` |
+| `task status` | 2026-09-11 | 3 — lib: `printJson`, `gatherTaskStatusList`, `gatherSingleTaskStatus` | `taskStatus` |
 
 `dispatchRole` retires no row today — its own command (`dispatch`) is new, not a retirement of an existing exempt row. `devReviewLoop` (this task) likewise retires no row today — it is itself a new named chokepoint (`## Effects` intro), and `dev-review-loop`'s own command calls it alongside the same three argv-plumbing calls `dispatch` already carries (`loadConfig`/`isAgentVendor`/`printJson`) — once `sharedCommandShell` absorbs those, this command is left calling only `devReviewLoop`, becoming compliant on its own rather than needing a second named target.
 

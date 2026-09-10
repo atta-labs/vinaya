@@ -82,6 +82,8 @@ In a typical working period:
 6. Reviews PRs on the forge. Code review for correctness and scope compliance.
 7. Merges PRs after Planner spec review and CI passes. (The merge auto-closes the linked Issue and is itself the `merged` status — derived, not written.)
 
+`vinaya task status` answers "what's running right now" across every dispatched task in one glance — each open task Issue with a frozen brief, its pull request, and whether its loop is `running` (with the driver pid), `paused` (with the reason), `published`, or has `no driver` — read from the outbox and the forge, never from a terminal-by-terminal `ps` scan. `vinaya task status <tranche> <n>` narrows to one task with its last round's verdict lines and the exact resume command.
+
 The Principal does not need to be present during task execution. Dispatch and escalation routing are handled by the Planner (and an automation layer, if used); the Developer executes. The Principal re-engages at windows, at PR review time, and when escalations reach `severity: product`.
 
 ---
