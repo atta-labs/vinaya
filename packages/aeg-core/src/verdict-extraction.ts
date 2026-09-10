@@ -118,6 +118,16 @@
  * the PR's actual head. Searched only within the SAME comment body that
  * produced the winning verdict — a sha mentioned in a different comment is
  * not this verdict's binding.
+ *
+ * Ruling-freshness binding (`review-validity-v1` task 3, `#477`, O1). A
+ * fifth field, `rulingOrdinal`, is read from the SAME winning comment via
+ * `extractRulingOrdinal`/`firstSevenLines` — its OWN window, not
+ * `firstFiveLines` widened in place (see that function's doc comment for
+ * why: an out-of-surface `AEG:CLAIM` in `packages/sources` pins
+ * `firstFiveLines`'s exact signature). `null` means no `Ruling ordinal:`
+ * line at all — the pre-cutover stock — never confused with a rendered
+ * `0`, which means a post-cutover verdict cast when the PR carried no
+ * ruling yet.
  */
 
 const HEAD_SHA_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Judged head:\s*([0-9a-f]{7,40})(?![A-Za-z0-9])/im
@@ -135,6 +145,21 @@ const HEAD_SHA_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Judged head:\s*([0-9a-f]{7,4
  * spec's superseded `number`.
  */
 const OBJECTIVES_VERSION_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Objectives version:\s*([0-9a-f]{64})(?![A-Za-z0-9])/im
+
+/**
+ * review-validity-v1 task 3 (`#477`, O1): a fourth head line, `Ruling
+ * ordinal: <k>`, renders UNCONDITIONALLY on every post-cutover verdict —
+ * `0` when no principal ruling existed on the PR at cast time, never
+ * omitted the way `Objectives version:` is pre-cutover. Read from its OWN
+ * wider window (`firstSevenLines`, below), never from `firstFiveLines`:
+ * `packages/sources` carries an `AEG:CLAIM` binding on `firstFiveLines`'s
+ * exact signature that this task's declared Surface excludes, so that
+ * function's name, body, and 5-line reach stay byte-identical — widening
+ * it in place would silently break that out-of-surface claim. The value is
+ * a decimal ordinal (the marker's own `<pr>-<k>`, `k` monotone by
+ * construction in `vinaya pr rule`), never a hash.
+ */
+const RULING_ORDINAL_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Ruling ordinal:\s*(\d+)(?!\d)/im
 
 /**
  * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
@@ -179,6 +204,25 @@ function extractObjectivesVersion(comment: string): string | null {
 }
 
 /**
+ * `review-validity-v1` task 3 (`#477`, O1): its own 7-line window, wider
+ * than `firstFiveLines` by exactly the two lines `Ruling ordinal:` and its
+ * preceding blank line add when `Objectives version:` also renders (worst
+ * case: line 7). `null` means no `Ruling ordinal:` line at all — the
+ * pre-cutover stock this task's Traps require staying bound whenever the
+ * PR itself carries no ruling (`review-gate.ts`'s `isBoundToRulings`), not
+ * `0` — `0` is only ever the RENDERED explicit value on a post-cutover
+ * verdict.
+ */
+function firstSevenLines(comment: string): string {
+  return comment.split('\n').slice(0, 7).join('\n')
+}
+
+function extractRulingOrdinal(comment: string): number | null {
+  const m = firstSevenLines(comment).match(RULING_ORDINAL_PATTERN)
+  return m ? Number.parseInt(m[1] as string, 10) : null
+}
+
+/**
  * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * `headSha` is `null` in two distinct situations that both mean "cannot
  * confirm this verdict covers the current head": no verdict comment matched
@@ -194,6 +238,8 @@ export type VerdictExtraction = {
   value: string
   headSha: string | null
   objectivesVersion: string | null
+  /** `null` on the pre-cutover stock (no `Ruling ordinal:` line at all) — never conflated with a rendered `0` (`review-validity-v1` task 3, `#477`, O1). */
+  rulingOrdinal: number | null
   danglingNote: string | null
 }
 
@@ -221,6 +267,7 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
       value: `no ${missingLabel} pass was run before merge — DANGLING, see below`,
       headSha: null,
       objectivesVersion: null,
+      rulingOrdinal: null,
       danglingNote: `no ${missingLabel} verdict comment found on this PR`
     }
   }
@@ -233,6 +280,7 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
       value: `the most recent ${missingLabel} comment's VERDICT line is not within its first five lines — DANGLING, see below`,
       headSha: null,
       objectivesVersion: null,
+      rulingOrdinal: null,
       danglingNote: `the most recent ${missingLabel} verdict comment carries a VERDICT-shaped line outside the first-five-line read window`
     }
   }
@@ -241,6 +289,7 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
     value: (m[1] as string).toUpperCase().replace(/[_-]/g, ' '),
     headSha: extractHeadSha(latest),
     objectivesVersion: extractObjectivesVersion(latest),
+    rulingOrdinal: extractRulingOrdinal(latest),
     danglingNote: null
   }
 }

@@ -158,6 +158,8 @@ export {
   isReviewGateExemptBranch
 } from './review-gate'
 export type { ReviewGateComment, ReviewGateInput, ReviewGateResult, ReviewGateVerdict } from './review-gate'
+export { newestPrincipalRulingOrdinal } from './ruling-ordinal'
+export type { RulingComment } from './ruling-ordinal'
 export {
   checkBlastRadiusScope,
   checkConflictCompleteness,

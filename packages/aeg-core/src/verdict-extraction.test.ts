@@ -36,17 +36,35 @@ SECRETS: none found`
 describe('extractCodeReviewVerdict', () => {
   it('extracts APPROVE from a standalone VERDICT: line', () => {
     const result = extractCodeReviewVerdict(['VERDICT: APPROVE'])
-    expect(result).toEqual({ value: 'APPROVE', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'APPROVE',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('extracts REQUEST CHANGES (normalizing the separator) from a VERDICT: line', () => {
     const result = extractCodeReviewVerdict(['VERDICT: REQUEST_CHANGES'])
-    expect(result).toEqual({ value: 'REQUEST CHANGES', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'REQUEST CHANGES',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('extracts LGTM from a VERDICT: line', () => {
     const result = extractCodeReviewVerdict(['VERDICT: LGTM'])
-    expect(result).toEqual({ value: 'LGTM', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'LGTM',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('is DANGLING/missing when no comment carries the marker at all', () => {
@@ -61,7 +79,13 @@ describe('extractCodeReviewVerdict', () => {
       'Fixed per feedback.',
       'VERDICT: APPROVE\n\nlooks good now.'
     ])
-    expect(result).toEqual({ value: 'APPROVE', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'APPROVE',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   // ---- required regression coverage (aeg-review-gate-v1 task 1 follow-up, security FAIL finding) ----
@@ -82,7 +106,13 @@ describe('extractCodeReviewVerdict', () => {
 
   it('regression 3: a real, line-anchored VERDICT: APPROVE (matching the actual subagent report shape) still produces a clean verdict', () => {
     const result = extractCodeReviewVerdict([REAL_CODE_REVIEWER_REPORT])
-    expect(result).toEqual({ value: 'APPROVE', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'APPROVE',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('regression 4: most-recent-clear-hit-wins tie-breaking still works under the tightened pattern', () => {
@@ -91,19 +121,37 @@ describe('extractCodeReviewVerdict', () => {
       DANGLING_CODE_REVIEW_PLACEHOLDER, // an intervening comment that must not count as a "clear hit"
       'VERDICT: APPROVE'
     ])
-    expect(result).toEqual({ value: 'APPROVE', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'APPROVE',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   // ---- markdown-emphasis tolerance (PR #636: reviewer emitted the bolded form) ----
 
   it('extracts APPROVE from a markdown-bolded VERDICT: line (the #636 exact shape)', () => {
     const result = extractCodeReviewVerdict(['**VERDICT: APPROVE**'])
-    expect(result).toEqual({ value: 'APPROVE', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'APPROVE',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('extracts REQUEST CHANGES from a bolded VERDICT: line inside a full report', () => {
     const result = extractCodeReviewVerdict(['**VERDICT: REQUEST CHANGES**\n\nthree blockers below.'])
-    expect(result).toEqual({ value: 'REQUEST CHANGES', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'REQUEST CHANGES',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('extracts APPROVE from an underscore-emphasized VERDICT: line (both single and double)', () => {
@@ -113,12 +161,14 @@ describe('extractCodeReviewVerdict', () => {
       value: 'APPROVE',
       headSha: null,
       objectivesVersion: null,
+      rulingOrdinal: null,
       danglingNote: null
     })
     expect(extractCodeReviewVerdict(['__VERDICT: APPROVE__'])).toEqual({
       value: 'APPROVE',
       headSha: null,
       objectivesVersion: null,
+      rulingOrdinal: null,
       danglingNote: null
     })
   })
@@ -160,19 +210,37 @@ describe('extractCodeReviewVerdict', () => {
       'VERDICT: REQUEST CHANGES\n\nthree blockers.',
       'Addressed. For reference the first pass said:\n\n> **VERDICT: APPROVE**\n\nsee thread.'
     ])
-    expect(result).toEqual({ value: 'REQUEST CHANGES', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'REQUEST CHANGES',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 })
 
 describe('extractSecurityReviewVerdict', () => {
   it('extracts PASS from a standalone VERDICT: line', () => {
     const result = extractSecurityReviewVerdict(['VERDICT: PASS'])
-    expect(result).toEqual({ value: 'PASS', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'PASS',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('extracts FAIL from a standalone VERDICT: line', () => {
     const result = extractSecurityReviewVerdict(['VERDICT: FAIL'])
-    expect(result).toEqual({ value: 'FAIL', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'FAIL',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('is DANGLING/missing when no comment carries the marker at all', () => {
@@ -199,7 +267,13 @@ describe('extractSecurityReviewVerdict', () => {
 
   it('regression 3: a real, line-anchored VERDICT: PASS (matching the actual subagent report shape) still produces a clean verdict', () => {
     const result = extractSecurityReviewVerdict([REAL_SECURITY_REVIEWER_REPORT])
-    expect(result).toEqual({ value: 'PASS', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'PASS',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('regression 4: most-recent-clear-hit-wins tie-breaking still works under the tightened pattern', () => {
@@ -208,14 +282,26 @@ describe('extractSecurityReviewVerdict', () => {
       DANGLING_SECURITY_PLACEHOLDER, // an intervening comment that must not count as a "clear hit"
       'VERDICT: PASS'
     ])
-    expect(result).toEqual({ value: 'PASS', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'PASS',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   // ---- markdown-emphasis tolerance (PR #636: reviewer emitted the bolded form) ----
 
   it('extracts PASS from a markdown-bolded VERDICT: line', () => {
     const result = extractSecurityReviewVerdict(['**VERDICT: PASS**'])
-    expect(result).toEqual({ value: 'PASS', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'PASS',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('extracts PASS from an underscore-emphasized VERDICT: line', () => {
@@ -223,6 +309,7 @@ describe('extractSecurityReviewVerdict', () => {
       value: 'PASS',
       headSha: null,
       objectivesVersion: null,
+      rulingOrdinal: null,
       danglingNote: null
     })
   })
@@ -248,7 +335,13 @@ describe('extractSecurityReviewVerdict', () => {
       'VERDICT: FAIL\n\nleaked credential in the fixture.',
       'Rotated. The earlier clean run said:\n\n> **VERDICT: PASS**\n\nfor reference.'
     ])
-    expect(result).toEqual({ value: 'FAIL', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'FAIL',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 })
 
@@ -264,12 +357,24 @@ describe('reviewed-commit binding (Judged head:)', () => {
 
   it('present and matching a full 40-char sha: extracts it lowercased alongside the verdict', () => {
     const result = extractCodeReviewVerdict([`VERDICT: APPROVE\n\nJudged head: ${FULL_SHA}`])
-    expect(result).toEqual({ value: 'APPROVE', headSha: FULL_SHA, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'APPROVE',
+      headSha: FULL_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('present with the abbreviated 7-char form: extracts it alongside the verdict', () => {
     const result = extractSecurityReviewVerdict([`VERDICT: PASS\n\nJudged head: ${SHORT_SHA}`])
-    expect(result).toEqual({ value: 'PASS', headSha: SHORT_SHA, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'PASS',
+      headSha: SHORT_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it("present but naming a superseded (stale) head: extraction still returns it verbatim — staleness is the gate's judgment, not the extractor's", () => {
@@ -281,7 +386,13 @@ describe('reviewed-commit binding (Judged head:)', () => {
 
   it('absent entirely: a clean verdict with no Judged head: line extracts a real value but a null headSha', () => {
     const result = extractCodeReviewVerdict(['VERDICT: APPROVE\n\nlooks good.'])
-    expect(result).toEqual({ value: 'APPROVE', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'APPROVE',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('no verdict at all: headSha is null and danglingNote is set — the "no verdict" state, distinct from "verdict but unbound"', () => {
@@ -302,7 +413,13 @@ describe('reviewed-commit binding (Judged head:)', () => {
 
   it('a sha mentioned in ordinary prose is NOT read as a binding', () => {
     const result = extractCodeReviewVerdict([`VERDICT: APPROVE\n\nsee commit ${FULL_SHA} for the prior context.`])
-    expect(result).toEqual({ value: 'APPROVE', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'APPROVE',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it.each([
@@ -317,12 +434,24 @@ describe('reviewed-commit binding (Judged head:)', () => {
 
   it('tolerates a leading emphasis run, matching the VERDICT: anchor discipline', () => {
     const result = extractCodeReviewVerdict([`**VERDICT: APPROVE**\n\n**Judged head: ${FULL_SHA}**`])
-    expect(result).toEqual({ value: 'APPROVE', headSha: FULL_SHA, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'APPROVE',
+      headSha: FULL_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('is scoped to the SAME comment as the winning verdict — a sha in a different comment is not this binding', () => {
     const result = extractCodeReviewVerdict([`Judged head: ${FULL_SHA}`, 'VERDICT: APPROVE\n\nno head line here.'])
-    expect(result).toEqual({ value: 'APPROVE', headSha: null, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'APPROVE',
+      headSha: null,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 })
 
@@ -366,7 +495,13 @@ describe('the VERDICT:/Judged head:/Objectives version: markers are read from th
 
   it('VERDICT: on line 1 and Judged head: on line 3 — the real render shape — still extracts cleanly', () => {
     const result = extractCodeReviewVerdict([`VERDICT: APPROVE\n\nJudged head: ${FULL_SHA}`])
-    expect(result).toEqual({ value: 'APPROVE', headSha: FULL_SHA, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'APPROVE',
+      headSha: FULL_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('VERDICT: on line 1, Judged head: on line 3, Objectives version: on line 5 — the real render shape — all three extract cleanly', () => {
@@ -377,6 +512,7 @@ describe('the VERDICT:/Judged head:/Objectives version: markers are read from th
       value: 'APPROVE',
       headSha: FULL_SHA,
       objectivesVersion: OBJ_VERSION,
+      rulingOrdinal: null,
       danglingNote: null
     })
   })
@@ -394,7 +530,13 @@ describe('the VERDICT:/Judged head:/Objectives version: markers are read from th
       `Objectives version: ${OBJ_VERSION}`,
       `VERDICT: APPROVE\n\nJudged head: ${FULL_SHA}`
     ])
-    expect(result).toEqual({ value: 'APPROVE', headSha: FULL_SHA, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'APPROVE',
+      headSha: FULL_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('a clean VERDICT: on line 1 still extracts even when a Judged head: line sits on line 6 — but the head does not bind', () => {
@@ -410,6 +552,53 @@ describe('the VERDICT:/Judged head:/Objectives version: markers are read from th
     const result = extractSecurityReviewVerdict([comment])
     expect(result.value).not.toBe('PASS')
     expect(result.danglingNote).not.toBeNull()
+  })
+})
+
+// ---- Ruling ordinal: read from its OWN 7-line window (review-validity-v1
+// task 3, #477, O1) ----
+// `Ruling ordinal:` renders UNCONDITIONALLY, so its worst-case position is
+// line 7 (Objectives version present: 5=version, 6=blank, 7=ruling
+// ordinal). This window is `firstSevenLines`, never `firstFiveLines`
+// widened in place — see `firstSevenLines`'s own doc comment for why.
+
+describe('Ruling ordinal: is read from its own first-seven-line window', () => {
+  const FULL_SHA = '8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f'
+  const OBJ_VERSION = 'a'.repeat(64)
+
+  it('Ruling ordinal: on line 5 (no Objectives version) extracts cleanly', () => {
+    const result = extractCodeReviewVerdict([`VERDICT: APPROVE\n\nJudged head: ${FULL_SHA}\n\nRuling ordinal: 3`])
+    expect(result.rulingOrdinal).toBe(3)
+  })
+
+  it('Ruling ordinal: 0 (explicit zero, no rulings existed at cast time) extracts as 0, not null', () => {
+    const result = extractCodeReviewVerdict([`VERDICT: APPROVE\n\nJudged head: ${FULL_SHA}\n\nRuling ordinal: 0`])
+    expect(result.rulingOrdinal).toBe(0)
+  })
+
+  it('Ruling ordinal: on line 7 (Objectives version present on line 5) still extracts — the real post-cutover render shape', () => {
+    const comment = `VERDICT: APPROVE\n\nJudged head: ${FULL_SHA}\n\nObjectives version: ${OBJ_VERSION}\n\nRuling ordinal: 7`
+    const result = extractCodeReviewVerdict([comment])
+    expect(result.objectivesVersion).toBe(OBJ_VERSION)
+    expect(result.rulingOrdinal).toBe(7)
+  })
+
+  it('a Ruling ordinal: line on line 8 does not extract — one line past the 7-line window, same fail-closed shape as a Judged head: line past its own window', () => {
+    const comment = `VERDICT: APPROVE\n\nJudged head: ${FULL_SHA}\n\nObjectives version: ${OBJ_VERSION}\n\nextra\nRuling ordinal: 9`
+    const result = extractCodeReviewVerdict([comment])
+    expect(result.objectivesVersion).toBe(OBJ_VERSION)
+    expect(result.rulingOrdinal).toBeNull()
+  })
+
+  it('no Ruling ordinal: line at all (pre-cutover stock) reads as null, never 0', () => {
+    const result = extractCodeReviewVerdict([`VERDICT: APPROVE\n\nJudged head: ${FULL_SHA}`])
+    expect(result.rulingOrdinal).toBeNull()
+  })
+
+  it('applies the same window to extractSecurityReviewVerdict', () => {
+    const comment = `VERDICT: PASS\n\nJudged head: ${FULL_SHA}\n\nObjectives version: ${OBJ_VERSION}\n\nRuling ordinal: 2`
+    const result = extractSecurityReviewVerdict([comment])
+    expect(result.rulingOrdinal).toBe(2)
   })
 })
 
@@ -434,7 +623,13 @@ describe('candidate selection stays whole-body — a later unclear candidate sha
 
   it('the earlier comment alone still extracts its clean head-bound APPROVE unchanged', () => {
     const result = extractCodeReviewVerdict([clean])
-    expect(result).toEqual({ value: 'APPROVE', headSha: HEAD, objectivesVersion: null, danglingNote: null })
+    expect(result).toEqual({
+      value: 'APPROVE',
+      headSha: HEAD,
+      objectivesVersion: null,
+      rulingOrdinal: null,
+      danglingNote: null
+    })
   })
 
   it('the later comment alone is DANGLING — its VERDICT-shaped line is a real candidate, just unreadable in its own window', () => {

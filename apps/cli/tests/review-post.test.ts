@@ -165,12 +165,13 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
       tests: 'honest',
       docs: 'tier-appropriate',
       objectivesVersion: null,
+      rulingOrdinal: 0,
       objectiveResults: null
     })
     const extraction = extractCodeReviewVerdict([body])
     expect(extraction.value).toBe('APPROVE')
     expect(extraction.headSha).toBe(HEAD)
-    expect(verifyPostedCodeReview(asComment(body), 'APPROVE', HEAD, PRINCIPALS, body, null).ok).toBe(true)
+    expect(verifyPostedCodeReview(asComment(body), 'APPROVE', HEAD, PRINCIPALS, body, null, 0).ok).toBe(true)
   })
 
   it('renders REQUEST CHANGES with a space, matching the role doc template literally', () => {
@@ -186,6 +187,7 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
       tests: 'honest',
       docs: 'tier-appropriate',
       objectivesVersion: null,
+      rulingOrdinal: 0,
       objectiveResults: null
     })
     expect(body).toContain('VERDICT: REQUEST CHANGES')
@@ -207,6 +209,7 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
       tests: 'x',
       docs: 'x',
       objectivesVersion: null,
+      rulingOrdinal: 0,
       objectiveResults: null
     })
     expect(body).toContain('Cast by: Reviewer (session sess-abc123)')
@@ -227,6 +230,7 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
       tests: 'x',
       docs: 'x',
       objectivesVersion: null,
+      rulingOrdinal: 0,
       objectiveResults: null
     })
     const lines = body.split('\n')
@@ -246,12 +250,13 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
       secrets: 'none found',
       secretsEvidence: '(scanner ran, 0 findings)',
       objectivesVersion: null,
+      rulingOrdinal: 0,
       objectiveResults: null
     })
     const extraction = extractSecurityReviewVerdict([body])
     expect(extraction.value).toBe('PASS')
     expect(extraction.headSha).toBe(HEAD)
-    expect(verifyPostedSecurity(asComment(body), 'PASS', HEAD, PRINCIPALS, body, null).ok).toBe(true)
+    expect(verifyPostedSecurity(asComment(body), 'PASS', HEAD, PRINCIPALS, body, null, 0).ok).toBe(true)
   })
 
   it('pastes the secrets evidence above the SECRETS: line', () => {
@@ -264,6 +269,7 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
       secrets: 'none found',
       secretsEvidence: 'gitleaks: 0 leaks detected',
       objectivesVersion: null,
+      rulingOrdinal: 0,
       objectiveResults: null
     })
     const evidenceIdx = body.indexOf('gitleaks: 0 leaks detected')
@@ -282,6 +288,7 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
       secrets: 'listed above, redacted',
       secretsEvidence: null,
       objectivesVersion: null,
+      rulingOrdinal: 0,
       objectiveResults: null
     })
     expect(body).toContain('VERDICT: FAIL')
@@ -299,6 +306,7 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
       secrets: 'none found',
       secretsEvidence: '(scanner ran, 0 findings)',
       objectivesVersion: null,
+      rulingOrdinal: 0,
       objectiveResults: null
     })
     expect(body).toContain('Cast by: Security (session sess-abc123)')
@@ -319,21 +327,21 @@ describe("resolveSessionId — reuses report-tokens.ts's CLAUDE_CODE_SESSION_ID 
 describe('self-verification — the mutation-proof: catches malformed renders the merge gate would also miss', () => {
   it('a heading-wrapped VERDICT (the exact incident this task closes) fails self-verification', () => {
     const malformed = `## Security Review — PASS\n\nJudged head: ${HEAD}\n\nEverything looks fine.`
-    const result = verifyPostedSecurity(asComment(malformed), 'PASS', HEAD, PRINCIPALS, malformed, null)
+    const result = verifyPostedSecurity(asComment(malformed), 'PASS', HEAD, PRINCIPALS, malformed, null, 0)
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('no clean VERDICT was found')
   })
 
   it('a bolded VERDICT for the wrong value fails self-verification', () => {
     const malformed = `**VERDICT: FAIL**\n\nJudged head: ${HEAD}`
-    const result = verifyPostedSecurity(asComment(malformed), 'PASS', HEAD, PRINCIPALS, malformed, null)
+    const result = verifyPostedSecurity(asComment(malformed), 'PASS', HEAD, PRINCIPALS, malformed, null, 0)
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('expected "PASS"')
   })
 
   it('a clean VERDICT with no Judged head line fails self-verification', () => {
     const malformed = 'VERDICT: APPROVE\n\nNo head line here.'
-    const result = verifyPostedCodeReview(asComment(malformed), 'APPROVE', HEAD, PRINCIPALS, malformed, null)
+    const result = verifyPostedCodeReview(asComment(malformed), 'APPROVE', HEAD, PRINCIPALS, malformed, null, 0)
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('no `Judged head:` line')
   })
@@ -341,14 +349,14 @@ describe('self-verification — the mutation-proof: catches malformed renders th
   it('a clean VERDICT bound to a stale head fails self-verification', () => {
     const staleHead = 'b'.repeat(40)
     const malformed = `VERDICT: APPROVE\n\nJudged head: ${staleHead}`
-    const result = verifyPostedCodeReview(asComment(malformed), 'APPROVE', HEAD, PRINCIPALS, malformed, null)
+    const result = verifyPostedCodeReview(asComment(malformed), 'APPROVE', HEAD, PRINCIPALS, malformed, null, 0)
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('does not cover the resolved head')
   })
 
   it('accepts an abbreviated Judged head that is a real prefix of the resolved head', () => {
-    const clean = `VERDICT: APPROVE\n\nJudged head: ${HEAD.slice(0, 7)}`
-    const result = verifyPostedCodeReview(asComment(clean), 'APPROVE', HEAD, PRINCIPALS, clean, null)
+    const clean = `VERDICT: APPROVE\n\nJudged head: ${HEAD.slice(0, 7)}\n\nRuling ordinal: 0`
+    const result = verifyPostedCodeReview(asComment(clean), 'APPROVE', HEAD, PRINCIPALS, clean, null, 0)
     expect(result.ok).toBe(true)
   })
 
@@ -360,7 +368,8 @@ describe('self-verification — the mutation-proof: catches malformed renders th
       HEAD,
       PRINCIPALS,
       clean,
-      null
+      null,
+      0
     )
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('no clean VERDICT was found')
@@ -368,13 +377,13 @@ describe('self-verification — the mutation-proof: catches malformed renders th
 
   it('an unauthored (null) comment does not count either', () => {
     const clean = `VERDICT: PASS\n\nJudged head: ${HEAD}`
-    const result = verifyPostedSecurity(asComment(clean, null), 'PASS', HEAD, PRINCIPALS, clean, null)
+    const result = verifyPostedSecurity(asComment(clean, null), 'PASS', HEAD, PRINCIPALS, clean, null, 0)
     expect(result.ok).toBe(false)
   })
 
   it('a real allowlisted verdict still counts alongside a non-allowlisted decoy comment', () => {
-    const real = `VERDICT: APPROVE\n\nJudged head: ${HEAD}`
-    const decoy = `VERDICT: REQUEST CHANGES\n\nJudged head: ${HEAD}`
+    const real = `VERDICT: APPROVE\n\nJudged head: ${HEAD}\n\nRuling ordinal: 0`
+    const decoy = `VERDICT: REQUEST CHANGES\n\nJudged head: ${HEAD}\n\nRuling ordinal: 0`
     const result = verifyPostedCodeReview(
       [
         { body: decoy, author: 'some-random-account' },
@@ -384,7 +393,8 @@ describe('self-verification — the mutation-proof: catches malformed renders th
       HEAD,
       PRINCIPALS,
       real,
-      null
+      null,
+      0
     )
     expect(result.ok).toBe(true)
   })
