@@ -1,5 +1,18 @@
-import { describe, expect, it } from 'bun:test'
-import { resolveBoundaryPaths } from '../../src/lib/brief-assembly.js'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  checkDirtyPinnedFiles,
+  checkStaleAgainstRemote,
+  resolveBoundaryPaths,
+  resolveRemoteDefaultBranch
+} from '../../src/lib/brief-assembly.js'
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+}
 
 /**
  * `resolveBoundaryPaths` — the impure-adjacent half of task 5 (Issue #447,
@@ -36,5 +49,93 @@ describe('resolveBoundaryPaths', () => {
     expect(resolveBoundaryPaths(['roles/developer.md', 'aeg-root/roles/developer.md'], files)).toEqual([
       'aeg-root/roles/developer.md'
     ])
+  })
+})
+
+/**
+ * task-run-v1 task 4, Issue #483, O1 — Part 1's own Test plan sentence:
+ * "proven with a fixture repo in both states." A real remote/local repo
+ * pair, no network, no mocked `git` — `resolveRemoteDefaultBranch`/
+ * `checkStaleAgainstRemote`/`checkDirtyPinnedFiles` are the exact functions
+ * `assembleAndRenderBrief` calls.
+ */
+describe('checkStaleAgainstRemote / checkDirtyPinnedFiles — fixture repo, both states', () => {
+  let tmpDir: string
+  let remoteDir: string
+  let localDir: string
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'vinaya-brief-freshness-'))
+    remoteDir = join(tmpDir, 'remote')
+    localDir = join(tmpDir, 'local')
+    mkdirSync(remoteDir, { recursive: true })
+    git(remoteDir, ['init', '-q', '-b', 'main'])
+    git(remoteDir, ['config', 'user.email', 'a@example.com'])
+    git(remoteDir, ['config', 'user.name', 'A'])
+    writeFileSync(join(remoteDir, 'pinned.md'), 'v1\n')
+    git(remoteDir, ['add', 'pinned.md'])
+    git(remoteDir, ['commit', '-q', '-m', 'first'])
+
+    git(tmpDir, ['clone', '-q', remoteDir, localDir])
+    git(localDir, ['config', 'user.email', 'a@example.com'])
+    git(localDir, ['config', 'user.name', 'A'])
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('resolveRemoteDefaultBranch reads the real remote default branch name and sha', () => {
+    const headSha = git(remoteDir, ['rev-parse', 'HEAD'])
+    const resolved = resolveRemoteDefaultBranch(localDir)
+    expect(resolved).toEqual({ branch: 'main', sha: headSha })
+  })
+
+  it('checkStaleAgainstRemote passes cleanly when HEAD equals the remote default branch tip', () => {
+    const headSha = git(localDir, ['rev-parse', 'HEAD'])
+    const result = checkStaleAgainstRemote(headSha, () => resolveRemoteDefaultBranch(localDir))
+    expect(result).toEqual([])
+  })
+
+  it('checkStaleAgainstRemote refuses, naming both revisions, when the local checkout is one commit behind', () => {
+    const staleHeadSha = git(localDir, ['rev-parse', 'HEAD'])
+
+    // Advance the remote's main past the local checkout's HEAD.
+    writeFileSync(join(remoteDir, 'pinned.md'), 'v2\n')
+    git(remoteDir, ['add', 'pinned.md'])
+    git(remoteDir, ['commit', '-q', '-m', 'second'])
+    const newRemoteSha = git(remoteDir, ['rev-parse', 'HEAD'])
+
+    const result = checkStaleAgainstRemote(staleHeadSha, () => resolveRemoteDefaultBranch(localDir))
+    expect(result.length).toBe(1)
+    expect(result[0]).toContain(staleHeadSha)
+    expect(result[0]).toContain(newRemoteSha)
+    expect(result[0]).toContain('main')
+  })
+
+  it('checkStaleAgainstRemote refuses when the remote cannot be resolved (offline)', () => {
+    const result = checkStaleAgainstRemote('deadbeef', () => null)
+    expect(result.length).toBe(1)
+    expect(result[0]).toMatch(/could not be resolved/)
+  })
+
+  it('checkDirtyPinnedFiles passes cleanly on a clean tree', () => {
+    expect(checkDirtyPinnedFiles(['pinned.md'], localDir)).toEqual([])
+  })
+
+  it('checkDirtyPinnedFiles refuses, naming the file, when a pinned file has an uncommitted edit — even though HEAD still equals the remote tip', () => {
+    const headSha = git(localDir, ['rev-parse', 'HEAD'])
+    expect(checkStaleAgainstRemote(headSha, () => resolveRemoteDefaultBranch(localDir))).toEqual([])
+
+    writeFileSync(join(localDir, 'pinned.md'), 'uncommitted edit\n')
+
+    const result = checkDirtyPinnedFiles(['pinned.md'], localDir)
+    expect(result.length).toBe(1)
+    expect(result[0]).toContain('pinned.md')
+  })
+
+  it('checkDirtyPinnedFiles never blocks on a dirty file it was not asked to pin (Traps to avoid: no unrelated dirty file blocks)', () => {
+    writeFileSync(join(localDir, 'scratch.md'), 'an operator scratch file\n')
+    expect(checkDirtyPinnedFiles(['pinned.md'], localDir)).toEqual([])
   })
 })

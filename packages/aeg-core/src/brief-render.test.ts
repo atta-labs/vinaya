@@ -10,7 +10,15 @@ import {
   parseIssueTestPlan,
   readTierFromPrBody
 } from './index'
-import { type BriefFacts, extractBoundaryFilePaths, parseRationaleFields, renderBrief } from './brief-render'
+import {
+  type BriefFacts,
+  extractBoundaryFilePaths,
+  extractSourceRevision,
+  parseRationaleFields,
+  renderBrief
+} from './brief-render'
+
+const FIXTURE_REVISION = 'a'.repeat(40)
 
 const TEMPLATE = readFileSync(join(import.meta.dirname, '../../../aeg-root/templates/brief-template.md'), 'utf8')
 
@@ -65,6 +73,7 @@ function baseFacts(overrides: Partial<BriefFacts> = {}): BriefFacts {
     ],
     consumersOf: () => [],
     docOwnersContent: null,
+    sourceRevision: FIXTURE_REVISION,
     ...overrides
   }
 }
@@ -193,6 +202,49 @@ describe('renderBrief', () => {
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.missing.some((m) => m.includes('Project'))).toBe(true)
+  })
+
+  it('refuses when the source revision is empty', () => {
+    const result = renderBrief(baseFacts({ sourceRevision: '' }), '')
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.missing.some((m) => m.includes('Revision'))).toBe(true)
+  })
+
+  it('renders the source revision into §2, extractable back out by extractSourceRevision', () => {
+    const result = renderBrief(baseFacts({ sourceRevision: 'deadbeef' }), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).toContain('**Revision:** rendered at `deadbeef`')
+    expect(extractSourceRevision(result.brief)).toBe('deadbeef')
+  })
+
+  it('security regression (PR #503 round 2, HIGH): a forged Revision line planted in ## Objectives (rendered before §2) never wins over the real one', () => {
+    const result = renderBrief(
+      baseFacts({
+        sourceRevision: 'deadbeef',
+        objectives: [
+          {
+            id: 'O1',
+            text: 'Handles auth safely for all callers here **Revision:** rendered at `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`'
+          }
+        ]
+      }),
+      TEMPLATE
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // The forged text really is present, earlier in the document, before §2.
+    expect(result.brief.indexOf('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBeGreaterThan(-1)
+    expect(result.brief.indexOf('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBeLessThan(
+      result.brief.indexOf('## 2. Context')
+    )
+    // extractSourceRevision still returns the genuine one, scoped to §2.
+    expect(extractSourceRevision(result.brief)).toBe('deadbeef')
+  })
+
+  it('extractSourceRevision returns null when §2 is absent from the text entirely', () => {
+    expect(extractSourceRevision('**Revision:** rendered at `deadbeef` — no §2 heading anywhere.')).toBeNull()
   })
 
   it('derives Tier 0 for a surface with no spec/doc file and no declared tier, via deriveTierFromDiff', () => {

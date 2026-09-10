@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -144,6 +145,36 @@ esac
   chmodSync(gh, 0o755)
 }
 
+/**
+ * Fakes ONLY `git ls-remote --symref origin HEAD` (task 4, Issue #483, O1's
+ * staleness check) — everything else falls through to the REAL `git`
+ * binary unchanged, since `assembleAndRenderBrief` still needs real
+ * `git ls-files`/`rev-parse`/`status` reads against this actual checkout.
+ * This fixture spawns from `REPO_ROOT` (a real worktree, not a synthetic
+ * repo), so the staleness check would otherwise compare this worktree's
+ * real HEAD against the real `origin/main` tip — a mismatch on every task
+ * branch, in every CI run, forever, since a PR branch is never `origin/main`
+ * itself. Answering with THIS worktree's own current HEAD, on the branch
+ * name `assembleAndRenderBrief` never reads, makes the staleness check a
+ * trivial pass without faking anything else about `git`.
+ */
+function writeFakeGit(dir: string, realGit: string): void {
+  const headSha = execFileSync(realGit, ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  const git = join(dir, 'git')
+  writeFileSync(
+    git,
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ] && [ "$2" = "--symref" ] && [ "$3" = "origin" ] && [ "$4" = "HEAD" ]; then
+  printf 'ref: refs/heads/main\\tHEAD\\n'
+  printf '%s\\tHEAD\\n' "${headSha}"
+  exit 0
+fi
+exec "${realGit}" "$@"
+`
+  )
+  chmodSync(git, 0o755)
+}
+
 /** The fake `claude` vendor binary — records the brief it received on stdin so the test can prove it was really invoked, not merely that the command exited 0. */
 function writeFakeVendor(dir: string, callLog: string): void {
   const p = join(dir, 'claude')
@@ -217,6 +248,8 @@ function buildFixture(): Fixture {
   const dataDir = tempDir('vinaya-dispatch-task-data-')
   const issueListPath = writeIssueList(dataDir)
   writeFakeGh(binDir, issueListPath)
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
+  writeFakeGit(binDir, realGit)
   const callLog = join(dataDir, 'vendor-call.log')
   writeFakeVendor(binDir, callLog)
   const preload = writeFetchPreload(dataDir, issueListPath)

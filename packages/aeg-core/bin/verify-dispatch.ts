@@ -83,7 +83,6 @@ import {
   type RepoRef
 } from '@attalabs/aeg-forge-state'
 import {
-  AEG_BRIEF_V1_MARKER,
   type BaselineEntry,
   captureBaseline,
   checkDispatchReadiness,
@@ -91,7 +90,6 @@ import {
   checkPremises,
   classifyLeftover,
   compareToBaseline,
-  contentAfterTwoLines,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
   type DispatchPriorTrancheFact,
@@ -99,7 +97,9 @@ import {
   deriveSection7,
   classifyDocOwnersManifest,
   DOC_OWNERS_PATH,
-  parsePremiseBlock
+  parsePremiseBlock,
+  PRINCIPAL_ALLOWLIST,
+  resolveNewestFrozenBrief
 } from '../src/index'
 import type { Tranche, Task } from '../src/types'
 
@@ -665,6 +665,31 @@ function countErrorLines(output: string): number {
 
 // ---- modes ---------------------------------------------------------------------
 
+export type ResolvePremiseBriefTextResult = { ok: true; text: string } | { ok: false; message: string }
+
+/**
+ * Resolves the newest principal-authored frozen brief's content out of an
+ * Issue's raw `gh issue view --json comments` payload — via
+ * `resolveNewestFrozenBrief` (task 4, Issue #483, O3), the same single
+ * resolver `check-brief-shape.ts`/`fetchFrozenBrief` use, rather than a
+ * v1-only marker match. Pure and exported so `--premise`'s Issue-derived
+ * mode is unit-testable without spawning `gh` or the forge — the exact gap
+ * that let a v1-only match ship here silently (security review, PR #503
+ * round 2, BLOCKER: after `--supersede`, this refused every dispatch of the
+ * corrected task at Step 0).
+ */
+export function resolvePremiseBriefText(
+  comments: Array<{ body: string; author?: { login?: string } | null }>,
+  issueNumber: number
+): ResolvePremiseBriefTextResult {
+  const normalized = comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
+  const briefComment = resolveNewestFrozenBrief(normalized, PRINCIPAL_ALLOWLIST)
+  if (!briefComment) {
+    return { ok: false, message: `not dispatched — no \`aeg:brief:v<k>\` comment on Issue #${issueNumber}.` }
+  }
+  return { ok: true, text: briefComment.content }
+}
+
 async function runPremiseModeFromIssue(trancheSlug: string, taskId: string): Promise<void> {
   const repo = await resolveRepo()
   if (!repo) {
@@ -691,7 +716,7 @@ async function runPremiseModeFromIssue(trancheSlug: string, taskId: string): Pro
     process.exit(1)
   }
 
-  const commentsJson = shJson<{ comments: Array<{ body: string }> }>('gh', [
+  const commentsJson = shJson<{ comments: Array<{ body: string; author?: { login?: string } | null }> }>('gh', [
     'issue',
     'view',
     String(task.issue),
@@ -700,13 +725,13 @@ async function runPremiseModeFromIssue(trancheSlug: string, taskId: string): Pro
     '--json',
     'comments'
   ])
-  const briefComment = commentsJson?.comments.find((c) => c.body.split('\n')[0] === AEG_BRIEF_V1_MARKER)
-  if (!briefComment) {
-    console.error(`verify-dispatch --premise: not dispatched — no \`aeg:brief:v1\` comment on Issue #${task.issue}.`)
+  const resolved = resolvePremiseBriefText(commentsJson?.comments ?? [], task.issue)
+  if (!resolved.ok) {
+    console.error(`verify-dispatch --premise: ${resolved.message}`)
     process.exit(1)
   }
 
-  const brief = contentAfterTwoLines(briefComment.body)
+  const brief = resolved.text
 
   const assertions = parsePremiseBlock(brief)
   if (assertions.length === 0) {

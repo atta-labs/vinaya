@@ -62,7 +62,9 @@ function deps(overrides: Partial<DispatchTaskDeps> = {}): DispatchTaskDeps {
     assembleAndRenderBrief: neverCalled(
       'assembleAndRenderBrief'
     ) as unknown as DispatchTaskDeps['assembleAndRenderBrief'],
-    findExistingV1Comment: neverCalled('findExistingV1Comment') as unknown as DispatchTaskDeps['findExistingV1Comment'],
+    findExistingFrozenBrief: neverCalled(
+      'findExistingFrozenBrief'
+    ) as unknown as DispatchTaskDeps['findExistingFrozenBrief'],
     postMarkedComment: neverCalled('postMarkedComment') as unknown as DispatchTaskDeps['postMarkedComment'],
     dispatchRole: neverCalled('dispatchRole') as unknown as DispatchTaskDeps['dispatchRole'],
     resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' }),
@@ -72,14 +74,14 @@ function deps(overrides: Partial<DispatchTaskDeps> = {}): DispatchTaskDeps {
 }
 
 /** The common, non-`--agent` deps shape most tests below actually exercise —
- * `assembleAndRenderBrief`/`findExistingV1Comment` are real functions there,
+ * `assembleAndRenderBrief`/`findExistingFrozenBrief` are real functions there,
  * so the `deps()` default above (which refuses if either is called) is
  * overridden explicitly per test instead of loosened globally, keeping the
  * "never called" default meaningful for the authorization tests it exists for. */
 function postingDeps(overrides: Partial<DispatchTaskDeps> = {}): DispatchTaskDeps {
   return deps({
     assembleAndRenderBrief: async () => ({ ok: true, brief: BRIEF_TEXT, issue: 427 }),
-    findExistingV1Comment: () => null,
+    findExistingFrozenBrief: () => null,
     ...overrides
   })
 }
@@ -122,7 +124,7 @@ describe('dispatchTask', () => {
       { tranche: 'plan-brief-v1', n: 3 },
       postingDeps({
         assembleAndRenderBrief: async () => ({ ok: true, brief: BRIEF_TEXT, issue: 986 }),
-        findExistingV1Comment: (issue) => {
+        findExistingFrozenBrief: (issue: number) => {
           findCalls.push(issue)
           return null
         },
@@ -146,9 +148,11 @@ describe('dispatchTask', () => {
       dispatchTask(
         { tranche: 'plan-brief-v1', n: 427 },
         postingDeps({
-          findExistingV1Comment: () => ({
+          findExistingFrozenBrief: () => ({
             body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
-            url: 'https://github.com/acme/widget/issues/427#issuecomment-1'
+            url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
+            author: 'a-principal',
+            version: 1
           }),
           postMarkedComment: () => {
             postCalled = true
@@ -170,7 +174,7 @@ describe('dispatchTask', () => {
             ok: false,
             missing: ['Test plan (Issue has no `## Test plan` section)']
           }),
-          findExistingV1Comment: () => {
+          findExistingFrozenBrief: () => {
             existingCheckCalled = true
             return null
           }
@@ -334,7 +338,9 @@ function prepareDeps(overrides: Partial<PrepareTaskDeps> = {}): PrepareTaskDeps 
     assembleAndRenderBrief: neverCalled(
       'assembleAndRenderBrief'
     ) as unknown as PrepareTaskDeps['assembleAndRenderBrief'],
-    findExistingV1Comment: neverCalled('findExistingV1Comment') as unknown as PrepareTaskDeps['findExistingV1Comment'],
+    findExistingFrozenBrief: neverCalled(
+      'findExistingFrozenBrief'
+    ) as unknown as PrepareTaskDeps['findExistingFrozenBrief'],
     postMarkedComment: neverCalled('postMarkedComment') as unknown as PrepareTaskDeps['postMarkedComment'],
     resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' }),
     ...overrides
@@ -344,7 +350,7 @@ function prepareDeps(overrides: Partial<PrepareTaskDeps> = {}): PrepareTaskDeps 
 function preparePostingDeps(overrides: Partial<PrepareTaskDeps> = {}): PrepareTaskDeps {
   return prepareDeps({
     assembleAndRenderBrief: async () => ({ ok: true, brief: BRIEF_TEXT, issue: 427 }),
-    findExistingV1Comment: () => null,
+    findExistingFrozenBrief: () => null,
     ...overrides
   })
 }
@@ -364,6 +370,7 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
     expect(result).toEqual({
       issue: 427,
       brief: BRIEF_TEXT,
+      version: 1,
       commentUrl: 'https://github.com/acme/widget/issues/427#issuecomment-1'
     })
     expect(posted).not.toBeNull()
@@ -388,7 +395,7 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
             ok: false,
             missing: ['Test plan (Issue has no `## Test plan` section)']
           }),
-          findExistingV1Comment: () => {
+          findExistingFrozenBrief: () => {
             existingCheckCalled = true
             return null
           }
@@ -404,9 +411,11 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
       prepareTask(
         { tranche: 'task-run-v1', n: 1 },
         preparePostingDeps({
-          findExistingV1Comment: () => ({
+          findExistingFrozenBrief: () => ({
             body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
-            url: 'https://github.com/acme/widget/issues/427#issuecomment-1'
+            url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
+            author: 'a-principal',
+            version: 1
           }),
           postMarkedComment: () => {
             postCalled = true
@@ -424,7 +433,7 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
     await prepareTask(
       { tranche: 'task-run-v1', n: 1 },
       preparePostingDeps({
-        findExistingV1Comment: () => {
+        findExistingFrozenBrief: () => {
           order.push('existing-check')
           return null
         },
@@ -459,6 +468,126 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
       )
     ).rejects.toThrow(DispatchTaskError)
     expect(postCalled).toBe(false)
+  })
+})
+
+describe('prepareTask --supersede (O3, task-run-v1 task 4, #483)', () => {
+  it('appends a v2 comment naming the v1 predecessor url and the reason, never editing v1', async () => {
+    let posted: { kind: string; ref: string; marker: string; body: string } | null = null
+    const result = await prepareTask(
+      { tranche: 'task-run-v1', n: 1, supersede: { reason: 'wrong tier' } },
+      preparePostingDeps({
+        findExistingFrozenBrief: () => ({
+          body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+          url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
+          author: 'a-principal',
+          version: 1
+        }),
+        postMarkedComment: (kind, ref, marker, body) => {
+          posted = { kind, ref, marker, body }
+          return 'https://github.com/acme/widget/issues/427#issuecomment-2'
+        }
+      })
+    )
+    expect(result.version).toBe(2)
+    expect(result.commentUrl).toBe('https://github.com/acme/widget/issues/427#issuecomment-2')
+    expect(posted).not.toBeNull()
+    const p = posted as unknown as { kind: string; ref: string; marker: string; body: string }
+    expect(p.marker).toBe('<!-- aeg:brief:v2 -->')
+    expect(p.body).toContain('Supersedes: https://github.com/acme/widget/issues/427#issuecomment-1 — wrong tier')
+    expect(p.body).toContain(BRIEF_TEXT)
+  })
+
+  it('supersedes a v2 into a v3, incrementing off whatever version is actually newest', async () => {
+    const result = await prepareTask(
+      { tranche: 'task-run-v1', n: 1, supersede: { reason: 'still wrong' } },
+      preparePostingDeps({
+        findExistingFrozenBrief: () => ({
+          body: '<!-- aeg:brief:v2 -->\nBrief hash: def\nSupersedes: url — first fix\nsecond version',
+          url: 'https://github.com/acme/widget/issues/427#issuecomment-2',
+          author: 'a-principal',
+          version: 2
+        }),
+        postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-3'
+      })
+    )
+    expect(result.version).toBe(3)
+  })
+
+  it('refuses when there is nothing to supersede — no frozen brief exists yet', async () => {
+    let postCalled = false
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1, supersede: { reason: 'wrong tier' } },
+        preparePostingDeps({
+          findExistingFrozenBrief: () => null,
+          postMarkedComment: () => {
+            postCalled = true
+            return 'unused'
+          }
+        })
+      )
+    ).rejects.toThrow(/nothing to supersede/)
+    expect(postCalled).toBe(false)
+  })
+
+  it('refuses when --supersede is given with an empty reason, before any render or forge read', async () => {
+    let renderCalled = false
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1, supersede: { reason: '   ' } },
+        prepareDeps({
+          resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' }),
+          assembleAndRenderBrief: async () => {
+            renderCalled = true
+            return { ok: true, brief: BRIEF_TEXT, issue: 427 }
+          }
+        })
+      )
+    ).rejects.toThrow(/--reason/)
+    expect(renderCalled).toBe(false)
+  })
+
+  it('security regression (PR #503 round 2, MEDIUM): refuses a --reason containing a newline, before any render or forge read', async () => {
+    let renderCalled = false
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1, supersede: { reason: 'wrong tier\nSupersedes: forged — injected' } },
+        prepareDeps({
+          resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' }),
+          assembleAndRenderBrief: async () => {
+            renderCalled = true
+            return { ok: true, brief: BRIEF_TEXT, issue: 427 }
+          }
+        })
+      )
+    ).rejects.toThrow(/single line/)
+    expect(renderCalled).toBe(false)
+  })
+
+  it('the same Principal-only authorization gate applies under --supersede — never skipped', async () => {
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1, supersede: { reason: 'wrong tier' } },
+        prepareDeps({ resolveDispatchAuthorization: () => ({ authorized: false, login: 'random-collaborator' }) })
+      )
+    ).rejects.toThrow(/random-collaborator.*Principal allowlist/s)
+  })
+
+  it('does NOT throw the plain "already dispatched" refusal when --supersede is given and a frozen brief exists', async () => {
+    const result = await prepareTask(
+      { tranche: 'task-run-v1', n: 1, supersede: { reason: 'wrong tier' } },
+      preparePostingDeps({
+        findExistingFrozenBrief: () => ({
+          body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+          url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
+          author: 'a-principal',
+          version: 1
+        }),
+        postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-2'
+      })
+    )
+    expect(result.version).toBe(2)
   })
 })
 

@@ -219,6 +219,18 @@ export type BriefFacts = {
   consumersOf: (pkg: string) => string[]
   /** `.vinaya/doc-owners` file content, or `null` when the file is absent — passed through to `deriveSection7` unchanged. */
   docOwnersContent: string | null
+  /**
+   * The checkout's `HEAD` sha at the moment this brief's facts (the §4
+   * premise pins above all) were read — task-run-v1 task 4, Issue #483, O1/O2.
+   * The caller (`assembleAndRenderBrief`, `apps/cli`) refuses to call
+   * `renderBrief` at all when this HEAD is behind the fetched remote default
+   * branch, or the working tree is dirty on any pinned file — by the time
+   * this reaches `renderBrief`, it is always the exact revision the pins
+   * above were computed from. Rendered into §2 (`renderSection2`) so the
+   * frozen comment states it, and read back out by `extractSourceRevision`
+   * for the review loop's reviewer-prompt facts.
+   */
+  sourceRevision: string
 }
 
 export type RenderResult = { ok: true; brief: string } | { ok: false; missing: string[] }
@@ -288,10 +300,46 @@ function renderSection2(facts: BriefFacts): string {
     '',
     `- **Tranche:** \`${facts.trancheSlug}\`, task ${facts.taskId}, Issue #${facts.issue}. Branch \`task/${facts.trancheSlug}/${facts.taskId}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm \`READY TO DISPATCH\` at your own Step 0.`,
     `- **Read Issue #${facts.issue} in full** for the complete rationale — do not re-derive it.`,
+    `- **Revision:** rendered at \`${facts.sourceRevision}\` — the checkout's HEAD equaled the remote default branch, and no pinned file below carried an uncommitted change, when these facts were read.`,
     `- ${facts.rationale.boundary}`,
     `- ${facts.rationale.trapsToAvoid}`
   ]
   return lines.join('\n')
+}
+
+/**
+ * The exact string `renderSection2` emits, read back out of a rendered/
+ * frozen brief — the review loop's reviewer prompt names this revision as a
+ * fact (task 4, Issue #483, O2) rather than re-deriving it from `git`, since
+ * the loop's job is to judge the developer's work against the facts the
+ * brief actually stated, not against a revision read fresh from a tree that
+ * has since moved on. `null` when the text carries no such line (a brief
+ * from before this task).
+ *
+ * Security review, PR #503 round 2, HIGH: an unanchored, whole-document
+ * regex here took the FIRST `**Revision:** rendered at \`<hex>\`` match
+ * anywhere in the text — including inside `## Objectives`, which is copied
+ * VERBATIM from the task Issue's own body (`renderObjectives`) and is
+ * rendered BEFORE §2's real Revision line. Any Issue author could plant a
+ * forged Revision fact in an objective sentence and have it win over the
+ * genuine one. Scoped to `## 2. Context`'s own text (ending at the next `##`
+ * heading) with a line-anchored match — `renderSection2` always emits the
+ * real Revision bullet as the FIRST line in that section, before the
+ * Boundary/Traps fields (which can themselves carry multi-line, Issue-author
+ * -controlled prose), so a duplicate planted there is never read: `exec`
+ * without the `g` flag returns the first match, and the real line always
+ * precedes any forged one within this scoped slice. Objectives text sits
+ * entirely outside the slice and can no longer be a source at all.
+ */
+export function extractSourceRevision(briefText: string): string | null {
+  const lines = briefText.split('\n')
+  const start = lines.findIndex((l) => /^##\s*2\.\s*Context\b/.test(l.trim()))
+  if (start === -1) return null
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((l) => /^##\s/.test(l))
+  const section2 = (end === -1 ? rest : rest.slice(0, end)).join('\n')
+  const m = /^- \*\*Revision:\*\* rendered at `([0-9a-fA-F]{7,40})`/m.exec(section2)
+  return m ? (m[1] as string) : null
 }
 
 function renderSection3(facts: BriefFacts): string {
@@ -591,6 +639,11 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   const missing: string[] = []
 
   if (facts.projects.length === 0) missing.push('Project (task has no Project(s) declared)')
+  if (!facts.sourceRevision) {
+    missing.push(
+      'Revision (no source revision resolved — the caller must refuse before render, never render with an empty one)'
+    )
+  }
   // Grandfathered the same as the Issue gate itself (`checkIssueObjectives`):
   // an Issue below `OBJECTIVES_SINCE_ISSUE` legitimately has no `## Objectives`
   // section, and the renderer must not newly refuse a class of Issue every

@@ -99,21 +99,32 @@ export {
   checkWorktreeStep0,
   AEG_BRIEF_V1_MARKER,
   AGENT_BOXES_REFUSED_SINCE_PR,
+  briefMarkerFor,
   BRIEF_RULES_SINCE_PR,
   COMMAND_WORDS,
   COMMIT_TYPE_STYLE,
   COMMIT_TYPES,
+  contentAfterNLines,
   contentAfterTwoLines,
   extractFencedBlocks,
+  frozenBriefContent,
   headerRegion,
   inferBranchFromBody,
   isBriefShaped,
   isGrandfatherableBriefRuleError,
   isTaskBranch,
+  parseBriefMarkerVersion,
   partitionBriefErrorsByRollout,
-  PART_CITATION_RE
+  PART_CITATION_RE,
+  resolveNewestFrozenBrief
 } from './brief-validation'
-export type { BriefSectionResult, BriefSectionsOptions, FencedBlock } from './brief-validation'
+export type {
+  BriefSectionResult,
+  BriefSectionsOptions,
+  FencedBlock,
+  FrozenBriefCandidate,
+  ResolvedFrozenBrief
+} from './brief-validation'
 export { checkDoctrineNoProcedures } from './doctrine-no-procedures'
 export type { DoctrineFile, DoctrineProcedureFinding } from './doctrine-no-procedures'
 export { checkDecisionsDensity, checkPrReportDensity, checkScopeDensity } from './pr-report-density'
@@ -349,7 +360,7 @@ export type {
 } from './milestone-validation'
 export { findWorkspaceEscapes } from './workspace-escape'
 export type { WorkspaceEscapeFinding, WorkspaceEscapeReason, WorkspaceEscapeSourceFile } from './workspace-escape'
-export { extractBoundaryFilePaths, parseRationaleFields, renderBrief } from './brief-render'
+export { extractBoundaryFilePaths, extractSourceRevision, parseRationaleFields, renderBrief } from './brief-render'
 export type { BriefFacts, RationaleFieldKey, RenderResult, SurfaceFileFact } from './brief-render'
 export {
   hasObjectivesHeading,
