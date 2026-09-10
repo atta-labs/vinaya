@@ -146,7 +146,7 @@ export const COMMANDS: readonly Command[] = [
       { flag: '--agent <claude|codex|gemini>', description: 'Start the developer through dispatchRole once posted' }
     ],
     details: [
-      // AEG:CLAIM: apps/cli/src/lib/dispatch-task.ts contains:export const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
+      // AEG:CLAIM: packages/aeg-core/src/brief-validation.ts contains:export const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
       "Renders the brief from the Issue and the tree (the same assembly `brief render` uses) and posts it once as an Issue comment whose first line is `<!-- aeg:brief:v1 -->` and whose second line is `Brief hash: <sha256>` — the hash covers only the body below those two lines, so any reader recomputes it. Refuses outright, naming the existing comment's URL, when a `v1` comment already exists on the Issue — the brief is frozen by design, never overwritten or silently reissued.",
       'With `--agent`, starts the Developer through `dispatchRole` when `apps/cli/src/lib/dispatch.ts` exports it; otherwise prints the rendered brief and the manual dispatch instruction and exits `0` — a soft dependency, never a hard block.',
       'Principal-only, with or without `--agent`: refuses before any render, forge read, or post when the authenticated `gh` identity is not on the Principal allowlist (or cannot be resolved at all) — dispatching is the `todo → in-flight` transition, not a general-purpose comment poster.',
@@ -663,9 +663,9 @@ export const COMMANDS: readonly Command[] = [
       "Sets `VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_ROUND` on the child only — never on this process's own environment — and refuses by name, before any spawn attempt, when the named vendor binary is absent from `PATH` or present but not executable.",
       "Records `dispatched` (with the prompt's sha256), `outcome_received` (duration, the vendor's own usage when its stdout prints a recognizable shape), or `dispatch_failed` (`timeout`, `crash`, or `refused`) through the Vinaya Log's one `dispatch` family writer, `dispatchRole`. A wall-time ceiling (`dispatch.timeoutMs` in config, default one hour) sends `SIGTERM` then, after a grace window, `SIGKILL`.",
       "When `--task` or `--pr` is given, flushes that outbox via `vinaya log flush` immediately after the child settles — `--task` and `--pr` are mutually exclusive here, matching `log flush`'s own single-target rule. Without either, the dispatch still runs and logs; nothing is flushed, and the lines ride to the next flush.",
-      // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:resumeArgs: (id) => ['-p', '-r', id, '--output-format', 'json'],
-      // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:resumeArgs: (id) => ['exec', 'resume', id, '--json', '-'],
-      // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:resumeArgs: (id) => ['-p', '', '--resume', id, '--output-format', 'json', '--skip-trust'],
+      // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:'-r',
+      // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:resumeArgs: (id, model) => ['exec', 'resume', id, ...(model ? ['--model', model] : []), '--json', '-'],
+      // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:'--resume',
       "A successful dispatch's `DispatchHandle` carries `resumeId` — the vendor's own session/thread identifier (claude/gemini: `session_id`; codex: `thread_id`), parsed from its stdout, `null` on any failure. Passing that value as `--resume <id>` on a later call swaps in that vendor's own resume invocation (`claude -p -r <id> ...`; `codex exec resume <id> ...`; `gemini ... --resume <id> ...`) in place of its first-dispatch args."
     ],
     status: 'shipped'
