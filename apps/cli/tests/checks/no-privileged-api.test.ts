@@ -23,7 +23,8 @@ const ALLOWED_KEYS = new Set<keyof CheckSpec>([
   'requiresOpenPr',
   // Expressible in config (CheckEntrySchema) and documented in
   // CONFIG_REFERENCE, so it is not a privileged core-only field.
-  'ownWorkflow'
+  'ownWorkflow',
+  'principalOwed'
 ])
 
 describe('no-privileged-api', () => {

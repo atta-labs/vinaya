@@ -105,6 +105,23 @@ export type CheckSpec = {
    * its own workflow is what gates the merge.
    */
   ownWorkflow?: boolean
+  /**
+   * True for a check whose failure only the Principal can clear — it reads a
+   * state only a human review/verification step produces, and no diff the
+   * Developer pushes can satisfy it directly. `test-plan` is the one example
+   * today: its `[principal]` half waits on the Principal ticking a box in a
+   * real signed-in browser, a wait-state `check-test-plan` marks with
+   * `CheckError.pending: true` (never a structural failure, which stays
+   * unmarked and still blocks). The mechanical gate (`vinaya check --all`'s
+   * own exit code, and the loop's CI reader) excludes a `principalOwed`
+   * check's failure from what makes a run red ONLY when every error it
+   * reported that run is `pending: true` — a structural failure on the same
+   * check (no Test Plan section at all) still counts, because that one the
+   * Developer can actually fix. Enforcement of the human-owed half itself
+   * does not disappear: it moves to `review-gate`, which refuses merge while
+   * the live PR body still carries an unticked `[principal]` item.
+   */
+  principalOwed?: true
 }
 
 /**
