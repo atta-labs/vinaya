@@ -79,15 +79,50 @@ jobs:
       # PR_BODY is what makes body-bare-digits EVALUATE at all — the bin
       # reads `process.env.PR_BODY` only, never fetches it itself. Fetched
       # live from the forge, never the event payload — same reasoning as
-      # `vinaya-checks.yml`'s own PR_BODY step.
+      # `vinaya-checks.yml`'s own PR_BODY step. See `verifiedFetchPrBodyStep`'s
+      # own doc comment for why this re-reads with a bounded backoff instead
+      # of trusting the first read.
       - name: Fetch PR body
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.head_ref }}
         run: |
+          ATTEMPTS=0
+          MAX_ATTEMPTS=6
+          SLEEP_SECONDS=5
+          while :; do
+            BODY="$(gh pr view "$PR_NUMBER" --json body --jq .body)"
+            WAIT_FOR=""
+            if [[ "$BRANCH" =~ ^task/[^/]+/[^/]+$ ]]; then
+              CLOSES_REGION="$(printf '%s\n' "$BODY" | sed -n '/<!-- AEG:CLOSES:START -->/,/<!-- AEG:CLOSES:END -->/p')"
+              if ! printf '%s\n' "$CLOSES_REGION" | grep -qE '#[0-9]+'; then
+                WAIT_FOR="a real Closes #N inside the AEG:CLOSES region for task branch $BRANCH"
+              fi
+            fi
+            if [ -z "$WAIT_FOR" ]; then
+              EVIDENCE_REGION="$(printf '%s\n' "$BODY" | sed -n '/<!-- AEG:EVIDENCE:START -->/,/<!-- AEG:EVIDENCE:END -->/p')"
+              if [ -n "$EVIDENCE_REGION" ]; then
+                EVIDENCE_HEAD="$(printf '%s\n' "$EVIDENCE_REGION" | grep -m1 '^Head: ' | sed 's/^Head: //')"
+                if [ -n "$EVIDENCE_HEAD" ] && [ "$EVIDENCE_HEAD" != "$PR_HEAD_SHA" ]; then
+                  WAIT_FOR="the AEG:EVIDENCE block's Head ($EVIDENCE_HEAD) to catch up to this run's real head ($PR_HEAD_SHA)"
+                fi
+              fi
+            fi
+            if [ -z "$WAIT_FOR" ]; then
+              break
+            fi
+            ATTEMPTS=$((ATTEMPTS + 1))
+            if [ "$ATTEMPTS" -ge "$MAX_ATTEMPTS" ]; then
+              echo "::error::Gave up after $ATTEMPTS attempts waiting for $WAIT_FOR." >&2
+              exit 1
+            fi
+            sleep "$SLEEP_SECONDS"
+          done
           DELIM="PR_BODY_$(openssl rand -hex 16)"
           echo "PR_BODY<<$DELIM" >> "$GITHUB_ENV"
-          gh pr view "$PR_NUMBER" --json body --jq .body >> "$GITHUB_ENV"
+          printf '%s\n' "$BODY" >> "$GITHUB_ENV"
           echo "$DELIM" >> "$GITHUB_ENV"
       - name: Body checks
         env:

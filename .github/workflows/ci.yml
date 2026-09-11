@@ -93,6 +93,21 @@ jobs:
           path: apps/cli/dist
           retention-days: 1
 
+      # task 17, O5: `vinaya doctor` diagnoses drift between this repo's own
+      # managed files (the four `vinaya-*.yml` workflows, git hooks) and the
+      # generator that produced them (`apps/cli/src/lib/artifacts.ts`) —
+      # read-only, never mutates. Runs the CLI just built above (never a
+      # stale published `vinaya` on the runner) against THIS repo, the same
+      # one `vinaya init` installed into. A generator change that ships with
+      # no regenerated file is exactly the gap this closes: `#529` changed the
+      # review-workflow generator and merged without regenerating
+      # `.github/workflows/vinaya-review.yml`, and nothing ran `doctor` to
+      # catch it. Unconditional (not gated behind the docs-only skip above):
+      # a drifted managed file is a fact about the tree, independent of
+      # whether THIS diff happens to also touch docs.
+      - name: vinaya doctor — managed files match their generator
+        run: node apps/cli/dist/index.js doctor
+
       # Biome was a devDependency every contributor already installed, and
       # nothing ever ran it — so formatting and lint drifted in whenever a
       # contributor did not run it by hand. `check` is formatter + linter in
