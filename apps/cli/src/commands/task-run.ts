@@ -25,6 +25,7 @@
 
 import { colourLoopLine } from '../lib/dispatch.js'
 import { DISPATCH_AGENTS, type DispatchAgent } from '../lib/dispatch-task.js'
+import { loadConfig } from '../lib/config.js'
 import { runTask, type RunTaskResult } from '../lib/task-run.js'
 
 /** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */
@@ -32,7 +33,7 @@ const TASK_RUN_FAILURE_EXIT_CODE = 3
 
 const KNOWN_FLAGS = ['--agent']
 
-type ParsedFlags = { agent: string | undefined; unknown: string[] }
+type ParsedFlags = { agent: string | undefined; agentFlagPresent: boolean; unknown: string[] }
 
 /**
  * `unknown` collects any `--flag`-shaped or stray token this parser does
@@ -41,16 +42,26 @@ type ParsedFlags = { agent: string | undefined; unknown: string[] }
  * on that sibling command, where an unrecognized flag was silently dropped
  * while every other flag still took effect. Refusing here closes the same
  * gap rather than reintroducing it on a second command.
+ *
+ * `agentFlagPresent` distinguishes `--agent` never given at all (falls back
+ * to `dispatch.agent` in config) from `--agent` given with no value (a
+ * malformed flag, always refused — never silently rescued by the config
+ * fallback): both otherwise parse `agent` as `undefined`, and collapsing
+ * them would let a typo'd `--agent` at the end of argv quietly succeed off
+ * the config default instead of failing loud.
  */
 function parseFlags(rest: string[]): ParsedFlags {
   let agent: string | undefined
+  let agentFlagPresent = false
   const unknown: string[] = []
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]
-    if (a === '--agent') agent = rest[++i]
-    else if (a !== undefined) unknown.push(a)
+    if (a === '--agent') {
+      agentFlagPresent = true
+      agent = rest[++i]
+    } else if (a !== undefined) unknown.push(a)
   }
-  return { agent, unknown }
+  return { agent, agentFlagPresent, unknown }
 }
 
 export async function taskRunCommand(args: string[]): Promise<void> {
@@ -74,11 +85,21 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     )
     process.exit(2)
   }
-  if (!parsed.agent || !(DISPATCH_AGENTS as readonly string[]).includes(parsed.agent)) {
-    console.error(`vinaya task run: --agent <${DISPATCH_AGENTS.join('|')}> is required.`)
+  // `--agent` falls back to `dispatch.agent` in `vinaya.config.json` when
+  // omitted entirely — the same fallback `dispatch.ts` and
+  // `dev-review-loop.ts` already give their own `--agent` flags, so a repo
+  // that declares its agent once needs no flag repeated on every command. A
+  // `--agent` given with no value is a malformed flag, not an omission —
+  // never rescued by the config fallback (see `parseFlags`'s own doc
+  // comment on `agentFlagPresent`).
+  const agentRaw = parsed.agentFlagPresent ? parsed.agent : (parsed.agent ?? loadConfig()?.dispatch?.agent)
+  if (!agentRaw || !(DISPATCH_AGENTS as readonly string[]).includes(agentRaw)) {
+    console.error(
+      `vinaya task run: --agent <${DISPATCH_AGENTS.join('|')}> is required (or set dispatch.agent in vinaya.config.json).`
+    )
     process.exit(2)
   }
-  const agent = parsed.agent as DispatchAgent
+  const agent = agentRaw as DispatchAgent
 
   let result: RunTaskResult
   try {

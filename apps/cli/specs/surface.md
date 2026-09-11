@@ -420,24 +420,34 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `devReviewLoop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `describeObjectivesEdit` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `DevReviewLoopResumeError` | class | `apps/cli/src/lib/dev-review-loop.ts` |
+| `DeveloperStopSignal` | class | `apps/cli/src/lib/dev-review-loop.ts` |
+| `DRIVER_OWNED_PATHS` | const | `apps/cli/src/lib/dev-review-loop.ts` |
 | `extractObjectivesSection` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchCiConclusion` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchConflictingFiles` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchDeveloperStop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchFailingCheckNames` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchIssueTitle` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `fetchMergeableState` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchNewestRulingOrdinal` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `fetchSourceRevision` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `filterDeveloperStops` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `filterPrincipalRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `findLatestPrincipalObjectivesEdit` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `findOpenPrForBranch` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `findPrincipalFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `gitCommitsTouchingDriverPaths` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `lintReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `NO_SOURCE_REVISION` | const | `apps/cli/src/lib/dev-review-loop.ts` |
 | `outboxRoot` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `parseConfidenceReply` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `parseMergeTreeConflictFiles` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `parseObjectivesEditComment` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `publishRound` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `readWorktreeHead` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `renderNoPushStopComment` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `renderPauseComment` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `renderReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `resolveHead` | function | `apps/cli/src/lib/dev-review-loop.ts` |
@@ -604,7 +614,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `brief render` | `brief.ts` | `briefRenderCommand` | 1 | compliant | `assembleAndRenderBrief` |
 | `task dispatch` | `task.ts` | `taskDispatchCommand` | 1 | compliant | `dispatchTask` |
 | `task brief` | `task.ts` | `taskBriefCommand` | 1 | compliant | `prepareTask` |
-| `task run` | `task-run.ts` | `taskRunCommand` | 2 | exempt — see below | sharedCommandShell (target) |
+| `task run` | `task-run.ts` | `taskRunCommand` | 3 | exempt — see below | sharedCommandShell (target) |
 | `task status` | `task-status.ts` | `taskStatusCommand` | 3 | exempt — see below | taskStatus (target) |
 | `pr create` | `pr.ts` | `prCreateCommand` | 9 | exempt — see below | forgeWrite (target) |
 | `pr edit` | `pr.ts` | `prEditCommand` | 8 | exempt — see below | forgeWrite (target) |
@@ -680,7 +690,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `pr-verify-evidence-logic.ts` (not a command — see note) | 2026-09-05 | n/a — lib code (`publishedMergeBase`, `normaliseLines`, `compareEvidence`, `renderVerdict`) colocated in `apps/cli/src/commands/` instead of `apps/cli/src/lib/` | moves to `apps/cli/src/lib/` in the next task touching `pr-verify-evidence` |
 | `dispatch` | 2026-09-07 | 5 — lib (4): `loadConfig`, `isAgentVendor`, `dispatchRole`, `printJson`; commands/\*.ts (refused outright): `logFlushCommand` (`log.ts`) | `sharedCommandShell` |
 | `dev-review-loop` | 2026-09-10 | 5 — lib: `loadConfig`, `isAgentVendor`, `devReviewLoop`, `printJson`, `colourLoopLine` | `sharedCommandShell` |
-| `task run` | 2026-09-10 | 2 — lib: `runTask`, `colourLoopLine` | `sharedCommandShell` |
+| `task run` | 2026-09-11 | 3 — lib: `runTask`, `colourLoopLine`, `loadConfig` | `sharedCommandShell` |
 | `task status` | 2026-09-11 | 3 — lib: `printJson`, `gatherTaskStatusList`, `gatherSingleTaskStatus` | `taskStatus` |
 
 `dispatchRole` retires no row today — its own command (`dispatch`) is new, not a retirement of an existing exempt row. `devReviewLoop` (this task) likewise retires no row today — it is itself a new named chokepoint (`## Effects` intro), and `dev-review-loop`'s own command calls it alongside the same three argv-plumbing calls `dispatch` already carries (`loadConfig`/`isAgentVendor`/`printJson`) — once `sharedCommandShell` absorbs those, this command is left calling only `devReviewLoop`, becoming compliant on its own rather than needing a second named target.
@@ -702,4 +712,6 @@ Every non-compliant command from the table above, dated, with the count of disti
 `task run` (`taskRunCommand`) is **exempt**, not compliant — round 2 review (MAJOR): the fresh-task publish/pause summary lines needed role-colouring through `colourLoopLine` (`dispatch.ts`, already exported), the same treatment `dev-review-loop`'s own equivalent lines already carry, raising this command's own in-scope call count from `1` to `2` (`runTask` plus `colourLoopLine`) — both the Commands table row and the new Exemptions row above updated together, same convention the `dev-review-loop` colour addition itself used one commit earlier. `RunTaskResult` (`task-run.ts`) also gained a `prUrl: string | null` field, built from `resolveRepo()` (`@attalabs/aeg-forge-state`, already used by `dev-review-loop.ts`) plus the loop's own `prNumber` — round 2 review, MAJOR: Issue #480's own Sizing story promises the publish path "printing the PR URL," which the shipped command did not do. `null` only when the repo cannot be resolved, never thrown — a display-only nicety, not a new refusal.
 
 Round 2 review, second round (security, HIGH/MEDIUM): `taskRunCommand` now catches every `runTask` failure itself and exits `3` (a new, distinct exit code — never `1`, which pause alone owns), and its own argv parser (`parseFlags`) now collects unrecognized flags into an explicit refusal (exit `2`) instead of silently dropping them, mirroring the fix `dispatch.ts`'s own `parseArgs`/`KNOWN_FLAGS` already made for the identical gap on that sibling command. Neither change touches this command's in-scope lib-call count (still `2`: `runTask`, `colourLoopLine`) or its exemption status.
+
+`taskRunCommand` now falls back to `dispatch.agent` in `vinaya.config.json` when `--agent` is omitted entirely (task-run-v1 task 13), the same fallback `dispatch`/`dev-review-loop` already give their own `--agent` flags — a new call to `loadConfig` (`apps/cli/src/lib/config.ts`, already exported), raising this command's own in-scope lib-call count from `2` to `3` (`runTask`, `colourLoopLine`, `loadConfig`; both the Commands table and the Exemptions row above updated together). Still exempt, not compliant — the target migration is unchanged.
 

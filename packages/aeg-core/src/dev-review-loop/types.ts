@@ -88,6 +88,14 @@ export type Observations =
  * `'objectives_changed'` in every respect: the driver detects and decides
  * it itself, and this member exists only so the pause shares the same
  * vocabulary and rendering path every other pause reason already uses.
+ *
+ * `'stale_driver'` (task `task-run-v1` 13, `#508`, O8): the base branch
+ * moved past a commit touching the driver's own code
+ * (`apps/cli/src/lib/dev-review-loop.ts`, `apps/cli/src/commands/
+ * review-post.ts`, or this package) since the loop started — same shape
+ * again: the driver compares its recorded start-of-loop base head against a
+ * freshly re-read one and decides this itself, so a running driver never
+ * publishes verdicts an updated gate would refuse.
  */
 export type PauseReason =
   | 'escalation'
@@ -98,6 +106,7 @@ export type PauseReason =
   | 'infrastructure'
   | 'objectives_changed'
   | 'ruling_posted'
+  | 'stale_driver'
 
 export type Decision =
   | { type: 'dispatch_developer'; reason?: 'confidence' }
