@@ -140,25 +140,54 @@ function fetchIssueCommentsForBrief(issueNumber: number): { body: string; author
 
 /**
  * The frozen brief's own hash this PR is judged against (task 4, `#478`,
- * O1) — `null` when the PR closes no Issue, or that Issue
- * carries no principal-authored frozen brief yet. Unlike
- * `resolveObjectivesVersion`, this never fails closed: a PR with nothing to
- * bind against yet is the same "skip the binding" case `objectivesVersion:
- * null` already covers, never a hard `severity:infra` refusal — a fetch
- * failure here is exactly as safe to treat as "unresolvable" as a genuinely
- * missing brief, since both mean the same thing to the binding: nothing to
- * compare against.
+ * O1) — `null` in exactly TWO cases: the PR closes no Issue (`extractIssue`,
+ * resolved before any fetch), or that Issue's real, successfully-fetched
+ * comment list carries no principal-authored frozen brief yet
+ * (`resolveNewestFrozenBrief` returning `null` on genuine data, not on an
+ * error). Every OTHER case — the fetch itself throwing (network error, `gh`
+ * auth failure, malformed JSON) — fails this check outright
+ * (`severity:infra`, exit `1`), the identical fail-closed treatment
+ * `resolveObjectivesVersion` already gives its own fetch failure, and for
+ * the identical reason (round 3 review, `#478`): the prior version caught
+ * every exception into `null`, and `isBoundToBriefHash` treats a `null`
+ * current hash as "skip the binding" — collapsing "the fetch failed" and
+ * "no brief was ever posted" into the same permissive skip let a transient
+ * `gh` hiccup at merge time silently disarm the whole brief-hash freshness
+ * check, passing a PR whose frozen brief was actually superseded. Callers
+ * must guard this the same way `resolveObjectivesVersion` is guarded: never
+ * invoke it when `waived` is `true`, so the waiver's own escape hatch stays
+ * reachable even though this now fails closed (`#433`'s MAJOR finding,
+ * reapplied here).
  */
 function resolveBriefHash(pr: PrView, principalAllowlist: readonly string[]): string | null {
   const { issue } = extractIssue(pr.body)
   if (issue === null) return null
+  let comments: { body: string; author: string | null }[]
   try {
-    const comments = fetchIssueCommentsForBrief(issue)
-    const frozen = resolveNewestFrozenBrief(comments, principalAllowlist as string[])
-    return frozen ? briefHash(frozen.content) : null
-  } catch {
-    return null
+    comments = fetchIssueCommentsForBrief(issue)
+  } catch (err) {
+    if (isIssueNotFoundError(err)) {
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'error',
+        message: `review-gate severity:infra — Issue #${issue} does not resolve via \`gh issue view\` — cannot verify the brief-hash binding for a PR whose linked Issue no longer exists.`,
+        agent_recovery_prompt: `Restore Issue #${issue}, fix \`Closes #N\` to name a real Issue, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya check review-gate\`.`
+      })
+      process.exit(1)
+    }
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `review-gate severity:infra — could not fetch Issue #${issue}'s comments via \`gh issue view\` to resolve its frozen-brief hash: ${(err as Error).message}`,
+      agent_recovery_prompt:
+        'Confirm `gh auth status` passes and the Issue number is correct, then re-run `vinaya check review-gate`.'
+    })
+    process.exit(1)
   }
+  const frozen = resolveNewestFrozenBrief(comments, principalAllowlist as string[])
+  return frozen ? briefHash(frozen.content) : null
 }
 
 /**
@@ -549,10 +578,13 @@ function main(): void {
     ),
     policy: reviewPolicy,
     // The frozen brief's own hash at evaluation time (task 4, `#478`, O1) —
-    // never fetched under a waiver, same reasoning as `rulingOrdinal` above:
-    // this can never itself be the reason a resolution fails, so it runs
-    // unconditionally rather than being skipped like `objectivesVersion`.
-    briefHash: resolveBriefHash(pr, principalAllowlist)
+    // never fetched under a waiver, the identical `objectivesVersion`
+    // treatment above and for the identical reason (round 3 review,
+    // `#478`): `resolveBriefHash` now fails closed on a genuine fetch
+    // error, so calling it unconditionally would make a `gh` hiccup able to
+    // block an actor-verified waiver's own escape hatch — the exact bug
+    // `#433`'s MAJOR finding closed for `resolveObjectivesVersion`.
+    briefHash: waived ? null : resolveBriefHash(pr, principalAllowlist)
   })
 
   let failed = false

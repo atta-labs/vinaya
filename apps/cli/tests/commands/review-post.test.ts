@@ -145,6 +145,14 @@ if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments')) {
   process.stdout.write(JSON.stringify({ comments: list.map((c) => ({ body: c.body, author: { login: c.author } })) }))
   process.exit(0)
 }
+if (args[0] === 'issue' && args[1] === 'view' && args.includes('comments')) {
+  // resolveBriefHashForPr (task 4, #478, O1) always reaches this call —
+  // this PR's own "Closes #1" resolves to a real Issue number. No
+  // principal-authored aeg-brief-vK comment here is the legitimate
+  // "nothing to bind against yet" case, not an error.
+  process.stdout.write('{"comments":[]}')
+  process.exit(0)
+}
 if (args[0] === 'pr' && args[1] === 'comment') {
   const bodyFile = args[args.indexOf('--body-file') + 1]
   const body = readFileSync(bodyFile, 'utf8')
@@ -210,6 +218,16 @@ if (args[0] === 'api' && args[1] === 'repos/{owner}/{repo}/git/ref/heads/stub-br
 }
 if (args[0] === 'pr' && args[1] === 'view' && args.includes('body')) {
   process.stdout.write(${JSON.stringify(prBody)})
+  process.exit(0)
+}
+if (args[0] === 'issue' && args[1] === 'view' && args.includes('comments')) {
+  // \`resolveBriefHashForPr\` (task 4, #478, O1) — a DIFFERENT real call from
+  // the \`--json body\` one below (\`resolveObjectivesForPr\`), which always
+  // runs first and refuses before this is ever reached when \`issueBody\` is
+  // undefined (the Issue-not-found case). When the Issue DOES resolve, no
+  // principal-authored \`aeg:brief:v<k>\` comment here is the legitimate
+  // "nothing to bind against yet" case, not an error.
+  process.stdout.write('{"comments":[]}')
   process.exit(0)
 }
 if (args[0] === 'issue' && args[1] === 'view') {
@@ -781,6 +799,14 @@ if (args[0] === 'pr' && args[1] === 'view' && args.includes('body')) {
 if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments')) {
   const list = readComments()
   process.stdout.write(JSON.stringify({ comments: list.map((c) => ({ body: c.body, author: { login: c.author } })) }))
+  process.exit(0)
+}
+if (args[0] === 'issue' && args[1] === 'view' && args.includes('comments')) {
+  // resolveBriefHashForPr (task 4, #478, O1) always reaches this call —
+  // this PR's own "Closes #1" resolves to a real Issue number. No
+  // principal-authored aeg-brief-vK comment here is the legitimate
+  // "nothing to bind against yet" case, not an error.
+  process.stdout.write('{"comments":[]}')
   process.exit(0)
 }
 if (args[0] === 'pr' && args[1] === 'comment') {

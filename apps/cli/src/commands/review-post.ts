@@ -1311,28 +1311,41 @@ function resolveRulingOrdinalForPr(pr: string): number {
 
 /**
  * The frozen brief's own hash for the Issue `pr` closes, at the moment this
- * command runs (task 4, `#478`, O1) — `null` when the PR closes no Issue, or
- * that Issue carries no principal-authored frozen brief. Unlike
- * `resolveObjectivesForPr`, this never refuses — a PR with nothing to bind
- * against yet is the same "skip the binding" case `objectivesVersion: null`
- * already covers, never a hard error.
+ * command runs (task 4, `#478`, O1) — `null` in exactly TWO cases: the PR
+ * closes no Issue (resolved before any fetch), or that Issue's real,
+ * successfully-fetched comment list carries no principal-authored frozen
+ * brief yet. Every OTHER case — the fetch itself throwing (network error,
+ * `gh` auth failure, malformed JSON) — refuses via `refuseCmd`, the identical
+ * treatment `resolveObjectivesForPr` already gives its own fetch failure
+ * (round 3 review, `#478`): the prior version caught every exception into
+ * `null`, silently rendering `Brief hash: (none)` on a transient `gh` hiccup
+ * instead of refusing the post — inconsistent with every sibling resolver in
+ * this file, even though the gate's own independent re-check later fails
+ * closed on the resulting mismatch.
  */
 function resolveBriefHashForPr(pr: string, principalAllowlist: readonly string[]): string | null {
   const prBody = fetchPrBody(pr)
   const { issue } = extractIssue(prBody)
   if (issue === null) return null
+  let out: string
   try {
-    const out = gh(['issue', 'view', String(issue), '--json', 'comments'])
-    const parsed = JSON.parse(out) as { comments: Array<{ body: string; author?: { login?: string } | null }> }
-    const comments = parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
-    const frozen = resolveNewestFrozenBrief(comments, principalAllowlist as string[])
-    return frozen ? briefHash(frozen.content) : null
-  } catch {
-    // The Issue doesn't resolve, or carries no frozen brief — the same
-    // "nothing to bind against yet" case `objectivesVersion: null` already
-    // covers, never a hard error.
-    return null
+    out = gh(['issue', 'view', String(issue), '--json', 'comments'])
+  } catch (err) {
+    if (isIssueNotFoundError(err)) {
+      refuseCmd(
+        `Issue #${issue} does not resolve via \`gh issue view\` — no frozen brief to bind against.`,
+        'Confirm the Issue exists, or fix `Closes #N` in the PR body, then re-run.'
+      )
+    }
+    refuseCmd(
+      `Could not fetch Issue #${issue}'s comments via \`gh issue view\` to resolve its frozen-brief hash: ${err instanceof Error ? err.message : String(err)}`,
+      'Confirm `gh auth status` passes, then re-run.'
+    )
   }
+  const parsed = JSON.parse(out) as { comments: Array<{ body: string; author?: { login?: string } | null }> }
+  const comments = parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
+  const frozen = resolveNewestFrozenBrief(comments, principalAllowlist as string[])
+  return frozen ? briefHash(frozen.content) : null
 }
 
 function readObjectivesFile(path: string): ObjectiveResult[] {

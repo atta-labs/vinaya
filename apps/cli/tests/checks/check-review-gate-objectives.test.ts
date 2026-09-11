@@ -58,6 +58,16 @@ if (args[0] === 'issue' && args[1] === 'view') {
     process.stderr.write(process.env.STUB_ISSUE_VIEW_FAIL)
     process.exit(1)
   }
+  // \`--json body\` (objectives) and \`--json comments\` (brief hash,
+  // task 4, #478) are two DIFFERENT real calls this stub must answer
+  // differently — collapsing them meant the brief-hash resolver, now
+  // fail-closed on a genuine error (round 3 review, #478), saw the raw
+  // objectives text as its own JSON and threw a parse error every test in
+  // this file never intended to exercise.
+  if (args.includes('comments')) {
+    process.stdout.write(process.env.STUB_ISSUE_VIEW_COMMENTS_JSON ?? '{"comments":[]}')
+    process.exit(0)
+  }
   process.stdout.write(process.env.STUB_ISSUE_VIEW_BODY ?? '')
   process.exit(0)
 }
