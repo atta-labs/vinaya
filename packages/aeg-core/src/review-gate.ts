@@ -388,13 +388,7 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const codeReviewRulingsBound = codeReviewBinding.rulingOrdinal
   const securityRulingsBound = securityBinding.rulingOrdinal
 
-  if (
-    codeReviewClean &&
-    codeReviewBinding.bound &&
-    securityClean &&
-    securityBinding.bound &&
-    mechanicalChecksClean
-  ) {
+  if (codeReviewClean && codeReviewBinding.bound && securityClean && securityBinding.bound && mechanicalChecksClean) {
     return {
       verdict: 'pass',
       reason: `code-reviewer verdict is a clean APPROVE and security-review verdict is a clean PASS, both covering head ${input.headSha}, and every reported mechanical check is green.`,

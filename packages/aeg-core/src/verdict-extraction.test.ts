@@ -832,7 +832,7 @@ describe('Brief hash: / Policy digest: extraction', () => {
       '',
       'Judged head: abc1234',
       '',
-      `Ruling ordinal: 0`,
+      'Ruling ordinal: 0',
       '',
       `Brief hash: ${HASH_A}`,
       '',
@@ -871,9 +871,15 @@ describe('Brief hash: / Policy digest: extraction', () => {
   })
 
   it('reads null for Brief hash: when the value is a non-hash placeholder ("(none)")', () => {
-    const comment = ['VERDICT: APPROVE', '', 'Judged head: abc1234', '', 'Ruling ordinal: 0', '', 'Brief hash: (none)'].join(
-      '\n'
-    )
+    const comment = [
+      'VERDICT: APPROVE',
+      '',
+      'Judged head: abc1234',
+      '',
+      'Ruling ordinal: 0',
+      '',
+      'Brief hash: (none)'
+    ].join('\n')
     const result = extractCodeReviewVerdict([comment])
     expect(result.briefHash).toBeNull()
   })

@@ -66,7 +66,14 @@ describe('compareManifest', () => {
   it('binds when every field matches exactly', () => {
     const m = manifest()
     const result = compareManifest(manifestAsEchoed(m), m)
-    expect(result).toEqual({ bound: true, head: true, briefHash: true, objectivesVersion: true, rulingOrdinal: true, policyDigest: true })
+    expect(result).toEqual({
+      bound: true,
+      head: true,
+      briefHash: true,
+      objectivesVersion: true,
+      rulingOrdinal: true,
+      policyDigest: true
+    })
   })
 
   it('head: binds by patch identity when the sha differs but patchIdOf agrees', () => {

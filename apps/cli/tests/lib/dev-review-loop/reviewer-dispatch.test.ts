@@ -82,7 +82,16 @@ describe('buildVerdictFromReport — objective-id coverage, the same rule `revie
       )
     ).toThrow(ReviewerReportParseFailure)
     try {
-      buildVerdictFromReport('reviewer', workDir, 'claude', 478, HANDLE, MANIFEST, DEFAULT_REVIEW_POLICY, RESOLVED_OBJECTIVES)
+      buildVerdictFromReport(
+        'reviewer',
+        workDir,
+        'claude',
+        478,
+        HANDLE,
+        MANIFEST,
+        DEFAULT_REVIEW_POLICY,
+        RESOLVED_OBJECTIVES
+      )
       throw new Error('expected a throw')
     } catch (err) {
       expect(err).toBeInstanceOf(ReviewerReportParseFailure)

@@ -53,7 +53,9 @@ export function briefHash(brief: string): string {
  */
 export function policyDigest(policy: ReviewPolicy): string {
   return createHash('sha256')
-    .update(JSON.stringify({ codeReviewThreshold: policy.codeReviewThreshold, securityThreshold: policy.securityThreshold }))
+    .update(
+      JSON.stringify({ codeReviewThreshold: policy.codeReviewThreshold, securityThreshold: policy.securityThreshold })
+    )
     .digest('hex')
 }
 
