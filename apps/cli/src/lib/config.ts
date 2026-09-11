@@ -54,7 +54,13 @@ const CheckEntrySchema = z
     // config-registered check declares this exactly like a core one. An
     // adopter whose own workflow reports a check marks it here so
     // `check --all` stops producing a second conclusion nothing refreshes.
-    ownWorkflow: z.boolean().optional()
+    ownWorkflow: z.boolean().optional(),
+    // Same discipline again (review-validity-v1 11, O1): an adopter's own
+    // custom check whose failure only their own equivalent of the Principal
+    // can clear declares this exactly like `test-plan` does in the core
+    // registry — see `CheckSpec.principalOwed`'s doc comment for the
+    // exclusion semantics this unlocks.
+    principalOwed: z.literal(true).optional()
   })
   // `anyOf` is keyed BY the variable name it expands to (`{"GITHUB_TOKEN":
   // {"anyOf":["GITHUB_TOKEN","GH_TOKEN"]}}`) — the key must be one of its own

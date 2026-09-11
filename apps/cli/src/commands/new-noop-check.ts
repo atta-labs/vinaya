@@ -58,12 +58,19 @@ export function newNoopCheckCommand(args: string[]): void {
   // `ownWorkflow` check like `review-gate` is withheld from `--all`
   // specifically to avoid a second, stale conclusion; a pasted entry
   // missing that flag loses that exclusion for its replacement).
-  const entry: { run: string; scope: string; requiresOpenPr?: true; ownWorkflow?: true } = {
+  const entry: {
+    run: string
+    scope: string
+    requiresOpenPr?: true
+    ownWorkflow?: true
+    principalOwed?: true
+  } = {
     run: `./${relPath}`,
     scope: coreSpec.scope
   }
   if (coreSpec.requiresOpenPr) entry.requiresOpenPr = true
   if (coreSpec.ownWorkflow) entry.ownWorkflow = true
+  if (coreSpec.principalOwed) entry.principalOwed = true
   const registration = JSON.stringify({ checks: { [name]: entry } }, null, 2)
   process.stdout.write(
     `Created ${relPath}\n\nThis REPLACES the core check "${name}" — it will no longer run. Register the no-op in vinaya.config.json:\n${registration}\n`

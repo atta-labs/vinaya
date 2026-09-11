@@ -344,6 +344,12 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // the first commit — only the Principal can satisfy it, after review.
       // See `CheckSpec.requiresOpenPr`'s doc comment.
       requiresOpenPr: true,
+      // See `CheckSpec.principalOwed`'s doc comment (review-validity-v1 11,
+      // O1): a run whose ONLY red is this check, failing for the
+      // `pending: true` (unticked `[principal]` item) reason, reads green to
+      // `vinaya check --all`'s own exit code and to the loop's CI reader.
+      // The `[agent]`/structural half stays a real, blocking failure.
+      principalOwed: true,
       // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
       // plain absence-tolerant fall-throughs. Body and branch only again
       // (task 12, #387): the bin no longer shells to `gh` at all — the

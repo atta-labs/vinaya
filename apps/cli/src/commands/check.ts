@@ -401,6 +401,34 @@ export async function checkCommand(args: string[]): Promise<void> {
     }
   }
 
-  const failed = outcomes.some((o) => o.status === 'fail' || o.status === 'error' || o.status === 'timeout')
-  process.exitCode = failed ? 1 : 0
+  process.exitCode = isRunFailed(outcomes, specsToRun) ? 1 : 0
+}
+
+/**
+ * The run's own pass/fail verdict — what becomes `vinaya check --all`'s exit
+ * code, and therefore the ONE GitHub check-run conclusion a bundled
+ * `scope: 'diff'` run like `test-plan` reports under (they share one CI job;
+ * GitHub exposes no per-check granularity inside it — confirmed live against
+ * this repo's own `vinaya check --all --diff-only` run).
+ *
+ * A `principalOwed` check (review-validity-v1 11, O1) whose every reported
+ * error THIS run is `pending: true` is waiting on the Principal, not on this
+ * diff, and is excluded — the registry flag names the check, never a name
+ * list, and the exclusion applies ONLY to that one cause: a structural
+ * failure on the same check (no `pending` errors at all, or a mix of
+ * pending/non-pending) still counts, because that half the Developer can
+ * actually fix. `test-plan`'s own red still runs and is reported per-check
+ * by the caller above; only the run's aggregate verdict is affected — the
+ * loop's CI reader (`fetchCiConclusion`) needs no change of its own, since
+ * `success`/`neutral`/`skipped` already read as green there, and this
+ * function is what decides which of those this run reports. Exported for
+ * direct unit coverage rather than only through a spawned end-to-end run.
+ */
+export function isRunFailed(outcomes: CheckOutcome[], specs: CheckSpec[]): boolean {
+  return outcomes.some((o) => {
+    if (o.status !== 'fail' && o.status !== 'error' && o.status !== 'timeout') return false
+    const spec = specs.find((s) => s.name === o.name)
+    if (spec?.principalOwed && o.errors.length > 0 && o.errors.every((e) => e.pending === true)) return false
+    return true
+  })
 }
