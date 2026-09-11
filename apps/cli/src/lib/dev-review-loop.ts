@@ -243,7 +243,7 @@ export function filterPrincipalRulings(comments: readonly MarkerComment[], allow
 const DEVELOPER_STOP_MARKER = /^<!-- aeg:developer:stop -->$/
 
 /**
- * O9 (task-run-v1 13, `#508`): a developer that refuses to start (entry
+ * O9: a developer that refuses to start (entry
  * gate) or hits a stop condition before ever pushing has nowhere to post
  * but the task Issue — no PR exists yet. `aeg-root/roles/developer.md`
  * names this exact marker for that one case. Same trust boundary as
@@ -756,7 +756,7 @@ export function writeHeldVerdict(
   writeFileSync(heldVerdictPath(root, task, round, role), renderedComment, 'utf8')
 }
 
-/** task-run-v1 13 (#508), O5: removes both held-verdict files for a round whose head fell into conflict after reviewers judged it — nothing is published against a head that cannot merge. Missing files are not an error (a round can hold only one role's verdict, or none). */
+/** O5: removes both held-verdict files for a round whose head fell into conflict after reviewers judged it — nothing is published against a head that cannot merge. Missing files are not an error (a round can hold only one role's verdict, or none). */
 function discardHeldVerdicts(root: string, task: number, round: number): void {
   for (const role of ['reviewer', 'security'] as const) {
     try {
@@ -825,7 +825,7 @@ export class ReviewerInfrastructureFailure extends Error {
 }
 
 /**
- * O9 (task-run-v1 13, `#508`): thrown by the round-1-entry check when the
+ * O9: thrown by the round-1-entry check when the
  * developer's very first turn ends with no branch on the remote AND a
  * refusal/escalation posted on the task Issue (`fetchDeveloperStop`) — the
  * caller catches this and ends the loop at once, never entering the
@@ -1006,7 +1006,7 @@ export function renderPauseComment(prNumber: number, reason: PauseReason, detail
 }
 
 /**
- * O9 (task-run-v1 13, `#508`): the round-1-entry variant of the pause
+ * O9: the round-1-entry variant of the pause
  * comment — no PR exists yet to carry it (posted on the Issue instead) and
  * no PR number exists for a `--resume` command, so the resume path named is
  * `vinaya task run`, the same one command this task's own O10 makes work
@@ -1353,7 +1353,7 @@ function defaultDeps(): LoopDeps {
     flushOutbox: defaultFlushOutbox,
     sleep: defaultSleep,
     now: () => Date.now(),
-    // task-run-v1 13 (#508), O3: env-overridable the same way the gate poll
+    // O3: env-overridable the same way the gate poll
     // budget already is (`gatePollEnvOverride`'s own doc comment) — a real
     // subprocess test exercising the PR-poll timeout path needs this in
     // test time, not the ~30 real minutes the production budget takes.
@@ -1398,8 +1398,8 @@ async function assertDispatchOrEscalate(
 }
 
 /**
- * `timeoutMessage` may be a plain string or a thunk — the thunk form (O3,
- * task-run-v1 13, `#508`) is evaluated ONLY on the timeout path, never on
+ * `timeoutMessage` may be a plain string or a thunk — the thunk form (O3)
+ * is evaluated ONLY on the timeout path, never on
  * every attempt: a message that itself reads the forge (branch/local/remote
  * head, PR existence) must not cost an extra round of shell calls on the
  * common, poll-succeeds-immediately path.
@@ -1860,7 +1860,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     const repo = await resolveRepo().catch(() => null)
     const repoRoot = d.repoRoot()
     const confidenceFilePath = join(repoRoot, '.worktrees', branch, CONFIDENCE_FILE_NAME)
-    /** task-run-v1 13 (#508), O8: recorded once, at loop start — never re-derived. Re-read at every round entry (top of the `while(true)` below) and compared against this fixed watermark for commits touching `DRIVER_OWNED_PATHS`. */
+    /** O8: recorded once, at loop start — never re-derived. Re-read at every round entry (top of the `while(true)` below) and compared against this fixed watermark for commits touching `DRIVER_OWNED_PATHS`. */
     const baseHeadAtStart = d.gitRevParseOriginMain()
     const loopOutboxPath = outboxPathFor({ outboxRoot: () => root }, repo, task)
     /**
@@ -2246,7 +2246,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      */
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      // task-run-v1 13 (#508), O8: re-read the base branch's head at every
+      // O8: re-read the base branch's head at every
       // round entry (every iteration is a superset of "every round entry" —
       // checking more often than the minimum is strictly safer, never
       // wrong) and compare against the fixed watermark recorded at loop
@@ -2385,7 +2385,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         await logEvents(result.events)
         d.flushOutbox(task)
       } else if (decision.type === 'dispatch_reviewers') {
-        // task-run-v1 13 (#508), O4/O7: mergeability is read BEFORE any CI
+        // O4/O7: mergeability is read BEFORE any CI
         // read or reviewer dispatch — a branch in conflict with the base
         // sends the developer back with the conflicting files named; no
         // reviewer starts and no CI is waited on for this head. Round
@@ -2502,7 +2502,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
 
       if (decision.type === 'publish') {
-        // task-run-v1 13 (#508), O5: mergeability is read AGAIN before
+        // O5: mergeability is read AGAIN before
         // publication — reviewers can take long enough that a clean head
         // falls into conflict with the base while they worked. A branch
         // that fell into conflict has its held verdicts for this round
