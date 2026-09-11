@@ -101,10 +101,12 @@ const THREE_OBJECTIVES = [
  */
 function stubGh(opts: {
   body: string
-  comments: Array<{ body: string }>
+  comments: Array<{ body: string; author?: { login: string } | null; url?: string }>
   issueUrl: string
   commentUrl: string
   login?: string
+  /** Override the `[<tranche>] <n> — ...` title `resolveTaskIssueRef` (O6) reads — defaults to a well-formed one so the supersede path resolves cleanly when a frozen brief is present. */
+  title?: string
 }): {
   path: Record<string, string>
   editedBodyLogPath: string
@@ -112,10 +114,27 @@ function stubGh(opts: {
 } {
   const dir = tempDir('issue-objectives-stub-')
   const bodyCommentsJsonPath = join(dir, 'body-comments.json')
+  const fullContextJsonPath = join(dir, 'full-context.json')
   const labelsJsonPath = join(dir, 'labels.json')
   const editedBodyLogPath = join(dir, 'edited-body.log')
   const commentsLogPath = join(dir, 'posted-comments.log')
+  // `--json body,comments` (O3's `fetchForgeIssueContext`, called from
+  // inside `writeValidatedIssueEdit`) and `--json body,title,labels,comments`
+  // (`issue-objectives.ts`'s own `fetchIssueBodyAndComments`) both hit this
+  // same `gh`. Both payloads carry `opts.comments` unmodified — neither
+  // fixture in this file posts a frozen `aeg:brief:v<k>` comment, so O6's
+  // supersede path stays dormant and only `title`/`labels` need placeholder
+  // values that never get read for these tests.
   writeFileSync(bodyCommentsJsonPath, JSON.stringify({ body: opts.body, comments: opts.comments }))
+  writeFileSync(
+    fullContextJsonPath,
+    JSON.stringify({
+      body: opts.body,
+      title: opts.title ?? '[task-run-v1] 11 — fixture',
+      labels: [{ name: 'vinaya/tranche:task-run-v1' }],
+      comments: opts.comments
+    })
+  )
   writeFileSync(labelsJsonPath, JSON.stringify({ labels: [{ name: 'vinaya/tranche:demo' }] }))
   writeFileSync(editedBodyLogPath, '')
   writeFileSync(commentsLogPath, '')
@@ -134,8 +153,10 @@ if [ "$1" = "label" ] && [ "$2" = "list" ]; then
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
   case "$*" in
+    *title*) cat "${fullContextJsonPath}" ;;
+    *comments*) cat "${bodyCommentsJsonPath}" ;;
     *labels*) cat "${labelsJsonPath}" ;;
-    *) cat "${bodyCommentsJsonPath}" ;;
+    *) echo "unhandled issue view: $*" >&2; exit 1 ;;
   esac
   exit 0
 fi
@@ -326,5 +347,38 @@ describe('vinaya issue objectives edit', () => {
     expect(r.stderr).toContain('Principal-only')
     expect(readFileSync(editedBodyLogPath, 'utf-8')).toBe('')
     expect(readFileSync(commentsLogPath, 'utf-8')).toBe('')
+  })
+
+  // task-run-v1 task 11, review round 1, O6 — once the Objectives comment is
+  // posted, a frozen brief must be superseded in the same command. This
+  // fixture cannot exercise the real supersede (it needs a real/mocked
+  // `assembleAndRenderBrief` network round trip — covered instead by
+  // `dispatch-task.test.ts`'s bundle-integration fixture for that shared
+  // machinery); it proves the OTHER half: a frozen brief whose Issue title
+  // does not resolve to a `[<tranche>] <n> — ...` task identity is refused
+  // by name rather than silently skipping the supersede O6 promises.
+  it('refuses, naming O6, when a frozen brief exists but the title/label do not resolve to a task identity', () => {
+    const repo = tempDir('issue-objectives-repo-')
+    const { path, commentsLogPath } = stubGh({
+      body: issueBody(THREE_OBJECTIVES),
+      comments: [
+        { body: '<!-- aeg:brief:v1 -->\nBrief hash: x\nfrozen brief text', author: { login: 'daniboomerang' } }
+      ],
+      issueUrl: 'https://github.com/acme/widget/issues/413',
+      commentUrl: 'https://github.com/acme/widget/issues/413#issuecomment-5',
+      title: 'not a task-shaped title at all'
+    })
+    const r = runCli(
+      ['issue', 'objectives', 'edit', '413', '--add', 'Fourth objective sentence here.', '--reason', 'scope grew'],
+      repo,
+      path
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/already frozen/)
+    expect(r.stderr).toContain('O6')
+    // The Objectives comment was already posted before the supersede check —
+    // this refusal reports the resulting disagreement, it does not undo it.
+    const posted = readFileSync(commentsLogPath, 'utf-8')
+    expect(posted).toContain('<!-- aeg:objectives:v1 -->')
   })
 })

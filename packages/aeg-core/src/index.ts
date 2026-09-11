@@ -191,6 +191,7 @@ export {
   checkSurfaceScope,
   declaredProjects,
   edgesNameEachOther,
+  frozenSectionsChanged,
   globCoversPath,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
@@ -202,6 +203,7 @@ export {
   parseIssueTestPlan
 } from './issue-validation'
 export type {
+  FrozenSection,
   IssuePart,
   IssueSectionResult,
   IssueSurface,

@@ -11,6 +11,8 @@ import {
   makeCheckError,
   parseIssueNumberFromRef,
   refuse,
+  refuseFrozenSectionChange,
+  refuseUnlabeledTaskShapedBody,
   resolveMilestoneAttachArgs,
   runGhWrite,
   validateTaskIssue,
@@ -53,12 +55,14 @@ export function issueCreateCommand(args: string[]): void {
   const title = extractTitle(ghArgs)
   const labels = extractLabels(ghArgs)
 
+  refuseUnlabeledTaskShapedBody(body, labels, RETRY_CREATE)
+
   if (isTaskIssueLabelSet(labels)) {
     // No number exists until the write completes — `checkIssueObjectives`
     // treats `null` as NOT exempted (fail-closed), never as "old enough to
     // skip"; every Issue this repo can newly mint is already far past
     // `OBJECTIVES_SINCE_ISSUE`, so this never blocks a legitimate create.
-    validateTaskIssue(body, title, labels, RETRY_CREATE, null)
+    validateTaskIssue(body, title, labels, RETRY_CREATE, null, { kind: 'create', ghArgs })
   }
 
   if (validateOnly) {
@@ -98,8 +102,13 @@ export function issueEditCommand(args: string[]): void {
     // normally silent on edit, so the forge is what decides task-Issue
     // applicability.
     const labels = [...new Set([...fetchForgeLabels(issueRef, RETRY_EDIT), ...extractLabels(ghArgs)])]
+    refuseUnlabeledTaskShapedBody(body, labels, RETRY_EDIT)
     if (isTaskIssueLabelSet(labels)) {
-      validateTaskIssue(body, title, labels, RETRY_EDIT, parseIssueNumberFromRef(issueRef))
+      refuseFrozenSectionChange(issueRef, body, RETRY_EDIT)
+      validateTaskIssue(body, title, labels, RETRY_EDIT, parseIssueNumberFromRef(issueRef), {
+        kind: 'edit',
+        issueRef
+      })
     }
     reportPass(json, 'issue edit')
     return

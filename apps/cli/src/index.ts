@@ -228,7 +228,7 @@ try {
       } else if (subcommand === 'edit') {
         issueEditCommand(passthrough)
       } else if (subcommand === 'objectives edit') {
-        issueObjectivesEditCommand(passthrough)
+        await issueObjectivesEditCommand(passthrough)
       } else {
         console.error(
           `Unknown 'issue' subcommand: ${rawSubcommand ?? '(none)'} (expected 'create', 'edit', or 'objectives edit')`

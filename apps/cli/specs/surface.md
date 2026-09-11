@@ -173,6 +173,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `checkSurfaceScope` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `declaredProjects` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `edgesNameEachOther` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `frozenSectionsChanged` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `globCoversPath` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `isTaskIssueBodyShaped` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `isTaskIssueLabelSet` | function | `packages/aeg-core/src/issue-validation.ts` |
@@ -310,7 +311,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `projectsFromBody` | function | `packages/aeg-forge-state/src/list-tasks.ts` |
 | `mapForgeFacts` | function | `packages/aeg-forge-state/src/map-forge-facts.ts` |
 
-(272 exports.)
+(273 exports.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
@@ -496,6 +497,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `ensureTrancheLabelExists` | function | `apps/cli/src/lib/forge-write.ts` |
 | `extractLabels` | function | `apps/cli/src/lib/forge-write.ts` |
 | `extractTitle` | function | `apps/cli/src/lib/forge-write.ts` |
+| `fetchForgeIssueContext` | function | `apps/cli/src/lib/forge-write.ts` |
 | `fetchForgeLabels` | function | `apps/cli/src/lib/forge-write.ts` |
 | `ForgeArgError` | class | `apps/cli/src/lib/forge-write.ts` |
 | `locateBody` | function | `apps/cli/src/lib/forge-write.ts` |
@@ -506,6 +508,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `readProjectPaths` | function | `apps/cli/src/lib/forge-write.ts` |
 | `readSharedPackages` | function | `apps/cli/src/lib/forge-write.ts` |
 | `refuse` | function | `apps/cli/src/lib/forge-write.ts` |
+| `refuseFrozenSectionChange` | function | `apps/cli/src/lib/forge-write.ts` |
 | `refuseUnlabeledTaskShapedBody` | function | `apps/cli/src/lib/forge-write.ts` |
 | `refuseUnlessPrincipal` | function | `apps/cli/src/lib/forge-write.ts` |
 | `resolveMilestoneAttachArgs` | function | `apps/cli/src/lib/forge-write.ts` |
@@ -581,7 +584,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `AEG_BRIEF_V1_MARKER` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(237 exports.)
+(239 exports.)
 
 ## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
@@ -606,9 +609,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `pr report` | `pr-report.ts` | `prReportCommand` | 3 | exempt — see below | collectTokens (target) |
 | `pr verify-evidence` | `pr-verify-evidence.ts` | `prVerifyEvidenceCommand` | 3 | exempt — see below | collectTokens (target) |
 | `pr rule` | `pr-rule.ts` | `prRuleCommand` | 6 | exempt — see below | forgeWrite (target) |
-| `issue create` | `issue.ts` | `issueCreateCommand` | 10 | exempt — see below | forgeWrite (target) |
-| `issue edit` | `issue.ts` | `issueEditCommand` | 10 | exempt — see below | forgeWrite (target) |
-| `issue objectives edit` | `issue-objectives.ts` | `issueObjectivesEditCommand` | 8 | exempt — see below | forgeWrite (target) |
+| `issue create` | `issue.ts` | `issueCreateCommand` | 11 | exempt — see below | forgeWrite (target) |
+| `issue edit` | `issue.ts` | `issueEditCommand` | 12 | exempt — see below | forgeWrite (target) |
+| `issue objectives edit` | `issue-objectives.ts` | `issueObjectivesEditCommand` | 11 | exempt — see below | forgeWrite (target) |
 | `log flush` | `log.ts` | `logFlushCommand` | 4 | exempt — see below | sharedCommandShell (target) |
 | `milestone create` | `milestone.ts` | `milestoneCreateCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `milestone adopt` | `milestone.ts` | `milestoneAdoptCommand` | 4 | exempt — see below | forgeWrite (target) |
@@ -651,9 +654,9 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `pr report` | 2026-09-10 | 3 — lib: `summariseNumstat`; commands/\*.ts (refused outright): `realDeps`, `meteringRefusalMessage` (`tokens.ts`) | `collectTokens` |
 | `pr verify-evidence` | 2026-09-05 | 3 — lib: none; commands/\*.ts (refused outright): `buildReport` (`pr-report.ts`), `compareEvidence`, `renderVerdict` (`pr-verify-evidence-logic.ts`) | `collectTokens` |
 | `pr rule` | 2026-09-05 | 6 — lib (6): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `countMarkerComments`, `postMarkedComment`, `printJson` | `forgeWrite` |
-| `issue create` | 2026-09-05 | 10 — lib (10): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `extractLabels`, `validateTaskIssue`, `printJson`, `ensureTrancheLabelExists`, `runGhWrite`, `resolveMilestoneAttachArgs` | `forgeWrite` |
-| `issue edit` | 2026-09-05 | 10 — lib (10): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `fetchForgeLabels`, `extractLabels`, `validateTaskIssue`, `parseIssueNumberFromRef`, `printJson`, `writeValidatedIssueEdit` | `forgeWrite` |
-| `issue objectives edit` | 2026-09-05 | 8 — lib (8): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `writeValidatedIssueEdit`, `locateBody`, `countMarkerComments`, `postMarkedComment`, `printJson` | `forgeWrite` |
+| `issue create` | 2026-09-11 | 11 — lib (11): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `extractLabels`, `refuseUnlabeledTaskShapedBody`, `validateTaskIssue`, `printJson`, `ensureTrancheLabelExists`, `runGhWrite`, `resolveMilestoneAttachArgs` | `forgeWrite` |
+| `issue edit` | 2026-09-11 | 12 — lib (12): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `fetchForgeLabels`, `extractLabels`, `refuseUnlabeledTaskShapedBody`, `refuseFrozenSectionChange`, `validateTaskIssue`, `parseIssueNumberFromRef`, `printJson`, `writeValidatedIssueEdit` | `forgeWrite` |
+| `issue objectives edit` | 2026-09-11 | 11 — lib (11): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `writeValidatedIssueEdit`, `locateBody`, `countMarkerComments`, `postMarkedComment`, `printJson`, `resolvePrincipalAllowlist`, `loadTrustAnchorConfig`, `prepareTask` | `forgeWrite` |
 | `log flush` | 2026-09-06 | 4 — lib (4): `outboxPathFor`, `log`, `currentRunId`, `printJson` | `sharedCommandShell` |
 | `milestone create` | 2026-09-05 | 8 — lib (8): `extractTitle`, `refuse`, `makeCheckError`, `locateBody`, `resolveSections`, `validateForgeWrite`, `printJson`, `detectGitRepo` | `forgeWrite` |
 | `milestone adopt` | 2026-09-05 | 4 — lib (4): `refuse`, `makeCheckError`, `detectGitRepo`, `printJson` | `forgeWrite` |

@@ -31,10 +31,26 @@ function runCli(args: string[], cwd: string, env?: Record<string, string>): CliR
   }
 }
 
-/** A fake `gh` on PATH whose `issue view <ref> --json labels` answers with a single task-tranche label — enough for `fetchForgeLabels` to treat the target as a task Issue, without a real network call. */
+/**
+ * A fake `gh` on PATH whose `issue view <ref> --json labels` answers with a
+ * single task-tranche label — enough for `fetchForgeLabels` to treat the
+ * target as a task Issue, without a real network call. Also answers
+ * `--json body,comments` (O3's `fetchForgeIssueContext`, unconditional
+ * whenever the target is a task Issue) with an empty body and no comments —
+ * "no frozen brief exists", O3 dormant, the same as every real Issue this
+ * suite's fixtures target before `vinaya task dispatch` ever runs on them.
+ */
 function fakeGhLabelsPath(dir: string): string {
   const gh = join(dir, 'gh')
-  writeFileSync(gh, `#!/bin/sh\necho '{"labels":[{"name":"vinaya/tranche:demo"}]}'\n`)
+  writeFileSync(
+    gh,
+    `#!/bin/sh
+case "$*" in
+  *labels*) echo '{"labels":[{"name":"vinaya/tranche:demo"}]}' ;;
+  *) echo '{"body":"","comments":[]}' ;;
+esac
+`
+  )
   execFileSync('chmod', ['+x', gh])
   return `${dir}:${process.env.PATH}`
 }
@@ -413,6 +429,88 @@ describe('vinaya issue edit --validate-only — briefSections builtin reaches th
       { PATH: fakeGhLabelsPath(ghDir) }
     )
     expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/Surface/)
+  })
+})
+
+// task-run-v1 task 11, review round 1, O3 — a plain `vinaya issue edit` real
+// write must refuse an Objectives/Surface/Parts change once the task's brief
+// is frozen, naming the frozen comment and `issue objectives edit`.
+describe('vinaya issue edit (real write) — O3 frozen-brief section lock', () => {
+  let cwd: string
+  let ghDir: string
+
+  const OLD_BODY = [
+    '## Objectives',
+    '',
+    'O1. Do the thing.',
+    '',
+    "## Planner's rationale",
+    '',
+    '**Boundary** — n/a.',
+    '',
+    '## Surface',
+    '',
+    'in: apps/cli/src/lib',
+    'out: apps/cli/src/commands'
+  ].join('\n')
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-issue-edit-frozen-test-'))
+    ghDir = mkdtempSync(join(tmpdir(), 'vinaya-issue-edit-frozen-fake-gh-'))
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+    rmSync(ghDir, { recursive: true, force: true })
+  })
+
+  /** A fake `gh` answering `issue view <ref> --json labels` (task label) and `--json body,comments` (the pre-edit body plus one frozen `aeg:brief:v1` comment authored by the default principal, `daniboomerang`). `issue edit` is never expected to be reached when O3 refuses first. */
+  function fakeGhFrozenPath(dir: string): string {
+    const gh = join(dir, 'gh')
+    const bodyCommentsPath = join(dir, 'body-comments.json')
+    writeFileSync(
+      bodyCommentsPath,
+      JSON.stringify({
+        body: OLD_BODY,
+        comments: [
+          { body: '<!-- aeg:brief:v1 -->\nBrief hash: x\nfrozen brief text', author: { login: 'daniboomerang' } }
+        ]
+      })
+    )
+    writeFileSync(
+      gh,
+      `#!/bin/sh
+case "$*" in
+  *labels*) echo '{"labels":[{"name":"vinaya/tranche:demo"}]}' ;;
+  *comments*) cat "${bodyCommentsPath}" ;;
+  *) echo "unhandled: $*" >&2; exit 1 ;;
+esac
+`
+    )
+    execFileSync('chmod', ['+x', gh])
+    return `${dir}:${process.env.PATH}`
+  }
+
+  it('refuses an Objectives change, naming the frozen comment and `issue objectives edit`', () => {
+    const newBody = OLD_BODY.replace('O1. Do the thing.', 'O1. Do a different thing.')
+    const bodyPath = join(cwd, 'new-body.md')
+    writeFileSync(bodyPath, newBody)
+    const r = runCli(['issue', 'edit', '999', '--body-file', bodyPath], cwd, { PATH: fakeGhFrozenPath(ghDir) })
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/already frozen/)
+    expect(r.stderr).toContain('issue objectives edit')
+    expect(r.stderr).toMatch(/Objectives/)
+  })
+
+  it('refuses the same way via `--validate-only`, previewing what the real write would do', () => {
+    const newBody = OLD_BODY.replace('in: apps/cli/src/lib', 'in: apps/cli/src/lib, packages/aeg-core/src')
+    const bodyPath = join(cwd, 'new-body.md')
+    writeFileSync(bodyPath, newBody)
+    const r = runCli(['issue', 'edit', '999', '--validate-only', '--body-file', bodyPath], cwd, {
+      PATH: fakeGhFrozenPath(ghDir)
+    })
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/already frozen/)
     expect(r.stderr).toMatch(/Surface/)
   })
 })

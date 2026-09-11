@@ -58,6 +58,8 @@ import {
   deriveWorkspacePackageDomains,
   DOC_OWNERS_PATH,
   findTrancheSlug,
+  type FrozenBriefCandidate,
+  frozenSectionsChanged,
   isBriefShaped,
   isPrincipal,
   isTaskBranch,
@@ -68,6 +70,7 @@ import {
   parseRegistry,
   type ProjectPath,
   readTierFromPrBody,
+  resolveNewestFrozenBrief,
   type TaskSurfaceFacts,
   trancheLabel
 } from '@attalabs/aeg-core'
@@ -860,6 +863,98 @@ export function fetchForgeLabels(issueRef: string, retryCommand: string): string
 }
 
 /**
+ * Fetches an Issue's current body plus its comments in one round trip — O3
+ * needs the pre-edit body (to detect a frozen-brief section change) and the
+ * comment list (to resolve the newest frozen brief, if any, via
+ * `resolveNewestFrozenBrief`). A failed fetch is a HARD refusal, same
+ * posture as `fetchForgeLabels` — a `gh` hiccup here must not silently
+ * degrade to "no frozen brief", which would let a locked-section edit
+ * through unrefused.
+ */
+/** `FrozenBriefCandidate` plus the comment's own URL — so a caller resolving the newest frozen brief can name it (`ResolvedFrozenBrief<C>` carries every field of `C` through unchanged). */
+export type FrozenBriefCandidateWithUrl = FrozenBriefCandidate & { url: string }
+
+export function fetchForgeIssueContext(
+  issueRef: string,
+  retryCommand: string
+): { body: string; comments: FrozenBriefCandidateWithUrl[] } {
+  let out: string
+  try {
+    out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'body,comments'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch (err) {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `Could not fetch Issue ${issueRef}'s body/comments from the forge (\`gh issue view\`) — the frozen-brief gate cannot decide whether it applies: ${(err as Error).message}`,
+        `Check \`gh auth status\` and network, then re-run \`${retryCommand}\`. The edit is refused rather than passed through unvalidated.`
+      )
+    ])
+  }
+  try {
+    const parsed = JSON.parse(out) as {
+      body: string
+      comments: Array<{ body: string; url: string; author: { login: string } | null }>
+    }
+    return {
+      body: parsed.body,
+      comments: parsed.comments.map((c) => ({ body: c.body, url: c.url, author: c.author?.login ?? null }))
+    }
+  } catch {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `Could not parse \`gh issue view ${issueRef} --json body,comments\` output.`,
+        `Re-run \`${retryCommand}\`; the edit is refused rather than passed through unvalidated.`
+      )
+    ])
+  }
+}
+
+/**
+ * **O3 — refuses an `issue edit` that changes `## Objectives`, `## Surface`,
+ * or `## Parts` on a task Issue whose brief is already frozen.** Fetches the
+ * live pre-edit body and comment list, resolves the newest principal-authored
+ * frozen brief (if any — dormant when none exists, the same
+ * seam-is-dormant-when-absent posture this file uses elsewhere), and compares
+ * the pre-edit body against `newBody` via `frozenSectionsChanged` (never
+ * against the frozen comment's own rendered text — see that function's own
+ * doc comment for why). Names the frozen comment's URL and
+ * `vinaya issue objectives edit` as the sanctioned path for an Objectives
+ * change; `## Surface`/`## Parts` have no self-serve edit path once frozen.
+ *
+ * `skipCheck`, when true, is `issue objectives edit`'s own escape hatch: that
+ * command IS the sanctioned way to change `## Objectives` on a frozen task
+ * (its own write goes through `writeValidatedIssueEdit`, below), and it posts
+ * its own superseding `aeg:brief:v<k+1>` comment after writing (O6) — this
+ * gate must not refuse the very command it names as the sanctioned escape.
+ */
+export function refuseFrozenSectionChange(
+  issueRef: string,
+  newBody: string | null,
+  retryCommand: string,
+  skipCheck = false
+): void {
+  if (skipCheck || newBody === null) return
+  const { body: oldBody, comments } = fetchForgeIssueContext(issueRef, retryCommand)
+  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  const frozen = resolveNewestFrozenBrief(comments, allowlist)
+  if (frozen === null) return
+  const changed = frozenSectionsChanged(oldBody, newBody)
+  if (changed.length === 0) return
+  const sections = changed.map((s) => `\`## ${s}\``).join(', ')
+  refuse([
+    makeCheckError(
+      'issue-frozen-brief',
+      `This task Issue's brief is already frozen — the frozen comment is at ${frozen.url}. This edit changes ${sections}, which is locked once frozen. Use \`vinaya issue objectives edit\` for an Objectives change; \`## Surface\`/\`## Parts\` have no self-serve edit path once frozen — escalate to the Planner to supersede the frozen brief.`,
+      `Revert the ${sections} change(s) in the body, or use \`vinaya issue objectives edit\` for an Objectives change, then re-run \`${retryCommand}\`.`
+    )
+  ])
+}
+
+/**
  * The Issue number `issue edit`'s target ref names, for `checkIssueObjectives`'s
  * `OBJECTIVES_SINCE_ISSUE` cutover. `edit` targets a REAL, already-existing
  * Issue, so unlike `create`'s genuinely-unknown-until-write number, `null`
@@ -1060,8 +1155,10 @@ export function writeValidatedIssueEdit(input: {
   json: boolean
   retryCommand: string
   quiet?: boolean
+  /** `issue objectives edit`'s own escape hatch — see `refuseFrozenSectionChange`'s doc comment. Every other caller omits this (defaults to `false`, the check runs). */
+  skipFrozenSectionsCheck?: boolean
 }): void {
-  const { issueRef, ghArgs, bodyResult, json, retryCommand, quiet } = input
+  const { issueRef, ghArgs, bodyResult, json, retryCommand, quiet, skipFrozenSectionsCheck } = input
   const body = bodyResult?.body ?? null
   const title = extractTitle(ghArgs)
 
@@ -1072,6 +1169,7 @@ export function writeValidatedIssueEdit(input: {
   refuseUnlabeledTaskShapedBody(body, labels, retryCommand)
 
   if (isTaskIssueLabelSet(labels)) {
+    refuseFrozenSectionChange(issueRef, body, retryCommand, skipFrozenSectionsCheck ?? false)
     validateTaskIssue(body, title, labels, retryCommand, parseIssueNumberFromRef(issueRef), {
       kind: 'edit',
       issueRef

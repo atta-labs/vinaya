@@ -21,7 +21,7 @@ import { stripCode } from './anchored-region'
 import { checkTestPlan, extractFencedBlocks } from './brief-validation'
 import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from './doc-owners'
 import { globsOverlap } from './derive-section7'
-import { objectivesOf } from './objectives'
+import { objectivesOf, objectivesVersion } from './objectives'
 import { locateTestPlanSection } from './test-plan-section'
 
 export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }
@@ -1458,4 +1458,85 @@ export function checkSurfaceOverlap(subject: TaskSurfaceFacts, siblings: TaskSur
     }
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+// ---------------------------------------------------------------------------
+// O3 (task-run-v1 task 11, review round 1) — an edit that changes
+// `## Objectives`, `## Surface`, or `## Parts` on a task Issue whose brief is
+// already frozen is refused. Design: compare the LIVE Issue body before and
+// after the edit (never the frozen comment's own rendered text — the brief
+// render is lossy for `## Surface`'s `in:` glob list and interleaves
+// `## Parts` with computed file groupings, so it cannot serve as the
+// comparison target; see task-run-v1 11's own PR discussion). The frozen
+// comment's existence is the gate condition and is named in the refusal
+// message; the pre-edit live body is the comparison basis.
+// ---------------------------------------------------------------------------
+
+export type FrozenSection = 'Objectives' | 'Surface' | 'Parts'
+
+/** True when two `## Surface` sections carry the same `in:`/`out:` glob sets, order-insensitive. */
+function surfacesEqual(a: IssueSurface, b: IssueSurface): boolean {
+  const norm = (globs: string[]) => [...globs].sort().join(' ')
+  return norm(a.in) === norm(b.in) && norm(a.out) === norm(b.out)
+}
+
+/** True when two `## Parts` lists carry the same `{n, objectiveIds, text}` tuples, in the same order — a Part's own order is significant (it drives §6's rendering), unlike a Surface glob set. */
+function partsEqual(a: IssuePart[], b: IssuePart[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((p, i) => {
+    const q = b[i] as IssuePart
+    return (
+      p.n === q.n &&
+      p.text === q.text &&
+      p.objectiveIds.length === q.objectiveIds.length &&
+      p.objectiveIds.every((id, j) => id === q.objectiveIds[j])
+    )
+  })
+}
+
+/**
+ * **O3 — which of `## Objectives`/`## Surface`/`## Parts` changed between
+ * `oldBody` and `newBody`.** Pure comparison; the caller decides whether the
+ * Issue's brief is actually frozen (this function runs unconditionally, the
+ * gate is applying it only when a frozen comment exists) and builds the
+ * refusal message (naming the frozen comment and `issue objectives edit`).
+ *
+ * A section that fails to parse on ONE side but not the other counts as
+ * changed (a well-formed section that stopped parsing, or vice versa, is
+ * exactly a change this gate exists to catch). A section that fails to parse
+ * on BOTH sides is not reported here — that Issue predates a cutover or is
+ * otherwise malformed on its own terms, a fact `checkIssueObjectives`/
+ * `checkIssueBriefSections` already report; this function only compares
+ * shapes it can actually read on both sides.
+ */
+export function frozenSectionsChanged(oldBody: string, newBody: string): FrozenSection[] {
+  const changed: FrozenSection[] = []
+
+  const oldObjectives = objectivesOf(oldBody)
+  const newObjectives = objectivesOf(newBody)
+  if (oldObjectives.ok && newObjectives.ok) {
+    if (objectivesVersion(oldObjectives.objectives) !== objectivesVersion(newObjectives.objectives)) {
+      changed.push('Objectives')
+    }
+  } else if (oldObjectives.ok !== newObjectives.ok) {
+    changed.push('Objectives')
+  }
+
+  const oldSurface = parseIssueSurface(oldBody)
+  const newSurface = parseIssueSurface(newBody)
+  if (oldSurface.ok && newSurface.ok) {
+    if (!surfacesEqual(oldSurface.value, newSurface.value)) changed.push('Surface')
+  } else if (oldSurface.ok !== newSurface.ok) {
+    changed.push('Surface')
+  }
+
+  const oldParts = parseIssueParts(oldBody)
+  const newParts = parseIssueParts(newBody)
+  if (oldParts.ok && newParts.ok) {
+    if (!partsEqual(oldParts.value, newParts.value)) changed.push('Parts')
+  } else if (oldParts.ok !== newParts.ok) {
+    changed.push('Parts')
+  }
+
+  return changed
 }

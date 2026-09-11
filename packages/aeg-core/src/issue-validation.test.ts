@@ -22,6 +22,7 @@ import {
   checkSurfaceOverlap,
   checkSurfaceScope,
   declaredProjects,
+  frozenSectionsChanged,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   OBJECTIVES_SINCE_ISSUE,
@@ -805,6 +806,66 @@ describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
     const subject = mk('42', ['packages/aeg-core/src/**'], ['#43'])
     const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'], ['#42'])
     expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+})
+
+describe('frozenSectionsChanged (task-run-v1 11, review round 1, O3)', () => {
+  const surface = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n'
+  const parts = '## Parts\n\nPart 1 (O1) — the thing.\n'
+  const objectives = '## Objectives\n\nO1. Do the thing.\n'
+  const body = `${objectives}\n${surface}\n${parts}`
+
+  it('reports nothing when nothing changed', () => {
+    expect(frozenSectionsChanged(body, body)).toEqual([])
+  })
+
+  it('reports `Objectives` when the objectives text changes', () => {
+    const changed = body.replace('O1. Do the thing.', 'O1. Do a different thing.')
+    expect(frozenSectionsChanged(body, changed)).toEqual(['Objectives'])
+  })
+
+  it('does not report `Objectives` for a reflow that leaves the normalized text identical', () => {
+    const reflowed = body.replace('O1. Do the thing.', 'O1.   Do   the   thing.')
+    expect(frozenSectionsChanged(body, reflowed)).toEqual([])
+  })
+
+  it('reports `Surface` when an `in:`/`out:` glob changes', () => {
+    const changed = body.replace('in: apps/cli/src/lib', 'in: apps/cli/src/lib, packages/aeg-core/src')
+    expect(frozenSectionsChanged(body, changed)).toEqual(['Surface'])
+  })
+
+  it('does not report `Surface` for a reordering of the same glob set', () => {
+    const multiGlob = body.replace(
+      'in: apps/cli/src/lib\nout: apps/cli/src/commands',
+      'in: apps/cli/src/lib, packages/aeg-core/src\nout: apps/cli/src/commands, apps/cli/src/checks'
+    )
+    const reordered = multiGlob.replace(
+      'in: apps/cli/src/lib, packages/aeg-core/src\nout: apps/cli/src/commands, apps/cli/src/checks',
+      'in: packages/aeg-core/src, apps/cli/src/lib\nout: apps/cli/src/checks, apps/cli/src/commands'
+    )
+    expect(frozenSectionsChanged(multiGlob, reordered)).toEqual([])
+  })
+
+  it('reports `Parts` when a Part outcome changes', () => {
+    const changed = body.replace('Part 1 (O1) — the thing.', 'Part 1 (O1) — a different thing.')
+    expect(frozenSectionsChanged(body, changed)).toEqual(['Parts'])
+  })
+
+  it('reports every changed section in one pass, not only the first', () => {
+    const changed = body
+      .replace('O1. Do the thing.', 'O1. Do a different thing.')
+      .replace('Part 1 (O1) — the thing.', 'Part 1 (O1) — a different thing.')
+    expect(frozenSectionsChanged(body, changed)).toEqual(['Objectives', 'Parts'])
+  })
+
+  it('reports a section as changed when it stops parsing on one side', () => {
+    const brokenSurface = body.replace('## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n', '')
+    expect(frozenSectionsChanged(body, brokenSurface)).toEqual(['Surface'])
+  })
+
+  it('reports nothing for a section malformed identically on both sides', () => {
+    const noSurface = body.replace('## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n', '')
+    expect(frozenSectionsChanged(noSurface, noSurface)).toEqual([])
   })
 })
 
