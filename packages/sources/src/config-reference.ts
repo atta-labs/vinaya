@@ -132,6 +132,15 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "ownWorkflow": true }`
   },
   {
+    key: 'checks.principalOwed',
+    type: 'true (optional)',
+    semantics: [
+      'Marks a check whose failure only the Principal can clear — it reads a state only a human review/verification step produces, no diff the Developer pushes can satisfy it directly. The mechanical gate (`vinaya check --all`\'s own exit code, and the loop\'s CI reader) excludes this check\'s failure from what makes a run red ONLY when every error it reported that run is a pending wait-state — a structural failure on the same check still counts. Enforcement of the human-owed half itself does not disappear: it moves to `review-gate`, which refuses merge while the live PR body still carries an unticked `[principal]` item.',
+      'Same no-privileged-field discipline as `requiresOpenPr` and `ownWorkflow` — a config-registered check declares this exactly like the core `test-plan` check does.'
+    ],
+    example: `{ "principalOwed": true }`
+  },
+  {
     key: 'checks.env',
     type: 'Record<string, EnvEntry> (optional)',
     semantics: [
