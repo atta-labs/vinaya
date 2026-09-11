@@ -184,6 +184,7 @@ export function fetchConflictingFiles(baseBranch: string, headBranch: string): s
  */
 export const DRIVER_OWNED_PATHS = [
   'apps/cli/src/lib/dev-review-loop.ts',
+  'apps/cli/src/lib/dev-review-loop/',
   'apps/cli/src/commands/review-post.ts',
   'packages/aeg-core/src'
 ] as const

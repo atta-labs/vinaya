@@ -58,6 +58,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   describeObjectivesEdit,
+  DRIVER_OWNED_PATHS,
   extractObjectivesSection,
   filterPrincipalRulings,
   findLatestPrincipalObjectivesEdit,
@@ -2448,6 +2449,25 @@ describe('devReviewLoop — a base that moves past this driver’s own code WHIL
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:stale_driver -->$/m)
     expect(pauseComment).toMatch(new RegExp(`base moved from ${BASE_SHA} to ${'e'.repeat(40)}`))
   }, 20000)
+})
+
+// --- review-validity-v1 12 (#526), O8 round 2: the split must not narrow stale_driver's own coverage ---
+
+describe('DRIVER_OWNED_PATHS covers every dev-review-loop/*.ts split module (review-validity-v1 12, #526 round 2)', () => {
+  it('names the dev-review-loop/ directory, not only the old single composition-root file', () => {
+    const splitModules = [
+      'gate-reading.ts',
+      'reviewer-dispatch.ts',
+      'round-assess.ts',
+      'publication.ts',
+      'pause-resume.ts',
+      'developer-dispatch.ts'
+    ]
+    for (const m of splitModules) {
+      const modulePath = `apps/cli/src/lib/dev-review-loop/${m}`
+      expect(DRIVER_OWNED_PATHS.some((p) => modulePath === p || modulePath.startsWith(p))).toBe(true)
+    }
+  })
 })
 
 // --- task-run-v1 13 (#508), O5: a clean head falls into conflict while reviewers worked ---
