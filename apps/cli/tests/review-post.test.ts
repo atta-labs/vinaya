@@ -166,6 +166,8 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
       docs: 'tier-appropriate',
       objectivesVersion: null,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: null
     })
     const extraction = extractCodeReviewVerdict([body])
@@ -188,6 +190,8 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
       docs: 'tier-appropriate',
       objectivesVersion: null,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: null
     })
     expect(body).toContain('VERDICT: REQUEST CHANGES')
@@ -210,6 +214,8 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
       docs: 'x',
       objectivesVersion: null,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: null
     })
     expect(body).toContain('Cast by: Reviewer (session sess-abc123)')
@@ -231,6 +237,8 @@ describe('renderCodeReviewComment — matches the gate the merge check actually 
       docs: 'x',
       objectivesVersion: null,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: null
     })
     const lines = body.split('\n')
@@ -251,6 +259,8 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
       secretsEvidence: '(scanner ran, 0 findings)',
       objectivesVersion: null,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: null
     })
     const extraction = extractSecurityReviewVerdict([body])
@@ -270,6 +280,8 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
       secretsEvidence: 'gitleaks: 0 leaks detected',
       objectivesVersion: null,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: null
     })
     const evidenceIdx = body.indexOf('gitleaks: 0 leaks detected')
@@ -289,6 +301,8 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
       secretsEvidence: null,
       objectivesVersion: null,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: null
     })
     expect(body).toContain('VERDICT: FAIL')
@@ -307,6 +321,8 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
       secretsEvidence: '(scanner ran, 0 findings)',
       objectivesVersion: null,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: null
     })
     expect(body).toContain('Cast by: Security (session sess-abc123)')

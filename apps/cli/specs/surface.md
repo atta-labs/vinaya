@@ -266,6 +266,17 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `DEFAULT_RELEASE_ACTOR` | const | `packages/aeg-core/src/review-gate.ts` |
 | `isChangesetsReleasePr` | function | `packages/aeg-core/src/review-gate.ts` |
 | `isReviewGateExemptBranch` | function | `packages/aeg-core/src/review-gate.ts` |
+| `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `buildReviewInputManifest` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `compareManifest` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToBriefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToHead` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToObjectives` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToPatch` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToPolicy` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToRulings` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `manifestAsEchoed` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `policyDigest` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `blockingSeverities` | function | `packages/aeg-core/src/review-policy.ts` |
 | `CODE_REVIEW_SEVERITY_ORDER` | const | `packages/aeg-core/src/review-policy.ts` |
 | `codeReviewBlockingSeverities` | function | `packages/aeg-core/src/review-policy.ts` |

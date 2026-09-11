@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import { join } from 'node:path'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
+  type ReviewInputManifest,
   SECURITY_SEVERITY_ORDER,
   type ReviewPolicy,
   type VerdictObservation
@@ -41,15 +42,19 @@ import { GLOBAL_VINAYA_HOME } from '../config.js'
 
 export type ReviewerPromptFacts = {
   objectives: string
-  /** `resolveIssueObjectives`'s version for `objectives`, captured at dispatch time — threaded into the held verdict (O2) and re-checked at assessment time (O3). `null` alongside an empty `objectives`. */
-  objectivesVersion: string | null
   rulings: string[]
-  /** The newest principal ruling ordinal on this PR, captured at dispatch time (task 3, `#477`, O1) — `0` when `rulings` is empty. Threaded into the held verdict and re-checked at assessment time (O3), same shape as `objectivesVersion`. */
-  rulingOrdinal: number
-  head: string
   ciConclusion: 'green' | 'red' | 'pending'
   /** The frozen brief's own `**Revision:**` fact (task 4, Issue #483, O2) — `fetchSourceRevision`. */
   revision: string
+  /**
+   * The one review-input manifest (`review-validity-v1` task 4, `#478`,
+   * O1) — head, the frozen brief's own hash, objectives version, ruling
+   * ordinal, and the effective review policy's digest, built by the driver
+   * BEFORE this dispatch. The only source of `HEAD:` in the rendered prompt
+   * below and of every structural line `buildVerdictFromReport` renders —
+   * `objectivesVersion`/`rulingOrdinal` are no longer separate fields here.
+   */
+  manifest: ReviewInputManifest
 }
 
 /**
@@ -85,7 +90,7 @@ export function renderReviewerPrompt(facts: ReviewerPromptFacts): string {
     'RULINGS ON THIS PR:',
     facts.rulings.length > 0 ? facts.rulings.map((r, i) => `${i + 1}. ${r}`).join('\n') : '(none)',
     '',
-    `HEAD: ${facts.head}`,
+    `HEAD: ${facts.manifest.headSha}`,
     `CI: ${facts.ciConclusion}`,
     `BRIEF REVISION: ${facts.revision}`
   ].join('\n')
@@ -247,14 +252,15 @@ export type RoundVerdictParse = { observation: VerdictObservation; rendered: str
 export function buildVerdictFromReport(
   role: 'reviewer' | 'security',
   workDir: string,
-  headSha: string,
   agent: AgentVendor,
   taskId: number,
   handle: DispatchHandle,
-  objectivesVersionAtDispatch: string | null,
-  rulingOrdinalAtDispatch: number,
+  manifest: ReviewInputManifest,
   policy: ReviewPolicy
 ): RoundVerdictParse {
+  const headSha = manifest.headSha
+  const objectivesVersionAtDispatch = manifest.objectivesVersion
+  const rulingOrdinalAtDispatch = manifest.rulingOrdinal
   const reportRaw = readIfExists(join(workDir, 'report.txt')) ?? ''
   const report = parseReport(reportRaw)
   const sessionId = handle.resumeId ?? '(unknown)'
@@ -277,6 +283,8 @@ export function buildVerdictFromReport(
       roleLabel,
       objectivesVersion: objectivesVersionAtDispatch,
       rulingOrdinal: rulingOrdinalAtDispatch,
+      briefHash: manifest.briefHash,
+      policyDigest: manifest.policyDigest,
       taskId: String(taskId),
       model: agent,
       tokensIn,
@@ -335,6 +343,8 @@ export function buildVerdictFromReport(
       objectivesVersion: objectivesVersionAtDispatch,
       objectiveResults: renderedObjectiveResults,
       rulingOrdinal: rulingOrdinalAtDispatch,
+      briefHash: manifest.briefHash,
+      policyDigest: manifest.policyDigest,
       taskId: String(taskId),
       model: agent,
       tokensIn,
@@ -381,6 +391,8 @@ export function buildVerdictFromReport(
     objectivesVersion: objectivesVersionAtDispatch,
     objectiveResults: renderedObjectiveResults,
     rulingOrdinal: rulingOrdinalAtDispatch,
+    briefHash: manifest.briefHash,
+    policyDigest: manifest.policyDigest,
     taskId: String(taskId),
     model: agent,
     tokensIn,

@@ -47,13 +47,17 @@ import { mkdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   assessRound,
+  buildReviewInputManifest,
+  compareManifest,
   initialLoopState,
+  manifestAsEchoed,
   type Confidence,
   type Decision,
   type DevReviewLoopEventInput,
   type LoopConfig,
   type LoopState,
   type Observations,
+  type ReviewInputManifest,
   type RoundStats
 } from '@attalabs/aeg-core'
 import {
@@ -681,17 +685,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // parse is retried once, into a fresh work directory, before it
         // becomes a pause.
         try {
-          return buildVerdictFromReport(
-            role,
-            workDir,
-            facts.head,
-            input.agent,
-            task,
-            handle,
-            facts.objectivesVersion,
-            facts.rulingOrdinal,
-            policy
-          )
+          return buildVerdictFromReport(role, workDir, input.agent, task, handle, facts.manifest, policy)
         } catch (err) {
           if (!(err instanceof ReviewerReportParseFailure)) throw err
           lastParseFailure = err
@@ -1048,14 +1042,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const rulings = d.fetchRulings(prNumber)
         const rulingOrdinal = d.fetchNewestRulingOrdinal(prNumber)
         const revision = d.fetchSourceRevision(task)
+        const briefContentAtDispatch = d.fetchFrozenBrief(task)
+        const manifest: ReviewInputManifest = buildReviewInputManifest({
+          headSha: head,
+          briefContent: briefContentAtDispatch,
+          objectivesVersion: resolvedObjectives.version,
+          rulingOrdinal,
+          policy
+        })
         const facts: ReviewerPromptFacts = {
           objectives: resolvedObjectives.text,
-          objectivesVersion: resolvedObjectives.version,
           rulings,
-          rulingOrdinal,
-          head,
           ciConclusion,
-          revision
+          revision,
+          manifest
         }
 
         // O5: an infrastructure outcome from either role (after its own
@@ -1082,34 +1082,60 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         }
 
         if (verdicts) {
-          // O3: objectives may have moved between the dispatch above (`facts`,
-          // captured before either reviewer ran) and now, right after both
-          // finished — a principal's `issue objectives edit` can land mid-round.
-          // Re-resolved BEFORE either verdict is held: neither `verdicts` value
-          // (still in-memory only) is ever written to disk on the mismatch path,
-          // so "the held verdicts … are discarded" holds by never holding them.
+          // O2: the loop's own publication self-check — objectives may have
+          // moved between the dispatch above (`facts.manifest`, captured
+          // before either reviewer ran) and now, right after both finished
+          // (a principal's `issue objectives edit`, a ruling, a brief
+          // supersession, or — in principle — a policy change can each land
+          // mid-round). Re-resolved BEFORE either verdict is held: neither
+          // `verdicts` value (still in-memory only) is ever written to disk
+          // on a mismatch, so "the held verdicts … are discarded" holds by
+          // never holding them. `compareManifest` — the SAME comparison the
+          // merge gate calls — decides this, field by field, rather than a
+          // second, hand-rolled inequality check per field (task 4, `#478`,
+          // O2): the echo here is simply `facts.manifest` itself, never a
+          // round-trip through the rendered text (Traps to avoid — nothing
+          // to trust or distrust when the value is this driver's own, still
+          // in memory).
           const reassessedObjectives = d.resolveIssueObjectives(task)
-          // task 3 (#477, O3): a ruling can land in that
-          // same window. Re-fetched the same way, before either verdict is
-          // held — the discard mechanism is identical to the objectives one:
-          // in-memory-only values are simply never written.
           const reassessedRulingOrdinal = d.fetchNewestRulingOrdinal(prNumber)
-          if (reassessedObjectives.version !== facts.objectivesVersion) {
+          const reassessedBriefContent = d.fetchFrozenBrief(task)
+          const currentManifest: ReviewInputManifest = buildReviewInputManifest({
+            headSha: head,
+            briefContent: reassessedBriefContent,
+            objectivesVersion: reassessedObjectives.version,
+            rulingOrdinal: reassessedRulingOrdinal,
+            policy
+          })
+          const binding = compareManifest(manifestAsEchoed(facts.manifest), currentManifest)
+          if (!binding.objectivesVersion) {
             const command = reassessedObjectives.edit
               ? describeObjectivesEdit(task, reassessedObjectives.edit)
               : `vinaya issue objectives edit ${task} ... (edit comment not found on re-read)`
-            const detail = `objectives moved from ${facts.objectivesVersion ?? 'none'} to ${
+            const detail = `objectives moved from ${facts.manifest.objectivesVersion ?? 'none'} to ${
               reassessedObjectives.version ?? 'none'
             } between reviewer dispatch and assessment — superseded by \`${command}\``
             const stats = computeStats(head, roundStartMs)
             await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
             decision = { type: 'pause', reason: 'objectives_changed', detail }
             d.flushOutbox(task)
-          } else if (reassessedRulingOrdinal !== facts.rulingOrdinal) {
-            const detail = `a new ruling landed between reviewer dispatch and assessment — ruling ordinal moved from ${facts.rulingOrdinal} to ${reassessedRulingOrdinal} — superseded by ruling ${prNumber}-${reassessedRulingOrdinal}`
+          } else if (!binding.rulingOrdinal) {
+            const detail = `a new ruling landed between reviewer dispatch and assessment — ruling ordinal moved from ${facts.manifest.rulingOrdinal} to ${reassessedRulingOrdinal} — superseded by ruling ${prNumber}-${reassessedRulingOrdinal}`
             const stats = computeStats(head, roundStartMs)
             await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
             decision = { type: 'pause', reason: 'ruling_posted', detail }
+            d.flushOutbox(task)
+          } else if (!binding.briefHash) {
+            const detail = `the frozen brief was superseded between reviewer dispatch and assessment — brief hash moved from ${facts.manifest.briefHash ?? 'none'} to ${currentManifest.briefHash ?? 'none'}`
+            const stats = computeStats(head, roundStartMs)
+            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+            decision = { type: 'pause', reason: 'brief_superseded', detail }
+            d.flushOutbox(task)
+          } else if (!binding.policyDigest) {
+            const detail = `the review policy changed between reviewer dispatch and assessment — policy digest moved from ${facts.manifest.policyDigest} to ${currentManifest.policyDigest}`
+            const stats = computeStats(head, roundStartMs)
+            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+            decision = { type: 'pause', reason: 'policy_changed', detail }
             d.flushOutbox(task)
           } else {
             const [reviewer, security] = verdicts

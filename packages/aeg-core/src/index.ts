@@ -193,6 +193,25 @@ export type { ReviewGateComment, ReviewGateInput, ReviewGateResult, ReviewGateVe
 export { newestPrincipalRulingOrdinal } from './ruling-ordinal'
 export type { RulingComment } from './ruling-ordinal'
 export {
+  briefHash,
+  buildReviewInputManifest,
+  compareManifest,
+  isBoundToBriefHash,
+  isBoundToHead,
+  isBoundToObjectives,
+  isBoundToPatch,
+  isBoundToPolicy,
+  isBoundToRulings,
+  manifestAsEchoed,
+  policyDigest
+} from './review-input-manifest'
+export type {
+  EchoedManifest,
+  ManifestBindingResult,
+  ReviewInputManifest,
+  ReviewInputManifestFacts
+} from './review-input-manifest'
+export {
   checkBlastRadiusScope,
   checkConflictCompleteness,
   checkDocsWithinSurface,

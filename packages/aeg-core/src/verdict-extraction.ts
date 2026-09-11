@@ -162,6 +162,28 @@ const OBJECTIVES_VERSION_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Objectives version
 const RULING_ORDINAL_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Ruling ordinal:\s*(\d+)(?!\d)/im
 
 /**
+ * `review-validity-v1` task 4 (`#478`, O1): a fifth head line, `Brief hash:
+ * <sha256>`, renders UNCONDITIONALLY on every post-cutover verdict right
+ * after `Ruling ordinal:` — the frozen brief's own hash at dispatch time.
+ * `null` means no such line at all — legacy stock from before this task, or
+ * a rendered `(none)` placeholder when no frozen brief was resolvable for
+ * that task/PR at cast time (never confused with a real 64-hex-char hash).
+ * Read from its own wider window (`firstElevenLines`, below), same reasoning
+ * as `RULING_ORDINAL_PATTERN`'s own `firstSevenLines`.
+ */
+const BRIEF_HASH_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Brief hash:\s*([0-9a-f]{64})(?![A-Za-z0-9])/im
+
+/**
+ * `review-validity-v1` task 4 (`#478`, O5): a sixth head line, `Policy
+ * digest: <sha256>`, renders UNCONDITIONALLY right after `Brief hash:` —
+ * the effective review policy's digest at cast time. `null` means no such
+ * line at all — legacy stock from before this task; every comment this
+ * task renders carries it, so a `null` echo is grandfathered rather than
+ * treated as a real omission (`review-input-manifest.ts`'s `isBoundToPolicy`).
+ */
+const POLICY_DIGEST_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Policy digest:\s*([0-9a-f]{64})(?![A-Za-z0-9])/im
+
+/**
  * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
@@ -223,6 +245,27 @@ function extractRulingOrdinal(comment: string): number | null {
 }
 
 /**
+ * `review-validity-v1` task 4 (`#478`, O1): its own 11-line window — worst
+ * case, `Objectives version:`/blank (lines 5-6), `Ruling ordinal:`/blank
+ * (7-8), `Brief hash:`/blank (9-10) all render ahead of `Policy digest:`,
+ * which then lands on line 11. `null` means no `Brief hash:`/`Policy
+ * digest:` line at all within that window.
+ */
+function firstElevenLines(comment: string): string {
+  return comment.split('\n').slice(0, 11).join('\n')
+}
+
+function extractBriefHash(comment: string): string | null {
+  const m = firstElevenLines(comment).match(BRIEF_HASH_PATTERN)
+  return m ? (m[1] as string).toLowerCase() : null
+}
+
+function extractPolicyDigest(comment: string): string | null {
+  const m = firstElevenLines(comment).match(POLICY_DIGEST_PATTERN)
+  return m ? (m[1] as string).toLowerCase() : null
+}
+
+/**
  * `review-validity-v1` task 8 (`#506`, O2/O3): the FINDINGS block's own
  * severities, read from the WHOLE comment body — never `firstFiveLines`'s
  * window, since `renderFindingsSection` (`review-post.ts`) always renders
@@ -263,6 +306,10 @@ export type VerdictExtraction = {
   objectivesVersion: string | null
   /** `null` on the pre-cutover stock (no `Ruling ordinal:` line at all) — never conflated with a rendered `0` (`review-validity-v1` task 3, `#477`, O1). */
   rulingOrdinal: number | null
+  /** `null` when no `Brief hash:` line was found (`review-validity-v1` task 4, `#478`, O1) — legacy stock, or no frozen brief resolvable at cast time. */
+  briefHash: string | null
+  /** `null` when no `Policy digest:` line was found (`review-validity-v1` task 4, `#478`, O5) — legacy stock only; every comment rendered from this task forward carries it unconditionally. */
+  policyDigest: string | null
   /** The winning comment's own FINDINGS block severities, whole-body read (`review-validity-v1` task 8, `#506`, O2/O3) — `[]` on a DANGLING extraction (`danglingNote` set) or a comment with no findings at all. */
   findingSeverities: string[]
   danglingNote: string | null
@@ -293,6 +340,8 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      briefHash: null,
+      policyDigest: null,
       findingSeverities: [],
       danglingNote: `no ${missingLabel} verdict comment found on this PR`
     }
@@ -307,6 +356,8 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      briefHash: null,
+      policyDigest: null,
       findingSeverities: [],
       danglingNote: `the most recent ${missingLabel} verdict comment carries a VERDICT-shaped line outside the first-five-line read window`
     }
@@ -317,6 +368,8 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
     headSha: extractHeadSha(latest),
     objectivesVersion: extractObjectivesVersion(latest),
     rulingOrdinal: extractRulingOrdinal(latest),
+    briefHash: extractBriefHash(latest),
+    policyDigest: extractPolicyDigest(latest),
     findingSeverities: extractFindingSeverities(latest),
     danglingNote: null
   }
