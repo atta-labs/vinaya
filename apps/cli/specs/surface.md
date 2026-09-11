@@ -266,6 +266,16 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `DEFAULT_RELEASE_ACTOR` | const | `packages/aeg-core/src/review-gate.ts` |
 | `isChangesetsReleasePr` | function | `packages/aeg-core/src/review-gate.ts` |
 | `isReviewGateExemptBranch` | function | `packages/aeg-core/src/review-gate.ts` |
+| `blockingSeverities` | function | `packages/aeg-core/src/review-policy.ts` |
+| `CODE_REVIEW_SEVERITY_ORDER` | const | `packages/aeg-core/src/review-policy.ts` |
+| `codeReviewBlockingSeverities` | function | `packages/aeg-core/src/review-policy.ts` |
+| `DEFAULT_REVIEW_POLICY` | const | `packages/aeg-core/src/review-policy.ts` |
+| `evaluateCodeReview` | function | `packages/aeg-core/src/review-policy.ts` |
+| `evaluateReviewFindings` | function | `packages/aeg-core/src/review-policy.ts` |
+| `evaluateSecurityReview` | function | `packages/aeg-core/src/review-policy.ts` |
+| `isKnownSeverity` | function | `packages/aeg-core/src/review-policy.ts` |
+| `SECURITY_SEVERITY_ORDER` | const | `packages/aeg-core/src/review-policy.ts` |
+| `securityBlockingSeverities` | function | `packages/aeg-core/src/review-policy.ts` |
 | `deriveReviewStatus` | function | `packages/aeg-core/src/review-status.ts` |
 | `parseDeveloperRoundMarker` | function | `packages/aeg-core/src/review-status.ts` |
 | `renderReviewStatus` | function | `packages/aeg-core/src/review-status.ts` |
@@ -395,6 +405,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `resolveAgentVendors` | function | `apps/cli/src/lib/config.ts` |
 | `resolvePrincipalAllowlist` | function | `apps/cli/src/lib/config.ts` |
 | `resolveReleaseActor` | function | `apps/cli/src/lib/config.ts` |
+| `resolveReviewPolicy` | function | `apps/cli/src/lib/config.ts` |
 | `tokensCollectTrustKey` | function | `apps/cli/src/lib/config.ts` |
 | `trustAnchorRepo` | function | `apps/cli/src/lib/config.ts` |
 | `trustTokensCollectCommand` | function | `apps/cli/src/lib/config.ts` |

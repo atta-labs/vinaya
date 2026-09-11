@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CheckSpec } from '../src/checks/contract'
 import { runChecks } from '../src/checks/runner'
-import { PRINCIPAL_ALLOWLIST } from '@attalabs/aeg-core'
+import { DEFAULT_REVIEW_POLICY, PRINCIPAL_ALLOWLIST } from '@attalabs/aeg-core'
 import {
   isCanonicalHookBlockPath,
   lintEnvDeclarations,
@@ -22,6 +22,7 @@ import {
   readRepoCiSetup,
   resolveAgentVendors,
   resolvePrincipalAllowlist as resolvePrincipalAllowlistStatic,
+  resolveReviewPolicy,
   trustAnchorRepo,
   VinayaConfigSchema
 } from '../src/lib/config'
@@ -109,6 +110,45 @@ describe('config', () => {
     const result = resolvePrincipalAllowlist({ principals: ['alice', 'bob'] })
     expect(result).toEqual(['alice', 'bob'])
     expect(result).not.toContain(PRINCIPAL_ALLOWLIST[0])
+  })
+
+  it("resolveReviewPolicy returns today's behaviour (BLOCKER/HIGH) when the policy is omitted entirely", () => {
+    expect(resolveReviewPolicy(null)).toEqual(DEFAULT_REVIEW_POLICY)
+    expect(resolveReviewPolicy({})).toEqual(DEFAULT_REVIEW_POLICY)
+  })
+
+  it('resolveReviewPolicy defaults a per-field omission independently', () => {
+    expect(resolveReviewPolicy({ reviewPolicy: { codeReviewThreshold: 'MAJOR' } })).toEqual({
+      codeReviewThreshold: 'MAJOR',
+      securityThreshold: 'HIGH'
+    })
+    expect(resolveReviewPolicy({ reviewPolicy: { securityThreshold: 'MEDIUM' } })).toEqual({
+      codeReviewThreshold: 'BLOCKER',
+      securityThreshold: 'MEDIUM'
+    })
+  })
+
+  it('resolveReviewPolicy resolves this repository’s own configured MAJOR/HIGH', () => {
+    expect(resolveReviewPolicy({ reviewPolicy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' } })).toEqual({
+      codeReviewThreshold: 'MAJOR',
+      securityThreshold: 'HIGH'
+    })
+  })
+
+  it('resolveReviewPolicy REFUSES (throws) on an unknown codeReviewThreshold, never falls back', () => {
+    expect(() => resolveReviewPolicy({ reviewPolicy: { codeReviewThreshold: 'CATASTROPHIC' } })).toThrow(
+      /codeReviewThreshold "CATASTROPHIC" is not one of/
+    )
+  })
+
+  it('resolveReviewPolicy REFUSES (throws) on an unknown securityThreshold, never falls back', () => {
+    expect(() => resolveReviewPolicy({ reviewPolicy: { securityThreshold: 'SEVERE' } })).toThrow(
+      /securityThreshold "SEVERE" is not one of/
+    )
+  })
+
+  it('resolveReviewPolicy REFUSES a threshold from the wrong role’s scale (security value on the code-review field)', () => {
+    expect(() => resolveReviewPolicy({ reviewPolicy: { codeReviewThreshold: 'HIGH' } })).toThrow(/not one of/)
   })
 
   it('configPath returns local path when vinaya.config.json exists in cwd', () => {

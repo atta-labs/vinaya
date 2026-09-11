@@ -61,6 +61,19 @@ export {
   WAIVER_LABEL,
   WAIVER_LABEL_REVIEW
 } from './waiver-label'
+export {
+  blockingSeverities,
+  CODE_REVIEW_SEVERITY_ORDER,
+  codeReviewBlockingSeverities,
+  DEFAULT_REVIEW_POLICY,
+  evaluateCodeReview,
+  evaluateReviewFindings,
+  evaluateSecurityReview,
+  isKnownSeverity,
+  SECURITY_SEVERITY_ORDER,
+  securityBlockingSeverities
+} from './review-policy'
+export type { CodeReviewSeverity, PolicyEvaluation, PolicyFinding, ReviewPolicy, SecuritySeverity } from './review-policy'
 export { deriveSection7, globsOverlap } from './derive-section7'
 export type { Section7Match } from './derive-section7'
 export { checkManifestValidity, parseNoDocRules } from './manifest-validity'
