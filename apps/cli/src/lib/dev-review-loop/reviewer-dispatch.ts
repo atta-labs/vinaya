@@ -11,10 +11,12 @@
  * below under the same path it always had.
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict,
   type Objective,
   type ReviewInputManifest,
   SECURITY_SEVERITY_ORDER,
@@ -133,6 +135,51 @@ export function discardHeldVerdicts(root: string, task: number, round: number): 
       // Not held for this round — nothing to discard.
     }
   }
+}
+
+export type HeldRequestChanges = { round: number; head: string; rendered: string }
+
+/**
+ * O4 (task 3, `#482`): the HIGHEST round number with any held
+ * verdict file at all, read ONLY if its own reviewer AND security pair are
+ * both still on disk and re-parse as REQUEST CHANGES — the durable,
+ * machine-local record of "round k sent the developer back" a fresh attach
+ * needs to recover from, since a restarted driver's in-memory `LoopState`
+ * carries no round history at all. Never falls back to an OLDER round: a
+ * clean highest pair means a later round already superseded whatever an
+ * older REQUEST-CHANGES pair still sitting on disk once meant (round k+1
+ * published, or is mid-publish, in the SAME process run that wrote it) —
+ * treated as "nothing to recover," the same as no held state existing at
+ * all, never as license to act on round k's now-stale findings instead.
+ * `null` also when the highest round's two files disagree on which head
+ * they judged, or when either fails to re-parse through the same
+ * extractors `publishRound` itself trusts — an attach never guesses past
+ * state that doesn't read clean.
+ */
+export function latestHeldRequestChanges(root: string, task: number): HeldRequestChanges | null {
+  const dir = join(root, 'dev-review-loop', String(task))
+  let entries: string[]
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return null
+  }
+  let highest = -1
+  for (const name of entries) {
+    const m = /^round-(\d+)-reviewer\.md$/.exec(name)
+    if (m) highest = Math.max(highest, Number(m[1] as string))
+  }
+  if (highest < 0) return null
+
+  const reviewerBody = readIfExists(heldVerdictPath(root, task, highest, 'reviewer'))
+  const securityBody = readIfExists(heldVerdictPath(root, task, highest, 'security'))
+  if (!reviewerBody || !securityBody) return null
+  const reviewer = extractCodeReviewVerdict([reviewerBody])
+  const security = extractSecurityReviewVerdict([securityBody])
+  if (reviewer.danglingNote || security.danglingNote) return null
+  if (!reviewer.headSha || !security.headSha || reviewer.headSha !== security.headSha) return null
+  if (reviewer.value === 'APPROVE' && security.value === 'PASS') return null
+  return { round: highest, head: reviewer.headSha, rendered: `${reviewerBody}\n\n---\n\n${securityBody}` }
 }
 
 /**

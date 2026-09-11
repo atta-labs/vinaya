@@ -461,7 +461,7 @@ describe('vinaya log flush — defeat cases', () => {
 
 describe('tailHasOwnLine — the race-condition correlation (code review BLOCKER 2, PR #439)', () => {
   it("ignores a concurrent process's matching-shape line carrying a DIFFERENT run_id, and finds this call's own line once it lands", async () => {
-    const { tailHasOwnLine } = await import('../../src/commands/log')
+    const { tailHasOwnLine } = await import('../../src/lib/log-flush')
     const home = tempDir('log-flush-race-')
     const path = join(home, 'outbox.ndjson')
     writeFileSync(path, '')
