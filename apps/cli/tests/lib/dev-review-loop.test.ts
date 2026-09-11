@@ -2179,6 +2179,12 @@ describe('devReviewLoop — a conflicting head is sent back to the developer, ne
     // before `waitForGreenGate` ever calls `gh api .../check-runs`, not
     // after it, so this marker is never touched.
     expect(existsSync(join(home, '.ci-conclusion-checked'))).toBe(false)
+    // Same fact, checked a second, more direct way: `gate_result_read` is
+    // the one durable event a real `waitForGreenGate` call ever produces
+    // (fed from its own `gate` observation into `assessRound`) — its
+    // absence from the outbox is a code-level guarantee CI was never
+    // waited on, independent of the shell marker above.
+    expect(outboxLines(home).some((l) => l.event === 'gate_result_read')).toBe(false)
 
     // The fresh brief, then two conflict-retry dispatches (the bound) —
     // never a reviewer prompt anywhere in this file.
