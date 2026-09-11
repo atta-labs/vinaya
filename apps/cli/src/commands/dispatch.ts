@@ -161,7 +161,9 @@ export async function dispatchCommand(args: string[]): Promise<void> {
       await flushOutbox(parsed.task !== undefined ? { issue: parsed.task } : { pr: parsed.pr as number })
     } catch (err) {
       const message = err instanceof LogFlushError || err instanceof Error ? err.message : String(err)
-      process.stderr.write(`vinaya dispatch: log flush failed (non-fatal — retry with \`vinaya log flush\`): ${message}\n`)
+      process.stderr.write(
+        `vinaya dispatch: log flush failed (non-fatal — retry with \`vinaya log flush\`): ${message}\n`
+      )
     }
   }
 

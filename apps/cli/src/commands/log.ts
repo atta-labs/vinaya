@@ -28,7 +28,8 @@ function emitAuditLineWarning(message: string): void {
     check: 'log-flush-audit-line-unconfirmed',
     severity: 'warning',
     message,
-    agent_recovery_prompt: 'No action required for the posted comments; re-run `vinaya log flush` if the audit trail must be complete.'
+    agent_recovery_prompt:
+      'No action required for the posted comments; re-run `vinaya log flush` if the audit trail must be complete.'
   })
 }
 

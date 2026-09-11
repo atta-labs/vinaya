@@ -2107,7 +2107,10 @@ describe('devReviewLoop — a second attach on the same unchanged head reads as 
     // git's own current head (`writeFakeGitAttach`'s `ls-remote`).
     const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
     mkdirSync(heldDir, { recursive: true })
-    writeFileSync(join(heldDir, 'round-1-reviewer.md'), `VERDICT: REQUEST CHANGES\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`)
+    writeFileSync(
+      join(heldDir, 'round-1-reviewer.md'),
+      `VERDICT: REQUEST CHANGES\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`
+    )
     writeFileSync(join(heldDir, 'round-1-security.md'), `VERDICT: FAIL\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`)
     // A prior attach already redelivered round 1's findings once, on this
     // exact head, with no developer push in between — this run is the
