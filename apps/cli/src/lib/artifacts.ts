@@ -229,6 +229,37 @@ function ownVersion(): string {
 export const SETUP_BUN_SHA = '0c5077e51419868618aeaa5fe8019c62421857d6'
 
 /**
+ * The workflow artifact name the `pull_request` build (this repo's own
+ * `ci.yml`) uploads once and `vinaya-checks.yml` downloads — never a
+ * `pull_request_target` workflow, which builds its own trusted copy and must
+ * never download an artifact a pull request's own run produced (O2's trust
+ * boundary; see `apps/cli/specs/self-hosting.md`).
+ */
+export const CLI_DIST_ARTIFACT_NAME = 'vinaya-cli-dist'
+
+/**
+ * Restores Bun's install cache — keyed on whichever lockfile the repo
+ * actually has, text `bun.lock` or the legacy binary `bun.lockb`;
+ * `hashFiles` silently ignores whichever one is absent — before a
+ * `bun install --frozen-lockfile`. Caches only the download cache, never the
+ * built `dist` (the build itself costs seconds and must never be trusted
+ * across a trust boundary — see O2 below); a second workflow installing
+ * against the same lockfile on the same commit then installs nothing it
+ * doesn't already have. Emitted once, right after `setup-bun`, everywhere
+ * this generator itself emits a `bun install --frozen-lockfile` line.
+ */
+function bunInstallCacheStep(): string {
+  return `      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-\${{ runner.os }}-\${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-\${{ runner.os }}-
+`
+}
+
+/**
  * The steps that make the vinaya binary available, emitted directly after
  * `setup-node` at 6-space step indentation. Empty for the ordinary adopter —
  * `npx` needs no preparation.
@@ -244,7 +275,7 @@ function vinayaSetupSteps(selfHost: VendoredVinaya | null, sourceTrust: Workflow
       # 2026-08-14. Bun's own version still comes from the repo's
       # \`packageManager\` field, not from this pin.
       - uses: oven-sh/setup-bun@${SETUP_BUN_SHA}
-      # This repo declares the \`@attalabs/vinaya\` workspace package itself, so
+${bunInstallCacheStep()}      # This repo declares the \`@attalabs/vinaya\` workspace package itself, so
       # \`npx @attalabs/vinaya\` resolves to that local member instead of the
       # registry and dies on its unbuilt \`bin\`. Build and run the trusted
       # default-branch copy directly.
@@ -267,7 +298,7 @@ function vinayaSetupSteps(selfHost: VendoredVinaya | null, sourceTrust: Workflow
       # Resolved from the \`v2\` tag on 2026-08-14. Bun's own version still
       # comes from the repo's \`packageManager\` field, not from this pin.
       - uses: oven-sh/setup-bun@${SETUP_BUN_SHA}
-      # This repo declares the \`@attalabs/vinaya\` workspace package itself, so
+${bunInstallCacheStep()}      # This repo declares the \`@attalabs/vinaya\` workspace package itself, so
       # \`npx @attalabs/vinaya\` resolves to that local member instead of the
       # registry and dies on its unbuilt \`bin\`. Build and run this repo's own
       # CLI — which also makes CI exercise the code in the pull request rather

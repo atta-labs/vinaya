@@ -876,6 +876,13 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(occurrences(files, 'bun install --frozen-lockfile --ignore-scripts')).toBe(6)
     expect(occurrences(files, 'bun install --frozen-lockfile\n')).toBe(0)
 
+    // O1: every install is preceded by a restore of Bun's own install cache,
+    // keyed on the lockfile — so a second workflow on the same commit
+    // installs nothing it doesn't already have.
+    expect(occurrences(files, 'Restore Bun install cache')).toBe(6)
+    expect(occurrences(files, 'actions/cache@v4')).toBe(6)
+    expect(occurrences(files, `key: bun-\${{ runner.os }}-\${{ hashFiles('bun.lock', 'bun.lockb') }}`)).toBe(6)
+
     // Default checkout writes GITHUB_TOKEN into .git/config as an http
     // extraheader — in the same workspace the build then executes.
     for (const [path, content] of files) {
