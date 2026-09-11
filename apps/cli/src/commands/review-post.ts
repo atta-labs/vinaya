@@ -407,7 +407,7 @@ export type CodeReviewInput = TokensInput & {
   objectiveResults: readonly ObjectiveResult[] | null
   /** The newest principal ruling ordinal on this PR at cast time — `0` when none, RENDERS UNCONDITIONALLY, never omitted the way `objectivesVersion` is pre-cutover (task 3, `#477`, O1). */
   rulingOrdinal: number
-  /** The frozen brief's own hash at cast time (`review-validity-v1` task 4, `#478`, O1) — `null` when no frozen brief was resolvable for this PR. RENDERS UNCONDITIONALLY, as `(none)` when null — a non-hash placeholder the gate's extractor reads back as no binding at all. */
+  /** The frozen brief's own hash at cast time (task 4, `#478`, O1) — `null` when no frozen brief was resolvable for this PR. RENDERS UNCONDITIONALLY, as `(none)` when null — a non-hash placeholder the gate's extractor reads back as no binding at all. */
   briefHash: string | null
   /** The effective review policy's digest at cast time (task 4, `#478`, O5). Never null — a policy is always configured or defaulted. */
   policyDigest: string

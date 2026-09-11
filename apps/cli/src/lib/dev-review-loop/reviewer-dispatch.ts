@@ -51,7 +51,7 @@ export type ReviewerPromptFacts = {
   /** The frozen brief's own `**Revision:**` fact (task 4, Issue #483, O2) — `fetchSourceRevision`. */
   revision: string
   /**
-   * The one review-input manifest (`review-validity-v1` task 4, `#478`,
+   * The one review-input manifest (task 4, `#478`,
    * O1) — head, the frozen brief's own hash, objectives version, ruling
    * ordinal, and the effective review policy's digest, built by the driver
    * BEFORE this dispatch. The only source of `HEAD:` in the rendered prompt

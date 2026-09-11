@@ -138,8 +138,8 @@ function fetchIssueCommentsForBrief(issueNumber: number): { body: string; author
 }
 
 /**
- * The frozen brief's own hash this PR is judged against (`review-validity-v1`
- * task 4, `#478`, O1) — `null` when the PR closes no Issue, or that Issue
+ * The frozen brief's own hash this PR is judged against (task 4, `#478`,
+ * O1) — `null` when the PR closes no Issue, or that Issue
  * carries no principal-authored frozen brief yet. Unlike
  * `resolveObjectivesVersion`, this never fails closed: a PR with nothing to
  * bind against yet is the same "skip the binding" case `objectivesVersion:
