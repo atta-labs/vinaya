@@ -11,6 +11,7 @@ import {
   buildInitOps,
   CHECKS_FOLDER_PLACEHOLDER_PATH,
   CHECKS_WORKFLOW_PATH,
+  CLI_DIST_ARTIFACT_NAME,
   CONFIG_PATH,
   DOCTRINE_POINTER_PATH,
   labelOps,
@@ -869,12 +870,29 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // The first THIRD-PARTY action this generator writes into an adopter repo,
     // in the job that then builds and runs PR code: pinned to a commit, so a
     // repoint of the mutable tag cannot execute new upstream code everywhere.
+    // `vinaya-checks.yml` no longer BUILDS its own copy (O2) — it downloads
+    // the one `ci.yml` already built — but it still installs (found live:
+    // the downloaded `dist/index.js` imports its external, unbundled deps —
+    // `gray-matter`, `zod` — from `node_modules` at require time, and
+    // nothing else in that job ever populates it), so it still contributes
+    // its own setup-bun. `files`/`occurrences` cover the five paths in
+    // `WORKFLOWS` above — body-checks.yml is not one of them (see the O2
+    // boundary test, which reads it directly for that reason) — so:
+    // checks(1) + review(1) + verdict(1) + archivist(3) = 6.
     expect(occurrences(files, 'oven-sh/setup-bun@v2')).toBe(0)
     expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(6)
 
     // The install runs against the PR's own dependency manifest.
     expect(occurrences(files, 'bun install --frozen-lockfile --ignore-scripts')).toBe(6)
     expect(occurrences(files, 'bun install --frozen-lockfile\n')).toBe(0)
+
+    // O1: every install is preceded by a restore of Bun's own install cache,
+    // keyed on the lockfile — so a second workflow on the same commit
+    // installs nothing it doesn't already have. `vinaya-checks.yml`'s
+    // install (O2, above) gets one too.
+    expect(occurrences(files, 'Restore Bun install cache')).toBe(6)
+    expect(occurrences(files, 'actions/cache@v4')).toBe(6)
+    expect(occurrences(files, `key: bun-\${{ runner.os }}-\${{ hashFiles('bun.lock', 'bun.lockb') }}`)).toBe(6)
 
     // Default checkout writes GITHUB_TOKEN into .git/config as an http
     // extraheader — in the same workspace the build then executes.
@@ -894,9 +912,13 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // All six invocations move — none left on the broken path.
     expect(occurrences(files, 'npx --yes @attalabs/vinaya')).toBe(0)
     expect(occurrences(files, VENDORED_BIN)).toBe(6)
-    // Every job carrying an invocation first builds the member it invokes.
+    // Every job in `WORKFLOWS` installs (6 — see the setup-bun count above);
+    // only the jobs that actually BUILD their own copy run the build
+    // command — every one except `vinaya-checks.yml`, which downloads the
+    // shared build instead (O2) but still installs for the downloaded
+    // dist's runtime deps.
     expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(6)
-    expect(occurrences(files, 'bun run --cwd apps/cli build')).toBe(6)
+    expect(occurrences(files, 'bun run --cwd apps/cli build')).toBe(5)
 
     // Per-file: the exact subcommands, in the built-binary shape.
     const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
@@ -914,6 +936,70 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(archivist).toContain(`${VENDORED_BIN} audit --only=direct-push --sha=${SIGIL}{{ github.sha }}`)
     // The retrigger job executes no repo content and gains no build step.
     expect(occurrences(new Map([[ARCHIVIST_WORKFLOW_PATH, archivist]]), 'setup-bun')).toBe(3)
+
+    // O2: `vinaya-checks.yml` never builds; it downloads the artifact
+    // `ci.yml` uploads (but still installs, for the downloaded dist's
+    // runtime deps — see above). A `pull_request_target` workflow never
+    // downloads an artifact at all — see the boundary test below.
+    expect(checks).toContain('oven-sh/setup-bun')
+    expect(checks).toContain('bun install --frozen-lockfile --ignore-scripts')
+    expect(checks).not.toContain('bun run --cwd apps/cli build')
+    expect(checks).toContain('actions/download-artifact@v4')
+    expect(checks).toContain(`name: ${CLI_DIST_ARTIFACT_NAME}`)
+    expect(checks).toContain('actions/workflows/ci.yml/runs')
+    // CI red, found live: download-artifact does not reliably preserve the
+    // executable bit `scripts/build.ts` sets on every emitted entrypoint —
+    // every check, spawned directly from `dist/checks/bin/*.js`, failed
+    // EACCES after download. Restored explicitly, after the download.
+    const downloadIdx = checks.indexOf('actions/download-artifact@v4')
+    const chmodIdx = checks.indexOf('chmod -R +x apps/cli/dist')
+    expect(chmodIdx).toBeGreaterThan(downloadIdx)
+  })
+
+  it('O2 boundary: only the shared pull_request build downloads it — pull_request_target workflows always build their own', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+    const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
+    const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
+    // Not in `generated()`'s WORKFLOWS list — read directly so `?? ''`
+    // never silently makes this assertion trivially pass on a missing file.
+    const bodyChecks = readFileSync(join(root, BODY_CHECKS_WORKFLOW_PATH), 'utf-8')
+    const archivist = files.get(ARCHIVIST_WORKFLOW_PATH) ?? ''
+    const retrigger = files.get(REVIEW_RETRIGGER_WORKFLOW_PATH) ?? ''
+    const verdict = files.get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
+
+    expect(checks).toContain('actions/download-artifact@v4')
+    for (const [name, content] of [
+      ['review', review],
+      ['body-checks', bodyChecks],
+      ['archivist', archivist],
+      ['retrigger', retrigger],
+      ['verdict', verdict]
+    ] as const) {
+      expect(`${name}: ${content.includes('download-artifact')}`).toBe(`${name}: false`)
+      expect(`${name}: ${content.includes(CLI_DIST_ARTIFACT_NAME)}`).toBe(`${name}: false`)
+    }
+  })
+
+  it('O2 security finding: vinaya-checks.yml grants `actions: read` for the shared-build API calls', async () => {
+    // Without it, `gh api .../actions/workflows/ci.yml/runs`, `.../actions/
+    // runs/$RUN_ID/artifacts`, and `actions/download-artifact@v4`'s
+    // cross-run `run-id` all 403 against GITHUB_TOKEN — an explicit
+    // `permissions:` block grants nothing not listed. Scoped to the checks
+    // job specifically: the trusted-build workflows never take the
+    // shared-build branch and must not gain this scope they don't need.
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+    const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
+    const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
+    const archivist = files.get(ARCHIVIST_WORKFLOW_PATH) ?? ''
+
+    const checksPermissions = checks.slice(checks.indexOf('permissions:'), checks.indexOf('steps:'))
+    expect(checksPermissions).toContain('actions: read')
+    expect(review).not.toContain('actions: read')
+    expect(archivist).not.toContain('actions: read')
   })
 
   it('every env: wiring survives in BOTH shapes', async () => {
@@ -942,10 +1028,11 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       expect(verdict).not.toContain('BRANCH:')
       expect(verdict).not.toContain('headRefName')
       // GH_TOKEN on every step that talks to the forge: checks 2 (fetch PR
-      // body, run checks), review 1 (review gate), retrigger 1 (its own
-      // workflow file, Issue #402 O4), verdict 3 (resolve-head, evaluate,
-      // retrigger), archivist 3.
-      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(10)
+      // body, run checks) + 1 more when vendored (find the shared build,
+      // O2), review 2 (require a verdict before building, O3; review gate),
+      // retrigger 1 (its own workflow file, Issue #402 O4), verdict 3
+      // (resolve-head, evaluate, retrigger), archivist 3.
+      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 12 : 11)
     }
   })
 
@@ -983,6 +1070,63 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
         expect(evaluate).toContain(`${PUBLISHED_RUN} check review-gate`)
       }
     }
+  })
+
+  it('O3: the review gate never builds on an ordinary push — its first step gates on a VERDICT: comment, no checkout before it', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+    const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
+
+    const gateIdx = review.indexOf('Require a verdict before building')
+    const checkoutIdx = review.indexOf('actions/checkout@v4')
+    const buildIdx = review.indexOf('Build the trusted Vinaya CLI')
+    expect(gateIdx).toBeGreaterThan(-1)
+    // The gate step is the FIRST step in the job — before any checkout or
+    // build — so an ordinary push (opened/synchronize/reopened/labeled/
+    // unlabeled) with no verdict yet never pays for either.
+    expect(gateIdx).toBeLessThan(checkoutIdx)
+    expect(checkoutIdx).toBeLessThan(buildIdx)
+    expect(review).toContain('gh pr view "$PR_NUMBER"')
+    expect(review).toContain('exit 1')
+    // One job, one required check-run name — never a second job/name.
+    expect(occurrences(new Map([[REVIEW_WORKFLOW_PATH, review]]), '\n  vinaya-review:')).toBe(1)
+    expect(occurrences(new Map([[REVIEW_WORKFLOW_PATH, review]]), 'name: vinaya review gate')).toBe(1)
+  })
+
+  it('O3 review finding: the verdict pre-check is line-anchored on `VERDICT:`, never a bare substring search', async () => {
+    // security-review FAIL finding / PR #636/#639: `packages/aeg-core/src/
+    // verdict-extraction.ts` standardized on a line-anchored `VERDICT:`
+    // marker specifically because a bare substring/word search matches
+    // ordinary prose that only MENTIONS a verdict (an escalation, a
+    // reviewer report, this very step's own description) and would wrongly
+    // treat that as a cast one. The pre-check here must never regress to
+    // `contains("VERDICT")`, and its jq must actually reject a bare mention
+    // and accept a real line-anchored marker.
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+    const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
+
+    expect(review).not.toContain('contains("VERDICT")')
+
+    const jqExpr =
+      '[.comments[].body | select((. / "\\n") | any(test("^[ \\t]*(\\\\*{1,3}|_{1,3})?VERDICT:")))] | length > 0'
+    expect(review).toContain(jqExpr)
+
+    // The jq expression itself, run for real: a bare mention must not
+    // satisfy it, a real line-anchored marker (with or without emphasis)
+    // must, and a blockquoted/list-item/heading mention must not.
+    const runJq = (body: string): string =>
+      execFileSync('jq', [jqExpr], {
+        input: JSON.stringify({ comments: [{ body }] }),
+        encoding: 'utf8'
+      }).trim()
+    expect(runJq('this checks for a VERDICT: comment in prose')).toBe('false')
+    expect(runJq('some discussion\nVERDICT: PASS\nJudged head: abc123')).toBe('true')
+    expect(runJq('**VERDICT: APPROVE**')).toBe('true')
+    expect(runJq('> VERDICT: APPROVE')).toBe('false')
+    expect(runJq('# VERDICT: APPROVE')).toBe('false')
   })
 
   it('the hook stubs resolve the vendored bin too (atta-labs/attalabs#935 corrects this case)', async () => {

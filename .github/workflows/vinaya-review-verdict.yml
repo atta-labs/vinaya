@@ -61,6 +61,13 @@ jobs:
       # 2026-08-14. Bun's own version still comes from the repo's
       # `packageManager` field, not from this pin.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
       # This repo declares the `@attalabs/vinaya` workspace package itself, so
       # `npx @attalabs/vinaya` resolves to that local member instead of the
       # registry and dies on its unbuilt `bin`. Build and run the trusted

@@ -336,6 +336,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `buildInitOps` | function | `apps/cli/src/lib/artifacts.ts` |
 | `CHECKS_FOLDER_PLACEHOLDER_PATH` | const | `apps/cli/src/lib/artifacts.ts` |
 | `CHECKS_WORKFLOW_PATH` | const | `apps/cli/src/lib/artifacts.ts` |
+| `CLI_DIST_ARTIFACT_NAME` | const | `apps/cli/src/lib/artifacts.ts` |
 | `CONFIG_PATH` | const | `apps/cli/src/lib/artifacts.ts` |
 | `DOCTRINE_POINTER_PATH` | const | `apps/cli/src/lib/artifacts.ts` |
 | `doctrinePointer` | function | `apps/cli/src/lib/artifacts.ts` |

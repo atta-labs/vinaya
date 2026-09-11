@@ -8,7 +8,7 @@ import { runDoctor } from '../src/commands/doctor.js'
 import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
 import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
-import { CHECKS_WORKFLOW_PATH, CONFIG_PATH, DOCTRINE_POINTER_PATH } from '../src/lib/artifacts.js'
+import { CHECKS_WORKFLOW_PATH, CONFIG_PATH, DOCTRINE_POINTER_PATH, REVIEW_WORKFLOW_PATH } from '../src/lib/artifacts.js'
 import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
 import { CLAUDE_SETTINGS_PATH, CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
@@ -244,6 +244,48 @@ describe('vinaya doctor — never mutates', () => {
     const report = await runDoctorJson()
     expect(report.healthy).toBe(false)
     const hit = report.findings.find((f) => f.check === 'workflows' && f.message.includes(CHECKS_WORKFLOW_PATH))
+    expect(hit?.severity).toBe('warn')
+    expect(hit?.message).toContain('drifted')
+
+    expect(snapshot(root)).toEqual(before)
+  })
+
+  it('O5: flags a managed workflow that lacks the Bun install-cache step as drifted', async () => {
+    // The cache step (O1) is only emitted when the repo vendors vinaya as a
+    // workspace member — an ordinary npx-fetching adopter needs no install
+    // step for vinaya at all, cache included.
+    writeFileSync(
+      join(root, 'package.json'),
+      `${JSON.stringify({ name: 'widget', private: true, workspaces: ['apps/*'] }, null, 2)}\n`
+    )
+    mkdirSync(join(root, 'apps/cli'), { recursive: true })
+    writeFileSync(
+      join(root, 'apps/cli/package.json'),
+      `${JSON.stringify(
+        {
+          name: '@attalabs/vinaya',
+          version: '0.4.6',
+          bin: { vinaya: './dist/index.js' },
+          scripts: { build: 'bun scripts/build.ts' }
+        },
+        null,
+        2
+      )}\n`
+    )
+    await runInit(['--yes'], initDeps())
+    const generated = readFileSync(join(root, REVIEW_WORKFLOW_PATH), 'utf-8')
+    expect(generated).toContain('Restore Bun install cache')
+
+    const withoutCache = generated
+      .split('\n')
+      .filter((line) => !line.includes('Restore Bun install cache') && !line.includes('actions/cache@v4'))
+      .join('\n')
+    writeFileSync(join(root, REVIEW_WORKFLOW_PATH), withoutCache)
+    const before = snapshot(root)
+
+    const report = await runDoctorJson()
+    expect(report.healthy).toBe(false)
+    const hit = report.findings.find((f) => f.check === 'workflows' && f.message.includes(REVIEW_WORKFLOW_PATH))
     expect(hit?.severity).toBe('warn')
     expect(hit?.message).toContain('drifted')
 

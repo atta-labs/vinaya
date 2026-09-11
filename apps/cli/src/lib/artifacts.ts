@@ -229,11 +229,42 @@ function ownVersion(): string {
 export const SETUP_BUN_SHA = '0c5077e51419868618aeaa5fe8019c62421857d6'
 
 /**
+ * The workflow artifact name the `pull_request` build (this repo's own
+ * `ci.yml`) uploads once and `vinaya-checks.yml` downloads — never a
+ * `pull_request_target` workflow, which builds its own trusted copy and must
+ * never download an artifact a pull request's own run produced (O2's trust
+ * boundary; see `apps/cli/specs/self-hosting.md`).
+ */
+export const CLI_DIST_ARTIFACT_NAME = 'vinaya-cli-dist'
+
+/**
+ * Restores Bun's install cache — keyed on whichever lockfile the repo
+ * actually has, text `bun.lock` or the legacy binary `bun.lockb`;
+ * `hashFiles` silently ignores whichever one is absent — before a
+ * `bun install --frozen-lockfile`. Caches only the download cache, never the
+ * built `dist` (the build itself costs seconds and must never be trusted
+ * across a trust boundary — see O2 below); a second workflow installing
+ * against the same lockfile on the same commit then installs nothing it
+ * doesn't already have. Emitted once, right after `setup-bun`, everywhere
+ * this generator itself emits a `bun install --frozen-lockfile` line.
+ */
+function bunInstallCacheStep(): string {
+  return `      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-\${{ runner.os }}-\${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-\${{ runner.os }}-
+`
+}
+
+/**
  * The steps that make the vinaya binary available, emitted directly after
  * `setup-node` at 6-space step indentation. Empty for the ordinary adopter —
  * `npx` needs no preparation.
  */
-type WorkflowSourceTrust = 'pull-request' | 'trusted'
+type WorkflowSourceTrust = 'pull-request' | 'trusted' | 'shared-build'
 
 function vinayaSetupSteps(selfHost: VendoredVinaya | null, sourceTrust: WorkflowSourceTrust = 'pull-request'): string {
   if (!selfHost) return ''
@@ -244,7 +275,7 @@ function vinayaSetupSteps(selfHost: VendoredVinaya | null, sourceTrust: Workflow
       # 2026-08-14. Bun's own version still comes from the repo's
       # \`packageManager\` field, not from this pin.
       - uses: oven-sh/setup-bun@${SETUP_BUN_SHA}
-      # This repo declares the \`@attalabs/vinaya\` workspace package itself, so
+${bunInstallCacheStep()}      # This repo declares the \`@attalabs/vinaya\` workspace package itself, so
       # \`npx @attalabs/vinaya\` resolves to that local member instead of the
       # registry and dies on its unbuilt \`bin\`. Build and run the trusted
       # default-branch copy directly.
@@ -259,6 +290,67 @@ function vinayaSetupSteps(selfHost: VendoredVinaya | null, sourceTrust: Workflow
           bun run --cwd ${selfHost.dir} build
 `
   }
+  if (sourceTrust === 'shared-build') {
+    // Never builds its own copy — O2's boundary is that a `pull_request`
+    // workflow builds the CLI exactly once (this repo's own `ci.yml`) and a
+    // sibling `pull_request` workflow downloads it. Both run at the same
+    // trust level (untrusted PR content), so sharing here crosses no
+    // boundary; a `pull_request_target` workflow must NEVER take this branch
+    // (see `reviewWorkflow`/`bodyChecksWorkflow`/`archivistWorkflow`, all of
+    // which stay on `'trusted'` and build their own copy).
+    //
+    // Still installs — only the BUILD is shared, not the install. The
+    // downloaded \`dist/index.js\` imports its external (unbundled) deps —
+    // \`gray-matter\`, \`zod\` — from \`node_modules\` at require time (found
+    // live: skipping install here entirely crashed every run with
+    // \`ERR_MODULE_NOT_FOUND: Cannot find package 'gray-matter'\`, since no
+    // step in this branch had ever populated \`node_modules\`). O1's cache
+    // step still makes this install cheap; what O2 removes is only the
+    // \`bun run --cwd \${selfHost.dir} build\` this job used to also pay for.
+    return `      - uses: oven-sh/setup-bun@${SETUP_BUN_SHA}
+${bunInstallCacheStep()}      - name: Install dependencies (dist is downloaded below, never built here)
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Find the shared CLI build for this commit
+        id: shared-build
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          SHA="\${{ github.event.pull_request.head.sha }}"
+          for i in $(seq 1 20); do
+            RUN_ID=$(gh api --paginate \\
+              "repos/\${{ github.repository }}/actions/workflows/ci.yml/runs?event=pull_request&head_sha=$SHA&per_page=100" \\
+              | jq -sr '[.[].workflow_runs[]] | sort_by(.created_at) | last | .id // empty')
+            if [ -n "$RUN_ID" ]; then
+              HAS_ARTIFACT=$(gh api "repos/\${{ github.repository }}/actions/runs/$RUN_ID/artifacts" \\
+                --jq '[.artifacts[] | select(.name == "${CLI_DIST_ARTIFACT_NAME}")] | length > 0')
+              if [ "$HAS_ARTIFACT" = "true" ]; then
+                echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+            sleep 15
+          done
+          echo "No CI (ci.yml) run for $SHA produced the shared ${CLI_DIST_ARTIFACT_NAME} build after waiting - failing rather than building an unshared copy." >&2
+          exit 1
+      - name: Download the shared CLI build
+        uses: actions/download-artifact@v4
+        with:
+          name: ${CLI_DIST_ARTIFACT_NAME}
+          path: ${selfHost.dir}/dist
+          github-token: \${{ secrets.GITHUB_TOKEN }}
+          run-id: \${{ steps.shared-build.outputs.run_id }}
+      # \`upload-artifact\`/\`download-artifact\` round-trip through a zip and
+      # do not reliably preserve the executable bit \`scripts/build.ts\` sets
+      # on every emitted entrypoint (found live: every check spawned
+      # directly from \`dist/checks/bin/*.js\` — not via \`node\` — failed
+      # \`EACCES\` after download). Restored here rather than skipped upstream:
+      # the upload side has no reason to know which bits its own consumer
+      # will need preserved.
+      - name: Restore executable bits lost in the artifact round-trip
+        run: chmod -R +x ${selfHost.dir}/dist
+`
+  }
   return `      # Pinned to a commit, not the mutable \`v2\` tag. This is the first
       # THIRD-PARTY action this generator writes into an adopter's repository,
       # and it runs in the same job that then builds and executes pull-request
@@ -267,7 +359,7 @@ function vinayaSetupSteps(selfHost: VendoredVinaya | null, sourceTrust: Workflow
       # Resolved from the \`v2\` tag on 2026-08-14. Bun's own version still
       # comes from the repo's \`packageManager\` field, not from this pin.
       - uses: oven-sh/setup-bun@${SETUP_BUN_SHA}
-      # This repo declares the \`@attalabs/vinaya\` workspace package itself, so
+${bunInstallCacheStep()}      # This repo declares the \`@attalabs/vinaya\` workspace package itself, so
       # \`npx @attalabs/vinaya\` resolves to that local member instead of the
       # registry and dies on its unbuilt \`bin\`. Build and run this repo's own
       # CLI — which also makes CI exercise the code in the pull request rather
@@ -391,6 +483,14 @@ jobs:
       contents: read
       pull-requests: read
       issues: read
+      # O2's shared-build lookup (\`vinayaSetupSteps(..., 'shared-build')\`)
+      # calls \`gh api .../actions/workflows/ci.yml/runs\` and
+      # \`.../actions/runs/$RUN_ID/artifacts\`, then downloads via
+      # \`actions/download-artifact@v4\` with a cross-run \`run-id\` — all three
+      # need \`actions: read\` on GITHUB_TOKEN, which an explicit \`permissions:\`
+      # block does not grant by default (security review finding: every run
+      # 403'd on the lookup/download without this).
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -402,7 +502,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-${vinayaSetupSteps(selfHost, 'pull-request')}${adopterSetupStep(ciSetup)}      # PR_BODY is what makes test-plan/closes-n/pr-report-density EVALUATE:
+${vinayaSetupSteps(selfHost, 'shared-build')}${adopterSetupStep(ciSetup)}      # PR_BODY is what makes test-plan/closes-n/pr-report-density EVALUATE:
       # none of the three fetches the body itself (all read
       # \`process.env.PR_BODY\` only) — without it they read "no body —
       # nothing to check" and pass vacuously regardless of the PR's real
@@ -468,6 +568,15 @@ function reviewWorkflow(selfHost: VendoredVinaya | null): string {
 # runs. When a clean final verdict lands, or CI turns green, one of those
 # two workflows re-runs this one, so the required check below goes green
 # natively with no manual rerun.
+#
+# The job's first step never builds: it reads the PR's comments through the
+# API alone and fails fast, without checkout or build, whenever no
+# \`VERDICT:\` comment exists yet — the ordinary state on \`opened\`/
+# \`synchronize\`/\`reopened\`/\`labeled\`/\`unlabeled\`. The build only runs once
+# that step finds a verdict, which in practice is the state a rerun finds it
+# in: the verdict-comment workflow and the CI-green retrigger both re-run
+# THIS run, and by the time either fires, the verdict this job is looking
+# for already exists.
 name: Vinaya Review Gate
 run-name: "Vinaya Review Gate PR #\${{ github.event.pull_request.number }} @ \${{ github.event.pull_request.head.sha }}"
 
@@ -511,6 +620,51 @@ jobs:
       issues: read
       checks: read
     steps:
+      # No checkout, no build: read whether a verdict exists yet through the
+      # API alone. Absent one, THIS step fails — the job's own single
+      # check-run ("vinaya review gate") goes red with the reason below and
+      # every step after it is skipped, so an ordinary push (opened /
+      # synchronize / reopened / labeled / unlabeled) never pays for a build
+      # it cannot use. Deliberately one job, not two: a second job would
+      # report a second check-run name, and \`REVIEW_GATE_CHECK_RUN_NAME\`
+      # (this repo's own \`check-review-gate.ts\`/\`dev-review-loop.ts\`) is
+      # the one required name every other mechanism already keys on.
+      #
+      # Line-anchored \`VERDICT:\` — same anchor discipline
+      # \`packages/aeg-core/src/verdict-extraction.ts\` standardizes on
+      # (security-review FAIL finding, PR #636/#639): a bare substring/word
+      # search matches ordinary prose that merely mentions "VERDICT" (an
+      # escalation, a reviewer report, this very step's own description) and
+      # would wrongly let the build run on a push with no real verdict cast.
+      # \`^[ \\t]*(\\*{1,3}|_{1,3})?VERDICT:\` tolerates the same leading
+      # markdown emphasis run the real extractor does, and — because it is
+      # tested per split line rather than as one multiline string (this
+      # jq/oniguruma build's \`^\`/\`$\` do not cross embedded newlines even
+      # under the "m"/"s" flags) — rejects the same blockquote/list-item/
+      # heading prefixes the real extractor rejects. This is a presence-only
+      # approximation of that module's full extraction (no first-five-lines
+      # window, no value-side match, no most-recent-comment selection, no
+      # code-span exclusion) — deliberately so: this step never runs after a
+      # checkout, so it cannot import \`packages/aeg-core\` and must not
+      # duplicate its regex as a second, driftable copy of the same fact
+      # (that module's own "one implementation per fact" constraint). A false
+      # positive here only wastes a trusted build; the downstream
+      # \`vinayaRun(selfHost, 'check review-gate')\` step, which DOES run the
+      # real extractor after checkout, is the authoritative verdict read and
+      # still fails correctly on anything this coarser check let through.
+      - name: Require a verdict before building
+        id: verdict-check
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: \${{ github.event.pull_request.number }}
+        run: |
+          set -o pipefail
+          HAS_VERDICT=$(gh pr view "$PR_NUMBER" --repo \${{ github.repository }} --json comments \\
+            --jq '[.comments[].body | select((. / "\\n") | any(test("^[ \\t]*(\\\\*{1,3}|_{1,3})?VERDICT:")))] | length > 0')
+          if [ "$HAS_VERDICT" != "true" ]; then
+            echo "No VERDICT: comment yet on PR #$PR_NUMBER - nothing to evaluate. Holding the gate red without building until a reviewer posts one." >&2
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           # Explicit trusted ref: never use the PR head/merge ref in this job.
