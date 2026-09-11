@@ -442,6 +442,37 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       "A default vendor `vinaya dispatch`'s own `--agent` flag overrides when given. Absent, `--agent` is required on the command line."
     ],
     example: `{ "dispatch": { "agent": "claude" } }`
+  },
+  {
+    key: 'reviewPolicy',
+    type: 'object (optional)',
+    semantics: [
+      "Which severities block is repository policy, not a hardcoded literal: one threshold per review role's own ordered severity scale — code review over `BLOCKER > MAJOR > MINOR`, security review over `CRITICAL > HIGH > MEDIUM > LOW`. A finding at or above the threshold prevents approval everywhere a verdict is derived, accepted, or judged.",
+      "Omitted entirely, or either field omitted, defaults to today's behavior (`BLOCKER` / `HIGH`). An unknown severity name refuses at config load — it never silently falls back, unlike the rest of this config's fields.",
+      "Read only via the default branch's configuration (the same trust class as `principals`), never the pull request's own checkout, so a change cannot lower its own threshold."
+    ],
+    example: `{
+  "reviewPolicy": {
+    "codeReviewThreshold": "MAJOR",
+    "securityThreshold": "HIGH"
+  }
+}`
+  },
+  {
+    key: 'reviewPolicy.codeReviewThreshold',
+    type: 'string (optional)',
+    semantics: [
+      "One of `BLOCKER`, `MAJOR`, `MINOR` (code review's own ordered scale). Defaults to `BLOCKER` when omitted. Any other value refuses config load with the accepted scale named in the error."
+    ],
+    example: `{ "reviewPolicy": { "codeReviewThreshold": "MAJOR" } }`
+  },
+  {
+    key: 'reviewPolicy.securityThreshold',
+    type: 'string (optional)',
+    semantics: [
+      "One of `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` (security review's own ordered scale). Defaults to `HIGH` when omitted. Any other value refuses config load with the accepted scale named in the error."
+    ],
+    example: `{ "reviewPolicy": { "securityThreshold": "HIGH" } }`
   }
 ] as const
 
