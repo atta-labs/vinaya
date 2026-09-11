@@ -188,6 +188,10 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body
   echo '{"body":"Closes #${TASK}"}'
   exit 0
 fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   FAKE_GH_STATE="$STATE_DIR" bun -e '
     const fs = require("fs")
@@ -271,6 +275,10 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body
   echo '{"body":"Closes #${TASK}"}'
   exit 0
 fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   FAKE_GH_STATE="$STATE_DIR" bun -e '
     const fs = require("fs")
@@ -345,6 +353,10 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body
   echo '{"body":"Closes #${TASK}"}'
   exit 0
 fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   COUNTER_FILE="$HOME/.fake-gh-pr-comments-calls"
   N=$(cat "$COUNTER_FILE" 2>/dev/null || echo 0)
@@ -411,6 +423,10 @@ if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
 fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
   echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
@@ -516,6 +532,10 @@ if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
 fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
   echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
@@ -1588,6 +1608,10 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body
   echo '{"body":"Closes #${TASK}"}'
   exit 0
 fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   FAKE_GH_STATE="$STATE_DIR" bun -e '
     const fs = require("fs")
@@ -1788,6 +1812,458 @@ describe('devReviewLoop — a remote branch with no open PR resumes the recorded
     expect(hasResume).toBe('1')
     expect(resumeId).toBe('seeded-session-7')
     expect(firstLine).toMatch(/already exists with no open pull request/)
+  }, 20000)
+})
+
+// --- task-run-v1 13 (#508): the developer's first turn ends with no push at all, resumed once (O2/O3) ---
+
+/**
+ * The first (fresh) developer dispatch does nothing — no push, no PR — and
+ * never touches `.fake-dev-invoked`. A SECOND (resumed) dispatch behaves
+ * like the clean round-1 fixture: it touches the marker (making
+ * `writeFakeGit`'s `ls-remote` and `writeFakeGh`'s `pr list` start
+ * answering, exactly as if this dispatch had really just pushed and opened
+ * the PR). Each developer invocation's `$HAS_RESUME` flag is appended to
+ * `.dev-invocations` and its full prompt is saved to `.dev-prompt-<n>.txt`
+ * (never colon-split off one recorded line — this scenario's own prompt
+ * text carries a colon in its first line).
+ */
+function writeFakeClaudeNoPushThenResumeScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+PROMPT="$(cat)"
+HAS_RESUME=0
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-r" ]; then HAS_RESUME=1; fi
+  prev="$a"
+done
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo "$HAS_RESUME" >> "$HOME/.dev-invocations"
+    COUNT=$(wc -l < "$HOME/.dev-invocations" | tr -d ' ')
+    printf '%s' "$PROMPT" > "$HOME/.dev-prompt-$COUNT.txt"
+    if [ "$HAS_RESUME" = "1" ]; then
+      touch "$HOME/.fake-dev-invoked"
+    fi
+    echo '{"session_id":"dev-session-fresh","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+function setUpNoPushThenResume(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeNoPushThenResumeScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe("devReviewLoop — the developer's first turn ends with no push at all, resumed once (O2, task-run-v1 13, #508)", () => {
+  it('resumes once with the push-and-open instructions before ever polling, then publishes once the resumed turn actually pushes', () => {
+    const { home, cwd, path } = setUpNoPushThenResume()
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    const invocations = readFileSync(join(home, '.dev-invocations'), 'utf8').trim().split('\n').filter(Boolean)
+    // Exactly two developer turns: the fresh brief, then ONE resume — never
+    // a second resume for this (Traps to avoid).
+    expect(invocations).toEqual(['0', '1'])
+
+    const resumedPrompt = readFileSync(join(home, '.dev-prompt-2.txt'), 'utf8')
+    expect(resumedPrompt).toMatch(/push and the pull-request open are foreground steps/i)
+    expect(resumedPrompt).toMatch(/git push/)
+    expect(resumedPrompt).toMatch(/pr create/)
+  }, 20000)
+})
+
+/** Never touches `.fake-dev-invoked`, ever, on any invocation — a developer whose branch never reaches the remote no matter how many turns it gets. */
+function writeFakeClaudeNoPushEver(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+cat > /dev/null
+echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+exit 0
+`
+  )
+}
+
+function setUpNoPushEver(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeNoPushEver(binDir)
+  writeFakeGh(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — the pull-request poll gives up naming what it waited for (O3, task-run-v1 13, #508)', () => {
+  it('names branch, local head (unknown), remote head (none), and pull-request absence, after resuming once', () => {
+    const { home, cwd, path } = setUpNoPushEver()
+
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_PR_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5'
+    })
+    expect(r.status).not.toBe(0)
+    const output = r.stdout + r.stderr
+    expect(output).toMatch(new RegExp(`branch: ${BRANCH.replace(/\//g, '\\/')}`))
+    expect(output).toMatch(/local head: \(worktree not found/)
+    expect(output).toMatch(/remote head: \(no head on origin\)/)
+    expect(output).toMatch(/pull request: none open/)
+  }, 20000)
+})
+
+// --- task-run-v1 13 (#508), O9: a refusal/escalation before any push ends the loop at once ---
+
+/** Never pushes, ever — and posts nothing itself; the STOP marker is seeded directly on the fake gh's Issue-comments response (below), standing in for a developer that posted one before ending its turn. */
+function setUpStopBeforePush(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeNoPushEver(binDir)
+  writeFakeBinary(
+    binDir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}},{"body":"<!-- aeg:developer:stop -->\\nEntry gate refused: brief is missing tier/scope/stop-conditions.","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  echo '[]'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/issues/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+echo "unhandled fake gh call in stop-before-push scenario: $*" >&2
+exit 1
+`
+  )
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a refusal/escalation posted before any push ends the loop at once (O9, task-run-v1 13, #508)', () => {
+  it('never enters the pull-request poll, posts on the Issue (no PR exists yet), and exits non-zero', () => {
+    const { home, cwd, path } = setUpStopBeforePush()
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(escalation\)/)
+
+    // Exactly one developer turn — the fresh brief — never a resume: O9
+    // short-circuits before O2's own resume-once logic ever runs.
+    expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
+
+    // `postedCommentFiles` also picks up this scenario's own working `gh
+    // issue comment` (needed for the real Issue-posted pause — there is no
+    // PR yet) being incidentally reused by the driver's own best-effort log
+    // flush; isolate this test's own pause comment by its marker rather than
+    // asserting a bare count.
+    const posted = postedCommentFiles(home)
+    const pauseFiles = posted.filter((f) =>
+      readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8').includes('aeg:loop:paused:escalation')
+    )
+    expect(pauseFiles).toHaveLength(1)
+    const body = readFileSync(join(home, '.fake-gh-posted-comments', pauseFiles[0] as string), 'utf8')
+    expect(body).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
+    expect(body).toMatch(/brief is missing tier\/scope\/stop-conditions/)
+    expect(body).toMatch(/vinaya task run/)
+  }, 20000)
+})
+
+// --- task-run-v1 13 (#508), O4/O6: mergeability blocks reviewer dispatch ---
+
+/**
+ * Pushes and opens the PR normally on the FIRST (fresh) developer call —
+ * exactly like `writeFakeClaude`'s own round-1 fixture. Every developer
+ * call's `$HAS_RESUME` flag and full prompt are recorded (never colon-split
+ * — this scenario's conflict prompt carries no colon in its first line, but
+ * the convention is kept consistent with the O2 fixture above). Reviewer
+ * roles record their own invocation too — this test asserts that marker is
+ * NEVER created, since a conflicting head must never reach a reviewer
+ * dispatch at all.
+ */
+function writeFakeClaudeConflictScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+PROMPT="$(cat)"
+HAS_RESUME=0
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-r" ]; then HAS_RESUME=1; fi
+  prev="$a"
+done
+case "$VINAYA_ROLE" in
+  code-reviewer|security)
+    touch "$HOME/.reviewer-invoked"
+    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-$VINAYA_ROLE-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo "$HAS_RESUME" >> "$HOME/.dev-invocations"
+    COUNT=$(wc -l < "$HOME/.dev-invocations" | tr -d ' ')
+    printf '%s' "$PROMPT" > "$HOME/.dev-prompt-$COUNT.txt"
+    touch "$HOME/.fake-dev-invoked"
+    echo '{"session_id":"dev-session-fresh","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+/** Same as \`writeFakeGh\`, except \`pr view --json mergeable\` always answers \`CONFLICTING\` — this scenario's head never resolves. */
+function writeFakeGhAlwaysConflicting(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"CONFLICTING"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call in conflict scenario: $*" >&2
+exit 1
+`
+  )
+}
+
+/** Same as \`writeFakeGit\`, plus a \`merge-tree\` that always reports one conflicting file. */
+function writeFakeGitConflict(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+if [ "$1" = "merge-tree" ]; then
+  echo "CONFLICT (content): Merge conflict in apps/cli/src/lib/dev-review-loop.ts"
+  exit 1
+fi
+exit 1
+`
+  )
+}
+
+function setUpConflict(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeConflictScenario(binDir)
+  writeFakeGhAlwaysConflicting(binDir)
+  writeFakeGitConflict(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a conflicting head is sent back to the developer, never to a reviewer (O4/O6, task-run-v1 13, #508)', () => {
+  it('reads mergeability before dispatching reviewers, names the conflicting file, and never starts a reviewer for this head', () => {
+    const { home, cwd, path } = setUpConflict()
+
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
+    })
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // No reviewer was ever dispatched — the conflict was caught before any
+    // reviewer read this head.
+    expect(existsSync(join(home, '.reviewer-invoked'))).toBe(false)
+
+    // The fresh brief, then two conflict-retry dispatches (the bound) —
+    // never a reviewer prompt anywhere in this file.
+    const invocations = readFileSync(join(home, '.dev-invocations'), 'utf8').trim().split('\n').filter(Boolean)
+    expect(invocations).toHaveLength(3)
+
+    const conflictPrompt = readFileSync(join(home, '.dev-prompt-2.txt'), 'utf8')
+    expect(conflictPrompt).toMatch(/behind the base in a way that conflicts/)
+    expect(conflictPrompt).toMatch(/apps\/cli\/src\/lib\/dev-review-loop\.ts/)
+
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', 'comment-1.md'), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    expect(pauseComment).toMatch(/conflict never resolved/)
+    expect(pauseComment).toMatch(/apps\/cli\/src\/lib\/dev-review-loop\.ts/)
+  }, 20000)
+})
+
+// --- task-run-v1 13 (#508), O8: a base that moves past this driver's own code pauses `stale_driver` ---
+
+/** Pushes and opens the PR on its one turn, and ALSO flips `.base-moved` — standing in for a separate PR merging into the base, touching the driver's own code, while this loop was running. */
+function writeFakeClaudeBaseMovesAfterFirstTurn(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+cat > /dev/null
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+touch "$HOME/.base-moved" 2>/dev/null
+echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+exit 0
+`
+  )
+}
+
+/** Same as \`writeFakeGit\`, except \`rev-parse origin/main\` answers a NEW sha once \`.base-moved\` exists, and \`log\` reports one commit in that range. */
+function writeFakeGitBaseMoves(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  if [ -f "$HOME/.base-moved" ]; then
+    echo "${'c'.repeat(40)}"
+  else
+    echo "${BASE_SHA}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+if [ "$1" = "log" ]; then
+  echo "dddddddddd Fix(cli): something touching the driver"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+function setUpBaseMoves(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeBaseMovesAfterFirstTurn(binDir)
+  writeFakeGh(binDir)
+  writeFakeGitBaseMoves(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a base that moves past this driver’s own code pauses stale_driver (O8, task-run-v1 13, #508)', () => {
+  it('names both shas and pauses before this round’s own gate/reviewer logic ever runs', () => {
+    const { home, cwd, path } = setUpBaseMoves()
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(stale_driver\)/)
+
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', 'comment-1.md'), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:stale_driver -->$/m)
+    expect(pauseComment).toMatch(new RegExp(`base moved from ${BASE_SHA} to ${'c'.repeat(40)}`))
+    expect(pauseComment).toMatch(/touching this driver's own code/)
   }, 20000)
 })
 

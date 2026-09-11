@@ -240,6 +240,30 @@ export function filterPrincipalRulings(comments: readonly MarkerComment[], allow
     .map((c) => contentAfterOneLine(c.body).trim())
 }
 
+const DEVELOPER_STOP_MARKER = /^<!-- aeg:developer:stop -->$/
+
+/**
+ * O9 (task-run-v1 13, `#508`): a developer that refuses to start (entry
+ * gate) or hits a stop condition before ever pushing has nowhere to post
+ * but the task Issue — no PR exists yet. `aeg-root/roles/developer.md`
+ * names this exact marker for that one case. Same trust boundary as
+ * `filterPrincipalRulings` (security review, PR #445, HIGH): a non-
+ * principal Issue commenter could otherwise post a fake stop marker and
+ * end an unattended loop early.
+ */
+export function filterDeveloperStops(comments: readonly MarkerComment[], allowlist: readonly string[]): string[] {
+  return comments
+    .filter((c) => isPrincipal(c.author, allowlist as string[]))
+    .filter((c) => DEVELOPER_STOP_MARKER.test(c.body.split('\n')[0] ?? ''))
+    .map((c) => contentAfterOneLine(c.body).trim())
+}
+
+/** The newest developer-stop comment's body on Issue `issueNumber`, or `null` when none exists. */
+export function fetchDeveloperStop(issueNumber: number): string | null {
+  const stops = filterDeveloperStops(fetchIssueComments(issueNumber, 'fetchDeveloperStop'), principalAllowlist())
+  return stops.length > 0 ? (stops[stops.length - 1] ?? null) : null
+}
+
 /**
  * Pure: the NEWEST principal-authored `aeg:brief:v<k>` comment among
  * `comments`, or `null` — unit-testable with no `gh` call. task
@@ -555,6 +579,105 @@ export function findOpenPrForBranch(branch: string): PrRef | null {
   }
 }
 
+// --- mergeability (O4/O5/O7) ------------------------------------------------
+
+/** The forge's own three-value answer (GitHub's `mergeable` GraphQL field, read via `gh pr view --json mergeable`) — `UNKNOWN` is the forge still computing it, never read as clean and never as conflicting (O7); the caller polls. */
+export type MergeableState = 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
+
+export function fetchMergeableState(prNumber: number): MergeableState {
+  let out: string
+  try {
+    out = sh('gh', ['pr', 'view', String(prNumber), '--json', 'mergeable'])
+  } catch (err) {
+    throw new Error(
+      `fetchMergeableState: could not fetch PR #${prNumber}'s mergeable state: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+  const parsed = JSON.parse(out) as { mergeable?: string }
+  return parsed.mergeable === 'MERGEABLE' || parsed.mergeable === 'CONFLICTING' ? parsed.mergeable : 'UNKNOWN'
+}
+
+/**
+ * Pure: `git merge-tree --write-tree`'s own `CONFLICT (...): ... in <path>`
+ * lines — unit-testable with no git call. Sorted and de-duplicated so a
+ * conflict git reports on more than one internal pass still names each file
+ * once.
+ */
+export function parseMergeTreeConflictFiles(mergeTreeOutput: string): string[] {
+  const files = new Set<string>()
+  for (const line of mergeTreeOutput.split('\n')) {
+    const m = /^CONFLICT \([^)]*\):.* in (.+)$/.exec(line.trim())
+    if (m?.[1]) files.add(m[1].trim())
+  }
+  return [...files].sort()
+}
+
+/**
+ * O4/O6: the conflicting file(s) GitHub's own `mergeable: CONFLICTING`
+ * doesn't name directly — computed locally with `git merge-tree
+ * --write-tree` (git ≥ 2.38) against the same two refs the forge just
+ * judged, rather than a second, possibly-disagreeing merge algorithm. A
+ * best-effort `git fetch` first: this driver's own checkout may not have
+ * `headBranch`'s newest commits locally yet.
+ */
+export function fetchConflictingFiles(baseBranch: string, headBranch: string): string[] {
+  try {
+    execFileSync('git', ['fetch', '--quiet', 'origin', baseBranch, headBranch], {
+      stdio: ['ignore', 'ignore', 'ignore']
+    })
+  } catch {
+    // Best-effort — the refs may already be current locally.
+  }
+  try {
+    execFileSync('git', ['merge-tree', '--write-tree', `origin/${baseBranch}`, `origin/${headBranch}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    return []
+  } catch (err) {
+    const stdout = (err as { stdout?: string }).stdout ?? ''
+    return parseMergeTreeConflictFiles(stdout)
+  }
+}
+
+// --- base-head staleness (O8) ------------------------------------------------
+
+/**
+ * O8: any commit touching one of these paths between the loop's recorded
+ * start-of-loop base head and a freshly re-read base head means the base
+ * moved past THIS driver's own code (or the policy it calls, or the
+ * review-post rendering it shares) — a live loop must never keep judging
+ * rounds against a gate that has since changed underneath it. Exported so
+ * both the driver and its tests share the exact same list.
+ */
+export const DRIVER_OWNED_PATHS = [
+  'apps/cli/src/lib/dev-review-loop.ts',
+  'apps/cli/src/commands/review-post.ts',
+  'packages/aeg-core/src'
+] as const
+
+/** `git log --oneline <oldSha>..<newSha> -- <DRIVER_OWNED_PATHS>` — one line per commit touching this driver's own code in that range, empty when none. */
+export function gitCommitsTouchingDriverPaths(oldSha: string, newSha: string): string[] {
+  try {
+    const out = sh('git', ['log', '--oneline', `${oldSha}..${newSha}`, '--', ...DRIVER_OWNED_PATHS])
+    return out ? out.split('\n').filter((l) => l.length > 0) : []
+  } catch {
+    return []
+  }
+}
+
+// --- worktree head (O2/O3) ---------------------------------------------------
+
+/** `null` when the worktree doesn't exist locally, or `git -C <path> rev-parse HEAD` otherwise fails — a fact this driver may simply not have (it runs from the repo root, not necessarily the same machine/checkout as the developer's own worktree). */
+export function readWorktreeHead(worktreePath: string): string | null {
+  if (!existsSync(worktreePath)) return null
+  try {
+    return sh('git', ['-C', worktreePath, 'rev-parse', 'HEAD'])
+  } catch {
+    return null
+  }
+}
+
 // --- reviewer prompt (facts only) -----------------------------------------
 
 export type ReviewerPromptFacts = {
@@ -633,6 +756,17 @@ export function writeHeldVerdict(
   writeFileSync(heldVerdictPath(root, task, round, role), renderedComment, 'utf8')
 }
 
+/** task-run-v1 13 (#508), O5: removes both held-verdict files for a round whose head fell into conflict after reviewers judged it — nothing is published against a head that cannot merge. Missing files are not an error (a round can hold only one role's verdict, or none). */
+function discardHeldVerdicts(root: string, task: number, round: number): void {
+  for (const role of ['reviewer', 'security'] as const) {
+    try {
+      unlinkSync(heldVerdictPath(root, task, round, role))
+    } catch {
+      // Not held for this round — nothing to discard.
+    }
+  }
+}
+
 /**
  * `attempt` 1 is the round's normal work directory (unchanged path, so an
  * existing fixture/fake that never retries keeps working unmodified);
@@ -687,6 +821,19 @@ export class ReviewerInfrastructureFailure extends Error {
     public readonly missing: readonly string[]
   ) {
     super(`${role}'s work directory carried no ${missing.join(' and no ')} after a fresh dispatch and one fresh retry.`)
+  }
+}
+
+/**
+ * O9 (task-run-v1 13, `#508`): thrown by the round-1-entry check when the
+ * developer's very first turn ends with no branch on the remote AND a
+ * refusal/escalation posted on the task Issue (`fetchDeveloperStop`) — the
+ * caller catches this and ends the loop at once, never entering the
+ * pull-request poll (there is nothing to poll for: no push ever happened).
+ */
+export class DeveloperStopSignal extends Error {
+  constructor(public readonly detail: string) {
+    super(`devReviewLoop: developer posted a stop before any push: ${detail}`)
   }
 }
 
@@ -854,6 +1001,26 @@ export function renderPauseComment(prNumber: number, reason: PauseReason, detail
     '',
     '```',
     `vinaya dev-review-loop --resume ${prNumber}`,
+    '```'
+  ].join('\n')
+}
+
+/**
+ * O9 (task-run-v1 13, `#508`): the round-1-entry variant of the pause
+ * comment — no PR exists yet to carry it (posted on the Issue instead) and
+ * no PR number exists for a `--resume` command, so the resume path named is
+ * `vinaya task run`, the same one command this task's own O10 makes work
+ * with no `--agent` to remember.
+ */
+export function renderNoPushStopComment(task: number, detail: string): string {
+  return [
+    `The dev-review-loop paused: escalation — ${detail}.`,
+    '',
+    'No branch was ever pushed for this task, so there is no pull request to resume against yet.',
+    'A Principal ruling is needed before this can continue. Once one is posted on this Issue, resume with:',
+    '',
+    '```',
+    `vinaya task run <tranche> ${task}`,
     '```'
   ].join('\n')
 }
@@ -1081,6 +1248,16 @@ export type LoopDeps = {
   prPollIntervalMs: number
   gatePollMaxAttempts: number
   gatePollIntervalMs: number
+  /** O2/O3: the developer's own worktree HEAD (`.worktrees/<branch>`), or `null` when unreadable/unknown. */
+  readWorktreeHead: typeof readWorktreeHead
+  /** O9: the newest developer-stop comment on the task Issue, or `null`. */
+  fetchDeveloperStop: typeof fetchDeveloperStop
+  /** O4/O5/O7: the forge's own mergeable state for a PR. */
+  fetchMergeableState: typeof fetchMergeableState
+  /** O4/O6: the conflicting file(s) between a head branch and the base. */
+  fetchConflictingFiles: typeof fetchConflictingFiles
+  /** O8: commits touching `DRIVER_OWNED_PATHS` between two base-branch shas. */
+  gitCommitsTouchingDriverPaths: typeof gitCommitsTouchingDriverPaths
 }
 
 function defaultRepoRoot(): string {
@@ -1176,10 +1353,20 @@ function defaultDeps(): LoopDeps {
     flushOutbox: defaultFlushOutbox,
     sleep: defaultSleep,
     now: () => Date.now(),
-    prPollMaxAttempts: 120,
-    prPollIntervalMs: 15_000,
+    // task-run-v1 13 (#508), O3: env-overridable the same way the gate poll
+    // budget already is (`gatePollEnvOverride`'s own doc comment) — a real
+    // subprocess test exercising the PR-poll timeout path needs this in
+    // test time, not the ~30 real minutes the production budget takes.
+    // Unset in every real invocation, so production behavior is unchanged.
+    prPollMaxAttempts: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_PR_POLL_MAX_ATTEMPTS', 120),
+    prPollIntervalMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS', 15_000),
     gatePollMaxAttempts: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS', 120),
-    gatePollIntervalMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS', 15_000)
+    gatePollIntervalMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS', 15_000),
+    readWorktreeHead,
+    fetchDeveloperStop,
+    fetchMergeableState,
+    fetchConflictingFiles,
+    gitCommitsTouchingDriverPaths
   }
 }
 
@@ -1210,19 +1397,26 @@ async function assertDispatchOrEscalate(
   throw new Error(`devReviewLoop: dispatching ${vendor} failed (${handle.failureReason}).`)
 }
 
+/**
+ * `timeoutMessage` may be a plain string or a thunk — the thunk form (O3,
+ * task-run-v1 13, `#508`) is evaluated ONLY on the timeout path, never on
+ * every attempt: a message that itself reads the forge (branch/local/remote
+ * head, PR existence) must not cost an extra round of shell calls on the
+ * common, poll-succeeds-immediately path.
+ */
 async function pollUntil<T>(
   fn: () => T | null,
   maxAttempts: number,
   intervalMs: number,
   sleep: (ms: number) => Promise<void>,
-  timeoutMessage: string
+  timeoutMessage: string | (() => string)
 ): Promise<T> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const result = fn()
     if (result !== null) return result
     await sleep(intervalMs)
   }
-  throw new Error(timeoutMessage)
+  throw new Error(typeof timeoutMessage === 'function' ? timeoutMessage() : timeoutMessage)
 }
 
 function deepEqual(a: unknown, b: unknown): boolean {
@@ -1666,6 +1860,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     const repo = await resolveRepo().catch(() => null)
     const repoRoot = d.repoRoot()
     const confidenceFilePath = join(repoRoot, '.worktrees', branch, CONFIDENCE_FILE_NAME)
+    /** task-run-v1 13 (#508), O8: recorded once, at loop start — never re-derived. Re-read at every round entry (top of the `while(true)` below) and compared against this fixed watermark for commits touching `DRIVER_OWNED_PATHS`. */
+    const baseHeadAtStart = d.gitRevParseOriginMain()
     const loopOutboxPath = outboxPathFor({ outboxRoot: () => root }, repo, task)
     /**
      * Awaits EACH event's own landing before firing the next `log()` call —
@@ -1713,6 +1909,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let pendingGateRedRetry = false
     /** O2: consecutive gate-red developer turns that produced no push on one head — reset to 0 by every genuine `gate` observation. */
     let gateStalledStreak = 0
+    /** O4/O6: the conflicting file(s) from the last mergeability read, consumed by the very next `dispatch_developer` prompt, then cleared — never a CI-red retry (never sets `pendingGateRedRetry`), so the head-change-wait that follows always re-checks the gate fresh rather than replaying `lastFailingChecks`. */
+    let pendingConflictFiles: string[] | null = null
 
     async function dispatchDeveloper(prompt: string, roundNum: number): Promise<DispatchHandle> {
       const isResume = devResumeId !== null
@@ -1730,6 +1928,116 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         if (handle.resumeId) devResumeId = handle.resumeId
       }
       return handle
+    }
+
+    /** O2/O3: the developer's own worktree convention (`aeg-root/roles/developer.md`) — `.worktrees/<branch>` under this repo's root, the SAME path `confidenceFilePath` above already derives its own parent from. */
+    function worktreePathForBranch(): string {
+      return join(repoRoot, '.worktrees', branch)
+    }
+
+    /** O3: names branch, local head (if the worktree is known), remote head, and pull-request existence — whatever this driver actually observed, however this give-up happened, so a principal reading it knows which step was skipped. */
+    function pollGiveUpMessage(context: string): string {
+      const localHead = d.readWorktreeHead(worktreePathForBranch())
+      let remoteHead: string | null
+      try {
+        remoteHead = d.resolveHead(branch)
+      } catch {
+        remoteHead = null
+      }
+      const pr = d.findOpenPrForBranch(branch)
+      return [
+        `devReviewLoop: ${context}`,
+        `branch: ${branch}`,
+        `local head: ${localHead ?? `(worktree not found at .worktrees/${branch} — cannot read)`}`,
+        `remote head: ${remoteHead ?? '(no head on origin)'}`,
+        `pull request: ${pr ? `#${pr.number} open` : 'none open'}`
+      ].join('\n')
+    }
+
+    const PUSH_AND_OPEN_PROMPT = [
+      'Your turn ended without a push: this branch has no head on the remote yet.',
+      'The push and the pull-request open are foreground steps per aeg-root/roles/developer.md — run them now, in the foreground, and wait for each to finish:',
+      '`git push` (from this task’s worktree), then',
+      '`bun apps/cli/src/index.ts pr create --body-file <path> --title "<title>"`.'
+    ].join('\n\n')
+
+    const OPEN_PR_PROMPT = [
+      'This branch already exists with no open pull request for it.',
+      'Open the pull request through the validated path per aeg-root/roles/developer.md:',
+      '`bun apps/cli/src/index.ts pr create --body-file <path> --title "<title>"`.'
+    ].join('\n\n')
+
+    /** O4/O6: the loop's own conflict prompt — names the conflicting file(s) so the developer does not have to re-derive mergeability itself. */
+    function renderConflictPrompt(files: readonly string[]): string {
+      const fileList =
+        files.length > 0 ? files.map((f) => `- ${f}`).join('\n') : '(no specific file could be determined)'
+      return [
+        'This branch is behind the base in a way that conflicts — it cannot merge as-is.',
+        'Merge or rebase the base and resolve before pushing again, per aeg-root/roles/developer.md. Conflicting file(s):',
+        fileList
+      ].join('\n\n')
+    }
+
+    /**
+     * O2/O3/O9: run once, right after the developer's round-1 turn ends and
+     * BEFORE any poll for a pull request — the poll never starts against a
+     * branch the developer has not pushed (Traps to avoid). Covers both
+     * round-1 entries this driver can reach here: a fresh dispatch just
+     * ran (`alreadyPushed: false` — the branch may or may not have a head
+     * on the remote yet) and a crash-recovery re-entry (`alreadyPushed:
+     * true` — the branch already exists, no fresh dispatch this call).
+     * Resumes the developer AT MOST ONCE (Traps: never resume twice for
+     * this) — a still-missing push after that one resume is left to the
+     * poll's own bounded timeout rather than a second dispatch.
+     */
+    async function afterDeveloperTurnBeforePrPoll(alreadyPushed: boolean): Promise<number> {
+      let remoteHead: string | null
+      try {
+        remoteHead = d.resolveHead(branch)
+      } catch {
+        remoteHead = null
+      }
+
+      if (!alreadyPushed && remoteHead === null) {
+        // O9: no push at all yet. A posted refusal/escalation ends the loop
+        // now, never entering the pull-request poll.
+        const stop = d.fetchDeveloperStop(task)
+        if (stop !== null) throw new DeveloperStopSignal(stop)
+
+        // O2: resume once, foreground — this single resume's own prompt
+        // covers both the missing push and (since it also asks for the
+        // open) the common case where the PR was never opened either.
+        const rec = d.readResumeRecord(task, input.agent, repo)
+        if (rec) devResumeId = rec.resumeId
+        await dispatchDeveloper(PUSH_AND_OPEN_PROMPT, round)
+        return await pollUntil(
+          () => d.findOpenPrForBranch(branch),
+          d.prPollMaxAttempts,
+          d.prPollIntervalMs,
+          d.sleep,
+          () =>
+            pollGiveUpMessage(
+              'no open PR appeared within the poll budget after resuming once with the push-and-open instructions.'
+            )
+        ).then((pr) => pr.number)
+      }
+
+      const existingPrNow = d.findOpenPrForBranch(branch)
+      if (existingPrNow) return existingPrNow.number
+
+      // Pushed (originally, or by this call's own `alreadyPushed: true`
+      // crash-recovery path) but the PR is still missing: resume once to
+      // open it, then poll.
+      const rec = d.readResumeRecord(task, input.agent, repo)
+      if (rec) devResumeId = rec.resumeId
+      await dispatchDeveloper(OPEN_PR_PROMPT, round)
+      return await pollUntil(
+        () => d.findOpenPrForBranch(branch),
+        d.prPollMaxAttempts,
+        d.prPollIntervalMs,
+        d.sleep,
+        () => pollGiveUpMessage('no open PR appeared within the poll budget after resuming to open one.')
+      ).then((pr) => pr.number)
     }
 
     /**
@@ -1819,6 +2127,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
     }
 
+    /** O4/O5/O7: the forge's own mergeable state, polled off `UNKNOWN` within the existing gate poll budget — never read as clean and never as conflicting (O7). A budget exhaustion is treated as `CONFLICTING`, never as clean: this gates a reviewer dispatch or a publish, and silently proceeding on an unresolved answer is the one failure mode O4/O5 exist to prevent. */
+    async function pollMergeableState(prNumber: number): Promise<MergeableState> {
+      return await pollUntil(
+        () => {
+          const m = d.fetchMergeableState(prNumber)
+          return m === 'UNKNOWN' ? null : m
+        },
+        d.gatePollMaxAttempts,
+        d.gatePollIntervalMs,
+        d.sleep,
+        () => `devReviewLoop: mergeability for PR #${prNumber} never resolved off UNKNOWN within the poll budget.`
+      ).catch(() => 'CONFLICTING' as const)
+    }
+
     function readAndClearConfidence(): Confidence {
       const content = readIfExists(confidenceFilePath)
       try {
@@ -1862,36 +2184,35 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           branchExists = false
         }
         if (branchExists) {
-          // Remote branch, no open PR yet: resume the recorded developer
-          // session ONCE, instructed to open the PR through the validated
-          // path, and wait for it — never a fresh developer (Traps).
-          const rec = d.readResumeRecord(task, input.agent, repo)
-          if (rec) devResumeId = rec.resumeId
-          const openPrPrompt = [
-            'This branch already exists with no open pull request for it.',
-            'Open the pull request through the validated path per aeg-root/roles/developer.md:',
-            '`bun apps/cli/src/index.ts pr create --body-file <path> --title "<title>"`.'
-          ].join('\n\n')
-          await dispatchDeveloper(openPrPrompt, round)
-          prNumber = await pollUntil(
-            () => d.findOpenPrForBranch(branch),
-            d.prPollMaxAttempts,
-            d.prPollIntervalMs,
-            d.sleep,
-            `devReviewLoop: no open PR appeared for branch \`${branch}\` within the poll budget after resuming to open one.`
-          ).then((pr) => pr.number)
+          // Crash-recovery re-entry: the branch already exists (pushed by a
+          // prior process), no dispatch here — `afterDeveloperTurnBeforePrPoll`
+          // resumes once to open the PR and polls (O2/O3).
+          prNumber = await afterDeveloperTurnBeforePrPoll(true)
         } else {
-          // Round 1: fresh dispatch, brief read from the frozen Issue comment (O1).
+          // Round 1: fresh dispatch, brief read from the frozen Issue comment
+          // (O1). What happens next — check, at most one resume, poll — is
+          // O2/O3/O9's own job, never blind.
           const brief = d.fetchFrozenBrief(task)
           await dispatchDeveloper(brief, round)
 
-          prNumber = await pollUntil(
-            () => d.findOpenPrForBranch(branch),
-            d.prPollMaxAttempts,
-            d.prPollIntervalMs,
-            d.sleep,
-            `devReviewLoop: no open PR appeared for branch \`${branch}\` within the poll budget.`
-          ).then((pr) => pr.number)
+          try {
+            prNumber = await afterDeveloperTurnBeforePrPoll(false)
+          } catch (err) {
+            if (!(err instanceof DeveloperStopSignal)) throw err
+            // O9: no branch ever reached the remote, and the developer
+            // posted a refusal/escalation instead — end the loop now, on the
+            // Issue (there is no PR to comment on), never entering the poll.
+            postForgeEffectOnce(root, task, `no-push-stop-${round}`, () =>
+              postMarkedComment(
+                'issue',
+                String(task),
+                pauseMarker('escalation'),
+                renderNoPushStopComment(task, err.detail)
+              )
+            )
+            d.flushOutbox(task)
+            return { finalDecision: { type: 'pause', reason: 'escalation', detail: err.detail }, prNumber: 0, task }
+          }
         }
       }
     }
@@ -1925,6 +2246,29 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      */
     // eslint-disable-next-line no-constant-condition
     while (true) {
+      // task-run-v1 13 (#508), O8: re-read the base branch's head at every
+      // round entry (every iteration is a superset of "every round entry" —
+      // checking more often than the minimum is strictly safer, never
+      // wrong) and compare against the fixed watermark recorded at loop
+      // start. A base that moved past a commit touching this driver's own
+      // code pauses now, before this iteration's own dispatch/gate/publish
+      // logic runs — a running driver must never keep judging rounds
+      // against a gate that has since changed underneath it.
+      if (decision.type !== 'pause') {
+        const currentBaseHead = d.gitRevParseOriginMain()
+        if (currentBaseHead !== baseHeadAtStart) {
+          const touching = d.gitCommitsTouchingDriverPaths(baseHeadAtStart, currentBaseHead)
+          if (touching.length > 0) {
+            const head = d.resolveHead(branch)
+            const stats = computeStats(head, roundStartMs)
+            const detail = `base moved from ${baseHeadAtStart} to ${currentBaseHead}, touching this driver's own code (${touching.join('; ')})`
+            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+            decision = { type: 'pause', reason: 'stale_driver', detail }
+            d.flushOutbox(task)
+          }
+        }
+      }
+
       if (decision.type === 'dispatch_developer') {
         // O2: `pendingGateRedRetry` (set below, at this round's own two `gate`
         // observation call sites — never inferred from `decision` itself,
@@ -1937,26 +2281,41 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // tight loop on an unchanged head — `#479`'s own five-re-dispatches-
         // in-two-minutes failure).
         const isGateRedRetry = pendingGateRedRetry
+        // O4/O6: a conflict-resolve retry — READ, never cleared here. Same
+        // persistence discipline as `pendingGateRedRetry`: it survives a
+        // bounded stall's own `continue` unchanged (this branch's own
+        // `dispatch_developer` decision doesn't change either), so the NEXT
+        // iteration rebuilds the SAME conflict prompt and re-runs the SAME
+        // stall check, rather than falling through to a stale fallback
+        // prompt and a fresh, unbounded gate-check/re-detect cycle (found
+        // live: clearing it here let the loop rediscover the same conflict
+        // every OTHER iteration, doubling the dispatches needed to reach the
+        // bound and sending one nonsense prompt per cycle). Cleared only
+        // where it's genuinely resolved — the mergeability re-reads at the
+        // `dispatch_reviewers`/`publish` sites, below.
+        const conflictFiles = pendingConflictFiles
         if (!firstPass) {
           const prompt = [
-            resumedDispatch
-              ? `Principal ruling on this pause:\n\n${lastReviewContext}\n`
-              : isGateRedRetry
-                ? `CI is red on the last head. Failing check-run(s): ${
-                    lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
-                  }. Fix and push.`
-                : // `isGateRedRetry` is false here only when this dispatch came from
-                  // `assessVerdicts`' review-findings fallback, which requires
-                  // `dispatch_reviewers` to have already run and set `lastReviewContext`
-                  // — so it is never null in this branch (code review, round 1, MINOR:
-                  // the prior 'CI was red...' fallback below this was unreachable).
-                  `Round ${round} review findings:\n\n${lastReviewContext}\n`,
+            conflictFiles !== null
+              ? renderConflictPrompt(conflictFiles)
+              : resumedDispatch
+                ? `Principal ruling on this pause:\n\n${lastReviewContext}\n`
+                : isGateRedRetry
+                  ? `CI is red on the last head. Failing check-run(s): ${
+                      lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
+                    }. Fix and push.`
+                  : // `isGateRedRetry` is false here only when this dispatch came from
+                    // `assessVerdicts`' review-findings fallback, which requires
+                    // `dispatch_reviewers` to have already run and set `lastReviewContext`
+                    // — so it is never null in this branch (code review, round 1, MINOR:
+                    // the prior 'CI was red...' fallback below this was unreachable).
+                    `Round ${round} review findings:\n\n${lastReviewContext}\n`,
             'Address the findings above per aeg-root/roles/developer.md. Push fixes as new commits on the SAME branch; do not open a new PR.',
             round >= 2 ? CONFIDENCE_PROMPT_LINE : ''
           ]
             .filter(Boolean)
             .join('\n\n')
-          const headBeforeDispatch = isGateRedRetry ? d.resolveHead(branch) : null
+          const headBeforeDispatch = isGateRedRetry || conflictFiles !== null ? d.resolveHead(branch) : null
           roundStartMs = d.now()
           await dispatchDeveloper(prompt, round)
           resumedDispatch = false
@@ -1979,9 +2338,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // bounded stall counter instead of `fetchCiConclusion` again.
               gateStalledStreak += 1
               const stats = computeStats(headBeforeDispatch, roundStartMs)
-              const detail = `head ${headBeforeDispatch} unchanged after dispatch; failing check-run(s): ${
-                lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
-              }`
+              const detail =
+                conflictFiles !== null
+                  ? `head ${headBeforeDispatch} unchanged after dispatch; conflict never resolved (file(s): ${
+                      conflictFiles.length > 0 ? conflictFiles.join(', ') : '(unknown)'
+                    })`
+                  : `head ${headBeforeDispatch} unchanged after dispatch; failing check-run(s): ${
+                      lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
+                    }`
               if (gateStalledStreak < MAX_GATE_STALLED_TURNS) {
                 d.flushOutbox(task)
                 continue
@@ -2021,6 +2385,24 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         await logEvents(result.events)
         d.flushOutbox(task)
       } else if (decision.type === 'dispatch_reviewers') {
+        // task-run-v1 13 (#508), O4/O7: mergeability is read BEFORE any CI
+        // read or reviewer dispatch — a branch in conflict with the base
+        // sends the developer back with the conflicting files named; no
+        // reviewer starts and no CI is waited on for this head. Round
+        // number does not advance (same discipline as the infrastructure
+        // pause below — this round's reviewers never ran).
+        const mergeableForReview = await pollMergeableState(prNumber)
+        if (mergeableForReview === 'CONFLICTING') {
+          pendingConflictFiles = d.fetchConflictingFiles('main', branch)
+          decision = { type: 'dispatch_developer' }
+          d.flushOutbox(task)
+          continue
+        }
+        // Genuinely resolved (or never conflicting) — clear the retry flag
+        // so a later conflict starts its own fresh stall count rather than
+        // inheriting this one's file list.
+        pendingConflictFiles = null
+
         const head = d.resolveHead(branch)
         const ciConclusion = d.fetchCiConclusion(head)
         const resolvedObjectives = d.resolveIssueObjectives(task)
@@ -2120,6 +2502,27 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
 
       if (decision.type === 'publish') {
+        // task-run-v1 13 (#508), O5: mergeability is read AGAIN before
+        // publication — reviewers can take long enough that a clean head
+        // falls into conflict with the base while they worked. A branch
+        // that fell into conflict has its held verdicts for this round
+        // discarded (never published against a head that cannot merge);
+        // the developer is resumed to resolve, and round does not advance,
+        // so the NEXT reviewer dispatch judges the resolved head.
+        const mergeableForPublish = await pollMergeableState(prNumber)
+        if (mergeableForPublish === 'CONFLICTING') {
+          discardHeldVerdicts(root, task, round)
+          // This round's deferred completion events described an outcome
+          // (`publish`) that is no longer real — dropped rather than logged
+          // against whichever LATER round genuinely publishes next.
+          pendingCompletionEvents = []
+          pendingConflictFiles = d.fetchConflictingFiles('main', branch)
+          decision = { type: 'dispatch_developer' }
+          d.flushOutbox(task)
+          continue
+        }
+        pendingConflictFiles = null
+
         publishRound(root, {
           task,
           round,
