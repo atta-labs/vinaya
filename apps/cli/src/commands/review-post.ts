@@ -44,11 +44,13 @@
  *
  * `--role code-reviewer` and `--role security` are the only two shapes —
  * mirroring `reviewer.md`/`security.md`'s templates exactly, including each
- * doc's own internal consistency rule (a BLOCKER finding forces
- * REQUEST CHANGES; a CRITICAL/HIGH finding forces FAIL; an unbacked
- * "SECRETS: none found" is refused without `--secrets-evidence-file`) — so
- * this command catches the same category of mistake at the source, not just
- * the shape of the line.
+ * doc's own internal consistency rule (a finding at or above this
+ * repository's policy threshold forces REQUEST CHANGES/FAIL — which
+ * severities block is repository policy, task 8,
+ * `#506`, O1, resolved once via `resolveReviewPolicy` and never hardcoded
+ * here; an unbacked "SECRETS: none found" is refused without
+ * `--secrets-evidence-file`) — so this command catches the same category of
+ * mistake at the source, not just the shape of the line.
  *
  * Findings file grammar: one finding per line, `SEVERITY|file:line|description`
  * — `|` is the delimiter because `file:line` already contains a colon.
@@ -81,6 +83,10 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  CODE_REVIEW_SEVERITY_ORDER,
+  codeReviewBlockingSeverities,
+  evaluateCodeReview,
+  evaluateSecurityReview,
   extractCodeReviewVerdict,
   extractIssue,
   extractSecurityReviewVerdict,
@@ -92,10 +98,13 @@ import {
   objectivesOf,
   objectivesVersion,
   type ReviewGateComment,
+  type ReviewPolicy,
   resolveObjectivesSource,
+  SECURITY_SEVERITY_ORDER,
+  securityBlockingSeverities,
   type VerdictExtraction
 } from '@attalabs/aeg-core'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config'
+import { loadTrustAnchorConfig, resolvePrincipalAllowlist, resolveReviewPolicy } from '../lib/config'
 import { printJson } from '../lib/envelope'
 import { makeCheckError, refuse } from '../lib/forge-write'
 
@@ -105,13 +114,22 @@ export type Finding = { severity: string; location: string; description: string 
 
 export class FindingsParseError extends Error {}
 
-const CODE_REVIEW_SEVERITIES = ['BLOCKER', 'MAJOR', 'MINOR'] as const
-const SECURITY_SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const
+// The full severity vocabulary each role's findings file may use — the
+// canonical scale @attalabs/aeg-core's evaluator itself orders against
+// (`CODE_REVIEW_SEVERITY_ORDER`/`SECURITY_SEVERITY_ORDER`), reused here
+// rather than a second local copy that could drift.
+const CODE_REVIEW_SEVERITIES = CODE_REVIEW_SEVERITY_ORDER
+const SECURITY_SEVERITIES = SECURITY_SEVERITY_ORDER
 
 /**
- * Parses the `SEVERITY|file:line|description` findings-file grammar. Throws
- * `FindingsParseError` (never silently drops or reinterprets a malformed
- * line) naming the exact line and what was wrong with it.
+ * Parses the `SEVERITY|file:line|description` findings-file grammar. Splits
+ * on its first two `|` only (task 8, `#506`, O6) — the
+ * rest of the line is the description, exactly the same tolerance
+ * `parseObjectivesFile` already gives evidence, so a description that itself
+ * contains a `|` (an em-dash-separated aside, a piped shell example) no
+ * longer breaks parsing. Throws `FindingsParseError` (never silently drops
+ * or reinterprets a malformed line) naming the exact line and what was wrong
+ * with it.
  */
 export function parseFindingsFile(content: string, allowedSeverities: readonly string[]): Finding[] {
   const lines = content
@@ -120,8 +138,9 @@ export function parseFindingsFile(content: string, allowedSeverities: readonly s
     .filter((l) => l.length > 0)
 
   return lines.map((line, idx) => {
-    const parts = line.split('|')
-    if (parts.length !== 3) {
+    const first = line.indexOf('|')
+    const second = first === -1 ? -1 : line.indexOf('|', first + 1)
+    if (first === -1 || second === -1) {
       // A `Search:` pattern reaching for regex alternation is the one way to
       // land here that has nothing to do with the grammar being misunderstood,
       // so it gets its own sentence rather than a bare field count.
@@ -129,15 +148,16 @@ export function parseFindingsFile(content: string, allowedSeverities: readonly s
         ? ' The `Search:` pattern cannot use `|` alternation — this file is `|`-delimited. Use a character class, or a shorter pattern matching the stem the copies share.'
         : ''
       throw new FindingsParseError(
-        `findings file line ${idx + 1}: expected exactly 3 \`|\`-delimited fields (SEVERITY|file:line|description), found ${parts.length}: ${line}${alternationHint}`
+        `findings file line ${idx + 1}: expected \`SEVERITY|file:line|description\` (at least 2 \`|\` delimiters): ${line}${alternationHint}`
       )
     }
-    const severity = (parts[0] as string).trim().toUpperCase()
-    const location = (parts[1] as string).trim()
-    const description = (parts[2] as string).trim()
+    const severityRaw = line.slice(0, first).trim()
+    const severity = severityRaw.toUpperCase()
+    const location = line.slice(first + 1, second).trim()
+    const description = line.slice(second + 1).trim()
     if (!allowedSeverities.includes(severity)) {
       throw new FindingsParseError(
-        `findings file line ${idx + 1}: severity "${parts[0]}" is not one of ${allowedSeverities.join('|')}: ${line}`
+        `findings file line ${idx + 1}: severity "${severityRaw}" is not one of ${allowedSeverities.join('|')}: ${line}`
       )
     }
     if (!location || !description) {
@@ -281,11 +301,19 @@ export function parseObjectivesFile(content: string): ObjectiveResult[] {
         `objectives file line ${idx + 1}: "${id}" is not a well-formed objective id — expected \`O<n>\`: ${line}`
       )
     }
-    if (statusRaw !== 'MET' && statusRaw !== 'NOT MET') {
+    // Tolerant by leading word (task 8, `#506`, O6): a
+    // reviewer writing `NOT MET (partial)` or `MET — see note` still parses,
+    // anything after the leading MET/NOT MET word is ignored for the status
+    // itself (it is not dropped; the caller's own line still carries it, and
+    // most such qualifiers belong in the evidence field instead). Longer
+    // alternative first so `NOT MET` is never mistaken for a bare `MET`.
+    const statusMatch = /^(NOT MET|MET)\b/.exec(statusRaw)
+    if (!statusMatch) {
       throw new ObjectivesParseError(
-        `objectives file line ${idx + 1}: status "${statusRaw}" is not MET or NOT MET: ${line}`
+        `objectives file line ${idx + 1}: status "${statusRaw}" does not start with MET or NOT MET: ${line}`
       )
     }
+    const status = statusMatch[1] as ObjectiveStatus
     if (!evidence) {
       throw new ObjectivesParseError(`objectives file line ${idx + 1}: evidence must be non-empty for ${id}: ${line}`)
     }
@@ -293,7 +321,7 @@ export function parseObjectivesFile(content: string): ObjectiveResult[] {
     if (invalidReason) {
       throw new ObjectivesParseError(`objectives file line ${idx + 1}: ${invalidReason} (${id}): ${line}`)
     }
-    return { id, status: statusRaw as ObjectiveStatus, evidence }
+    return { id, status, evidence }
   })
 }
 
@@ -398,16 +426,19 @@ function isResolved(finding: Finding): boolean {
 }
 
 /**
- * The command decides, not the caller. `REQUEST_CHANGES` iff a BLOCKER
- * finding is present; the severity vocabulary is caller-asserted (unchanged
- * from before), but once assigned, the verdict it forces is no longer typed
- * by hand — this generalises the BLOCKER-vs-APPROVE contradiction check that
- * used to live only as a post-hoc refusal. A finding whose re-review state is
- * `resolved` keeps its BLOCKER severity for the record but never drives the
- * verdict — a fix-claimed or reproduced BLOCKER still does.
+ * The command decides, not the caller. `REQUEST_CHANGES` iff a finding at or
+ * above `policy.codeReviewThreshold` is present, decided by
+ * `@attalabs/aeg-core`'s pure evaluator (`evaluateCodeReview`) — no literal
+ * `'BLOCKER'` decision here any more (task 8, `#506`,
+ * O1/O2): which severities block is repository policy, resolved once by the
+ * caller and passed in. The severity vocabulary itself is unchanged — a
+ * finding whose re-review state is `resolved` keeps its severity for the
+ * record but never drives the verdict — a fix-claimed or reproduced blocking
+ * finding still does.
  */
-export function deriveCodeReviewVerdict(findings: readonly Finding[]): CodeReviewVerdict {
-  return findings.some((f) => f.severity === 'BLOCKER' && !isResolved(f)) ? 'REQUEST_CHANGES' : 'APPROVE'
+export function deriveCodeReviewVerdict(findings: readonly Finding[], policy: ReviewPolicy): CodeReviewVerdict {
+  const consequential = findings.filter((f) => !isResolved(f))
+  return evaluateCodeReview(consequential, policy).outcome === 'blocked' ? 'REQUEST_CHANGES' : 'APPROVE'
 }
 
 /**
@@ -481,12 +512,14 @@ export type SecurityInput = TokensInput & {
 }
 
 /**
- * Same derivation for the security shape: `FAIL` iff a CRITICAL or HIGH
- * finding is present. A `resolved` finding keeps its severity for the
- * record but never drives the verdict, same as the code-review shape.
+ * Same derivation for the security shape: `FAIL` iff a finding at or above
+ * `policy.securityThreshold` is present, via `evaluateSecurityReview`. A
+ * `resolved` finding keeps its severity for the record but never drives the
+ * verdict, same as the code-review shape.
  */
-export function deriveSecurityVerdict(findings: readonly Finding[]): SecurityVerdict {
-  return findings.some((f) => (f.severity === 'CRITICAL' || f.severity === 'HIGH') && !isResolved(f)) ? 'FAIL' : 'PASS'
+export function deriveSecurityVerdict(findings: readonly Finding[], policy: ReviewPolicy): SecurityVerdict {
+  const consequential = findings.filter((f) => !isResolved(f))
+  return evaluateSecurityReview(consequential, policy).outcome === 'blocked' ? 'FAIL' : 'PASS'
 }
 
 /** `security.md`'s "none found" claim, tolerant of `none-found`/extra whitespace/case. */
@@ -1583,7 +1616,7 @@ function checkRoundTwo(
   if (outside.length > 0) {
     refuseCmd(
       `Non-blocking finding at ${(outside[0] as Finding).location} is outside the diff since the previously judged head ${judgedHead} — round two is delta-only for non-blocking severities.`,
-      'Drop it from this round, or wait for the Principal to move it into scope at the next round; a BLOCKER/CRITICAL/HIGH finding is always accepted regardless of delta.'
+      `Drop it from this round, or wait for the Principal to move it into scope at the next round; a finding at or above this repository's policy threshold (${blockingSeverities.join('/')}) is always accepted regardless of delta.`
     )
   }
 }
@@ -1602,6 +1635,22 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     refuseCmd(
       `\`--role ${role ?? '(missing)'}\` is not \`code-reviewer\` or \`security\`.`,
       'Pass `--role code-reviewer` or `--role security`.'
+    )
+  }
+
+  // Which severities block is repository policy (task 8,
+  // `#506`, O1/O4) — resolved once, from the default branch, before any
+  // derivation or contradiction check below reads it. `resolveReviewPolicy`
+  // refuses (throws) on a present-but-unknown severity value; caught here so
+  // that refusal reads as this command's own `refuseCmd` exit, not a raw
+  // uncaught throw.
+  let policy: ReviewPolicy
+  try {
+    policy = resolveReviewPolicy(loadTrustAnchorConfig())
+  } catch (err) {
+    refuseCmd(
+      err instanceof Error ? err.message : String(err),
+      "Fix `reviewPolicy` in the default branch's `vinaya.config.json` to a known severity on each role's own scale, then re-run."
     )
   }
 
@@ -1642,7 +1691,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     }
     const summary = requireFlag(flags, '--summary')
     const allowedSeverities = role === 'code-reviewer' ? CODE_REVIEW_SEVERITIES : SECURITY_SEVERITIES
-    const blockingSeverities: readonly string[] = role === 'code-reviewer' ? ['BLOCKER'] : ['CRITICAL', 'HIGH']
+    const blockingSeverities: readonly string[] =
+      role === 'code-reviewer' ? codeReviewBlockingSeverities(policy) : securityBlockingSeverities(policy)
     const findings = readFindingsFile(flags.get('--findings-file'), allowedSeverities)
     if (findings.some((f) => blockingSeverities.includes(f.severity))) {
       refuseCmd(
@@ -1699,7 +1749,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
 
   if (role === 'code-reviewer') {
     const findings = readFindingsFile(flags.get('--findings-file'), CODE_REVIEW_SEVERITIES)
-    const derived = deriveCodeReviewVerdict(findings)
+    const derived = deriveCodeReviewVerdict(findings, policy)
     if (verdictRaw !== undefined) {
       const explicit = normalizeCodeReviewVerdict(verdictRaw)
       if (explicit !== derived) {
@@ -1754,7 +1804,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       principalAllowlist,
       extractCodeReviewVerdict,
       findings,
-      ['BLOCKER'],
+      codeReviewBlockingSeverities(policy),
       objectiveResults
     )
 
@@ -1818,7 +1868,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
 
   // role === 'security'
   const findings = readFindingsFile(flags.get('--findings-file'), SECURITY_SEVERITIES)
-  const derived = deriveSecurityVerdict(findings)
+  const derived = deriveSecurityVerdict(findings, policy)
   if (verdictRaw !== undefined) {
     const explicit = normalizeSecurityVerdict(verdictRaw)
     if (explicit !== derived) {
@@ -1875,7 +1925,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     principalAllowlist,
     extractSecurityReviewVerdict,
     findings,
-    ['CRITICAL', 'HIGH'],
+    securityBlockingSeverities(policy),
     objectiveResults
   )
 

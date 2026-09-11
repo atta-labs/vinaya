@@ -266,6 +266,16 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `DEFAULT_RELEASE_ACTOR` | const | `packages/aeg-core/src/review-gate.ts` |
 | `isChangesetsReleasePr` | function | `packages/aeg-core/src/review-gate.ts` |
 | `isReviewGateExemptBranch` | function | `packages/aeg-core/src/review-gate.ts` |
+| `blockingSeverities` | function | `packages/aeg-core/src/review-policy.ts` |
+| `CODE_REVIEW_SEVERITY_ORDER` | const | `packages/aeg-core/src/review-policy.ts` |
+| `codeReviewBlockingSeverities` | function | `packages/aeg-core/src/review-policy.ts` |
+| `DEFAULT_REVIEW_POLICY` | const | `packages/aeg-core/src/review-policy.ts` |
+| `evaluateCodeReview` | function | `packages/aeg-core/src/review-policy.ts` |
+| `evaluateReviewFindings` | function | `packages/aeg-core/src/review-policy.ts` |
+| `evaluateSecurityReview` | function | `packages/aeg-core/src/review-policy.ts` |
+| `isKnownSeverity` | function | `packages/aeg-core/src/review-policy.ts` |
+| `SECURITY_SEVERITY_ORDER` | const | `packages/aeg-core/src/review-policy.ts` |
+| `securityBlockingSeverities` | function | `packages/aeg-core/src/review-policy.ts` |
 | `deriveReviewStatus` | function | `packages/aeg-core/src/review-status.ts` |
 | `parseDeveloperRoundMarker` | function | `packages/aeg-core/src/review-status.ts` |
 | `renderReviewStatus` | function | `packages/aeg-core/src/review-status.ts` |
@@ -396,6 +406,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `resolveAgentVendors` | function | `apps/cli/src/lib/config.ts` |
 | `resolvePrincipalAllowlist` | function | `apps/cli/src/lib/config.ts` |
 | `resolveReleaseActor` | function | `apps/cli/src/lib/config.ts` |
+| `resolveReviewPolicy` | function | `apps/cli/src/lib/config.ts` |
 | `tokensCollectTrustKey` | function | `apps/cli/src/lib/config.ts` |
 | `trustAnchorRepo` | function | `apps/cli/src/lib/config.ts` |
 | `trustTokensCollectCommand` | function | `apps/cli/src/lib/config.ts` |
@@ -415,48 +426,81 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `resolveHookDir` | function | `apps/cli/src/lib/detect.ts` |
 | `setCoreHooksPath` | function | `apps/cli/src/lib/detect.ts` |
 | `unsetCoreHooksPath` | function | `apps/cli/src/lib/detect.ts` |
-| `CONFIDENCE_PROMPT_LINE` | const | `apps/cli/src/lib/dev-review-loop.ts` |
 | `DEV_REVIEW_LOOP_AGENTS` | const | `apps/cli/src/lib/dev-review-loop.ts` |
-| `developerBranchFor` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `devReviewLoop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `describeObjectivesEdit` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `DevReviewLoopResumeError` | class | `apps/cli/src/lib/dev-review-loop.ts` |
-| `DeveloperStopSignal` | class | `apps/cli/src/lib/dev-review-loop.ts` |
-| `DRIVER_OWNED_PATHS` | const | `apps/cli/src/lib/dev-review-loop.ts` |
-| `extractObjectivesSection` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchCiConclusion` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchConflictingFiles` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchDeveloperStop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchFailingCheckNames` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchIssueTitle` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchMergeableState` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchNewestRulingOrdinal` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `fetchSourceRevision` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `filterDeveloperStops` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `filterPrincipalRulings` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `findLatestPrincipalObjectivesEdit` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `findOpenPrForBranch` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `findPrincipalFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `gitCommitsTouchingDriverPaths` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `lintReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `NO_SOURCE_REVISION` | const | `apps/cli/src/lib/dev-review-loop.ts` |
-| `outboxRoot` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `parseConfidenceReply` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `parseMergeTreeConflictFiles` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `parseObjectivesEditComment` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `publishRound` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `readWorktreeHead` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `renderNoPushStopComment` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `renderPauseComment` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `renderReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `resolveHead` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `resolveIssueObjectives` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `ReviewerInfrastructureFailure` | class | `apps/cli/src/lib/dev-review-loop.ts` |
-| `routeCompletionEvents` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `taskFromPrBody` | function | `apps/cli/src/lib/dev-review-loop.ts` |
-| `writeHeldVerdict` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `DRIVER_OWNED_PATHS` | const | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
+| `fetchCiConclusion` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
+| `fetchConflictingFiles` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
+| `fetchFailingCheckNames` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
+| `fetchMergeableState` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
+| `gitCommitsTouchingDriverPaths` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
+| `parseMergeTreeConflictFiles` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
+| `readWorktreeHead` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
+| `resolveHead` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
+| `sh` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
+| `describeObjectivesEdit` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `developerBranchFor` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `DeveloperStopSignal` | class | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `extractObjectivesSection` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `fetchDeveloperStop` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `fetchFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `fetchIssueTitle` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `fetchNewestRulingOrdinal` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `fetchPrBody` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `fetchRulings` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `fetchSourceRevision` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `filterDeveloperStops` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `filterPrincipalRulings` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `findLatestPrincipalObjectivesEdit` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `findOpenPrForBranch` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `findPrincipalFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `markerComments` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `NO_SOURCE_REVISION` | const | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `parseObjectivesEditComment` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `principalAllowlist` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `resolveIssueObjectives` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `reviewPolicy` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `taskFromPrBody` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `withPromptFile` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `buildVerdictFromReport` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `discardHeldVerdicts` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `hasObjectivesFacts` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `heldVerdictPath` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `lintReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `missingReviewerArtifacts` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `outboxRoot` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `readIfExists` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `renderReviewerDispatchPrompt` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `renderReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `ReviewerInfrastructureFailure` | class | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `ReviewerReportParseFailure` | class | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `reviewerWorkDir` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `writeHeldVerdict` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `assertDispatchOrEscalate` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `CONFIDENCE_FILE_NAME` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `CONFIDENCE_PROMPT_LINE` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `DevReviewLoopResumeError` | class | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `driverDecidedPauseEvents` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `MAX_GATE_STALLED_TURNS` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `parseConfidenceReply` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `parseShortstat` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `pollUntil` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `routeCompletionEvents` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `sizeOfSafe` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `waitForOwnLoopLine` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `postForgeEffectOnce` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
+| `publishRound` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
+| `clearDriverLock` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
+| `isDriverPidAlive` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
+| `pauseMarker` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
+| `postPauseComment` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
+| `printDriverLockLine` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
+| `readDriverLock` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
+| `readPauseState` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
+| `renderNoPushStopComment` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
+| `renderPauseComment` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
+| `writeDriverLock` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
+| `writePauseState` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `changedLineRanges` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `fileDiffAgainst` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `findingsInThisDiff` | function | `apps/cli/src/lib/diff-evidence.ts` |
@@ -632,7 +676,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `milestone close` | `milestone.ts` | `milestoneCloseCommand` | 4 | exempt — see below | forgeWrite (target) |
 | `milestone status` | `milestone.ts` | `milestoneStatusCommand` | 4 | exempt — see below | forgeWrite (target) |
 | `review status` | `review-status.ts` | `reviewStatusCommand` | 2 | exempt — see below | devReviewLoop (target) |
-| `review post` | `review-post.ts` | `reviewPostCommand` | 5 | exempt — see below | devReviewLoop (target) |
+| `review post` | `review-post.ts` | `reviewPostCommand` | 6 | exempt — see below | devReviewLoop (target) |
 | `doctor` | `doctor.ts` | `doctorCommand` | 17 | exempt — see below | sharedCommandShell (target) |
 | `tokens` | `tokens.ts` | `tokensCommand` | 1 | compliant | `parseTokensCollectDeclaration` |
 | `doctrine` | `doctrine.ts` | `doctrineCommand` | 2 | exempt — see below | sharedCommandShell (target) |
@@ -677,7 +721,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `milestone close` | 2026-09-05 | 4 — lib (4): `refuse`, `makeCheckError`, `detectGitRepo`, `printJson` | `forgeWrite` |
 | `milestone status` | 2026-09-10 | 4 — lib (4): `detectGitRepo`, `refuse`, `makeCheckError`, `printJson` | `forgeWrite` |
 | `review status` | 2026-09-05 | 2 — lib: `resolvePrincipalAllowlist`, `loadTrustAnchorConfig` | `devReviewLoop` |
-| `review post` | 2026-09-05 | 5 — lib: `refuse`, `makeCheckError`, `printJson`, `resolvePrincipalAllowlist`, `loadTrustAnchorConfig` (re-verified after the `--objectives-file` addition — the new resolution/render path calls only `gh` directly and this file's own exported helpers, so the in-scope count is unchanged) | `devReviewLoop` |
+| `review post` | 2026-09-11 | 6 — lib: `refuse`, `makeCheckError`, `printJson`, `resolvePrincipalAllowlist`, `loadTrustAnchorConfig`, `resolveReviewPolicy` (which severities block is repository policy, `review-validity-v1` task 8, `#506`, O1 — the derivation and its contradiction check now resolve `policy` once via `resolveReviewPolicy` before deriving or cross-checking a verdict) | `devReviewLoop` |
 | `doctor` | 2026-09-05 | 17 — lib (16): `hookDirFromManifest`, `detectVendoredVinaya`, `readRepoCiSetup`, `resolveAgentVendors`, `buildInitOps`, `isDefaultedAgentVendorPath`, `resolveManagedBlockPath`, `markerLines`, `renderBlock`, `foreignRawHooks`, `starterConfig`, `checksMissingEnvDeclaration`, `envDeclarationWarning`, `lintEnvDeclarations`, `globalChecksIgnoredWarning`, `printJson`; commands/\*.ts (refused outright): `resolveDoctrineRootInfo` (`doctrine.ts`) | `sharedCommandShell` |
 | `doctrine` | 2026-09-05 | 2 — lib: `packageRoot`, `printJson` | `sharedCommandShell` |
 | `upgrade` | 2026-09-08 | 22 — lib (21): `hookDirFromManifest`, `resolveManagedBlockPath`, `stripBlockFromContent`, `blockStripLeavesEmpty`, `foreignRawHooks`, `activeRawHooks`, `detectVendoredVinaya`, `readRepoCiSetup`, `resolveAgentVendors`, `buildInitOps`, `isDefaultedAgentVendorPath`, `markerLines`, `renderBlock`, `indent`, `writeFileWithDirs`, `createHost`, `appendBlock`, `promptYesNo`, `closeStdin`, `staleAgentSkillPaths`, `containedAbs`; commands/\*.ts (refused outright): `resolveDoctrineRoot` (`doctrine.ts`) | `sharedCommandShell` |

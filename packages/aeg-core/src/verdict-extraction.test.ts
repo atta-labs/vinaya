@@ -41,6 +41,7 @@ describe('extractCodeReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -52,6 +53,7 @@ describe('extractCodeReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -63,6 +65,7 @@ describe('extractCodeReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -84,6 +87,7 @@ describe('extractCodeReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -111,6 +115,7 @@ describe('extractCodeReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: ['MINOR'],
       danglingNote: null
     })
   })
@@ -126,6 +131,7 @@ describe('extractCodeReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -139,6 +145,7 @@ describe('extractCodeReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -150,6 +157,7 @@ describe('extractCodeReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -162,6 +170,7 @@ describe('extractCodeReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
     expect(extractCodeReviewVerdict(['__VERDICT: APPROVE__'])).toEqual({
@@ -169,6 +178,7 @@ describe('extractCodeReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -215,6 +225,7 @@ describe('extractCodeReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -228,6 +239,7 @@ describe('extractSecurityReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -239,6 +251,7 @@ describe('extractSecurityReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -272,6 +285,7 @@ describe('extractSecurityReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: ['LOW'],
       danglingNote: null
     })
   })
@@ -287,6 +301,7 @@ describe('extractSecurityReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -300,6 +315,7 @@ describe('extractSecurityReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -310,6 +326,7 @@ describe('extractSecurityReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -340,6 +357,7 @@ describe('extractSecurityReviewVerdict', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -362,6 +380,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
       headSha: FULL_SHA,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -373,6 +392,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
       headSha: SHORT_SHA,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -391,6 +411,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -418,6 +439,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -439,6 +461,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
       headSha: FULL_SHA,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -450,6 +473,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -500,6 +524,7 @@ describe('the VERDICT:/Judged head:/Objectives version: markers are read from th
       headSha: FULL_SHA,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -513,6 +538,7 @@ describe('the VERDICT:/Judged head:/Objectives version: markers are read from th
       headSha: FULL_SHA,
       objectivesVersion: OBJ_VERSION,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -535,6 +561,7 @@ describe('the VERDICT:/Judged head:/Objectives version: markers are read from th
       headSha: FULL_SHA,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -628,6 +655,7 @@ describe('candidate selection stays whole-body — a later unclear candidate sha
       headSha: HEAD,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: null
     })
   })
@@ -637,6 +665,58 @@ describe('candidate selection stays whole-body — a later unclear candidate sha
     expect(result.value).not.toBe('REQUEST CHANGES')
     expect(result.danglingNote).not.toBeNull()
     expect(result.headSha).toBeNull()
+  })
+})
+
+// ---- FINDINGS block severities (review-validity-v1 task 8, #506, O2/O3) ----
+// Read from the WHOLE comment body — never firstFiveLines's window, since
+// renderFindingsSection always renders the findings list past line five.
+
+describe('findingSeverities — the FINDINGS block, read whole-body', () => {
+  it('extracts every severity from a real rendered FINDINGS block', () => {
+    const result = extractCodeReviewVerdict([REAL_CODE_REVIEWER_REPORT])
+    expect(result.findingSeverities).toEqual(['MINOR'])
+  })
+
+  it('extracts a mixed-severity FINDINGS block in rendered order', () => {
+    const comment = [
+      'VERDICT: REQUEST CHANGES',
+      '',
+      'Judged head: 8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f',
+      '',
+      'FINDINGS (ordered by severity):',
+      '1. [BLOCKER] a.ts:1 — off-by-one',
+      '2. [MAJOR] b.ts:2 — missing null check',
+      '3. [MINOR] c.ts:3 — naming nit'
+    ].join('\n')
+    const result = extractCodeReviewVerdict([comment])
+    expect(result.findingSeverities).toEqual(['BLOCKER', 'MAJOR', 'MINOR'])
+  })
+
+  it('"None." (the empty-findings render) yields no severities', () => {
+    const comment =
+      'VERDICT: APPROVE\n\nJudged head: 8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f\n\nFINDINGS (ordered by severity):\nNone.'
+    const result = extractCodeReviewVerdict([comment])
+    expect(result.findingSeverities).toEqual([])
+  })
+
+  it('a DANGLING extraction (no verdict comment at all) carries no findingSeverities', () => {
+    const result = extractCodeReviewVerdict(['unrelated comment'])
+    expect(result.findingSeverities).toEqual([])
+  })
+
+  it("reads only the winning comment — an earlier comment's findings are not this verdict's", () => {
+    const result = extractCodeReviewVerdict([
+      'VERDICT: REQUEST CHANGES\n\nFINDINGS (ordered by severity):\n1. [BLOCKER] a.ts:1 — old issue',
+      'VERDICT: APPROVE\n\nFINDINGS (ordered by severity):\nNone.'
+    ])
+    expect(result.value).toBe('APPROVE')
+    expect(result.findingSeverities).toEqual([])
+  })
+
+  it('security-review findings extract identically via extractSecurityReviewVerdict', () => {
+    const result = extractSecurityReviewVerdict([REAL_SECURITY_REVIEWER_REPORT])
+    expect(result.findingSeverities).toEqual(['LOW'])
   })
 })
 

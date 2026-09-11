@@ -58,6 +58,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   describeObjectivesEdit,
+  DRIVER_OWNED_PATHS,
   extractObjectivesSection,
   filterPrincipalRulings,
   findLatestPrincipalObjectivesEdit,
@@ -69,7 +70,11 @@ import {
   type ReviewerPromptFacts,
   routeCompletionEvents
 } from '../../src/lib/dev-review-loop.js'
-import { renderCodeReviewComment, renderSecurityComment } from '../../src/commands/review-post.js'
+import {
+  deriveCodeReviewVerdict,
+  renderCodeReviewComment,
+  renderSecurityComment
+} from '../../src/commands/review-post.js'
 import { spliceObjectivesSection } from '../../src/commands/issue-objectives.js'
 import {
   checkReviewGate,
@@ -1302,6 +1307,180 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
   }, 20000)
 })
 
+// --- a findings.txt that still does not parse is infrastructure, never an
+// uncaught throw (review-validity-v1 task 8, #506, O6) ---
+
+/**
+ * Security writes a genuinely unparseable `findings.txt` line — no `|` at
+ * all, so neither a severity nor a location nor a description can be read
+ * off it — on BOTH the first dispatch and the retry. The prior behaviour
+ * (before O6) let `parseFindingsFile`'s thrown `FindingsParseError`
+ * propagate straight out of `buildVerdictFromReport` uncaught, crashing the
+ * whole driver process; this scenario proves it is now caught, retried
+ * once, and turned into the same `infrastructure` pause a missing artifact
+ * gets — never a crash.
+ */
+function writeFakeClaudeReviewerWritesGarbageFindingsScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+cat > /dev/null
+WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    ATTEMPT=$(cat "$HOME/.security-invocations" 2>/dev/null | wc -l | tr -d ' ')
+    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    if [ "$ATTEMPT" != "0" ]; then
+      WD="$WORKROOT/round-$VINAYA_ROUND-security-work-retry1"
+    fi
+    mkdir -p "$WD"
+    printf 'this is not a valid finding line at all\\n' > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo "invocation" >> "$HOME/.security-invocations"
+    echo '{"session_id":"sec-session-garbage","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+function setUpReviewerWritesGarbageFindings(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeReviewerWritesGarbageFindingsScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a findings.txt line that still does not parse is an infrastructure pause (review-validity-v1 task 8, #506, O6)', () => {
+  it('retries once into a fresh work directory, then pauses naming the file, the line, and the reviewer session id — never an uncaught throw', () => {
+    const { home, cwd, path } = setUpReviewerWritesGarbageFindings()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // Two genuinely separate dispatches — one attempt, one fresh retry.
+    const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
+    expect(invocations).toHaveLength(2)
+
+    const drlRoot = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    const pauseState = JSON.parse(readFileSync(join(drlRoot, 'pause-state.json'), 'utf8')) as Record<string, unknown>
+    expect(pauseState.round).toBe(1)
+    expect(pauseState.reason).toBe('infrastructure')
+
+    const pausedFiles = postedCommentFiles(home)
+    expect(pausedFiles).toHaveLength(1)
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[0] as string), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    // Names the file, the line (inside the parse error's own message), and
+    // the reviewer's session id — O6's three required facts.
+    expect(pauseComment).toMatch(/findings\.txt/)
+    expect(pauseComment).toMatch(/line 1/)
+    expect(pauseComment).toMatch(/sec-session-garbage/)
+    expect(pauseComment).not.toMatch(/^VERDICT:/m)
+  }, 20000)
+})
+
+// --- a report.txt missing SECRETS is infrastructure, never a fabricated
+// clean claim (review-validity-v1 12, #526 round 2, security HIGH) ---
+
+/**
+ * Security writes a complete, parseable report on BOTH attempts — except it
+ * never writes a `SECRETS:` line. Before this fix, `buildVerdictFromReport`
+ * defaulted a missing `SECRETS` key to the literal "none found" — a CLEAN
+ * self-attestation `security.md` requires evidence for — so a reviewer
+ * session that crashed or forgot the line got its verdict rendered as if it
+ * had actually checked. This proves it is now the same one-retry-then-pause
+ * treatment `findings.txt`/`objectives.txt` already get, never a silently
+ * fabricated clean claim.
+ */
+function writeFakeClaudeSecurityOmitsSecretsScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+cat > /dev/null
+WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    ATTEMPT=$(cat "$HOME/.security-invocations" 2>/dev/null | wc -l | tr -d ' ')
+    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    if [ "$ATTEMPT" != "0" ]; then
+      WD="$WORKROOT/round-$VINAYA_ROUND-security-work-retry1"
+    fi
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\n' > "$WD/report.txt"
+    echo "invocation" >> "$HOME/.security-invocations"
+    echo '{"session_id":"sec-session-no-secrets","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+function setUpSecurityOmitsSecrets(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeSecurityOmitsSecretsScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a report.txt missing SECRETS is an infrastructure pause, never a fabricated clean claim (review-validity-v1 12, #526 round 2)', () => {
+  it('retries once into a fresh work directory, then pauses naming report.txt and the reviewer session id — never a silent "none found"', () => {
+    const { home, cwd, path } = setUpSecurityOmitsSecrets()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
+    expect(invocations).toHaveLength(2)
+
+    const pausedFiles = postedCommentFiles(home)
+    expect(pausedFiles).toHaveLength(1)
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[0] as string), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    expect(pauseComment).toMatch(/report\.txt/)
+    expect(pauseComment).toMatch(/sec-session-no-secrets/)
+    expect(pauseComment).not.toMatch(/^VERDICT:/m)
+    expect(pauseComment).not.toMatch(/SECRETS: none found/)
+  }, 20000)
+})
+
 // --- an empty findings file is still a clean verdict (O1, contrast case) ---
 //
 // Already proven by 'devReviewLoop — round 1 clean, ends on publish', above:
@@ -1381,6 +1560,10 @@ describe('devReviewLoop — the reviewer prompt names the objectives file, and o
     )
     expect(reviewerPrompt).toMatch(/objectives\.txt/)
     expect(reviewerPrompt).toMatch(/O<n>\|MET\|<evidence>/)
+    // O6 (review-validity-v1 task 8, #506): the prompt states the bare-word
+    // status rule and that `|` never appears in a description.
+    expect(reviewerPrompt).toMatch(/bare leading word/)
+    expect(reviewerPrompt).toMatch(/`\|` never appears in a description/)
 
     const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
     expect(invocations).toHaveLength(2)
@@ -2351,6 +2534,25 @@ describe('devReviewLoop — a base that moves past this driver’s own code WHIL
   }, 20000)
 })
 
+// --- review-validity-v1 12 (#526), O8 round 2: the split must not narrow stale_driver's own coverage ---
+
+describe('DRIVER_OWNED_PATHS covers every dev-review-loop/*.ts split module (review-validity-v1 12, #526 round 2)', () => {
+  it('names the dev-review-loop/ directory, not only the old single composition-root file', () => {
+    const splitModules = [
+      'gate-reading.ts',
+      'reviewer-dispatch.ts',
+      'round-assess.ts',
+      'publication.ts',
+      'pause-resume.ts',
+      'developer-dispatch.ts'
+    ]
+    for (const m of splitModules) {
+      const modulePath = `apps/cli/src/lib/dev-review-loop/${m}`
+      expect(DRIVER_OWNED_PATHS.some((p) => modulePath === p || modulePath.startsWith(p))).toBe(true)
+    }
+  })
+})
+
 // --- task-run-v1 13 (#508), O5: a clean head falls into conflict while reviewers worked ---
 
 /** Standard round-1 push/open, then clean verdicts from both reviewer roles — each touches `.reviewers-ran` right after writing its own verdict, so the SECOND mergeability read (at publish) can answer differently from the first (before either reviewer ran). */
@@ -3121,6 +3323,124 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
 
     expect(result.verdict).toBe('fail')
     expect(result.reason).toMatch(/objectives version/)
+  })
+})
+
+/**
+ * Which severities block is repository policy (`review-validity-v1` task 8,
+ * `#506`, O2/O4): the loop's own derivation (`deriveCodeReviewVerdict`, the
+ * same function `buildVerdictFromReport` calls) and the merge gate's own
+ * evaluation (`checkReviewGate`) must agree on the SAME findings under the
+ * SAME policy — this repository's own configured MAJOR/HIGH.
+ */
+describe('a loop-published verdict agrees with the merge gate under policy (review-validity-v1 task 8, #506, O2/O4)', () => {
+  const HEAD = 'e'.repeat(40)
+  const TOKENS = { taskId: '506', model: 'claude', tokensIn: '8', tokensOut: '4', cost: '—', sessionId: 's1' }
+  const THIS_REPO_POLICY = { codeReviewThreshold: 'MAJOR' as const, securityThreshold: 'HIGH' as const }
+
+  it("a MAJOR finding drives REQUEST_CHANGES at the loop (never reaches a clean round to publish) under this repo's MAJOR/HIGH policy", () => {
+    const findings = [{ severity: 'MAJOR', location: 'a.ts:1', description: 'off-by-one' }]
+    expect(deriveCodeReviewVerdict(findings, THIS_REPO_POLICY)).toBe('REQUEST_CHANGES')
+  })
+
+  it('the SAME finding, rendered as a (hand-typed-bypass) APPROVE comment, is read as not clean by checkReviewGate under the identical policy — the two never disagree', () => {
+    const reviewerComment = renderCodeReviewComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'APPROVE',
+      briefConformance: 'yes',
+      specConformance: 'yes',
+      findings: [{ severity: 'MAJOR', location: 'a.ts:1', description: 'off-by-one' }],
+      scope: 'small',
+      scopeEvidence: null,
+      tests: 'pass',
+      docs: 'n/a',
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      objectiveResults: null
+    })
+    const securityComment = renderSecurityComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'PASS',
+      findings: [],
+      configScan: 'clean',
+      secrets: 'none found',
+      secretsEvidence: null,
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      objectiveResults: null
+    })
+
+    const result = checkReviewGate({
+      comments: [
+        { body: reviewerComment, author: 'daniboomerang' },
+        { body: securityComment, author: 'daniboomerang' }
+      ],
+      labels: [],
+      waiverLabelActor: null,
+      headSha: HEAD,
+      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
+      principalAllowlist: ['daniboomerang'],
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      policy: THIS_REPO_POLICY
+    })
+
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('never overrides policy')
+  })
+
+  it('the identical MAJOR-carrying comment passes under the DEFAULT (BLOCKER) policy — the gate and the default-policy derivation agree too', () => {
+    const findings = [{ severity: 'MAJOR', location: 'a.ts:1', description: 'off-by-one' }]
+    expect(deriveCodeReviewVerdict(findings, { codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH' })).toBe(
+      'APPROVE'
+    )
+
+    const reviewerComment = renderCodeReviewComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'APPROVE',
+      briefConformance: 'yes',
+      specConformance: 'yes',
+      findings: [{ severity: 'MAJOR', location: 'a.ts:1', description: 'off-by-one' }],
+      scope: 'small',
+      scopeEvidence: null,
+      tests: 'pass',
+      docs: 'n/a',
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      objectiveResults: null
+    })
+    const securityComment = renderSecurityComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'PASS',
+      findings: [],
+      configScan: 'clean',
+      secrets: 'none found',
+      secretsEvidence: null,
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      objectiveResults: null
+    })
+
+    const result = checkReviewGate({
+      comments: [
+        { body: reviewerComment, author: 'daniboomerang' },
+        { body: securityComment, author: 'daniboomerang' }
+      ],
+      labels: [],
+      waiverLabelActor: null,
+      headSha: HEAD,
+      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
+      principalAllowlist: ['daniboomerang'],
+      objectivesVersion: null,
+      rulingOrdinal: 0
+      // policy omitted — defaults to BLOCKER/HIGH.
+    })
+
+    expect(result.verdict).toBe('pass')
   })
 })
 

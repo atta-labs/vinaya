@@ -4,7 +4,15 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
-import { DEFAULT_RELEASE_ACTOR, PRINCIPAL_ALLOWLIST } from '@attalabs/aeg-core'
+import {
+  CODE_REVIEW_SEVERITY_ORDER,
+  DEFAULT_RELEASE_ACTOR,
+  DEFAULT_REVIEW_POLICY,
+  isKnownSeverity,
+  PRINCIPAL_ALLOWLIST,
+  type ReviewPolicy,
+  SECURITY_SEVERITY_ORDER
+} from '@attalabs/aeg-core'
 import { AGENT_VENDORS, type AgentVendor } from './agent-vendors.js'
 import { CLAUDE_COMMAND_PATH } from './claude-command-emitter.js'
 import { GEMINI_COMMAND_PATH } from './gemini-command-emitter.js'
@@ -550,6 +558,24 @@ export const VinayaConfigSchema = z.object({
       timeoutMs: z.number().int().positive().optional(),
       agent: z.enum(['claude', 'codex', 'gemini']).optional()
     })
+    .optional(),
+  // Which severities block is repository policy (task 8,
+  // `#506`, O1) — two separate thresholds, one per review role's own ordered
+  // severity scale (`@attalabs/aeg-core`'s `CODE_REVIEW_SEVERITY_ORDER`/
+  // `SECURITY_SEVERITY_ORDER`). Typed as a bare string here, deliberately NOT
+  // `z.enum(...)`: a `z.enum` failure fails the WHOLE config's schema parse,
+  // which both `loadConfig`/`loadTrustAnchorConfig` swallow into a silent
+  // `null` (every other field falls back too) — the opposite of this field's
+  // own contract. `resolveReviewPolicy` (below) is where an unknown value
+  // actually refuses, so a typo here is a loud, review-policy-specific error,
+  // never a silent whole-config fallback. Same trust class as `principals` —
+  // read only via `loadTrustAnchorConfig` (the default branch), never the PR
+  // checkout, so a change cannot lower its own threshold (O4).
+  reviewPolicy: z
+    .object({
+      codeReviewThreshold: z.string().min(1).optional(),
+      securityThreshold: z.string().min(1).optional()
+    })
     .optional()
 })
 
@@ -703,6 +729,41 @@ export function resolvePrincipalAllowlist(config: VinayaConfig | null): string[]
  */
 export function resolveReleaseActor(config: VinayaConfig | null): string {
   return config?.releaseActor ?? DEFAULT_RELEASE_ACTOR
+}
+
+/**
+ * Resolves the effective review policy (task 8, `#506`,
+ * O1): `config?.reviewPolicy` when set, else `DEFAULT_REVIEW_POLICY`
+ * (`BLOCKER`/`HIGH` — today's behaviour, unchanged for a repo that never sets
+ * this key). Per-field: an omitted `codeReviewThreshold`/`securityThreshold`
+ * defaults; a PRESENT one that is not a real severity on its role's own scale
+ * REFUSES (throws), never falls back to the default — an unknown value is a
+ * config defect to fix, not a value to silently downgrade past. Same sourcing
+ * rule as `resolvePrincipalAllowlist`/`resolveReleaseActor`: callers MUST
+ * pass `loadTrustAnchorConfig()` (the default branch), never `loadConfig()`
+ * or anything PR-checkout-derived, so a change cannot lower its own
+ * threshold (O4) — the gate and the loop read the identical source.
+ */
+export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
+  const raw = config?.reviewPolicy
+  if (!raw) return DEFAULT_REVIEW_POLICY
+
+  const codeReviewThreshold = raw.codeReviewThreshold ?? DEFAULT_REVIEW_POLICY.codeReviewThreshold
+  if (!isKnownSeverity(CODE_REVIEW_SEVERITY_ORDER, codeReviewThreshold)) {
+    throw new Error(
+      `vinaya.config.json: reviewPolicy.codeReviewThreshold "${codeReviewThreshold}" is not one of ${CODE_REVIEW_SEVERITY_ORDER.join(' > ')} — fix the config, this never falls back to a default.`
+    )
+  }
+  const securityThreshold = raw.securityThreshold ?? DEFAULT_REVIEW_POLICY.securityThreshold
+  if (!isKnownSeverity(SECURITY_SEVERITY_ORDER, securityThreshold)) {
+    throw new Error(
+      `vinaya.config.json: reviewPolicy.securityThreshold "${securityThreshold}" is not one of ${SECURITY_SEVERITY_ORDER.join(' > ')} — fix the config, this never falls back to a default.`
+    )
+  }
+  return {
+    codeReviewThreshold: codeReviewThreshold as ReviewPolicy['codeReviewThreshold'],
+    securityThreshold: securityThreshold as ReviewPolicy['securityThreshold']
+  }
 }
 
 /**

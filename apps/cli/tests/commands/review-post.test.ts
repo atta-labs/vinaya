@@ -3,7 +3,13 @@ import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extractCodeReviewVerdict, extractSecurityReviewVerdict, OBJECTIVES_SINCE_ISSUE } from '@attalabs/aeg-core'
+import {
+  DEFAULT_REVIEW_POLICY,
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict,
+  OBJECTIVES_SINCE_ISSUE,
+  type ReviewPolicy
+} from '@attalabs/aeg-core'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import {
   checkDocCorrectnessSearch,
@@ -233,38 +239,63 @@ process.exit(1)
 
 describe('deriveCodeReviewVerdict — the command decides, not the caller', () => {
   it('no findings → APPROVE', () => {
-    expect(deriveCodeReviewVerdict([])).toBe('APPROVE')
+    expect(deriveCodeReviewVerdict([], DEFAULT_REVIEW_POLICY)).toBe('APPROVE')
   })
-  it('MAJOR only → APPROVE', () => {
-    expect(deriveCodeReviewVerdict([{ severity: 'MAJOR', location: 'a.ts:1', description: 'x' }])).toBe('APPROVE')
+  it('MAJOR only → APPROVE under the default (BLOCKER) policy', () => {
+    expect(
+      deriveCodeReviewVerdict([{ severity: 'MAJOR', location: 'a.ts:1', description: 'x' }], DEFAULT_REVIEW_POLICY)
+    ).toBe('APPROVE')
   })
   it('one BLOCKER → REQUEST_CHANGES', () => {
     expect(
-      deriveCodeReviewVerdict([
-        { severity: 'MINOR', location: 'a.ts:1', description: 'x' },
-        { severity: 'BLOCKER', location: 'b.ts:2', description: 'y' }
-      ])
+      deriveCodeReviewVerdict(
+        [
+          { severity: 'MINOR', location: 'a.ts:1', description: 'x' },
+          { severity: 'BLOCKER', location: 'b.ts:2', description: 'y' }
+        ],
+        DEFAULT_REVIEW_POLICY
+      )
     ).toBe('REQUEST_CHANGES')
+  })
+
+  const THIS_REPO_POLICY: ReviewPolicy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' }
+
+  it("a MAJOR → REQUEST_CHANGES under this repository's own MAJOR/HIGH policy (which severities block is repository policy, #506, O1)", () => {
+    expect(
+      deriveCodeReviewVerdict([{ severity: 'MAJOR', location: 'a.ts:1', description: 'x' }], THIS_REPO_POLICY)
+    ).toBe('REQUEST_CHANGES')
+  })
+  it('a MINOR alone still → APPROVE under the MAJOR threshold — MINOR never blocks', () => {
+    expect(
+      deriveCodeReviewVerdict([{ severity: 'MINOR', location: 'a.ts:1', description: 'x' }], THIS_REPO_POLICY)
+    ).toBe('APPROVE')
   })
 })
 
 describe('deriveSecurityVerdict — the command decides, not the caller', () => {
   it('no findings → PASS', () => {
-    expect(deriveSecurityVerdict([])).toBe('PASS')
+    expect(deriveSecurityVerdict([], DEFAULT_REVIEW_POLICY)).toBe('PASS')
   })
   it('MEDIUM/LOW only → PASS', () => {
     expect(
-      deriveSecurityVerdict([
-        { severity: 'MEDIUM', location: 'a.ts:1', description: 'x' },
-        { severity: 'LOW', location: 'b.ts:1', description: 'y' }
-      ])
+      deriveSecurityVerdict(
+        [
+          { severity: 'MEDIUM', location: 'a.ts:1', description: 'x' },
+          { severity: 'LOW', location: 'b.ts:1', description: 'y' }
+        ],
+        DEFAULT_REVIEW_POLICY
+      )
     ).toBe('PASS')
   })
   it('a HIGH → FAIL', () => {
-    expect(deriveSecurityVerdict([{ severity: 'HIGH', location: 'a.ts:1', description: 'x' }])).toBe('FAIL')
+    expect(
+      deriveSecurityVerdict([{ severity: 'HIGH', location: 'a.ts:1', description: 'x' }], DEFAULT_REVIEW_POLICY)
+    ).toBe('FAIL')
   })
   it('a CRITICAL → FAIL', () => {
-    expect(deriveSecurityVerdict([{ severity: 'CRITICAL', location: 'a.ts:1', description: 'x' }])).toBe('FAIL')
+    expect(
+      deriveSecurityVerdict([{ severity: 'CRITICAL', location: 'a.ts:1', description: 'x' }], DEFAULT_REVIEW_POLICY)
+    ).toBe('FAIL')
   })
 })
 
@@ -1480,7 +1511,7 @@ describe('deriveCodeReviewVerdict / deriveSecurityVerdict — a resolved finding
     const findings: Finding[] = [
       { severity: 'BLOCKER', location: 'a.ts:1', description: 'F1 correctness resolved: fixed in this round' }
     ]
-    expect(deriveCodeReviewVerdict(findings)).toBe('APPROVE')
+    expect(deriveCodeReviewVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('APPROVE')
   })
 
   it('a BLOCKER marked fix-claimed (not yet resolved) still forces REQUEST_CHANGES', () => {
@@ -1491,12 +1522,12 @@ describe('deriveCodeReviewVerdict / deriveSecurityVerdict — a resolved finding
         description: 'F1 correctness fix-claimed: says it is fixed, not yet reproduced'
       }
     ]
-    expect(deriveCodeReviewVerdict(findings)).toBe('REQUEST_CHANGES')
+    expect(deriveCodeReviewVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('REQUEST_CHANGES')
   })
 
   it('a BLOCKER with no state token (a brand-new finding) still forces REQUEST_CHANGES', () => {
     const findings: Finding[] = [{ severity: 'BLOCKER', location: 'a.ts:1', description: 'F1 correctness: off-by-one' }]
-    expect(deriveCodeReviewVerdict(findings)).toBe('REQUEST_CHANGES')
+    expect(deriveCodeReviewVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('REQUEST_CHANGES')
   })
 
   it('a resolved BLOCKER alongside an open one still forces REQUEST_CHANGES — one open blocker is enough', () => {
@@ -1504,28 +1535,28 @@ describe('deriveCodeReviewVerdict / deriveSecurityVerdict — a resolved finding
       { severity: 'BLOCKER', location: 'a.ts:1', description: 'F1 correctness resolved: fixed' },
       { severity: 'BLOCKER', location: 'b.ts:2', description: 'F2 correctness open: still broken' }
     ]
-    expect(deriveCodeReviewVerdict(findings)).toBe('REQUEST_CHANGES')
+    expect(deriveCodeReviewVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('REQUEST_CHANGES')
   })
 
   it('a CRITICAL marked resolved does not force FAIL', () => {
     const findings: Finding[] = [
       { severity: 'CRITICAL', location: 'a.ts:1', description: 'F1 secrets resolved: rotated' }
     ]
-    expect(deriveSecurityVerdict(findings)).toBe('PASS')
+    expect(deriveSecurityVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('PASS')
   })
 
   it('a HIGH marked resolved does not force FAIL', () => {
     const findings: Finding[] = [
       { severity: 'HIGH', location: 'a.ts:1', description: 'F1 injection resolved: sanitized' }
     ]
-    expect(deriveSecurityVerdict(findings)).toBe('PASS')
+    expect(deriveSecurityVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('PASS')
   })
 
   it('a HIGH marked reproduced still forces FAIL', () => {
     const findings: Finding[] = [
       { severity: 'HIGH', location: 'a.ts:1', description: 'F1 injection reproduced: still exploitable' }
     ]
-    expect(deriveSecurityVerdict(findings)).toBe('FAIL')
+    expect(deriveSecurityVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('FAIL')
   })
 })
 
@@ -1635,6 +1666,19 @@ describe('parseObjectivesFile', () => {
 
   it('throws on a status that is not MET or NOT MET', () => {
     expect(() => parseObjectivesFile('O1|DONE|x')).toThrow(ObjectivesParseError)
+  })
+
+  it('a status line is MET or NOT MET by its leading word — a qualifier after it is tolerated, not dropped as a parse error (#506, O6)', () => {
+    expect(parseObjectivesFile('O1|NOT MET (partial)|see notes')).toEqual([
+      { id: 'O1', status: 'NOT MET', evidence: 'see notes' }
+    ])
+    expect(parseObjectivesFile('O1|MET — confirmed|see notes')).toEqual([
+      { id: 'O1', status: 'MET', evidence: 'see notes' }
+    ])
+  })
+
+  it('"NOT MET" is never mistaken for a bare "MET" — the longer alternative wins first', () => {
+    expect(parseObjectivesFile('O1|NOT MET|x')[0]?.status).toBe('NOT MET')
   })
 
   it('throws on empty evidence', () => {
@@ -2218,14 +2262,30 @@ describe('a doc-correctness finding must carry a repo-wide Search: pattern (Issu
   })
 })
 
-describe('a Search: pattern reaching for alternation gets told why (Issue #434, round 1)', () => {
-  it('names the pipe-delimiter conflict rather than only a field count', () => {
+describe('a Search: pattern using `|` alternation no longer breaks parsing (review-validity-v1 task 8, #506, O6)', () => {
+  it('a doc-correctness Search: pattern carrying `|` alternation now parses cleanly — the grammar splits on its first two `|` only, so a Search: pattern is free to use real regex alternation', () => {
     const line = 'MAJOR|a/b.md:1|F1 doc-correctness: stale. Search: first.(three|five).lines'
-    expect(() => parseFindingsFile(line, ['BLOCKER', 'MAJOR', 'MINOR'])).toThrow(/cannot use `\|` alternation/)
+    const findings = parseFindingsFile(line, ['BLOCKER', 'MAJOR', 'MINOR'])
+    expect(findings).toEqual([
+      {
+        severity: 'MAJOR',
+        location: 'a/b.md:1',
+        description: 'F1 doc-correctness: stale. Search: first.(three|five).lines'
+      }
+    ])
   })
 
-  it('says nothing about alternation for an ordinary malformed line', () => {
-    expect(() => parseFindingsFile('MAJOR|a/b.md:1|F1 correctness: x|y', ['MAJOR'])).toThrow(/expected exactly 3/)
-    expect(() => parseFindingsFile('MAJOR|a/b.md:1|F1 correctness: x|y', ['MAJOR'])).not.toThrow(/alternation/)
+  it('a description carrying an ordinary (non-Search:) `|` also parses cleanly — the rest of the line after the second `|` is the whole description', () => {
+    const findings = parseFindingsFile('MAJOR|a/b.md:1|F1 correctness: x|y', ['MAJOR'])
+    expect(findings).toEqual([{ severity: 'MAJOR', location: 'a/b.md:1', description: 'F1 correctness: x|y' }])
+  })
+
+  it('the alternation hint still fires for a line with too few `|` delimiters that also mentions Search:', () => {
+    expect(() => parseFindingsFile('BLOCKER Search: x', ['BLOCKER'])).toThrow(/cannot use `\|` alternation/)
+  })
+
+  it('says nothing about alternation for an ordinary malformed line (too few `|` delimiters, no Search: text)', () => {
+    expect(() => parseFindingsFile('MAJOR|a/b.md:1', ['MAJOR'])).toThrow(/at least 2/)
+    expect(() => parseFindingsFile('MAJOR|a/b.md:1', ['MAJOR'])).not.toThrow(/alternation/)
   })
 })

@@ -75,7 +75,7 @@ import {
   WAIVER_LABEL_REVIEW
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { loadTrustAnchorConfig, resolvePrincipalAllowlist, resolveReviewPolicy } from '../../lib/config'
 import { patchIdAt } from '../../lib/patch-id'
 import { REVIEW_GATE_CHECK_RUN_NAME as OWN_CHECK_RUN_NAME } from '../../lib/review-gate-check-name'
 
@@ -421,7 +421,30 @@ function main(): void {
   // PR metadata is input data, never the source of the gate implementation or
   // its trust anchors. See `loadTrustAnchorConfig` in lib/config.ts for the
   // three failed attempts that established the config half of this boundary.
-  const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  const trustAnchorConfig = loadTrustAnchorConfig()
+  const principalAllowlist = resolvePrincipalAllowlist(trustAnchorConfig)
+
+  // Which severities block is repository policy (task
+  // 8, `#506`, O4) — resolved from the SAME default-branch trust-anchor read
+  // as `principals`, never from the PR's own checkout, so a change cannot
+  // lower its own threshold. `resolveReviewPolicy` refuses (throws) on a
+  // present-but-unknown severity value (O1) — caught here and reported as an
+  // infra-severity check error, the same shape every other unresolvable
+  // trust-anchor fact in this file already uses.
+  let reviewPolicy: ReturnType<typeof resolveReviewPolicy>
+  try {
+    reviewPolicy = resolveReviewPolicy(trustAnchorConfig)
+  } catch (err) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `review-gate severity:infra — ${err instanceof Error ? err.message : String(err)}`,
+      agent_recovery_prompt:
+        "Fix `reviewPolicy` in the default branch's `vinaya.config.json` to a known severity on each role's own scale, then re-run `vinaya check review-gate`."
+    })
+    process.exit(1)
+  }
 
   // A verified waiver skips objectives resolution entirely (#433, security
   // review MAJOR) — `resolveObjectivesVersion` fails closed (`process.exit(1)`)
@@ -461,7 +484,8 @@ function main(): void {
     rulingOrdinal: newestPrincipalRulingOrdinal(
       pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
       principalAllowlist
-    )
+    ),
+    policy: reviewPolicy
   })
 
   if (result.verdict === 'fail') {
