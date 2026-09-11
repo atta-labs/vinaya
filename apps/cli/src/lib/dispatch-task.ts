@@ -27,12 +27,12 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   AEG_BRIEF_V1_MARKER,
+  briefHash,
   briefMarkerFor,
   isPrincipal,
   parseRationaleFields,
@@ -43,7 +43,7 @@ import { assembleAndRenderBrief } from './brief-assembly.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { currentGhLogin, postMarkedComment } from './forge-write.js'
 
-export { AEG_BRIEF_V1_MARKER, contentAfterTwoLines } from '@attalabs/aeg-core'
+export { AEG_BRIEF_V1_MARKER, briefHash, contentAfterTwoLines } from '@attalabs/aeg-core'
 
 /**
  * The coding-agent vendor `--agent` names — distinct from `agent-vendors.ts`'s
@@ -71,18 +71,6 @@ function sh(cmd: string, args: string[]): string {
 
 type IssueComment = { body: string; url: string; author: string | null }
 type IssueCommentsJson = { comments: Array<{ body: string; url: string; author?: { login?: string } | null }> }
-
-/**
- * `sha256` of the brief text as it will appear below the two header lines
- * once posted — `postMarkedComment` appends its own trailing `\n`, so the
- * hashed content is `brief + '\n'`, exactly what `contentAfterTwoLines`
- * reconstructs from the live posted comment. Computing the hash any other
- * way (e.g. over `brief` alone) would make the writer and every reader
- * disagree on a real, once-posted comment.
- */
-export function briefHash(brief: string): string {
-  return createHash('sha256').update(`${brief}\n`).digest('hex')
-}
 
 function fetchIssueComments(n: number): IssueComment[] {
   let out: string
