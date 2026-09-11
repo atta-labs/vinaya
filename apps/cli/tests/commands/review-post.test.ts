@@ -1668,6 +1668,19 @@ describe('parseObjectivesFile', () => {
     expect(() => parseObjectivesFile('O1|DONE|x')).toThrow(ObjectivesParseError)
   })
 
+  it('a status line is MET or NOT MET by its leading word — a qualifier after it is tolerated, not dropped as a parse error (#506, O6)', () => {
+    expect(parseObjectivesFile('O1|NOT MET (partial)|see notes')).toEqual([
+      { id: 'O1', status: 'NOT MET', evidence: 'see notes' }
+    ])
+    expect(parseObjectivesFile('O1|MET — confirmed|see notes')).toEqual([
+      { id: 'O1', status: 'MET', evidence: 'see notes' }
+    ])
+  })
+
+  it('"NOT MET" is never mistaken for a bare "MET" — the longer alternative wins first', () => {
+    expect(parseObjectivesFile('O1|NOT MET|x')[0]?.status).toBe('NOT MET')
+  })
+
   it('throws on empty evidence', () => {
     expect(() => parseObjectivesFile('O1|MET|')).toThrow(ObjectivesParseError)
     expect(() => parseObjectivesFile('O1|MET|   ')).toThrow(ObjectivesParseError)
@@ -2249,14 +2262,30 @@ describe('a doc-correctness finding must carry a repo-wide Search: pattern (Issu
   })
 })
 
-describe('a Search: pattern reaching for alternation gets told why (Issue #434, round 1)', () => {
-  it('names the pipe-delimiter conflict rather than only a field count', () => {
+describe('a Search: pattern using `|` alternation no longer breaks parsing (review-validity-v1 task 8, #506, O6)', () => {
+  it('a doc-correctness Search: pattern carrying `|` alternation now parses cleanly — the grammar splits on its first two `|` only, so a Search: pattern is free to use real regex alternation', () => {
     const line = 'MAJOR|a/b.md:1|F1 doc-correctness: stale. Search: first.(three|five).lines'
-    expect(() => parseFindingsFile(line, ['BLOCKER', 'MAJOR', 'MINOR'])).toThrow(/cannot use `\|` alternation/)
+    const findings = parseFindingsFile(line, ['BLOCKER', 'MAJOR', 'MINOR'])
+    expect(findings).toEqual([
+      {
+        severity: 'MAJOR',
+        location: 'a/b.md:1',
+        description: 'F1 doc-correctness: stale. Search: first.(three|five).lines'
+      }
+    ])
   })
 
-  it('says nothing about alternation for an ordinary malformed line', () => {
-    expect(() => parseFindingsFile('MAJOR|a/b.md:1|F1 correctness: x|y', ['MAJOR'])).toThrow(/expected exactly 3/)
-    expect(() => parseFindingsFile('MAJOR|a/b.md:1|F1 correctness: x|y', ['MAJOR'])).not.toThrow(/alternation/)
+  it('a description carrying an ordinary (non-Search:) `|` also parses cleanly — the rest of the line after the second `|` is the whole description', () => {
+    const findings = parseFindingsFile('MAJOR|a/b.md:1|F1 correctness: x|y', ['MAJOR'])
+    expect(findings).toEqual([{ severity: 'MAJOR', location: 'a/b.md:1', description: 'F1 correctness: x|y' }])
+  })
+
+  it('the alternation hint still fires for a line with too few `|` delimiters that also mentions Search:', () => {
+    expect(() => parseFindingsFile('BLOCKER Search: x', ['BLOCKER'])).toThrow(/cannot use `\|` alternation/)
+  })
+
+  it('says nothing about alternation for an ordinary malformed line (too few `|` delimiters, no Search: text)', () => {
+    expect(() => parseFindingsFile('MAJOR|a/b.md:1', ['MAJOR'])).toThrow(/at least 2/)
+    expect(() => parseFindingsFile('MAJOR|a/b.md:1', ['MAJOR'])).not.toThrow(/alternation/)
   })
 })

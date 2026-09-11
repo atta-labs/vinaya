@@ -122,9 +122,14 @@ const CODE_REVIEW_SEVERITIES = CODE_REVIEW_SEVERITY_ORDER
 const SECURITY_SEVERITIES = SECURITY_SEVERITY_ORDER
 
 /**
- * Parses the `SEVERITY|file:line|description` findings-file grammar. Throws
- * `FindingsParseError` (never silently drops or reinterprets a malformed
- * line) naming the exact line and what was wrong with it.
+ * Parses the `SEVERITY|file:line|description` findings-file grammar. Splits
+ * on its first two `|` only (`review-validity-v1` task 8, `#506`, O6) — the
+ * rest of the line is the description, exactly the same tolerance
+ * `parseObjectivesFile` already gives evidence, so a description that itself
+ * contains a `|` (an em-dash-separated aside, a piped shell example) no
+ * longer breaks parsing. Throws `FindingsParseError` (never silently drops
+ * or reinterprets a malformed line) naming the exact line and what was wrong
+ * with it.
  */
 export function parseFindingsFile(content: string, allowedSeverities: readonly string[]): Finding[] {
   const lines = content
@@ -133,8 +138,9 @@ export function parseFindingsFile(content: string, allowedSeverities: readonly s
     .filter((l) => l.length > 0)
 
   return lines.map((line, idx) => {
-    const parts = line.split('|')
-    if (parts.length !== 3) {
+    const first = line.indexOf('|')
+    const second = first === -1 ? -1 : line.indexOf('|', first + 1)
+    if (first === -1 || second === -1) {
       // A `Search:` pattern reaching for regex alternation is the one way to
       // land here that has nothing to do with the grammar being misunderstood,
       // so it gets its own sentence rather than a bare field count.
@@ -142,15 +148,16 @@ export function parseFindingsFile(content: string, allowedSeverities: readonly s
         ? ' The `Search:` pattern cannot use `|` alternation — this file is `|`-delimited. Use a character class, or a shorter pattern matching the stem the copies share.'
         : ''
       throw new FindingsParseError(
-        `findings file line ${idx + 1}: expected exactly 3 \`|\`-delimited fields (SEVERITY|file:line|description), found ${parts.length}: ${line}${alternationHint}`
+        `findings file line ${idx + 1}: expected \`SEVERITY|file:line|description\` (at least 2 \`|\` delimiters): ${line}${alternationHint}`
       )
     }
-    const severity = (parts[0] as string).trim().toUpperCase()
-    const location = (parts[1] as string).trim()
-    const description = (parts[2] as string).trim()
+    const severityRaw = line.slice(0, first).trim()
+    const severity = severityRaw.toUpperCase()
+    const location = line.slice(first + 1, second).trim()
+    const description = line.slice(second + 1).trim()
     if (!allowedSeverities.includes(severity)) {
       throw new FindingsParseError(
-        `findings file line ${idx + 1}: severity "${parts[0]}" is not one of ${allowedSeverities.join('|')}: ${line}`
+        `findings file line ${idx + 1}: severity "${severityRaw}" is not one of ${allowedSeverities.join('|')}: ${line}`
       )
     }
     if (!location || !description) {
@@ -294,11 +301,19 @@ export function parseObjectivesFile(content: string): ObjectiveResult[] {
         `objectives file line ${idx + 1}: "${id}" is not a well-formed objective id — expected \`O<n>\`: ${line}`
       )
     }
-    if (statusRaw !== 'MET' && statusRaw !== 'NOT MET') {
+    // Tolerant by leading word (`review-validity-v1` task 8, `#506`, O6): a
+    // reviewer writing `NOT MET (partial)` or `MET — see note` still parses,
+    // anything after the leading MET/NOT MET word is ignored for the status
+    // itself (it is not dropped; the caller's own line still carries it, and
+    // most such qualifiers belong in the evidence field instead). Longer
+    // alternative first so `NOT MET` is never mistaken for a bare `MET`.
+    const statusMatch = /^(NOT MET|MET)\b/.exec(statusRaw)
+    if (!statusMatch) {
       throw new ObjectivesParseError(
-        `objectives file line ${idx + 1}: status "${statusRaw}" is not MET or NOT MET: ${line}`
+        `objectives file line ${idx + 1}: status "${statusRaw}" does not start with MET or NOT MET: ${line}`
       )
     }
+    const status = statusMatch[1] as ObjectiveStatus
     if (!evidence) {
       throw new ObjectivesParseError(`objectives file line ${idx + 1}: evidence must be non-empty for ${id}: ${line}`)
     }
@@ -306,7 +321,7 @@ export function parseObjectivesFile(content: string): ObjectiveResult[] {
     if (invalidReason) {
       throw new ObjectivesParseError(`objectives file line ${idx + 1}: ${invalidReason} (${id}): ${line}`)
     }
-    return { id, status: statusRaw as ObjectiveStatus, evidence }
+    return { id, status, evidence }
   })
 }
 

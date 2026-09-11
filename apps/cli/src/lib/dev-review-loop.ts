@@ -66,7 +66,10 @@ import {
   deriveSecurityVerdict,
   type EscalationClass,
   type Finding,
+  FindingsParseError,
   isEscalationClass,
+  type ObjectiveResult,
+  ObjectivesParseError,
   parseFindingsFile,
   parseObjectivesFile,
   principalBodies,
@@ -844,6 +847,30 @@ export class ReviewerInfrastructureFailure extends Error {
 }
 
 /**
+ * Thrown by `buildVerdictFromReport` when `findings.txt`/`objectives.txt`
+ * still does not parse (`review-validity-v1` task 8, `#506`, O6) — the file
+ * exists (`missingReviewerArtifacts` already passed), but a line inside it
+ * is malformed beyond `parseFindingsFile`/`parseObjectivesFile`'s own
+ * tolerance (a status that starts with neither `MET` nor `NOT MET`, a
+ * findings line with fewer than two `|` delimiters). `dispatchReviewer`
+ * gives this the SAME one-fresh-retry treatment as a missing artifact; a
+ * second miss propagates here and the loop turns it into `{ type: 'pause',
+ * reason: 'infrastructure' }` — naming the file, the line (already inside
+ * `parseError.message`), and the reviewer's session id — never an uncaught
+ * throw that crashes the driver.
+ */
+export class ReviewerReportParseFailure extends Error {
+  constructor(
+    public readonly role: 'reviewer' | 'security',
+    public readonly file: 'findings.txt' | 'objectives.txt',
+    public readonly sessionId: string,
+    public readonly parseError: Error
+  ) {
+    super(`${role}'s ${file} did not parse (session ${sessionId}): ${parseError.message}`)
+  }
+}
+
+/**
  * O9: thrown by the round-1-entry check when the
  * developer's very first turn ends with no branch on the remote AND a
  * refusal/escalation posted on the task Issue (`fetchDeveloperStop`) — the
@@ -1593,10 +1620,29 @@ function buildVerdictFromReport(
 
   const findingsRaw = readIfExists(join(workDir, 'findings.txt')) ?? ''
   const allowedSeverities = role === 'reviewer' ? CODE_REVIEW_SEVERITY_ORDER : SECURITY_SEVERITY_ORDER
-  const findings: Finding[] = findingsRaw.trim() ? parseFindingsFile(findingsRaw, allowedSeverities) : []
+  // O6: a line that still does not parse — tolerant of a qualified status
+  // and a `|` in a description, but still not a valid line — is an
+  // infrastructure pause, never an uncaught throw that crashes the driver.
+  let findings: Finding[]
+  try {
+    findings = findingsRaw.trim() ? parseFindingsFile(findingsRaw, allowedSeverities) : []
+  } catch (err) {
+    if (err instanceof FindingsParseError) {
+      throw new ReviewerReportParseFailure(role, 'findings.txt', sessionId, err)
+    }
+    throw err
+  }
 
   const objectivesRaw = readIfExists(join(workDir, 'objectives.txt'))
-  const objectiveResults = objectivesRaw?.trim() ? parseObjectivesFile(objectivesRaw) : []
+  let objectiveResults: ObjectiveResult[]
+  try {
+    objectiveResults = objectivesRaw?.trim() ? parseObjectivesFile(objectivesRaw) : []
+  } catch (err) {
+    if (err instanceof ObjectivesParseError) {
+      throw new ReviewerReportParseFailure(role, 'objectives.txt', sessionId, err)
+    }
+    throw err
+  }
   const objectives = objectiveResults.map((o) => ({ id: o.id, met: o.status === 'MET' }))
   // O2: a version renders alongside its `OBJECTIVES:` block, or neither
   // renders — `review-post.ts`'s `CodeReviewInput`/`SecurityInput` contract
@@ -1685,9 +1731,10 @@ function renderReviewerDispatchPrompt(
     role === 'reviewer'
       ? '(severities: BLOCKER, MAJOR, MINOR — leave the file empty if there are none).'
       : '(severities: CRITICAL, HIGH, MEDIUM, LOW — leave the file empty if there are none).',
+    '`|` never appears in a description — write the finding without one, even inside a quoted or piped example.',
     ...(hasObjectivesFacts(facts)
       ? [
-          `Write one line per objective listed above to ${join(workDir, 'objectives.txt')}: O<n>|MET|<evidence> or O<n>|NOT MET|<evidence>.`
+          `Write one line per objective listed above to ${join(workDir, 'objectives.txt')}: O<n>|MET|<evidence> or O<n>|NOT MET|<evidence> — the status is read by its bare leading word (MET or NOT MET); write nothing else before it on that field.`
         ]
       : []),
     `Write a short report to ${join(workDir, 'report.txt')} as one \`KEY: value\` line per field:`,
@@ -2116,6 +2163,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const hasObjectives = hasObjectivesFacts(facts)
       const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
       let lastMissing: string[] = []
+      let lastParseFailure: ReviewerReportParseFailure | null = null
       for (let attempt = 1; attempt <= 2; attempt++) {
         const workDir = reviewerWorkDir(root, task, roundNum, role, attempt)
         mkdirSync(workDir, { recursive: true })
@@ -2127,20 +2175,33 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const missing = missingReviewerArtifacts(workDir, hasObjectives)
         if (missing.length > 0) {
           lastMissing = missing
+          lastParseFailure = null
           continue
         }
-        return buildVerdictFromReport(
-          role,
-          workDir,
-          facts.head,
-          input.agent,
-          task,
-          handle,
-          facts.objectivesVersion,
-          facts.rulingOrdinal,
-          policy
-        )
+        // O6: the SAME one-fresh-retry treatment a missing artifact gets —
+        // a findings.txt/objectives.txt that exists but still does not
+        // parse is retried once, into a fresh work directory, before it
+        // becomes a pause.
+        try {
+          return buildVerdictFromReport(
+            role,
+            workDir,
+            facts.head,
+            input.agent,
+            task,
+            handle,
+            facts.objectivesVersion,
+            facts.rulingOrdinal,
+            policy
+          )
+        } catch (err) {
+          if (!(err instanceof ReviewerReportParseFailure)) throw err
+          lastParseFailure = err
+          lastMissing = []
+          continue
+        }
       }
+      if (lastParseFailure) throw lastParseFailure
       throw new ReviewerInfrastructureFailure(role, lastMissing)
     }
 
@@ -2517,7 +2578,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             dispatchReviewer('security', round, facts)
           ])
         } catch (err) {
-          if (!(err instanceof ReviewerInfrastructureFailure)) throw err
+          if (!(err instanceof ReviewerInfrastructureFailure) && !(err instanceof ReviewerReportParseFailure)) throw err
           const stats = computeStats(head, roundStartMs)
           await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
           decision = { type: 'pause', reason: 'infrastructure', detail: err.message }

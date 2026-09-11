@@ -1306,6 +1306,97 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
   }, 20000)
 })
 
+// --- a findings.txt that still does not parse is infrastructure, never an
+// uncaught throw (review-validity-v1 task 8, #506, O6) ---
+
+/**
+ * Security writes a genuinely unparseable `findings.txt` line — no `|` at
+ * all, so neither a severity nor a location nor a description can be read
+ * off it — on BOTH the first dispatch and the retry. The prior behaviour
+ * (before O6) let `parseFindingsFile`'s thrown `FindingsParseError`
+ * propagate straight out of `buildVerdictFromReport` uncaught, crashing the
+ * whole driver process; this scenario proves it is now caught, retried
+ * once, and turned into the same `infrastructure` pause a missing artifact
+ * gets — never a crash.
+ */
+function writeFakeClaudeReviewerWritesGarbageFindingsScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+cat > /dev/null
+WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    ATTEMPT=$(cat "$HOME/.security-invocations" 2>/dev/null | wc -l | tr -d ' ')
+    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    if [ "$ATTEMPT" != "0" ]; then
+      WD="$WORKROOT/round-$VINAYA_ROUND-security-work-retry1"
+    fi
+    mkdir -p "$WD"
+    printf 'this is not a valid finding line at all\\n' > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo "invocation" >> "$HOME/.security-invocations"
+    echo '{"session_id":"sec-session-garbage","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+function setUpReviewerWritesGarbageFindings(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeReviewerWritesGarbageFindingsScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a findings.txt line that still does not parse is an infrastructure pause (review-validity-v1 task 8, #506, O6)', () => {
+  it('retries once into a fresh work directory, then pauses naming the file, the line, and the reviewer session id — never an uncaught throw', () => {
+    const { home, cwd, path } = setUpReviewerWritesGarbageFindings()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // Two genuinely separate dispatches — one attempt, one fresh retry.
+    const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
+    expect(invocations).toHaveLength(2)
+
+    const drlRoot = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    const pauseState = JSON.parse(readFileSync(join(drlRoot, 'pause-state.json'), 'utf8')) as Record<string, unknown>
+    expect(pauseState.round).toBe(1)
+    expect(pauseState.reason).toBe('infrastructure')
+
+    const pausedFiles = postedCommentFiles(home)
+    expect(pausedFiles).toHaveLength(1)
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[0] as string), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    // Names the file, the line (inside the parse error's own message), and
+    // the reviewer's session id — O6's three required facts.
+    expect(pauseComment).toMatch(/findings\.txt/)
+    expect(pauseComment).toMatch(/line 1/)
+    expect(pauseComment).toMatch(/sec-session-garbage/)
+    expect(pauseComment).not.toMatch(/^VERDICT:/m)
+  }, 20000)
+})
+
 // --- an empty findings file is still a clean verdict (O1, contrast case) ---
 //
 // Already proven by 'devReviewLoop — round 1 clean, ends on publish', above:
@@ -1385,6 +1476,10 @@ describe('devReviewLoop — the reviewer prompt names the objectives file, and o
     )
     expect(reviewerPrompt).toMatch(/objectives\.txt/)
     expect(reviewerPrompt).toMatch(/O<n>\|MET\|<evidence>/)
+    // O6 (review-validity-v1 task 8, #506): the prompt states the bare-word
+    // status rule and that `|` never appears in a description.
+    expect(reviewerPrompt).toMatch(/bare leading word/)
+    expect(reviewerPrompt).toMatch(/`\|` never appears in a description/)
 
     const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
     expect(invocations).toHaveLength(2)
