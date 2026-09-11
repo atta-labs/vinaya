@@ -43,8 +43,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, unlinkSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import {
   assessRound,
   initialLoopState,
@@ -66,7 +66,7 @@ import {
 } from './dispatch.js'
 import { postMarkedComment } from './forge-write.js'
 import { createLogSink, outboxPathFor } from './log-sink.js'
-import { packageRoot } from './package-root.js'
+import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
   fetchCiConclusion,
@@ -99,6 +99,7 @@ import {
   buildVerdictFromReport,
   discardHeldVerdicts,
   hasObjectivesFacts,
+  latestHeldRequestChanges,
   missingReviewerArtifacts,
   outboxRoot,
   readIfExists,
@@ -225,7 +226,7 @@ export type LoopDeps = {
   gitRevParseOriginMain: () => string
   gitFetch: (sha: string) => void
   gitDiffShortstat: (base: string, head: string) => string
-  flushOutbox: (task: number) => void
+  flushOutbox: (task: number) => Promise<void>
   sleep: (ms: number) => Promise<void>
   now: () => number
   prPollMaxAttempts: number
@@ -269,28 +270,23 @@ function defaultGitDiffShortstat(base: string, head: string): string {
 }
 
 /**
- * Spawns `vinaya log flush --issue <task>` as a SUBPROCESS rather than
- * importing `logFlushCommand` and calling it in-process. `logFlushCommand`
- * calls `process.exit()` directly on its own terminal paths (`0` for
- * "nothing to flush", `2` for a refusal) — calling that in-process inside
- * this driver's long-running, multi-round loop would kill the whole
- * `dev-review-loop` process on the very first such edge case, abandoning
- * every round still to come. A subprocess boundary contains that exit to
- * the child; a non-zero child exit is logged to stderr and never fatal to
- * the loop (flush failures don't undo a dispatch's own already-durable
- * outbox lines — `dispatch.ts`'s own doc comment).
+ * Calls `flushOutbox` (`./log-flush.js`) in-process rather than spawning a
+ * `vinaya log flush` subprocess (task 3, `#482`, O2) — a command calling a
+ * command, via a child process, which `apps/cli/specs/surface.md`'s "the
+ * rule" forbids. `flushOutbox` never calls `process.exit` (unlike the old
+ * `logFlushCommand` it replaced here), so this driver's long-running,
+ * multi-round process is never at risk of dying on a flush's own terminal
+ * path; a thrown `LogFlushError` — or any other failure — is caught and
+ * logged to stderr, never fatal to the loop (flush failures don't undo a
+ * dispatch's own already-durable outbox lines).
  */
-function defaultFlushOutbox(task: number): void {
+async function defaultFlushOutbox(task: number): Promise<void> {
   try {
-    const cliEntry = join(packageRoot(import.meta.url), 'src', 'index.ts')
-    execFileSync('bun', [cliEntry, 'log', 'flush', '--issue', String(task)], {
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
+    await flushOutboxLib({ issue: task })
   } catch (err) {
+    const message = err instanceof LogFlushError || err instanceof Error ? err.message : String(err)
     process.stderr.write(
-      `vinaya dev-review-loop: round-end flush failed (non-fatal, lines stay in the outbox for a later flush): ${
-        err instanceof Error ? err.message : String(err)
-      }\n`
+      `vinaya dev-review-loop: round-end flush failed (non-fatal, lines stay in the outbox for a later flush): ${message}\n`
     )
   }
 }
@@ -761,6 +757,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     let roundStartMs = d.now()
+    let decision: Decision = { type: 'dispatch_developer' }
+    let firstPass = !resumeFrom
     if (resumeFrom) {
       // O2: resuming — the PR and branch are already known (`resumeFrom`), so
       // there is no round-1 dispatch and no PR to poll for. `lastReviewContext`
@@ -781,10 +779,58 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // Attach: no developer dispatch here at all — the recorded session is
         // read now so a LATER round's resume (if one is ever needed) resumes
         // the SAME session rather than starting fresh; round 1's own gate runs
-        // next, unmodified, straight off `firstPass`.
+        // next, unmodified, straight off `firstPass` — UNLESS O4 (below)
+        // recovers a real round from held state.
         prNumber = existingPr.number
         const rec = d.readResumeRecord(task, input.agent, repo)
         if (rec) devResumeId = rec.resumeId
+
+        // O4 (task 3, `#482`): a prior process may have
+        // dispatched round k's reviewers, held REQUEST-CHANGES verdicts on
+        // disk, and dispatched the developer — then crashed or was
+        // restarted before ever observing whether the developer pushed a
+        // fix. Left alone, `round` stays at its default of 1 and this
+        // attach would re-run round 1's OWN gate check on a head that may
+        // be several real rounds deep (Origin: PR #529 — every attach
+        // after a fix push re-delivered round 1's stale findings and
+        // drifted into a confidence-collapse pause). Recovered here
+        // instead, from the durable, machine-local held-verdict files.
+        const held = latestHeldRequestChanges(root, task)
+        if (held) {
+          const currentHead = d.resolveHead(branch)
+          if (currentHead !== held.head) {
+            // The developer already pushed since round k's findings were
+            // computed — never re-deliver round k's findings. `round` set
+            // to k+1 and `firstPass` left at its default `true` (attach)
+            // is exactly the existing, already-tested fallthrough: no
+            // developer dispatch here, straight to round k+1's own gate
+            // check, which itself decides `dispatch_reviewers` once green.
+            round = held.round + 1
+          } else {
+            // Head unchanged — round k's findings were never actually
+            // delivered to the developer (or the developer hasn't
+            // responded yet). Never a third consecutive attempt on the
+            // SAME head with no push in between: the second one reads as
+            // `no_progress`, not another redelivery drifting toward a
+            // confidence collapse.
+            const marker = join(root, 'dev-review-loop', String(task), `round-${held.round}-attach-redelivered`)
+            if (existsSync(marker)) {
+              const stats = computeStats(currentHead, d.now())
+              await logEvents(driverDecidedPauseEvents(config.loopId, state, held.round + 1, stats))
+              decision = {
+                type: 'pause',
+                reason: 'no_progress',
+                detail: `round ${held.round} findings delivered again on unchanged head ${currentHead}, with no developer push since the first delivery`
+              }
+            } else {
+              mkdirSync(dirname(marker), { recursive: true })
+              writeFileSync(marker, new Date().toISOString(), 'utf8')
+              round = held.round + 1
+              lastReviewContext = held.rendered
+              firstPass = false
+            }
+          }
+        }
       } else {
         let branchExists = true
         try {
@@ -819,15 +865,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 renderNoPushStopComment(task, err.detail)
               )
             )
-            d.flushOutbox(task)
+            await d.flushOutbox(task)
             return { finalDecision: { type: 'pause', reason: 'escalation', detail: err.detail }, prNumber: 0, task }
           }
         }
       }
     }
 
-    let decision: Decision = { type: 'dispatch_developer' }
-    let firstPass = !resumeFrom
     // Held back from `logEvents` until `publishRound` (below) actually
     // succeeds — `assessRound`'s one `journal_finalized`/`merged_ready` event
     // (`assess-round.ts`) always arrives bundled with a `publish` decision in
@@ -878,7 +922,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const detail = `base moved from ${baseHeadAtStart} to ${currentBaseHead}, touching this driver's own code (${touching.join('; ')})`
       await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
       decision = { type: 'pause', reason: 'stale_driver', detail }
-      d.flushOutbox(task)
+      await d.flushOutbox(task)
       return true
     }
 
@@ -969,12 +1013,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                       lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
                     }`
               if (gateStalledStreak < MAX_GATE_STALLED_TURNS) {
-                d.flushOutbox(task)
+                await d.flushOutbox(task)
                 continue
               }
               await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
               decision = { type: 'pause', reason: 'infrastructure', detail }
-              d.flushOutbox(task)
+              await d.flushOutbox(task)
               continue
             }
           }
@@ -993,7 +1037,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const mergeableBeforeGate = await pollMergeableState(prNumber)
         if (mergeableBeforeGate === 'CONFLICTING') {
           pendingConflictFiles = d.fetchConflictingFiles('main', branch)
-          d.flushOutbox(task)
+          await d.flushOutbox(task)
           continue
         }
         pendingConflictFiles = null
@@ -1008,7 +1052,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         state = result.state
         decision = result.decision
         await logEvents(result.events)
-        d.flushOutbox(task)
+        await d.flushOutbox(task)
       } else if (decision.type === 'ask_confidence') {
         const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${CONFIDENCE_PROMPT_LINE}`
         await dispatchDeveloper(reaskPrompt, round)
@@ -1022,7 +1066,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         pendingGateRedRetry = false
         gateStalledStreak = 0
         await logEvents(result.events)
-        d.flushOutbox(task)
+        await d.flushOutbox(task)
       } else if (decision.type === 'dispatch_reviewers') {
         // O4/O7: mergeability is read BEFORE any CI
         // read or reviewer dispatch — a branch in conflict with the base
@@ -1034,7 +1078,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         if (mergeableForReview === 'CONFLICTING') {
           pendingConflictFiles = d.fetchConflictingFiles('main', branch)
           decision = { type: 'dispatch_developer' }
-          d.flushOutbox(task)
+          await d.flushOutbox(task)
           continue
         }
         // Genuinely resolved (or never conflicting) — clear the retry flag
@@ -1104,13 +1148,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             const stats = computeStats(head, roundStartMs)
             await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
             decision = { type: 'pause', reason: 'objectives_changed', detail }
-            d.flushOutbox(task)
+            await d.flushOutbox(task)
           } else if (reassessedRulingOrdinal !== facts.rulingOrdinal) {
             const detail = `a new ruling landed between reviewer dispatch and assessment — ruling ordinal moved from ${facts.rulingOrdinal} to ${reassessedRulingOrdinal} — superseded by ruling ${prNumber}-${reassessedRulingOrdinal}`
             const stats = computeStats(head, roundStartMs)
             await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
             decision = { type: 'pause', reason: 'ruling_posted', detail }
-            d.flushOutbox(task)
+            await d.flushOutbox(task)
           } else {
             const [reviewer, security] = verdicts
             // Both roles genuinely finished (`Promise.all` did not reject) —
@@ -1132,11 +1176,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             const routed = routeCompletionEvents(result.events, decision.type)
             pendingCompletionEvents = routed.toDeferUntilPublish
             await logEvents(routed.toLogNow)
-            d.flushOutbox(task)
+            await d.flushOutbox(task)
             if (decision.type === 'dispatch_developer') round += 1
           }
         } else {
-          d.flushOutbox(task)
+          await d.flushOutbox(task)
         }
       }
 
@@ -1157,7 +1201,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           pendingCompletionEvents = []
           pendingConflictFiles = d.fetchConflictingFiles('main', branch)
           decision = { type: 'dispatch_developer' }
-          d.flushOutbox(task)
+          await d.flushOutbox(task)
           continue
         }
         pendingConflictFiles = null
@@ -1168,7 +1212,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // between, so the top-of-loop check alone never catches a base that
         // moved past this driver's own code while reviewers were working.
         if (await checkStaleDriver()) {
-          d.flushOutbox(task)
+          await d.flushOutbox(task)
           continue
         }
 
@@ -1185,7 +1229,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // failed, or re-parsed dirty) skips this entirely, so the log never
         // claims `merged_ready` for a run that did not actually finish.
         await logEvents(pendingCompletionEvents)
-        d.flushOutbox(task)
+        await d.flushOutbox(task)
         return { finalDecision: decision, prNumber, task }
       }
 
@@ -1202,7 +1246,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           pausedAt: new Date().toISOString()
         })
         postPauseComment(root, task, round, pauseHead, prNumber, decision.reason, decision.detail)
-        d.flushOutbox(task)
+        await d.flushOutbox(task)
         return { finalDecision: decision, prNumber, task }
       }
     }

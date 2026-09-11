@@ -130,20 +130,24 @@ describe('dispatchRole — a successful dispatch', () => {
 
     // `--task` is given (to confirm `VINAYA_TASK` propagates) but no `gh` is
     // provided on PATH and `cwd` is not a git repo, so `dispatchCommand`'s
-    // trailing `log flush` refuses locally — safely, before any network
-    // call (confirmed live: `gh issue comment` outside a git repo fails on
-    // repo resolution alone) — with exit `2`. That is deliberate here: a
-    // SUCCEEDING flush would truncate the very outbox lines this test reads
-    // below; `--task`'s effect on env attribution and the log lines
-    // themselves is this test's concern, not the flush (see
-    // `apps/cli/tests/commands/dispatch.test.ts` for that).
+    // trailing `flushOutbox` call (task 3, `#482`, O1) refuses locally —
+    // safely, before any network call (confirmed live: `gh issue comment`
+    // outside a git repo fails on repo resolution alone). That refusal is
+    // deliberate here — a SUCCEEDING flush would truncate the very outbox
+    // lines this test reads below — but never reaches this process's own
+    // exit code any more: `flushOutbox` never calls `process.exit`, and
+    // `dispatchCommand` catches its thrown `LogFlushError` and logs it to
+    // stderr, non-fatally, exactly as its own doc comment promises. `--task`'s
+    // effect on env attribution and the log lines themselves is this test's
+    // concern, not the flush (see `apps/cli/tests/commands/dispatch.test.ts`
+    // for that).
     const r = runDispatch(
       ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '9001'],
       cwd,
       home,
       `${binDir}:${pathWithoutRealVendors()}`
     )
-    expect(r.status).toBe(2)
+    expect(r.status).toBe(0)
 
     const env = readFileSync(envOut, 'utf8')
     expect(env).toMatch(/^VINAYA_ROLE=developer$/m)
@@ -589,18 +593,19 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
       'claude',
       `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"session_id":"${synthId1}","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
     )
-    // `--task` makes `dispatchCommand` also try `vinaya log flush` with no
-    // `gh` on PATH outside a git repo — refused locally with exit `2`, the
-    // same deliberate shape the first `dispatchRole` describe block above
-    // documents. The resume record is written by `dispatchRole` itself,
-    // before that flush step ever runs, so it exists regardless.
+    // `--task` makes `dispatchCommand` also try `flushOutbox` with no `gh`
+    // on PATH outside a git repo — refused locally, the same deliberate
+    // shape the first `dispatchRole` describe block above documents, caught
+    // non-fatally so it never reaches this process's own exit code. The
+    // resume record is written by `dispatchRole` itself, before that flush
+    // step ever runs, so it exists regardless.
     const first = runDispatch(
       ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '454'],
       cwd,
       home,
       path
     )
-    expect(first.status).toBe(2)
+    expect(first.status).toBe(0)
 
     const record1 = JSON.parse(readFileSync(recordPath, 'utf8')) as {
       resumeId: string
@@ -629,7 +634,7 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
       home,
       path
     )
-    expect(second.status).toBe(2)
+    expect(second.status).toBe(0)
 
     // Overwritten, not appended — only the latest session is resumable.
     const record2 = JSON.parse(readFileSync(recordPath, 'utf8')) as { resumeId: string }
