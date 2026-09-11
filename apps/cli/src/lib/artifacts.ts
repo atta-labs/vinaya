@@ -298,7 +298,19 @@ ${bunInstallCacheStep()}      # This repo declares the \`@attalabs/vinaya\` work
     // boundary; a `pull_request_target` workflow must NEVER take this branch
     // (see `reviewWorkflow`/`bodyChecksWorkflow`/`archivistWorkflow`, all of
     // which stay on `'trusted'` and build their own copy).
-    return `      - name: Find the shared CLI build for this commit
+    //
+    // Still installs — only the BUILD is shared, not the install. The
+    // downloaded \`dist/index.js\` imports its external (unbundled) deps —
+    // \`gray-matter\`, \`zod\` — from \`node_modules\` at require time (found
+    // live: skipping install here entirely crashed every run with
+    // \`ERR_MODULE_NOT_FOUND: Cannot find package 'gray-matter'\`, since no
+    // step in this branch had ever populated \`node_modules\`). O1's cache
+    // step still makes this install cheap; what O2 removes is only the
+    // \`bun run --cwd \${selfHost.dir} build\` this job used to also pay for.
+    return `      - uses: oven-sh/setup-bun@${SETUP_BUN_SHA}
+${bunInstallCacheStep()}      - name: Install dependencies (dist is downloaded below, never built here)
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Find the shared CLI build for this commit
         id: shared-build
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}

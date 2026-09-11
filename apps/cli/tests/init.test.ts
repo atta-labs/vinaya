@@ -870,24 +870,29 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // The first THIRD-PARTY action this generator writes into an adopter repo,
     // in the job that then builds and runs PR code: pinned to a commit, so a
     // repoint of the mutable tag cannot execute new upstream code everywhere.
-    // `vinaya-checks.yml` no longer builds its own copy (O2) — it downloads
-    // the one `ci.yml` already built, so it contributes neither a setup-bun
-    // nor an install of its own. review(1) + verdict(1) + body-checks(1) +
-    // archivist(3) = 5.
+    // `vinaya-checks.yml` no longer BUILDS its own copy (O2) — it downloads
+    // the one `ci.yml` already built — but it still installs (found live:
+    // the downloaded `dist/index.js` imports its external, unbundled deps —
+    // `gray-matter`, `zod` — from `node_modules` at require time, and
+    // nothing else in that job ever populates it), so it still contributes
+    // its own setup-bun. `files`/`occurrences` cover the five paths in
+    // `WORKFLOWS` above — body-checks.yml is not one of them (see the O2
+    // boundary test, which reads it directly for that reason) — so:
+    // checks(1) + review(1) + verdict(1) + archivist(3) = 6.
     expect(occurrences(files, 'oven-sh/setup-bun@v2')).toBe(0)
-    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(5)
+    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(6)
 
     // The install runs against the PR's own dependency manifest.
-    expect(occurrences(files, 'bun install --frozen-lockfile --ignore-scripts')).toBe(5)
+    expect(occurrences(files, 'bun install --frozen-lockfile --ignore-scripts')).toBe(6)
     expect(occurrences(files, 'bun install --frozen-lockfile\n')).toBe(0)
 
     // O1: every install is preceded by a restore of Bun's own install cache,
     // keyed on the lockfile — so a second workflow on the same commit
-    // installs nothing it doesn't already have. `vinaya-checks.yml` has no
-    // install of its own (O2), so no cache step either.
-    expect(occurrences(files, 'Restore Bun install cache')).toBe(5)
-    expect(occurrences(files, 'actions/cache@v4')).toBe(5)
-    expect(occurrences(files, `key: bun-\${{ runner.os }}-\${{ hashFiles('bun.lock', 'bun.lockb') }}`)).toBe(5)
+    // installs nothing it doesn't already have. `vinaya-checks.yml`'s
+    // install (O2, above) gets one too.
+    expect(occurrences(files, 'Restore Bun install cache')).toBe(6)
+    expect(occurrences(files, 'actions/cache@v4')).toBe(6)
+    expect(occurrences(files, `key: bun-\${{ runner.os }}-\${{ hashFiles('bun.lock', 'bun.lockb') }}`)).toBe(6)
 
     // Default checkout writes GITHUB_TOKEN into .git/config as an http
     // extraheader — in the same workspace the build then executes.
@@ -907,9 +912,12 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // All six invocations move — none left on the broken path.
     expect(occurrences(files, 'npx --yes @attalabs/vinaya')).toBe(0)
     expect(occurrences(files, VENDORED_BIN)).toBe(6)
-    // Every job that BUILDS the member it invokes — every one except
-    // `vinaya-checks.yml`, which downloads the shared build instead (O2).
-    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(5)
+    // Every job in `WORKFLOWS` installs (6 — see the setup-bun count above);
+    // only the jobs that actually BUILD their own copy run the build
+    // command — every one except `vinaya-checks.yml`, which downloads the
+    // shared build instead (O2) but still installs for the downloaded
+    // dist's runtime deps.
+    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(6)
     expect(occurrences(files, 'bun run --cwd apps/cli build')).toBe(5)
 
     // Per-file: the exact subcommands, in the built-binary shape.
@@ -930,10 +938,12 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(occurrences(new Map([[ARCHIVIST_WORKFLOW_PATH, archivist]]), 'setup-bun')).toBe(3)
 
     // O2: `vinaya-checks.yml` never builds; it downloads the artifact
-    // `ci.yml` uploads. A `pull_request_target` workflow never does this —
-    // see the boundary test below.
-    expect(checks).not.toContain('oven-sh/setup-bun')
-    expect(checks).not.toContain('bun install')
+    // `ci.yml` uploads (but still installs, for the downloaded dist's
+    // runtime deps — see above). A `pull_request_target` workflow never
+    // downloads an artifact at all — see the boundary test below.
+    expect(checks).toContain('oven-sh/setup-bun')
+    expect(checks).toContain('bun install --frozen-lockfile --ignore-scripts')
+    expect(checks).not.toContain('bun run --cwd apps/cli build')
     expect(checks).toContain('actions/download-artifact@v4')
     expect(checks).toContain(`name: ${CLI_DIST_ARTIFACT_NAME}`)
     expect(checks).toContain('actions/workflows/ci.yml/runs')
