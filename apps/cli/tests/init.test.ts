@@ -947,6 +947,13 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(checks).toContain('actions/download-artifact@v4')
     expect(checks).toContain(`name: ${CLI_DIST_ARTIFACT_NAME}`)
     expect(checks).toContain('actions/workflows/ci.yml/runs')
+    // CI red, found live: download-artifact does not reliably preserve the
+    // executable bit `scripts/build.ts` sets on every emitted entrypoint —
+    // every check, spawned directly from `dist/checks/bin/*.js`, failed
+    // EACCES after download. Restored explicitly, after the download.
+    const downloadIdx = checks.indexOf('actions/download-artifact@v4')
+    const chmodIdx = checks.indexOf('chmod -R +x apps/cli/dist')
+    expect(chmodIdx).toBeGreaterThan(downloadIdx)
   })
 
   it('O2 boundary: only the shared pull_request build downloads it — pull_request_target workflows always build their own', async () => {

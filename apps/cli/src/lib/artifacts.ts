@@ -340,6 +340,15 @@ ${bunInstallCacheStep()}      - name: Install dependencies (dist is downloaded b
           path: ${selfHost.dir}/dist
           github-token: \${{ secrets.GITHUB_TOKEN }}
           run-id: \${{ steps.shared-build.outputs.run_id }}
+      # \`upload-artifact\`/\`download-artifact\` round-trip through a zip and
+      # do not reliably preserve the executable bit \`scripts/build.ts\` sets
+      # on every emitted entrypoint (found live: every check spawned
+      # directly from \`dist/checks/bin/*.js\` — not via \`node\` — failed
+      # \`EACCES\` after download). Restored here rather than skipped upstream:
+      # the upload side has no reason to know which bits its own consumer
+      # will need preserved.
+      - name: Restore executable bits lost in the artifact round-trip
+        run: chmod -R +x ${selfHost.dir}/dist
 `
   }
   return `      # Pinned to a commit, not the mutable \`v2\` tag. This is the first
