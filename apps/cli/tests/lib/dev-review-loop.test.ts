@@ -3551,3 +3551,133 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
     expect(result.reason).toContain('ruling 2')
   })
 })
+
+/**
+ * Same as `writeFakeGh`, except the mechanical check-runs answer models a
+ * real principal-owed scenario (review-validity-v1 11, O1/O2/O3): the
+ * bundled `vinaya check --all --diff-only` job reads `success` — exactly
+ * what `isRunFailed` (apps/cli/src/commands/check.ts) produces when the
+ * only red is `test-plan`'s `principalOwed` failure and every error it
+ * reported is `pending: true` — while a SEPARATE `vinaya review gate` run
+ * reads `failure`, modeling O2's merge-time enforcement of the same unticked
+ * `[principal]` box. `fetchMechanicalCheckRuns` (gate-reading.ts) already
+ * excludes `REVIEW_GATE_CHECK_RUN_NAME` unconditionally, by name, regardless
+ * of why it is red — so the loop's own CI reader must see ONLY the first
+ * line and read this head as green.
+ */
+function writeFakeGhCiGreenReviewGateRed(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  printf '%s\\n' '{"id":1,"name":"vinaya check --all --diff-only","status":"completed","conclusion":"success"}'
+  printf '%s\\n' '{"id":2,"name":"vinaya review gate","status":"completed","conclusion":"failure"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+function setUpPrincipalOwedRedReviewGate(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaude(binDir)
+  writeFakeGhCiGreenReviewGateRed(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a principal-owed red never redispatches the developer (review-validity-v1 11, O3)', () => {
+  it('dispatches both reviewers off the green mechanical gate, even with review-gate itself red', () => {
+    const { home, cwd, path } = setUpPrincipalOwedRedReviewGate()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    // Proof reviewers (not the developer) were dispatched off round 1: the
+    // held-verdict files only the dispatch_reviewers branch writes exist.
+    const reviewerVerdict = readFileSync(
+      join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-reviewer.md'),
+      'utf8'
+    )
+    expect(reviewerVerdict).toMatch(/^VERDICT: APPROVE$/m)
+    const securityVerdict = readFileSync(
+      join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-security.md'),
+      'utf8'
+    )
+    expect(securityVerdict).toMatch(/^VERDICT: PASS$/m)
+
+    // Proof the gate itself read green, and no second gate/developer round
+    // happened first — a red-gate retry would insert a second
+    // gate_result_read/round_started pair before verdicts_read.
+    const loopEvents = outboxLines(home)
+      .filter((l) => l.kind === 'dev_review_loop')
+      .map((l) => l.event)
+    expect(loopEvents).toEqual([
+      'loop_started',
+      'round_started',
+      'gate_result_read',
+      'verdicts_read',
+      'findings_compared',
+      'stop_condition_met',
+      'round_ended',
+      'journal_finalized'
+    ])
+    const gateResult = outboxLines(home).find((l) => l.event === 'gate_result_read') as Record<string, unknown>
+    expect(gateResult.green).toBe(true)
+  }, 20000)
+})
