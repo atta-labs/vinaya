@@ -2244,29 +2244,42 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * mechanical CI hiccup on round 1 silently start asking the round-1-never-
      * asks confidence question — a real behavioral bug, not a style choice.
      */
+    /**
+     * O8 (round 2 review, BLOCKER): re-read the base branch's head and
+     * compare against the fixed watermark recorded at loop start. A base
+     * that moved past a commit touching this driver's own code sets
+     * `decision` to `pause{reason:'stale_driver'}` and returns `true` — the
+     * caller's job is to stop doing whatever it was about to do and let
+     * that decision reach the bottom pause-handling. Called from TWO sites,
+     * not just the loop top: a clean `dispatch_reviewers` → `publish`
+     * transition falls through to publish in the SAME iteration with no
+     * loop-back in between (found live, round 2 review — the doc comment's
+     * old claim that "every iteration is a superset of every round entry"
+     * was false for exactly this transition, the common clean-round path),
+     * so publish re-checks this itself rather than trusting the top-of-loop
+     * check alone.
+     */
+    async function checkStaleDriver(): Promise<boolean> {
+      const currentBaseHead = d.gitRevParseOriginMain()
+      if (currentBaseHead === baseHeadAtStart) return false
+      const touching = d.gitCommitsTouchingDriverPaths(baseHeadAtStart, currentBaseHead)
+      if (touching.length === 0) return false
+      const head = d.resolveHead(branch)
+      const stats = computeStats(head, roundStartMs)
+      const detail = `base moved from ${baseHeadAtStart} to ${currentBaseHead}, touching this driver's own code (${touching.join('; ')})`
+      await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+      decision = { type: 'pause', reason: 'stale_driver', detail }
+      d.flushOutbox(task)
+      return true
+    }
+
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      // O8: re-read the base branch's head at every
-      // round entry (every iteration is a superset of "every round entry" —
-      // checking more often than the minimum is strictly safer, never
-      // wrong) and compare against the fixed watermark recorded at loop
-      // start. A base that moved past a commit touching this driver's own
-      // code pauses now, before this iteration's own dispatch/gate/publish
-      // logic runs — a running driver must never keep judging rounds
-      // against a gate that has since changed underneath it.
+      // Checking more often than the minimum ("every round entry") is
+      // strictly safer, never wrong — this runs before every iteration's
+      // own dispatch/gate/publish logic.
       if (decision.type !== 'pause') {
-        const currentBaseHead = d.gitRevParseOriginMain()
-        if (currentBaseHead !== baseHeadAtStart) {
-          const touching = d.gitCommitsTouchingDriverPaths(baseHeadAtStart, currentBaseHead)
-          if (touching.length > 0) {
-            const head = d.resolveHead(branch)
-            const stats = computeStats(head, roundStartMs)
-            const detail = `base moved from ${baseHeadAtStart} to ${currentBaseHead}, touching this driver's own code (${touching.join('; ')})`
-            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
-            decision = { type: 'pause', reason: 'stale_driver', detail }
-            d.flushOutbox(task)
-          }
-        }
+        await checkStaleDriver()
       }
 
       if (decision.type === 'dispatch_developer') {
@@ -2358,6 +2371,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
         }
         firstPass = false
+
+        // O4/O7 (round 2 review, BLOCKER): mergeability is checked BEFORE
+        // the CI gate is ever waited on — `waitForGreenGate` below used to
+        // run unconditionally here, so even round 1 burned the full CI poll
+        // budget on a head that might already be `CONFLICTING`, and the
+        // mergeability read at the `dispatch_reviewers` branch (below) never
+        // ran until a whole extra iteration later. Checked here, every time
+        // this branch runs (fresh round-1 entry, a conflict-retry, or a
+        // genuine next round), so a conflicting head is sent back before any
+        // CI wait, never after one.
+        const mergeableBeforeGate = await pollMergeableState(prNumber)
+        if (mergeableBeforeGate === 'CONFLICTING') {
+          pendingConflictFiles = d.fetchConflictingFiles('main', branch)
+          d.flushOutbox(task)
+          continue
+        }
+        pendingConflictFiles = null
 
         const gate = await waitForGreenGate(roundStartMs)
         lastFailingChecks = gate.failingChecks
@@ -2522,6 +2552,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           continue
         }
         pendingConflictFiles = null
+
+        // O8 (round 2 review, BLOCKER): re-check staleness here too — a
+        // clean `dispatch_reviewers` → `publish` transition reaches this
+        // point in the SAME iteration, with no loop-back to the top in
+        // between, so the top-of-loop check alone never catches a base that
+        // moved past this driver's own code while reviewers were working.
+        if (await checkStaleDriver()) {
+          d.flushOutbox(task)
+          continue
+        }
 
         publishRound(root, {
           task,

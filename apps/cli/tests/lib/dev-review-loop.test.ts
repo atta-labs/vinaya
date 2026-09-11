@@ -1454,6 +1454,10 @@ if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
   echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
   exit 0
 fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
 if [ "$1" = "api" ]; then
   echo '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"failure"}'
   exit 0
@@ -2095,6 +2099,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "merg
   exit 0
 fi
 if [ "$1" = "api" ]; then
+  touch "$HOME/.ci-conclusion-checked"
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
 fi
@@ -2168,6 +2173,12 @@ describe('devReviewLoop — a conflicting head is sent back to the developer, ne
     // No reviewer was ever dispatched — the conflict was caught before any
     // reviewer read this head.
     expect(existsSync(join(home, '.reviewer-invoked'))).toBe(false)
+
+    // O4 (round 2 review, BLOCKER): CI is never waited on for a head that
+    // starts this round already CONFLICTING — mergeability is checked
+    // before `waitForGreenGate` ever calls `gh api .../check-runs`, not
+    // after it, so this marker is never touched.
+    expect(existsSync(join(home, '.ci-conclusion-checked'))).toBe(false)
 
     // The fresh brief, then two conflict-retry dispatches (the bound) —
     // never a reviewer prompt anywhere in this file.
@@ -2264,6 +2275,73 @@ describe('devReviewLoop — a base that moves past this driver’s own code paus
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:stale_driver -->$/m)
     expect(pauseComment).toMatch(new RegExp(`base moved from ${BASE_SHA} to ${'c'.repeat(40)}`))
     expect(pauseComment).toMatch(/touching this driver's own code/)
+  }, 20000)
+})
+
+/** Same as \`writeFakeGit\`, except \`rev-parse origin/main\` answers a NEW sha once \`.reviewers-ran\` exists (not \`.fake-dev-invoked\` — the base moves WHILE reviewers are working, not before the developer's own first turn), and \`log\` reports one commit in that range. */
+function writeFakeGitBaseMovesDuringReview(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  if [ -f "$HOME/.reviewers-ran" ]; then
+    echo "${'e'.repeat(40)}"
+  else
+    echo "${BASE_SHA}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+if [ "$1" = "log" ]; then
+  echo "ffffffffff Fix(cli): something touching the driver"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+function setUpStaleDriverDuringReview(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeConflictAtPublishScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGitBaseMovesDuringReview(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a base that moves past this driver’s own code WHILE reviewers were working pauses stale_driver before publish (O8, task-run-v1 13, #508)', () => {
+  it('catches staleness at the dispatch_reviewers → publish transition, not only at round entry', () => {
+    const { home, cwd, path } = setUpStaleDriverDuringReview()
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(stale_driver\)/)
+    // Never reached publish — both reviewers ran (clean), but the round
+    // never posted a verdict comment or a publish summary.
+    expect(r.stdout).not.toMatch(/publish/)
+
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', 'comment-1.md'), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:stale_driver -->$/m)
+    expect(pauseComment).toMatch(new RegExp(`base moved from ${BASE_SHA} to ${'e'.repeat(40)}`))
   }, 20000)
 })
 
