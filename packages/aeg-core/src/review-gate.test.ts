@@ -947,6 +947,160 @@ describe('checkReviewGate — patch-identity binding', () => {
   })
 })
 
+// ---- Brief-hash binding (review-validity-v1 task 4, #478, O1) ------------
+
+describe('checkReviewGate — brief-hash binding', () => {
+  const HASH_A = 'a'.repeat(64)
+  const HASH_B = 'b'.repeat(64)
+
+  const boundComment = (verdict: string, hash: string) =>
+    principal(`VERDICT: ${verdict}\n\nJudged head: ${HEAD_SHA}\n\nRuling ordinal: 0\n\nBrief hash: ${hash}`)
+
+  it('passes when both verdicts carry the current brief hash', () => {
+    const result = checkReviewGate({
+      comments: [boundComment('APPROVE', HASH_A), boundComment('PASS', HASH_A)],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      briefHash: HASH_A
+    })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('fails, naming both hashes, when a clean verdict was cast against a superseded frozen brief', () => {
+    const result = checkReviewGate({
+      comments: [boundComment('APPROVE', HASH_A), boundComment('PASS', HASH_A)],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      briefHash: HASH_B
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain(
+      `the newest code-review verdict was cast against brief hash ${HASH_A}, the frozen brief's current hash is ${HASH_B}`
+    )
+    expect(result.reason).toContain(
+      `the newest security-review verdict was cast against brief hash ${HASH_A}, the frozen brief's current hash is ${HASH_B}`
+    )
+  })
+
+  it('omitting briefHash entirely (every caller predating this field) skips the binding — the two new fixtures above are the only behavior change', () => {
+    const result = checkReviewGate({
+      comments: [boundComment('APPROVE', HASH_A), boundComment('PASS', HASH_A)],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0
+    })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('a null current briefHash (no frozen brief resolvable) skips the binding, even against a stale echoed hash', () => {
+    const result = checkReviewGate({
+      comments: [boundComment('APPROVE', HASH_A), boundComment('PASS', HASH_A)],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      briefHash: null
+    })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('fails, naming "none", when a clean verdict carries no Brief hash: line at all but a brief is now resolvable', () => {
+    const result = checkReviewGate({
+      comments: [APPROVE_COMMENT, PASS_COMMENT],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      briefHash: HASH_A
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain(
+      `the newest code-review verdict was cast against brief hash none, the frozen brief's current hash is ${HASH_A}`
+    )
+  })
+})
+
+// ---- Policy-digest binding (review-validity-v1 task 4, #478, O5) ---------
+
+describe('checkReviewGate — policy-digest binding', () => {
+  const boundComment = (verdict: string, digest: string) =>
+    principal(
+      `VERDICT: ${verdict}\n\nJudged head: ${HEAD_SHA}\n\nRuling ordinal: 0\n\nBrief hash: (none)\n\nPolicy digest: ${digest}`
+    )
+
+  it('passes when both verdicts carry a digest matching the current (default) policy', () => {
+    // The real digest value is an implementation detail of `policyDigest` —
+    // this fixture reads it back from the gate's own failure message on a
+    // deliberate mismatch (below) rather than importing the hash function,
+    // so the test does not silently drift if the digest algorithm changes.
+    const mismatch = checkReviewGate({
+      comments: [boundComment('APPROVE', '1'.repeat(64)), boundComment('PASS', '1'.repeat(64))],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0
+    })
+    const m = /current policy digest is ([0-9a-f]{64})/.exec(mismatch.reason)
+    const currentDigest = m?.[1] as string
+    expect(currentDigest).toMatch(/^[0-9a-f]{64}$/)
+
+    const result = checkReviewGate({
+      comments: [boundComment('APPROVE', currentDigest), boundComment('PASS', currentDigest)],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0
+    })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('fails when a clean verdict was cast against a policy digest that no longer matches the current one', () => {
+    const result = checkReviewGate({
+      comments: [boundComment('APPROVE', '1'.repeat(64)), boundComment('PASS', '1'.repeat(64))],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('was cast against review policy digest')
+  })
+
+  it('a legacy comment with no Policy digest: line at all still binds — grandfathered, never confused with a real mismatch', () => {
+    const result = checkReviewGate({
+      comments: [APPROVE_COMMENT, PASS_COMMENT],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0
+    })
+    expect(result.verdict).toBe('pass')
+  })
+})
+
 // ---- Which severities block is repository policy (review-validity-v1 task
 // 8, #506, O2/O3/O4) — a reviewer's own APPROVE/PASS never overrides the
 // evaluator: a comment's FINDINGS block is re-evaluated against `policy`

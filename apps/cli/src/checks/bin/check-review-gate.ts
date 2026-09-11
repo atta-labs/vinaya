@@ -63,6 +63,7 @@
 
 import { execFileSync } from 'node:child_process'
 import {
+  briefHash,
   checkReviewGate,
   extractIssue,
   isIssueNotFoundError,
@@ -71,6 +72,7 @@ import {
   OBJECTIVES_SINCE_ISSUE,
   objectivesOf,
   objectivesVersion,
+  resolveNewestFrozenBrief,
   resolveObjectivesSource,
   WAIVER_LABEL_REVIEW
 } from '@attalabs/aeg-core'
@@ -124,6 +126,38 @@ function fetchIssueBodyForObjectives(issueNumber: number): string {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   })
+}
+
+function fetchIssueCommentsForBrief(issueNumber: number): { body: string; author: string | null }[] {
+  const out = execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'comments'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  const parsed = JSON.parse(out) as { comments: Array<{ body: string; author?: { login?: string } | null }> }
+  return parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
+}
+
+/**
+ * The frozen brief's own hash this PR is judged against (`review-validity-v1`
+ * task 4, `#478`, O1) — `null` when the PR closes no Issue, or that Issue
+ * carries no principal-authored frozen brief yet. Unlike
+ * `resolveObjectivesVersion`, this never fails closed: a PR with nothing to
+ * bind against yet is the same "skip the binding" case `objectivesVersion:
+ * null` already covers, never a hard `severity:infra` refusal — a fetch
+ * failure here is exactly as safe to treat as "unresolvable" as a genuinely
+ * missing brief, since both mean the same thing to the binding: nothing to
+ * compare against.
+ */
+function resolveBriefHash(pr: PrView, principalAllowlist: readonly string[]): string | null {
+  const { issue } = extractIssue(pr.body)
+  if (issue === null) return null
+  try {
+    const comments = fetchIssueCommentsForBrief(issue)
+    const frozen = resolveNewestFrozenBrief(comments, principalAllowlist as string[])
+    return frozen ? briefHash(frozen.content) : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -485,7 +519,12 @@ function main(): void {
       pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
       principalAllowlist
     ),
-    policy: reviewPolicy
+    policy: reviewPolicy,
+    // The frozen brief's own hash at evaluation time (task 4, `#478`, O1) —
+    // never fetched under a waiver, same reasoning as `rulingOrdinal` above:
+    // this can never itself be the reason a resolution fails, so it runs
+    // unconditionally rather than being skipped like `objectivesVersion`.
+    briefHash: resolveBriefHash(pr, principalAllowlist)
   })
 
   if (result.verdict === 'fail') {
