@@ -292,6 +292,44 @@ describe('vinaya doctor — never mutates', () => {
     expect(snapshot(root)).toEqual(before)
   })
 
+  it('O3 (task-run-v1 18, #525): flags the task-16 pre-check shape (verdict-only, no waiver-label check) as drifted', async () => {
+    await runInit(['--yes'], initDeps())
+    const generated = readFileSync(join(root, REVIEW_WORKFLOW_PATH), 'utf-8')
+    expect(generated).toContain('vinaya/waiver:review')
+
+    // The exact shape `task-run-v1 16` shipped, before this task added the
+    // waiver-label check alongside it: a single-condition pre-check that
+    // only ever reads comments, never labels.
+    const task16Shape = generated
+      .split('\n')
+      .flatMap((line) => {
+        if (line.includes('PR_JSON=$(gh pr view "$PR_NUMBER"')) {
+          return [
+            `          HAS_VERDICT=$(gh pr view "$PR_NUMBER" --repo \${{ github.repository }} --json comments \\`,
+            '            --jq \'[.comments[].body | select((. / "\\n") | any(test("^[ \\t]*(\\\\*{1,3}|_{1,3})?VERDICT:")))] | length > 0\')'
+          ]
+        }
+        if (line.includes('HAS_VERDICT=$(echo "$PR_JSON"')) return []
+        if (line.includes('HAS_WAIVER_LABEL=$(echo "$PR_JSON"')) return []
+        if (line.includes('if [ "$HAS_VERDICT" != "true" ] && [ "$HAS_WAIVER_LABEL" != "true" ]; then')) {
+          return [line.replace(' && [ "$HAS_WAIVER_LABEL" != "true" ]', '')]
+        }
+        return [line]
+      })
+      .join('\n')
+    expect(task16Shape).not.toContain('HAS_WAIVER_LABEL')
+    writeFileSync(join(root, REVIEW_WORKFLOW_PATH), task16Shape)
+    const before = snapshot(root)
+
+    const report = await runDoctorJson()
+    expect(report.healthy).toBe(false)
+    const hit = report.findings.find((f) => f.check === 'workflows' && f.message.includes(REVIEW_WORKFLOW_PATH))
+    expect(hit?.severity).toBe('warn')
+    expect(hit?.message).toContain('drifted')
+
+    expect(snapshot(root)).toEqual(before) // doctor fixed nothing
+  })
+
   it('does not flag .vinaya/doc-owners as drifted once a real binding is added (found live: was recommending `vinaya upgrade`, which would have wiped it)', async () => {
     await runInit(['--yes'], initDeps())
     writeFileSync(join(root, DOC_OWNERS_PATH), 'apps/foo/src/**  apps/foo/specs/foo.md\n', { flag: 'a' })

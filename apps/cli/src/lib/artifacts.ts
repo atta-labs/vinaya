@@ -20,7 +20,7 @@
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { DOC_OWNERS_PATH, LABELS, type LabelKey } from '@attalabs/aeg-core'
+import { DOC_OWNERS_PATH, LABELS, type LabelKey, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
 import { resolveDoctrineRoot } from '../commands/doctrine.js'
 import type { AgentVendor } from './agent-vendors.js'
 import { buildAgentsSkillsOps } from './agents-skills-emitter.js'
@@ -548,7 +548,20 @@ ${vinayaSetupSteps(selfHost, 'shared-build')}${adopterSetupStep(ciSetup)}      #
 `
 }
 
+/**
+ * Doubles every backslash in a plain regex SOURCE string (e.g.
+ * `VERDICT_MARKER_SOURCE`, already in the single-backslash form
+ * `RegExp.prototype.source` uses) so it survives, byte-identical, through a
+ * jq double-quoted string literal: jq's JSON-style string parser collapses
+ * `\\` back to one backslash, reconstructing the exact source oniguruma
+ * needs. Generation-time only — never applied to pull-request content.
+ */
+function jqStringEscape(regexSource: string): string {
+  return regexSource.replace(/\\/g, '\\\\')
+}
+
 function reviewWorkflow(selfHost: VendoredVinaya | null): string {
+  const verdictMarkerForJq = jqStringEscape(VERDICT_MARKER_SOURCE)
   return `# ${MANAGED_NOTE}
 #
 # The required review gate. \`pull_request_target\` is the trust boundary:
@@ -569,14 +582,21 @@ function reviewWorkflow(selfHost: VendoredVinaya | null): string {
 # two workflows re-runs this one, so the required check below goes green
 # natively with no manual rerun.
 #
-# The job's first step never builds: it reads the PR's comments through the
-# API alone and fails fast, without checkout or build, whenever no
-# \`VERDICT:\` comment exists yet — the ordinary state on \`opened\`/
-# \`synchronize\`/\`reopened\`/\`labeled\`/\`unlabeled\`. The build only runs once
-# that step finds a verdict, which in practice is the state a rerun finds it
-# in: the verdict-comment workflow and the CI-green retrigger both re-run
-# THIS run, and by the time either fires, the verdict this job is looking
-# for already exists.
+# The job's first step never builds: it reads the PR's comments and labels
+# through the API alone and fails fast, without checkout or build, whenever
+# neither a \`VERDICT:\` comment nor a (presence-only, unverified) waiver
+# label exists yet — the ordinary state on \`opened\`/\`synchronize\`/
+# \`reopened\`/\`labeled\`/\`unlabeled\`. The build runs once that step finds
+# either: a verdict, which in practice is the state a rerun finds it in (the
+# verdict-comment workflow and the CI-green retrigger both re-run THIS run,
+# and by the time either fires, the verdict this job is looking for already
+# exists) — or a \`labeled\` event applying the waiver label itself, so a
+# waived PR goes green on the SAME push that applies the label rather than
+# waiting on a verdict that will never arrive (\`#525\`: found live minutes
+# after this pre-check step was first added — PR #517's Version Packages
+# PR, carrying the waiver label, went red at the gate in four seconds,
+# never having learned the waiver the full gate downstream already
+# honoured).
 name: Vinaya Review Gate
 run-name: "Vinaya Review Gate PR #\${{ github.event.pull_request.number }} @ \${{ github.event.pull_request.head.sha }}"
 
@@ -620,8 +640,9 @@ jobs:
       issues: read
       checks: read
     steps:
-      # No checkout, no build: read whether a verdict exists yet through the
-      # API alone. Absent one, THIS step fails — the job's own single
+      # No checkout, no build: read whether a verdict exists yet, or an
+      # actor-verified \`vinaya/waiver:review\` label is present, through the
+      # API alone. Absent both, THIS step fails — the job's own single
       # check-run ("vinaya review gate") goes red with the reason below and
       # every step after it is skipped, so an ordinary push (opened /
       # synchronize / reopened / labeled / unlabeled) never pays for a build
@@ -630,39 +651,57 @@ jobs:
       # (this repo's own \`check-review-gate.ts\`/\`dev-review-loop.ts\`) is
       # the one required name every other mechanism already keys on.
       #
+      # The label check below is PRESENCE-ONLY, never actor verification
+      # (\`#525\`: "Do NOT verify the waiver's actor in the pre-check").
+      # Actor verification needs the trusted build's
+      # \`principalAllowlist\`/\`gh api .../timeline\` reads and stays exactly
+      # where it already lives, in \`check-review-gate.ts\`'s own \`main()\`.
+      # An unverified label only earns the PR a build — the SAME build job
+      # the full gate already runs on every ordinary push — so a
+      # self-applied label buys nothing on its own: \`checkReviewGate\` inside
+      # that build re-decides for real, actor and all, exactly as it did
+      # before this pre-check existed.
+      #
+      # Both string constants spliced into the \`jq\` calls below are read
+      # from \`packages/aeg-core\` at CLI-GENERATION time — \`WAIVER_LABEL_REVIEW\`
+      # (\`waiver-label.ts\`) and \`VERDICT_MARKER_SOURCE\` (\`verdict-extraction.ts\`)
+      # — the SAME constants \`check-review-gate.ts\` reads for the full gate,
+      # never a second hand-typed copy of either fact (\`#525\`).
+      #
       # Line-anchored \`VERDICT:\` — same anchor discipline
       # \`packages/aeg-core/src/verdict-extraction.ts\` standardizes on
       # (security-review FAIL finding, PR #636/#639): a bare substring/word
       # search matches ordinary prose that merely mentions "VERDICT" (an
       # escalation, a reviewer report, this very step's own description) and
       # would wrongly let the build run on a push with no real verdict cast.
-      # \`^[ \\t]*(\\*{1,3}|_{1,3})?VERDICT:\` tolerates the same leading
-      # markdown emphasis run the real extractor does, and — because it is
-      # tested per split line rather than as one multiline string (this
-      # jq/oniguruma build's \`^\`/\`$\` do not cross embedded newlines even
-      # under the "m"/"s" flags) — rejects the same blockquote/list-item/
-      # heading prefixes the real extractor rejects. This is a presence-only
-      # approximation of that module's full extraction (no first-five-lines
-      # window, no value-side match, no most-recent-comment selection, no
-      # code-span exclusion) — deliberately so: this step never runs after a
-      # checkout, so it cannot import \`packages/aeg-core\` and must not
-      # duplicate its regex as a second, driftable copy of the same fact
-      # (that module's own "one implementation per fact" constraint). A false
-      # positive here only wastes a trusted build; the downstream
+      # \`VERDICT_MARKER_SOURCE\` tolerates the same leading markdown emphasis
+      # run the real extractor does, and — because it is tested per split
+      # line rather than as one multiline string (this jq/oniguruma build's
+      # \`^\`/\`$\` do not cross embedded newlines even under the "m"/"s"
+      # flags) — rejects the same blockquote/list-item/heading prefixes the
+      # real extractor rejects. This is a presence-only approximation of
+      # that module's full extraction (no first-five-lines window, no
+      # value-side match, no most-recent-comment selection, no code-span
+      # exclusion) — deliberately so: this step never runs after a checkout,
+      # so it cannot import \`packages/aeg-core\` at RUN time (the constant is
+      # instead read once, at CLI-generation time, and spliced in below). A
+      # false positive here only wastes a trusted build; the downstream
       # \`vinayaRun(selfHost, 'check review-gate')\` step, which DOES run the
-      # real extractor after checkout, is the authoritative verdict read and
-      # still fails correctly on anything this coarser check let through.
-      - name: Require a verdict before building
+      # real extractor and the real actor-verified waiver check after
+      # checkout, is the authoritative read and still fails correctly on
+      # anything this coarser check let through.
+      - name: Require a verdict or waiver before building
         id: verdict-check
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
         run: |
           set -o pipefail
-          HAS_VERDICT=$(gh pr view "$PR_NUMBER" --repo \${{ github.repository }} --json comments \\
-            --jq '[.comments[].body | select((. / "\\n") | any(test("^[ \\t]*(\\\\*{1,3}|_{1,3})?VERDICT:")))] | length > 0')
-          if [ "$HAS_VERDICT" != "true" ]; then
-            echo "No VERDICT: comment yet on PR #$PR_NUMBER - nothing to evaluate. Holding the gate red without building until a reviewer posts one." >&2
+          PR_JSON=$(gh pr view "$PR_NUMBER" --repo \${{ github.repository }} --json comments,labels)
+          HAS_VERDICT=$(echo "$PR_JSON" | jq '[.comments[].body | select((. / "\\n") | any(test("${verdictMarkerForJq}")))] | length > 0')
+          HAS_WAIVER_LABEL=$(echo "$PR_JSON" | jq '[.labels[].name == "${WAIVER_LABEL_REVIEW}"] | any')
+          if [ "$HAS_VERDICT" != "true" ] && [ "$HAS_WAIVER_LABEL" != "true" ]; then
+            echo "No VERDICT: comment and no ${WAIVER_LABEL_REVIEW} label yet on PR #$PR_NUMBER - nothing to evaluate. Holding the gate red without building until a reviewer posts a verdict or a principal applies the waiver." >&2
             exit 1
           fi
       - uses: actions/checkout@v4
