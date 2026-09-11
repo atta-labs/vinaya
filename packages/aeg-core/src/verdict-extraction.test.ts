@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
+import { extractCodeReviewVerdict, extractSecurityReviewVerdict, VERDICT_MARKER_SOURCE } from './verdict-extraction'
 
 /**
  * The post-merge Archivist's real, auto-generated DANGLING placeholder text
@@ -637,5 +637,49 @@ describe('candidate selection stays whole-body — a later unclear candidate sha
     expect(result.value).not.toBe('REQUEST CHANGES')
     expect(result.danglingNote).not.toBeNull()
     expect(result.headSha).toBeNull()
+  })
+})
+
+describe('VERDICT_MARKER_SOURCE', () => {
+  // task-run-v1 18, #525 O2: the exported marker is a presence-only test —
+  // no value alternation — so it must accept every shape the two real value
+  // patterns above accept and reject every shape they reject, the same
+  // anchor discipline (mention vs. cast) `extractCodeReviewVerdict`'s own
+  // module comment documents.
+  const marker = new RegExp(VERDICT_MARKER_SOURCE, 'im')
+
+  it('matches a bare, line-anchored VERDICT: marker', () => {
+    expect(marker.test('VERDICT: APPROVE')).toBe(true)
+    expect(marker.test('some discussion\nVERDICT: PASS\nJudged head: abc123')).toBe(true)
+  })
+
+  it('tolerates a leading markdown emphasis run', () => {
+    expect(marker.test('**VERDICT: APPROVE**')).toBe(true)
+    expect(marker.test('_VERDICT: APPROVE_')).toBe(true)
+  })
+
+  it('rejects a bare mention in prose', () => {
+    expect(marker.test('this checks for a VERDICT: comment in prose')).toBe(false)
+  })
+
+  it('rejects a blockquoted, list-item, or heading mention', () => {
+    expect(marker.test('> VERDICT: APPROVE')).toBe(false)
+    expect(marker.test('* VERDICT: APPROVE')).toBe(false)
+    expect(marker.test('# VERDICT: APPROVE')).toBe(false)
+  })
+
+  it("is the exact prefix both real value patterns' extraction depends on", () => {
+    // Indirect check (the two patterns above are module-private): a value
+    // pattern built from this exact source plus a value alternation extracts
+    // identically to the real exported function.
+    const codeReviewFromMarker = new RegExp(
+      `${VERDICT_MARKER_SOURCE}\\s*(APPROVE|REQUEST[ _-]?CHANGES|LGTM)(?![A-Za-z0-9])`,
+      'im'
+    )
+    const comment = '**VERDICT: APPROVE**'
+    const real = extractCodeReviewVerdict([comment])
+    const viaMarker = codeReviewFromMarker.exec(comment)
+    expect(viaMarker?.[1]).toBe('APPROVE')
+    expect(real.value).toBe('APPROVE')
   })
 })

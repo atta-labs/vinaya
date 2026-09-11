@@ -161,7 +161,7 @@ export {
   taskRefFromBranch
 } from './archive-task'
 export type { MergedPrFacts } from './archive-task'
-export { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
+export { extractCodeReviewVerdict, extractSecurityReviewVerdict, VERDICT_MARKER_SOURCE } from './verdict-extraction'
 export type { VerdictExtraction } from './verdict-extraction'
 export {
   CHANGESET_RELEASE_BRANCH,

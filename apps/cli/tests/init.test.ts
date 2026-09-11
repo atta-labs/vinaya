@@ -1072,19 +1072,20 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
   })
 
-  it('O3: the review gate never builds on an ordinary push — its first step gates on a VERDICT: comment, no checkout before it', async () => {
+  it('O3: the review gate never builds on an ordinary push — its first step gates on a VERDICT: comment or waiver label, no checkout before it', async () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
     const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
 
-    const gateIdx = review.indexOf('Require a verdict before building')
+    const gateIdx = review.indexOf('Require a verdict or waiver before building')
     const checkoutIdx = review.indexOf('actions/checkout@v4')
     const buildIdx = review.indexOf('Build the trusted Vinaya CLI')
     expect(gateIdx).toBeGreaterThan(-1)
     // The gate step is the FIRST step in the job — before any checkout or
     // build — so an ordinary push (opened/synchronize/reopened/labeled/
-    // unlabeled) with no verdict yet never pays for either.
+    // unlabeled) with neither a verdict nor the waiver label yet never pays
+    // for either.
     expect(gateIdx).toBeLessThan(checkoutIdx)
     expect(checkoutIdx).toBeLessThan(buildIdx)
     expect(review).toContain('gh pr view "$PR_NUMBER"')
@@ -1094,15 +1095,13 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(occurrences(new Map([[REVIEW_WORKFLOW_PATH, review]]), 'name: vinaya review gate')).toBe(1)
   })
 
-  it('O3 review finding: the verdict pre-check is line-anchored on `VERDICT:`, never a bare substring search', async () => {
-    // security-review FAIL finding / PR #636/#639: `packages/aeg-core/src/
-    // verdict-extraction.ts` standardized on a line-anchored `VERDICT:`
-    // marker specifically because a bare substring/word search matches
-    // ordinary prose that only MENTIONS a verdict (an escalation, a
-    // reviewer report, this very step's own description) and would wrongly
-    // treat that as a cast one. The pre-check here must never regress to
-    // `contains("VERDICT")`, and its jq must actually reject a bare mention
-    // and accept a real line-anchored marker.
+  it('O1/O2 (task-run-v1 18, #525): the pre-check honours the review waiver, its label and verdict-marker conditions derived from the same constants `check-review-gate.ts` uses', async () => {
+    // #525: PR #517 (Version Packages, carrying `vinaya/waiver:review`) went
+    // red at this gate in four seconds — the pre-check task 16 added never
+    // learned the waiver the full gate downstream already honours. The
+    // pre-check must now also build (and hand off to the real gate) on an
+    // unverified label alone, without duplicating the label string or the
+    // verdict marker as a second hand-typed literal.
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
@@ -1110,23 +1109,48 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
 
     expect(review).not.toContain('contains("VERDICT")')
 
-    const jqExpr =
-      '[.comments[].body | select((. / "\\n") | any(test("^[ \\t]*(\\\\*{1,3}|_{1,3})?VERDICT:")))] | length > 0'
-    expect(review).toContain(jqExpr)
+    // O2: both conditions are the imported constants, not a second literal —
+    // the waiver label string appears verbatim (`WAIVER_LABEL_REVIEW`), and
+    // the verdict-marker regex source (`VERDICT_MARKER_SOURCE`) appears with
+    // the SAME non-capturing group `check-review-gate.ts`'s own extractors
+    // build on, not a re-typed capturing-group approximation.
+    expect(review).toContain('"vinaya/waiver:review"')
 
-    // The jq expression itself, run for real: a bare mention must not
-    // satisfy it, a real line-anchored marker (with or without emphasis)
-    // must, and a blockquoted/list-item/heading mention must not.
-    const runJq = (body: string): string =>
-      execFileSync('jq', [jqExpr], {
-        input: JSON.stringify({ comments: [{ body }] }),
-        encoding: 'utf8'
-      }).trim()
-    expect(runJq('this checks for a VERDICT: comment in prose')).toBe('false')
-    expect(runJq('some discussion\nVERDICT: PASS\nJudged head: abc123')).toBe('true')
-    expect(runJq('**VERDICT: APPROVE**')).toBe('true')
-    expect(runJq('> VERDICT: APPROVE')).toBe('false')
-    expect(runJq('# VERDICT: APPROVE')).toBe('false')
+    const verdictJqExpr =
+      '[.comments[].body | select((. / "\\n") | any(test("^[ \\\\t]*(?:\\\\*{1,3}|_{1,3})?VERDICT:")))] | length > 0'
+    expect(review).toContain(verdictJqExpr)
+
+    const labelJqExpr = '[.labels[].name == "vinaya/waiver:review"] | any'
+    expect(review).toContain(labelJqExpr)
+
+    // Three fixtures (O1), the jq expressions run for real against each:
+    // neither marker nor label present — red, stays unbuilt; the label alone
+    // (unverified) — builds; a real verdict alone — builds.
+    const runJq = (jqExpr: string, input: unknown): string =>
+      execFileSync('jq', [jqExpr], { input: JSON.stringify(input), encoding: 'utf8' }).trim()
+
+    const neither = { comments: [{ body: 'just discussion, no verdict here' }], labels: [] }
+    expect(runJq(verdictJqExpr, neither)).toBe('false')
+    expect(runJq(labelJqExpr, neither)).toBe('false')
+
+    const labelOnly = {
+      comments: [{ body: 'just discussion, no verdict here' }],
+      labels: [{ name: 'vinaya/waiver:review' }]
+    }
+    expect(runJq(verdictJqExpr, labelOnly)).toBe('false')
+    expect(runJq(labelJqExpr, labelOnly)).toBe('true')
+
+    const verdictOnly = { comments: [{ body: 'some discussion\nVERDICT: PASS\nJudged head: abc123' }], labels: [] }
+    expect(runJq(verdictJqExpr, verdictOnly)).toBe('true')
+    expect(runJq(labelJqExpr, verdictOnly)).toBe('false')
+
+    // The marker itself still rejects a bare mention and a
+    // blockquoted/list-item/heading mention, exactly as before.
+    const runJqVerdict = (body: string): string => runJq(verdictJqExpr, { comments: [{ body }] })
+    expect(runJqVerdict('this checks for a VERDICT: comment in prose')).toBe('false')
+    expect(runJqVerdict('**VERDICT: APPROVE**')).toBe('true')
+    expect(runJqVerdict('> VERDICT: APPROVE')).toBe('false')
+    expect(runJqVerdict('# VERDICT: APPROVE')).toBe('false')
   })
 
   it('the hook stubs resolve the vendored bin too (atta-labs/attalabs#935 corrects this case)', async () => {
