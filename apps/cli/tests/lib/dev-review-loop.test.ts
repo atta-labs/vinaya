@@ -205,7 +205,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
-if [ "$1" = "api" ]; then
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
 fi
@@ -292,7 +292,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
-if [ "$1" = "api" ]; then
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
 fi
@@ -369,7 +369,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   fi
   exit 0
 fi
-if [ "$1" = "api" ]; then
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
 fi
@@ -442,7 +442,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
-if [ "$1" = "api" ]; then
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   printf '%s\\n%s\\n' \\
     '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"success"}' \\
     '{"id":2,"name":"vinaya review gate","status":"completed","conclusion":"failure"}'
@@ -551,7 +551,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
-if [ "$1" = "api" ]; then
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
 fi
@@ -1458,7 +1458,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "merg
   echo '{"mergeable":"MERGEABLE"}'
   exit 0
 fi
-if [ "$1" = "api" ]; then
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"failure"}'
   exit 0
 fi
@@ -1629,7 +1629,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
-if [ "$1" = "api" ]; then
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"success"}'
   exit 0
 fi
@@ -2071,7 +2071,6 @@ function writeFakeGhAlwaysConflicting(dir: string): void {
     `#!/bin/sh
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
-echo "$*" >> "$HOME/.gh-invocations.log"
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}}]}'
   exit 0
@@ -2099,7 +2098,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "merg
   echo '{"mergeable":"CONFLICTING"}'
   exit 0
 fi
-if [ "$1" = "api" ]; then
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   touch "$HOME/.ci-conclusion-checked"
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
@@ -2170,18 +2169,6 @@ describe('devReviewLoop — a conflicting head is sent back to the developer, ne
     })
     expect(r.status).not.toBe(0)
     expect(r.stdout).toMatch(/paused \(infrastructure\)/)
-
-    // Diagnostic (task-run-v1 13, #508): printed unconditionally, before any
-    // assertion below can fail and stop the test — this exact assertion
-    // failed on CI twice (never locally, 35+ runs) with no root cause found
-    // by code inspection alone. The full, ordered list of every `gh` call
-    // this run actually made is the fastest way to learn what really
-    // happened the NEXT time this fails, instead of guessing again.
-    const ghInvocationsPath = join(home, '.gh-invocations.log')
-    const ghInvocations = existsSync(ghInvocationsPath)
-      ? readFileSync(ghInvocationsPath, 'utf8')
-      : '(no .gh-invocations.log written)'
-    console.log(`[O4 diagnostic] gh invocations this run:\n${ghInvocations}`)
 
     // No reviewer was ever dispatched — the conflict was caught before any
     // reviewer read this head.
@@ -2467,7 +2454,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "merg
   fi
   exit 0
 fi
-if [ "$1" = "api" ]; then
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
 fi
@@ -2611,7 +2598,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "merg
   fi
   exit 0
 fi
-if [ "$1" = "api" ]; then
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
 fi
