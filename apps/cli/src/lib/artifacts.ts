@@ -1285,7 +1285,7 @@ ${hookRun(selfHost, 'check --all --diff-only --local --skip-full')}`
 # type-check only the packages your staged diff actually touches (O9) —
 # scoped so this hook costs seconds, not the whole repo's worth of work.
 VINAYA_STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACMR)"
-bunx biome check --write --staged . || exit 1
+bunx biome check --write --staged . --no-errors-on-unmatched || exit 1
 if [ -n "$VINAYA_STAGED_FILES" ]; then
   echo "$VINAYA_STAGED_FILES" | xargs git add --
 fi

@@ -93,6 +93,17 @@ jobs:
           path: apps/cli/dist
           retention-days: 1
 
+      # `actions/checkout` produces a fresh clone with no local git config,
+      # so `core.hooksPath` is never set here the way a real contributor's
+      # machine has it after `vinaya init`/`vinaya upgrade` — doctor's own
+      # `[hooks]` finding correctly reads that as ring 0 being inert and
+      # errors on every run otherwise (measured live: PR #539's first CI
+      # run). Arming it here is the exact one-line remedy doctor itself
+      # prints, makes the finding true for this checkout, and is harmless —
+      # no step in this job makes a commit or push for a hook to fire on.
+      - name: Arm this checkout's git hooks routing
+        run: git config core.hooksPath .vinaya/hooks
+
       # task 17, O5: `vinaya doctor` diagnoses drift between this repo's own
       # managed files (the four `vinaya-*.yml` workflows, git hooks) and the
       # generator that produced them (`apps/cli/src/lib/artifacts.ts`) —

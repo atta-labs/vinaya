@@ -1300,12 +1300,12 @@ describe('generated pre-commit hook: scoped format/lint/typecheck (O9)', () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const preCommit = readFileSync(join(root, '.husky/pre-commit'), 'utf-8')
-    expect(preCommit).toContain('bunx biome check --write --staged .')
+    expect(preCommit).toContain('bunx biome check --write --staged . --no-errors-on-unmatched')
     expect(preCommit).toContain('bunx turbo typecheck --affected')
     // The fix-then-restage step must run BEFORE typecheck (so typecheck sees
     // the fixed code) and typecheck must run BEFORE the doctrine gate (cheap,
     // deterministic checks refuse first).
-    expect(preCommit.indexOf('bunx biome check --write --staged .')).toBeLessThan(
+    expect(preCommit.indexOf('bunx biome check --write --staged . --no-errors-on-unmatched')).toBeLessThan(
       preCommit.indexOf('bunx turbo typecheck --affected')
     )
     expect(preCommit.indexOf('bunx turbo typecheck --affected')).toBeLessThan(
