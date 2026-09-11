@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   checkBriefSections,
+  checkConsumerTests,
   objectivesOf,
   parseIssueParts,
   parseIssueStopConditions,
@@ -547,6 +548,41 @@ describe('renderBrief', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.brief).toMatch(/consumer-tests: none —/)
+  })
+
+  // task 17, O6 — a directory-only §4 (Modify lists Surface directories, not
+  // files, because the Boundary named fewer files than `## Surface` `in:`
+  // declares) must never produce a brief `checkConsumerTests` itself rejects
+  // (#478's frozen brief: exactly this shape refused on `pr create`).
+  it('a covered consumer names its covering test DIRECTORY, not a file, when the Boundary narrows the Surface — and the rendered §4 passes checkConsumerTests', () => {
+    const result = renderBrief(
+      baseFacts({
+        surface: { in: ['packages/aeg-core/src', 'packages/aeg-core/bin', 'apps/cli/tests'], out: [] },
+        consumersOf: () => ['apps/cli'],
+        surfaceFiles: [
+          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' },
+          { path: 'apps/cli/tests/checks/fixture.test.ts', sha256: 'b'.repeat(64), packageName: null }
+        ]
+      }),
+      ''
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const section4 = /## 4\. Technical surface map[\s\S]*?(?=\n## 5\.)/.exec(result.brief)?.[0] ?? ''
+    const modifyBlock = /\*\*Modify:\*\*\n([\s\S]*?)\n\n/.exec(section4)?.[1] ?? ''
+    // boundaryNarrowsSurface: `packages/aeg-core/bin` has no covering file,
+    // so the Modify LIST ITSELF names directories, never the covering file
+    // (which can still legitimately appear elsewhere in §4, e.g. Premise
+    // pins for an already-existing file — the explicit consumer-tests line
+    // below is what makes coverage independently, robustly visible rather
+    // than relying on that incidental side channel).
+    expect(modifyBlock).toContain('packages/aeg-core/bin')
+    expect(modifyBlock).not.toContain('apps/cli/tests/checks/fixture.test.ts')
+    expect(section4).toMatch(/consumer-tests: apps\/cli\/tests \(covers @attalabs\/aeg-core\)/)
+    expect(section4).not.toMatch(/consumer-tests: none —/)
+
+    const validated = checkConsumerTests(result.brief, (pkg) => (pkg === 'aeg-core' ? ['apps/cli'] : []))
+    expect(validated.status).toBe('pass')
   })
 
   it("§5 Step 0 creates the worktree branch with --no-track and configures push.autoSetupRemote, so a plain `git push` reaches the task's own ref (task 5, Issue #447, O2)", () => {
