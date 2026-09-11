@@ -75,11 +75,14 @@ import { checkForgeTitle } from '../src/brief-validation'
 import {
   checkBlastRadiusScope,
   checkConflictCompleteness,
+  checkIssueObjectives,
   checkIssueRationale,
   checkIssueType,
   checkNoBriefContent,
+  checkPartsCiteDefinedObjectives,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
+  checkSurfaceGlobsResolve,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   type ProjectPath,
@@ -90,6 +93,24 @@ import { parseRegistry } from '../src/parse-registry'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)
+
+/** Trailing digits off a bare number or an Issue URL — mirrors `apps/cli/src/lib/forge-write.ts`'s `parseIssueNumberFromRef` (not importable here: `apps/cli` is downstream of this package). */
+function parseIssueNumberFromRef(ref: string): number | null {
+  const m = /(\d+)\s*$/.exec(ref.trim())
+  return m ? Number.parseInt(m[1] as string, 10) : null
+}
+
+/** `git ls-files -- <glob>` non-empty — mirrors `apps/cli/src/lib/brief-assembly.ts`'s `expandGlob`, used the same way (`checkSurfaceGlobsResolve`'s `resolvesToFile` predicate). */
+function globResolvesToFile(glob: string): boolean {
+  try {
+    return (
+      execFileSync('git', ['ls-files', '--', glob], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+        .length > 0
+    )
+  } catch {
+    return false
+  }
+}
 
 function fail(msg: string): never {
   console.error(`\n[open-issue] REFUSED — ${msg}`)
@@ -869,6 +890,22 @@ export function main(): void {
     // edit costs nothing for the forward case and exempts every pre-merge
     // Issue exactly as promised.
     const typeErrors = isEdit ? [] : checkIssueType(body, labels).errors
+    // O2 (task 17) — three of the six write-only rules named apart:
+    // objectives numbering, Parts coverage, Surface glob resolution.
+    // `issueNumber` mirrors `apps/cli`'s own fail-closed-on-null posture
+    // (`checkIssueObjectives`'s own doc comment): `create` has no number
+    // until the write completes, and every Issue this repo can newly mint is
+    // already far past the Objectives cutover, so this never blocks a
+    // legitimate create. `checkPartsCiteDefinedObjectives`/
+    // `checkSurfaceGlobsResolve` are dormant when the Issue carries no
+    // `## Parts`/`## Surface` section at all. Title grammar and tranche-label
+    // presence are already enforced above; Milestone attach's validating half
+    // is deliberately NOT wired here — see `runIssueChecks`'s own comment in
+    // `apps/cli/src/lib/forge-write.ts` for why every write-path moment for
+    // it is a false-positive risk (`edit` never re-attaches by this file's
+    // own `resolveMilestoneToAttach` design, and `create`'s attach happens as
+    // part of this SAME write).
+    const issueNumber = isEdit ? parseIssueNumberFromRef(ghArgs[0] as string) : null
     const contentErrors = [
       ...checkBlastRadiusScope(body, labels, sharedPackages, projectPaths).errors,
       ...checkProjectsRegistered(
@@ -878,6 +915,9 @@ export function main(): void {
       ).errors,
       ...checkNoBriefContent(body).errors,
       ...checkRationaleNamesDocs(body).errors,
+      ...checkIssueObjectives(body, issueNumber).errors,
+      ...checkPartsCiteDefinedObjectives(body).errors,
+      ...checkSurfaceGlobsResolve(body, globResolvesToFile).errors,
       ...typeErrors
     ]
     if (contentErrors.length > 0) {

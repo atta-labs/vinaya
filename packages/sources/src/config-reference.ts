@@ -141,6 +141,15 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "principalOwed": true }`
   },
   {
+    key: 'checks.validates',
+    type: "'body' | 'issue' (optional)",
+    semantics: [
+      "Names what forge-write object this check validates the outgoing bytes of. `'body'` marks a check `vinaya pr create`/`pr edit`/`pr report --push` (and the Issue write paths' own body checks) run automatically, through the same registry runner, over the not-yet-shipped bytes before they ever reach the forge — a check declaring this needs no further wiring in the write path itself. `'issue'` marks a check that only ever applies to a task Issue's own content (never a pull request); it runs at Issue-write time and in the coherence sweep over open Issues, and is never selected into a pull-request workflow.",
+      'Same no-privileged-field discipline as `requiresOpenPr`/`ownWorkflow`/`principalOwed` — a config-registered check declares this exactly like a core one, and the write path treats every check with this value identically regardless of origin. Absent (the default) for a check that grades the code diff itself, never forge-write content.'
+    ],
+    example: `{ "validates": "body" }`
+  },
+  {
     key: 'checks.env',
     type: 'Record<string, EnvEntry> (optional)',
     semantics: [

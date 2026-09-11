@@ -199,7 +199,7 @@ try {
       if (subcommand === 'create') {
         await prCreateCommand(rest)
       } else if (subcommand === 'edit') {
-        prEditCommand(rest)
+        await prEditCommand(rest)
       } else if (subcommand === 'report') {
         await prReportCommand(rest)
       } else if (subcommand === 'verify-evidence') {
@@ -224,9 +224,9 @@ try {
       const subcommand = rawSubcommand === 'objectives' && rest[0] === 'edit' ? 'objectives edit' : rawSubcommand
       const passthrough = subcommand === 'objectives edit' ? rest.slice(1) : rest
       if (subcommand === 'create') {
-        issueCreateCommand(passthrough)
+        await issueCreateCommand(passthrough)
       } else if (subcommand === 'edit') {
-        issueEditCommand(passthrough)
+        await issueEditCommand(passthrough)
       } else if (subcommand === 'objectives edit') {
         await issueObjectivesEditCommand(passthrough)
       } else {

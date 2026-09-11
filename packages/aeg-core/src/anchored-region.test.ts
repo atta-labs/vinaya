@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { anchoredRegion } from './anchored-region'
 import { buildProvenanceBlock, extractIssue, type MergedPrFacts } from './archive-task'
-import { checkClosesN as checkClosesNField, checkProjectField } from './brief-validation'
-import { checkClosesN, extractClosesReferences, type TrancheFile } from './coherence-checks'
+import { checkClosesNPresence as checkClosesNField, checkProjectField } from './brief-validation'
+import { checkClosesNTopology, extractClosesReferences, type TrancheFile } from './coherence-checks'
 import { fenceShapes } from '../tests/fixtures/fence-shapes'
 import { readTierFromPrBody } from './pr-tier'
 import { parsePremiseBlock } from './premise-check'
@@ -139,9 +139,9 @@ describe('anchor recognition is additive — PR #407 freeform round-trip', () =>
     expect(checkProjectField(body).status).toBe('pass')
   })
 
-  it('checkClosesN — unchanged (ok, expected Issue 395)', () => {
+  it('checkClosesNTopology — unchanged (ok, expected Issue 395)', () => {
     const files = [makeTrancheFile('aeg-governance-hardening', [makeTask('31', 395)])]
-    const r = checkClosesN('task/aeg-governance-hardening/31', body, files)
+    const r = checkClosesNTopology('task/aeg-governance-hardening/31', body, files)
     expect(r.ok).toBe(true)
     expect(r.expectedIssue).toBe(395)
   })
@@ -227,12 +227,12 @@ describe('anchor vs decoy — Closes #N', () => {
     'body text'
   ].join('\n')
 
-  it('checkClosesN counts only references inside the pair', () => {
+  it('checkClosesNTopology counts only references inside the pair', () => {
     const files = [makeTrancheFile('aeg-governance-hardening', [makeTask('31', 395)])]
-    expect(checkClosesN('task/aeg-governance-hardening/31', body, files).ok).toBe(true)
+    expect(checkClosesNTopology('task/aeg-governance-hardening/31', body, files).ok).toBe(true)
     // …and the decoy alone would NOT satisfy the gate for issue 999:
     const files999 = [makeTrancheFile('aeg-governance-hardening', [makeTask('31', 999)])]
-    expect(checkClosesN('task/aeg-governance-hardening/31', body, files999).ok).toBe(false)
+    expect(checkClosesNTopology('task/aeg-governance-hardening/31', body, files999).ok).toBe(false)
   })
 
   it('archivist resolves the primary Issue to the anchored reference and flags the decoy as extra', () => {
@@ -347,7 +347,7 @@ describe('template-shaped body — anchored report above a <details>-wrapped bri
     }
 
     const files = [makeTrancheFile('aeg-governance-hardening', [makeTask('30', 393)])]
-    expect(checkClosesN('task/aeg-governance-hardening/30', body, files).ok).toBe(true)
+    expect(checkClosesNTopology('task/aeg-governance-hardening/30', body, files).ok).toBe(true)
 
     const { issue, block } = buildProvenanceBlock(makeFacts(body))
     expect(issue).toBe(393)

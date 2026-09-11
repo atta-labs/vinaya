@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: closes-n. Thin adapter over `@attalabs/aeg-core`'s `checkClosesN`
+ * Core check: closes-n. Thin adapter over `@attalabs/aeg-core`'s `checkClosesNTopology`
  * — mirrors `packages/aeg-core/bin/verify-coherence.ts --closes-n`'s input
  * assembly (BRANCH/PR_BODY env, the branch's own tranche, the reverse
  * `Closes #N` lookup via `fetchTaskIssueRefs`), emitting the check contract
@@ -24,7 +24,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkClosesN, extractClosesReferences, fetchTaskIssueRefs, type TrancheFile } from '@attalabs/aeg-core'
+import { checkClosesNTopology, extractClosesReferences, fetchTaskIssueRefs, type TrancheFile } from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
       const tranche = await source.getTranche(slug)
       files.push({ slug, archived: false, tranche })
     } catch {
-      // Forge unavailable — checkClosesN reports "no topology file found"
+      // Forge unavailable — checkClosesNTopology reports "no topology file found"
       // for this branch's own tranche below, the correct, honest failure
       // when the forge can't be reached at all.
     }
@@ -80,7 +80,7 @@ async function main(): Promise<void> {
   const taskIssueRefs =
     repo && referenced.length > 0 ? await fetchTaskIssueRefs(repo.owner, repo.repo, referenced) : undefined
 
-  const result = checkClosesN(branch, prBody, files, taskIssueRefs)
+  const result = checkClosesNTopology(branch, prBody, files, taskIssueRefs)
 
   if (!result.ok) {
     emitCheckError({

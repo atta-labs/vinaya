@@ -284,7 +284,7 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
   writeFileSync(tmp, newBody, 'utf8')
   try {
     const ghArgs = ['--body-file', tmp]
-    writeValidatedIssueEdit({
+    await writeValidatedIssueEdit({
       issueRef,
       ghArgs,
       bodyResult: locateBody(ghArgs),

@@ -19,22 +19,3 @@ O1. The validated forge-write commands ship.
 **Stop-and-escalate** — Halt if the adopter-generic config cannot express a required validation.
 
 **Docs to keep coherent** — §7: `apps/cli/README.md`'s command reference row.
-
-## Surface
-
-in: apps/cli/src/commands, apps/cli/src/lib
-out: apps/cli/src/checks
-
-## Parts
-
-Part 1 (O1) — the validated forge-write commands.
-
-## Test plan
-
-```
-bun test → 0 fail
-```
-
-## Stop conditions
-
-- Halt if the adopter-generic config cannot express a required validation.

@@ -123,6 +123,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'brief-shape',
+      validates: 'body',
       run: bin('check-brief-shape'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -156,6 +157,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `requiresOpenPr`: `PR_BODY="$(cat draft.md)" vinaya check
       // pr-report-density` is the intended pre-`pr create` dry run.
       name: 'pr-report-density',
+      validates: 'body',
       run: bin('check-pr-report-density'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -168,6 +170,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'doc-coverage',
+      validates: 'body',
       run: bin('check-doc-coverage'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -229,6 +232,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `Premise:` block (the overwhelming majority) is silent, and there is
       // no branch condition anywhere in this check.
       name: 'pr-premise-reassert',
+      validates: 'body',
       run: bin('check-pr-premise-reassert'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -262,6 +266,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'closes-n',
+      validates: 'body',
       run: bin('check-closes-n'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -336,6 +341,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'test-plan',
+      validates: 'body',
       run: bin('check-test-plan'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -368,6 +374,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'body-bare-digits',
+      validates: 'body',
       run: bin('check-body-bare-digits'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -409,6 +416,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'token-report',
+      validates: 'body',
       run: bin('check-token-report'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -581,6 +589,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'doc-coverage-push',
+      validates: 'body',
       run: bin('check-doc-coverage-push'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -627,6 +636,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'evidence-fresh',
+      validates: 'body',
       run: bin('check-evidence-fresh'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -833,6 +843,91 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       }
     },
     0
+  ],
+  // The six write-only rules named apart (task 17, O2) — `validates: 'issue'`
+  // means each applies only to a task Issue's own content, never a pull
+  // request. `ownWorkflow: true`: nothing in `.github/workflows` ever
+  // invokes these by name, so `--all` (both `vinaya-checks.yml` and
+  // `vinaya-body-checks.yml`, both PULL-REQUEST workflows) never selects
+  // them either way — declared for the same reason `review-gate`/
+  // `body-bare-digits` declare it: a check that is invoked directly, by
+  // name, from somewhere other than `--all` (here: `runIssueChecks` at
+  // Issue-write time, and `verify-coherence.ts`'s open-Issue sweep).
+  [
+    {
+      name: 'issue-title-grammar',
+      run: bin('check-issue-title-grammar'),
+      validates: 'issue',
+      scope: 'full',
+      ownWorkflow: true,
+      timeoutMs: 15_000,
+      env: { ISSUE_TITLE: { optional: true } }
+    },
+    1
+  ],
+  [
+    {
+      name: 'issue-objectives-numbering',
+      run: bin('check-issue-objectives-numbering'),
+      validates: 'issue',
+      scope: 'full',
+      ownWorkflow: true,
+      timeoutMs: 15_000,
+      env: { ISSUE_BODY: { optional: true }, ISSUE_NUMBER: { optional: true } }
+    },
+    1
+  ],
+  [
+    {
+      name: 'issue-parts-coverage',
+      run: bin('check-issue-parts-coverage'),
+      validates: 'issue',
+      scope: 'full',
+      ownWorkflow: true,
+      timeoutMs: 15_000,
+      env: { ISSUE_BODY: { optional: true } }
+    },
+    1
+  ],
+  [
+    {
+      name: 'issue-surface-globs',
+      run: bin('check-issue-surface-globs'),
+      validates: 'issue',
+      scope: 'full',
+      ownWorkflow: true,
+      timeoutMs: 15_000,
+      env: { ISSUE_BODY: { optional: true } }
+    },
+    1
+  ],
+  [
+    {
+      name: 'issue-tranche-label',
+      run: bin('check-issue-tranche-label'),
+      validates: 'issue',
+      scope: 'full',
+      ownWorkflow: true,
+      timeoutMs: 15_000,
+      env: { ISSUE_BODY: { optional: true }, ISSUE_LABELS: { optional: true } }
+    },
+    1
+  ],
+  [
+    {
+      name: 'issue-milestone-attach',
+      run: bin('check-issue-milestone-attach'),
+      validates: 'issue',
+      scope: 'full',
+      ownWorkflow: true,
+      timeoutMs: 15_000,
+      env: {
+        ISSUE_LABELS: { optional: true },
+        CURRENT_MILESTONE_TITLE: { optional: true },
+        RESOLVED_MILESTONE_TITLE: { optional: true }
+      }
+    },
+    1
   ]
 ]
 

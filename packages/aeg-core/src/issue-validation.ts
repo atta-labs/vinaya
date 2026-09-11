@@ -529,6 +529,53 @@ export function isTaskIssueBodyShaped(body: string): boolean {
   return RATIONALE_FIELDS.some((f) => hasRationaleField(text, f.pattern))
 }
 
+/**
+ * task 17, O2 — one of the six write-only rules given a name apart: a task-
+ * shaped Issue body reaching the forge with no `vinaya/tranche:*` label. Pure
+ * over `isTaskIssueBodyShaped`/`isTaskIssueLabelSet` — the exact predicate
+ * `forge-write.ts`'s `refuseUnlabeledTaskShapedBody` and `bin/open-issue.ts`'s
+ * mirrored inline check already enforce; this names it once so a registered
+ * `issue`-scope check and the coherence sweep can both call the SAME
+ * function instead of re-deriving the same two-line condition.
+ */
+export function checkTrancheLabelPresence(body: string, labels: string[]): IssueSectionResult {
+  if (isTaskIssueLabelSet(labels)) return { status: 'pass', errors: [] }
+  if (!isTaskIssueBodyShaped(body)) return { status: 'pass', errors: [] }
+  return {
+    status: 'fail',
+    errors: [
+      "issue-validation tranche label: this body carries task-Issue sections (`## Objectives` / `## Planner's rationale`) but no `vinaya/tranche:*` label was given — a task Issue never reaches the forge unlabeled."
+    ]
+  }
+}
+
+/**
+ * task 17, O2 — the Milestone-attach rule's validating half. The auto-attach
+ * ACTION (`resolveMilestoneAttachArgs`/`resolveMilestoneTitleForCreate` in
+ * `forge-write.ts`) mutates argv best-effort; this is the check that proves
+ * the attach actually landed — a task Issue's live Milestone must equal the
+ * target its tranche label resolves to, once that target is known at all.
+ * Dormant (`pass`) whenever the caller could not resolve one side or the
+ * other — a Milestone this process cannot determine has no known target to
+ * compare against, the same seam-is-dormant-when-absent posture
+ * `forge-write.ts` already uses for `docOwnersContent`/`sharedPackages`.
+ */
+export function checkMilestoneAttach(
+  labels: string[],
+  currentMilestoneTitle: string | null,
+  resolvedMilestoneTitle: string | null
+): IssueSectionResult {
+  if (!isTaskIssueLabelSet(labels)) return { status: 'pass', errors: [] }
+  if (resolvedMilestoneTitle === null) return { status: 'pass', errors: [] }
+  if (currentMilestoneTitle === resolvedMilestoneTitle) return { status: 'pass', errors: [] }
+  return {
+    status: 'fail',
+    errors: [
+      `issue-validation milestone attach: this task Issue's tranche label resolves to Milestone "${resolvedMilestoneTitle}", but its live Milestone is ${currentMilestoneTitle === null ? 'unset' : `"${currentMilestoneTitle}"`} — attach it to "${resolvedMilestoneTitle}".`
+    ]
+  }
+}
+
 /** Every `vinaya/type:*` label id, in `labels.ts` order — the source of truth this check reads, never a second list. */
 const TYPE_LABEL_IDS = LABELS.filter((l) => l.category === 'type').map((l) => l.id)
 
@@ -1442,12 +1489,41 @@ export type TaskSurfaceFacts = {
  * the write-time gate and the coherence sweep can never disagree about what
  * counts as an overlap.
  */
+/**
+ * task 17, O4 — a glob shared by construction is never a real conflict:
+ * every path segment of it is inspected for a literal `tests`/`specs`
+ * directory name (`apps/cli/tests/**`, `packages/aeg-core/tests/**`,
+ * `specs/**` all match; `apps/testsuite/**` does not — segment equality,
+ * never a substring test), and separately, a glob every open task in the
+ * Milestone (the subject plus the FULL sibling set the caller resolved) also
+ * declares VERBATIM is exempt outright: a shared test tree, or a glob the
+ * whole cohort was deliberately given in common, was never two tasks racing
+ * onto the same files by accident.
+ *
+ * The second check is EXACT-STRING membership, never `globsOverlap` — a
+ * fuzzy overlap test here would be circular (two genuinely conflicting
+ * globs overlap each other BY DEFINITION, so "every cohort member declares
+ * some glob that overlaps mine" is trivially true for exactly the pairs this
+ * function exists to still catch). It also requires a real "every task in
+ * the MILESTONE" cohort — at least two siblings, three tasks total: a bare
+ * pairwise duplicate (two tasks, the same single glob, nothing else) is the
+ * exact accidental-full-overlap shape this check exists to catch, not a
+ * cohort-wide convention to exempt.
+ */
+function isSharedByConstruction(glob: string, subject: TaskSurfaceFacts, siblings: TaskSurfaceFacts[]): boolean {
+  if (glob.split('/').some((segment) => segment === 'tests' || segment === 'specs')) return true
+  if (siblings.length < 2) return false
+  const cohort = [subject, ...siblings]
+  return cohort.every((entry) => entry.surfaceIn.includes(glob))
+}
+
 export function checkSurfaceOverlap(subject: TaskSurfaceFacts, siblings: TaskSurfaceFacts[]): IssueSectionResult {
   const errors: string[] = []
   for (const sibling of siblings) {
     if (sibling.ref === subject.ref) continue
     if (edgesNameEachOther(subject, sibling)) continue
     for (const mine of subject.surfaceIn) {
+      if (isSharedByConstruction(mine, subject, siblings)) continue
       for (const theirs of sibling.surfaceIn) {
         if (globsOverlap(mine, theirs)) {
           errors.push(

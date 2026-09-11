@@ -11,7 +11,7 @@
  *
  * This is a thin I/O shim — forge fetches, filesystem reads, and CLI arg/
  * format/exit handling only. The pure check evaluators (A1/A2/A3, T1/T2/T3,
- * D1, L1/L2/L3, checkClosesN) live in `../src/coherence-checks.ts`.
+ * D1, L1/L2/L3, checkClosesNTopology) live in `../src/coherence-checks.ts`.
  *
  * Usage:
  *   bun packages/aeg-core/bin/verify-coherence.ts                   # JSON + human output
@@ -46,7 +46,7 @@ import {
   checkA1,
   checkA2,
   checkA3,
-  checkClosesN,
+  checkClosesNTopology,
   checkD1,
   checkL1,
   checkL2,
@@ -1048,7 +1048,7 @@ if (import.meta.main) {
       console.warn('closes-n: BRANCH env var not set — skipping (non-task context).')
       process.exit(0)
     }
-    // Scoped load: checkClosesN only ever reads the ONE tranche named in
+    // Scoped load: checkClosesNTopology only ever reads the ONE tranche named in
     // the branch — deriving every other tranche from the forge here would
     // pay the full repo-wide sweep's latency for data this gate never uses.
     const branchTrancheSlug = branch.match(/^task\/([^/]+)\//)?.[1]
@@ -1063,7 +1063,7 @@ if (import.meta.main) {
     const taskIssueRefs = repo
       ? await fetchTaskIssueRefs(repo.owner, repo.repo, [...extractClosesReferences(prBody)])
       : undefined
-    const result = checkClosesN(branch, prBody, files, taskIssueRefs)
+    const result = checkClosesNTopology(branch, prBody, files, taskIssueRefs)
     if (result.ok) {
       const issueStr = result.expectedIssue ? ` (Closes #${result.expectedIssue} ✓)` : ''
       console.log(`closes-n: branch "${branch}" passes${issueStr}.`)

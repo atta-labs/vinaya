@@ -139,9 +139,6 @@ describe('symbol-collision detection', () => {
  *   - `BodyResult`     — `{ body, source }`, byte-identical in `open-issue.ts`
  *                        and `open-pr.ts`. Harmless.
  *   - `BodySource`     — byte-identical union type, same two files. Harmless.
- *   - `checkClosesN`   — two EXPORTED functions, different signatures, in
- *                        `brief-validation.ts` and `coherence-checks.ts`. A
- *                        claim about "checkClosesN" resolves to neither.
  *   - `createLabel`    — `check-direct-main-push.ts` shells out through an
  *                        execFileSync-array-shaped local `sh`; `dead-branch-
  *                        audit.ts` through a shell-string-shaped local `sh`.
@@ -249,7 +246,6 @@ const KNOWN_COLLISIONS = [
   'AssociatedPr',
   'BodyResult',
   'BodySource',
-  'checkClosesN',
   'collisionResistantKey',
   'createLabel',
   'ensureLabelExists',

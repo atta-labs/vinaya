@@ -96,7 +96,7 @@ describe('vinaya issue create --validate-only', () => {
         'create',
         '--validate-only',
         '--body-file',
-        join(FORGE_FIXTURES, 'issue-valid.md'),
+        join(FORGE_FIXTURES, 'issue-valid-with-objectives.md'),
         '--label',
         'vinaya/tranche:demo'
       ],
@@ -123,7 +123,7 @@ describe('vinaya issue create --validate-only', () => {
         '--validate-only',
         '--json',
         '--body-file',
-        join(FORGE_FIXTURES, 'issue-valid.md'),
+        join(FORGE_FIXTURES, 'issue-valid-with-objectives.md'),
         '--label',
         'vinaya/tranche:demo'
       ],
@@ -241,7 +241,7 @@ describe('vinaya issue create --validate-only — content gate', () => {
         'create',
         '--validate-only',
         '--body-file',
-        join(FORGE_FIXTURES, 'issue-valid.md'),
+        join(FORGE_FIXTURES, 'issue-valid-with-objectives.md'),
         '--label',
         'vinaya/tranche:demo'
       ],
@@ -414,7 +414,14 @@ describe('vinaya issue edit --validate-only — briefSections builtin reaches th
 
   it('passes an Issue numbered below the cutover (425) carrying none of the four sections', () => {
     const r = runCli(
-      ['issue', 'edit', '425', '--validate-only', '--body-file', join(FORGE_FIXTURES, 'issue-valid.md')],
+      [
+        'issue',
+        'edit',
+        '425',
+        '--validate-only',
+        '--body-file',
+        join(FORGE_FIXTURES, 'issue-valid-with-objectives.md')
+      ],
       cwd,
       { PATH: fakeGhLabelsPath(ghDir) }
     )

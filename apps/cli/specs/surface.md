@@ -98,7 +98,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `checkA1` | function | `packages/aeg-core/src/coherence-checks.ts` |
 | `checkA2` | function | `packages/aeg-core/src/coherence-checks.ts` |
 | `checkA3` | function | `packages/aeg-core/src/coherence-checks.ts` |
-| `checkClosesN` | function | `packages/aeg-core/src/coherence-checks.ts` |
+| `checkClosesNTopology` | function | `packages/aeg-core/src/coherence-checks.ts` |
 | `checkD1` | function | `packages/aeg-core/src/coherence-checks.ts` |
 | `checkL1` | function | `packages/aeg-core/src/coherence-checks.ts` |
 | `checkL2` | function | `packages/aeg-core/src/coherence-checks.ts` |
@@ -163,6 +163,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `checkIssueObjectives` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkIssueRationale` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkIssueType` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkMilestoneAttach` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkNoBriefContent` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkPartsCiteDefinedObjectives` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkProjectsRegistered` | function | `packages/aeg-core/src/issue-validation.ts` |
@@ -172,6 +173,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `checkSurfaceGlobsResolve` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkSurfaceOverlap` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkSurfaceScope` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkTrancheLabelPresence` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `declaredProjects` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `edgesNameEachOther` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `frozenSectionsChanged` | function | `packages/aeg-core/src/issue-validation.ts` |
@@ -572,7 +574,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `resolveMilestoneAttachArgs` | function | `apps/cli/src/lib/forge-write.ts` |
 | `resolveSections` | function | `apps/cli/src/lib/forge-write.ts` |
 | `resolveShippableArgs` | function | `apps/cli/src/lib/forge-write.ts` |
+| `runBodyChecks` | function | `apps/cli/src/lib/forge-write.ts` |
 | `runGhWrite` | function | `apps/cli/src/lib/forge-write.ts` |
+| `runIssueChecks` | function | `apps/cli/src/lib/forge-write.ts` |
 | `validateForgeWrite` | function | `apps/cli/src/lib/forge-write.ts` |
 | `validateIssueContent` | function | `apps/cli/src/lib/forge-write.ts` |
 | `validateTaskIssue` | function | `apps/cli/src/lib/forge-write.ts` |
@@ -666,8 +670,8 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `task run` | `task-run.ts` | `taskRunCommand` | 3 | exempt — see below | sharedCommandShell (target) |
 | `task status` | `task-status.ts` | `taskStatusCommand` | 3 | exempt — see below | taskStatus (target) |
 | `pr create` | `pr.ts` | `prCreateCommand` | 9 | exempt — see below | forgeWrite (target) |
-| `pr edit` | `pr.ts` | `prEditCommand` | 8 | exempt — see below | forgeWrite (target) |
-| `pr report` | `pr-report.ts` | `prReportCommand` | 3 | exempt — see below | collectTokens (target) |
+| `pr edit` | `pr.ts` | `prEditCommand` | 10 | exempt — see below | forgeWrite (target) |
+| `pr report` | `pr-report.ts` | `prReportCommand` | 4 | exempt — see below | collectTokens (target) |
 | `pr verify-evidence` | `pr-verify-evidence.ts` | `prVerifyEvidenceCommand` | 3 | exempt — see below | collectTokens (target) |
 | `pr rule` | `pr-rule.ts` | `prRuleCommand` | 6 | exempt — see below | forgeWrite (target) |
 | `issue create` | `issue.ts` | `issueCreateCommand` | 11 | exempt — see below | forgeWrite (target) |
@@ -711,8 +715,8 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `init product` | 2026-09-05 | 8 — lib (8): `planRegistryRow`, `planConfigProjectEntry`, `renderRegistryRowDiffLine`, `renderConfigProjectEntryDiffLine`, `applyRegistryRow`, `applyConfigProjectEntry`, `promptYesNo`, `closeStdin` | `sharedCommandShell` |
 | `check` | 2026-09-05 | 3 — lib: `loadConfigChecked`, `configPath`, `printJson` | `runChecks` |
 | `pr create` | 2026-09-05 | 9 — lib (9): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `loadConfigChecked`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
-| `pr edit` | 2026-09-05 | 8 — lib (8): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
-| `pr report` | 2026-09-10 | 3 — lib: `summariseNumstat`; commands/\*.ts (refused outright): `realDeps`, `meteringRefusalMessage` (`tokens.ts`) | `collectTokens` |
+| `pr edit` | 2026-09-11 | 10 — lib (10): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `runBodyChecks`, `parseIssueNumberFromRef`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
+| `pr report` | 2026-09-11 | 4 — lib: `summariseNumstat`, `runBodyChecks`; commands/\*.ts (refused outright): `realDeps`, `meteringRefusalMessage` (`tokens.ts`) | `collectTokens` |
 | `pr verify-evidence` | 2026-09-05 | 3 — lib: none; commands/\*.ts (refused outright): `buildReport` (`pr-report.ts`), `compareEvidence`, `renderVerdict` (`pr-verify-evidence-logic.ts`) | `collectTokens` |
 | `pr rule` | 2026-09-05 | 6 — lib (6): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `countMarkerComments`, `postMarkedComment`, `printJson` | `forgeWrite` |
 | `issue create` | 2026-09-11 | 11 — lib (11): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `extractLabels`, `refuseUnlabeledTaskShapedBody`, `validateTaskIssue`, `printJson`, `ensureTrancheLabelExists`, `runGhWrite`, `resolveMilestoneAttachArgs` | `forgeWrite` |

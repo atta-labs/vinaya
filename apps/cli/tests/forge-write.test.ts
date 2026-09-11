@@ -11,6 +11,8 @@ import {
   locateBody,
   readSharedPackages,
   resolveShippableArgs,
+  runBodyChecks,
+  runIssueChecks,
   validateForgeWrite,
   validateIssueContent
 } from '../src/lib/forge-write'
@@ -565,5 +567,74 @@ describe('resolveSections — rings.ring1_forgeWriteInterception', () => {
       briefSchema: { pr: { sections: [{ builtin: 'tier' }] } }
     })
     expect(resolveSections('pr', 'vinaya pr create')).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// task 17, O1/O2 — the registry-runner call every forge-write path shares.
+// Only the pass path is exercised here (a body/Issue this process can grade
+// clean) — the refusal path calls `refuse()` (`process.exit(1)`), which
+// `tests/commands/pr.test.ts`'s subprocess-based suite already covers
+// end to end (`runs the registry PR_BODY checks (task 12, #387)`).
+// ---------------------------------------------------------------------------
+
+describe('runBodyChecks — the ONE registry-runner call every forge-write path shares (O1)', () => {
+  it("resolves without refusing on a body the registered `validates: 'body'` checks all pass, PR not yet created", async () => {
+    await expect(runBodyChecks(validPr, 'fix/some-branch', undefined, 'vinaya pr create')).resolves.toBeUndefined()
+  })
+
+  describe('rings.ring1_forgeWriteInterception: true', () => {
+    let tmpDir: string
+    let originalCwd: string
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'vinaya-forge-body-checks-ring1-test-'))
+      originalCwd = process.cwd()
+      process.chdir(tmpDir)
+      writeFileSync(
+        join(tmpDir, 'vinaya.config.json'),
+        JSON.stringify({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } }),
+        'utf8'
+      )
+    })
+
+    afterEach(() => {
+      process.chdir(originalCwd)
+      rmSync(tmpDir, { recursive: true, force: true })
+    })
+
+    it('resolves without refusing, even given a body no core check would pass', async () => {
+      await expect(runBodyChecks('123', '', undefined, 'vinaya pr create')).resolves.toBeUndefined()
+    })
+  })
+})
+
+describe('runIssueChecks — the ONE registry-runner call every Issue write path shares (O2)', () => {
+  it("resolves without refusing for a subject every registered `validates: 'issue'` check passes", async () => {
+    await expect(
+      runIssueChecks({
+        body: "## Objectives\n\nO1. Something happens.\n\n## Planner's rationale\n\nsome rationale\n",
+        labels: ['vinaya/tranche:demo-v1'],
+        title: 'Feat: a well-formed title',
+        issueNumber: null,
+        currentMilestoneTitle: null,
+        resolvedMilestoneTitle: null,
+        retryCommand: 'vinaya issue create'
+      })
+    ).resolves.toBeUndefined()
+  })
+})
+
+describe('forge-write.ts — the registry runner is the ONLY validator path for validates:-tagged checks (O1/O2 audit)', () => {
+  const source = readFileSync(join(import.meta.dir, '..', 'src', 'lib', 'forge-write.ts'), 'utf8')
+
+  it('calls `runChecks` in exactly two places — runBodyChecks and runIssueChecks — never a third, ad hoc invocation', () => {
+    const matches = source.match(/\brunChecks\(/g) ?? []
+    expect(matches.length).toBe(2)
+  })
+
+  it('every check `runBodyChecks`/`runIssueChecks` select is filtered by its registered `validates` field, not a hand-rolled name list', () => {
+    expect(source).toContain("filter((s) => s.validates === 'body')")
+    expect(source).toContain("filter((s) => s.validates === 'issue')")
   })
 })
