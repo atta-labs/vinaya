@@ -411,8 +411,8 @@ export async function checkCommand(args: string[]): Promise<void> {
  * GitHub exposes no per-check granularity inside it — confirmed live against
  * this repo's own `vinaya check --all --diff-only` run).
  *
- * A `principalOwed` check (review-validity-v1 11, O1) whose every reported
- * error THIS run is `pending: true` is waiting on the Principal, not on this
+ * A `principalOwed` check whose every reported error THIS run is
+ * `pending: true` is waiting on the Principal, not on this
  * diff, and is excluded — the registry flag names the check, never a name
  * list, and the exclusion applies ONLY to that one cause: a structural
  * failure on the same check (no `pending` errors at all, or a mix of

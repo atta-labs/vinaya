@@ -55,8 +55,8 @@ const CheckEntrySchema = z
     // adopter whose own workflow reports a check marks it here so
     // `check --all` stops producing a second conclusion nothing refreshes.
     ownWorkflow: z.boolean().optional(),
-    // Same discipline again (review-validity-v1 11, O1): an adopter's own
-    // custom check whose failure only their own equivalent of the Principal
+    // Same discipline again: an adopter's own custom check whose
+    // failure only their own equivalent of the Principal
     // can clear declares this exactly like `test-plan` does in the core
     // registry — see `CheckSpec.principalOwed`'s doc comment for the
     // exclusion semantics this unlocks.

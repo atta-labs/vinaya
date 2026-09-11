@@ -230,11 +230,10 @@ function resolveObjectivesVersion(pr: PrView): string | null {
 }
 
 /**
- * The `[principal]` half of `test-plan`'s own tick-state gate, moved HERE
- * (review-validity-v1 11, O2) — enforcement of an unticked `[principal]` Test
- * Plan item does not disappear when `test-plan`'s registry entry is marked
- * `principalOwed` (O1), it moves to where a MERGE is actually refused: this
- * check. `test-plan` keeps grading the `[agent]` half and the plan's
+ * The `[principal]` half of `test-plan`'s own tick-state gate, moved HERE —
+ * enforcement of an unticked `[principal]` Test Plan item does not disappear
+ * when `test-plan`'s registry entry is marked `principalOwed`, it moves to
+ * where a MERGE is actually refused: this check. `test-plan` keeps grading the `[agent]` half and the plan's
  * structure only; ticking a `[principal]` box is what a Principal does after
  * verifying in a real signed-in browser, and this is the check that refuses
  * a merge while one is still unticked, in the same `review-gate (PR #N): …`

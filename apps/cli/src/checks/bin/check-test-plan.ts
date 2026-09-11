@@ -25,9 +25,9 @@ const CHECK_NAME = 'test-plan'
 
 /**
  * Classifies a fail result into this check's `CheckError`s, exported for
- * direct unit coverage of the pending/structural split (review-validity-v1
- * 11, O1) rather than only through a spawned end-to-end run. Two
- * distinguishable causes share this one check. A missing Test Plan section
+ * direct unit coverage of the pending/structural split rather than only
+ * through a spawned end-to-end run. Two distinguishable causes share this
+ * one check. A missing Test Plan section
  * is structural — the Developer fixes it by writing one, and it always
  * blocks the mechanical gate. An unticked `[principal]` item is a wait
  * state — only the Principal clears it, by verifying in a real signed-in
