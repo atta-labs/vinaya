@@ -71,6 +71,12 @@
 import { isPrincipal, isWaiverLabelActorVerified, PRINCIPAL_ALLOWLIST, WAIVER_LABEL_REVIEW } from './waiver-label'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
 import { DEFAULT_REVIEW_POLICY, evaluateCodeReview, evaluateSecurityReview, type ReviewPolicy } from './review-policy'
+import {
+  compareManifest,
+  policyDigest as computePolicyDigest,
+  type EchoedManifest,
+  type ReviewInputManifest
+} from './review-input-manifest'
 
 export type ReviewGateVerdict = 'pass' | 'fail'
 
@@ -201,6 +207,19 @@ export type ReviewGateInput = {
    * fallback shape `principalAllowlist` already uses above.
    */
   policy?: ReviewPolicy
+  /**
+   * The frozen brief's own hash at evaluation time (`review-validity-v1`
+   * task 4, `#478`, O1) — resolved by the caller (never here; this stays
+   * pure) from the linked Issue's newest principal-authored frozen brief.
+   * Optional, defaulting to `null` (skip the binding) when omitted — every
+   * existing caller that predates this field is unaffected, the same
+   * optional-with-fallback shape `patchIdOf`/`policy` already use above.
+   * `null` (explicit, or via omission) means no frozen brief is resolvable
+   * for this PR — nothing to bind against, so every verdict passes this
+   * check unconditionally, the same "skip" meaning `objectivesVersion: null`
+   * already carries.
+   */
+  briefHash?: string | null
 }
 
 /**
@@ -214,82 +233,6 @@ export type ReviewGateInput = {
  */
 export function isReviewGateExemptBranch(_branch: string): boolean {
   return false
-}
-
-/**
- * True when `extraction.headSha` covers `headSha` — an exact match, or
- * `headSha` starting with `extraction.headSha` (the abbreviated-sha case:
- * a verdict may bind against a 7-char prefix, and `headSha` itself is always
- * the full 40-char form GitHub's API returns). `false` when the extraction
- * carries no `headSha` at all (no `Judged head:` line was found) — an
- * unbound verdict never counts as covering anything.
- */
-function isBoundToHead(extraction: { headSha: string | null }, headSha: string): boolean {
-  if (!extraction.headSha) return false
-  return headSha.toLowerCase().startsWith(extraction.headSha.toLowerCase())
-}
-
-/**
- * True when the judged head and the current head carry the SAME patch — the
- * verdict was cast on this exact set of changes, whatever sha now addresses
- * it. Composed BESIDE `isBoundToHead`, never in place of it: sha binding
- * still counts on its own, and this only widens what else counts.
- *
- * Fails closed on every uncertainty. `null` on either side is "git could not
- * answer", not "they match" — a force-push that makes the judged head
- * unreachable resolves to `null` and the verdict correctly stops counting.
- */
-function isBoundByPatchIdentity(
-  extraction: { headSha: string | null },
-  headSha: string,
-  patchIdOf?: (sha: string) => string | null
-): boolean {
-  if (patchIdOf === undefined || !extraction.headSha) return false
-  const judged = patchIdOf(extraction.headSha)
-  const current = patchIdOf(headSha)
-  if (judged === null || current === null) return false
-  return judged === current
-}
-
-/** A verdict covers the current head when its sha binds it, or its patch identity does. */
-function isBoundToPatch(
-  extraction: { headSha: string | null },
-  headSha: string,
-  patchIdOf?: (sha: string) => string | null
-): boolean {
-  return isBoundToHead(extraction, headSha) || isBoundByPatchIdentity(extraction, headSha, patchIdOf)
-}
-
-/**
- * True when the verdict's objectives version covers the PR's current one
- * (dev-review-loop-v1 task 2, `#412`, O3). `currentVersion === null` means
- * the binding is skipped entirely (pre-cutover Issue, no Issue, or no
- * resolvable objectives section) — every verdict passes this check
- * unconditionally, preserving the pre-cutover stock. Otherwise a verdict
- * binds only when its own `objectivesVersion` is the identical string; a
- * verdict with no version line at all (`null`) never matches a non-null
- * current version, the same fail-closed default `isBoundToHead` uses for a
- * missing `Judged head:` line.
- */
-function isBoundToObjectives(extraction: { objectivesVersion: string | null }, currentVersion: string | null): boolean {
-  if (currentVersion === null) return true
-  return extraction.objectivesVersion === currentVersion
-}
-
-/**
- * True when the verdict's ruling ordinal covers the PR's current newest
- * ruling ordinal (`review-validity-v1` task 3, `#477`, O2). `null` on the
- * extraction (pre-cutover stock — no `Ruling ordinal:` line at all) binds
- * only when `currentOrdinal` is `0`: a verdict cast before this feature
- * existed is still valid on a PR that has never had a ruling, but not on
- * one that has, since that verdict's reviewers structurally never saw it.
- * Otherwise the ordinals must match exactly — a verdict cast against ruling
- * 1 does not cover a PR whose newest ruling is now 2, and a ruling posted
- * after approval is exactly what turns a previously-bound verdict unbound.
- */
-function isBoundToRulings(extraction: { rulingOrdinal: number | null }, currentOrdinal: number): boolean {
-  if (extraction.rulingOrdinal === null) return currentOrdinal === 0
-  return extraction.rulingOrdinal === currentOrdinal
 }
 
 /**
@@ -406,24 +349,46 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const securityPolicyClean = securityPolicyEvaluation.outcome === 'clean'
   const codeReviewClean = codeReviewTextClean && codeReviewPolicyClean
   const securityClean = securityTextClean && securityPolicyClean
-  const codeReviewBound = isBoundToPatch(codeReview, input.headSha, input.patchIdOf)
-  const securityBound = isBoundToPatch(security, input.headSha, input.patchIdOf)
-  const codeReviewObjectivesBound = isBoundToObjectives(codeReview, input.objectivesVersion)
-  const securityObjectivesBound = isBoundToObjectives(security, input.objectivesVersion)
-  const codeReviewRulingsBound = isBoundToRulings(codeReview, input.rulingOrdinal)
-  const securityRulingsBound = isBoundToRulings(security, input.rulingOrdinal)
+  // task 4 (`#478`, O2): ONE comparison — the same `compareManifest` the
+  // loop's own publication self-check calls — behind every binding below,
+  // rather than four separate hand-rolled predicates. `current` is this
+  // evaluation's own manifest; each verdict's own echoed fields (read by
+  // `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` above) are
+  // compared against it, never trusted as provenance on their own. Built
+  // directly (not via `buildReviewInputManifest`, which hashes a caller
+  // brief string) since the caller already resolved `briefHash` itself and
+  // this module stays pure — no hashing of forge content here.
+  const currentManifest: ReviewInputManifest = {
+    headSha: input.headSha,
+    briefHash: input.briefHash ?? null,
+    objectivesVersion: input.objectivesVersion,
+    rulingOrdinal: input.rulingOrdinal,
+    policyDigest: computePolicyDigest(policy)
+  }
+  const codeReviewEchoed: EchoedManifest = {
+    headSha: codeReview.headSha,
+    briefHash: codeReview.briefHash,
+    objectivesVersion: codeReview.objectivesVersion,
+    rulingOrdinal: codeReview.rulingOrdinal,
+    policyDigest: codeReview.policyDigest
+  }
+  const securityEchoed: EchoedManifest = {
+    headSha: security.headSha,
+    briefHash: security.briefHash,
+    objectivesVersion: security.objectivesVersion,
+    rulingOrdinal: security.rulingOrdinal,
+    policyDigest: security.policyDigest
+  }
+  const codeReviewBinding = compareManifest(codeReviewEchoed, currentManifest, input.patchIdOf)
+  const securityBinding = compareManifest(securityEchoed, currentManifest, input.patchIdOf)
+  const codeReviewBound = codeReviewBinding.head
+  const securityBound = securityBinding.head
+  const codeReviewObjectivesBound = codeReviewBinding.objectivesVersion
+  const securityObjectivesBound = securityBinding.objectivesVersion
+  const codeReviewRulingsBound = codeReviewBinding.rulingOrdinal
+  const securityRulingsBound = securityBinding.rulingOrdinal
 
-  if (
-    codeReviewClean &&
-    codeReviewBound &&
-    codeReviewObjectivesBound &&
-    codeReviewRulingsBound &&
-    securityClean &&
-    securityBound &&
-    securityObjectivesBound &&
-    securityRulingsBound &&
-    mechanicalChecksClean
-  ) {
+  if (codeReviewClean && codeReviewBinding.bound && securityClean && securityBinding.bound && mechanicalChecksClean) {
     return {
       verdict: 'pass',
       reason: `code-reviewer verdict is a clean APPROVE and security-review verdict is a clean PASS, both covering head ${input.headSha}, and every reported mechanical check is green.`,
@@ -450,6 +415,14 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
     problems.push(
       `the newest code-review verdict was cast against ruling ordinal ${codeReview.rulingOrdinal ?? 'none'}, a newer ruling (ruling ${input.rulingOrdinal}) is now posted on this PR`
     )
+  } else if (!codeReviewBinding.briefHash) {
+    problems.push(
+      `the newest code-review verdict was cast against brief hash ${codeReview.briefHash ?? 'none'}, the frozen brief's current hash is ${currentManifest.briefHash ?? 'none'}`
+    )
+  } else if (!codeReviewBinding.policyDigest) {
+    problems.push(
+      `the newest code-review verdict was cast against review policy digest ${codeReview.policyDigest ?? 'none'}, this repository's current policy digest is ${currentManifest.policyDigest}`
+    )
   }
   if (!securityTextClean) {
     problems.push(`security-review verdict is not a clean PASS (found: ${security.value})`)
@@ -468,6 +441,14 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   } else if (!securityRulingsBound) {
     problems.push(
       `the newest security-review verdict was cast against ruling ordinal ${security.rulingOrdinal ?? 'none'}, a newer ruling (ruling ${input.rulingOrdinal}) is now posted on this PR`
+    )
+  } else if (!securityBinding.briefHash) {
+    problems.push(
+      `the newest security-review verdict was cast against brief hash ${security.briefHash ?? 'none'}, the frozen brief's current hash is ${currentManifest.briefHash ?? 'none'}`
+    )
+  } else if (!securityBinding.policyDigest) {
+    problems.push(
+      `the newest security-review verdict was cast against review policy digest ${security.policyDigest ?? 'none'}, this repository's current policy digest is ${currentManifest.policyDigest}`
     )
   }
   if (!mechanicalChecksClean) {

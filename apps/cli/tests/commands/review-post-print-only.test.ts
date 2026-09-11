@@ -37,11 +37,15 @@ function runCli(args: string[], cwd: string, env: Record<string, string | undefi
 /**
  * Answers `pr view --json headRefName`, `pr view --json headRefOid`,
  * `pr view --json comments` (empty — round one, no prior verdict to
- * reconcile against) and `pr view --json body` (`Closes #1` — below
+ * reconcile against), `pr view --json body` (`Closes #1` — below
  * `OBJECTIVES_SINCE_ISSUE`, so `resolveObjectivesForPr` resolves `skip` and
- * neither an `Objectives version:` line nor an `OBJECTIVES:` block renders);
- * `pr comment` exits non-zero with a distinctive stderr line, so a stray
- * real post is loud, never silent.
+ * neither an `Objectives version:` line nor an `OBJECTIVES:` block renders)
+ * and `issue view --json comments` (empty — `resolveBriefHashForPr`, task 4,
+ * `#478`, O1, always reaches this call since `Closes #1` names a real Issue;
+ * no principal-authored frozen brief here is the legitimate "nothing to
+ * bind against yet" case, so `Brief hash:` renders `(none)`, never a
+ * refusal); `pr comment` exits non-zero with a distinctive stderr line, so a
+ * stray real post is loud, never silent.
  *
  * `resolveHeadSha` resolves the branch name first, then its true head via
  * `git ls-remote` — which fails outright here (`cwd` is a plain tempdir,
@@ -65,6 +69,11 @@ fi
 if [ "$1" = "api" ]; then
   case "$*" in
     *git/ref/heads/stub-branch*) echo "${headSha}"; exit 0 ;;
+  esac
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  case "$*" in
+    *comments*) echo '{"comments": []}'; exit 0 ;;
   esac
 fi
 if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then

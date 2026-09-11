@@ -96,6 +96,24 @@ export type Observations =
  * again: the driver compares its recorded start-of-loop base head against a
  * freshly re-read one and decides this itself, so a running driver never
  * publishes verdicts an updated gate would refuse.
+ *
+ * `'brief_superseded'` (`review-validity-v1` task 4, `#478`, O2): the
+ * frozen brief's own hash the driver resolved when it dispatched this
+ * round's reviewers no longer matches the hash it resolves once their
+ * verdicts are back — a Planner superseded the frozen brief mid-round.
+ * Same shape as `'objectives_changed'`/`'ruling_posted'`: the driver
+ * detects and decides it itself (via the shared `compareManifest`, not a
+ * hand-rolled inequality), and this member exists only so the pause shares
+ * the same vocabulary and rendering path every other pause reason uses.
+ *
+ * `'policy_changed'` (task 4, `#478`, O5): the effective review policy's
+ * digest the driver resolved at dispatch time no longer matches the one it
+ * resolves once verdicts are back — same shape again. In practice a single
+ * loop run resolves its policy once and never re-reads it, so this branch
+ * is reachable only if a future change makes that re-read live; it exists
+ * now so the manifest's comparison is symmetric on every field, matching
+ * what the merge gate (which DOES re-resolve policy fresh on every run)
+ * already checks.
  */
 export type PauseReason =
   | 'escalation'
@@ -107,6 +125,8 @@ export type PauseReason =
   | 'objectives_changed'
   | 'ruling_posted'
   | 'stale_driver'
+  | 'brief_superseded'
+  | 'policy_changed'
 
 export type Decision =
   | { type: 'dispatch_developer'; reason?: 'confidence' }

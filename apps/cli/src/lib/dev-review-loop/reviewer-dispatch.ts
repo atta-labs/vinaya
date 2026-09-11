@@ -17,11 +17,14 @@ import {
   CODE_REVIEW_SEVERITY_ORDER,
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
+  type Objective,
+  type ReviewInputManifest,
   SECURITY_SEVERITY_ORDER,
   type ReviewPolicy,
   type VerdictObservation
 } from '@attalabs/aeg-core'
 import {
+  checkObjectiveIdCoverage,
   deriveCodeReviewVerdict,
   deriveSecurityVerdict,
   type EscalationClass,
@@ -43,15 +46,21 @@ import { GLOBAL_VINAYA_HOME } from '../config.js'
 
 export type ReviewerPromptFacts = {
   objectives: string
-  /** `resolveIssueObjectives`'s version for `objectives`, captured at dispatch time — threaded into the held verdict (O2) and re-checked at assessment time (O3). `null` alongside an empty `objectives`. */
-  objectivesVersion: string | null
+  /** The `objectives` text, parsed — `[]` exactly when `objectives` is empty. Threaded into `buildVerdictFromReport`'s own `checkObjectiveIdCoverage` call (task 4, `#478`, O4), the same coverage rule `review post` already applies. */
+  resolvedObjectives: readonly Objective[]
   rulings: string[]
-  /** The newest principal ruling ordinal on this PR, captured at dispatch time (task 3, `#477`, O1) — `0` when `rulings` is empty. Threaded into the held verdict and re-checked at assessment time (O3), same shape as `objectivesVersion`. */
-  rulingOrdinal: number
-  head: string
   ciConclusion: 'green' | 'red' | 'pending'
   /** The frozen brief's own `**Revision:**` fact (task 4, Issue #483, O2) — `fetchSourceRevision`. */
   revision: string
+  /**
+   * The one review-input manifest (task 4, `#478`,
+   * O1) — head, the frozen brief's own hash, objectives version, ruling
+   * ordinal, and the effective review policy's digest, built by the driver
+   * BEFORE this dispatch. The only source of `HEAD:` in the rendered prompt
+   * below and of every structural line `buildVerdictFromReport` renders —
+   * `objectivesVersion`/`rulingOrdinal` are no longer separate fields here.
+   */
+  manifest: ReviewInputManifest
 }
 
 /**
@@ -87,7 +96,7 @@ export function renderReviewerPrompt(facts: ReviewerPromptFacts): string {
     'RULINGS ON THIS PR:',
     facts.rulings.length > 0 ? facts.rulings.map((r, i) => `${i + 1}. ${r}`).join('\n') : '(none)',
     '',
-    `HEAD: ${facts.head}`,
+    `HEAD: ${facts.manifest.headSha}`,
     `CI: ${facts.ciConclusion}`,
     `BRIEF REVISION: ${facts.revision}`
   ].join('\n')
@@ -294,14 +303,16 @@ export type RoundVerdictParse = { observation: VerdictObservation; rendered: str
 export function buildVerdictFromReport(
   role: 'reviewer' | 'security',
   workDir: string,
-  headSha: string,
   agent: AgentVendor,
   taskId: number,
   handle: DispatchHandle,
-  objectivesVersionAtDispatch: string | null,
-  rulingOrdinalAtDispatch: number,
-  policy: ReviewPolicy
+  manifest: ReviewInputManifest,
+  policy: ReviewPolicy,
+  resolvedObjectives: readonly Objective[]
 ): RoundVerdictParse {
+  const headSha = manifest.headSha
+  const objectivesVersionAtDispatch = manifest.objectivesVersion
+  const rulingOrdinalAtDispatch = manifest.rulingOrdinal
   const reportRaw = readIfExists(join(workDir, 'report.txt')) ?? ''
   const report = parseReport(reportRaw)
   const sessionId = handle.resumeId ?? '(unknown)'
@@ -324,6 +335,8 @@ export function buildVerdictFromReport(
       roleLabel,
       objectivesVersion: objectivesVersionAtDispatch,
       rulingOrdinal: rulingOrdinalAtDispatch,
+      briefHash: manifest.briefHash,
+      policyDigest: manifest.policyDigest,
       taskId: String(taskId),
       model: agent,
       tokensIn,
@@ -359,6 +372,24 @@ export function buildVerdictFromReport(
     }
     throw err
   }
+  // O4 (task 4, `#478`): the SAME coverage rule `review post`'s own
+  // `resolveObjectiveResultsForCommand` already applies to a human-posted
+  // verdict — an under-reporting reviewer (one that wrote fewer, or extra,
+  // `O<n>|...` lines than the resolved objectives list) never yields a
+  // version-bound verdict here either. Same one-fresh-retry treatment as a
+  // missing or malformed artifact (`ReviewerReportParseFailure`), never a
+  // silently-accepted partial report.
+  if (resolvedObjectives.length > 0) {
+    const coverageProblem = checkObjectiveIdCoverage(resolvedObjectives, objectiveResults)
+    if (coverageProblem !== null) {
+      throw new ReviewerReportParseFailure(
+        role,
+        'objectives.txt',
+        sessionId,
+        new Error(`objectives.txt does not cover the resolved objectives list exactly: ${coverageProblem}`)
+      )
+    }
+  }
   const objectives = objectiveResults.map((o) => ({ id: o.id, met: o.status === 'MET' }))
   // O2: a version renders alongside its `OBJECTIVES:` block, or neither
   // renders — `review-post.ts`'s `CodeReviewInput`/`SecurityInput` contract
@@ -382,6 +413,8 @@ export function buildVerdictFromReport(
       objectivesVersion: objectivesVersionAtDispatch,
       objectiveResults: renderedObjectiveResults,
       rulingOrdinal: rulingOrdinalAtDispatch,
+      briefHash: manifest.briefHash,
+      policyDigest: manifest.policyDigest,
       taskId: String(taskId),
       model: agent,
       tokensIn,
@@ -428,6 +461,8 @@ export function buildVerdictFromReport(
     objectivesVersion: objectivesVersionAtDispatch,
     objectiveResults: renderedObjectiveResults,
     rulingOrdinal: rulingOrdinalAtDispatch,
+    briefHash: manifest.briefHash,
+    policyDigest: manifest.policyDigest,
     taskId: String(taskId),
     model: agent,
     tokensIn,

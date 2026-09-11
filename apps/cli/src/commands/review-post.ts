@@ -83,6 +83,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  briefHash,
   CODE_REVIEW_SEVERITY_ORDER,
   codeReviewBlockingSeverities,
   evaluateCodeReview,
@@ -97,6 +98,8 @@ import {
   type Objective,
   objectivesOf,
   objectivesVersion,
+  policyDigest as reviewPolicyDigest,
+  resolveNewestFrozenBrief,
   type ReviewGateComment,
   type ReviewPolicy,
   resolveObjectivesSource,
@@ -404,6 +407,10 @@ export type CodeReviewInput = TokensInput & {
   objectiveResults: readonly ObjectiveResult[] | null
   /** The newest principal ruling ordinal on this PR at cast time — `0` when none, RENDERS UNCONDITIONALLY, never omitted the way `objectivesVersion` is pre-cutover (task 3, `#477`, O1). */
   rulingOrdinal: number
+  /** The frozen brief's own hash at cast time (task 4, `#478`, O1) — `null` when no frozen brief was resolvable for this PR. RENDERS UNCONDITIONALLY, as `(none)` when null — a non-hash placeholder the gate's extractor reads back as no binding at all. */
+  briefHash: string | null
+  /** The effective review policy's digest at cast time (task 4, `#478`, O5). Never null — a policy is always configured or defaulted. */
+  policyDigest: string
 }
 
 const CODE_REVIEW_VERDICT_TEXT: Record<CodeReviewVerdict, string> = {
@@ -463,6 +470,8 @@ export function renderCodeReviewComment(input: CodeReviewInput): string {
     lines.push(`Objectives version: ${input.objectivesVersion}`, '')
   }
   lines.push(`Ruling ordinal: ${input.rulingOrdinal}`, '')
+  lines.push(`Brief hash: ${input.briefHash ?? '(none)'}`, '')
+  lines.push(`Policy digest: ${input.policyDigest}`, '')
   if (input.scopeEvidence !== null) {
     // AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
     // Directly below the verdict block, per `reviewer.md`'s own evidence
@@ -509,6 +518,10 @@ export type SecurityInput = TokensInput & {
   objectiveResults: readonly ObjectiveResult[] | null
   /** The newest principal ruling ordinal on this PR at cast time — `0` when none, RENDERS UNCONDITIONALLY, never omitted the way `objectivesVersion` is pre-cutover (task 3, `#477`, O1). */
   rulingOrdinal: number
+  /** The frozen brief's own hash at cast time (task 4, `#478`, O1) — `null` when no frozen brief was resolvable for this PR. RENDERS UNCONDITIONALLY, as `(none)` when null. */
+  briefHash: string | null
+  /** The effective review policy's digest at cast time (task 4, `#478`, O5). Never null. */
+  policyDigest: string
 }
 
 /**
@@ -546,6 +559,8 @@ export function renderSecurityComment(input: SecurityInput): string {
     lines.push(`Objectives version: ${input.objectivesVersion}`, '')
   }
   lines.push(`Ruling ordinal: ${input.rulingOrdinal}`, '')
+  lines.push(`Brief hash: ${input.briefHash ?? '(none)'}`, '')
+  lines.push(`Policy digest: ${input.policyDigest}`, '')
   lines.push('FINDINGS (ordered by severity):', renderFindingsSection(sorted), '')
   if (input.objectiveResults !== null) {
     lines.push(renderObjectivesBlock(input.objectiveResults), '')
@@ -676,6 +691,9 @@ export type EscalationInput = TokensInput & {
   objectivesVersion: string | null
   /** Same resolution as the verdict shapes (task 3, `#477`, O1) — an escalation carries this line too, unconditionally, even though it carries no verdict at all. */
   rulingOrdinal: number
+  /** Same resolution as the verdict shapes (task 4, `#478`, O1/O5) — an escalation carries these two lines too, unconditionally. */
+  briefHash: string | null
+  policyDigest: string
 }
 
 /**
@@ -705,6 +723,8 @@ export function renderEscalationComment(input: EscalationInput): string {
     lines.push(`Objectives version: ${input.objectivesVersion}`, '')
   }
   lines.push(`Ruling ordinal: ${input.rulingOrdinal}`, '')
+  lines.push(`Brief hash: ${input.briefHash ?? '(none)'}`, '')
+  lines.push(`Policy digest: ${input.policyDigest}`, '')
   lines.push(
     input.summary,
     '',
@@ -1289,6 +1309,45 @@ function resolveRulingOrdinalForPr(pr: string): number {
   return newestPrincipalRulingOrdinal(comments, resolvePrincipalAllowlist(loadTrustAnchorConfig()))
 }
 
+/**
+ * The frozen brief's own hash for the Issue `pr` closes, at the moment this
+ * command runs (task 4, `#478`, O1) — `null` in exactly TWO cases: the PR
+ * closes no Issue (resolved before any fetch), or that Issue's real,
+ * successfully-fetched comment list carries no principal-authored frozen
+ * brief yet. Every OTHER case — the fetch itself throwing (network error,
+ * `gh` auth failure, malformed JSON) — refuses via `refuseCmd`, the identical
+ * treatment `resolveObjectivesForPr` already gives its own fetch failure
+ * (round 3 review, `#478`): the prior version caught every exception into
+ * `null`, silently rendering `Brief hash: (none)` on a transient `gh` hiccup
+ * instead of refusing the post — inconsistent with every sibling resolver in
+ * this file, even though the gate's own independent re-check later fails
+ * closed on the resulting mismatch.
+ */
+function resolveBriefHashForPr(pr: string, principalAllowlist: readonly string[]): string | null {
+  const prBody = fetchPrBody(pr)
+  const { issue } = extractIssue(prBody)
+  if (issue === null) return null
+  let out: string
+  try {
+    out = gh(['issue', 'view', String(issue), '--json', 'comments'])
+  } catch (err) {
+    if (isIssueNotFoundError(err)) {
+      refuseCmd(
+        `Issue #${issue} does not resolve via \`gh issue view\` — no frozen brief to bind against.`,
+        'Confirm the Issue exists, or fix `Closes #N` in the PR body, then re-run.'
+      )
+    }
+    refuseCmd(
+      `Could not fetch Issue #${issue}'s comments via \`gh issue view\` to resolve its frozen-brief hash: ${err instanceof Error ? err.message : String(err)}`,
+      'Confirm `gh auth status` passes, then re-run.'
+    )
+  }
+  const parsed = JSON.parse(out) as { comments: Array<{ body: string; author?: { login?: string } | null }> }
+  const comments = parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
+  const frozen = resolveNewestFrozenBrief(comments, principalAllowlist as string[])
+  return frozen ? briefHash(frozen.content) : null
+}
+
 function readObjectivesFile(path: string): ObjectiveResult[] {
   if (path.trim() === '') {
     refuseCmd('`--objectives-file` was given with no path.', 'Pass the path to the objectives file, then re-run.')
@@ -1705,6 +1764,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     const escalationObjectivesVersion =
       escalationObjectivesResolution.kind === 'list' ? escalationObjectivesResolution.version : null
     const escalationRulingOrdinal = resolveRulingOrdinalForPr(pr)
+    const escalationPrincipalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+    const escalationBriefHash = resolveBriefHashForPr(pr, escalationPrincipalAllowlist)
     const body = renderEscalationComment({
       ...tokens,
       headSha,
@@ -1713,7 +1774,9 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       role: tokensRole,
       roleLabel,
       objectivesVersion: escalationObjectivesVersion,
-      rulingOrdinal: escalationRulingOrdinal
+      rulingOrdinal: escalationRulingOrdinal,
+      briefHash: escalationBriefHash,
+      policyDigest: reviewPolicyDigest(policy)
     })
     checkRenderedCommentOrRefuse(body, { kind: 'escalation' })
     if (printOnly) {
@@ -1787,6 +1850,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     )
     refuseIfCleanVerdictHasNotMetObjective(isCleanVerdict(verdict), 'APPROVE', objectiveResults)
     const resolvedRulingOrdinal = resolveRulingOrdinalForPr(pr)
+    const resolvedBriefHash = resolveBriefHashForPr(pr, principalAllowlist)
 
     let comments: ReviewGateComment[]
     try {
@@ -1821,7 +1885,9 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       docs,
       objectivesVersion: resolvedObjectivesVersion,
       objectiveResults,
-      rulingOrdinal: resolvedRulingOrdinal
+      rulingOrdinal: resolvedRulingOrdinal,
+      briefHash: resolvedBriefHash,
+      policyDigest: reviewPolicyDigest(policy)
     }
     const body = renderCodeReviewComment(input)
     checkRenderedCommentOrRefuse(body, { kind: 'code-review', verdict })
@@ -1908,6 +1974,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   )
   refuseIfCleanVerdictHasNotMetObjective(isCleanVerdict(verdict), 'PASS', objectiveResults)
   const resolvedRulingOrdinal = resolveRulingOrdinalForPr(pr)
+  const resolvedBriefHash = resolveBriefHashForPr(pr, principalAllowlist)
 
   let comments: ReviewGateComment[]
   try {
@@ -1939,7 +2006,9 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     secretsEvidence,
     objectivesVersion: resolvedObjectivesVersion,
     objectiveResults,
-    rulingOrdinal: resolvedRulingOrdinal
+    rulingOrdinal: resolvedRulingOrdinal,
+    briefHash: resolvedBriefHash,
+    policyDigest: reviewPolicyDigest(policy)
   }
   const body = renderSecurityComment(input)
   checkRenderedCommentOrRefuse(body, { kind: 'security', verdict })

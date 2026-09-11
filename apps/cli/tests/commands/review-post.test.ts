@@ -145,6 +145,14 @@ if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments')) {
   process.stdout.write(JSON.stringify({ comments: list.map((c) => ({ body: c.body, author: { login: c.author } })) }))
   process.exit(0)
 }
+if (args[0] === 'issue' && args[1] === 'view' && args.includes('comments')) {
+  // resolveBriefHashForPr (task 4, #478, O1) always reaches this call —
+  // this PR's own "Closes #1" resolves to a real Issue number. No
+  // principal-authored aeg-brief-vK comment here is the legitimate
+  // "nothing to bind against yet" case, not an error.
+  process.stdout.write('{"comments":[]}')
+  process.exit(0)
+}
 if (args[0] === 'pr' && args[1] === 'comment') {
   const bodyFile = args[args.indexOf('--body-file') + 1]
   const body = readFileSync(bodyFile, 'utf8')
@@ -210,6 +218,16 @@ if (args[0] === 'api' && args[1] === 'repos/{owner}/{repo}/git/ref/heads/stub-br
 }
 if (args[0] === 'pr' && args[1] === 'view' && args.includes('body')) {
   process.stdout.write(${JSON.stringify(prBody)})
+  process.exit(0)
+}
+if (args[0] === 'issue' && args[1] === 'view' && args.includes('comments')) {
+  // \`resolveBriefHashForPr\` (task 4, #478, O1) — a DIFFERENT real call from
+  // the \`--json body\` one below (\`resolveObjectivesForPr\`), which always
+  // runs first and refuses before this is ever reached when \`issueBody\` is
+  // undefined (the Issue-not-found case). When the Issue DOES resolve, no
+  // principal-authored \`aeg:brief:v<k>\` comment here is the legitimate
+  // "nothing to bind against yet" case, not an error.
+  process.stdout.write('{"comments":[]}')
   process.exit(0)
 }
 if (args[0] === 'issue' && args[1] === 'view') {
@@ -512,7 +530,9 @@ describe('renderEscalationComment — never a line the gate reads as a verdict',
       role: 'review',
       roleLabel: 'Reviewer',
       objectivesVersion: null,
-      rulingOrdinal: 0
+      rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64)
     })
     expect(body).toContain('ESCALATE: strategy')
     expect(body).toContain(`Judged head: ${HEAD}`)
@@ -528,7 +548,9 @@ describe('renderEscalationComment — never a line the gate reads as a verdict',
       role: 'security',
       roleLabel: 'Security',
       objectivesVersion: null,
-      rulingOrdinal: 0
+      rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64)
     })
     expect(extractCodeReviewVerdict([body]).danglingNote).not.toBeNull()
     expect(extractSecurityReviewVerdict([body]).danglingNote).not.toBeNull()
@@ -544,7 +566,9 @@ describe('renderEscalationComment — never a line the gate reads as a verdict',
       role: 'review',
       roleLabel: 'Reviewer',
       objectivesVersion: null,
-      rulingOrdinal: 0
+      rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64)
     })
     const result = verifyPostedEscalation([{ body: 'VERDICT: APPROVE', author: 'daniboomerang' }], escalation)
     expect(result.ok).toBe(false)
@@ -775,6 +799,14 @@ if (args[0] === 'pr' && args[1] === 'view' && args.includes('body')) {
 if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments')) {
   const list = readComments()
   process.stdout.write(JSON.stringify({ comments: list.map((c) => ({ body: c.body, author: { login: c.author } })) }))
+  process.exit(0)
+}
+if (args[0] === 'issue' && args[1] === 'view' && args.includes('comments')) {
+  // resolveBriefHashForPr (task 4, #478, O1) always reaches this call —
+  // this PR's own "Closes #1" resolves to a real Issue number. No
+  // principal-authored aeg-brief-vK comment here is the legitimate
+  // "nothing to bind against yet" case, not an error.
+  process.stdout.write('{"comments":[]}')
   process.exit(0)
 }
 if (args[0] === 'pr' && args[1] === 'comment') {
@@ -1412,6 +1444,8 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       docs: 'x',
       objectivesVersion: null,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: null
     })
     expect(checkRenderedComment(body, { kind: 'code-review', verdict: 'APPROVE' })).toEqual({ ok: true })
@@ -1428,6 +1462,8 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       secretsEvidence: '(scanner ran, 0 findings)',
       objectivesVersion: null,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: null
     })
     expect(checkRenderedComment(body, { kind: 'security', verdict: 'PASS' })).toEqual({ ok: true })
@@ -1442,7 +1478,9 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       role: 'review',
       roleLabel: 'Reviewer',
       objectivesVersion: null,
-      rulingOrdinal: 0
+      rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64)
     })
     expect(checkRenderedComment(body, { kind: 'escalation' })).toEqual({ ok: true })
   })
@@ -1466,6 +1504,8 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       docs: 'x',
       objectivesVersion: null,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: null
     })
     expect(checkRenderedComment(body, { kind: 'code-review', verdict: 'APPROVE' })).toEqual({ ok: true })
@@ -1498,9 +1538,14 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       role: 'review',
       roleLabel: 'Reviewer',
       objectivesVersion: null,
-      rulingOrdinal: 0
+      rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64)
     })
-    expect(body.split('\n')[6]).toBe('VERDICT: APPROVE')
+    // Brief hash:/Policy digest: (task 4, #478) now render unconditionally
+    // ahead of the summary too, pushing it from line 7 to line 11 — still
+    // well outside every extractor's own read window.
+    expect(body.split('\n')[10]).toBe('VERDICT: APPROVE')
     const result = checkRenderedComment(body, { kind: 'escalation' })
     expect(result.ok).toBe(true)
   })
@@ -1621,14 +1666,16 @@ describe('review post — --scope-evidence-file: a fence directly below the verd
       const verdictLine = lines.indexOf('VERDICT: APPROVE')
       expect(verdictLine).toBeGreaterThan(-1)
       expect(lines[verdictLine + 2]).toBe(`Judged head: ${HEAD}`)
-      // Ruling ordinal: renders unconditionally, ahead of the scope-evidence
-      // fence (review-validity-v1 task 3, #477, O1).
+      // Ruling ordinal:/Brief hash:/Policy digest: all render unconditionally,
+      // ahead of the scope-evidence fence (task 3, `#477`, O1; task 4, `#478`, O1/O5).
       expect(lines[verdictLine + 4]).toBe('Ruling ordinal: 0')
-      expect(lines[verdictLine + 6]).toBe('```')
-      expect(lines[verdictLine + 7]).toContain('2 files changed')
+      expect(lines[verdictLine + 6]).toBe('Brief hash: (none)')
+      expect(lines[verdictLine + 8]).toMatch(/^Policy digest: [0-9a-f]{64}$/)
+      expect(lines[verdictLine + 10]).toBe('```')
+      expect(lines[verdictLine + 11]).toContain('2 files changed')
       // The fence closes before BRIEF CONFORMANCE — evidence sits directly
       // below the verdict block, not mixed into the free-text fields.
-      const fenceClose = lines.indexOf('```', verdictLine + 7)
+      const fenceClose = lines.indexOf('```', verdictLine + 11)
       expect(lines[fenceClose + 2]).toBe('BRIEF CONFORMANCE: x')
       // No Objectives version: line either — this PR is `Closes #1`, well
       // below `OBJECTIVES_SINCE_ISSUE`, so `resolveObjectivesForPr` returns
@@ -1776,6 +1823,8 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       docs: 'x',
       objectivesVersion: OBJ_VERSION,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: RESULTS
     })
     const lines = body.split('\n')
@@ -1801,12 +1850,15 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       docs: 'x',
       objectivesVersion: null,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: null
     })
     expect(body).not.toContain('Objectives version:')
     expect(body).not.toContain('OBJECTIVES:')
     expect(body.split('\n')[4]).toBe('Ruling ordinal: 0')
-    expect(body.split('\n')[6]).toBe('BRIEF CONFORMANCE: x')
+    expect(body.split('\n')[6]).toBe('Brief hash: (none)')
+    expect(body.split('\n')[10]).toBe('BRIEF CONFORMANCE: x')
   })
 
   it('security: Objectives version: renders as line 5, and the block before CONFIG SCAN:', () => {
@@ -1820,6 +1872,8 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       secretsEvidence: null,
       objectivesVersion: OBJ_VERSION,
       rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64),
       objectiveResults: RESULTS
     })
     const lines = body.split('\n')
@@ -1840,7 +1894,9 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       role: 'review',
       roleLabel: 'Reviewer',
       objectivesVersion: OBJ_VERSION,
-      rulingOrdinal: 0
+      rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64)
     })
     const lines = body.split('\n')
     expect(lines[4]).toBe(`Objectives version: ${OBJ_VERSION}`)
@@ -1856,7 +1912,9 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       role: 'review',
       roleLabel: 'Reviewer',
       objectivesVersion: null,
-      rulingOrdinal: 0
+      rulingOrdinal: 0,
+      briefHash: null,
+      policyDigest: 'p'.repeat(64)
     })
     expect(body).not.toContain('Objectives version:')
   })

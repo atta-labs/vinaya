@@ -266,6 +266,17 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `DEFAULT_RELEASE_ACTOR` | const | `packages/aeg-core/src/review-gate.ts` |
 | `isChangesetsReleasePr` | function | `packages/aeg-core/src/review-gate.ts` |
 | `isReviewGateExemptBranch` | function | `packages/aeg-core/src/review-gate.ts` |
+| `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `buildReviewInputManifest` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `compareManifest` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToBriefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToHead` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToObjectives` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToPatch` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToPolicy` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToRulings` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `manifestAsEchoed` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `policyDigest` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `blockingSeverities` | function | `packages/aeg-core/src/review-policy.ts` |
 | `CODE_REVIEW_SEVERITY_ORDER` | const | `packages/aeg-core/src/review-policy.ts` |
 | `codeReviewBlockingSeverities` | function | `packages/aeg-core/src/review-policy.ts` |
@@ -323,7 +334,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `projectsFromBody` | function | `packages/aeg-forge-state/src/list-tasks.ts` |
 | `mapForgeFacts` | function | `packages/aeg-forge-state/src/map-forge-facts.ts` |
 
-(273 exports.)
+(284 exports.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
@@ -509,7 +520,6 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `repoRoot` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `resolveChangedFiles` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `resolveDiff` | function | `apps/cli/src/lib/diff-evidence.ts` |
-| `briefHash` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `DISPATCH_AGENTS` | const | `apps/cli/src/lib/dispatch-task.ts` |
 | `dispatchTask` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `DispatchTaskError` | class | `apps/cli/src/lib/dispatch-task.ts` |
@@ -643,6 +653,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `renderTaskStatusRow` | function | `apps/cli/src/lib/task-status.ts` |
 | `resumeCommandFor` | function | `apps/cli/src/lib/task-status.ts` |
 | `AEG_BRIEF_V1_MARKER` | const | `packages/aeg-core/src/brief-validation.ts` |
+| `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
 (239 exports.)
