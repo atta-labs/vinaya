@@ -264,7 +264,7 @@ function bunInstallCacheStep(): string {
  * `setup-node` at 6-space step indentation. Empty for the ordinary adopter —
  * `npx` needs no preparation.
  */
-type WorkflowSourceTrust = 'pull-request' | 'trusted'
+type WorkflowSourceTrust = 'pull-request' | 'trusted' | 'shared-build'
 
 function vinayaSetupSteps(selfHost: VendoredVinaya | null, sourceTrust: WorkflowSourceTrust = 'pull-request'): string {
   if (!selfHost) return ''
@@ -288,6 +288,46 @@ ${bunInstallCacheStep()}      # This repo declares the \`@attalabs/vinaya\` work
         run: |
           bun install --frozen-lockfile --ignore-scripts
           bun run --cwd ${selfHost.dir} build
+`
+  }
+  if (sourceTrust === 'shared-build') {
+    // Never builds its own copy — O2's boundary is that a `pull_request`
+    // workflow builds the CLI exactly once (this repo's own `ci.yml`) and a
+    // sibling `pull_request` workflow downloads it. Both run at the same
+    // trust level (untrusted PR content), so sharing here crosses no
+    // boundary; a `pull_request_target` workflow must NEVER take this branch
+    // (see `reviewWorkflow`/`bodyChecksWorkflow`/`archivistWorkflow`, all of
+    // which stay on `'trusted'` and build their own copy).
+    return `      - name: Find the shared CLI build for this commit
+        id: shared-build
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          SHA="\${{ github.event.pull_request.head.sha }}"
+          for i in $(seq 1 20); do
+            RUN_ID=$(gh api --paginate \\
+              "repos/\${{ github.repository }}/actions/workflows/ci.yml/runs?event=pull_request&head_sha=$SHA&per_page=100" \\
+              | jq -sr '[.[].workflow_runs[]] | sort_by(.created_at) | last | .id // empty')
+            if [ -n "$RUN_ID" ]; then
+              HAS_ARTIFACT=$(gh api "repos/\${{ github.repository }}/actions/runs/$RUN_ID/artifacts" \\
+                --jq '[.artifacts[] | select(.name == "${CLI_DIST_ARTIFACT_NAME}")] | length > 0')
+              if [ "$HAS_ARTIFACT" = "true" ]; then
+                echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+            sleep 15
+          done
+          echo "No CI (ci.yml) run for $SHA produced the shared ${CLI_DIST_ARTIFACT_NAME} build after waiting - failing rather than building an unshared copy." >&2
+          exit 1
+      - name: Download the shared CLI build
+        uses: actions/download-artifact@v4
+        with:
+          name: ${CLI_DIST_ARTIFACT_NAME}
+          path: ${selfHost.dir}/dist
+          github-token: \${{ secrets.GITHUB_TOKEN }}
+          run-id: \${{ steps.shared-build.outputs.run_id }}
 `
   }
   return `      # Pinned to a commit, not the mutable \`v2\` tag. This is the first
@@ -433,7 +473,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-${vinayaSetupSteps(selfHost, 'pull-request')}${adopterSetupStep(ciSetup)}      # PR_BODY is what makes test-plan/closes-n/pr-report-density EVALUATE:
+${vinayaSetupSteps(selfHost, 'shared-build')}${adopterSetupStep(ciSetup)}      # PR_BODY is what makes test-plan/closes-n/pr-report-density EVALUATE:
       # none of the three fetches the body itself (all read
       # \`process.env.PR_BODY\` only) — without it they read "no body —
       # nothing to check" and pass vacuously regardless of the PR's real

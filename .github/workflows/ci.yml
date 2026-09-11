@@ -5,6 +5,13 @@
 #
 # Runs unscoped (no --affected, no --filter): the suite is ~1-2 minutes and
 # scoping has hidden failures here before.
+#
+# This job also builds the CLI once and uploads it as the `vinaya-cli-dist`
+# artifact (O2) — the exact name `CLI_DIST_ARTIFACT_NAME` in
+# `apps/cli/src/lib/artifacts.ts` names — so the sibling `pull_request`
+# workflow `vinaya-checks.yml` downloads it instead of building its own copy.
+# Both run at the same trust level (untrusted PR content), so sharing here
+# crosses no boundary; see `apps/cli/specs/self-hosting.md`.
 
 name: CI
 
@@ -34,8 +41,31 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
 
+      # O1: restores Bun's install cache, keyed on the lockfile, before the
+      # install below — same key shape `bunInstallCacheStep()`
+      # (`apps/cli/src/lib/artifacts.ts`) emits in every generated workflow.
+      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # O2: built once here, uploaded below, and downloaded by
+      # `vinaya-checks.yml` instead of that workflow building its own copy.
+      - name: Build the Vinaya CLI
+        run: bun run --cwd apps/cli build
+
+      - name: Upload the shared CLI build
+        uses: actions/upload-artifact@v4
+        with:
+          name: vinaya-cli-dist
+          path: apps/cli/dist
+          retention-days: 1
 
       # Biome was a devDependency every contributor already installed, and
       # nothing ever ran it — so formatting and lint drifted in whenever a

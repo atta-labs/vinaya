@@ -11,6 +11,7 @@ import {
   buildInitOps,
   CHECKS_FOLDER_PLACEHOLDER_PATH,
   CHECKS_WORKFLOW_PATH,
+  CLI_DIST_ARTIFACT_NAME,
   CONFIG_PATH,
   DOCTRINE_POINTER_PATH,
   labelOps,
@@ -869,19 +870,24 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // The first THIRD-PARTY action this generator writes into an adopter repo,
     // in the job that then builds and runs PR code: pinned to a commit, so a
     // repoint of the mutable tag cannot execute new upstream code everywhere.
+    // `vinaya-checks.yml` no longer builds its own copy (O2) — it downloads
+    // the one `ci.yml` already built, so it contributes neither a setup-bun
+    // nor an install of its own. review(1) + verdict(1) + body-checks(1) +
+    // archivist(3) = 5.
     expect(occurrences(files, 'oven-sh/setup-bun@v2')).toBe(0)
-    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(6)
+    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(5)
 
     // The install runs against the PR's own dependency manifest.
-    expect(occurrences(files, 'bun install --frozen-lockfile --ignore-scripts')).toBe(6)
+    expect(occurrences(files, 'bun install --frozen-lockfile --ignore-scripts')).toBe(5)
     expect(occurrences(files, 'bun install --frozen-lockfile\n')).toBe(0)
 
     // O1: every install is preceded by a restore of Bun's own install cache,
     // keyed on the lockfile — so a second workflow on the same commit
-    // installs nothing it doesn't already have.
-    expect(occurrences(files, 'Restore Bun install cache')).toBe(6)
-    expect(occurrences(files, 'actions/cache@v4')).toBe(6)
-    expect(occurrences(files, `key: bun-\${{ runner.os }}-\${{ hashFiles('bun.lock', 'bun.lockb') }}`)).toBe(6)
+    // installs nothing it doesn't already have. `vinaya-checks.yml` has no
+    // install of its own (O2), so no cache step either.
+    expect(occurrences(files, 'Restore Bun install cache')).toBe(5)
+    expect(occurrences(files, 'actions/cache@v4')).toBe(5)
+    expect(occurrences(files, `key: bun-\${{ runner.os }}-\${{ hashFiles('bun.lock', 'bun.lockb') }}`)).toBe(5)
 
     // Default checkout writes GITHUB_TOKEN into .git/config as an http
     // extraheader — in the same workspace the build then executes.
@@ -901,9 +907,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // All six invocations move — none left on the broken path.
     expect(occurrences(files, 'npx --yes @attalabs/vinaya')).toBe(0)
     expect(occurrences(files, VENDORED_BIN)).toBe(6)
-    // Every job carrying an invocation first builds the member it invokes.
-    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(6)
-    expect(occurrences(files, 'bun run --cwd apps/cli build')).toBe(6)
+    // Every job that BUILDS the member it invokes — every one except
+    // `vinaya-checks.yml`, which downloads the shared build instead (O2).
+    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(5)
+    expect(occurrences(files, 'bun run --cwd apps/cli build')).toBe(5)
 
     // Per-file: the exact subcommands, in the built-binary shape.
     const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
@@ -921,6 +928,39 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(archivist).toContain(`${VENDORED_BIN} audit --only=direct-push --sha=${SIGIL}{{ github.sha }}`)
     // The retrigger job executes no repo content and gains no build step.
     expect(occurrences(new Map([[ARCHIVIST_WORKFLOW_PATH, archivist]]), 'setup-bun')).toBe(3)
+
+    // O2: `vinaya-checks.yml` never builds; it downloads the artifact
+    // `ci.yml` uploads. A `pull_request_target` workflow never does this —
+    // see the boundary test below.
+    expect(checks).not.toContain('oven-sh/setup-bun')
+    expect(checks).not.toContain('bun install')
+    expect(checks).toContain('actions/download-artifact@v4')
+    expect(checks).toContain(`name: ${CLI_DIST_ARTIFACT_NAME}`)
+    expect(checks).toContain('actions/workflows/ci.yml/runs')
+  })
+
+  it('O2 boundary: only the shared pull_request build downloads it — pull_request_target workflows always build their own', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+    const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
+    const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
+    const bodyChecks = files.get(BODY_CHECKS_WORKFLOW_PATH) ?? ''
+    const archivist = files.get(ARCHIVIST_WORKFLOW_PATH) ?? ''
+    const retrigger = files.get(REVIEW_RETRIGGER_WORKFLOW_PATH) ?? ''
+    const verdict = files.get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
+
+    expect(checks).toContain('actions/download-artifact@v4')
+    for (const [name, content] of [
+      ['review', review],
+      ['body-checks', bodyChecks],
+      ['archivist', archivist],
+      ['retrigger', retrigger],
+      ['verdict', verdict]
+    ] as const) {
+      expect(`${name}: ${content.includes('download-artifact')}`).toBe(`${name}: false`)
+      expect(`${name}: ${content.includes(CLI_DIST_ARTIFACT_NAME)}`).toBe(`${name}: false`)
+    }
   })
 
   it('every env: wiring survives in BOTH shapes', async () => {
@@ -949,10 +989,11 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       expect(verdict).not.toContain('BRANCH:')
       expect(verdict).not.toContain('headRefName')
       // GH_TOKEN on every step that talks to the forge: checks 2 (fetch PR
-      // body, run checks), review 1 (review gate), retrigger 1 (its own
-      // workflow file, Issue #402 O4), verdict 3 (resolve-head, evaluate,
-      // retrigger), archivist 3.
-      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(10)
+      // body, run checks) + 1 more when vendored (find the shared build,
+      // O2), review 1 (review gate), retrigger 1 (its own workflow file,
+      // Issue #402 O4), verdict 3 (resolve-head, evaluate, retrigger),
+      // archivist 3.
+      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 11 : 10)
     }
   })
 
