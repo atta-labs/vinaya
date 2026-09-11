@@ -965,6 +965,26 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
   })
 
+  it('O2 security finding: vinaya-checks.yml grants `actions: read` for the shared-build API calls', async () => {
+    // Without it, `gh api .../actions/workflows/ci.yml/runs`, `.../actions/
+    // runs/$RUN_ID/artifacts`, and `actions/download-artifact@v4`'s
+    // cross-run `run-id` all 403 against GITHUB_TOKEN — an explicit
+    // `permissions:` block grants nothing not listed. Scoped to the checks
+    // job specifically: the trusted-build workflows never take the
+    // shared-build branch and must not gain this scope they don't need.
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+    const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
+    const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
+    const archivist = files.get(ARCHIVIST_WORKFLOW_PATH) ?? ''
+
+    const checksPermissions = checks.slice(checks.indexOf('permissions:'), checks.indexOf('steps:'))
+    expect(checksPermissions).toContain('actions: read')
+    expect(review).not.toContain('actions: read')
+    expect(archivist).not.toContain('actions: read')
+  })
+
   it('every env: wiring survives in BOTH shapes', async () => {
     // PR_BODY/PR_NUMBER are what make the checks EVALUATE rather than pass
     // vacuously. BRANCH remains content-check input but is deliberately
@@ -1051,11 +1071,45 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(gateIdx).toBeLessThan(checkoutIdx)
     expect(checkoutIdx).toBeLessThan(buildIdx)
     expect(review).toContain('gh pr view "$PR_NUMBER"')
-    expect(review).toContain('contains("VERDICT")')
     expect(review).toContain('exit 1')
     // One job, one required check-run name — never a second job/name.
     expect(occurrences(new Map([[REVIEW_WORKFLOW_PATH, review]]), '\n  vinaya-review:')).toBe(1)
     expect(occurrences(new Map([[REVIEW_WORKFLOW_PATH, review]]), 'name: vinaya review gate')).toBe(1)
+  })
+
+  it('O3 review finding: the verdict pre-check is line-anchored on `VERDICT:`, never a bare substring search', async () => {
+    // security-review FAIL finding / PR #636/#639: `packages/aeg-core/src/
+    // verdict-extraction.ts` standardized on a line-anchored `VERDICT:`
+    // marker specifically because a bare substring/word search matches
+    // ordinary prose that only MENTIONS a verdict (an escalation, a
+    // reviewer report, this very step's own description) and would wrongly
+    // treat that as a cast one. The pre-check here must never regress to
+    // `contains("VERDICT")`, and its jq must actually reject a bare mention
+    // and accept a real line-anchored marker.
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+    const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
+
+    expect(review).not.toContain('contains("VERDICT")')
+
+    const jqExpr =
+      '[.comments[].body | select((. / "\\n") | any(test("^[ \\t]*(\\\\*{1,3}|_{1,3})?VERDICT:")))] | length > 0'
+    expect(review).toContain(jqExpr)
+
+    // The jq expression itself, run for real: a bare mention must not
+    // satisfy it, a real line-anchored marker (with or without emphasis)
+    // must, and a blockquoted/list-item/heading mention must not.
+    const runJq = (body: string): string =>
+      execFileSync('jq', [jqExpr], {
+        input: JSON.stringify({ comments: [{ body }] }),
+        encoding: 'utf8'
+      }).trim()
+    expect(runJq('this checks for a VERDICT: comment in prose')).toBe('false')
+    expect(runJq('some discussion\nVERDICT: PASS\nJudged head: abc123')).toBe('true')
+    expect(runJq('**VERDICT: APPROVE**')).toBe('true')
+    expect(runJq('> VERDICT: APPROVE')).toBe('false')
+    expect(runJq('# VERDICT: APPROVE')).toBe('false')
   })
 
   it('the hook stubs resolve the vendored bin too (atta-labs/attalabs#935 corrects this case)', async () => {

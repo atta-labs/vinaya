@@ -462,6 +462,14 @@ jobs:
       contents: read
       pull-requests: read
       issues: read
+      # O2's shared-build lookup (\`vinayaSetupSteps(..., 'shared-build')\`)
+      # calls \`gh api .../actions/workflows/ci.yml/runs\` and
+      # \`.../actions/runs/$RUN_ID/artifacts\`, then downloads via
+      # \`actions/download-artifact@v4\` with a cross-run \`run-id\` — all three
+      # need \`actions: read\` on GITHUB_TOKEN, which an explicit \`permissions:\`
+      # block does not grant by default (security review finding: every run
+      # 403'd on the lookup/download without this).
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -600,6 +608,29 @@ jobs:
       # report a second check-run name, and \`REVIEW_GATE_CHECK_RUN_NAME\`
       # (this repo's own \`check-review-gate.ts\`/\`dev-review-loop.ts\`) is
       # the one required name every other mechanism already keys on.
+      #
+      # Line-anchored \`VERDICT:\` — same anchor discipline
+      # \`packages/aeg-core/src/verdict-extraction.ts\` standardizes on
+      # (security-review FAIL finding, PR #636/#639): a bare substring/word
+      # search matches ordinary prose that merely mentions "VERDICT" (an
+      # escalation, a reviewer report, this very step's own description) and
+      # would wrongly let the build run on a push with no real verdict cast.
+      # \`^[ \\t]*(\\*{1,3}|_{1,3})?VERDICT:\` tolerates the same leading
+      # markdown emphasis run the real extractor does, and — because it is
+      # tested per split line rather than as one multiline string (this
+      # jq/oniguruma build's \`^\`/\`$\` do not cross embedded newlines even
+      # under the "m"/"s" flags) — rejects the same blockquote/list-item/
+      # heading prefixes the real extractor rejects. This is a presence-only
+      # approximation of that module's full extraction (no first-five-lines
+      # window, no value-side match, no most-recent-comment selection, no
+      # code-span exclusion) — deliberately so: this step never runs after a
+      # checkout, so it cannot import \`packages/aeg-core\` and must not
+      # duplicate its regex as a second, driftable copy of the same fact
+      # (that module's own "one implementation per fact" constraint). A false
+      # positive here only wastes a trusted build; the downstream
+      # \`vinayaRun(selfHost, 'check review-gate')\` step, which DOES run the
+      # real extractor after checkout, is the authoritative verdict read and
+      # still fails correctly on anything this coarser check let through.
       - name: Require a verdict before building
         id: verdict-check
         env:
@@ -608,7 +639,7 @@ jobs:
         run: |
           set -o pipefail
           HAS_VERDICT=$(gh pr view "$PR_NUMBER" --repo \${{ github.repository }} --json comments \\
-            --jq '[.comments[].body | select(contains("VERDICT"))] | length > 0')
+            --jq '[.comments[].body | select((. / "\\n") | any(test("^[ \\t]*(\\\\*{1,3}|_{1,3})?VERDICT:")))] | length > 0')
           if [ "$HAS_VERDICT" != "true" ]; then
             echo "No VERDICT: comment yet on PR #$PR_NUMBER - nothing to evaluate. Holding the gate red without building until a reviewer posts one." >&2
             exit 1

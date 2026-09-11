@@ -42,6 +42,14 @@ jobs:
       contents: read
       pull-requests: read
       issues: read
+      # O2's shared-build lookup (`vinayaSetupSteps(..., 'shared-build')`)
+      # calls `gh api .../actions/workflows/ci.yml/runs` and
+      # `.../actions/runs/$RUN_ID/artifacts`, then downloads via
+      # `actions/download-artifact@v4` with a cross-run `run-id` — all three
+      # need `actions: read` on GITHUB_TOKEN, which an explicit `permissions:`
+      # block does not grant by default (security review finding: every run
+      # 403'd on the lookup/download without this).
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,30 +61,36 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      # Pinned to a commit, not the mutable `v2` tag. This is the first
-      # THIRD-PARTY action this generator writes into an adopter's repository,
-      # and it runs in the same job that then builds and executes pull-request
-      # code. A repoint of `v2` would execute new upstream code in every
-      # adopter on the next run, with no diff anywhere to review.
-      # Resolved from the `v2` tag on 2026-08-14. Bun's own version still
-      # comes from the repo's `packageManager` field, not from this pin.
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-      # This repo declares the `@attalabs/vinaya` workspace package itself, so
-      # `npx @attalabs/vinaya` resolves to that local member instead of the
-      # registry and dies on its unbuilt `bin`. Build and run this repo's own
-      # CLI — which also makes CI exercise the code in the pull request rather
-      # than a published copy predating it.
-      #
-      # `--ignore-scripts` blocks the PR-controlled surface, which is not
-      # the obvious one: bun already declines an untrusted DEPENDENCY's
-      # postinstall (measured, 1.2.14). What this stops is the repo's own
-      # root and workspace lifecycle scripts, plus anything the pull request
-      # adds to `trustedDependencies` — all of it editable in the same PR
-      # this job is checking. The build needs the packages, not the hooks.
-      - name: Build the vendored Vinaya CLI
+      - name: Find the shared CLI build for this commit
+        id: shared-build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          bun install --frozen-lockfile --ignore-scripts
-          bun run --cwd apps/cli build
+          set -o pipefail
+          SHA="${{ github.event.pull_request.head.sha }}"
+          for i in $(seq 1 20); do
+            RUN_ID=$(gh api --paginate \
+              "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?event=pull_request&head_sha=$SHA&per_page=100" \
+              | jq -sr '[.[].workflow_runs[]] | sort_by(.created_at) | last | .id // empty')
+            if [ -n "$RUN_ID" ]; then
+              HAS_ARTIFACT=$(gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/artifacts" \
+                --jq '[.artifacts[] | select(.name == "vinaya-cli-dist")] | length > 0')
+              if [ "$HAS_ARTIFACT" = "true" ]; then
+                echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+            sleep 15
+          done
+          echo "No CI (ci.yml) run for $SHA produced the shared vinaya-cli-dist build after waiting - failing rather than building an unshared copy." >&2
+          exit 1
+      - name: Download the shared CLI build
+        uses: actions/download-artifact@v4
+        with:
+          name: vinaya-cli-dist
+          path: apps/cli/dist
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.shared-build.outputs.run_id }}
       # Adopter-declared CI setup (vinaya.config.json `ci.setup`), emitted
       # verbatim. It prepares this repository's OWN custom checks — scripts
       # committed here that may import this repository's code — which the

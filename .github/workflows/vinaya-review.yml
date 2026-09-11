@@ -17,6 +17,15 @@
 # runs. When a clean final verdict lands, or CI turns green, one of those
 # two workflows re-runs this one, so the required check below goes green
 # natively with no manual rerun.
+#
+# The job's first step never builds: it reads the PR's comments through the
+# API alone and fails fast, without checkout or build, whenever no
+# `VERDICT:` comment exists yet — the ordinary state on `opened`/
+# `synchronize`/`reopened`/`labeled`/`unlabeled`. The build only runs once
+# that step finds a verdict, which in practice is the state a rerun finds it
+# in: the verdict-comment workflow and the CI-green retrigger both re-run
+# THIS run, and by the time either fires, the verdict this job is looking
+# for already exists.
 name: Vinaya Review Gate
 run-name: "Vinaya Review Gate PR #${{ github.event.pull_request.number }} @ ${{ github.event.pull_request.head.sha }}"
 
@@ -60,6 +69,51 @@ jobs:
       issues: read
       checks: read
     steps:
+      # No checkout, no build: read whether a verdict exists yet through the
+      # API alone. Absent one, THIS step fails — the job's own single
+      # check-run ("vinaya review gate") goes red with the reason below and
+      # every step after it is skipped, so an ordinary push (opened /
+      # synchronize / reopened / labeled / unlabeled) never pays for a build
+      # it cannot use. Deliberately one job, not two: a second job would
+      # report a second check-run name, and `REVIEW_GATE_CHECK_RUN_NAME`
+      # (this repo's own `check-review-gate.ts`/`dev-review-loop.ts`) is
+      # the one required name every other mechanism already keys on.
+      #
+      # Line-anchored `VERDICT:` — same anchor discipline
+      # `packages/aeg-core/src/verdict-extraction.ts` standardizes on
+      # (security-review FAIL finding, PR #636/#639): a bare substring/word
+      # search matches ordinary prose that merely mentions "VERDICT" (an
+      # escalation, a reviewer report, this very step's own description) and
+      # would wrongly let the build run on a push with no real verdict cast.
+      # `^[ \t]*(\*{1,3}|_{1,3})?VERDICT:` tolerates the same leading
+      # markdown emphasis run the real extractor does, and — because it is
+      # tested per split line rather than as one multiline string (this
+      # jq/oniguruma build's `^`/`$` do not cross embedded newlines even
+      # under the "m"/"s" flags) — rejects the same blockquote/list-item/
+      # heading prefixes the real extractor rejects. This is a presence-only
+      # approximation of that module's full extraction (no first-five-lines
+      # window, no value-side match, no most-recent-comment selection, no
+      # code-span exclusion) — deliberately so: this step never runs after a
+      # checkout, so it cannot import `packages/aeg-core` and must not
+      # duplicate its regex as a second, driftable copy of the same fact
+      # (that module's own "one implementation per fact" constraint). A false
+      # positive here only wastes a trusted build; the downstream
+      # `vinayaRun(selfHost, 'check review-gate')` step, which DOES run the
+      # real extractor after checkout, is the authoritative verdict read and
+      # still fails correctly on anything this coarser check let through.
+      - name: Require a verdict before building
+        id: verdict-check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -o pipefail
+          HAS_VERDICT=$(gh pr view "$PR_NUMBER" --repo ${{ github.repository }} --json comments \
+            --jq '[.comments[].body | select((. / "\n") | any(test("^[ \t]*(\\*{1,3}|_{1,3})?VERDICT:")))] | length > 0')
+          if [ "$HAS_VERDICT" != "true" ]; then
+            echo "No VERDICT: comment yet on PR #$PR_NUMBER - nothing to evaluate. Holding the gate red without building until a reviewer posts one." >&2
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           # Explicit trusted ref: never use the PR head/merge ref in this job.
@@ -75,6 +129,13 @@ jobs:
       # 2026-08-14. Bun's own version still comes from the repo's
       # `packageManager` field, not from this pin.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
       # This repo declares the `@attalabs/vinaya` workspace package itself, so
       # `npx @attalabs/vinaya` resolves to that local member instead of the
       # registry and dies on its unbuilt `bin`. Build and run the trusted
