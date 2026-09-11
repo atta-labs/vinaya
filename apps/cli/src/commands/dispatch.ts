@@ -2,22 +2,20 @@
  * `vinaya dispatch <role> --agent claude|codex|gemini --prompt-file <path>`
  * (Issue #406). Thin argv-parsing shim over
  * `dispatchRole` (`../lib/dispatch.js`) — the real spawn/timeout/attribution
- * logic lives there. Calls `logFlushCommand` (`./log.js`) directly when
- * `--task`/`--pr` is given, per the Principal's ruling that this command's
- * three-vendor/spawn/signal shape is exempt from the one-lib-call rule
- * (`apps/cli/specs/surface.md`) — no shared `flushLog` extraction here,
- * that is `sharedCommandShell`'s own future task.
+ * logic lives there. Calls `flushOutbox` (`../lib/log-flush.js`) directly
+ * when `--task`/`--pr` is given, per the Principal's ruling that this
+ * command's three-vendor/spawn/signal shape is exempt from the one-lib-call
+ * rule (`apps/cli/specs/surface.md`) — no shared `flushLog` extraction
+ * here, that is `sharedCommandShell`'s own future task.
  *
- * `logFlushCommand` calls `process.exit()` directly for its own "nothing to
- * flush" (0) and refusal (2) paths — it never throws them. This command's
- * own result is therefore printed BEFORE the flush call, not after: anything
- * printed after `logFlushCommand` may never run. A flush failure does not
- * undo the dispatch's own effect (the child already ran, and its log lines
- * are already durably written to the local outbox for a later `vinaya log
- * flush` retry) — but when flush is the last step and it exits early, the
- * overall process's exit code reflects the flush step, not this command's
- * own `handle.failureReason`. Disclosed in this task's PR body as a known
- * edge case, not fixed here — `log.ts` is consumed unchanged.
+ * `flushOutbox` never calls `process.exit` (task 3, `#482`, O1) — unlike
+ * the `logFlushCommand` this used to call directly, a real command-calling-
+ * command case `surface.md`'s Exemptions table used to carry for this row
+ * (retired by that same task). A thrown `LogFlushError` is caught and
+ * logged to stderr, never fatal: a flush failure does not undo the
+ * dispatch's own effect (the child already ran, and its log lines are
+ * already durably written to the local outbox for a later `vinaya log
+ * flush` retry).
  */
 
 import { readFileSync } from 'node:fs'
@@ -25,7 +23,7 @@ import { ROLE_VALUES, type Role } from '@attalabs/aeg-core'
 import { AGENT_VENDOR_NAMES, dispatchRole, isAgentVendor, type AgentVendor } from '../lib/dispatch.js'
 import { loadConfig } from '../lib/config.js'
 import { printJson } from '../lib/envelope.js'
-import { logFlushCommand } from './log.js'
+import { flushOutbox, LogFlushError } from '../lib/log-flush.js'
 
 type ParsedArgs = {
   role: string | undefined
@@ -141,7 +139,6 @@ export async function dispatchCommand(args: string[]): Promise<void> {
     promptFile
   })
 
-  // Printed before the flush call — see module doc.
   if (parsed.json) {
     printJson({
       exitCode: handle.exitCode,
@@ -159,10 +156,13 @@ export async function dispatchCommand(args: string[]): Promise<void> {
     )
   }
 
-  if (parsed.task !== undefined) {
-    await logFlushCommand(['--issue', String(parsed.task)])
-  } else if (parsed.pr !== undefined) {
-    await logFlushCommand(['--pr', String(parsed.pr)])
+  if (parsed.task !== undefined || parsed.pr !== undefined) {
+    try {
+      await flushOutbox(parsed.task !== undefined ? { issue: parsed.task } : { pr: parsed.pr as number })
+    } catch (err) {
+      const message = err instanceof LogFlushError || err instanceof Error ? err.message : String(err)
+      process.stderr.write(`vinaya dispatch: log flush failed (non-fatal — retry with \`vinaya log flush\`): ${message}\n`)
+    }
   }
 
   if (handle.failureReason) process.exit(1)

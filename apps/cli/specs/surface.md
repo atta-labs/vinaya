@@ -466,6 +466,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `discardHeldVerdicts` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `hasObjectivesFacts` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `heldVerdictPath` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `latestHeldRequestChanges` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `lintReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `missingReviewerArtifacts` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `outboxRoot` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
@@ -580,6 +581,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `GEMINI_COMMAND_GROUP` | const | `apps/cli/src/lib/gemini-command-emitter.ts` |
 | `GEMINI_COMMAND_PATH` | const | `apps/cli/src/lib/gemini-command-emitter.ts` |
 | `renderGeminiCommand` | function | `apps/cli/src/lib/gemini-command-emitter.ts` |
+| `flushOutbox` | function | `apps/cli/src/lib/log-flush.ts` |
+| `LogFlushError` | class | `apps/cli/src/lib/log-flush.ts` |
+| `tailHasOwnLine` | function | `apps/cli/src/lib/log-flush.ts` |
 | `createLogSink` | function | `apps/cli/src/lib/log-sink.ts` |
 | `currentRunId` | function | `apps/cli/src/lib/log-sink.ts` |
 | `log` | function | `apps/cli/src/lib/log-sink.ts` |
@@ -669,7 +673,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `issue create` | `issue.ts` | `issueCreateCommand` | 11 | exempt — see below | forgeWrite (target) |
 | `issue edit` | `issue.ts` | `issueEditCommand` | 12 | exempt — see below | forgeWrite (target) |
 | `issue objectives edit` | `issue-objectives.ts` | `issueObjectivesEditCommand` | 11 | exempt — see below | forgeWrite (target) |
-| `log flush` | `log.ts` | `logFlushCommand` | 4 | exempt — see below | sharedCommandShell (target) |
+| `log flush` | `log.ts` | `logFlushCommand` | 2 | exempt — see below | sharedCommandShell (target) |
 | `milestone create` | `milestone.ts` | `milestoneCreateCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `milestone adopt` | `milestone.ts` | `milestoneAdoptCommand` | 4 | exempt — see below | forgeWrite (target) |
 | `milestone edit` | `milestone.ts` | `milestoneEditCommand` | 7 | exempt — see below | forgeWrite (target) |
@@ -714,7 +718,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `issue create` | 2026-09-11 | 11 — lib (11): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `extractLabels`, `refuseUnlabeledTaskShapedBody`, `validateTaskIssue`, `printJson`, `ensureTrancheLabelExists`, `runGhWrite`, `resolveMilestoneAttachArgs` | `forgeWrite` |
 | `issue edit` | 2026-09-11 | 12 — lib (12): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `fetchForgeLabels`, `extractLabels`, `refuseUnlabeledTaskShapedBody`, `refuseFrozenSectionChange`, `validateTaskIssue`, `parseIssueNumberFromRef`, `printJson`, `writeValidatedIssueEdit` | `forgeWrite` |
 | `issue objectives edit` | 2026-09-11 | 11 — lib (11): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `writeValidatedIssueEdit`, `locateBody`, `countMarkerComments`, `postMarkedComment`, `printJson`, `resolvePrincipalAllowlist`, `loadTrustAnchorConfig`, `prepareTask` | `forgeWrite` |
-| `log flush` | 2026-09-06 | 4 — lib (4): `outboxPathFor`, `log`, `currentRunId`, `printJson` | `sharedCommandShell` |
+| `log flush` | 2026-09-11 | 2 — lib (2): `flushOutbox`, `printJson` | `sharedCommandShell` |
 | `milestone create` | 2026-09-05 | 8 — lib (8): `extractTitle`, `refuse`, `makeCheckError`, `locateBody`, `resolveSections`, `validateForgeWrite`, `printJson`, `detectGitRepo` | `forgeWrite` |
 | `milestone adopt` | 2026-09-05 | 4 — lib (4): `refuse`, `makeCheckError`, `detectGitRepo`, `printJson` | `forgeWrite` |
 | `milestone edit` | 2026-09-05 | 7 — lib (7): `refuse`, `makeCheckError`, `locateBody`, `resolveSections`, `validateForgeWrite`, `printJson`, `detectGitRepo` | `forgeWrite` |
@@ -733,7 +737,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `waiver` | 2026-09-05 | 2 — lib: `prompt`, `closeStdin` | `sharedCommandShell` |
 | `quickstart` | 2026-09-05 | 9 — lib: `planDocOwnersBinding`, `applyDocOwnersBinding`, `renderDocOwnersBindingDiffLine`, `promptYesNo`, `prompt`; commands/\*.ts (refused outright): `runInit` (`init.ts`), `runInitProduct` (`init.ts`), `runDemoBreak` (`demo.ts`), `runDoctor` (`doctor.ts`) | `sharedCommandShell` |
 | `pr-verify-evidence-logic.ts` (not a command — see note) | 2026-09-05 | n/a — lib code (`publishedMergeBase`, `normaliseLines`, `compareEvidence`, `renderVerdict`) colocated in `apps/cli/src/commands/` instead of `apps/cli/src/lib/` | moves to `apps/cli/src/lib/` in the next task touching `pr-verify-evidence` |
-| `dispatch` | 2026-09-07 | 5 — lib (4): `loadConfig`, `isAgentVendor`, `dispatchRole`, `printJson`; commands/\*.ts (refused outright): `logFlushCommand` (`log.ts`) | `sharedCommandShell` |
+| `dispatch` | 2026-09-11 | 5 — lib (5): `loadConfig`, `isAgentVendor`, `dispatchRole`, `flushOutbox`, `printJson` | `sharedCommandShell` |
 | `dev-review-loop` | 2026-09-10 | 5 — lib: `loadConfig`, `isAgentVendor`, `devReviewLoop`, `printJson`, `colourLoopLine` | `sharedCommandShell` |
 | `task run` | 2026-09-11 | 3 — lib: `runTask`, `colourLoopLine`, `loadConfig` | `sharedCommandShell` |
 | `task status` | 2026-09-11 | 3 — lib: `printJson`, `gatherTaskStatusList`, `gatherSingleTaskStatus` | `taskStatus` |
