@@ -294,6 +294,19 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
   }
 }
 
+/**
+ * The line-anchored `VERDICT:` marker prefix both value patterns below open
+ * with — exported standalone, unchanged, character for character (a move,
+ * not a rewrite: `#525` Stop-and-escalate; neither pattern below is edited)
+ * so a second consumer can build the identical presence-only test without
+ * hand-copying a third literal of the same fact. The generated review-gate
+ * pre-check job (`apps/cli/src/lib/artifacts.ts`, task-run-v1 16/18, `#525`
+ * O2) is that consumer: it runs before any checkout, so it cannot import
+ * this module at workflow run time, and instead imports this source string
+ * at CLI-generation time to build its own jq `test()` regex.
+ */
+export const VERDICT_MARKER_SOURCE = '^[ \\t]*(?:\\*{1,3}|_{1,3})?VERDICT:'
+
 /** `value` is `APPROVE`, `REQUEST CHANGES`, `LGTM`, or a DANGLING placeholder string. */
 export function extractCodeReviewVerdict(comments: string[]): VerdictExtraction {
   return extractVerdict(

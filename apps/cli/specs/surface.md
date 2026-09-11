@@ -286,6 +286,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `locateTestPlanSection` | function | `packages/aeg-core/src/test-plan-section.ts` |
 | `extractCodeReviewVerdict` | function | `packages/aeg-core/src/verdict-extraction.ts` |
 | `extractSecurityReviewVerdict` | function | `packages/aeg-core/src/verdict-extraction.ts` |
+| `VERDICT_MARKER_SOURCE` | const | `packages/aeg-core/src/verdict-extraction.ts` |
 | `evaluateVocabularyCitation` | function | `packages/aeg-core/src/vocabulary-citation.ts` |
 | `isPrincipal` | function | `packages/aeg-core/src/waiver-label.ts` |
 | `isWaiverLabelActorVerified` | function | `packages/aeg-core/src/waiver-label.ts` |
