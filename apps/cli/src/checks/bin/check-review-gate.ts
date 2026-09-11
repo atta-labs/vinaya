@@ -64,6 +64,7 @@
 import { execFileSync } from 'node:child_process'
 import {
   checkReviewGate,
+  evaluateTestPlanGate,
   extractIssue,
   isIssueNotFoundError,
   isWaiverLabelActorVerified,
@@ -226,6 +227,33 @@ function resolveObjectivesVersion(pr: PrView): string | null {
     process.exit(1)
   }
   return objectivesVersion(own.objectives)
+}
+
+/**
+ * The `[principal]` half of `test-plan`'s own tick-state gate, moved HERE —
+ * enforcement of an unticked `[principal]` Test Plan item does not disappear
+ * when `test-plan`'s registry entry is marked `principalOwed`, it moves to
+ * where a MERGE is actually refused: this check. `test-plan` keeps grading the `[agent]` half and the plan's
+ * structure only; ticking a `[principal]` box is what a Principal does after
+ * verifying in a real signed-in browser, and this is the check that refuses
+ * a merge while one is still unticked, in the same `review-gate (PR #N): …`
+ * message shape `checkReviewGate`'s own missing-verdict fail already uses.
+ *
+ * Reuses `evaluateTestPlanGate` — the exact same tick-detection logic
+ * `check-test-plan.ts` runs — rather than re-implementing the checkbox scan,
+ * so the two checks can never disagree about which lines are unticked.
+ * Returns `null` when there is nothing to refuse: `verdict === 'pass'` (no
+ * section, sentinel, no `[principal]` items, or all ticked) or a fail whose
+ * cause is the OTHER (structural, no-section) branch — that one is
+ * `test-plan`'s to grade and block on, not this check's; see
+ * `check-test-plan.ts`'s own cause classification, which this mirrors.
+ */
+export function uncheckedPrincipalReason(body: string, branch: string): string | null {
+  const result = evaluateTestPlanGate(body, branch)
+  if (result.verdict !== 'fail') return null
+  const uncheckedLines = result.messages.filter((m) => /^\s*[-*]\s+\[\s\]/.test(m)).map((m) => m.trim())
+  if (uncheckedLines.length === 0) return null
+  return `unticked [principal] Test Plan item(s) — ${uncheckedLines.join('; ')}`
 }
 
 function shaFromLsRemote(branch: string): string | null {
@@ -488,6 +516,8 @@ function main(): void {
     policy: reviewPolicy
   })
 
+  let failed = false
+
   if (result.verdict === 'fail') {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
@@ -497,10 +527,33 @@ function main(): void {
       agent_recovery_prompt:
         'Wait for a code-reviewer APPROVE and a security-review PASS on this PR (or ask a principal to apply the `vinaya/waiver:review` label), then re-run `vinaya check review-gate`.'
     })
-    process.exit(1)
+    failed = true
   }
 
-  process.exit(0)
+  // O2: the `[principal]` half of `test-plan`'s tick-state gate, enforced
+  // HERE — see `uncheckedPrincipalReason`'s doc comment. Independent of the
+  // review verdict above (and of `vinaya/waiver:review`, which waives the
+  // code-review/security obligation, never the Principal's own runtime
+  // verification) — `roles/developer.md`'s Pre-merge gate already lists
+  // "reviewer approved" and "Principal confirmation" as two separate items.
+  const principalReason = uncheckedPrincipalReason(pr.body, pr.headRefName)
+  if (principalReason !== null) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `review-gate (PR #${prNumber}): ${principalReason}`,
+      agent_recovery_prompt:
+        'Nothing for the Developer to fix here — wait for the Principal to verify in a real signed-in browser and tick each `[principal]` Test Plan box, then re-run `vinaya check review-gate`.'
+    })
+    failed = true
+  }
+
+  process.exit(failed ? 1 : 0)
 }
 
-main()
+// Guarded so this module can be imported by unit tests without executing the
+// check. Spawned as a bin (the only way it runs for real) this is still true.
+if (import.meta.main) {
+  main()
+}

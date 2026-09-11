@@ -138,7 +138,10 @@ describe('registry env declarations', () => {
       'requiresOpenPr',
       // Expressible in config (CheckEntrySchema) and documented in
       // CONFIG_REFERENCE, so it is not a privileged core-only field.
-      'ownWorkflow'
+      'ownWorkflow',
+      // Same reason (review-validity-v1 11, O1): expressible in config
+      // (CheckEntrySchema) exactly like `ownWorkflow`.
+      'principalOwed'
     ])
     for (const spec of specs) {
       const extra = (Object.keys(spec) as Array<keyof CheckSpec>).filter((k) => !ALLOWED_KEYS.has(k))
