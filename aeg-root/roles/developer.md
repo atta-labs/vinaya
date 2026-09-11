@@ -311,6 +311,8 @@ Escalate with the appropriate severity — a manual escalation note, or, if you 
 
 The brief's stop conditions tell you when to STOP and ask. Honor them. If the stop conditions say "STOP if you discover X" and you discover X, you stop. You do not improvise a workaround.
 
+**Refusing or escalating before you have ever pushed.** The entry-gate refusals in this doc, and a stop condition hit before your first commit, happen before a branch or pull request exists — there is no PR yet to comment on, and an unattended loop has nothing else to read but the task Issue. In that case only, post your refusal or escalation as a comment on the task Issue itself, with `<!-- aeg:developer:stop -->` as the comment's own first line, followed by your reason. This is what lets an automation layer end the run at once rather than wait out a full poll budget for a pull request you were never going to open. Once you have pushed at least once, escalate normally — a PR exists, and every later escalation goes there per your automation layer's own request-input mechanism, never this marker.
+
 ---
 
 ## Stop conditions

@@ -2267,6 +2267,295 @@ describe('devReviewLoop — a base that moves past this driver’s own code paus
   }, 20000)
 })
 
+// --- task-run-v1 13 (#508), O5: a clean head falls into conflict while reviewers worked ---
+
+/** Standard round-1 push/open, then clean verdicts from both reviewer roles — each touches `.reviewers-ran` right after writing its own verdict, so the SECOND mergeability read (at publish) can answer differently from the first (before either reviewer ran). */
+function writeFakeClaudeConflictAtPublishScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+PROMPT="$(cat)"
+HAS_RESUME=0
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-r" ]; then HAS_RESUME=1; fi
+  prev="$a"
+done
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    touch "$HOME/.reviewers-ran"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    touch "$HOME/.reviewers-ran"
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo "$HAS_RESUME" >> "$HOME/.dev-invocations"
+    COUNT=$(wc -l < "$HOME/.dev-invocations" | tr -d ' ')
+    printf '%s' "$PROMPT" > "$HOME/.dev-prompt-$COUNT.txt"
+    touch "$HOME/.fake-dev-invoked"
+    echo '{"session_id":"dev-session-fresh","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+/** Same as \`writeFakeGh\`, except \`pr view --json mergeable\` answers MERGEABLE until \`.reviewers-ran\` exists, then CONFLICTING — a clean head at round entry that falls into conflict while reviewers were working. */
+function writeFakeGhConflictAtPublish(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  if [ -f "$HOME/.reviewers-ran" ]; then
+    echo '{"mergeable":"CONFLICTING"}'
+  else
+    echo '{"mergeable":"MERGEABLE"}'
+  fi
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call in conflict-at-publish scenario: $*" >&2
+exit 1
+`
+  )
+}
+
+function setUpConflictAtPublish(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeConflictAtPublishScenario(binDir)
+  writeFakeGhConflictAtPublish(binDir)
+  writeFakeGitConflict(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a clean head falls into conflict while reviewers worked (O5, task-run-v1 13, #508)', () => {
+  it('discards the held verdicts, never publishes, and resumes the developer to resolve', () => {
+    const { home, cwd, path } = setUpConflictAtPublish()
+
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
+    })
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).not.toMatch(/publish/)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // Both reviewers genuinely ran (mergeability was clean when THEY were
+    // dispatched) — but their held verdicts must not survive the conflict
+    // discovered right before publish.
+    const drlRoot = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    expect(existsSync(join(drlRoot, 'round-1-reviewer.md'))).toBe(false)
+    expect(existsSync(join(drlRoot, 'round-1-security.md'))).toBe(false)
+
+    const conflictPrompt = readFileSync(join(home, '.dev-prompt-2.txt'), 'utf8')
+    expect(conflictPrompt).toMatch(/behind the base in a way that conflicts/)
+  }, 20000)
+})
+
+// --- task-run-v1 13 (#508), O7: UNKNOWN is polled, never read as clean or conflicting ---
+
+/** Standard round-1 clean flow (push, open, green gate, clean reviewers) — mergeability is what varies (fake gh, below). */
+function writeFakeClaudeUnknownMergeable(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+cat > /dev/null
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+/** Same as \`writeFakeGh\`, except \`pr view --json mergeable\` answers UNKNOWN a bounded number of times (counted in \`.mergeable-reads\`), then MERGEABLE — proving the poll consumes more than one attempt without ever treating UNKNOWN as a final answer either way. */
+function writeFakeGhUnknownThenMergeable(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  COUNT_FILE="$HOME/.mergeable-reads"
+  N=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
+  N=$((N + 1))
+  echo "$N" > "$COUNT_FILE"
+  if [ "$N" -lt 3 ]; then
+    echo '{"mergeable":"UNKNOWN"}'
+  else
+    echo '{"mergeable":"MERGEABLE"}'
+  fi
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call in unknown-mergeable scenario: $*" >&2
+exit 1
+`
+  )
+}
+
+function setUpUnknownMergeable(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeUnknownMergeable(binDir)
+  writeFakeGhUnknownThenMergeable(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — an UNKNOWN mergeable answer is polled, never read as clean or conflicting (O7, task-run-v1 13, #508)', () => {
+  it('keeps polling through UNKNOWN and publishes once it resolves MERGEABLE', () => {
+    const { home, cwd, path } = setUpUnknownMergeable()
+
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '5',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
+    })
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    // Genuinely polled more than once before resolving — never treated the
+    // first (UNKNOWN) read as a final answer.
+    const reads = Number(readFileSync(join(home, '.mergeable-reads'), 'utf8').trim())
+    expect(reads).toBeGreaterThanOrEqual(3)
+  }, 20000)
+})
+
 // --- objectives version changes mid-round (review-validity-v1 task 2, #476, O3) ---
 
 function setUpObjectivesChangedMidRound(): { home: string; cwd: string; path: string } {
