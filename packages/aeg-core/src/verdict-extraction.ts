@@ -177,9 +177,13 @@ const BRIEF_HASH_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Brief hash:\s*([0-9a-f]{64
  * `review-validity-v1` task 4 (`#478`, O5): a sixth head line, `Policy
  * digest: <sha256>`, renders UNCONDITIONALLY right after `Brief hash:` —
  * the effective review policy's digest at cast time. `null` means no such
- * line at all — legacy stock from before this task; every comment this
- * task renders carries it, so a `null` echo is grandfathered rather than
- * treated as a real omission (`review-input-manifest.ts`'s `isBoundToPolicy`).
+ * line at all — legacy stock from before this task, or a stripped/malformed
+ * line. Unlike the other fields this package extracts, a `null` echo here
+ * is NEVER grandfathered (round 4 security MEDIUM): a policy is always
+ * resolvable, so there is no genuine "nothing to bind against" case on the
+ * current side to key forgiveness on the way brief-hash/objectives/ruling
+ * each have — `review-input-manifest.ts`'s `isBoundToPolicy` requires an
+ * exact digest match unconditionally.
  */
 const POLICY_DIGEST_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Policy digest:\s*([0-9a-f]{64})(?![A-Za-z0-9])/im
 
