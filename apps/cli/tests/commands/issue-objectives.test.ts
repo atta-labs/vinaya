@@ -189,6 +189,13 @@ describe('vinaya issue objectives edit', () => {
     expect(r.stderr).toContain('--reason')
   })
 
+  it('refuses a --reason containing a newline before any forge fetch or write — no gh stub needed', () => {
+    const repo = tempDir('issue-objectives-repo-')
+    const r = runCli(['issue', 'objectives', 'edit', '413', '--add', 'x', '--reason', 'line one\nline two'], repo, {})
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('single line')
+  })
+
   it('refuses --add and --drop together', () => {
     const repo = tempDir('issue-objectives-repo-')
     const r = runCli(

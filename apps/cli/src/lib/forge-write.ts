@@ -78,7 +78,8 @@ import { expandGlob } from './brief-assembly'
 import {
   findMilestoneAttachTargetForSlug,
   hasExplicitMilestoneFlag,
-  parseRationaleDeps
+  parseRationaleDeps,
+  resolveMilestoneAttachTarget
 } from '@attalabs/aeg-forge-state'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks/contract'
 import {
@@ -983,7 +984,7 @@ export function parseIssueNumberFromRef(ref: string): number | null {
  * `checkBlastRadiusScope`; `sharedPackages`/`projectPaths` are resolved from
  * the adopter repo on disk, not threaded through from argv.
  */
-/** How `validateTaskIssue` resolves O5's target Milestone — an edit reads the Issue's own current Milestone from the forge; a create has none yet, so only an explicit `--milestone` flag counts (auto-attach resolution is out of scope here — see the Decisions section of this task's PR). */
+/** How `validateTaskIssue` resolves O5's target Milestone — an edit reads the Issue's own current Milestone from the forge; a create has none yet, so `resolveMilestoneTitleForCreate` reads an explicit `--milestone` flag or, absent one, the same label-driven auto-attach target `resolveMilestoneAttachArgs` itself resolves at write time. */
 export type MilestoneSource = { kind: 'edit'; issueRef: string } | { kind: 'create'; ghArgs: string[] }
 
 /** Extracts `--milestone`/`-m`'s value from argv, or `null` if absent — the value half of `hasExplicitMilestoneFlag`'s presence check. */
@@ -1018,11 +1019,75 @@ function fetchForgeMilestoneBestEffort(issueRef: string): string | null {
 }
 
 /**
+ * O5's Milestone source for `issue create`: an explicit `--milestone`/`-m`
+ * flag wins outright; absent that, mirrors `resolveMilestoneAttachArgs`'s own
+ * label-driven auto-attach lookup so the common create workflow (a tranche
+ * label, no explicit flag) still resolves a real target instead of leaving
+ * O5 dormant.
+ *
+ * Security review (Issue #502), round 2, HIGH: the prior version only ever
+ * read the explicit flag, so a normal `issue create --label
+ * vinaya/tranche:<slug>` — the label-driven auto-attach path
+ * `resolveMilestoneAttachArgs` itself resolves at write time — left
+ * `milestoneTitle` `null` and the overlap check dead on `create` in the
+ * common case. Same fail-open-to-dormant posture as
+ * `resolveMilestoneAttachArgs`: a lookup failure degrades to "no Milestone
+ * known" rather than refusing a create over a `gh api` hiccup.
+ */
+function resolveMilestoneTitleForCreate(ghArgs: string[], labels: string[]): string | null {
+  const explicit = extractMilestoneFlagValue(ghArgs)
+  if (explicit !== null) return explicit
+  if (!isTaskIssueLabelSet(labels)) return null
+  const slug = findTrancheSlug(labels)
+  if (!slug) return null
+  // `stdio: ['ignore', 'pipe', 'pipe']` deliberately, rather than reusing
+  // `findMilestoneAttachTargetForSlug` directly: that helper's underlying
+  // `gh api` call inherits the real `gh` stderr straight through to THIS
+  // process's own stderr (Node's `execFileSync` default), bypassing the
+  // try/catch below entirely. Harmless on the real-write path this task
+  // does not touch (`resolveMilestoneAttachArgs`, run inside a real repo
+  // with a real remote), but this call now also runs on `--validate-only` —
+  // a raw `gh` error line (e.g. no git remote in a test fixture) would land
+  // on the same stderr stream every reader parses as one `CheckError` JSON
+  // per line, tripping `malformed` the way `check-coherence.ts`'s own
+  // `git()` helper is annotated against. Fetched and parsed here, then
+  // handed to the same pure `resolveMilestoneAttachTarget` matcher, so
+  // behaviour is unchanged — only the stderr leak is closed.
+  try {
+    const out = execFileSync('gh', ['api', 'repos/{owner}/{repo}/milestones?state=all&per_page=100'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    const milestones = JSON.parse(out) as Array<{
+      number: number
+      title: string
+      description: string | null
+      state: 'open' | 'closed'
+    }>
+    const target = resolveMilestoneAttachTarget(milestones, slug)
+    return target ? target.title : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * O5's sibling-task resolver: every OTHER open task Issue sharing
- * `milestoneTitle`, reduced to `TaskSurfaceFacts`. One repo-wide
- * `gh issue list` (capped at 200, matching `fetchOpenIssuesByLabel`'s own
- * limit) rather than a per-tranche fetch — O5's peer group spans every
- * tranche sharing a Milestone, not one tranche's own label.
+ * `milestoneTitle`, reduced to `TaskSurfaceFacts`. Server-side-scoped to that
+ * one Milestone via `gh issue list --milestone`, not a repo-wide fetch — O5's
+ * peer group spans every tranche sharing a Milestone, but never Issues
+ * outside it, so the query itself (not just a client-side filter afterward)
+ * only ever returns candidates that could actually matter.
+ *
+ * Security review (Issue #502), round 2, MEDIUM: the prior version queried
+ * `gh issue list` repo-wide with a flat `--limit 200` and filtered by
+ * Milestone client-side — a genuinely overlapping sibling past the 200th
+ * open Issue repo-wide was silently missed. Scoping the query itself to the
+ * Milestone shrinks the realistic result size by orders of magnitude for any
+ * repo with more than one active Milestone; `--limit` is raised well past
+ * any plausible single-Milestone open-Issue count as a second margin, and
+ * `gh` itself pages through the API internally to satisfy a `--limit` this
+ * large in one invocation — no separate cursor loop is needed here.
  *
  * Unlike the Milestone read above, a failure HERE is a hard refusal: by this
  * point a real Milestone is known, so degrading silently to "no siblings
@@ -1039,7 +1104,18 @@ function fetchOpenTaskSurfaceSiblings(
   try {
     out = execFileSync(
       'gh',
-      ['issue', 'list', '--state', 'open', '--json', 'number,body,labels,milestone', '--limit', '200'],
+      [
+        'issue',
+        'list',
+        '--state',
+        'open',
+        '--milestone',
+        milestoneTitle,
+        '--json',
+        'number,body,labels,milestone',
+        '--limit',
+        '2000'
+      ],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
     )
   } catch (err) {
@@ -1088,12 +1164,11 @@ export function validateTaskIssue(
   labels: string[],
   retryCommand: string,
   issueNumber: number | null,
-  // Optional — `apps/cli/src/commands/issue.ts` (`## Surface` `out:`, this
-  // task's own declared surface) calls `validateTaskIssue` with its
-  // original five arguments, unchanged; omitted here means "no Milestone
-  // source to resolve," which degrades to O5 dormant (`milestoneTitle`
-  // stays `null`) exactly like a Milestone this process could not
-  // determine — never a crash, never a silently-wrong Milestone guess.
+  // Optional — every call site in `apps/cli/src/commands/issue.ts` now
+  // passes it (Issue #502 v3 Surface). Left optional rather than required so
+  // an omission degrades to O5 dormant (`milestoneTitle` stays `null`)
+  // exactly like a Milestone this process could not determine — never a
+  // crash, never a silently-wrong Milestone guess.
   milestoneSource?: MilestoneSource
 ): void {
   if (body === null) {
@@ -1121,7 +1196,7 @@ export function validateTaskIssue(
       ? null
       : milestoneSource.kind === 'edit'
         ? fetchForgeMilestoneBestEffort(milestoneSource.issueRef)
-        : extractMilestoneFlagValue(milestoneSource.ghArgs)
+        : resolveMilestoneTitleForCreate(milestoneSource.ghArgs, labels)
   const milestoneSiblings =
     milestoneTitle !== null ? fetchOpenTaskSurfaceSiblings(milestoneTitle, issueNumber, retryCommand) : null
 

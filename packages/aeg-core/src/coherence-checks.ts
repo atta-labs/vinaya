@@ -6,17 +6,21 @@
  * topology are injected by the caller (`bin/verify-coherence.ts`, the I/O shim).
  */
 
-import { trancheLabel, label } from '@attalabs/aeg-forge-state'
+import { parseRationaleDeps, trancheLabel, label } from '@attalabs/aeg-forge-state'
 import { anchoredRegion, stripCode } from './anchored-region'
 import {
   checkIssueObjectives,
   checkIssueRationale,
   checkProjectsRegistered,
   checkSurfaceExcludesBoundDoc,
-  isTaskIssueLabelSet
+  checkSurfaceOverlap,
+  isTaskIssueLabelSet,
+  parseIssueSurface,
+  type TaskSurfaceFacts
 } from './issue-validation'
 import { isPrincipal, PRINCIPAL_ALLOWLIST } from './waiver-label'
 import type { ForgeIssue, TaskIssueRef } from '@attalabs/aeg-types'
+import type { GhIssue } from '@attalabs/aeg-forge-state'
 import type { ForgeFacts, Tranche, Task } from './types'
 
 // ---------- grandfather cutoff -----------------------------------------------
@@ -530,6 +534,70 @@ export function checkR2(issuesBySlug: Map<string, ForgeIssue[]>, docOwnersConten
     }
   }
   return { check: 'R2', status: failures.length > 0 ? 'fail' : 'pass', failures }
+}
+
+/**
+ * R3: The same `checkSurfaceOverlap` predicate (O5, task-run-v1 task 11) run
+ * pairwise over every open task Issue sharing a Milestone — the coherence
+ * half of O5's own obligation ("the same predicate runs in the coherence
+ * check over open task Issues"). The write-time gate
+ * (`apps/cli/src/lib/forge-write.ts`) only ever compares the ONE Issue being
+ * created/edited against its siblings at that moment; this is the sweep that
+ * re-checks the whole open set afterward — a sibling's Surface widened
+ * later, or an Issue edited outside the validated path, still surfaces here.
+ *
+ * Takes the RAW `GhIssue` list (not the derived `ForgeIssue`/`Tranche`
+ * shapes R1/R2 consume) because only the raw shape carries the GitHub-native
+ * `milestone` field — see this module's own header note on why the raw
+ * per-slug Issue lists are threaded through the sweep for exactly this
+ * reason. An Issue with no Milestone, or whose `## Surface` doesn't parse,
+ * is excluded from every group: O5 only binds tasks that share a real
+ * Milestone, and a Surface this function cannot read is `checkIssueBriefSections`'s
+ * finding to report, not this one's.
+ *
+ * Fail class: `surface-overlap`
+ */
+export function checkR3(issuesBySlug: Map<string, GhIssue[]>): CheckResult {
+  type Entry = { slug: string; issue: GhIssue; facts: TaskSurfaceFacts }
+  const byMilestone = new Map<string, Entry[]>()
+
+  for (const [slug, issues] of issuesBySlug) {
+    for (const issue of issues) {
+      if (issue.state !== 'OPEN') continue
+      const milestoneTitle = issue.milestone?.title
+      if (!milestoneTitle) continue
+      const labels = issue.labels.map((l) => l.name)
+      if (!isTaskIssueLabelSet(labels)) continue
+      const body = issue.body ?? ''
+      const surface = parseIssueSurface(body)
+      if (!surface.ok) continue
+
+      const facts: TaskSurfaceFacts = {
+        ref: String(issue.number),
+        surfaceIn: surface.value.in,
+        conflictsWith: parseRationaleDeps(body).conflictsWith
+      }
+      const group = byMilestone.get(milestoneTitle) ?? []
+      group.push({ slug, issue, facts })
+      byMilestone.set(milestoneTitle, group)
+    }
+  }
+
+  const failures: CheckFailure[] = []
+  for (const group of byMilestone.values()) {
+    if (group.length < 2) continue
+    for (const entry of group) {
+      const siblings = group.filter((g) => g.facts.ref !== entry.facts.ref).map((g) => g.facts)
+      const errors = checkSurfaceOverlap(entry.facts, siblings).errors
+      if (errors.length === 0) continue
+      failures.push({
+        issue: entry.issue.number,
+        tranche: entry.slug,
+        reason: `Issue #${entry.issue.number} fails the cross-task surface-overlap gate: ${errors.join(' | ')}`
+      })
+    }
+  }
+  return { check: 'R3', status: failures.length > 0 ? 'fail' : 'pass', failures }
 }
 
 /**

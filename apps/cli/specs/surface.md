@@ -107,6 +107,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `checkL5` | function | `packages/aeg-core/src/coherence-checks.ts` |
 | `checkR1` | function | `packages/aeg-core/src/coherence-checks.ts` |
 | `checkR2` | function | `packages/aeg-core/src/coherence-checks.ts` |
+| `checkR3` | function | `packages/aeg-core/src/coherence-checks.ts` |
 | `checkT1` | function | `packages/aeg-core/src/coherence-checks.ts` |
 | `checkT2` | function | `packages/aeg-core/src/coherence-checks.ts` |
 | `checkT3` | function | `packages/aeg-core/src/coherence-checks.ts` |

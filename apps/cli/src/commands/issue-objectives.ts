@@ -132,6 +132,23 @@ function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditO
       )
     ])
   }
+  // Security review (Issue #502), round 2, HIGH: this same reason is later
+  // handed to `prepareTask`'s own O6 supersede call, which refuses a
+  // `\r`/`\n` reason for the header-corruption hazard `dispatch-task.ts`
+  // documents at its own check. Checked here too, before ANY write, so a
+  // bad reason never gets past the point where the Objectives comment has
+  // already posted — `prepareTask`'s refusal would otherwise fire only
+  // after that comment exists, leaving the Issue and its frozen brief
+  // disagreeing with no disclosure.
+  if (/[\r\n]/.test(reason as string)) {
+    refuse([
+      makeCheckError(
+        'forge-args',
+        "`--reason` must be a single line — it becomes one line of the frozen comment header this edit may supersede, and a newline in it would corrupt every reader's header-line count for that version.",
+        `Remove the newline from --reason, then re-run \`${RETRY}\`.`
+      )
+    ])
+  }
 
   return { json, issueRef, op: ops[0] as EditOp, reason: reason as string }
 }
