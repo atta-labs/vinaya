@@ -585,6 +585,36 @@ describe('renderBrief', () => {
     expect(validated.status).toBe('pass')
   })
 
+  // Round 2 review, BLOCKER: the covering file can be a COLOCATED test
+  // (`packages/sources/src/foo.test.ts`, the layout `packages/sources` and
+  // `packages/aeg-core` already use in this repo) with no `tests`/`specs`
+  // ancestor to name — the prior fallback named the file's bare containing
+  // directory, which neither of `checkConsumerTests`'s two accepted forms
+  // (a real `.test.<ext>` file, or a `tests`/`specs`-segment directory)
+  // matches, reopening the exact "renderer produces what its own validator
+  // rejects" bug this whole objective exists to close.
+  it('a covered consumer with a COLOCATED covering test (no tests/specs ancestor) names the file itself, and the rendered §4 passes checkConsumerTests', () => {
+    const result = renderBrief(
+      baseFacts({
+        surface: { in: ['packages/aeg-core/src', 'packages/aeg-core/bin', 'packages/sources/src'], out: [] },
+        consumersOf: () => ['packages/sources'],
+        surfaceFiles: [
+          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' },
+          { path: 'packages/sources/src/fixture.test.ts', sha256: 'b'.repeat(64), packageName: null }
+        ]
+      }),
+      ''
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const section4 = /## 4\. Technical surface map[\s\S]*?(?=\n## 5\.)/.exec(result.brief)?.[0] ?? ''
+    expect(section4).toMatch(/consumer-tests: packages\/sources\/src\/fixture\.test\.ts \(covers @attalabs\/aeg-core\)/)
+    expect(section4).not.toMatch(/consumer-tests: none —/)
+
+    const validated = checkConsumerTests(result.brief, (pkg) => (pkg === 'aeg-core' ? ['packages/sources'] : []))
+    expect(validated.status).toBe('pass')
+  })
+
   it("§5 Step 0 creates the worktree branch with --no-track and configures push.autoSetupRemote, so a plain `git push` reaches the task's own ref (task 5, Issue #447, O2)", () => {
     const result = renderBrief(baseFacts(), TEMPLATE)
     expect(result.ok).toBe(true)

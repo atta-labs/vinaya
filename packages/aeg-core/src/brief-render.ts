@@ -363,11 +363,18 @@ function renderSection3(facts: BriefFacts): string {
 // reference to this directory as coverage evidence (same segment-equality
 // convention `checkSurfaceOverlap`'s O4 exemption uses), so this is what the
 // renderer names when the covering FILE itself won't appear in Modify's
-// directory-only listing. Falls back to the file's own containing
-// directory when no segment is literally named `tests`/`specs` (still a
-// real, narrower-than-the-file directory reference — never the bare file
-// path a `boundaryNarrowsSurface` Modify list was built specifically to
-// avoid naming).
+// directory-only listing.
+//
+// Falls back to the covering FILE's own path (never a bare containing
+// directory) when no ancestor segment is literally named `tests`/`specs` —
+// a colocated test file (`packages/sources/src/foo.test.ts`, a real layout
+// this repo's own `packages/sources` and `packages/aeg-core` already use,
+// with no `tests`/`specs` ancestor to name) has no directory form
+// `hasTestPathForConsumer`'s `testDirRe` accepts, but its own `.test.<ext>`
+// path already matches `filePathRe` — a prior version of this fallback
+// named the bare containing directory instead, satisfying neither regex and
+// producing a brief `checkConsumerTests` rejected, reopening the exact class
+// of bug O6 exists to close (round `2` review, BLOCKER).
 function nearestTestDir(path: string): string {
   const segments = path.split('/')
   let idx = -1
@@ -378,7 +385,7 @@ function nearestTestDir(path: string): string {
     }
   }
   if (idx !== -1) return segments.slice(0, idx + 1).join('/')
-  return segments.slice(0, -1).join('/')
+  return path
 }
 
 function renderSection4(facts: BriefFacts): string {
@@ -436,9 +443,10 @@ function renderSection4(facts: BriefFacts): string {
   // and `checkConsumerTests`'s file-path regex finds nothing even though
   // real coverage exists (#478's frozen brief: this renderer produced a
   // brief its own validator rejected). A covered consumer gets an explicit
-  // line naming its covering test DIRECTORY in that mode — a form
-  // `checkConsumerTests` now also accepts as coverage — so the renderer can
-  // never again produce a brief its own validator fails.
+  // line naming its covering test DIRECTORY (or the file itself, when no
+  // `tests`/`specs` ancestor exists to name — see `nearestTestDir`) in that
+  // mode — a form `checkConsumerTests` accepts either way — so the renderer
+  // can never again produce a brief its own validator fails.
   const uncovered: string[] = []
   const coveredDirLines: string[] = []
   for (const pkg of byPackage.keys()) {
