@@ -15,12 +15,14 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import { join } from 'node:path'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
+  type Objective,
   type ReviewInputManifest,
   SECURITY_SEVERITY_ORDER,
   type ReviewPolicy,
   type VerdictObservation
 } from '@attalabs/aeg-core'
 import {
+  checkObjectiveIdCoverage,
   deriveCodeReviewVerdict,
   deriveSecurityVerdict,
   type EscalationClass,
@@ -42,6 +44,8 @@ import { GLOBAL_VINAYA_HOME } from '../config.js'
 
 export type ReviewerPromptFacts = {
   objectives: string
+  /** The `objectives` text, parsed — `[]` exactly when `objectives` is empty. Threaded into `buildVerdictFromReport`'s own `checkObjectiveIdCoverage` call (task 4, `#478`, O4), the same coverage rule `review post` already applies. */
+  resolvedObjectives: readonly Objective[]
   rulings: string[]
   ciConclusion: 'green' | 'red' | 'pending'
   /** The frozen brief's own `**Revision:**` fact (task 4, Issue #483, O2) — `fetchSourceRevision`. */
@@ -256,7 +260,8 @@ export function buildVerdictFromReport(
   taskId: number,
   handle: DispatchHandle,
   manifest: ReviewInputManifest,
-  policy: ReviewPolicy
+  policy: ReviewPolicy,
+  resolvedObjectives: readonly Objective[]
 ): RoundVerdictParse {
   const headSha = manifest.headSha
   const objectivesVersionAtDispatch = manifest.objectivesVersion
@@ -319,6 +324,24 @@ export function buildVerdictFromReport(
       throw new ReviewerReportParseFailure(role, 'objectives.txt', sessionId, err)
     }
     throw err
+  }
+  // O4 (task 4, `#478`): the SAME coverage rule `review post`'s own
+  // `resolveObjectiveResultsForCommand` already applies to a human-posted
+  // verdict — an under-reporting reviewer (one that wrote fewer, or extra,
+  // `O<n>|...` lines than the resolved objectives list) never yields a
+  // version-bound verdict here either. Same one-fresh-retry treatment as a
+  // missing or malformed artifact (`ReviewerReportParseFailure`), never a
+  // silently-accepted partial report.
+  if (resolvedObjectives.length > 0) {
+    const coverageProblem = checkObjectiveIdCoverage(resolvedObjectives, objectiveResults)
+    if (coverageProblem !== null) {
+      throw new ReviewerReportParseFailure(
+        role,
+        'objectives.txt',
+        sessionId,
+        new Error(`objectives.txt does not cover the resolved objectives list exactly: ${coverageProblem}`)
+      )
+    }
   }
   const objectives = objectiveResults.map((o) => ({ id: o.id, met: o.status === 'MET' }))
   // O2: a version renders alongside its `OBJECTIVES:` block, or neither

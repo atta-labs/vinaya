@@ -685,7 +685,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // parse is retried once, into a fresh work directory, before it
         // becomes a pause.
         try {
-          return buildVerdictFromReport(role, workDir, input.agent, task, handle, facts.manifest, policy)
+          return buildVerdictFromReport(
+            role,
+            workDir,
+            input.agent,
+            task,
+            handle,
+            facts.manifest,
+            policy,
+            facts.resolvedObjectives
+          )
         } catch (err) {
           if (!(err instanceof ReviewerReportParseFailure)) throw err
           lastParseFailure = err
@@ -1052,6 +1061,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         })
         const facts: ReviewerPromptFacts = {
           objectives: resolvedObjectives.text,
+          resolvedObjectives: resolvedObjectives.objectives,
           rulings,
           ciConclusion,
           revision,

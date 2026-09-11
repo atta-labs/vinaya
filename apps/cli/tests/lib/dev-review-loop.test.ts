@@ -3043,6 +3043,7 @@ describe('filterPrincipalRulings / findPrincipalFrozenBrief (pure)', () => {
 describe('renderReviewerPrompt (pure) — task 4, #483, O2', () => {
   const BASE_FACTS: ReviewerPromptFacts = {
     objectives: 'O1. Do the thing.',
+    resolvedObjectives: [{ id: 'O1', text: 'Do the thing.' }],
     rulings: [],
     ciConclusion: 'green',
     revision: 'b'.repeat(40),

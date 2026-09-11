@@ -318,6 +318,8 @@ export type ObjectivesResolution = {
   version: string | null
   /** Present only when `text`/`version` came from an objectives-edit comment, not the frozen brief. */
   edit: ObjectivesEditSource | null
+  /** The parsed `id`/`text` list `text` resolves to — `[]` exactly when `text` is empty. `review-validity-v1` task 4 (`#478`, O4) threads this through to `buildVerdictFromReport`'s own `checkObjectiveIdCoverage` call, the same coverage rule `review post` already applies. */
+  objectives: readonly Objective[]
 }
 
 /**
@@ -354,7 +356,8 @@ export function resolveIssueObjectives(issueNumber: number): ObjectivesResolutio
       return {
         text: parsed.now.map((o) => `${o.id}. ${o.text}`).join('\n'),
         version: parsed.version,
-        edit: { previous: parsed.previous, now: parsed.now, reason: parsed.reason }
+        edit: { previous: parsed.previous, now: parsed.now, reason: parsed.reason },
+        objectives: parsed.now
       }
     }
   }
@@ -366,9 +369,14 @@ export function resolveIssueObjectives(issueNumber: number): ObjectivesResolutio
     )
   }
   const text = extractObjectivesSection(brief.content)
-  if (text.length === 0) return { text: '', version: null, edit: null }
+  if (text.length === 0) return { text: '', version: null, edit: null, objectives: [] }
   const parsedObjectives = objectivesOf(['## Objectives', '', text].join('\n'))
-  return { text, version: parsedObjectives.ok ? objectivesVersion(parsedObjectives.objectives) : null, edit: null }
+  return {
+    text,
+    version: parsedObjectives.ok ? objectivesVersion(parsedObjectives.objectives) : null,
+    edit: null,
+    objectives: parsedObjectives.ok ? parsedObjectives.objectives : []
+  }
 }
 
 /**
