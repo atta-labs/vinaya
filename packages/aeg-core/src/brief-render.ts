@@ -378,6 +378,24 @@ function renderSection4(facts: BriefFacts): string {
         ]
       : []
 
+  // O7 (task 8, `#506`): a Boundary that named fewer files than the Issue's
+  // own `## Surface` `in:` list is narrower than the real scope — Boundary
+  // prose justifies a few files, it is never an exhaustive enumeration.
+  // When the Boundary names fewer files than there are `in:` directories,
+  // Modify lists each `in:` directory instead of the handful of files the
+  // prose happened to name, so a developer reads the scope as the
+  // directory, not the one file the rationale mentioned (Issue's own
+  // Origin, O6/O7: exactly this narrowing shipped two lines against ten
+  // objectives on #508).
+  const boundaryNarrowsSurface = facts.surfaceFiles.length < facts.surface.in.length
+  const modifyLines = boundaryNarrowsSurface
+    ? facts.surface.in.length > 0
+      ? bulletList(facts.surface.in)
+      : '- (none named)'
+    : modified.length > 0
+      ? bulletList(modified)
+      : '- (none named)'
+
   const lines = [
     '## 4. Technical surface map',
     '',
@@ -385,7 +403,7 @@ function renderSection4(facts: BriefFacts): string {
     created.length > 0 ? bulletList(created) : '- (none — every surface file already exists)',
     '',
     '**Modify:**',
-    modified.length > 0 ? bulletList(modified) : '- (none named)',
+    modifyLines,
     ...(consumerLines.length > 0 ? ['', ...consumerLines] : []),
     '',
     '**Out of surface:** ' +

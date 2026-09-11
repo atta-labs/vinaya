@@ -2198,7 +2198,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           if (!(err instanceof ReviewerReportParseFailure)) throw err
           lastParseFailure = err
           lastMissing = []
-          continue
         }
       }
       if (lastParseFailure) throw lastParseFailure

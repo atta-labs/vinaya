@@ -349,6 +349,52 @@ describe('renderBrief', () => {
     })
   })
 
+  describe('a narrowed Boundary lists Surface in: directories under Modify, never just the file the rationale named (task 8, #506, O7)', () => {
+    it('a one-file Boundary with a three-directory Surface renders three directory entries under Modify', () => {
+      const facts = baseFacts({
+        surface: { in: ['packages/aeg-core/src', 'apps/cli/src/lib', 'apps/cli/src/commands'], out: [] },
+        surfaceFiles: [
+          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' }
+        ]
+      })
+      const result = renderBrief(facts, TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      const modifyBlock = /\*\*Modify:\*\*\n([\s\S]*?)\n\n/.exec(result.brief)?.[1] ?? ''
+      const modifyLines = modifyBlock
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+      expect(modifyLines).toEqual(['- packages/aeg-core/src', '- apps/cli/src/lib', '- apps/cli/src/commands'])
+      // The one named file is not what a developer reads as the scope — it
+      // still appears in Premise pins (proof-of-revision), never as the
+      // Modify bullet on its own.
+      expect(modifyBlock).not.toContain('fixture.ts')
+
+      // Directory-shaped Modify entries are still a brief checkBriefSections
+      // accepts — the narrowing fallback does not break mechanical validation.
+      const { errors } = checkBriefSections(result.brief, readTierFromPrBody, {
+        requireClosesN: true,
+        consumersOf: () => []
+      })
+      expect(errors).toEqual([])
+    })
+
+    it('a Boundary naming as many (or more) files than there are Surface in: directories keeps the file list under Modify, unchanged', () => {
+      const facts = baseFacts({
+        surface: { in: ['packages/aeg-core/src'], out: [] },
+        surfaceFiles: [
+          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' }
+        ]
+      })
+      const result = renderBrief(facts, TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      const modifyBlock = /\*\*Modify:\*\*\n([\s\S]*?)\n\n/.exec(result.brief)?.[1] ?? ''
+      expect(modifyBlock.trim()).toBe('- packages/aeg-core/src/fixture.ts')
+    })
+  })
+
   it('declares Test Plan: unit-tests-only when the Issue Test plan section is the sentinel', () => {
     const result = renderBrief(baseFacts({ testPlan: { kind: 'unit-tests-only' } }), '')
     expect(result.ok).toBe(true)
