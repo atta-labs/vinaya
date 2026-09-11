@@ -120,10 +120,10 @@ describe('compareManifest', () => {
     expect(compareManifest(echoed, current).briefHash).toBe(false)
   })
 
-  it('policyDigest: a null echo (pre-cutover legacy comment) skips the binding', () => {
+  it('policyDigest: a null echo (pre-cutover legacy comment) is NEVER grandfathered — unlike every other field, a policy is always resolvable so there is no genuine "nothing to bind against" case (#478 round 4, security MEDIUM)', () => {
     const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), policyDigest: null }
     const current = manifest({ policyDigest: policyDigest({ codeReviewThreshold: 'MAJOR', securityThreshold: 'LOW' }) })
-    expect(compareManifest(echoed, current).policyDigest).toBe(true)
+    expect(compareManifest(echoed, current).policyDigest).toBe(false)
   })
 
   it('policyDigest: does not bind when the echoed digest is stale against a changed current policy', () => {

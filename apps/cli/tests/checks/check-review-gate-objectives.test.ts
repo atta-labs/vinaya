@@ -3,7 +3,16 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { objectivesOf, objectivesVersion } from '@attalabs/aeg-core'
+import { DEFAULT_REVIEW_POLICY, objectivesOf, objectivesVersion, policyDigest } from '@attalabs/aeg-core'
+
+/**
+ * The digest `check-review-gate.ts` resolves when no `vinaya.config.json` is
+ * reachable (none of these throwaway repos have one) — it falls back to
+ * `DEFAULT_REVIEW_POLICY`. Every comment fixture here that expects `pass`
+ * now needs this line too: `isBoundToPolicy` no longer grandfathers a
+ * missing `Policy digest:` line (`#478` round 4, security MEDIUM).
+ */
+const DEFAULT_POLICY_DIGEST = policyDigest(DEFAULT_REVIEW_POLICY)
 
 const BIN = join(import.meta.dir, '../../src/checks/bin/check-review-gate.ts')
 
@@ -114,11 +123,11 @@ process.exit(1)
       number: 1,
       comments: [
         {
-          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nObjectives version: ${ISSUE_VERSION}`,
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nObjectives version: ${ISSUE_VERSION}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
           author: { login: 'daniboomerang' }
         },
         {
-          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nObjectives version: ${ISSUE_VERSION}`,
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nObjectives version: ${ISSUE_VERSION}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
           author: { login: 'daniboomerang' }
         }
       ],
@@ -188,11 +197,11 @@ process.exit(1)
       number: 1,
       comments: [
         {
-          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nObjectives version: ${bodyVersion}`,
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nObjectives version: ${bodyVersion}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
           author: { login: 'daniboomerang' }
         },
         {
-          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nObjectives version: ${bodyVersion}`,
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nObjectives version: ${bodyVersion}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
           author: { login: 'daniboomerang' }
         }
       ],
@@ -219,8 +228,14 @@ process.exit(1)
     const prView = {
       number: 1,
       comments: [
-        { body: `VERDICT: APPROVE\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } },
-        { body: `VERDICT: PASS\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } }
+        {
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          author: { login: 'daniboomerang' }
+        },
+        {
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          author: { login: 'daniboomerang' }
+        }
       ],
       labels: [],
       headRefName: 'work',
@@ -245,8 +260,14 @@ process.exit(1)
     const prView = {
       number: 1,
       comments: [
-        { body: `VERDICT: APPROVE\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } },
-        { body: `VERDICT: PASS\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } }
+        {
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          author: { login: 'daniboomerang' }
+        },
+        {
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          author: { login: 'daniboomerang' }
+        }
       ],
       labels: [],
       headRefName: 'work',
@@ -274,8 +295,14 @@ process.exit(1)
     const prView = {
       number: 1,
       comments: [
-        { body: `VERDICT: APPROVE\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } },
-        { body: `VERDICT: PASS\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } }
+        {
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          author: { login: 'daniboomerang' }
+        },
+        {
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          author: { login: 'daniboomerang' }
+        }
       ],
       labels: [],
       headRefName: 'work',
@@ -307,8 +334,14 @@ process.exit(1)
     const prView = {
       number: 1,
       comments: [
-        { body: `VERDICT: APPROVE\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } },
-        { body: `VERDICT: PASS\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } }
+        {
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          author: { login: 'daniboomerang' }
+        },
+        {
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          author: { login: 'daniboomerang' }
+        }
       ],
       labels: [],
       headRefName: 'work',
@@ -336,8 +369,14 @@ process.exit(1)
     const prView = {
       number: 1,
       comments: [
-        { body: `VERDICT: APPROVE\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } },
-        { body: `VERDICT: PASS\n\nJudged head: ${sha}`, author: { login: 'daniboomerang' } }
+        {
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          author: { login: 'daniboomerang' }
+        },
+        {
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          author: { login: 'daniboomerang' }
+        }
       ],
       labels: [],
       headRefName: 'work',

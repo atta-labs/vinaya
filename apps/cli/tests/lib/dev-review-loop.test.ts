@@ -78,8 +78,10 @@ import {
 import { spliceObjectivesSection } from '../../src/commands/issue-objectives.js'
 import {
   checkReviewGate,
+  DEFAULT_REVIEW_POLICY,
   objectivesOf,
   objectivesVersion,
+  policyDigest,
   renderObjectives,
   type Objective,
   type DevReviewLoopEventInput
@@ -87,6 +89,16 @@ import {
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
+
+/**
+ * `checkReviewGate` resolves `DEFAULT_REVIEW_POLICY`'s digest whenever a
+ * test omits its own `policy` field (every "passes" fixture below that
+ * doesn't test a custom policy). `isBoundToPolicy` no longer grandfathers a
+ * digest it cannot parse as real hex (`#478` round 4, security MEDIUM) — the
+ * `'p'.repeat(64)` placeholder these fixtures used is not valid hex, so the
+ * reader treats it as "no line at all" and it must now match for real.
+ */
+const DEFAULT_POLICY_DIGEST = policyDigest(DEFAULT_REVIEW_POLICY)
 
 const TASK = 9001
 const BRANCH = `task/dev-review-loop-v1/${TASK}`
@@ -3518,7 +3530,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
 
       briefHash: null,
 
-      policyDigest: 'p'.repeat(64),
+      policyDigest: DEFAULT_POLICY_DIGEST,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
     const securityComment = renderSecurityComment({
@@ -3534,7 +3546,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
 
       briefHash: null,
 
-      policyDigest: 'p'.repeat(64),
+      policyDigest: DEFAULT_POLICY_DIGEST,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
 
@@ -3706,7 +3718,7 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
 
       briefHash: null,
 
-      policyDigest: 'p'.repeat(64),
+      policyDigest: DEFAULT_POLICY_DIGEST,
       objectiveResults: null
     })
     const securityComment = renderSecurityComment({
@@ -3722,7 +3734,7 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
 
       briefHash: null,
 
-      policyDigest: 'p'.repeat(64),
+      policyDigest: DEFAULT_POLICY_DIGEST,
       objectiveResults: null
     })
 
@@ -3775,7 +3787,7 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
 
       briefHash: null,
 
-      policyDigest: 'p'.repeat(64),
+      policyDigest: DEFAULT_POLICY_DIGEST,
       objectiveResults: null
     })
     const securityComment = renderSecurityComment({
@@ -3791,7 +3803,7 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
 
       briefHash: null,
 
-      policyDigest: 'p'.repeat(64),
+      policyDigest: DEFAULT_POLICY_DIGEST,
       objectiveResults: null
     })
 

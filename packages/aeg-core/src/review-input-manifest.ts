@@ -208,16 +208,26 @@ export function isBoundToBriefHash(echoed: { briefHash: string | null }, current
 }
 
 /**
- * True when the echoed policy digest covers the current one. The skip
- * direction here is the mirror image of every other field: a policy is
- * ALWAYS resolvable (configured or defaulted), so the current side is never
- * null — the grandfathering is on the ECHOED side instead, `null` meaning
- * "this comment predates `Policy digest:` rendering at all" (every comment
- * this task renders carries the line unconditionally, so a `null` echo is
- * legacy stock, never a real omission).
+ * True when the echoed policy digest covers the current one. `#478` round 4
+ * (security MEDIUM): NEVER grandfathers a `null` echo, unlike a first read
+ * of "a policy is ALWAYS resolvable, so grandfather on the echoed side
+ * instead" might suggest — every other field in this family grandfathers
+ * only when there is a genuine sentinel for "nothing to compare" on the
+ * CURRENT side (`currentHash`/`currentVersion === null` for brief/
+ * objectives, `currentOrdinal === 0` for rulings, each a real fact about
+ * that PR/Issue that can itself change and un-grandfather the binding
+ * later). A policy has no such sentinel: `currentDigest` is never null, so
+ * a blanket "null echo always binds" never re-evaluates and can never
+ * un-grandfather — exactly the asymmetry `isBoundToBriefHash`'s own doc
+ * comment already warns against ("there is no partial-legacy stock to
+ * grandfather on the echoed side: a `null` echo against a resolvable
+ * current [value] is simply unbound"), just not yet applied here. A `null`
+ * echo (a comment predating `Policy digest:` rendering, or one stripped of
+ * the line) is simply unbound, the same as any other mismatch — the one-
+ * time cost is that a PR opened before this task merged needs one fresh
+ * review round, not a permanent exemption from the O5 guarantee.
  */
 export function isBoundToPolicy(echoed: { policyDigest: string | null }, currentDigest: string): boolean {
-  if (echoed.policyDigest === null) return true
   return echoed.policyDigest === currentDigest
 }
 

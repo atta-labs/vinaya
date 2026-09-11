@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { checkReviewGate, isChangesetsReleasePr, isReviewGateExemptBranch } from './review-gate'
+import { policyDigest } from './review-input-manifest'
+import { DEFAULT_REVIEW_POLICY } from './review-policy'
 
 import type { MechanicalCheckStatus, ReviewGateComment } from './review-gate'
 
 /** A single green check-run — the default "mechanical checks are clean" fixture for tests that are about verdict logic, not mechanical-check logic. */
 const CLEAN_CHECKS: MechanicalCheckStatus[] = [{ name: 'Vinaya CI', bucket: 'pass' }]
+
+/**
+ * The digest `checkReviewGate` resolves whenever a test omits its own
+ * `policy` field (it defaults to `DEFAULT_REVIEW_POLICY`) — every shared
+ * "clean" comment fixture in this file that isn't itself testing the
+ * policy-digest binding renders this line so it satisfies that binding too
+ * (`#478` round 4, security MEDIUM: a `Policy digest:`-less comment no
+ * longer binds unconditionally).
+ */
+const DEFAULT_POLICY_DIGEST = policyDigest(DEFAULT_REVIEW_POLICY)
 
 /** Principal-authored comment — the allowlisted author every legitimate verdict flows through. */
 const principal = (body: string): ReviewGateComment => ({ body, author: 'daniboomerang' })
@@ -20,9 +32,11 @@ const HEAD_SHA = '8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f'
 // first five lines only (round-4 ruling, `#392`, widened by `#412`). These fixtures test
 // decoration, not marker position, so the decoration moves after the head.
 const APPROVE_COMMENT = principal(
-  `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}\n\nBRIEF CONFORMANCE: clean. Looks good.`
+  `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}\n\nBRIEF CONFORMANCE: clean. Looks good.\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`
 )
-const PASS_COMMENT = principal(`VERDICT: PASS\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS: none.`)
+const PASS_COMMENT = principal(
+  `VERDICT: PASS\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS: none.\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`
+)
 const REQUEST_CHANGES_COMMENT = principal(`VERDICT: REQUEST_CHANGES\n\nJudged head: ${HEAD_SHA}\n\nsee inline notes.`)
 const FAIL_COMMENT = principal(`VERDICT: FAIL\n\nJudged head: ${HEAD_SHA}\n\nhardcoded credential found.`)
 
@@ -147,8 +161,8 @@ describe('checkReviewGate', () => {
       const shortSha = HEAD_SHA.slice(0, 7)
       const result = checkReviewGate({
         comments: [
-          principal(`VERDICT: APPROVE\n\nJudged head: ${shortSha}`),
-          principal(`VERDICT: PASS\n\nJudged head: ${shortSha}`)
+          principal(`VERDICT: APPROVE\n\nJudged head: ${shortSha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`),
+          principal(`VERDICT: PASS\n\nJudged head: ${shortSha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`)
         ],
         labels: [],
         waiverLabelActor: null,
@@ -184,8 +198,12 @@ describe('checkReviewGate', () => {
         comments: [
           APPROVE_COMMENT,
           PASS_COMMENT,
-          principal(`VERDICT: APPROVE\n\nJudged head: ${newHeadAfterPush}\n\nsupersedes my prior pass.`),
-          principal(`VERDICT: PASS\n\nJudged head: ${newHeadAfterPush}\n\nsupersedes my prior pass.`)
+          principal(
+            `VERDICT: APPROVE\n\nJudged head: ${newHeadAfterPush}\n\nsupersedes my prior pass.\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`
+          ),
+          principal(
+            `VERDICT: PASS\n\nJudged head: ${newHeadAfterPush}\n\nsupersedes my prior pass.\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`
+          )
         ],
         labels: [],
         waiverLabelActor: null,
@@ -474,11 +492,11 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
 
 describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)', () => {
   const adopterApprove = (author: string) => ({
-    body: `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}\n\nclean.`,
+    body: `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}\n\nclean.\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
     author
   })
   const adopterPass = (author: string) => ({
-    body: `VERDICT: PASS\n\nJudged head: ${HEAD_SHA}\n\nno findings.`,
+    body: `VERDICT: PASS\n\nJudged head: ${HEAD_SHA}\n\nno findings.\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
     author
   })
 
@@ -686,7 +704,9 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
   const VERSION_B = 'b'.repeat(64)
 
   const boundComment = (verdict: string, version: string) =>
-    principal(`VERDICT: ${verdict}\n\nJudged head: ${HEAD_SHA}\n\nObjectives version: ${version}`)
+    principal(
+      `VERDICT: ${verdict}\n\nJudged head: ${HEAD_SHA}\n\nObjectives version: ${version}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`
+    )
 
   it('passes when both verdicts carry the current objectives version', () => {
     const result = checkReviewGate({
@@ -764,7 +784,9 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
 
 describe('checkReviewGate — ruling-freshness binding (review-validity-v1 task 3, #477, O2)', () => {
   const boundComment = (verdict: string, ordinal: number) =>
-    principal(`VERDICT: ${verdict}\n\nJudged head: ${HEAD_SHA}\n\nRuling ordinal: ${ordinal}`)
+    principal(
+      `VERDICT: ${verdict}\n\nJudged head: ${HEAD_SHA}\n\nRuling ordinal: ${ordinal}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`
+    )
 
   it('passes when both verdicts carry the current newest ruling ordinal', () => {
     const result = checkReviewGate({
@@ -872,8 +894,14 @@ describe('checkReviewGate — patch-identity binding', () => {
 
   function comments(head: string) {
     return [
-      { body: `VERDICT: APPROVE\n\nJudged head: ${head}`, author: 'daniboomerang' },
-      { body: `VERDICT: PASS\n\nJudged head: ${head}`, author: 'daniboomerang' }
+      {
+        body: `VERDICT: APPROVE\n\nJudged head: ${head}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+        author: 'daniboomerang'
+      },
+      {
+        body: `VERDICT: PASS\n\nJudged head: ${head}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+        author: 'daniboomerang'
+      }
     ]
   }
 
@@ -954,7 +982,9 @@ describe('checkReviewGate — brief-hash binding', () => {
   const HASH_B = 'b'.repeat(64)
 
   const boundComment = (verdict: string, hash: string) =>
-    principal(`VERDICT: ${verdict}\n\nJudged head: ${HEAD_SHA}\n\nRuling ordinal: 0\n\nBrief hash: ${hash}`)
+    principal(
+      `VERDICT: ${verdict}\n\nJudged head: ${HEAD_SHA}\n\nRuling ordinal: 0\n\nBrief hash: ${hash}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`
+    )
 
   it('passes when both verdicts carry the current brief hash', () => {
     const result = checkReviewGate({
@@ -1087,9 +1117,13 @@ describe('checkReviewGate — policy-digest binding', () => {
     expect(result.reason).toContain('was cast against review policy digest')
   })
 
-  it('a legacy comment with no Policy digest: line at all still binds — grandfathered, never confused with a real mismatch', () => {
+  it('a legacy comment with no Policy digest: line at all does NOT bind — unlike every other field, a policy is always resolvable so a missing line is never grandfathered (#478 round 4, security MEDIUM)', () => {
+    const legacyApprove = principal(
+      `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}\n\nBRIEF CONFORMANCE: clean. Looks good.`
+    )
+    const legacyPass = principal(`VERDICT: PASS\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS: none.`)
     const result = checkReviewGate({
-      comments: [APPROVE_COMMENT, PASS_COMMENT],
+      comments: [legacyApprove, legacyPass],
       labels: [],
       waiverLabelActor: null,
       mechanicalChecks: CLEAN_CHECKS,
@@ -1097,7 +1131,8 @@ describe('checkReviewGate — policy-digest binding', () => {
       objectivesVersion: null,
       rulingOrdinal: 0
     })
-    expect(result.verdict).toBe('pass')
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('was cast against review policy digest')
   })
 })
 
@@ -1108,14 +1143,16 @@ describe('checkReviewGate — policy-digest binding', () => {
 
 describe('checkReviewGate — policy evaluation (O2/O3)', () => {
   const findings = (lines: string[]) => (lines.length > 0 ? lines.join('\n') : 'None.')
+  const MAJOR_HIGH_POLICY = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' } as const
+  const MAJOR_HIGH_POLICY_DIGEST = policyDigest(MAJOR_HIGH_POLICY)
 
-  const codeReviewComment = (verdictLine: string, findingLines: string[] = []) =>
+  const codeReviewComment = (verdictLine: string, findingLines: string[] = [], digest = DEFAULT_POLICY_DIGEST) =>
     principal(
-      `VERDICT: ${verdictLine}\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS (ordered by severity):\n${findings(findingLines)}`
+      `VERDICT: ${verdictLine}\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS (ordered by severity):\n${findings(findingLines)}\n\nPolicy digest: ${digest}`
     )
-  const securityComment = (verdictLine: string, findingLines: string[] = []) =>
+  const securityComment = (verdictLine: string, findingLines: string[] = [], digest = DEFAULT_POLICY_DIGEST) =>
     principal(
-      `VERDICT: ${verdictLine}\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS (ordered by severity):\n${findings(findingLines)}`
+      `VERDICT: ${verdictLine}\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS (ordered by severity):\n${findings(findingLines)}\n\nPolicy digest: ${digest}`
     )
 
   const BASE_INPUT = {
@@ -1150,8 +1187,11 @@ describe('checkReviewGate — policy evaluation (O2/O3)', () => {
   it('a MEDIUM security finding does not block at the HIGH threshold', () => {
     const result = checkReviewGate({
       ...BASE_INPUT,
-      comments: [codeReviewComment('APPROVE'), securityComment('PASS', ['1. [MEDIUM] a.ts:1 — informational'])],
-      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' }
+      comments: [
+        codeReviewComment('APPROVE', [], MAJOR_HIGH_POLICY_DIGEST),
+        securityComment('PASS', ['1. [MEDIUM] a.ts:1 — informational'], MAJOR_HIGH_POLICY_DIGEST)
+      ],
+      policy: MAJOR_HIGH_POLICY
     })
     expect(result.verdict).toBe('pass')
   })
