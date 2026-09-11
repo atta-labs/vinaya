@@ -34,6 +34,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   assessRound,
+  CODE_REVIEW_SEVERITY_ORDER,
+  evaluateCodeReview,
+  evaluateSecurityReview,
+  SECURITY_SEVERITY_ORDER,
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
   extractSourceRevision,
@@ -53,6 +57,7 @@ import {
   type LoopState,
   type Observations,
   type PauseReason,
+  type ReviewPolicy,
   type RoundStats,
   type VerdictObservation
 } from '@attalabs/aeg-core'
@@ -77,7 +82,7 @@ import {
   readResumeRecord as realReadResumeRecord,
   type ResumeRecord
 } from './dispatch.js'
-import { GLOBAL_VINAYA_HOME, loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
+import { GLOBAL_VINAYA_HOME, loadTrustAnchorConfig, resolvePrincipalAllowlist, resolveReviewPolicy } from './config.js'
 import { postMarkedComment } from './forge-write.js'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { packageRoot } from './package-root.js'
@@ -230,6 +235,20 @@ function markerComments(raw: string): MarkerComment[] {
  */
 function principalAllowlist(): string[] {
   return resolvePrincipalAllowlist(loadTrustAnchorConfig())
+}
+
+/**
+ * Which severities block is repository policy (`review-validity-v1` task 8,
+ * `#506`, O1/O4) — resolved from the SAME default-branch trust-anchor source
+ * `principalAllowlist()` already reads, never from the PR's own checkout, so
+ * a change cannot lower its own threshold. `resolveReviewPolicy` refuses
+ * (throws) on a present-but-unknown severity value; this loop has no
+ * sanctioned way to run with an unresolvable policy, so that throw
+ * propagates and ends the run, the same as any other unrecoverable config
+ * defect this loop cannot itself repair.
+ */
+function reviewPolicy(): ReviewPolicy {
+  return resolveReviewPolicy(loadTrustAnchorConfig())
 }
 
 /** Pure: every ruling body (after its marker line), from principal-authored comments only — unit-testable with no `gh` call. */
@@ -927,6 +946,8 @@ export type PublishInput = {
   /** The round's judged head — every posted verdict is expected to bind to this, re-verified after each post. */
   expectedHead: string
   journal: Journal
+  /** Which severities block is repository policy (`review-validity-v1` task 8, `#506`, O2/O3) — the SAME resolved value `buildVerdictFromReport` derived this round's held verdicts under. */
+  policy: ReviewPolicy
 }
 
 /**
@@ -943,7 +964,7 @@ export type PublishInput = {
  * not posted.
  */
 export function publishRound(root: string, input: PublishInput): void {
-  const { task, round, prNumber, expectedHead } = input
+  const { task, round, prNumber, expectedHead, policy } = input
   const reviewerBody = readIfExists(heldVerdictPath(root, task, round, 'reviewer'))
   const securityBody = readIfExists(heldVerdictPath(root, task, round, 'security'))
   if (!reviewerBody || !securityBody) {
@@ -959,12 +980,35 @@ export function publishRound(root: string, input: PublishInput): void {
       `publishRound: posted reviewer verdict does not re-parse clean through extractCodeReviewVerdict bound to ${expectedHead}: ${postedReviewer.danglingNote ?? `headSha read back as ${String(postedReviewer.headSha)}`}`
     )
   }
+  // O3: the reviewer's own posted APPROVE never overrides the evaluator —
+  // re-evaluate the posted comment's own FINDINGS block against policy
+  // before treating this round as publishable, mirroring the merge gate's
+  // identical check (`checkReviewGate`) rather than trusting construction
+  // alone.
+  const postedReviewerPolicy = evaluateCodeReview(
+    postedReviewer.findingSeverities.map((severity) => ({ severity })),
+    policy
+  )
+  if (postedReviewer.value === 'APPROVE' && postedReviewerPolicy.outcome === 'blocked') {
+    throw new Error(
+      `publishRound: posted reviewer verdict says APPROVE but carries a finding (${postedReviewerPolicy.blockingFindings.map((f) => f.severity).join(', ')}) at or above this repository's code-review policy threshold (${policy.codeReviewThreshold}) — refusing to publish.`
+    )
+  }
 
   postForgeEffectOnce(root, task, `${round}-security-verdict`, () => postPrComment(prNumber, securityBody))
   const postedSecurity = extractSecurityReviewVerdict(fetchAllPrCommentBodies(prNumber))
   if (postedSecurity.danglingNote || postedSecurity.headSha !== expectedHead) {
     throw new Error(
       `publishRound: posted security verdict does not re-parse clean through extractSecurityReviewVerdict bound to ${expectedHead}: ${postedSecurity.danglingNote ?? `headSha read back as ${String(postedSecurity.headSha)}`}`
+    )
+  }
+  const postedSecurityPolicy = evaluateSecurityReview(
+    postedSecurity.findingSeverities.map((severity) => ({ severity })),
+    policy
+  )
+  if (postedSecurity.value === 'PASS' && postedSecurityPolicy.outcome === 'blocked') {
+    throw new Error(
+      `publishRound: posted security verdict says PASS but carries a finding (${postedSecurityPolicy.blockingFindings.map((f) => f.severity).join(', ')}) at or above this repository's security policy threshold (${policy.securityThreshold}) — refusing to publish.`
     )
   }
 
@@ -1512,7 +1556,8 @@ function buildVerdictFromReport(
   taskId: number,
   handle: DispatchHandle,
   objectivesVersionAtDispatch: string | null,
-  rulingOrdinalAtDispatch: number
+  rulingOrdinalAtDispatch: number,
+  policy: ReviewPolicy
 ): RoundVerdictParse {
   const reportRaw = readIfExists(join(workDir, 'report.txt')) ?? ''
   const report = parseReport(reportRaw)
@@ -1547,8 +1592,7 @@ function buildVerdictFromReport(
   }
 
   const findingsRaw = readIfExists(join(workDir, 'findings.txt')) ?? ''
-  const allowedSeverities =
-    role === 'reviewer' ? (['BLOCKER', 'MAJOR', 'MINOR'] as const) : (['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const)
+  const allowedSeverities = role === 'reviewer' ? CODE_REVIEW_SEVERITY_ORDER : SECURITY_SEVERITY_ORDER
   const findings: Finding[] = findingsRaw.trim() ? parseFindingsFile(findingsRaw, allowedSeverities) : []
 
   const objectivesRaw = readIfExists(join(workDir, 'objectives.txt'))
@@ -1562,7 +1606,7 @@ function buildVerdictFromReport(
   const findingObservations = findings.map((f, i) => ({ id: `F${i + 1}`, severity: f.severity, state: null }))
 
   if (role === 'reviewer') {
-    const verdict = deriveCodeReviewVerdict(findings)
+    const verdict = deriveCodeReviewVerdict(findings, policy)
     const rendered = renderCodeReviewComment({
       headSha,
       verdict,
@@ -1594,7 +1638,7 @@ function buildVerdictFromReport(
     }
   }
 
-  const verdict = deriveSecurityVerdict(findings)
+  const verdict = deriveSecurityVerdict(findings, policy)
   const rendered = renderSecurityComment({
     headSha,
     verdict,
@@ -1853,6 +1897,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // or they land under the `none` bucket instead of this task's.
     process.env.VINAYA_TASK = String(task)
 
+    // Which severities block is repository policy (`review-validity-v1` task
+    // 8, `#506`, O1/O4) — resolved once, from the default branch, and reused
+    // for every round's derivation and this run's publication self-check;
+    // the gate reads the identical source (`check-review-gate.ts`).
+    const policy = reviewPolicy()
+
     // Primes `resolveRepo()`'s process-lifetime cache BEFORE this loop's own
     // `log()` calls start racing each other on it (see `waitForLoopLineCount`'s
     // doc comment) — every later call in this process, including the ones
@@ -2087,7 +2137,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           task,
           handle,
           facts.objectivesVersion,
-          facts.rulingOrdinal
+          facts.rulingOrdinal,
+          policy
         )
       }
       throw new ReviewerInfrastructureFailure(role, lastMissing)
@@ -2568,7 +2619,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           round,
           prNumber,
           expectedHead: d.resolveHead(branch),
-          journal: { rounds: state.rounds }
+          journal: { rounds: state.rounds },
+          policy
         })
         // Only now — posts confirmed, not merely attempted — does the durable
         // log get to say this run completed. A throw above (a post that

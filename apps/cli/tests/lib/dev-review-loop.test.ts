@@ -69,7 +69,11 @@ import {
   type ReviewerPromptFacts,
   routeCompletionEvents
 } from '../../src/lib/dev-review-loop.js'
-import { renderCodeReviewComment, renderSecurityComment } from '../../src/commands/review-post.js'
+import {
+  deriveCodeReviewVerdict,
+  renderCodeReviewComment,
+  renderSecurityComment
+} from '../../src/commands/review-post.js'
 import { spliceObjectivesSection } from '../../src/commands/issue-objectives.js'
 import {
   checkReviewGate,
@@ -3121,6 +3125,124 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
 
     expect(result.verdict).toBe('fail')
     expect(result.reason).toMatch(/objectives version/)
+  })
+})
+
+/**
+ * Which severities block is repository policy (`review-validity-v1` task 8,
+ * `#506`, O2/O4): the loop's own derivation (`deriveCodeReviewVerdict`, the
+ * same function `buildVerdictFromReport` calls) and the merge gate's own
+ * evaluation (`checkReviewGate`) must agree on the SAME findings under the
+ * SAME policy — this repository's own configured MAJOR/HIGH.
+ */
+describe('a loop-published verdict agrees with the merge gate under policy (review-validity-v1 task 8, #506, O2/O4)', () => {
+  const HEAD = 'e'.repeat(40)
+  const TOKENS = { taskId: '506', model: 'claude', tokensIn: '8', tokensOut: '4', cost: '—', sessionId: 's1' }
+  const THIS_REPO_POLICY = { codeReviewThreshold: 'MAJOR' as const, securityThreshold: 'HIGH' as const }
+
+  it("a MAJOR finding drives REQUEST_CHANGES at the loop (never reaches a clean round to publish) under this repo's MAJOR/HIGH policy", () => {
+    const findings = [{ severity: 'MAJOR', location: 'a.ts:1', description: 'off-by-one' }]
+    expect(deriveCodeReviewVerdict(findings, THIS_REPO_POLICY)).toBe('REQUEST_CHANGES')
+  })
+
+  it('the SAME finding, rendered as a (hand-typed-bypass) APPROVE comment, is read as not clean by checkReviewGate under the identical policy — the two never disagree', () => {
+    const reviewerComment = renderCodeReviewComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'APPROVE',
+      briefConformance: 'yes',
+      specConformance: 'yes',
+      findings: [{ severity: 'MAJOR', location: 'a.ts:1', description: 'off-by-one' }],
+      scope: 'small',
+      scopeEvidence: null,
+      tests: 'pass',
+      docs: 'n/a',
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      objectiveResults: null
+    })
+    const securityComment = renderSecurityComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'PASS',
+      findings: [],
+      configScan: 'clean',
+      secrets: 'none found',
+      secretsEvidence: null,
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      objectiveResults: null
+    })
+
+    const result = checkReviewGate({
+      comments: [
+        { body: reviewerComment, author: 'daniboomerang' },
+        { body: securityComment, author: 'daniboomerang' }
+      ],
+      labels: [],
+      waiverLabelActor: null,
+      headSha: HEAD,
+      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
+      principalAllowlist: ['daniboomerang'],
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      policy: THIS_REPO_POLICY
+    })
+
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('never overrides policy')
+  })
+
+  it('the identical MAJOR-carrying comment passes under the DEFAULT (BLOCKER) policy — the gate and the default-policy derivation agree too', () => {
+    const findings = [{ severity: 'MAJOR', location: 'a.ts:1', description: 'off-by-one' }]
+    expect(deriveCodeReviewVerdict(findings, { codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH' })).toBe(
+      'APPROVE'
+    )
+
+    const reviewerComment = renderCodeReviewComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'APPROVE',
+      briefConformance: 'yes',
+      specConformance: 'yes',
+      findings: [{ severity: 'MAJOR', location: 'a.ts:1', description: 'off-by-one' }],
+      scope: 'small',
+      scopeEvidence: null,
+      tests: 'pass',
+      docs: 'n/a',
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      objectiveResults: null
+    })
+    const securityComment = renderSecurityComment({
+      ...TOKENS,
+      headSha: HEAD,
+      verdict: 'PASS',
+      findings: [],
+      configScan: 'clean',
+      secrets: 'none found',
+      secretsEvidence: null,
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      objectiveResults: null
+    })
+
+    const result = checkReviewGate({
+      comments: [
+        { body: reviewerComment, author: 'daniboomerang' },
+        { body: securityComment, author: 'daniboomerang' }
+      ],
+      labels: [],
+      waiverLabelActor: null,
+      headSha: HEAD,
+      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
+      principalAllowlist: ['daniboomerang'],
+      objectivesVersion: null,
+      rulingOrdinal: 0
+      // policy omitted — defaults to BLOCKER/HIGH.
+    })
+
+    expect(result.verdict).toBe('pass')
   })
 })
 

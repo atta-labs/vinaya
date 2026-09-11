@@ -83,12 +83,18 @@ export function evaluateReviewFindings<F extends PolicyFinding>(
 }
 
 /** `evaluateReviewFindings` fixed to the code-review scale and `policy.codeReviewThreshold`. */
-export function evaluateCodeReview<F extends PolicyFinding>(findings: readonly F[], policy: ReviewPolicy): PolicyEvaluation<F> {
+export function evaluateCodeReview<F extends PolicyFinding>(
+  findings: readonly F[],
+  policy: ReviewPolicy
+): PolicyEvaluation<F> {
   return evaluateReviewFindings(findings, CODE_REVIEW_SEVERITY_ORDER, policy.codeReviewThreshold)
 }
 
 /** `evaluateReviewFindings` fixed to the security scale and `policy.securityThreshold`. */
-export function evaluateSecurityReview<F extends PolicyFinding>(findings: readonly F[], policy: ReviewPolicy): PolicyEvaluation<F> {
+export function evaluateSecurityReview<F extends PolicyFinding>(
+  findings: readonly F[],
+  policy: ReviewPolicy
+): PolicyEvaluation<F> {
   return evaluateReviewFindings(findings, SECURITY_SEVERITY_ORDER, policy.securityThreshold)
 }
 

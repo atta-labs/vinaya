@@ -70,6 +70,7 @@
 
 import { isPrincipal, isWaiverLabelActorVerified, PRINCIPAL_ALLOWLIST, WAIVER_LABEL_REVIEW } from './waiver-label'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
+import { DEFAULT_REVIEW_POLICY, evaluateCodeReview, evaluateSecurityReview, type ReviewPolicy } from './review-policy'
 
 export type ReviewGateVerdict = 'pass' | 'fail'
 
@@ -189,6 +190,17 @@ export type ReviewGateInput = {
    * unconditional skip, since a ruling's existence is never ambiguous.
    */
   rulingOrdinal: number
+  /**
+   * Which severities block is repository policy (`review-validity-v1` task
+   * 8, `#506`, O2/O3) — resolved by the caller from the DEFAULT BRANCH's
+   * `vinaya.config.json` (`resolveReviewPolicy(loadTrustAnchorConfig())`),
+   * never from here (this stays pure) and never from the PR's own checkout,
+   * so a change cannot lower its own threshold (O4). Defaults to
+   * `DEFAULT_REVIEW_POLICY` (`BLOCKER`/`HIGH`) when omitted — every existing
+   * caller that predates this field is unaffected, the same optional-with-
+   * fallback shape `principalAllowlist` already uses above.
+   */
+  policy?: ReviewPolicy
 }
 
 /**
@@ -295,6 +307,14 @@ function isBoundToRulings(extraction: { rulingOrdinal: number | null }, currentO
  * exactly which verdict(s) are not clean, not bound to the current head,
  * which mechanical check(s) are not green, or that none have reported at
  * all.
+ *
+ * A verdict's own `VERDICT:` text is not, by itself, sufficient for "clean"
+ * (`review-validity-v1` task 8, `#506`, O3): the comment's own FINDINGS block
+ * is re-evaluated against `input.policy` (`evaluateCodeReview`/
+ * `evaluateSecurityReview`, `@attalabs/aeg-core`'s pure evaluator), and an
+ * `APPROVE`/`PASS` beside a finding at or above the threshold reads as not
+ * clean here regardless — a reviewer's own clean-sounding verdict never
+ * overrides the evaluator.
  */
 export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const principalAllowlist = input.principalAllowlist ?? PRINCIPAL_ALLOWLIST
@@ -348,8 +368,26 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
 
   const codeReview = extractCodeReviewVerdict(verifiedBodies)
   const security = extractSecurityReviewVerdict(verifiedBodies)
-  const codeReviewClean = codeReview.value === 'APPROVE'
-  const securityClean = security.value === 'PASS'
+  const policy = input.policy ?? DEFAULT_REVIEW_POLICY
+  // O3: a reviewer's own APPROVE/PASS never overrides the evaluator — clean
+  // requires BOTH a clean text value AND the evaluator finding nothing at or
+  // above policy in the comment's own FINDINGS block. A finding the text
+  // claims to be clean beside is read as not clean here, regardless of what
+  // the VERDICT: line says.
+  const codeReviewPolicyEvaluation = evaluateCodeReview(
+    codeReview.findingSeverities.map((severity) => ({ severity })),
+    policy
+  )
+  const securityPolicyEvaluation = evaluateSecurityReview(
+    security.findingSeverities.map((severity) => ({ severity })),
+    policy
+  )
+  const codeReviewTextClean = codeReview.value === 'APPROVE'
+  const securityTextClean = security.value === 'PASS'
+  const codeReviewPolicyClean = codeReviewPolicyEvaluation.outcome === 'clean'
+  const securityPolicyClean = securityPolicyEvaluation.outcome === 'clean'
+  const codeReviewClean = codeReviewTextClean && codeReviewPolicyClean
+  const securityClean = securityTextClean && securityPolicyClean
   const codeReviewBound = isBoundToPatch(codeReview, input.headSha, input.patchIdOf)
   const securityBound = isBoundToPatch(security, input.headSha, input.patchIdOf)
   const codeReviewObjectivesBound = isBoundToObjectives(codeReview, input.objectivesVersion)
@@ -376,8 +414,12 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   }
 
   const problems: string[] = []
-  if (!codeReviewClean) {
+  if (!codeReviewTextClean) {
     problems.push(`code-reviewer verdict is not a clean APPROVE (found: ${codeReview.value})`)
+  } else if (!codeReviewPolicyClean) {
+    problems.push(
+      `code-reviewer verdict says APPROVE but carries a finding (${codeReviewPolicyEvaluation.blockingFindings.map((f) => f.severity).join(', ')}) at or above this repository's code-review policy threshold (${policy.codeReviewThreshold}) — a reviewer's own APPROVE never overrides policy`
+    )
   } else if (!codeReviewBound) {
     problems.push(
       `the newest code-review verdict covers ${codeReview.headSha ?? 'no recorded commit'}, head is ${input.headSha}`
@@ -391,8 +433,12 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
       `the newest code-review verdict was cast against ruling ordinal ${codeReview.rulingOrdinal ?? 'none'}, a newer ruling (ruling ${input.rulingOrdinal}) is now posted on this PR`
     )
   }
-  if (!securityClean) {
+  if (!securityTextClean) {
     problems.push(`security-review verdict is not a clean PASS (found: ${security.value})`)
+  } else if (!securityPolicyClean) {
+    problems.push(
+      `security-review verdict says PASS but carries a finding (${securityPolicyEvaluation.blockingFindings.map((f) => f.severity).join(', ')}) at or above this repository's security policy threshold (${policy.securityThreshold}) — a reviewer's own PASS never overrides policy`
+    )
   } else if (!securityBound) {
     problems.push(
       `the newest security-review verdict covers ${security.headSha ?? 'no recorded commit'}, head is ${input.headSha}`

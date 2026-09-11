@@ -946,3 +946,80 @@ describe('checkReviewGate — patch-identity binding', () => {
     expect(result.reason).toContain('not a clean APPROVE')
   })
 })
+
+// ---- Which severities block is repository policy (review-validity-v1 task
+// 8, #506, O2/O3/O4) — a reviewer's own APPROVE/PASS never overrides the
+// evaluator: a comment's FINDINGS block is re-evaluated against `policy`
+// regardless of what its VERDICT: line claims.
+
+describe('checkReviewGate — policy evaluation (O2/O3)', () => {
+  const findings = (lines: string[]) => (lines.length > 0 ? lines.join('\n') : 'None.')
+
+  const codeReviewComment = (verdictLine: string, findingLines: string[] = []) =>
+    principal(
+      `VERDICT: ${verdictLine}\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS (ordered by severity):\n${findings(findingLines)}`
+    )
+  const securityComment = (verdictLine: string, findingLines: string[] = []) =>
+    principal(
+      `VERDICT: ${verdictLine}\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS (ordered by severity):\n${findings(findingLines)}`
+    )
+
+  const BASE_INPUT = {
+    labels: [],
+    waiverLabelActor: null,
+    mechanicalChecks: CLEAN_CHECKS,
+    headSha: HEAD_SHA,
+    objectivesVersion: null,
+    rulingOrdinal: 0
+  }
+
+  it("an APPROVE beside a MAJOR finding reads as not clean under this repo's MAJOR/HIGH policy — a reviewer's own APPROVE never overrides the evaluator (O3)", () => {
+    const result = checkReviewGate({
+      ...BASE_INPUT,
+      comments: [codeReviewComment('APPROVE', ['1. [MAJOR] a.ts:1 — off-by-one']), securityComment('PASS')],
+      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' }
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('never overrides policy')
+    expect(result.reason).toContain('MAJOR')
+  })
+
+  it('the identical MAJOR finding reads as clean under the DEFAULT (BLOCKER) policy — only a MAJOR-or-above threshold blocks it', () => {
+    const result = checkReviewGate({
+      ...BASE_INPUT,
+      comments: [codeReviewComment('APPROVE', ['1. [MAJOR] a.ts:1 — off-by-one']), securityComment('PASS')]
+      // policy omitted — defaults to BLOCKER/HIGH.
+    })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('a MEDIUM security finding does not block at the HIGH threshold', () => {
+    const result = checkReviewGate({
+      ...BASE_INPUT,
+      comments: [codeReviewComment('APPROVE'), securityComment('PASS', ['1. [MEDIUM] a.ts:1 — informational'])],
+      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' }
+    })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('a PASS beside a HIGH finding reads as not clean under an HIGH-or-above security policy', () => {
+    const result = checkReviewGate({
+      ...BASE_INPUT,
+      comments: [codeReviewComment('APPROVE'), securityComment('PASS', ['1. [HIGH] a.ts:1 — leaked pattern'])],
+      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' }
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('security-review verdict says PASS but carries a finding')
+  })
+
+  it('a clean REQUEST CHANGES/FAIL text is refused on the text check first — the policy problem message never fires for an already-not-clean text value', () => {
+    const result = checkReviewGate({
+      ...BASE_INPUT,
+      comments: [codeReviewComment('REQUEST_CHANGES', ['1. [BLOCKER] a.ts:1 — real bug']), securityComment('PASS')],
+      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' }
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('not a clean APPROVE')
+    expect(result.reason).not.toContain('never overrides policy')
+  })
+})

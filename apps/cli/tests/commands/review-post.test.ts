@@ -3,7 +3,13 @@ import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extractCodeReviewVerdict, extractSecurityReviewVerdict, OBJECTIVES_SINCE_ISSUE } from '@attalabs/aeg-core'
+import {
+  DEFAULT_REVIEW_POLICY,
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict,
+  OBJECTIVES_SINCE_ISSUE,
+  type ReviewPolicy
+} from '@attalabs/aeg-core'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import {
   checkDocCorrectnessSearch,
@@ -233,38 +239,63 @@ process.exit(1)
 
 describe('deriveCodeReviewVerdict — the command decides, not the caller', () => {
   it('no findings → APPROVE', () => {
-    expect(deriveCodeReviewVerdict([])).toBe('APPROVE')
+    expect(deriveCodeReviewVerdict([], DEFAULT_REVIEW_POLICY)).toBe('APPROVE')
   })
-  it('MAJOR only → APPROVE', () => {
-    expect(deriveCodeReviewVerdict([{ severity: 'MAJOR', location: 'a.ts:1', description: 'x' }])).toBe('APPROVE')
+  it('MAJOR only → APPROVE under the default (BLOCKER) policy', () => {
+    expect(
+      deriveCodeReviewVerdict([{ severity: 'MAJOR', location: 'a.ts:1', description: 'x' }], DEFAULT_REVIEW_POLICY)
+    ).toBe('APPROVE')
   })
   it('one BLOCKER → REQUEST_CHANGES', () => {
     expect(
-      deriveCodeReviewVerdict([
-        { severity: 'MINOR', location: 'a.ts:1', description: 'x' },
-        { severity: 'BLOCKER', location: 'b.ts:2', description: 'y' }
-      ])
+      deriveCodeReviewVerdict(
+        [
+          { severity: 'MINOR', location: 'a.ts:1', description: 'x' },
+          { severity: 'BLOCKER', location: 'b.ts:2', description: 'y' }
+        ],
+        DEFAULT_REVIEW_POLICY
+      )
     ).toBe('REQUEST_CHANGES')
+  })
+
+  const THIS_REPO_POLICY: ReviewPolicy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' }
+
+  it("a MAJOR → REQUEST_CHANGES under this repository's own MAJOR/HIGH policy (which severities block is repository policy, #506, O1)", () => {
+    expect(
+      deriveCodeReviewVerdict([{ severity: 'MAJOR', location: 'a.ts:1', description: 'x' }], THIS_REPO_POLICY)
+    ).toBe('REQUEST_CHANGES')
+  })
+  it('a MINOR alone still → APPROVE under the MAJOR threshold — MINOR never blocks', () => {
+    expect(
+      deriveCodeReviewVerdict([{ severity: 'MINOR', location: 'a.ts:1', description: 'x' }], THIS_REPO_POLICY)
+    ).toBe('APPROVE')
   })
 })
 
 describe('deriveSecurityVerdict — the command decides, not the caller', () => {
   it('no findings → PASS', () => {
-    expect(deriveSecurityVerdict([])).toBe('PASS')
+    expect(deriveSecurityVerdict([], DEFAULT_REVIEW_POLICY)).toBe('PASS')
   })
   it('MEDIUM/LOW only → PASS', () => {
     expect(
-      deriveSecurityVerdict([
-        { severity: 'MEDIUM', location: 'a.ts:1', description: 'x' },
-        { severity: 'LOW', location: 'b.ts:1', description: 'y' }
-      ])
+      deriveSecurityVerdict(
+        [
+          { severity: 'MEDIUM', location: 'a.ts:1', description: 'x' },
+          { severity: 'LOW', location: 'b.ts:1', description: 'y' }
+        ],
+        DEFAULT_REVIEW_POLICY
+      )
     ).toBe('PASS')
   })
   it('a HIGH → FAIL', () => {
-    expect(deriveSecurityVerdict([{ severity: 'HIGH', location: 'a.ts:1', description: 'x' }])).toBe('FAIL')
+    expect(
+      deriveSecurityVerdict([{ severity: 'HIGH', location: 'a.ts:1', description: 'x' }], DEFAULT_REVIEW_POLICY)
+    ).toBe('FAIL')
   })
   it('a CRITICAL → FAIL', () => {
-    expect(deriveSecurityVerdict([{ severity: 'CRITICAL', location: 'a.ts:1', description: 'x' }])).toBe('FAIL')
+    expect(
+      deriveSecurityVerdict([{ severity: 'CRITICAL', location: 'a.ts:1', description: 'x' }], DEFAULT_REVIEW_POLICY)
+    ).toBe('FAIL')
   })
 })
 
@@ -1480,7 +1511,7 @@ describe('deriveCodeReviewVerdict / deriveSecurityVerdict — a resolved finding
     const findings: Finding[] = [
       { severity: 'BLOCKER', location: 'a.ts:1', description: 'F1 correctness resolved: fixed in this round' }
     ]
-    expect(deriveCodeReviewVerdict(findings)).toBe('APPROVE')
+    expect(deriveCodeReviewVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('APPROVE')
   })
 
   it('a BLOCKER marked fix-claimed (not yet resolved) still forces REQUEST_CHANGES', () => {
@@ -1491,12 +1522,12 @@ describe('deriveCodeReviewVerdict / deriveSecurityVerdict — a resolved finding
         description: 'F1 correctness fix-claimed: says it is fixed, not yet reproduced'
       }
     ]
-    expect(deriveCodeReviewVerdict(findings)).toBe('REQUEST_CHANGES')
+    expect(deriveCodeReviewVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('REQUEST_CHANGES')
   })
 
   it('a BLOCKER with no state token (a brand-new finding) still forces REQUEST_CHANGES', () => {
     const findings: Finding[] = [{ severity: 'BLOCKER', location: 'a.ts:1', description: 'F1 correctness: off-by-one' }]
-    expect(deriveCodeReviewVerdict(findings)).toBe('REQUEST_CHANGES')
+    expect(deriveCodeReviewVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('REQUEST_CHANGES')
   })
 
   it('a resolved BLOCKER alongside an open one still forces REQUEST_CHANGES — one open blocker is enough', () => {
@@ -1504,28 +1535,28 @@ describe('deriveCodeReviewVerdict / deriveSecurityVerdict — a resolved finding
       { severity: 'BLOCKER', location: 'a.ts:1', description: 'F1 correctness resolved: fixed' },
       { severity: 'BLOCKER', location: 'b.ts:2', description: 'F2 correctness open: still broken' }
     ]
-    expect(deriveCodeReviewVerdict(findings)).toBe('REQUEST_CHANGES')
+    expect(deriveCodeReviewVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('REQUEST_CHANGES')
   })
 
   it('a CRITICAL marked resolved does not force FAIL', () => {
     const findings: Finding[] = [
       { severity: 'CRITICAL', location: 'a.ts:1', description: 'F1 secrets resolved: rotated' }
     ]
-    expect(deriveSecurityVerdict(findings)).toBe('PASS')
+    expect(deriveSecurityVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('PASS')
   })
 
   it('a HIGH marked resolved does not force FAIL', () => {
     const findings: Finding[] = [
       { severity: 'HIGH', location: 'a.ts:1', description: 'F1 injection resolved: sanitized' }
     ]
-    expect(deriveSecurityVerdict(findings)).toBe('PASS')
+    expect(deriveSecurityVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('PASS')
   })
 
   it('a HIGH marked reproduced still forces FAIL', () => {
     const findings: Finding[] = [
       { severity: 'HIGH', location: 'a.ts:1', description: 'F1 injection reproduced: still exploitable' }
     ]
-    expect(deriveSecurityVerdict(findings)).toBe('FAIL')
+    expect(deriveSecurityVerdict(findings, DEFAULT_REVIEW_POLICY)).toBe('FAIL')
   })
 })
 

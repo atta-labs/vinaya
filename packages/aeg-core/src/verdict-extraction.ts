@@ -223,6 +223,29 @@ function extractRulingOrdinal(comment: string): number | null {
 }
 
 /**
+ * `review-validity-v1` task 8 (`#506`, O2/O3): the FINDINGS block's own
+ * severities, read from the WHOLE comment body — never `firstFiveLines`'s
+ * window, since `renderFindingsSection` (`review-post.ts`) always renders
+ * the findings list well past line five. This is what lets the merge gate
+ * (`checkReviewGate`) and the loop's publication self-check evaluate the
+ * SAME findings a reviewer's own `VERDICT:` line claims to summarize,
+ * against repository policy, rather than trusting that line alone — a
+ * reviewer's own `APPROVE` never overrides the evaluator (O3).
+ *
+ * `renderFindingsSection`'s exact numbered-bracket form —
+ * `<n>. [SEVERITY] file:line — description` — is the only shape read here;
+ * "None." (the empty-findings render) matches nothing, correctly yielding
+ * `[]`. A hand-typed comment that never went through that renderer simply
+ * contributes no severities, the same fail-safe direction `extractVerdict`
+ * already takes for anything outside its own known shapes.
+ */
+const FINDING_SEVERITY_LINE = /^\d+\.\s+\[([A-Z][A-Z]*)\]/gm
+
+function extractFindingSeverities(comment: string): string[] {
+  return [...comment.matchAll(FINDING_SEVERITY_LINE)].map((m) => m[1] as string)
+}
+
+/**
  * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * `headSha` is `null` in two distinct situations that both mean "cannot
  * confirm this verdict covers the current head": no verdict comment matched
@@ -240,6 +263,8 @@ export type VerdictExtraction = {
   objectivesVersion: string | null
   /** `null` on the pre-cutover stock (no `Ruling ordinal:` line at all) — never conflated with a rendered `0` (`review-validity-v1` task 3, `#477`, O1). */
   rulingOrdinal: number | null
+  /** The winning comment's own FINDINGS block severities, whole-body read (`review-validity-v1` task 8, `#506`, O2/O3) — `[]` on a DANGLING extraction (`danglingNote` set) or a comment with no findings at all. */
+  findingSeverities: string[]
   danglingNote: string | null
 }
 
@@ -268,6 +293,7 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: `no ${missingLabel} verdict comment found on this PR`
     }
   }
@@ -281,6 +307,7 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
       headSha: null,
       objectivesVersion: null,
       rulingOrdinal: null,
+      findingSeverities: [],
       danglingNote: `the most recent ${missingLabel} verdict comment carries a VERDICT-shaped line outside the first-five-line read window`
     }
   }
@@ -290,6 +317,7 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
     headSha: extractHeadSha(latest),
     objectivesVersion: extractObjectivesVersion(latest),
     rulingOrdinal: extractRulingOrdinal(latest),
+    findingSeverities: extractFindingSeverities(latest),
     danglingNote: null
   }
 }

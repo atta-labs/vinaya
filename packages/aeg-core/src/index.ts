@@ -73,7 +73,13 @@ export {
   SECURITY_SEVERITY_ORDER,
   securityBlockingSeverities
 } from './review-policy'
-export type { CodeReviewSeverity, PolicyEvaluation, PolicyFinding, ReviewPolicy, SecuritySeverity } from './review-policy'
+export type {
+  CodeReviewSeverity,
+  PolicyEvaluation,
+  PolicyFinding,
+  ReviewPolicy,
+  SecuritySeverity
+} from './review-policy'
 export { deriveSection7, globsOverlap } from './derive-section7'
 export type { Section7Match } from './derive-section7'
 export { checkManifestValidity, parseNoDocRules } from './manifest-validity'

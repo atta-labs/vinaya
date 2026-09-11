@@ -642,7 +642,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `milestone close` | `milestone.ts` | `milestoneCloseCommand` | 4 | exempt — see below | forgeWrite (target) |
 | `milestone status` | `milestone.ts` | `milestoneStatusCommand` | 4 | exempt — see below | forgeWrite (target) |
 | `review status` | `review-status.ts` | `reviewStatusCommand` | 2 | exempt — see below | devReviewLoop (target) |
-| `review post` | `review-post.ts` | `reviewPostCommand` | 5 | exempt — see below | devReviewLoop (target) |
+| `review post` | `review-post.ts` | `reviewPostCommand` | 6 | exempt — see below | devReviewLoop (target) |
 | `doctor` | `doctor.ts` | `doctorCommand` | 17 | exempt — see below | sharedCommandShell (target) |
 | `tokens` | `tokens.ts` | `tokensCommand` | 1 | compliant | `parseTokensCollectDeclaration` |
 | `doctrine` | `doctrine.ts` | `doctrineCommand` | 2 | exempt — see below | sharedCommandShell (target) |
@@ -687,7 +687,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `milestone close` | 2026-09-05 | 4 — lib (4): `refuse`, `makeCheckError`, `detectGitRepo`, `printJson` | `forgeWrite` |
 | `milestone status` | 2026-09-10 | 4 — lib (4): `detectGitRepo`, `refuse`, `makeCheckError`, `printJson` | `forgeWrite` |
 | `review status` | 2026-09-05 | 2 — lib: `resolvePrincipalAllowlist`, `loadTrustAnchorConfig` | `devReviewLoop` |
-| `review post` | 2026-09-05 | 5 — lib: `refuse`, `makeCheckError`, `printJson`, `resolvePrincipalAllowlist`, `loadTrustAnchorConfig` (re-verified after the `--objectives-file` addition — the new resolution/render path calls only `gh` directly and this file's own exported helpers, so the in-scope count is unchanged) | `devReviewLoop` |
+| `review post` | 2026-09-11 | 6 — lib: `refuse`, `makeCheckError`, `printJson`, `resolvePrincipalAllowlist`, `loadTrustAnchorConfig`, `resolveReviewPolicy` (which severities block is repository policy, `review-validity-v1` task 8, `#506`, O1 — the derivation and its contradiction check now resolve `policy` once via `resolveReviewPolicy` before deriving or cross-checking a verdict) | `devReviewLoop` |
 | `doctor` | 2026-09-05 | 17 — lib (16): `hookDirFromManifest`, `detectVendoredVinaya`, `readRepoCiSetup`, `resolveAgentVendors`, `buildInitOps`, `isDefaultedAgentVendorPath`, `resolveManagedBlockPath`, `markerLines`, `renderBlock`, `foreignRawHooks`, `starterConfig`, `checksMissingEnvDeclaration`, `envDeclarationWarning`, `lintEnvDeclarations`, `globalChecksIgnoredWarning`, `printJson`; commands/\*.ts (refused outright): `resolveDoctrineRootInfo` (`doctrine.ts`) | `sharedCommandShell` |
 | `doctrine` | 2026-09-05 | 2 — lib: `packageRoot`, `printJson` | `sharedCommandShell` |
 | `upgrade` | 2026-09-08 | 22 — lib (21): `hookDirFromManifest`, `resolveManagedBlockPath`, `stripBlockFromContent`, `blockStripLeavesEmpty`, `foreignRawHooks`, `activeRawHooks`, `detectVendoredVinaya`, `readRepoCiSetup`, `resolveAgentVendors`, `buildInitOps`, `isDefaultedAgentVendorPath`, `markerLines`, `renderBlock`, `indent`, `writeFileWithDirs`, `createHost`, `appendBlock`, `promptYesNo`, `closeStdin`, `staleAgentSkillPaths`, `containedAbs`; commands/\*.ts (refused outright): `resolveDoctrineRoot` (`doctrine.ts`) | `sharedCommandShell` |
