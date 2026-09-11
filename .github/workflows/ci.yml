@@ -116,7 +116,17 @@ jobs:
       # catch it. Unconditional (not gated behind the docs-only skip above):
       # a drifted managed file is a fact about the tree, independent of
       # whether THIS diff happens to also touch docs.
+      #
+      # `GH_TOKEN` here for the same reason the Test step below sets it:
+      # doctor's own `[environment]` check shells to `gh auth status`, which
+      # `gh` fails with no token on the runner — `warn`/`error` findings
+      # flip doctor's exit code (measured live: PR #539's second CI run,
+      # ring 0 armed above, `gh` still red). The job token is a real,
+      # valid `gh` credential here, exactly like the Test step already
+      # relies on; this makes the finding true instead of suppressing it.
       - name: vinaya doctor — managed files match their generator
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node apps/cli/dist/index.js doctor
 
       # Biome was a devDependency every contributor already installed, and
