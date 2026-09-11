@@ -3054,6 +3054,144 @@ describe('devReviewLoop — a ruling lands between reviewer dispatch and assessm
   }, 20000)
 })
 
+// --- a frozen-brief supersede lands mid-round (review-validity-v1 task 4, #478, O1/O2) ---
+
+/**
+ * Same as `writeFakeGh`, except the frozen brief's OWN comment list grows a
+ * second, principal-authored `<!-- aeg:brief:v2 -->` supersede between
+ * dispatch and the driver's own re-assessment — the analogous mid-round
+ * change to `writeFakeGhObjectivesChangedMidRound`'s objectives edit and
+ * `writeFakeGhRulingPostedMidRound`'s ruling, but for the manifest's
+ * `briefHash` field instead. `## Objectives` stays byte-identical across
+ * both versions on purpose — only the brief's own prose changes — so
+ * `objectivesVersion` binds cleanly and the driver's `else if
+ * (!binding.briefHash)` branch is the one that actually fires, not the
+ * earlier objectives check. A counter file under `$HOME` tells the early
+ * (dispatch-time, v1-only) calls apart from the later (re-assessment,
+ * v1+v2) ones — the SAME `gh issue view --json comments` endpoint backs
+ * both `resolveIssueObjectives` and `fetchFrozenBrief`, so the threshold
+ * must clear every call either one makes before the driver's own
+ * post-reviewers re-check: the round-1 developer dispatch's own
+ * `fetchFrozenBrief`, the reviewer-dispatch facts' `resolveIssueObjectives`
+ * and its own `fetchFrozenBrief` (the manifest's dispatch-time
+ * `briefContentAtDispatch`), and the re-assessment's own
+ * `resolveIssueObjectives` — five calls total before the re-assessment's
+ * own `fetchFrozenBrief` is the one that must see v2.
+ */
+function writeFakeGhBriefSupersededMidRound(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  COUNTER_FILE="$HOME/.fake-gh-issue-comments-calls"
+  N=$(cat "$COUNTER_FILE" 2>/dev/null || echo 0)
+  N=$((N + 1))
+  echo "$N" > "$COUNTER_FILE"
+  BRIEF_V1='{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}'
+  if [ "$N" -ge 5 ]; then
+    BRIEF_V2='{"body":"<!-- aeg:brief:v2 -->\\nBrief hash: supersededhash\\nSupersedes: https://github.com/example/repo/issues/${TASK}#issuecomment-1 \\u2014 clarified scope mid-round.\\nDo the thing, revised.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}'
+    printf '%s\\n' "{\\"comments\\":[$BRIEF_V1,$BRIEF_V2]}"
+  else
+    printf '%s\\n' "{\\"comments\\":[$BRIEF_V1]}"
+  fi
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call in brief-superseded scenario: $*" >&2
+exit 1
+`
+  )
+}
+
+function setUpBriefSupersededMidRound(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaude(binDir)
+  writeFakeGhBriefSupersededMidRound(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a frozen-brief supersede lands between reviewer dispatch and assessment (review-validity-v1 task 4, #478, O1/O2)', () => {
+  it('discards the round instead of holding or publishing, and pauses naming both brief hashes', () => {
+    const { home, cwd, path } = setUpBriefSupersededMidRound()
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(brief_superseded\)/)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('brief_superseded')
+    expect(pauseState.detail).toMatch(/brief hash moved from [0-9a-f]+ to [0-9a-f]+/)
+
+    // Exactly one posted comment — the pause — never a reviewer or security
+    // verdict: `verdicts` (in-memory only at the mismatch check) is never
+    // written to disk, so nothing was ever held for round 1 to publish.
+    const posted = postedCommentFiles(home)
+    expect(posted).toHaveLength(1)
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', posted[0] as string), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:brief_superseded -->$/m)
+    expect(pauseComment).not.toMatch(/^VERDICT:/m)
+
+    const roundDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    expect(existsSync(join(roundDir, 'round-1-reviewer.md'))).toBe(false)
+    expect(existsSync(join(roundDir, 'round-1-security.md'))).toBe(false)
+  }, 20000)
+})
+
 // --- pure-function coverage for the two Decisions-section fixes -----------
 
 describe('extractObjectivesSection (pure)', () => {
