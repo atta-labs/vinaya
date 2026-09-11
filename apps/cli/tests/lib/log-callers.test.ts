@@ -42,19 +42,29 @@ import { fileURLToPath } from 'node:url'
  * (`postForgeEffectOnce`'s effect-id bookkeeping), and `pause-resume.ts`
  * (pause state and the driver pid lock). Same allowlist, same reasoning,
  * now three paths instead of one.
+ *
+ * Amended by task 3 (`task-run-v1`, `#482`, O1/O2): the flush's own body —
+ * the outbox truncate included — moved out of `apps/cli/src/commands/log.ts`
+ * into `apps/cli/src/lib/log-flush.ts`'s `flushOutbox`, a real lib
+ * chokepoint `devReviewLoop`'s round-end flush now calls in-process instead
+ * of spawning a `vinaya log flush` subprocess. `FLUSH_PATH` (the command
+ * file) drops out of both allowlists below — it no longer touches the
+ * outbox or imports `log-sink.js` at all, only argv-parses and calls the
+ * one lib function — and `LOG_FLUSH_LIB_PATH` takes its place in both.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
 const SINK_PATH = 'apps/cli/src/lib/log-sink.ts'
 const FLUSH_PATH = 'apps/cli/src/commands/log.ts'
+const LOG_FLUSH_LIB_PATH = 'apps/cli/src/lib/log-flush.ts'
 const DISPATCH_PATH = 'apps/cli/src/lib/dispatch.ts'
 const DEV_REVIEW_LOOP_PATH = 'apps/cli/src/lib/dev-review-loop.ts'
 const DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH = 'apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts'
 const DEV_REVIEW_LOOP_PUBLICATION_PATH = 'apps/cli/src/lib/dev-review-loop/publication.ts'
 const DEV_REVIEW_LOOP_PAUSE_RESUME_PATH = 'apps/cli/src/lib/dev-review-loop/pause-resume.ts'
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
-const CALLER_ALLOWLIST = new Set([...FUTURE_CALLER_ALLOWLIST, FLUSH_PATH, DISPATCH_PATH, DEV_REVIEW_LOOP_PATH])
-const OUTBOX_TRUNCATE_ALLOWLIST = new Set([FLUSH_PATH])
+const CALLER_ALLOWLIST = new Set([...FUTURE_CALLER_ALLOWLIST, LOG_FLUSH_LIB_PATH, DISPATCH_PATH, DEV_REVIEW_LOOP_PATH])
+const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_FLUSH_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
   DEV_REVIEW_LOOP_PATH,
   DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH,
@@ -151,9 +161,14 @@ describe('log-callers — O2', () => {
     }
   })
 
-  it('the flush allowlist entry does exist — task 2 is the landed caller, not a future one', () => {
+  it('the flush command file still exists — argv parsing only, no outbox access of its own', () => {
     const existing = files.map(([rel]) => rel)
     expect(existing).toContain(FLUSH_PATH)
+  })
+
+  it('the flush lib allowlist entry does exist — task 3 is the landed chokepoint, not a future one', () => {
+    const existing = files.map(([rel]) => rel)
+    expect(existing).toContain(LOG_FLUSH_LIB_PATH)
   })
 
   it('the dispatch allowlist entry does exist — task 3 is the landed caller, not a future one', () => {
@@ -171,5 +186,38 @@ describe('log-callers — O2', () => {
     expect(existing).toContain(DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH)
     expect(existing).toContain(DEV_REVIEW_LOOP_PUBLICATION_PATH)
     expect(existing).toContain(DEV_REVIEW_LOOP_PAUSE_RESUME_PATH)
+  })
+})
+
+/**
+ * task 3 (`task-run-v1`, `#482`, O2): `devReviewLoop`'s round-end flush used
+ * to spawn `vinaya log flush --issue <task>` as a subprocess of its own CLI
+ * entry (`execFileSync('bun', [cliEntry, 'log', 'flush', ...])`) — a
+ * command calling a command through a child process, which
+ * `apps/cli/specs/surface.md`'s "the rule" forbids as much as an in-process
+ * call would. Not a whole-tree ban on ever spawning the CLI entry — `index.ts`'s
+ * own author-repo self-defer and `pr-report.ts`'s isolated `check --all` run
+ * are unrelated, legitimate uses of the same mechanism this scan does not
+ * (and should not) flag — only the specific `log flush` subcommand shape
+ * this task retired.
+ */
+describe('log-callers — O2 (task 3, #482): no internal subprocess flush', () => {
+  const files = allSourceFiles()
+
+  it('no source file under apps/cli/src spawns `vinaya` as a binary, or its own CLI entry to run `log flush`, as a subprocess', () => {
+    // Array-literal argv shape only — a real spawn call, never a doc
+    // comment's prose description of the anti-pattern (`doctor.ts` names
+    // it, in backticks, as exactly what it does NOT do: `an
+    // execFileSync('vinaya', …) here would hang this diagnostic`).
+    const spawnsVinayaBinary = /(?:execFileSync|spawnSync|spawn)\(\s*['"]vinaya['"]\s*,\s*\[/
+    const spawnsLogFlushSubcommand = /['"]log['"]\s*,\s*['"]flush['"]/
+    const offenders = files
+      .filter(([rel]) => rel.startsWith('apps/cli/src/'))
+      .filter(([, abs]) => {
+        const content = readFileSync(abs, 'utf8')
+        return spawnsVinayaBinary.test(content) || spawnsLogFlushSubcommand.test(content)
+      })
+      .map(([rel]) => rel)
+    expect(offenders).toEqual([])
   })
 })
