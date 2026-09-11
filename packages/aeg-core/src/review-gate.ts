@@ -374,14 +374,32 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   // above policy in the comment's own FINDINGS block. A finding the text
   // claims to be clean beside is read as not clean here, regardless of what
   // the VERDICT: line says.
-  const codeReviewPolicyEvaluation = evaluateCodeReview(
-    codeReview.findingSeverities.map((severity) => ({ severity })),
-    policy
-  )
-  const securityPolicyEvaluation = evaluateSecurityReview(
-    security.findingSeverities.map((severity) => ({ severity })),
-    policy
-  )
+  //
+  // `findingSeverities` is a bare regex extraction over a hand-typed
+  // principal comment (`verdict-extraction.ts`'s `FINDING_SEVERITY_LINE`),
+  // not validated output — `evaluateReviewFindings` throws on any token
+  // outside the role's own scale. Every other refusal in this function
+  // returns a named `fail` result; an uncaught throw here would crash the
+  // check-run instead, on nothing worse than a typo in a manually-posted
+  // comment. Caught and failed closed the same way.
+  let codeReviewPolicyEvaluation: ReturnType<typeof evaluateCodeReview>
+  let securityPolicyEvaluation: ReturnType<typeof evaluateSecurityReview>
+  try {
+    codeReviewPolicyEvaluation = evaluateCodeReview(
+      codeReview.findingSeverities.map((severity) => ({ severity })),
+      policy
+    )
+    securityPolicyEvaluation = evaluateSecurityReview(
+      security.findingSeverities.map((severity) => ({ severity })),
+      policy
+    )
+  } catch (err) {
+    return {
+      verdict: 'fail',
+      reason: `a verdict comment carries a finding severity this repository's policy does not recognize: ${err instanceof Error ? err.message : String(err)}`,
+      waived: false
+    }
+  }
   const codeReviewTextClean = codeReview.value === 'APPROVE'
   const securityTextClean = security.value === 'PASS'
   const codeReviewPolicyClean = codeReviewPolicyEvaluation.outcome === 'clean'

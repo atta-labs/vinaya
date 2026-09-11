@@ -1398,6 +1398,89 @@ describe('devReviewLoop — a findings.txt line that still does not parse is an 
   }, 20000)
 })
 
+// --- a report.txt missing SECRETS is infrastructure, never a fabricated
+// clean claim (review-validity-v1 12, #526 round 2, security HIGH) ---
+
+/**
+ * Security writes a complete, parseable report on BOTH attempts — except it
+ * never writes a `SECRETS:` line. Before this fix, `buildVerdictFromReport`
+ * defaulted a missing `SECRETS` key to the literal "none found" — a CLEAN
+ * self-attestation `security.md` requires evidence for — so a reviewer
+ * session that crashed or forgot the line got its verdict rendered as if it
+ * had actually checked. This proves it is now the same one-retry-then-pause
+ * treatment `findings.txt`/`objectives.txt` already get, never a silently
+ * fabricated clean claim.
+ */
+function writeFakeClaudeSecurityOmitsSecretsScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+cat > /dev/null
+WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    ATTEMPT=$(cat "$HOME/.security-invocations" 2>/dev/null | wc -l | tr -d ' ')
+    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    if [ "$ATTEMPT" != "0" ]; then
+      WD="$WORKROOT/round-$VINAYA_ROUND-security-work-retry1"
+    fi
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\n' > "$WD/report.txt"
+    echo "invocation" >> "$HOME/.security-invocations"
+    echo '{"session_id":"sec-session-no-secrets","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+function setUpSecurityOmitsSecrets(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeSecurityOmitsSecretsScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a report.txt missing SECRETS is an infrastructure pause, never a fabricated clean claim (review-validity-v1 12, #526 round 2)', () => {
+  it('retries once into a fresh work directory, then pauses naming report.txt and the reviewer session id — never a silent "none found"', () => {
+    const { home, cwd, path } = setUpSecurityOmitsSecrets()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
+    expect(invocations).toHaveLength(2)
+
+    const pausedFiles = postedCommentFiles(home)
+    expect(pausedFiles).toHaveLength(1)
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[0] as string), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    expect(pauseComment).toMatch(/report\.txt/)
+    expect(pauseComment).toMatch(/sec-session-no-secrets/)
+    expect(pauseComment).not.toMatch(/^VERDICT:/m)
+    expect(pauseComment).not.toMatch(/SECRETS: none found/)
+  }, 20000)
+})
+
 // --- an empty findings file is still a clean verdict (O1, contrast case) ---
 //
 // Already proven by 'devReviewLoop — round 1 clean, ends on publish', above:

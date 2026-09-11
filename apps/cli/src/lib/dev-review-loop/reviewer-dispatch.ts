@@ -199,7 +199,7 @@ export class ReviewerInfrastructureFailure extends Error {
 export class ReviewerReportParseFailure extends Error {
   constructor(
     public readonly role: 'reviewer' | 'security',
-    public readonly file: 'findings.txt' | 'objectives.txt',
+    public readonly file: 'findings.txt' | 'objectives.txt' | 'report.txt',
     public readonly sessionId: string,
     public readonly parseError: Error
   ) {
@@ -353,13 +353,30 @@ export function buildVerdictFromReport(
     }
   }
 
+  // O3: `report.SECRETS` is required output, not an optional prose field
+  // like `CONFIG_SCAN` — unlike those, `security.md`'s own "none found" is a
+  // CLEAN self-attestation, so a missing or blank key can never fall back to
+  // it the way `CONFIG_SCAN` falls back to the honestly-absent
+  // `'(not reported)'`. Defaulting a missing key to "none found" would
+  // fabricate a clean claim for a reviewer session that crashed or forgot
+  // the line — the exact `findings.txt`/`objectives.txt` failure mode this
+  // module already turns into an infrastructure pause, extended to this key.
+  if (!report.SECRETS?.trim()) {
+    throw new ReviewerReportParseFailure(
+      role,
+      'report.txt',
+      sessionId,
+      new Error('missing required `SECRETS:` line — a security reviewer must always report one')
+    )
+  }
+
   const verdict = deriveSecurityVerdict(findings, policy)
   const rendered = renderSecurityComment({
     headSha,
     verdict,
     findings,
     configScan: report.CONFIG_SCAN ?? '(not reported)',
-    secrets: report.SECRETS ?? 'none found',
+    secrets: report.SECRETS,
     secretsEvidence: null,
     objectivesVersion: objectivesVersionAtDispatch,
     objectiveResults: renderedObjectiveResults,
@@ -408,6 +425,11 @@ export function renderReviewerDispatchPrompt(
       : []),
     `Write a short report to ${join(workDir, 'report.txt')} as one \`KEY: value\` line per field:`,
     role === 'reviewer' ? '  BRIEF_CONFORMANCE, SPEC_CONFORMANCE, SCOPE, TESTS, DOCS' : '  CONFIG_SCAN, SECRETS',
+    ...(role === 'security'
+      ? [
+          '`SECRETS:` is required — never leave it blank or omit it, even when you found nothing: write `SECRETS: none found` only after you actually checked.'
+        ]
+      : []),
     'To escalate instead of casting a verdict, write only `ESCALATE: authority|strategy|product` and `SUMMARY: <text>` to report.txt.'
   ].join('\n')
   return `${base}\n\n${instructions}`

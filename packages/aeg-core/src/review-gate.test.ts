@@ -1022,4 +1022,25 @@ describe('checkReviewGate — policy evaluation (O2/O3)', () => {
     expect(result.reason).toContain('not a clean APPROVE')
     expect(result.reason).not.toContain('never overrides policy')
   })
+
+  it('a severity token off the code-review scale in a hand-typed comment fails closed with a named reason, never an uncaught throw (#526 round 2 MINOR)', () => {
+    // "CRITICAL" is a security-scale token; findingSeverities is a bare
+    // regex extraction over free-typed comment text, so nothing stops it
+    // reaching a code-review comment's own FINDINGS block by typo.
+    expect(() =>
+      checkReviewGate({
+        ...BASE_INPUT,
+        comments: [codeReviewComment('APPROVE', ['1. [CRITICAL] a.ts:1 — off-scale severity']), securityComment('PASS')],
+        policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' }
+      })
+    ).not.toThrow()
+
+    const result = checkReviewGate({
+      ...BASE_INPUT,
+      comments: [codeReviewComment('APPROVE', ['1. [CRITICAL] a.ts:1 — off-scale severity']), securityComment('PASS')],
+      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' }
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('does not recognize')
+  })
 })

@@ -256,6 +256,17 @@ function bulletList(items: string[]): string {
   return items.map((i) => `- ${i}`).join('\n')
 }
 
+/**
+ * A `## Surface` `in:` entry renders as a clean directory path, never a raw
+ * glob (#526 round 2 MINOR): `globCoversPath`/`admittedSurfaceFiles` above
+ * already tolerate a `/**`/`/*` suffix on an `in:` entry, but Modify's
+ * directory-listing branch rendered the entry verbatim — the same stripping
+ * `globCoversPath` does internally, exposed here for display.
+ */
+function stripSurfaceGlobSuffix(glob: string): string {
+  return glob.replace(/\/\*\*?$/, '').replace(/\/+$/, '')
+}
+
 function isTestFile(path: string): boolean {
   return /\.test\.[jt]sx?$/i.test(path)
 }
@@ -387,11 +398,24 @@ function renderSection4(facts: BriefFacts): string {
   // directory, not the one file the rationale mentioned (Issue's own
   // Origin, O6/O7: exactly this narrowing shipped two lines against ten
   // objectives on #508).
-  const boundaryNarrowsSurface = facts.surfaceFiles.length < facts.surface.in.length
+  //
+  // A bare count comparison misses an uneven distribution (review-validity-v1
+  // 12, #526 round 2 MINOR): two Boundary files and two `in:` directories
+  // pass the count check even when both files land in the SAME directory,
+  // leaving the other entirely unnamed anywhere in Modify. Coverage is
+  // checked per directory instead — `globCoversPath` is the same matcher
+  // `admittedSurfaceFiles` above already uses, so a directory only counts as
+  // covered by the exact rule that decides which files are in scope at all.
+  const uncoveredSurfaceDirs = facts.surface.in.filter(
+    (dir) => !facts.surfaceFiles.some((f) => globCoversPath(dir, f.path))
+  )
+  const boundaryNarrowsSurface = uncoveredSurfaceDirs.length > 0
+  // `facts.surface.in` is never empty when `boundaryNarrowsSurface` is true
+  // (an empty list has nothing to be uncovered), so the `- (none named)`
+  // arm below could never execute — removed rather than left dead (#526
+  // round 2 MINOR).
   const modifyLines = boundaryNarrowsSurface
-    ? facts.surface.in.length > 0
-      ? bulletList(facts.surface.in)
-      : '- (none named)'
+    ? bulletList(facts.surface.in.map(stripSurfaceGlobSuffix))
     : modified.length > 0
       ? bulletList(modified)
       : '- (none named)'
