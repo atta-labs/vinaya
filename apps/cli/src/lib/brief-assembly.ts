@@ -30,6 +30,7 @@ import {
   parseRationaleFields,
   type PackageManifest,
   renderBrief,
+  trancheLabel,
   type BriefFacts,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
@@ -262,6 +263,24 @@ function workspaceGlobs(): string[] {
 export type AssembleAndRenderBriefResult = { ok: true; brief: string; issue: number } | { ok: false; missing: string[] }
 
 /**
+ * **O2 (Issue #502) — names what dispatch looked for.** A bare "not
+ * present in the forge-derived task list" message leaves the operator
+ * guessing whether the Issue was never cut, mislabeled, or the title doesn't
+ * match — this names the exact title form `vinaya task dispatch` expects,
+ * the label it queried, and how many open Issues actually carry that label,
+ * so the three causes (no Issue yet, wrong label, wrong title) are
+ * distinguishable from the message alone rather than requiring a second
+ * `gh issue list` by hand.
+ */
+export function taskNotFoundMessage(trancheSlug: string, taskId: string, openIssueCount: number): string {
+  return (
+    `task "${taskId}" is not present in tranche "${trancheSlug}"'s forge-derived task list — ` +
+    `looked for an open Issue titled \`[${trancheSlug}] ${taskId} —\` carrying label ` +
+    `\`${trancheLabel(trancheSlug)}\`; ${openIssueCount} open Issue(s) carry that label.`
+  )
+}
+
+/**
  * Renders the twelve-section brief for `<tranche> <n>` from the forge and the
  * tree — the exact assembly `vinaya brief render` has always run, callable
  * without an argv/stdout shell around it. `surfaceGlobsOverride`, when given,
@@ -308,16 +327,21 @@ export async function assembleAndRenderBrief(
     }
   }
   const task = tranche.tasks.find((t) => t.id === taskId)
-  if (!task) {
-    return {
-      ok: false,
-      missing: [`task "${taskId}" is not present in tranche "${trancheSlug}"'s forge-derived task list.`]
-    }
-  }
 
+  // Fetched here, before the not-found return below, so O2's enriched
+  // message can name how many open Issues actually carry the tranche label
+  // — the same fetch `openIssueMatch` below needs regardless.
   const token = (await resolveToken()) ?? ''
   const openIssuesBySlug = await fetchOpenIssuesByLabel([trancheSlug], repo.owner, repo.repo, token)
   const openIssues = openIssuesBySlug.get(trancheSlug) ?? []
+
+  if (!task) {
+    return {
+      ok: false,
+      missing: [taskNotFoundMessage(trancheSlug, taskId, openIssues.length)]
+    }
+  }
+
   const openIssueMatch = task.issue !== null ? openIssues.find((i) => i.number === task.issue) : undefined
 
   if (task.issue === null) {

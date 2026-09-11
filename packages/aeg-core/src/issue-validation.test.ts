@@ -16,17 +16,22 @@ import {
   checkPartsCiteDefinedObjectives,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
+  checkRationaleSurfaceCoverage,
   checkSurfaceExcludesBoundDoc,
   checkSurfaceGlobsResolve,
+  checkSurfaceOverlap,
   checkSurfaceScope,
   declaredProjects,
+  frozenSectionsChanged,
+  isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   OBJECTIVES_SINCE_ISSUE,
   parseIssueParts,
   parseIssueStopConditions,
   parseIssueSurface,
   parseIssueTestPlan,
-  type TaskIssueFacts
+  type TaskIssueFacts,
+  type TaskSurfaceFacts
 } from './issue-validation'
 
 // Issue #404's real live body, verbatim (`gh issue view 404 --json body`, dev-review-loop-v1
@@ -167,6 +172,39 @@ describe('isTaskIssueLabelSet', () => {
   })
   it('is false for no labels', () => {
     expect(isTaskIssueLabelSet([])).toBe(false)
+  })
+})
+
+describe('isTaskIssueBodyShaped (O1)', () => {
+  it('is true when the body carries a real `## Objectives` heading', () => {
+    expect(isTaskIssueBodyShaped('## Objectives\n\nO1. Do the thing.\n')).toBe(true)
+  })
+
+  it('is true when the body carries any ONE of the eight Planner rationale fields, bold-inline', () => {
+    expect(isTaskIssueBodyShaped('**Boundary** — the thing.\n')).toBe(true)
+    expect(isTaskIssueBodyShaped('**Stop-and-escalate** — n/a.\n')).toBe(true)
+  })
+
+  it('is true on the heading-style rationale fields too (Issue #219 style)', () => {
+    expect(isTaskIssueBodyShaped('### Boundary\n\nthe thing.\n')).toBe(true)
+  })
+
+  it('is true under a non-literal parent heading, as long as a real field is present — the live #issue-valid.md shape', () => {
+    // `checkIssueRationale` never requires the literal heading "## Planner's
+    // rationale" — only the eight fields underneath it — so a body titled
+    // "## Task Issue — Planner rationale" (a real fixture shape) must still
+    // read as task-shaped.
+    const body = '## Task Issue — Planner rationale\n\n**Boundary** — Ship the thing.\n'
+    expect(isTaskIssueBodyShaped(body)).toBe(true)
+  })
+
+  it('is false for an ordinary, non-task-shaped body', () => {
+    expect(isTaskIssueBodyShaped('Fix a typo in the README.\n')).toBe(false)
+  })
+
+  it('is false when the only match appears inside a fenced code block', () => {
+    const body = '```\n## Objectives\n\nO1. example inside a fence.\n\n**Boundary** — n/a.\n```\n'
+    expect(isTaskIssueBodyShaped(body)).toBe(false)
   })
 })
 
@@ -717,6 +755,120 @@ describe('checkConflictCompleteness (C, warn-only)', () => {
   })
 })
 
+describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
+  const mk = (ref: string, surfaceIn: string[], conflictsWith: string[] = []): TaskSurfaceFacts => ({
+    ref,
+    surfaceIn,
+    conflictsWith
+  })
+
+  it('refuses, naming both overlapping globs and the other task, when two tasks overlap with no Conflicts-with edge', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'])
+    const r = checkSurfaceOverlap(subject, [mk('43', ['packages/aeg-core/src/issue-validation.ts'])])
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/aeg-core\/src\/\*\*/)
+    expect(r.errors[0]).toMatch(/packages\/aeg-core\/src\/issue-validation\.ts/)
+    expect(r.errors[0]).toMatch(/43/)
+  })
+
+  it('passes when both tasks name each other in Conflicts-with', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], ['43'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'], ['42'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('passes when only ONE side declares the edge — same one-sided-is-enough rule `checkConflictCompleteness` already applies', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], ['43'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts']) // does not name 42 back
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('passes when the Surface globs simply do not overlap', () => {
+    const subject = mk('42', ['apps/cli/src/lib/**'])
+    const sibling = mk('43', ['packages/aeg-core/src/**'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('never compares a task against itself, even if `siblings` includes it', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'])
+    expect(checkSurfaceOverlap(subject, [subject]).status).toBe('pass')
+  })
+
+  it('reports one finding per overlapping glob pair, not only the first', () => {
+    const subject = mk('42', ['packages/aeg-core/src/a/**', 'packages/aeg-core/src/b/**'])
+    const sibling = mk('43', ['packages/aeg-core/src/a/x.ts', 'packages/aeg-core/src/b/y.ts'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBe(2)
+  })
+
+  it('a `#`-prefixed ref in Conflicts-with still counts as the same task', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], ['#43'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'], ['#42'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+})
+
+describe('frozenSectionsChanged (task-run-v1 11, review round 1, O3)', () => {
+  const surface = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n'
+  const parts = '## Parts\n\nPart 1 (O1) — the thing.\n'
+  const objectives = '## Objectives\n\nO1. Do the thing.\n'
+  const body = `${objectives}\n${surface}\n${parts}`
+
+  it('reports nothing when nothing changed', () => {
+    expect(frozenSectionsChanged(body, body)).toEqual([])
+  })
+
+  it('reports `Objectives` when the objectives text changes', () => {
+    const changed = body.replace('O1. Do the thing.', 'O1. Do a different thing.')
+    expect(frozenSectionsChanged(body, changed)).toEqual(['Objectives'])
+  })
+
+  it('does not report `Objectives` for a reflow that leaves the normalized text identical', () => {
+    const reflowed = body.replace('O1. Do the thing.', 'O1.   Do   the   thing.')
+    expect(frozenSectionsChanged(body, reflowed)).toEqual([])
+  })
+
+  it('reports `Surface` when an `in:`/`out:` glob changes', () => {
+    const changed = body.replace('in: apps/cli/src/lib', 'in: apps/cli/src/lib, packages/aeg-core/src')
+    expect(frozenSectionsChanged(body, changed)).toEqual(['Surface'])
+  })
+
+  it('does not report `Surface` for a reordering of the same glob set', () => {
+    const multiGlob = body.replace(
+      'in: apps/cli/src/lib\nout: apps/cli/src/commands',
+      'in: apps/cli/src/lib, packages/aeg-core/src\nout: apps/cli/src/commands, apps/cli/src/checks'
+    )
+    const reordered = multiGlob.replace(
+      'in: apps/cli/src/lib, packages/aeg-core/src\nout: apps/cli/src/commands, apps/cli/src/checks',
+      'in: packages/aeg-core/src, apps/cli/src/lib\nout: apps/cli/src/checks, apps/cli/src/commands'
+    )
+    expect(frozenSectionsChanged(multiGlob, reordered)).toEqual([])
+  })
+
+  it('reports `Parts` when a Part outcome changes', () => {
+    const changed = body.replace('Part 1 (O1) — the thing.', 'Part 1 (O1) — a different thing.')
+    expect(frozenSectionsChanged(body, changed)).toEqual(['Parts'])
+  })
+
+  it('reports every changed section in one pass, not only the first', () => {
+    const changed = body
+      .replace('O1. Do the thing.', 'O1. Do a different thing.')
+      .replace('Part 1 (O1) — the thing.', 'Part 1 (O1) — a different thing.')
+    expect(frozenSectionsChanged(body, changed)).toEqual(['Objectives', 'Parts'])
+  })
+
+  it('reports a section as changed when it stops parsing on one side', () => {
+    const brokenSurface = body.replace('## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n', '')
+    expect(frozenSectionsChanged(body, brokenSurface)).toEqual(['Surface'])
+  })
+
+  it('reports nothing for a section malformed identically on both sides', () => {
+    const noSurface = body.replace('## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n', '')
+    expect(frozenSectionsChanged(noSurface, noSurface)).toEqual([])
+  })
+})
+
 describe('code-blindness — every content check reuses the single stripCode (PR #617)', () => {
   it.each(fenceShapes())('does not trip A or B on quoted content inside a $name fence', (shape) => {
     const quoted = [
@@ -1132,6 +1284,59 @@ describe('checkDocsWithinSurface (O6)', () => {
   it('passes trivially when `## Surface` does not parse — reported elsewhere', () => {
     const body = '**Docs to keep coherent** — Update `apps/cli/specs/surface.md`.\n'
     expect(checkDocsWithinSurface(body, 500).status).toBe('pass')
+  })
+})
+
+describe('checkRationaleSurfaceCoverage (task-run-v1 11, O4)', () => {
+  const surface = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n'
+
+  it('passes when the Boundary path falls inside an `in:` glob', () => {
+    const body = `${surface}\n**Boundary** — Edits \`apps/cli/src/lib/forge-write.ts\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('fails, naming the path and the nearest `in:` entry, when no `in:` glob covers it', () => {
+    const body = `${surface}\n**Boundary** — Edits \`packages/aeg-core/src/issue-validation.ts\`.\n`
+    const r = checkRationaleSurfaceCoverage(body, 500)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/aeg-core\/src\/issue-validation\.ts/)
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/lib/)
+  })
+
+  it('picks the `in:` glob sharing the most leading path segments as "nearest"', () => {
+    const body =
+      '## Surface\n\nin: apps/cli/src/lib, apps/cli/src/commands\nout: —\n\n' +
+      '**Boundary** — Edits `apps/cli/src/checks/edge-resolve.ts`.\n'
+    const r = checkRationaleSurfaceCoverage(body, 500)
+    expect(r.status).toBe('fail')
+    // Both candidates share `apps/cli/src`; neither shares `checks` — first
+    // occurrence wins the tie, matching `nearestInGlob`'s own tie-break rule.
+    expect(r.errors[0]).toMatch(/nearest is `apps\/cli\/src\/lib`/)
+  })
+
+  it('passes when Boundary names a path to EXCLUDE it — covered by `out:`, not a gap', () => {
+    const body = `${surface}\n**Boundary** — Does NOT touch \`apps/cli/src/commands/task.ts\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('does not scan "Docs to keep coherent" — that field has its own, deliberately narrower check', () => {
+    const body = `${surface}\n**Docs to keep coherent** — See \`packages/aeg-core/src/issue-validation.ts\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('passes below the brief-sections cutover — no `## Surface` to compare against', () => {
+    const body = '**Boundary** — Edits `packages/aeg-core/src/issue-validation.ts`.\n'
+    expect(checkRationaleSurfaceCoverage(body, 425).status).toBe('pass')
+  })
+
+  it('passes trivially when `## Surface` does not parse — reported elsewhere', () => {
+    const body = '**Boundary** — Edits `packages/aeg-core/src/issue-validation.ts`.\n'
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('ignores a bare backticked identifier with no `/` — never a path', () => {
+    const body = `${surface}\n**Boundary** — Calls \`renderBrief()\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
   })
 })
 

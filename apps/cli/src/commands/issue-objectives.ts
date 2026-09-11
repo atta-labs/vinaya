@@ -2,7 +2,17 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type Objective, objectivesOf, objectivesVersion, renderObjectives } from '@attalabs/aeg-core'
+import {
+  type FrozenBriefCandidate,
+  type Objective,
+  objectivesOf,
+  objectivesVersion,
+  renderObjectives,
+  resolveNewestFrozenBrief
+} from '@attalabs/aeg-core'
+import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
+import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config.js'
+import { prepareTask } from '../lib/dispatch-task.js'
 import { printJson } from '../lib/envelope'
 import {
   countMarkerComments,
@@ -122,14 +132,39 @@ function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditO
       )
     ])
   }
+  // Security review (Issue #502), round 2, HIGH: this same reason is later
+  // handed to `prepareTask`'s own O6 supersede call, which refuses a
+  // `\r`/`\n` reason for the header-corruption hazard `dispatch-task.ts`
+  // documents at its own check. Checked here too, before ANY write, so a
+  // bad reason never gets past the point where the Objectives comment has
+  // already posted — `prepareTask`'s refusal would otherwise fire only
+  // after that comment exists, leaving the Issue and its frozen brief
+  // disagreeing with no disclosure.
+  if (/[\r\n]/.test(reason as string)) {
+    refuse([
+      makeCheckError(
+        'forge-args',
+        "`--reason` must be a single line — it becomes one line of the frozen comment header this edit may supersede, and a newline in it would corrupt every reader's header-line count for that version.",
+        `Remove the newline from --reason, then re-run \`${RETRY}\`.`
+      )
+    ])
+  }
 
   return { json, issueRef, op: ops[0] as EditOp, reason: reason as string }
 }
 
-function fetchIssueBodyAndComments(issueRef: string): { body: string; comments: string[] } {
+/** A comment reduced to what both `countMarkerComments` (body only) and `resolveNewestFrozenBrief` (body + author, O6) need, plus its own URL to name in a superseding-brief context. */
+type IssueComment = FrozenBriefCandidate & { url: string }
+
+function fetchIssueBodyAndComments(issueRef: string): {
+  body: string
+  title: string
+  labels: string[]
+  comments: IssueComment[]
+} {
   let out: string
   try {
-    out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'body,comments'], {
+    out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'body,title,labels,comments'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     })
@@ -143,13 +178,23 @@ function fetchIssueBodyAndComments(issueRef: string): { body: string; comments: 
     ])
   }
   try {
-    const parsed = JSON.parse(out) as { body?: string; comments?: Array<{ body: string }> }
-    return { body: parsed.body ?? '', comments: (parsed.comments ?? []).map((c) => c.body) }
+    const parsed = JSON.parse(out) as {
+      body?: string
+      title?: string
+      labels?: Array<{ name: string }>
+      comments?: Array<{ body: string; url: string; author: { login: string } | null }>
+    }
+    return {
+      body: parsed.body ?? '',
+      title: parsed.title ?? '',
+      labels: (parsed.labels ?? []).map((l) => l.name),
+      comments: (parsed.comments ?? []).map((c) => ({ body: c.body, url: c.url, author: c.author?.login ?? null }))
+    }
   } catch {
     refuse([
       makeCheckError(
         'forge-fetch',
-        `Could not parse \`gh issue view ${issueRef} --json body,comments\` output.`,
+        `Could not parse \`gh issue view ${issueRef} --json body,title,labels,comments\` output.`,
         `Re-run \`${RETRY}\`.`
       )
     ])
@@ -214,11 +259,11 @@ function applyOp(previous: Objective[], op: EditOp): Objective[] {
   return dropped
 }
 
-export function issueObjectivesEditCommand(args: string[]): void {
+export async function issueObjectivesEditCommand(args: string[]): Promise<void> {
   const { json, issueRef, op, reason } = parseArgs(args)
   refuseUnlessPrincipal(RETRY)
 
-  const { body, comments } = fetchIssueBodyAndComments(issueRef)
+  const { body, title, labels, comments } = fetchIssueBodyAndComments(issueRef)
   const parsed = objectivesOf(body)
   if (!parsed.ok) {
     refuse([
@@ -245,14 +290,25 @@ export function issueObjectivesEditCommand(args: string[]): void {
       bodyResult: locateBody(ghArgs),
       json: false,
       retryCommand: RETRY,
-      quiet: true
+      quiet: true,
+      // This command IS the sanctioned Objectives-change path O3 names as
+      // its own escape hatch — it never touches `## Surface`/`## Parts`
+      // (`spliceObjectivesSection` only ever rewrites the Objectives
+      // section), and it posts its own superseding `aeg:brief:v<k+1>`
+      // comment below (O6) rather than being refused by the gate it is
+      // the sanctioned alternative to.
+      skipFrozenSectionsCheck: true
     })
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 
   const newVersion = objectivesVersion(updated)
-  const k = countMarkerComments(comments, MARKER_PREFIX) + 1
+  const k =
+    countMarkerComments(
+      comments.map((c) => c.body),
+      MARKER_PREFIX
+    ) + 1
   const marker = `${MARKER_PREFIX}${k} -->`
   const commentBody = [
     'Previous:',
@@ -266,6 +322,35 @@ export function issueObjectivesEditCommand(args: string[]): void {
   ].join('\n')
   const url = postMarkedComment('issue', issueRef, marker, commentBody)
 
-  if (json) printJson({ written: true, version: newVersion, url })
-  else process.stdout.write(`${url}\n`)
+  // O6 — if this task's brief is already frozen, the Objectives edit above
+  // just moved the Issue and the frozen brief out of agreement (the frozen
+  // comment still shows the OLD list). Post the superseding brief in this
+  // same command, naming this edit's own `--reason`, so the two can never
+  // disagree after `issue objectives edit` returns and `pr create`'s
+  // `brief-shape` gate never fails on a Planner-authored Objectives change.
+  // Dormant when the brief was never frozen — nothing to supersede yet.
+  let supersedeUrl: string | null = null
+  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  const frozen = resolveNewestFrozenBrief(comments, allowlist)
+  if (frozen !== null) {
+    const taskRef = resolveTaskIssueRef(title, labels)
+    const taskId = taskRef ? Number.parseInt(taskRef.taskId, 10) : Number.NaN
+    if (!taskRef || !Number.isInteger(taskId)) {
+      refuse([
+        makeCheckError(
+          'objectives-supersede',
+          `Issue ${issueRef}'s brief is already frozen (${frozen.url}), but its title/\`vinaya/tranche:*\` label do not resolve to a \`[<tranche>] <n> — ...\` task identity — cannot post the superseding brief this Objectives edit requires (O6). The Objectives comment above was posted; the frozen brief now disagrees with it.`,
+          'Fix the Issue title to the `[<tranche>] <n> — <title>` form and its `vinaya/tranche:<slug>` label, then supersede by hand: `vinaya task brief <tranche> <n> --supersede --reason <text>`.'
+        )
+      ])
+    }
+    const result = await prepareTask({ tranche: taskRef.trancheSlug, n: taskId, supersede: { reason } })
+    supersedeUrl = result.commentUrl
+  }
+
+  if (json) printJson({ written: true, version: newVersion, url, supersedeUrl })
+  else {
+    process.stdout.write(`${url}\n`)
+    if (supersedeUrl) process.stdout.write(`${supersedeUrl}\n`)
+  }
 }

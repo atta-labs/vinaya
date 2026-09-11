@@ -44,10 +44,12 @@ import {
   checkPrincipalPlaceholder,
   checkProjectField,
   checkRationaleNamesDocs,
+  checkRationaleSurfaceCoverage,
   checkStopConditions,
   checkSurfaceExcludesBoundDoc,
   checkSurfaceGlobsResolve,
   checkSurfaceMap,
+  checkSurfaceOverlap,
   checkTestPlan,
   checkTestPlanExclusivity,
   checkTierField,
@@ -56,18 +58,29 @@ import {
   deriveWorkspacePackageDomains,
   DOC_OWNERS_PATH,
   findTrancheSlug,
+  type FrozenBriefCandidate,
+  frozenSectionsChanged,
   isBriefShaped,
   isPrincipal,
   isTaskBranch,
+  isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
+  parseIssueSurface,
   parsePnpmWorkspaceYaml,
   parseRegistry,
   type ProjectPath,
   readTierFromPrBody,
+  resolveNewestFrozenBrief,
+  type TaskSurfaceFacts,
   trancheLabel
 } from '@attalabs/aeg-core'
 import { expandGlob } from './brief-assembly'
-import { findMilestoneAttachTargetForSlug, hasExplicitMilestoneFlag } from '@attalabs/aeg-forge-state'
+import {
+  findMilestoneAttachTargetForSlug,
+  hasExplicitMilestoneFlag,
+  parseRationaleDeps,
+  resolveMilestoneAttachTarget
+} from '@attalabs/aeg-forge-state'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks/contract'
 import {
   type BriefBuiltin,
@@ -273,6 +286,38 @@ export function resolveMilestoneAttachArgs(ghArgs: string[], labels: string[]): 
     return ghArgs
   }
   return target ? [...ghArgs, '--milestone', target.title] : ghArgs
+}
+
+const CHECK_ISSUE_LABEL = 'issue-label'
+
+/**
+ * **O1 (Issue #502) — refuses a task-shaped body with no
+ * `vinaya/tranche:*` label, naming the label.** `isTaskIssueLabelSet`-gated
+ * validation (`validateTaskIssue`, below) never runs at all for a body with
+ * no tranche label — by design, a genuinely non-task Issue must pass through
+ * unvalidated. That design has a hole: a body that actually carries the
+ * Planner's `## Objectives`/`## Planner's rationale` sections but was posted
+ * with no label reads, to that same gate, as "not a task Issue" and sails
+ * through unvalidated too — a task Issue reaching the forge unlabeled. This
+ * runs BEFORE the `isTaskIssueLabelSet` branch at every call site, closing
+ * that hole without loosening the branch itself: a genuinely non-task body
+ * (`isTaskIssueBodyShaped` false) is untouched.
+ *
+ * Deliberately never infers the label from the body/title and adds it
+ * silently — the Planner types the label; this only refuses and names what's
+ * missing.
+ */
+export function refuseUnlabeledTaskShapedBody(body: string | null, labels: string[], retryCommand: string): void {
+  if (body === null) return
+  if (isTaskIssueLabelSet(labels)) return
+  if (!isTaskIssueBodyShaped(body)) return
+  refuse([
+    makeCheckError(
+      CHECK_ISSUE_LABEL,
+      "This body carries task-Issue sections (`## Objectives` / `## Planner's rationale`) but no `vinaya/tranche:*` label was given — a task Issue never reaches the forge unlabeled.",
+      `Add a \`vinaya/tranche:<slug>\` label (e.g. \`--label vinaya/tranche:<slug>\`), then re-run \`${retryCommand}\`.`
+    )
+  ])
 }
 
 /**
@@ -677,7 +722,11 @@ const ISSUE_CONTENT_RECOVERY = {
   docsWithinSurface:
     'Move the named doc pointer to a path `## Surface`\'s `in:` globs actually cover (never widen the surface just to fit the pointer — that renders an unusable brief), or drop it from "Docs to keep coherent" if this task does not really keep it coherent, then re-run `{cmd}`.',
   surfaceExcludesBoundDoc:
-    'Either move the named `out:` glob so it no longer covers the bound document, or narrow the `in:` glob so it no longer reaches the doc-owners binding — the Issue cannot declare both at once. Then re-run `{cmd}`.'
+    'Either move the named `out:` glob so it no longer covers the bound document, or narrow the `in:` glob so it no longer reaches the doc-owners binding — the Issue cannot declare both at once. Then re-run `{cmd}`.',
+  rationaleSurfaceCoverage:
+    'Widen the named `## Surface` `in:` glob to cover the Boundary path (nearest entry named above), or correct the path if it was mistyped, then re-run `{cmd}`.',
+  surfaceOverlap:
+    'Narrow the named `## Surface` `in:` glob so it no longer overlaps the other task, or declare a `Conflicts-with` entry naming one task in the other (either direction is enough), then re-run `{cmd}`.'
 } as const
 
 export type IssueContentInput = {
@@ -689,6 +738,16 @@ export type IssueContentInput = {
   issueNumber: number | null
   resolvesToFile: (glob: string) => boolean
   docOwnersContent: string | null
+  /**
+   * O5's sibling task set, already resolved by the caller from the live
+   * forge, scoped to the subject's own Milestone — `null` when no Milestone
+   * could be determined (dormant: nothing to compare against, same
+   * seam-is-dormant-when-absent convention `docOwnersContent`/
+   * `sharedPackages` already use here).
+   */
+  milestoneSiblings: TaskSurfaceFacts[] | null
+  /** How this subject is referred to in a sibling's `Conflicts-with` — its Issue number, or `''` for a not-yet-created Issue (a sibling cannot yet name a number that does not exist). */
+  subjectRef: string
 }
 
 /**
@@ -701,6 +760,14 @@ export type IssueContentInput = {
  * renderer can never disagree about whether a glob resolves.
  */
 export function validateIssueContent(input: IssueContentInput): CheckError[] {
+  const surfaceResult = parseIssueSurface(input.body)
+  const subjectSurfaceIn = surfaceResult.ok ? surfaceResult.value.in : []
+  const subject: TaskSurfaceFacts = {
+    ref: input.subjectRef,
+    surfaceIn: subjectSurfaceIn,
+    conflictsWith: parseRationaleDeps(input.body).conflictsWith
+  }
+
   const findings: Array<[string[], keyof typeof ISSUE_CONTENT_RECOVERY]> = [
     [
       checkBlastRadiusScope(input.body, input.labels, input.sharedPackages, input.projectPaths, input.issueNumber)
@@ -712,7 +779,12 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [checkSurfaceGlobsResolve(input.body, input.resolvesToFile).errors, 'surfaceGlobsResolve'],
     [checkPartsCiteDefinedObjectives(input.body).errors, 'partsCiteObjectives'],
     [checkDocsWithinSurface(input.body, input.issueNumber).errors, 'docsWithinSurface'],
-    [checkSurfaceExcludesBoundDoc(input.body, input.docOwnersContent).errors, 'surfaceExcludesBoundDoc']
+    [checkSurfaceExcludesBoundDoc(input.body, input.docOwnersContent).errors, 'surfaceExcludesBoundDoc'],
+    [checkRationaleSurfaceCoverage(input.body, input.issueNumber).errors, 'rationaleSurfaceCoverage'],
+    [
+      input.milestoneSiblings !== null ? checkSurfaceOverlap(subject, input.milestoneSiblings).errors : [],
+      'surfaceOverlap'
+    ]
   ]
   const errors: CheckError[] = []
   for (const [messages, kind] of findings) {
@@ -792,6 +864,98 @@ export function fetchForgeLabels(issueRef: string, retryCommand: string): string
 }
 
 /**
+ * Fetches an Issue's current body plus its comments in one round trip — O3
+ * needs the pre-edit body (to detect a frozen-brief section change) and the
+ * comment list (to resolve the newest frozen brief, if any, via
+ * `resolveNewestFrozenBrief`). A failed fetch is a HARD refusal, same
+ * posture as `fetchForgeLabels` — a `gh` hiccup here must not silently
+ * degrade to "no frozen brief", which would let a locked-section edit
+ * through unrefused.
+ */
+/** `FrozenBriefCandidate` plus the comment's own URL — so a caller resolving the newest frozen brief can name it (`ResolvedFrozenBrief<C>` carries every field of `C` through unchanged). */
+export type FrozenBriefCandidateWithUrl = FrozenBriefCandidate & { url: string }
+
+export function fetchForgeIssueContext(
+  issueRef: string,
+  retryCommand: string
+): { body: string; comments: FrozenBriefCandidateWithUrl[] } {
+  let out: string
+  try {
+    out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'body,comments'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch (err) {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `Could not fetch Issue ${issueRef}'s body/comments from the forge (\`gh issue view\`) — the frozen-brief gate cannot decide whether it applies: ${(err as Error).message}`,
+        `Check \`gh auth status\` and network, then re-run \`${retryCommand}\`. The edit is refused rather than passed through unvalidated.`
+      )
+    ])
+  }
+  try {
+    const parsed = JSON.parse(out) as {
+      body: string
+      comments: Array<{ body: string; url: string; author: { login: string } | null }>
+    }
+    return {
+      body: parsed.body,
+      comments: parsed.comments.map((c) => ({ body: c.body, url: c.url, author: c.author?.login ?? null }))
+    }
+  } catch {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `Could not parse \`gh issue view ${issueRef} --json body,comments\` output.`,
+        `Re-run \`${retryCommand}\`; the edit is refused rather than passed through unvalidated.`
+      )
+    ])
+  }
+}
+
+/**
+ * **O3 — refuses an `issue edit` that changes `## Objectives`, `## Surface`,
+ * or `## Parts` on a task Issue whose brief is already frozen.** Fetches the
+ * live pre-edit body and comment list, resolves the newest principal-authored
+ * frozen brief (if any — dormant when none exists, the same
+ * seam-is-dormant-when-absent posture this file uses elsewhere), and compares
+ * the pre-edit body against `newBody` via `frozenSectionsChanged` (never
+ * against the frozen comment's own rendered text — see that function's own
+ * doc comment for why). Names the frozen comment's URL and
+ * `vinaya issue objectives edit` as the sanctioned path for an Objectives
+ * change; `## Surface`/`## Parts` have no self-serve edit path once frozen.
+ *
+ * `skipCheck`, when true, is `issue objectives edit`'s own escape hatch: that
+ * command IS the sanctioned way to change `## Objectives` on a frozen task
+ * (its own write goes through `writeValidatedIssueEdit`, below), and it posts
+ * its own superseding `aeg:brief:v<k+1>` comment after writing (O6) — this
+ * gate must not refuse the very command it names as the sanctioned escape.
+ */
+export function refuseFrozenSectionChange(
+  issueRef: string,
+  newBody: string | null,
+  retryCommand: string,
+  skipCheck = false
+): void {
+  if (skipCheck || newBody === null) return
+  const { body: oldBody, comments } = fetchForgeIssueContext(issueRef, retryCommand)
+  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  const frozen = resolveNewestFrozenBrief(comments, allowlist)
+  if (frozen === null) return
+  const changed = frozenSectionsChanged(oldBody, newBody)
+  if (changed.length === 0) return
+  const sections = changed.map((s) => `\`## ${s}\``).join(', ')
+  refuse([
+    makeCheckError(
+      'issue-frozen-brief',
+      `This task Issue's brief is already frozen — the frozen comment is at ${frozen.url}. This edit changes ${sections}, which is locked once frozen. Use \`vinaya issue objectives edit\` for an Objectives change; \`## Surface\`/\`## Parts\` have no self-serve edit path once frozen — escalate to the Planner to supersede the frozen brief.`,
+      `Revert the ${sections} change(s) in the body, or use \`vinaya issue objectives edit\` for an Objectives change, then re-run \`${retryCommand}\`.`
+    )
+  ])
+}
+
+/**
  * The Issue number `issue edit`'s target ref names, for `checkIssueObjectives`'s
  * `OBJECTIVES_SINCE_ISSUE` cutover. `edit` targets a REAL, already-existing
  * Issue, so unlike `create`'s genuinely-unknown-until-write number, `null`
@@ -820,12 +984,192 @@ export function parseIssueNumberFromRef(ref: string): number | null {
  * `checkBlastRadiusScope`; `sharedPackages`/`projectPaths` are resolved from
  * the adopter repo on disk, not threaded through from argv.
  */
+/** How `validateTaskIssue` resolves O5's target Milestone — an edit reads the Issue's own current Milestone from the forge; a create has none yet, so `resolveMilestoneTitleForCreate` reads an explicit `--milestone` flag or, absent one, the same label-driven auto-attach target `resolveMilestoneAttachArgs` itself resolves at write time. */
+export type MilestoneSource = { kind: 'edit'; issueRef: string } | { kind: 'create'; ghArgs: string[] }
+
+/** Extracts `--milestone`/`-m`'s value from argv, or `null` if absent — the value half of `hasExplicitMilestoneFlag`'s presence check. */
+function extractMilestoneFlagValue(args: string[]): string | null {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string
+    if (a === '--milestone' || a === '-m') return args[i + 1] ?? null
+    if (a.startsWith('--milestone=')) return a.slice('--milestone='.length)
+  }
+  return null
+}
+
+/**
+ * The subject Issue's current Milestone title, best-effort — `null` on any
+ * fetch/parse failure or when no Milestone is attached. Same
+ * dormant-on-absence posture `docOwnersContent`/`sharedPackages` already use
+ * elsewhere in this file: a Milestone this process cannot determine has no
+ * known peer group for O5 to protect, so the overlap check goes dormant
+ * rather than blocking every edit on an unrelated `gh` hiccup.
+ */
+function fetchForgeMilestoneBestEffort(issueRef: string): string | null {
+  try {
+    const out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'milestone'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    const parsed = JSON.parse(out) as { milestone: { title: string } | null }
+    return parsed.milestone?.title ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * O5's Milestone source for `issue create`: an explicit `--milestone`/`-m`
+ * flag wins outright; absent that, mirrors `resolveMilestoneAttachArgs`'s own
+ * label-driven auto-attach lookup so the common create workflow (a tranche
+ * label, no explicit flag) still resolves a real target instead of leaving
+ * O5 dormant.
+ *
+ * Security review (Issue #502), round 2, HIGH: the prior version only ever
+ * read the explicit flag, so a normal `issue create --label
+ * vinaya/tranche:<slug>` — the label-driven auto-attach path
+ * `resolveMilestoneAttachArgs` itself resolves at write time — left
+ * `milestoneTitle` `null` and the overlap check dead on `create` in the
+ * common case. Same fail-open-to-dormant posture as
+ * `resolveMilestoneAttachArgs`: a lookup failure degrades to "no Milestone
+ * known" rather than refusing a create over a `gh api` hiccup.
+ */
+function resolveMilestoneTitleForCreate(ghArgs: string[], labels: string[]): string | null {
+  const explicit = extractMilestoneFlagValue(ghArgs)
+  if (explicit !== null) return explicit
+  if (!isTaskIssueLabelSet(labels)) return null
+  const slug = findTrancheSlug(labels)
+  if (!slug) return null
+  // `stdio: ['ignore', 'pipe', 'pipe']` deliberately, rather than reusing
+  // `findMilestoneAttachTargetForSlug` directly: that helper's underlying
+  // `gh api` call inherits the real `gh` stderr straight through to THIS
+  // process's own stderr (Node's `execFileSync` default), bypassing the
+  // try/catch below entirely. Harmless on the real-write path this task
+  // does not touch (`resolveMilestoneAttachArgs`, run inside a real repo
+  // with a real remote), but this call now also runs on `--validate-only` —
+  // a raw `gh` error line (e.g. no git remote in a test fixture) would land
+  // on the same stderr stream every reader parses as one `CheckError` JSON
+  // per line, tripping `malformed` the way `check-coherence.ts`'s own
+  // `git()` helper is annotated against. Fetched and parsed here, then
+  // handed to the same pure `resolveMilestoneAttachTarget` matcher, so
+  // behaviour is unchanged — only the stderr leak is closed.
+  try {
+    const out = execFileSync('gh', ['api', 'repos/{owner}/{repo}/milestones?state=all&per_page=100'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    const milestones = JSON.parse(out) as Array<{
+      number: number
+      title: string
+      description: string | null
+      state: 'open' | 'closed'
+    }>
+    const target = resolveMilestoneAttachTarget(milestones, slug)
+    return target ? target.title : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * O5's sibling-task resolver: every OTHER open task Issue sharing
+ * `milestoneTitle`, reduced to `TaskSurfaceFacts`. Server-side-scoped to that
+ * one Milestone via `gh issue list --milestone`, not a repo-wide fetch — O5's
+ * peer group spans every tranche sharing a Milestone, but never Issues
+ * outside it, so the query itself (not just a client-side filter afterward)
+ * only ever returns candidates that could actually matter.
+ *
+ * Security review (Issue #502), round 2, MEDIUM: the prior version queried
+ * `gh issue list` repo-wide with a flat `--limit 200` and filtered by
+ * Milestone client-side — a genuinely overlapping sibling past the 200th
+ * open Issue repo-wide was silently missed. Scoping the query itself to the
+ * Milestone shrinks the realistic result size by orders of magnitude for any
+ * repo with more than one active Milestone; `--limit` is raised well past
+ * any plausible single-Milestone open-Issue count as a second margin, and
+ * `gh` itself pages through the API internally to satisfy a `--limit` this
+ * large in one invocation — no separate cursor loop is needed here.
+ *
+ * Unlike the Milestone read above, a failure HERE is a hard refusal: by this
+ * point a real Milestone is known, so degrading silently to "no siblings
+ * found" would let a real collision through rather than merely skip a
+ * cosmetic lookup — the same fail-closed posture `fetchForgeLabels` already
+ * takes for the rationale gate's own applicability fetch.
+ */
+function fetchOpenTaskSurfaceSiblings(
+  milestoneTitle: string,
+  excludeIssueNumber: number | null,
+  retryCommand: string
+): TaskSurfaceFacts[] {
+  let out: string
+  try {
+    out = execFileSync(
+      'gh',
+      [
+        'issue',
+        'list',
+        '--state',
+        'open',
+        '--milestone',
+        milestoneTitle,
+        '--json',
+        'number,body,labels,milestone',
+        '--limit',
+        '2000'
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+  } catch (err) {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `Could not list open Issues (\`gh issue list\`) to check \`## Surface\` overlap against Milestone "${milestoneTitle}": ${(err as Error).message}`,
+        `Check \`gh auth status\` and network, then re-run \`${retryCommand}\`. The write is refused rather than passed through unvalidated.`
+      )
+    ])
+  }
+  let issues: Array<{
+    number: number
+    body: string
+    labels: Array<{ name: string }>
+    milestone: { title: string } | null
+  }>
+  try {
+    issues = JSON.parse(out)
+  } catch {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        'Could not parse `gh issue list --json number,body,labels,milestone` output.',
+        `Re-run \`${retryCommand}\`; the write is refused rather than passed through unvalidated.`
+      )
+    ])
+  }
+  return issues
+    .filter((i) => i.number !== excludeIssueNumber)
+    .filter((i) => i.milestone?.title === milestoneTitle)
+    .filter((i) => isTaskIssueLabelSet(i.labels.map((l) => l.name)))
+    .map((i) => {
+      const surface = parseIssueSurface(i.body)
+      return {
+        ref: String(i.number),
+        surfaceIn: surface.ok ? surface.value.in : [],
+        conflictsWith: parseRationaleDeps(i.body).conflictsWith
+      }
+    })
+}
+
 export function validateTaskIssue(
   body: string | null,
   title: string | null,
   labels: string[],
   retryCommand: string,
-  issueNumber: number | null
+  issueNumber: number | null,
+  // Optional — every call site in `apps/cli/src/commands/issue.ts` now
+  // passes it (Issue #502 v3 Surface). Left optional rather than required so
+  // an omission degrades to O5 dormant (`milestoneTitle` stays `null`)
+  // exactly like a Milestone this process could not determine — never a
+  // crash, never a silently-wrong Milestone guess.
+  milestoneSource?: MilestoneSource
 ): void {
   if (body === null) {
     refuse([
@@ -847,6 +1191,15 @@ export function validateTaskIssue(
   })
   if (schemaErrors.length > 0) refuse(schemaErrors)
 
+  const milestoneTitle =
+    milestoneSource === undefined
+      ? null
+      : milestoneSource.kind === 'edit'
+        ? fetchForgeMilestoneBestEffort(milestoneSource.issueRef)
+        : resolveMilestoneTitleForCreate(milestoneSource.ghArgs, labels)
+  const milestoneSiblings =
+    milestoneTitle !== null ? fetchOpenTaskSurfaceSiblings(milestoneTitle, issueNumber, retryCommand) : null
+
   const contentErrors = validateIssueContent({
     body,
     labels,
@@ -855,7 +1208,9 @@ export function validateTaskIssue(
     retryCommand,
     issueNumber,
     resolvesToFile: (glob) => expandGlob(glob).length > 0,
-    docOwnersContent: readDocOwnersContent()
+    docOwnersContent: readDocOwnersContent(),
+    milestoneSiblings,
+    subjectRef: issueNumber !== null ? String(issueNumber) : ''
   })
   if (contentErrors.length > 0) refuse(contentErrors)
 }
@@ -875,8 +1230,10 @@ export function writeValidatedIssueEdit(input: {
   json: boolean
   retryCommand: string
   quiet?: boolean
+  /** `issue objectives edit`'s own escape hatch — see `refuseFrozenSectionChange`'s doc comment. Every other caller omits this (defaults to `false`, the check runs). */
+  skipFrozenSectionsCheck?: boolean
 }): void {
-  const { issueRef, ghArgs, bodyResult, json, retryCommand, quiet } = input
+  const { issueRef, ghArgs, bodyResult, json, retryCommand, quiet, skipFrozenSectionsCheck } = input
   const body = bodyResult?.body ?? null
   const title = extractTitle(ghArgs)
 
@@ -884,8 +1241,14 @@ export function writeValidatedIssueEdit(input: {
   // silent on edit, so the forge is what decides task-Issue applicability.
   const labels = [...new Set([...fetchForgeLabels(issueRef, retryCommand), ...extractLabels(ghArgs)])]
 
+  refuseUnlabeledTaskShapedBody(body, labels, retryCommand)
+
   if (isTaskIssueLabelSet(labels)) {
-    validateTaskIssue(body, title, labels, retryCommand, parseIssueNumberFromRef(issueRef))
+    refuseFrozenSectionChange(issueRef, body, retryCommand, skipFrozenSectionsCheck ?? false)
+    validateTaskIssue(body, title, labels, retryCommand, parseIssueNumberFromRef(issueRef), {
+      kind: 'edit',
+      issueRef
+    })
   }
 
   const slugToEnsure = findTrancheSlug(labels)

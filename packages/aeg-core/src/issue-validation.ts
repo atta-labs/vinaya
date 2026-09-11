@@ -21,7 +21,7 @@ import { stripCode } from './anchored-region'
 import { checkTestPlan, extractFencedBlocks } from './brief-validation'
 import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from './doc-owners'
 import { globsOverlap } from './derive-section7'
-import { objectivesOf } from './objectives'
+import { objectivesOf, objectivesVersion } from './objectives'
 import { locateTestPlanSection } from './test-plan-section'
 
 export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }
@@ -496,6 +496,37 @@ export function checkIssueBriefSections(body: string, issueNumber: number | null
 /** true when any label marks this as a task Issue (the rationale contract applies). */
 export function isTaskIssueLabelSet(labels: string[]): boolean {
   return hasLabel('tranche', labels)
+}
+
+/** The literal `## Objectives` heading — independent of whether the section that follows it actually parses (a malformed one is still evidence of task-shape, and is `checkIssueObjectives`'s own concern, not this detector's). */
+const OBJECTIVES_HEADING_RE = /^##[ \t]*Objectives[ \t]*$/im
+
+/**
+ * **O1 (task-run-v1 task 11) — is this body task-Issue-shaped at all?** The
+ * forge-write label gate (`forge-write.ts`'s `refuseUnlabeledTaskShapedBody`,
+ * and `bin/open-issue.ts`'s mirrored inline check) uses this to catch a
+ * Planner's mistake `isTaskIssueLabelSet`-gated validation cannot see: a body
+ * that carries the Planner's judgment sections but no `vinaya/tranche:*`
+ * label reads, to every check gated behind `isTaskIssueLabelSet`, as "not a
+ * task Issue" and sails through unvalidated — the exact hole a task Issue
+ * never reaching the forge unlabeled falls through.
+ *
+ * Two signals, either sufficient: a real `## Objectives` heading, or any ONE
+ * of the eight Planner's-rationale fields (`hasRationaleField` — the same
+ * tolerant bold-inline-or-heading detector `checkIssueRationale` itself
+ * checks all eight with). Reusing that detector, rather than a third
+ * "does this look like a rationale section" heuristic, is deliberate: a body
+ * this function calls task-shaped is, by construction, exactly the set of
+ * bodies `checkIssueRationale` would go on to grade — a real Issue can carry
+ * its rationale under a heading `checkIssueRationale` never requires to be
+ * literally "## Planner's rationale" (`apps/cli/tests/fixtures/forge/issue-valid.md`
+ * uses "## Task Issue — Planner rationale"), so gating on that literal
+ * heading text alone under-detects.
+ */
+export function isTaskIssueBodyShaped(body: string): boolean {
+  const text = stripCode(body)
+  if (OBJECTIVES_HEADING_RE.test(text)) return true
+  return RATIONALE_FIELDS.some((f) => hasRationaleField(text, f.pattern))
 }
 
 /** Every `vinaya/type:*` label id, in `labels.ts` order — the source of truth this check reads, never a second list. */
@@ -1185,6 +1216,86 @@ export function checkDocsWithinSurface(body: string, issueNumber: number | null)
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
 
+/** A backticked repo-path token — at least two `/`-separated segments, so a bare identifier or filename in backticks (`` `log()` ``, `` `foo.ts` ``) never matches. Never a URL (filtered by the caller). */
+const RATIONALE_PATH_RE_GLOBAL = /`([\w.@-]+(?:\/[\w.@-]+)+)`/g
+
+/** How many leading `/`-separated segments two paths/globs share — the "nearest" ranking O4's message uses. A trailing `/**`/`/*` is stripped from the glob side first so `packages/aeg-core/**` compares as `packages/aeg-core`. */
+function sharedLeadingSegments(path: string, glob: string): number {
+  const pathSegs = path.split('/')
+  const globSegs = glob.replace(/\/\*\*?$/, '').split('/')
+  let n = 0
+  while (n < pathSegs.length && n < globSegs.length && pathSegs[n] === globSegs[n]) n++
+  return n
+}
+
+/** The `in:` glob sharing the most leading path segments with `path` — ties broken by first occurrence. `inGlobs` is never empty when called (a well-formed `## Surface` always parses at least one `in:` glob). */
+function nearestInGlob(path: string, inGlobs: string[]): string {
+  let best = inGlobs[0] as string
+  let bestScore = -1
+  for (const glob of inGlobs) {
+    const score = sharedLeadingSegments(path, glob)
+    if (score > bestScore) {
+      bestScore = score
+      best = glob
+    }
+  }
+  return best
+}
+
+/**
+ * **O4 (task-run-v1 task 11) — a Boundary path must fall inside the task's
+ * own declared Surface.** The Boundary field is where a Planner names what a
+ * task touches (and, in the same breath, what it deliberately excludes —
+ * `checkBlastRadiusScope`'s own doc comment records Boundary prose naming a
+ * path precisely IN ORDER TO EXCLUDE it). A path Boundary names as touched
+ * that no `in:` glob covers is a rationale/Surface disagreement the
+ * Developer would otherwise discover only after Step 0; naming the nearest
+ * `in:` entry (`nearestInGlob`) makes the fix — widen that glob, or correct
+ * the path — obvious without a second round trip.
+ *
+ * A path covered by `out:` is not flagged: Boundary naming a path to
+ * disclaim it (the negation case above) is legitimate and already accounted
+ * for by the Surface's own `out:` declaration — refusing it here would
+ * misread a negation as an omission, the exact failure mode
+ * `checkBlastRadiusScope`'s O4 (a different, file-scoped check) moved off
+ * prose-scanning to avoid.
+ *
+ * Scoped to the Boundary field only, not the whole Planner's rationale
+ * section: "Docs to keep coherent"/"Traps to avoid" have their own,
+ * deliberately narrower doc-pointer check (`checkDocsWithinSurface`, above)
+ * that stopped enforcing `in:`-coverage for doc pointers specifically,
+ * because nothing at PR time enforces it either and doing so produced an
+ * unusably over-wide brief (see that function's own doc comment). Reusing
+ * this net over those fields would silently re-introduce the regression that
+ * decision undid; Boundary is where "what this task touches" is actually
+ * declared.
+ *
+ * At or above `BRIEF_SECTIONS_SINCE_ISSUE` only — below it an Issue
+ * legitimately carries no `## Surface` to compare against.
+ */
+export function checkRationaleSurfaceCoverage(body: string, issueNumber: number | null): IssueSectionResult {
+  if (issueNumber !== null && issueNumber < BRIEF_SECTIONS_SINCE_ISSUE) return { status: 'pass', errors: [] }
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return { status: 'pass', errors: [] }
+
+  const text = PATH_TEXT(body)
+  const scope = rationaleFieldText(text, 'Boundary')
+  const paths = [...new Set([...scope.matchAll(RATIONALE_PATH_RE_GLOBAL)].map((m) => m[1] as string))].filter(
+    (p) => !/^https?:\/\//i.test(p)
+  )
+
+  const errors: string[] = []
+  for (const path of paths) {
+    if (surface.value.in.some((g) => globCoversPath(g, path))) continue
+    if (surface.value.out.some((g) => globCoversPath(g, path))) continue
+    const nearest = nearestInGlob(path, surface.value.in)
+    errors.push(
+      `issue-validation Boundary: \`${path}\` is named in the Boundary rationale, but no \`## Surface\` \`in:\` glob covers it — nearest is \`${nearest}\`. Widen the Surface's \`in:\` list to cover it, or correct the path if it was mistyped.`
+    )
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
 /**
  * **O1/O2 — a task Issue's `## Surface` `out:` list must not exclude a
  * document `.vinaya/doc-owners` binds to a path the same Issue's `in:` list
@@ -1244,8 +1355,11 @@ export type TaskIssueFacts = {
   conflictsWith: string[]
 }
 
-/** True when either side's declared edges name the other — `#621`, `621` and `8` all count. */
-function edgesNameEachOther(a: TaskIssueFacts, b: TaskIssueFacts): boolean {
+/** True when either side's declared edges name the other — `#621`, `621` and `8` all count. Structural on `{ ref, conflictsWith }` so both `TaskIssueFacts` and `TaskSurfaceFacts` satisfy it without a cast. */
+export function edgesNameEachOther(
+  a: { ref: string; conflictsWith: string[] },
+  b: { ref: string; conflictsWith: string[] }
+): boolean {
   const norm = (s: string) => s.replace(/^#/, '').trim()
   return a.conflictsWith.map(norm).includes(norm(b.ref)) || b.conflictsWith.map(norm).includes(norm(a.ref))
 }
@@ -1284,4 +1398,145 @@ export function checkConflictCompleteness(
     )
   }
   return warnings
+}
+
+// ---------------------------------------------------------------------------
+// O5 (task-run-v1 task 11) — cross-task Surface overlap. Same shape as
+// `checkConflictCompleteness` above (a subject checked against sibling task
+// Issues, `edgesNameEachOther` the same mutual-declaration bypass), but a
+// HARD refusal rather than a warning: `## Surface` `in:` is a structured,
+// declared fact (the same authority `checkSurfaceGlobsResolve`/`renderBrief`
+// already treat it as), not a prose heuristic, so a genuine overlap here is
+// not a hint — it is two Developers about to dispatch onto the same files
+// with neither task declared as blocking the other.
+// ---------------------------------------------------------------------------
+
+/** One open task Issue, reduced to what O5's cross-task Surface-overlap check needs. */
+export type TaskSurfaceFacts = {
+  /** How the Issue is referred to in a `Conflicts-with` edge — its number, or its task id (mirrors `TaskIssueFacts.ref`). */
+  ref: string
+  /** `## Surface` `in:` globs (`parseIssueSurface`) — `[]` when the Issue carries no parseable Surface (nothing to overlap). */
+  surfaceIn: string[]
+  /** Already-parsed `Conflicts-with` ids (`parseRationaleDeps`). */
+  conflictsWith: string[]
+}
+
+/**
+ * **O5 — two open task Issues in the same Milestone whose declared
+ * `## Surface` `in:` lists overlap, and that do not name each other in
+ * `Conflicts-with`, are refused.** `globsOverlap` (`derive-section7.ts`) is
+ * the same symmetric glob-overlap test `checkSurfaceExcludesBoundDoc` already
+ * uses for a different glob pair (a Surface glob against a doc-owners
+ * binding glob) — reused here for two tasks' Surface glob lists, never a
+ * second matcher. `edgesNameEachOther` exempts the pair as soon as EITHER
+ * side names the other — the same one-sided-is-enough rule
+ * `checkConflictCompleteness` already applies (there, as a warning bypass;
+ * here, as the sanctioned exemption): the edge only needs to be declared
+ * once for both tasks to serialize correctly against it.
+ *
+ * Pure over its inputs — `siblings` is resolved by the caller (the
+ * write-time gate in `apps/cli`'s `forge-write.ts` resolves it from the live
+ * forge, scoped to the subject's own Milestone; the coherence sweep in
+ * `coherence-checks.ts` resolves it from its own already-fetched Issue set)
+ * — one predicate, shared rather than reimplemented at each call site, so
+ * the write-time gate and the coherence sweep can never disagree about what
+ * counts as an overlap.
+ */
+export function checkSurfaceOverlap(subject: TaskSurfaceFacts, siblings: TaskSurfaceFacts[]): IssueSectionResult {
+  const errors: string[] = []
+  for (const sibling of siblings) {
+    if (sibling.ref === subject.ref) continue
+    if (edgesNameEachOther(subject, sibling)) continue
+    for (const mine of subject.surfaceIn) {
+      for (const theirs of sibling.surfaceIn) {
+        if (globsOverlap(mine, theirs)) {
+          errors.push(
+            `issue-validation Surface overlap: this task's \`## Surface\` \`in:\` glob \`${mine}\` overlaps ${sibling.ref}'s \`in:\` glob \`${theirs}\` — both are open task Issues in the same Milestone and neither names the other in \`Conflicts-with\`.`
+          )
+        }
+      }
+    }
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+// ---------------------------------------------------------------------------
+// O3 (task-run-v1 task 11, review round 1) — an edit that changes
+// `## Objectives`, `## Surface`, or `## Parts` on a task Issue whose brief is
+// already frozen is refused. Design: compare the LIVE Issue body before and
+// after the edit (never the frozen comment's own rendered text — the brief
+// render is lossy for `## Surface`'s `in:` glob list and interleaves
+// `## Parts` with computed file groupings, so it cannot serve as the
+// comparison target; see task-run-v1 11's own PR discussion). The frozen
+// comment's existence is the gate condition and is named in the refusal
+// message; the pre-edit live body is the comparison basis.
+// ---------------------------------------------------------------------------
+
+export type FrozenSection = 'Objectives' | 'Surface' | 'Parts'
+
+/** True when two `## Surface` sections carry the same `in:`/`out:` glob sets, order-insensitive. */
+function surfacesEqual(a: IssueSurface, b: IssueSurface): boolean {
+  const norm = (globs: string[]) => [...globs].sort().join(' ')
+  return norm(a.in) === norm(b.in) && norm(a.out) === norm(b.out)
+}
+
+/** True when two `## Parts` lists carry the same `{n, objectiveIds, text}` tuples, in the same order — a Part's own order is significant (it drives §6's rendering), unlike a Surface glob set. */
+function partsEqual(a: IssuePart[], b: IssuePart[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((p, i) => {
+    const q = b[i] as IssuePart
+    return (
+      p.n === q.n &&
+      p.text === q.text &&
+      p.objectiveIds.length === q.objectiveIds.length &&
+      p.objectiveIds.every((id, j) => id === q.objectiveIds[j])
+    )
+  })
+}
+
+/**
+ * **O3 — which of `## Objectives`/`## Surface`/`## Parts` changed between
+ * `oldBody` and `newBody`.** Pure comparison; the caller decides whether the
+ * Issue's brief is actually frozen (this function runs unconditionally, the
+ * gate is applying it only when a frozen comment exists) and builds the
+ * refusal message (naming the frozen comment and `issue objectives edit`).
+ *
+ * A section that fails to parse on ONE side but not the other counts as
+ * changed (a well-formed section that stopped parsing, or vice versa, is
+ * exactly a change this gate exists to catch). A section that fails to parse
+ * on BOTH sides is not reported here — that Issue predates a cutover or is
+ * otherwise malformed on its own terms, a fact `checkIssueObjectives`/
+ * `checkIssueBriefSections` already report; this function only compares
+ * shapes it can actually read on both sides.
+ */
+export function frozenSectionsChanged(oldBody: string, newBody: string): FrozenSection[] {
+  const changed: FrozenSection[] = []
+
+  const oldObjectives = objectivesOf(oldBody)
+  const newObjectives = objectivesOf(newBody)
+  if (oldObjectives.ok && newObjectives.ok) {
+    if (objectivesVersion(oldObjectives.objectives) !== objectivesVersion(newObjectives.objectives)) {
+      changed.push('Objectives')
+    }
+  } else if (oldObjectives.ok !== newObjectives.ok) {
+    changed.push('Objectives')
+  }
+
+  const oldSurface = parseIssueSurface(oldBody)
+  const newSurface = parseIssueSurface(newBody)
+  if (oldSurface.ok && newSurface.ok) {
+    if (!surfacesEqual(oldSurface.value, newSurface.value)) changed.push('Surface')
+  } else if (oldSurface.ok !== newSurface.ok) {
+    changed.push('Surface')
+  }
+
+  const oldParts = parseIssueParts(oldBody)
+  const newParts = parseIssueParts(newBody)
+  if (oldParts.ok && newParts.ok) {
+    if (!partsEqual(oldParts.value, newParts.value)) changed.push('Parts')
+  } else if (oldParts.ok !== newParts.ok) {
+    changed.push('Parts')
+  }
+
+  return changed
 }

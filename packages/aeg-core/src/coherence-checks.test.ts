@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { GhIssue } from '@attalabs/aeg-forge-state'
 import {
   checkA1,
   checkA2,
@@ -12,6 +13,7 @@ import {
   checkL5,
   checkR1,
   checkR2,
+  checkR3,
   checkT1,
   checkT2,
   checkT3,
@@ -740,6 +742,107 @@ describe('R2: surface-excludes-bound-doc', () => {
   it('dormant when `.vinaya/doc-owners` is absent — prior stock never flips red', () => {
     const issuesBySlug = new Map([['iter-1', [makeForgeIssue(204, CONTRADICTING_SURFACE_BODY)]]])
     passesWithNoFailures(checkR2(issuesBySlug, null))
+  })
+})
+
+// ---------- R3: cross-task-surface-overlap (Issue #502, O5's coherence half) ----------
+
+function surfaceBody(inGlob: string, extra = ''): string {
+  return `## Surface\n\nin: ${inGlob}\nout: —\n\n${extra}`
+}
+
+function makeGhIssue(opts: {
+  number: number
+  body: string
+  labels?: string[]
+  milestone?: string | null
+  state?: 'OPEN' | 'CLOSED'
+}): GhIssue {
+  return {
+    number: opts.number,
+    title: `Issue ${opts.number}`,
+    body: opts.body,
+    state: opts.state ?? 'OPEN',
+    labels: (opts.labels ?? ['vinaya/tranche:iter-1']).map((name) => ({ name })),
+    milestone:
+      opts.milestone === undefined ? { title: 'M1' } : opts.milestone === null ? null : { title: opts.milestone }
+  }
+}
+
+describe('R3: cross-task-surface-overlap', () => {
+  it('fail — two open task Issues in the same Milestone with overlapping `in:` and no Conflicts-with', () => {
+    const a = makeGhIssue({ number: 301, body: surfaceBody('apps/cli/src/lib') })
+    const b = makeGhIssue({ number: 302, body: surfaceBody('apps/cli/src/lib'), labels: ['vinaya/tranche:iter-2'] })
+    const issuesBySlug = new Map([
+      ['iter-1', [a]],
+      ['iter-2', [b]]
+    ])
+    const r = checkR3(issuesBySlug)
+    expect(r.status).toBe('fail')
+    expect(r.failures.map((f) => f.issue).sort()).toEqual([301, 302])
+    expect(r.failures[0]!.reason).toMatch(/surface-overlap/)
+  })
+
+  it('pass — the same overlap, but the pair name each other in Conflicts-with', () => {
+    const a = makeGhIssue({
+      number: 303,
+      body: surfaceBody('apps/cli/src/lib', '**Dependency rationale** — `Conflicts-with: 304`')
+    })
+    const b = makeGhIssue({
+      number: 304,
+      body: surfaceBody('apps/cli/src/lib', '**Dependency rationale** — `Conflicts-with: 303`'),
+      labels: ['vinaya/tranche:iter-2']
+    })
+    const issuesBySlug = new Map([
+      ['iter-1', [a]],
+      ['iter-2', [b]]
+    ])
+    passesWithNoFailures(checkR3(issuesBySlug))
+  })
+
+  it('pass — overlapping Surfaces in DIFFERENT Milestones never compare', () => {
+    const a = makeGhIssue({ number: 305, body: surfaceBody('apps/cli/src/lib'), milestone: 'M1' })
+    const b = makeGhIssue({
+      number: 306,
+      body: surfaceBody('apps/cli/src/lib'),
+      labels: ['vinaya/tranche:iter-2'],
+      milestone: 'M2'
+    })
+    const issuesBySlug = new Map([
+      ['iter-1', [a]],
+      ['iter-2', [b]]
+    ])
+    passesWithNoFailures(checkR3(issuesBySlug))
+  })
+
+  it('pass — an Issue with no Milestone attached never joins a group', () => {
+    const a = makeGhIssue({ number: 307, body: surfaceBody('apps/cli/src/lib'), milestone: null })
+    const b = makeGhIssue({ number: 308, body: surfaceBody('apps/cli/src/lib'), labels: ['vinaya/tranche:iter-2'] })
+    const issuesBySlug = new Map([
+      ['iter-1', [a]],
+      ['iter-2', [b]]
+    ])
+    passesWithNoFailures(checkR3(issuesBySlug))
+  })
+
+  it('pass — a CLOSED Issue never joins a group', () => {
+    const a = makeGhIssue({ number: 309, body: surfaceBody('apps/cli/src/lib'), state: 'CLOSED' })
+    const b = makeGhIssue({ number: 310, body: surfaceBody('apps/cli/src/lib'), labels: ['vinaya/tranche:iter-2'] })
+    const issuesBySlug = new Map([
+      ['iter-1', [a]],
+      ['iter-2', [b]]
+    ])
+    passesWithNoFailures(checkR3(issuesBySlug))
+  })
+
+  it('pass — a non-task Issue (no vinaya/tranche: label) never joins a group', () => {
+    const a = makeGhIssue({ number: 311, body: surfaceBody('apps/cli/src/lib'), labels: ['bug'] })
+    const b = makeGhIssue({ number: 312, body: surfaceBody('apps/cli/src/lib'), labels: ['vinaya/tranche:iter-2'] })
+    const issuesBySlug = new Map([
+      ['iter-1', [a]],
+      ['iter-2', [b]]
+    ])
+    passesWithNoFailures(checkR3(issuesBySlug))
   })
 })
 

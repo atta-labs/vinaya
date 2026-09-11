@@ -142,6 +142,7 @@ export {
   checkL5,
   checkR1,
   checkR2,
+  checkR3,
   checkT1,
   checkT2,
   checkT3,
@@ -184,11 +185,16 @@ export {
   checkPartsCiteDefinedObjectives,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
+  checkRationaleSurfaceCoverage,
   checkSurfaceExcludesBoundDoc,
   checkSurfaceGlobsResolve,
+  checkSurfaceOverlap,
   checkSurfaceScope,
   declaredProjects,
+  edgesNameEachOther,
+  frozenSectionsChanged,
   globCoversPath,
+  isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   BRIEF_SECTIONS_SINCE_ISSUE,
   OBJECTIVES_SINCE_ISSUE,
@@ -198,6 +204,7 @@ export {
   parseIssueTestPlan
 } from './issue-validation'
 export type {
+  FrozenSection,
   IssuePart,
   IssueSectionResult,
   IssueSurface,
@@ -205,7 +212,8 @@ export type {
   SurfaceScopeResult,
   SurfaceScopeViolation,
   ProjectPath,
-  TaskIssueFacts
+  TaskIssueFacts,
+  TaskSurfaceFacts
 } from './issue-validation'
 export { findHeadingLine, findTable, rowToRecord } from './markdown-table'
 export type { ParsedTable, TableRow } from './markdown-table'

@@ -56,6 +56,7 @@ import {
   checkManifestValidity,
   checkR1,
   checkR2,
+  checkR3,
   checkT1,
   checkT2,
   checkT3,
@@ -956,6 +957,19 @@ export async function runCoherenceChecks(
     // on any finding) — a `fail` here blocks CI the same as A1/A2/A3/M1/M3.
     results.push(checkL5(milestoneActiveSlugs, entriesBySlug))
   }
+
+  // R3 — the coherence half of O5 (task-run-v1 task 11): the same
+  // `checkSurfaceOverlap` predicate the write-time gate runs, swept over
+  // every open task Issue this run already fetched. Reads `sweep.issuesBySlug`
+  // (the raw `GhIssue` list, milestone attachment intact) AFTER the L4/L5
+  // top-up above, so a legacy tranche the sweep's own composition didn't
+  // already need is still represented rather than silently excluded. Runs
+  // unconditionally (not gated on `sweep.milestoneIndexFailed`): a lost
+  // Milestone index means L4/L5 lose their active-tranche authority, but
+  // R3 only groups by the Issue-level `milestone` field already in hand —
+  // degrading to whatever `sweep.issuesBySlug` holds is strictly better than
+  // not checking at all.
+  results.push(checkR3(sweep.issuesBySlug))
 
   // N/M stubs
   results.push(...checkM1M2M3())

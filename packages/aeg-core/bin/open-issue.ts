@@ -80,6 +80,7 @@ import {
   checkNoBriefContent,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
+  isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   type ProjectPath,
   type TaskIssueFacts
@@ -781,6 +782,21 @@ export function main(): void {
     const forgeLabels = fetchForgeLabels(issueRef)
     console.log(`[open-issue] edit — Issue ${issueRef} carries ${forgeLabels.length} label(s) on the forge.`)
     labels = [...new Set([...forgeLabels, ...labels])]
+  }
+
+  // O1 (task-run-v1 task 11) — a body carrying the Planner's `## Objectives`/
+  // `## Planner's rationale` sections but posted with no `vinaya/tranche:*`
+  // label reads, to the `isTaskIssueLabelSet` gate just below, as "not a task
+  // Issue" and would otherwise sail through every check that gate guards,
+  // unvalidated — a task Issue reaching the forge unlabeled. Mirrors
+  // `apps/cli/src/lib/forge-write.ts`'s `refuseUnlabeledTaskShapedBody`
+  // (the CLI's own copy of this same gate), never infers the label and adds
+  // it silently — the Planner types it; this only refuses and names what's
+  // missing.
+  if (body !== null && !isTaskIssueLabelSet(labels) && isTaskIssueBodyShaped(body)) {
+    fail(
+      "the body carries task-Issue sections (`## Objectives` / `## Planner's rationale`) but no `vinaya/tranche:*` label was given — a task Issue never reaches the forge unlabeled. Add one with `--label vinaya/tranche:<slug>`."
+    )
   }
 
   if (isTaskIssueLabelSet(labels)) {
