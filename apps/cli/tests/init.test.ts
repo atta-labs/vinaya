@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
-import { DOC_OWNERS_PATH, LABELS, parseRegistry } from '@attalabs/aeg-core'
+import { DOC_OWNERS_PATH, LABELS, parseRegistry, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
 import { AGENT_VENDORS, type AgentVendor } from '../src/lib/agent-vendors.js'
 import {
   ARCHIVIST_WORKFLOW_PATH,
@@ -1109,18 +1109,33 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
 
     expect(review).not.toContain('contains("VERDICT")')
 
-    // O2: both conditions are the imported constants, not a second literal —
-    // the waiver label string appears verbatim (`WAIVER_LABEL_REVIEW`), and
-    // the verdict-marker regex source (`VERDICT_MARKER_SOURCE`) appears with
-    // the SAME non-capturing group `check-review-gate.ts`'s own extractors
-    // build on, not a re-typed capturing-group approximation.
-    expect(review).toContain('"vinaya/waiver:review"')
+    // Source-level guarantee (round 2, MAJOR finding): a generated-text
+    // match alone cannot tell "imports the shared constant" apart from "a
+    // hand-typed literal that happens to equal today's value" — both
+    // produce byte-identical output. Reading the generator's OWN source and
+    // asserting it imports and splices these two identifiers closes that
+    // gap: a regression that reverts to a hand-typed copy (even one that
+    // still matches VERDICT_MARKER_SOURCE/WAIVER_LABEL_REVIEW's current
+    // value) drops the identifier from the source and fails here.
+    const generatorSource = readFileSync(join(import.meta.dir, '..', 'src/lib/artifacts.ts'), 'utf-8')
+    expect(generatorSource).toMatch(/import\s*\{[^}]*VERDICT_MARKER_SOURCE[^}]*\}\s*from\s*'@attalabs\/aeg-core'/)
+    expect(generatorSource).toMatch(/import\s*\{[^}]*WAIVER_LABEL_REVIEW[^}]*\}\s*from\s*'@attalabs\/aeg-core'/)
+    expect(generatorSource).toContain('jqStringEscape(VERDICT_MARKER_SOURCE)')
+    expect(generatorSource).toContain('${WAIVER_LABEL_REVIEW}')
 
-    const verdictJqExpr =
-      '[.comments[].body | select((. / "\\n") | any(test("^[ \\\\t]*(?:\\\\*{1,3}|_{1,3})?VERDICT:")))] | length > 0'
+    // O2: both conditions are DERIVED from the imported constants at
+    // generation time, not a second literal — reproduce the generator's own
+    // `jqStringEscape` (double every backslash so jq's string parser
+    // reconstructs the exact regex source) and confirm the generated text
+    // equals that derivation, not a value that merely happens to match.
+    const jqStringEscape = (regexSource: string): string => regexSource.replace(/\\/g, '\\\\')
+
+    expect(review).toContain(`"${WAIVER_LABEL_REVIEW}"`)
+
+    const verdictJqExpr = `[.comments[].body | select((. / "\\n") | any(test("${jqStringEscape(VERDICT_MARKER_SOURCE)}")))] | length > 0`
     expect(review).toContain(verdictJqExpr)
 
-    const labelJqExpr = '[.labels[].name == "vinaya/waiver:review"] | any'
+    const labelJqExpr = `[.labels[].name == "${WAIVER_LABEL_REVIEW}"] | any`
     expect(review).toContain(labelJqExpr)
 
     // Three fixtures (O1), the jq expressions run for real against each:
