@@ -11,7 +11,9 @@
 # `apps/cli/src/lib/artifacts.ts` names — so the sibling `pull_request`
 # workflow `vinaya-checks.yml` downloads it instead of building its own copy.
 # Both run at the same trust level (untrusted PR content), so sharing here
-# crosses no boundary; see `apps/cli/specs/self-hosting.md`.
+# crosses no boundary; see `apps/cli/specs/self-hosting.md`. The build and
+# upload always run, even on a docs-only diff, because `vinaya-checks.yml`
+# needs the artifact regardless of whether the test job below ran.
 
 name: CI
 
@@ -35,15 +37,38 @@ jobs:
           # as a real ref — the default shallow, single-branch checkout
           # never fetches it, and those tests fail with "origin/main does
           # not resolve" even though they pass locally. Unrelated to
-          # --affected (this job stays unscoped) — needed regardless.
+          # --affected (this job stays unscoped) — needed regardless. It also
+          # gives the docs-only diff check below a real `base.sha` to diff
+          # against.
           fetch-depth: 0
           persist-credentials: false
+
+      # O4: a diff touching only `**/*.md`, `.changeset/**`, and
+      # `aeg-root/**` doc files skips lint/typecheck/test below (never the
+      # CLI build/upload two steps down, which every PR's `vinaya-checks.yml`
+      # depends on regardless). Reports a real "true" on this job's own check
+      # run rather than a `skipped` job — this job's `if:` is never false.
+      - name: Detect docs-only diff
+        id: docs-only
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -o pipefail
+          CHANGED=$(git diff --name-only "$BASE_SHA"...HEAD)
+          NON_DOCS=$(echo "$CHANGED" | grep -vE '\.md$|^\.changeset/|^aeg-root/' || true)
+          if [ -n "$CHANGED" ] && [ -z "$NON_DOCS" ]; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
 
       # O1: restores Bun's install cache, keyed on the lockfile, before the
       # install below — same key shape `bunInstallCacheStep()`
-      # (`apps/cli/src/lib/artifacts.ts`) emits in every generated workflow.
+      # (`apps/cli/src/lib/artifacts.ts`) emits in every generated workflow,
+      # so this job and `vinaya-checks.yml`'s install (when it has one)
+      # share one cache entry per lockfile per commit.
       - name: Restore Bun install cache
         uses: actions/cache@v4
         with:
@@ -57,6 +82,7 @@ jobs:
 
       # O2: built once here, uploaded below, and downloaded by
       # `vinaya-checks.yml` instead of that workflow building its own copy.
+      # Always runs, docs-only diff or not — see the header note.
       - name: Build the Vinaya CLI
         run: bun run --cwd apps/cli build
 
@@ -79,12 +105,19 @@ jobs:
       # `bunx biome check --write .` locally. A CI job that rewrites the tree
       # would be pushing to a PR branch, which is not this gate's job.
       - name: Lint and format
+        if: steps.docs-only.outputs.docs_only != 'true'
         run: bunx biome check .
 
       - name: Typecheck
+        if: steps.docs-only.outputs.docs_only != 'true'
         run: bunx turbo typecheck
 
       - name: Test
+        if: steps.docs-only.outputs.docs_only != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bunx turbo test --concurrency=1
+
+      - name: Docs-only skip report
+        if: steps.docs-only.outputs.docs_only == 'true'
+        run: echo "Docs-only diff (**/*.md, .changeset/**, aeg-root/**) — lint/typecheck/test skipped." >> "$GITHUB_STEP_SUMMARY"
