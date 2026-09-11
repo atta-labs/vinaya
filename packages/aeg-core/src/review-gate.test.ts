@@ -1030,7 +1030,10 @@ describe('checkReviewGate — policy evaluation (O2/O3)', () => {
     expect(() =>
       checkReviewGate({
         ...BASE_INPUT,
-        comments: [codeReviewComment('APPROVE', ['1. [CRITICAL] a.ts:1 — off-scale severity']), securityComment('PASS')],
+        comments: [
+          codeReviewComment('APPROVE', ['1. [CRITICAL] a.ts:1 — off-scale severity']),
+          securityComment('PASS')
+        ],
         policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' }
       })
     ).not.toThrow()
