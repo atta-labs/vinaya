@@ -27,7 +27,7 @@
  * reviewer session) — only the developer's session is ever resumed.
  *
  * `apps/cli/src/lib/dev-review-loop.ts` is the COMPOSITION ROOT
- * (`review-validity-v1` task 8, `#506`, O8): the driver split into modules
+ * (task 8, `#506`, O8): the driver split into modules
  * under `apps/cli/src/lib/dev-review-loop/`, one per concern — gate reading,
  * reviewer dispatch and report parsing, round assessment glue, publication,
  * pause and resume, developer dispatch and branch polling. `devReviewLoop`
@@ -140,7 +140,7 @@ import {
 
 // Re-exports — every name this file exported before the O8 split still
 // resolves from this exact path, either defined below or re-exported from
-// the module that now owns it (`review-validity-v1` task 8, `#506`).
+// the module that now owns it (task 8, `#506`).
 export {
   fetchCiConclusion,
   fetchConflictingFiles,
@@ -442,7 +442,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // or they land under the `none` bucket instead of this task's.
     process.env.VINAYA_TASK = String(task)
 
-    // Which severities block is repository policy (`review-validity-v1` task
+    // Which severities block is repository policy (task
     // 8, `#506`, O1/O4) — resolved once, from the default branch, and reused
     // for every round's derivation and this run's publication self-check;
     // the gate reads the identical source (`check-review-gate.ts`).

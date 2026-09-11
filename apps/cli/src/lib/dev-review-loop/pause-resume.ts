@@ -1,5 +1,5 @@
 /**
- * `dev-review-loop`'s pause-and-resume concern (`review-validity-v1` task 8,
+ * `dev-review-loop`'s pause-and-resume concern (task 8,
  * `#506`, O8) — rendering and idempotently posting the pause comment,
  * durable pause state for `--resume`, and the one-driver-per-task pid lock.
  * Moved out of `apps/cli/src/lib/dev-review-loop.ts` verbatim;

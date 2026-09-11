@@ -559,7 +559,7 @@ export const VinayaConfigSchema = z.object({
       agent: z.enum(['claude', 'codex', 'gemini']).optional()
     })
     .optional(),
-  // Which severities block is repository policy (`review-validity-v1` task 8,
+  // Which severities block is repository policy (task 8,
   // `#506`, O1) — two separate thresholds, one per review role's own ordered
   // severity scale (`@attalabs/aeg-core`'s `CODE_REVIEW_SEVERITY_ORDER`/
   // `SECURITY_SEVERITY_ORDER`). Typed as a bare string here, deliberately NOT
@@ -732,7 +732,7 @@ export function resolveReleaseActor(config: VinayaConfig | null): string {
 }
 
 /**
- * Resolves the effective review policy (`review-validity-v1` task 8, `#506`,
+ * Resolves the effective review policy (task 8, `#506`,
  * O1): `config?.reviewPolicy` when set, else `DEFAULT_REVIEW_POLICY`
  * (`BLOCKER`/`HIGH` — today's behaviour, unchanged for a repo that never sets
  * this key). Per-field: an omitted `codeReviewThreshold`/`securityThreshold`

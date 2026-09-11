@@ -46,7 +46,7 @@
  * mirroring `reviewer.md`/`security.md`'s templates exactly, including each
  * doc's own internal consistency rule (a finding at or above this
  * repository's policy threshold forces REQUEST CHANGES/FAIL — which
- * severities block is repository policy, `review-validity-v1` task 8,
+ * severities block is repository policy, task 8,
  * `#506`, O1, resolved once via `resolveReviewPolicy` and never hardcoded
  * here; an unbacked "SECRETS: none found" is refused without
  * `--secrets-evidence-file`) — so this command catches the same category of
@@ -123,7 +123,7 @@ const SECURITY_SEVERITIES = SECURITY_SEVERITY_ORDER
 
 /**
  * Parses the `SEVERITY|file:line|description` findings-file grammar. Splits
- * on its first two `|` only (`review-validity-v1` task 8, `#506`, O6) — the
+ * on its first two `|` only (task 8, `#506`, O6) — the
  * rest of the line is the description, exactly the same tolerance
  * `parseObjectivesFile` already gives evidence, so a description that itself
  * contains a `|` (an em-dash-separated aside, a piped shell example) no
@@ -301,7 +301,7 @@ export function parseObjectivesFile(content: string): ObjectiveResult[] {
         `objectives file line ${idx + 1}: "${id}" is not a well-formed objective id — expected \`O<n>\`: ${line}`
       )
     }
-    // Tolerant by leading word (`review-validity-v1` task 8, `#506`, O6): a
+    // Tolerant by leading word (task 8, `#506`, O6): a
     // reviewer writing `NOT MET (partial)` or `MET — see note` still parses,
     // anything after the leading MET/NOT MET word is ignored for the status
     // itself (it is not dropped; the caller's own line still carries it, and
@@ -429,7 +429,7 @@ function isResolved(finding: Finding): boolean {
  * The command decides, not the caller. `REQUEST_CHANGES` iff a finding at or
  * above `policy.codeReviewThreshold` is present, decided by
  * `@attalabs/aeg-core`'s pure evaluator (`evaluateCodeReview`) — no literal
- * `'BLOCKER'` decision here any more (`review-validity-v1` task 8, `#506`,
+ * `'BLOCKER'` decision here any more (task 8, `#506`,
  * O1/O2): which severities block is repository policy, resolved once by the
  * caller and passed in. The severity vocabulary itself is unchanged — a
  * finding whose re-review state is `resolved` keeps its severity for the
@@ -1638,7 +1638,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     )
   }
 
-  // Which severities block is repository policy (`review-validity-v1` task 8,
+  // Which severities block is repository policy (task 8,
   // `#506`, O1/O4) — resolved once, from the default branch, before any
   // derivation or contradiction check below reads it. `resolveReviewPolicy`
   // refuses (throws) on a present-but-unknown severity value; caught here so

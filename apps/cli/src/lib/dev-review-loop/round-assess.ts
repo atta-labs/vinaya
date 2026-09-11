@@ -1,6 +1,6 @@
 /**
- * `dev-review-loop`'s round-assessment-glue concern (`review-validity-v1`
- * task 8, `#506`, O8) — the generic wait/detect/route helpers a round uses
+ * `dev-review-loop`'s round-assessment-glue concern (task 8,
+ * `#506`, O8) — the generic wait/detect/route helpers a round uses
  * around `@attalabs/aeg-core`'s `assessRound` (the ENTIRE policy; this
  * module never re-implements a stop condition or a round-outcome decision):
  * confidence-reply parsing, diff-stat parsing, dispatch/resume escalation,

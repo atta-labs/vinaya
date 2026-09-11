@@ -1,5 +1,5 @@
 /**
- * `dev-review-loop`'s gate-reading concern (`review-validity-v1` task 8,
+ * `dev-review-loop`'s gate-reading concern (task 8,
  * `#506`, O8) — every forge/git read about a head's mechanical readiness:
  * mechanical CI conclusion, mergeability, base-head staleness, and a
  * developer's own worktree head. Pure reads, no forge-write function

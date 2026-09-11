@@ -1,6 +1,6 @@
 /**
  * `dev-review-loop`'s reviewer-dispatch-and-report-parsing concern
- * (`review-validity-v1` task 8, `#506`, O8) — the reviewer's own prompt,
+ * (task 8, `#506`, O8) — the reviewer's own prompt,
  * the held-verdict outbox, the `findings.txt`/`objectives.txt`/`report.txt`
  * grammar, and turning a reviewer's own report into a rendered verdict via
  * `buildVerdictFromReport` (which calls `@attalabs/aeg-core`'s pure
@@ -185,7 +185,7 @@ export class ReviewerInfrastructureFailure extends Error {
 
 /**
  * Thrown by `buildVerdictFromReport` when `findings.txt`/`objectives.txt`
- * still does not parse (`review-validity-v1` task 8, `#506`, O6) — the file
+ * still does not parse (task 8, `#506`, O6) — the file
  * exists (`missingReviewerArtifacts` already passed), but a line inside it
  * is malformed beyond `parseFindingsFile`/`parseObjectivesFile`'s own
  * tolerance (a status that starts with neither `MET` nor `NOT MET`, a

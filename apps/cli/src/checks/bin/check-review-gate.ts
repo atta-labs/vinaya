@@ -424,7 +424,7 @@ function main(): void {
   const trustAnchorConfig = loadTrustAnchorConfig()
   const principalAllowlist = resolvePrincipalAllowlist(trustAnchorConfig)
 
-  // Which severities block is repository policy (`review-validity-v1` task
+  // Which severities block is repository policy (task
   // 8, `#506`, O4) — resolved from the SAME default-branch trust-anchor read
   // as `principals`, never from the PR's own checkout, so a change cannot
   // lower its own threshold. `resolveReviewPolicy` refuses (throws) on a

@@ -1,6 +1,6 @@
 /**
  * `dev-review-loop`'s developer-dispatch-and-branch-polling concern
- * (`review-validity-v1` task 8, `#506`, O8) — every forge read that resolves
+ * (task 8, `#506`, O8) — every forge read that resolves
  * WHAT the loop is working on and WHO said so with authority: the task
  * Issue's title/branch/objectives/rulings, principal-authored markers
  * (rulings, developer stops, objectives edits), and open-PR/branch lookup.
@@ -72,7 +72,7 @@ export function principalAllowlist(): string[] {
 }
 
 /**
- * Which severities block is repository policy (`review-validity-v1` task 8,
+ * Which severities block is repository policy (task 8,
  * `#506`, O1/O4) — resolved from the SAME default-branch trust-anchor source
  * `principalAllowlist()` already reads, never from the PR's own checkout, so
  * a change cannot lower its own threshold. `resolveReviewPolicy` refuses
