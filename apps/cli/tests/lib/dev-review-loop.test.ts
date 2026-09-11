@@ -2002,6 +2002,129 @@ describe('devReviewLoop — a remote branch with no open PR resumes the recorded
   }, 20000)
 })
 
+// --- task-run-v1 3 (#482), O4: attach recovers a held REQUEST-CHANGES round from disk ---
+
+const HELD_JUDGED_HEAD = 'c'.repeat(40)
+
+function heldVerdictText(verdictLine: string): string {
+  return `${verdictLine}\n\nJudged head: ${HELD_JUDGED_HEAD}\n\nFound something on the prior head.\n`
+}
+
+/**
+ * Round 2's reviewers both come back clean — this fixture is testing that
+ * round 1's held REQUEST-CHANGES pair on disk is what moves the driver
+ * straight to round 2 reviewers on attach, never a second round of real
+ * findings. The developer role, if ever invoked, records the fact instead
+ * of behaving like a real turn — this scenario asserts it never runs.
+ */
+function writeFakeClaudeAttachRecoversHeldRound(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+cat > /dev/null
+WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo '{"session_id":"sec-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo "developer dispatched: round=$VINAYA_ROUND" >> "$HOME/.dev-invocations"
+    echo '{"session_id":"dev-session-unexpected","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+function setUpAttachRecoversHeldRound(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeAttachRecoversHeldRound(binDir)
+  writeFakeGhAttach(binDir)
+  writeFakeGitAttach(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — attach recovers a held REQUEST-CHANGES round from disk (O4, task-run-v1 3, #482)', () => {
+  it('a moved head dispatches round 2 reviewers directly — never redelivers round 1s held findings to the developer', () => {
+    const { home, cwd, path } = setUpAttachRecoversHeldRound()
+
+    // Round 1's held verdicts, still on disk — never posted (REQUEST
+    // CHANGES/FAIL never reach `publishRound`) — judged against a head
+    // this fixture's `git` fake no longer answers as the branch's current
+    // one (`HEAD_SHA`, from `writeFakeGitAttach`'s `ls-remote`).
+    const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    mkdirSync(heldDir, { recursive: true })
+    writeFileSync(join(heldDir, 'round-1-reviewer.md'), heldVerdictText('VERDICT: REQUEST CHANGES'))
+    writeFileSync(join(heldDir, 'round-1-security.md'), heldVerdictText('VERDICT: FAIL'))
+
+    // The developer's own last turn — the one that pushed the fix moving
+    // the head away from round 1's judged sha — is what would realistically
+    // leave this file behind; pre-seeded here so round 2's confidence gate
+    // (round >= 2) reads a real value instead of asking a developer this
+    // attach must never dispatch.
+    const worktreeDir = join(cwd, '.worktrees', BRANCH)
+    mkdirSync(worktreeDir, { recursive: true })
+    writeFileSync(join(worktreeDir, '.vinaya-confidence'), 'CONFIDENCE: 90 — fixed round 1s blocker\n')
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    // No developer dispatch at all — round 1's held findings were never
+    // redelivered, and round 2 never needed to ask for confidence either
+    // (the pre-seeded file already answered it).
+    expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
+
+    // Reviewers really did run, at round 2 — the recovered round, not a
+    // reset-to-round-1 re-review of the exact same (already-fixed) head.
+    expect(existsSync(join(heldDir, 'round-2-reviewer-work'))).toBe(true)
+    expect(existsSync(join(heldDir, 'round-2-security-work'))).toBe(true)
+  }, 20000)
+})
+
+describe('devReviewLoop — a second attach on the same unchanged head reads as no_progress, not another redelivery (O4, task-run-v1 3, #482)', () => {
+  it('pauses on no_progress and dispatches nobody — never a third redelivery of round 1s findings', () => {
+    const { home, cwd, path } = setUpAttachRecoversHeldRound()
+
+    // Head UNCHANGED this time — round 1's judged sha matches the fake
+    // git's own current head (`writeFakeGitAttach`'s `ls-remote`).
+    const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    mkdirSync(heldDir, { recursive: true })
+    writeFileSync(join(heldDir, 'round-1-reviewer.md'), `VERDICT: REQUEST CHANGES\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`)
+    writeFileSync(join(heldDir, 'round-1-security.md'), `VERDICT: FAIL\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`)
+    // A prior attach already redelivered round 1's findings once, on this
+    // exact head, with no developer push in between — this run is the
+    // second one in a row, which O4 reads as no_progress rather than
+    // trying a third time.
+    writeFileSync(join(heldDir, 'round-1-attach-redelivered'), new Date().toISOString())
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(no_progress\)/)
+
+    expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
+    expect(existsSync(join(heldDir, 'round-2-reviewer-work'))).toBe(false)
+    expect(existsSync(join(heldDir, 'round-2-security-work'))).toBe(false)
+  }, 20000)
+})
+
 // --- task-run-v1 13 (#508): the developer's first turn ends with no push at all, resumed once (O2/O3) ---
 
 /**
