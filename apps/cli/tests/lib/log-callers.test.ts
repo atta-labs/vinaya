@@ -32,6 +32,16 @@ import { fileURLToPath } from 'node:url'
  * truncate. `OUTBOX_HELD_VERDICT_ALLOWLIST` names this explicitly rather
  * than silently widening `OUTBOX_TRUNCATE_ALLOWLIST` to cover a write it
  * does not describe.
+ *
+ * Amended by task 8 (`review-validity-v1`, `#506`, O8): the driver split
+ * into `apps/cli/src/lib/dev-review-loop/`, one module per concern — a pure
+ * move, no new write category. The under-outbox-root writes
+ * `writeHeldVerdict` used to perform from inside `dev-review-loop.ts` itself
+ * now run from three of those modules: `reviewer-dispatch.ts`
+ * (`writeHeldVerdict`/`discardHeldVerdicts`), `publication.ts`
+ * (`postForgeEffectOnce`'s effect-id bookkeeping), and `pause-resume.ts`
+ * (pause state and the driver pid lock). Same allowlist, same reasoning,
+ * now three paths instead of one.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
@@ -39,10 +49,18 @@ const SINK_PATH = 'apps/cli/src/lib/log-sink.ts'
 const FLUSH_PATH = 'apps/cli/src/commands/log.ts'
 const DISPATCH_PATH = 'apps/cli/src/lib/dispatch.ts'
 const DEV_REVIEW_LOOP_PATH = 'apps/cli/src/lib/dev-review-loop.ts'
+const DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH = 'apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts'
+const DEV_REVIEW_LOOP_PUBLICATION_PATH = 'apps/cli/src/lib/dev-review-loop/publication.ts'
+const DEV_REVIEW_LOOP_PAUSE_RESUME_PATH = 'apps/cli/src/lib/dev-review-loop/pause-resume.ts'
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
 const CALLER_ALLOWLIST = new Set([...FUTURE_CALLER_ALLOWLIST, FLUSH_PATH, DISPATCH_PATH, DEV_REVIEW_LOOP_PATH])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([FLUSH_PATH])
-const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([DEV_REVIEW_LOOP_PATH])
+const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
+  DEV_REVIEW_LOOP_PATH,
+  DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH,
+  DEV_REVIEW_LOOP_PUBLICATION_PATH,
+  DEV_REVIEW_LOOP_PAUSE_RESUME_PATH
+])
 /**
  * Amended by task 8 (#454, O8): `dispatch.ts` durably records a run's vendor
  * resume identifier under `~/.vinaya/dispatch-resume/`, so an operator can
@@ -146,5 +164,12 @@ describe('log-callers — O2', () => {
   it('the dev-review-loop allowlist entry does exist — task 5 is the landed caller, not a future one', () => {
     const existing = files.map(([rel]) => rel)
     expect(existing).toContain(DEV_REVIEW_LOOP_PATH)
+  })
+
+  it('the three dev-review-loop split-module allowlist entries do exist — task 8 is the landed split, not a future one', () => {
+    const existing = files.map(([rel]) => rel)
+    expect(existing).toContain(DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH)
+    expect(existing).toContain(DEV_REVIEW_LOOP_PUBLICATION_PATH)
+    expect(existing).toContain(DEV_REVIEW_LOOP_PAUSE_RESUME_PATH)
   })
 })
