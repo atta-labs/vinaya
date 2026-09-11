@@ -945,7 +945,9 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     const files = generated()
     const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
     const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
-    const bodyChecks = files.get(BODY_CHECKS_WORKFLOW_PATH) ?? ''
+    // Not in `generated()`'s WORKFLOWS list — read directly so `?? ''`
+    // never silently makes this assertion trivially pass on a missing file.
+    const bodyChecks = readFileSync(join(root, BODY_CHECKS_WORKFLOW_PATH), 'utf-8')
     const archivist = files.get(ARCHIVIST_WORKFLOW_PATH) ?? ''
     const retrigger = files.get(REVIEW_RETRIGGER_WORKFLOW_PATH) ?? ''
     const verdict = files.get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
@@ -990,10 +992,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       expect(verdict).not.toContain('headRefName')
       // GH_TOKEN on every step that talks to the forge: checks 2 (fetch PR
       // body, run checks) + 1 more when vendored (find the shared build,
-      // O2), review 1 (review gate), retrigger 1 (its own workflow file,
-      // Issue #402 O4), verdict 3 (resolve-head, evaluate, retrigger),
-      // archivist 3.
-      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 11 : 10)
+      // O2), review 2 (require a verdict before building, O3; review gate),
+      // retrigger 1 (its own workflow file, Issue #402 O4), verdict 3
+      // (resolve-head, evaluate, retrigger), archivist 3.
+      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 12 : 11)
     }
   })
 
@@ -1031,6 +1033,29 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
         expect(evaluate).toContain(`${PUBLISHED_RUN} check review-gate`)
       }
     }
+  })
+
+  it('O3: the review gate never builds on an ordinary push — its first step gates on a VERDICT: comment, no checkout before it', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+    const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
+
+    const gateIdx = review.indexOf('Require a verdict before building')
+    const checkoutIdx = review.indexOf('actions/checkout@v4')
+    const buildIdx = review.indexOf('Build the trusted Vinaya CLI')
+    expect(gateIdx).toBeGreaterThan(-1)
+    // The gate step is the FIRST step in the job — before any checkout or
+    // build — so an ordinary push (opened/synchronize/reopened/labeled/
+    // unlabeled) with no verdict yet never pays for either.
+    expect(gateIdx).toBeLessThan(checkoutIdx)
+    expect(checkoutIdx).toBeLessThan(buildIdx)
+    expect(review).toContain('gh pr view "$PR_NUMBER"')
+    expect(review).toContain('contains("VERDICT")')
+    expect(review).toContain('exit 1')
+    // One job, one required check-run name — never a second job/name.
+    expect(occurrences(new Map([[REVIEW_WORKFLOW_PATH, review]]), '\n  vinaya-review:')).toBe(1)
+    expect(occurrences(new Map([[REVIEW_WORKFLOW_PATH, review]]), 'name: vinaya review gate')).toBe(1)
   })
 
   it('the hook stubs resolve the vendored bin too (atta-labs/attalabs#935 corrects this case)', async () => {

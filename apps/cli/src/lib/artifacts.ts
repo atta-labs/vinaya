@@ -539,6 +539,15 @@ function reviewWorkflow(selfHost: VendoredVinaya | null): string {
 # runs. When a clean final verdict lands, or CI turns green, one of those
 # two workflows re-runs this one, so the required check below goes green
 # natively with no manual rerun.
+#
+# The job's first step never builds: it reads the PR's comments through the
+# API alone and fails fast, without checkout or build, whenever no
+# \`VERDICT:\` comment exists yet — the ordinary state on \`opened\`/
+# \`synchronize\`/\`reopened\`/\`labeled\`/\`unlabeled\`. The build only runs once
+# that step finds a verdict, which in practice is the state a rerun finds it
+# in: the verdict-comment workflow and the CI-green retrigger both re-run
+# THIS run, and by the time either fires, the verdict this job is looking
+# for already exists.
 name: Vinaya Review Gate
 run-name: "Vinaya Review Gate PR #\${{ github.event.pull_request.number }} @ \${{ github.event.pull_request.head.sha }}"
 
@@ -582,6 +591,28 @@ jobs:
       issues: read
       checks: read
     steps:
+      # No checkout, no build: read whether a verdict exists yet through the
+      # API alone. Absent one, THIS step fails — the job's own single
+      # check-run ("vinaya review gate") goes red with the reason below and
+      # every step after it is skipped, so an ordinary push (opened /
+      # synchronize / reopened / labeled / unlabeled) never pays for a build
+      # it cannot use. Deliberately one job, not two: a second job would
+      # report a second check-run name, and \`REVIEW_GATE_CHECK_RUN_NAME\`
+      # (this repo's own \`check-review-gate.ts\`/\`dev-review-loop.ts\`) is
+      # the one required name every other mechanism already keys on.
+      - name: Require a verdict before building
+        id: verdict-check
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: \${{ github.event.pull_request.number }}
+        run: |
+          set -o pipefail
+          HAS_VERDICT=$(gh pr view "$PR_NUMBER" --repo \${{ github.repository }} --json comments \\
+            --jq '[.comments[].body | select(contains("VERDICT"))] | length > 0')
+          if [ "$HAS_VERDICT" != "true" ]; then
+            echo "No VERDICT: comment yet on PR #$PR_NUMBER - nothing to evaluate. Holding the gate red without building until a reviewer posts one." >&2
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           # Explicit trusted ref: never use the PR head/merge ref in this job.
