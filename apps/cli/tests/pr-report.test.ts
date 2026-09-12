@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1170,6 +1170,143 @@ describe('vinaya pr report --push CLI surface', () => {
       expect(result.stderr).toMatch(/is not a PR number/)
     } finally {
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses --body-file without --push', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-cli-'))
+    try {
+      const bodyPath = join(dir, 'body.md')
+      writeFileSync(bodyPath, 'whatever')
+      const result = runCli(['pr', 'report', '--body-file', bodyPath], dir)
+      expect(result.status).toBe(2)
+      expect(result.stderr).toMatch(/--body-file only applies alongside --push/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a --body-file that does not exist', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-cli-'))
+    try {
+      const result = runCli(['pr', 'report', '--push', '383', '--body-file', join(dir, 'missing.md')], dir)
+      expect(result.status).toBe(2)
+      expect(result.stderr).toMatch(/does not exist/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+// --- O6 (#543): --push --body-file writes the WHOLE local body, not only the regenerated blocks ---
+
+describe('prReportCommand — --push --body-file writes the whole local body (#543 O6)', () => {
+  class ExitCalled extends Error {
+    constructor(public code: number | undefined) {
+      super(`process.exit(${code})`)
+    }
+  }
+
+  async function runCapturingExit(args: string[], testOverrides?: { gateRunner?: GateRunner }): Promise<void> {
+    const originalExit = process.exit
+    process.exit = ((code?: number) => {
+      throw new ExitCalled(code)
+    }) as never
+    try {
+      await prReportCommand(args, testOverrides)
+    } catch (err) {
+      if (!(err instanceof ExitCalled)) throw err
+    } finally {
+      process.exit = originalExit
+    }
+  }
+
+  it("pushes the local body-file's own Decisions bullet — a section outside the AEG:EVIDENCE/AEG:TOKENS blocks — to the forge fake, not only the regenerated blocks", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-bodyfile-'))
+    const binDir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-bodyfile-bin-'))
+    const forgeStore = join(dir, 'forge-body.txt')
+    const originalCwd = process.cwd()
+    const originalPath = process.env.PATH
+    const originalPrBody = process.env.PR_BODY
+    const originalBranch = process.env.BRANCH
+    const originalPrNumber = process.env.PR_NUMBER
+    try {
+      execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir })
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir })
+      execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'init'], { cwd: dir })
+      execFileSync('git', ['checkout', '-q', '-b', 'task/task-run-v1/6'], { cwd: dir })
+
+      // Ring 1 skips `runBodyChecks` entirely — this test is about the
+      // whole-body write path, not the body-validating check registry.
+      writeFileSync(
+        join(dir, 'vinaya.config.json'),
+        JSON.stringify({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } })
+      )
+
+      // A minimal forge fake: `pr view` prints whatever `pr edit --body-file`
+      // last wrote, so a real round trip through the fake proves the push
+      // landed — not merely that this command CALLED `gh`.
+      writeFileSync(forgeStore, 'placeholder — never read for this mode')
+      const ghScript = `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s' "$(cat "${forgeStore}")"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "edit" ]; then
+  cp "$5" "${forgeStore}"
+  exit 0
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+      const ghPath = join(binDir, 'gh')
+      writeFileSync(ghPath, ghScript)
+      execFileSync('chmod', ['+x', ghPath])
+
+      const bodyPath = join(dir, 'body.md')
+      writeFileSync(
+        bodyPath,
+        [
+          '## Decisions',
+          '',
+          '- config key name: chose `reviewPolicy.maxRounds` over a bare `maxRounds` — same namespace as the two thresholds.',
+          '',
+          '## Test plan',
+          '',
+          'Test Plan: unit-tests-only',
+          '',
+          '## Evidence',
+          '',
+          '## Scope',
+          '',
+          '**Tier:** 1'
+        ].join('\n')
+      )
+
+      delete process.env.PR_NUMBER
+      process.chdir(dir)
+      process.env.PATH = `${binDir}:${originalPath}`
+      await runCapturingExit(['--push', '383', '--body-file', bodyPath], { gateRunner: () => PASSING_GATES })
+
+      const pushedBody = readFileSync(forgeStore, 'utf8')
+      // The Decisions bullet — outside both generated blocks — reached the
+      // forge fake whole, not only the regenerated Evidence/Tokens content.
+      expect(pushedBody).toContain('## Decisions')
+      expect(pushedBody).toContain('chose `reviewPolicy.maxRounds`')
+      expect(pushedBody).toContain('AEG:EVIDENCE:START')
+      expect(pushedBody).toContain('Head:')
+    } finally {
+      process.chdir(originalCwd)
+      process.env.PATH = originalPath
+      if (originalPrBody === undefined) delete process.env.PR_BODY
+      else process.env.PR_BODY = originalPrBody
+      if (originalBranch === undefined) delete process.env.BRANCH
+      else process.env.BRANCH = originalBranch
+      if (originalPrNumber === undefined) delete process.env.PR_NUMBER
+      else process.env.PR_NUMBER = originalPrNumber
+      rmSync(dir, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
     }
   })
 })

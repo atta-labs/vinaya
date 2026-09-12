@@ -40,8 +40,33 @@ export type ReviewPolicy = {
   maxRounds: number
 }
 
-/** The minimal shape the evaluator needs — every real finding type (review-post.ts's `Finding`, a gate-side severity-only extraction) satisfies it. */
-export type PolicyFinding = { severity: string }
+/** The minimal shape the evaluator needs — every real finding type (review-post.ts's `Finding`, a gate-side severity-only extraction) satisfies it. `location` is optional so a caller with no location to report (an older extraction shape) still type-checks; such a finding is simply never prose-capped (O5, below). */
+export type PolicyFinding = { severity: string; location?: string }
+
+/**
+ * (`doctrine-fixes-v1` task 1, `#543`, O5) `true` when `location` names the
+ * PR body, a PR/review comment, or a role file — prose surfaces this
+ * evaluator caps at `MINOR` before counting a finding toward the blocking
+ * threshold, regardless of the severity the reviewer actually reported.
+ * Never a source or test file: those match none of these patterns.
+ */
+const PROSE_LOCATION_PATTERNS = [/\bpr\s*body\b/i, /\bcomment\b/i, /(^|\/)aeg-root\/roles\//i] as const
+
+export function isProseLocation(location: string): boolean {
+  return PROSE_LOCATION_PATTERNS.some((pattern) => pattern.test(location))
+}
+
+/**
+ * The severity every prose-located finding is evaluated at, regardless of
+ * scale (O5) — literally `'MINOR'`, not "the bottom rung of whichever scale
+ * applies": on the code-review scale this is the least severe rank; on the
+ * security scale `'MINOR'` is not a member at all, so `blockingSeverities`'s
+ * `Set` never contains it and a prose-located security finding never blocks
+ * under any configured threshold. Exported so callers rendering a capped
+ * finding's effective severity (never its own reported one) share this one
+ * literal rather than a second copy of it.
+ */
+export const PROSE_CAP_SEVERITY = 'MINOR'
 
 export type PolicyEvaluation<F extends PolicyFinding> = {
   outcome: 'clean' | 'blocked'
@@ -83,7 +108,13 @@ export function evaluateReviewFindings<F extends PolicyFinding>(
     if (!scale.includes(f.severity)) {
       throw new Error(`evaluateReviewFindings: severity "${f.severity}" is not one of ${scale.join(' > ')}`)
     }
-    return blocking.has(f.severity)
+    // (`#543` O5) Prose never blocks: a finding whose own location is the PR
+    // body, a comment, or a role file is evaluated at `PROSE_CAP_SEVERITY`,
+    // never its own reported severity — a source or test file location is
+    // never capped, and the finding's own reported severity is unchanged
+    // (only how it counts toward THIS threshold check is affected).
+    const effectiveSeverity = f.location !== undefined && isProseLocation(f.location) ? PROSE_CAP_SEVERITY : f.severity
+    return blocking.has(effectiveSeverity)
   })
   return { outcome: blockingFindings.length > 0 ? 'blocked' : 'clean', blockingFindings }
 }

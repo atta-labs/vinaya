@@ -500,6 +500,10 @@ export function renderReviewerDispatchPrompt(
       ? '(severities: BLOCKER, MAJOR, MINOR — leave the file empty if there are none).'
       : '(severities: CRITICAL, HIGH, MEDIUM, LOW — leave the file empty if there are none).',
     '`|` never appears in a description — write the finding without one, even inside a quoted or piped example.',
+    // (#543 O5) Named so a reviewer never under-reports a body/comment/
+    // role-file finding's real severity to pre-empt this — the cap is
+    // applied by the policy evaluator, not something to guess around.
+    'A finding whose own location is the PR body, a comment, or a role file is capped to MINOR before it counts toward the threshold, regardless of the severity you assign it — write its real severity anyway.',
     ...(hasObjectivesFacts(facts)
       ? [
           `Write one line per objective listed above to ${join(workDir, 'objectives.txt')}: O<n>|MET|<evidence> or O<n>|NOT MET|<evidence> — the status is read by its bare leading word (MET or NOT MET); write nothing else before it on that field.`

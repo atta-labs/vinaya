@@ -466,6 +466,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     type: 'object (optional)',
     semantics: [
       "Which severities block is repository policy, not a hardcoded literal: one threshold per review role's own ordered severity scale — code review over `BLOCKER > MAJOR > MINOR`, security review over `CRITICAL > HIGH > MEDIUM > LOW`. A finding at or above the threshold prevents approval everywhere a verdict is derived, accepted, or judged. Also carries the dev-review-loop's own round cap (`maxRounds`, below).",
+      'A finding whose own location is the PR body, a comment, or a role file is capped to `MINOR` before it counts toward either threshold, unconditionally — never configurable, never a source or test file. Prose alone never blocks a merge.',
       "Omitted entirely, or any field omitted, defaults to today's behavior (`BLOCKER` / `HIGH` / 3 rounds). An unknown severity name, or a `maxRounds` that isn't a positive integer, refuses at config load — it never silently falls back, unlike the rest of this config's fields.",
       "Read only via the default branch's configuration (the same trust class as `principals`), never the pull request's own checkout, so a change cannot lower its own threshold."
     ],

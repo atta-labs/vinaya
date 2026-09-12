@@ -8,6 +8,7 @@ import {
   evaluateReviewFindings,
   evaluateSecurityReview,
   isKnownSeverity,
+  isProseLocation,
   type ReviewPolicy,
   SECURITY_SEVERITY_ORDER,
   securityBlockingSeverities
@@ -111,6 +112,61 @@ describe('isKnownSeverity', () => {
   test('true for a scale member, false otherwise', () => {
     expect(isKnownSeverity(CODE_REVIEW_SEVERITY_ORDER, 'MAJOR')).toBe(true)
     expect(isKnownSeverity(CODE_REVIEW_SEVERITY_ORDER, 'CRITICAL')).toBe(false)
+  })
+})
+
+describe('isProseLocation (#543 O5)', () => {
+  test('matches the PR body, a comment, or a role file', () => {
+    expect(isProseLocation('PR body')).toBe(true)
+    expect(isProseLocation('pr body')).toBe(true)
+    expect(isProseLocation('a PR comment')).toBe(true)
+    expect(isProseLocation('review comment')).toBe(true)
+    expect(isProseLocation('aeg-root/roles/developer.md:12')).toBe(true)
+  })
+
+  test('never matches a source or test file', () => {
+    expect(isProseLocation('src/foo.ts:12')).toBe(false)
+    expect(isProseLocation('apps/cli/tests/foo.test.ts:1')).toBe(false)
+    expect(isProseLocation('aeg-root/contracts/planner-developer.md:5')).toBe(false)
+  })
+})
+
+describe('evaluateReviewFindings — prose cap (#543 O5)', () => {
+  test('a BLOCKER finding located in the PR body is capped to MINOR — never blocks under this repo’s MAJOR threshold', () => {
+    const result = evaluateReviewFindings(
+      [{ severity: 'BLOCKER', location: 'PR body' }],
+      CODE_REVIEW_SEVERITY_ORDER,
+      'MAJOR'
+    )
+    expect(result.outcome).toBe('clean')
+  })
+
+  test('the identical BLOCKER at a real source location still blocks — the cap never reaches source/test files', () => {
+    const result = evaluateReviewFindings(
+      [{ severity: 'BLOCKER', location: 'src/foo.ts:12' }],
+      CODE_REVIEW_SEVERITY_ORDER,
+      'MAJOR'
+    )
+    expect(result.outcome).toBe('blocked')
+  })
+
+  test('a CRITICAL security finding located in a role file never blocks — MINOR is not on the security scale at all', () => {
+    const result = evaluateReviewFindings(
+      [{ severity: 'CRITICAL', location: 'aeg-root/roles/security.md:3' }],
+      SECURITY_SEVERITY_ORDER,
+      'CRITICAL'
+    )
+    expect(result.outcome).toBe('clean')
+  })
+
+  test('a round with clean code/test/security findings stays green regardless of a body finding (O5 sizing story)', () => {
+    const codeReview = evaluateCodeReview([{ severity: 'BLOCKER', location: 'PR body' }], THIS_REPO_POLICY)
+    expect(codeReview.outcome).toBe('clean')
+  })
+
+  test('a finding with no location at all is never capped — treated exactly as before this task', () => {
+    const result = evaluateReviewFindings([{ severity: 'BLOCKER' }], CODE_REVIEW_SEVERITY_ORDER, 'MAJOR')
+    expect(result.outcome).toBe('blocked')
   })
 })
 
