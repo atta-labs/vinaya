@@ -1281,6 +1281,40 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     expect(typecheckIdx).toBeLessThan(selectorIdx)
   })
 
+  it("unsets every GIT_* variable before running the selected tests, AFTER selecting them (a fixture test creating its own git repo elsewhere must never inherit this hook invocation's own GIT_DIR/GIT_WORK_TREE) — vendored repo only", async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+    expect(prePush).toContain("for _vinaya_git_var in $(env | grep -o '^GIT_[A-Z_]*='); do")
+    expect(prePush).toContain('unset "${_vinaya_git_var%=*}"')
+    const selectIdx = prePush.indexOf('pre-push-select-tests.ts')
+    const unsetIdx = prePush.indexOf('_vinaya_git_var')
+    const runTestsIdx = prePush.indexOf('xargs bun test')
+    expect(selectIdx).toBeLessThan(unsetIdx)
+    expect(unsetIdx).toBeLessThan(runTestsIdx)
+  })
+
+  it('the GIT_* unset step really does isolate a child process from an ambient GIT_DIR/GIT_WORK_TREE — real subprocess, real env, no simulation shortcuts', () => {
+    // Extracts and runs the hook's own unset snippet in a real `sh`, exactly
+    // as the generated hook would, then proves a `git` call afterward can no
+    // longer see the ambient GIT_DIR/GIT_WORK_TREE this test seeds — the
+    // exact live incident (task-run-v1 20): a fixture test's own git fixture,
+    // created elsewhere, inherited the pre-push hook's real GIT_DIR and had
+    // several of its own commits land for real on the branch being pushed.
+    const script = `
+GIT_DIR=/tmp/should-never-be-read GIT_WORK_TREE=/tmp/should-never-be-read
+export GIT_DIR GIT_WORK_TREE
+for _vinaya_git_var in $(env | grep -o '^GIT_[A-Z_]*='); do
+  unset "\${_vinaya_git_var%=*}"
+done
+echo "GIT_DIR after unset: [$GIT_DIR]"
+git rev-parse --git-dir 2>&1 || true
+`
+    const out = execFileSync('sh', ['-c', script], { cwd: '/tmp', encoding: 'utf8' })
+    expect(out).toContain('GIT_DIR after unset: []')
+    expect(out).not.toContain('/tmp/should-never-be-read')
+  })
+
   it('the old --concurrency=1 guard leaves no trace in turbo.json either — no repo-wide setting CI or the hook would inherit', () => {
     const turboJson = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', '..', 'turbo.json'), 'utf-8'))
     expect(turboJson).not.toHaveProperty('concurrency')

@@ -25,6 +25,22 @@ fi
 bunx turbo typecheck --affected || exit 1
 VINAYA_SELECTED_TESTS="$(bun apps/cli/src/lib/pre-push-select-tests.ts)"
 if [ -n "$VINAYA_SELECTED_TESTS" ]; then
+  # A git hook's own invoking git sets GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE
+  # for THIS repo — correct for every step above, which all operate on this
+  # repo on purpose. A selected test that creates and operates on its OWN
+  # throwaway git fixture elsewhere inherits those same variables unless it
+  # explicitly overrides them, and GIT_DIR silently overrides discovery
+  # regardless of that fixture's own directory — a real, load-bearing
+  # incident, not a hypothetical: a fixture test with no remote of its own
+  # resolved this branch's real upstream and landed several of its own
+  # git commit calls as genuine commits on it, recoverable only via a hard
+  # reset to the last real commit. Unset every GIT_* variable right before
+  # the one step that can run arbitrary test-owned git fixtures — every
+  # step above stays on this repo either way, since cwd-based discovery
+  # finds the exact same repo these variables already named.
+  for _vinaya_git_var in $(env | grep -o '^GIT_[A-Z_]*='); do
+    unset "${_vinaya_git_var%=*}"
+  done
   echo "$VINAYA_SELECTED_TESTS" | xargs bun test || exit 1
 fi
 # <<< vinaya:managed:pre-push <<<

@@ -14,9 +14,43 @@
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 
+/**
+ * `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` (and the rest of the `GIT_*`
+ * family), when present in the environment, override git's own repository
+ * discovery outright — `cwd` stops mattering at all. A real pre-push hook
+ * inherits these correctly pointed at ITS OWN repo, so stripping them here
+ * changes nothing for that caller (discovery from `cwd` lands on the exact
+ * same repo `GIT_DIR` already named). What it closes is the caller this
+ * file cannot see: a test resolving a REAL, unrelated `repoRoot` while the
+ * process it runs in happens to carry a `GIT_DIR` from somewhere else —
+ * found live, expensively: a fixture repo, no remote configured, resolved
+ * `@{u}` to a real branch's real upstream because this function's own `git`
+ * call inherited that branch's `GIT_DIR`, and its own `git commit` calls
+ * (a different file's, run moments earlier) had already landed as genuine
+ * commits on it. Every call this file makes builds its `env` fresh from the
+ * ambient one with the `GIT_*` keys removed — never relies on `execFileSync`
+ * inheriting `process.env` implicitly, which on this runtime does not even
+ * see a same-process mutation of `process.env` made after the process
+ * started (confirmed live: deleting `process.env.GIT_DIR` had no effect on
+ * a child process spawned afterward in the same run — the fix has to be an
+ * explicit `env` object at the call site, not a mutation anywhere earlier).
+ */
+function cleanGitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('GIT_')) delete env[key]
+  }
+  return env
+}
+
 function git(repoRoot: string, args: string[]): string {
   try {
-    return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    return execFileSync('git', args, {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: cleanGitEnv()
+    }).trim()
   } catch {
     return ''
   }

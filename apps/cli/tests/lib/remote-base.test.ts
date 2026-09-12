@@ -9,8 +9,33 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { changedFilesSinceRemoteBase, resolveRemoteBase } from '../../src/lib/remote-base'
 
+// This suite's own process (`bun test`) can itself be running INSIDE a git
+// hook — the pre-push hook this very selector feeds runs the affected suite
+// before the push it's part of ever leaves the machine. A hook's invoking
+// git sets GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE for ITS OWN repo, and those
+// inherit into any child `git` command that doesn't build its own explicit
+// `env` — confirmed live, expensively: a "no remote at all" fixture, cwd in
+// a fresh tmpdir with no remote configured, resolved `@{u}` to THIS
+// BRANCH'S real upstream, and four of this suite's real `git commit` calls
+// landed as genuine commits on it — the worktree needed a `git reset --hard`
+// to its last real commit to recover. `resolveRemoteBase`/
+// `changedFilesSinceRemoteBase` themselves now build the same clean `env`
+// internally (`remote-base.ts`'s own `cleanGitEnv`) for every call they
+// make, so the direct, in-process calls to them below are covered by that
+// fix; this file's OWN setup calls (`git init`/`commit`/`push` against the
+// fixtures) need the identical treatment for the same reason. A same-process
+// mutation of `process.env` was tried first and does NOT work on this
+// runtime — a child process spawned afterward still saw the ORIGINAL
+// `GIT_DIR`, proving `execFileSync`'s default env inheritance reads a
+// snapshot taken at process start, not the live object. The fix has to be
+// an explicit `env` at every call site, never a deletion anywhere earlier.
+const GIT_ENV: NodeJS.ProcessEnv = { ...process.env }
+for (const key of Object.keys(GIT_ENV)) {
+  if (key.startsWith('GIT_')) delete GIT_ENV[key]
+}
+
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+  return execFileSync('git', args, { cwd, encoding: 'utf8', env: GIT_ENV }).trim()
 }
 
 function initRepo(dir: string): void {
