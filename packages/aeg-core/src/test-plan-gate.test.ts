@@ -77,6 +77,14 @@ describe('evaluateTestPlanGate — no section at all', () => {
     expect(result.verdict).toBe('pass')
   })
 
+  it('FAILs loud on a task/issue-<n> branch with no Test Plan section anywhere', () => {
+    const body = '## Summary\n\nx\n\n## Scope\n\nno test plan section here'
+    const result = evaluateTestPlanGate(body, 'task/issue-42')
+    expect(result.verdict).toBe('fail')
+    expect(result.messages.join('\n')).toContain('no Test Plan section found')
+    expect(result.messages.join('\n')).toContain('task/issue-42')
+  })
+
   it('PASSes (advisory) when BRANCH is unset entirely', () => {
     const body = '## Summary\n\nx\n\n## Scope\n\nno test plan section here'
     const result = evaluateTestPlanGate(body, '')

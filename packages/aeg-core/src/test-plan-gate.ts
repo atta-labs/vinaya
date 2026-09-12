@@ -24,14 +24,13 @@
  */
 
 import { locateTestPlanSection } from './test-plan-section'
+import { parseTaskBranchIdentity } from './task-branch-identity'
 
 export type TestPlanGateVerdict = 'pass' | 'fail'
 export type TestPlanGateResult = {
   verdict: TestPlanGateVerdict
   messages: string[]
 }
-
-const TASK_BRANCH_PATTERN = /^task\/[^/]+\/[^/]+$/
 
 export function evaluateTestPlanGate(body: string, branch: string): TestPlanGateResult {
   if (!body) {
@@ -47,7 +46,7 @@ export function evaluateTestPlanGate(body: string, branch: string): TestPlanGate
   const located = locateTestPlanSection(body)
 
   if (!located.found) {
-    if (TASK_BRANCH_PATTERN.test(branch)) {
+    if (parseTaskBranchIdentity(branch) !== null) {
       return {
         verdict: 'fail',
         messages: [
