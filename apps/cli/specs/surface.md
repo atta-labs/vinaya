@@ -609,6 +609,13 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `log` | function | `apps/cli/src/lib/log-sink.ts` |
 | `OUTBOX_MAX_BYTES` | const | `apps/cli/src/lib/log-sink.ts` |
 | `outboxPathFor` | function | `apps/cli/src/lib/log-sink.ts` |
+| `appendLoopLogLine` | function | `apps/cli/src/lib/loop-log.ts` |
+| `appendRoleLine` | function | `apps/cli/src/lib/loop-log.ts` |
+| `appendRunStartMarker` | function | `apps/cli/src/lib/loop-log.ts` |
+| `followLoopLog` | function | `apps/cli/src/lib/loop-log.ts` |
+| `LOOP_LOG_MAX_BYTES` | const | `apps/cli/src/lib/loop-log.ts` |
+| `loopLogPathFor` | function | `apps/cli/src/lib/loop-log.ts` |
+| `loopsRoot` | function | `apps/cli/src/lib/loop-log.ts` |
 | `EVIDENCE_SUMMARY_PREFIX` | const | `apps/cli/src/lib/numstat.ts` |
 | `summariseNumstat` | function | `apps/cli/src/lib/numstat.ts` |
 | `appendBlock` | function | `apps/cli/src/lib/ops.ts` |
@@ -685,7 +692,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `task dispatch` | `task.ts` | `taskDispatchCommand` | 1 | compliant | `dispatchTask` |
 | `task brief` | `task.ts` | `taskBriefCommand` | 1 | compliant | `prepareTaskOrIssue` |
 | `task run` | `task-run.ts` | `taskRunCommand` | 3 | exempt — see below | sharedCommandShell (target) |
-| `task status` | `task-status.ts` | `taskStatusCommand` | 3 | exempt — see below | taskStatus (target) |
+| `task status` | `task-status.ts` | `taskStatusCommand` | 5 | exempt — see below | taskStatus (target) |
 | `pr create` | `pr.ts` | `prCreateCommand` | 9 | exempt — see below | forgeWrite (target) |
 | `pr edit` | `pr.ts` | `prEditCommand` | 10 | exempt — see below | forgeWrite (target) |
 | `pr report` | `pr-report.ts` | `prReportCommand` | 4 | exempt — see below | collectTokens (target) |
@@ -761,7 +768,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `dispatch` | 2026-09-11 | 5 — lib (5): `loadConfig`, `isAgentVendor`, `dispatchRole`, `flushOutbox`, `printJson` | `sharedCommandShell` |
 | `dev-review-loop` | 2026-09-10 | 5 — lib: `loadConfig`, `isAgentVendor`, `devReviewLoop`, `printJson`, `colourLoopLine` | `sharedCommandShell` |
 | `task run` | 2026-09-11 | 3 — lib: `runTask`, `colourLoopLine`, `loadConfig` | `sharedCommandShell` |
-| `task status` | 2026-09-11 | 3 — lib: `printJson`, `gatherTaskStatusList`, `gatherSingleTaskStatus` | `taskStatus` |
+| `task status` | 2026-09-12 | 5 — lib: `printJson`, `gatherTaskStatusList`, `gatherSingleTaskStatus`, `loopLogPathFor`, `followLoopLog` | `taskStatus` |
 
 `dispatchRole` retires no row today — its own command (`dispatch`) is new, not a retirement of an existing exempt row. `devReviewLoop` (this task) likewise retires no row today — it is itself a new named chokepoint (`## Effects` intro), and `dev-review-loop`'s own command calls it alongside the same three argv-plumbing calls `dispatch` already carries (`loadConfig`/`isAgentVendor`/`printJson`) — once `sharedCommandShell` absorbs those, this command is left calling only `devReviewLoop`, becoming compliant on its own rather than needing a second named target.
 

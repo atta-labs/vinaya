@@ -70,6 +70,7 @@ import {
 } from './dispatch.js'
 import { postMarkedComment } from './forge-write.js'
 import { createLogSink, outboxPathFor } from './log-sink.js'
+import { appendRunStartMarker, loopLogPathFor } from './loop-log.js'
 import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
@@ -459,6 +460,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     const baseHeadAtStart = d.gitRevParseOriginMain()
     const loopOutboxPath = outboxPathFor({ outboxRoot: () => root }, repo, task)
     /**
+     * O6: the one file this run's own role-prefixed stream tees to,
+     * regardless of where it was launched — `vinaya task status --follow`
+     * tails it live. Resolved once, from the same `repo`/`task` every other
+     * per-run path here already uses; the run-start marker delineates this
+     * process's own narration from an earlier relaunch's still-appended one.
+     */
+    const loopLogPath = loopLogPathFor(repo, task)
+    appendRunStartMarker(loopLogPath, { role: 'dev-review-loop', pid: process.pid, runId })
+    /**
      * Awaits EACH event's own landing before firing the next `log()` call —
      * not just the batch's last one. `resolveRepo()` only caches a
      * DETERMINISTIC outcome (a parsed `AEG_REPO`, or a successful git-remote
@@ -514,7 +524,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           task: task,
           round: roundNum,
           resumeId: devResumeId ?? undefined,
-          promptFile
+          promptFile,
+          roleLogPath: loopLogPath
         })
       )
       await assertDispatchOrEscalate(handle, input.agent, isResume, devDispatchSucceededBefore)
@@ -667,7 +678,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         mkdirSync(workDir, { recursive: true })
         const prompt = renderReviewerDispatchPrompt(role, facts, workDir)
         const handle = await withPromptFile(prompt, (promptFile) =>
-          d.dispatchRole(dispatchRoleName, input.agent, prompt, { task: task, round: roundNum, promptFile })
+          d.dispatchRole(dispatchRoleName, input.agent, prompt, {
+            task: task,
+            round: roundNum,
+            promptFile,
+            roleLogPath: loopLogPath
+          })
         )
         await assertDispatchOrEscalate(handle, input.agent, false, false)
         const missing = missingReviewerArtifacts(workDir, hasObjectives)
