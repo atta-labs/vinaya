@@ -25,6 +25,7 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path'
+import { globToRegex } from '@attalabs/aeg-core'
 
 const FROM_CLAUSE_RE = /^\s*(?:import|export)\b[^'"]*?\bfrom\s*(['"])([^'"]+)\1/gm
 const BARE_IMPORT_RE = /^\s*import\s*(['"])([^'"]+)\1/gm
@@ -198,6 +199,25 @@ export type SelectionResult = {
   totalTestFiles: number
 }
 
+export type SelectionOptions = {
+  /**
+   * Glob patterns (matched against a test file's repo-root-relative path,
+   * `globToRegex`'s own grammar) naming test files whose own INPUT is the
+   * repository itself — a rule about the repo's own generated/managed
+   * state, which no import ever names. Reachability can never select one of
+   * these on the merits; they run on every push regardless (O1).
+   */
+  alwaysRun?: readonly string[]
+  /**
+   * Repo-root-relative or absolute paths of files added or renamed in this
+   * diff (`addedOrRenamedFilesSinceRemoteBase`). A brand-new or renamed test
+   * file has nothing importing it yet, so it can never satisfy reachability
+   * on its own first push — every one of these that IS a test file is
+   * selected unconditionally (O1).
+   */
+  addedOrRenamed?: readonly string[]
+}
+
 /**
  * The whole pipeline: given the changed files (repo-root-relative or
  * absolute, either works) and the repo root, groups them by workspace
@@ -205,11 +225,18 @@ export type SelectionResult = {
  * test file — in ANY package — whose transitive import closure reaches a
  * changed file in the SAME package, plus every test file that reaches a
  * changed OTHER package via a bare `@scope/name` import matching that
- * package's own `name`.
+ * package's own `name`, plus every test file `options.alwaysRun` names or
+ * that `options.addedOrRenamed` itself is.
  */
-export function selectAffectedTestFiles(repoRoot: string, changedFiles: string[]): SelectionResult {
+export function selectAffectedTestFiles(
+  repoRoot: string,
+  changedFiles: string[],
+  options: SelectionOptions = {}
+): SelectionResult {
   const packages = discoverWorkspacePackages(repoRoot)
   const absChanged = new Set(changedFiles.map((f) => (isAbsolute(f) ? f : join(repoRoot, f))))
+  const alwaysRunRegexes = (options.alwaysRun ?? []).map(globToRegex)
+  const addedOrRenamed = new Set((options.addedOrRenamed ?? []).map((f) => (isAbsolute(f) ? f : join(repoRoot, f))))
 
   // Which packages have at least one changed file directly inside them.
   const changedPackageNames = new Set<string>()
@@ -230,19 +257,19 @@ export function selectAffectedTestFiles(repoRoot: string, changedFiles: string[]
     const testFiles = files.filter(isTestFile)
     totalTestFiles += testFiles.length
 
-    const packageChanged = new Set([...absChanged].filter((f) => f.startsWith(`${pkg.dir}/`)))
-    if (packageChanged.size === 0 && changedPackageNames.size === 0) continue
-    // A package's own test files are only ever candidates for THIS
-    // selection when its own `test` script actually runs under `bun test`
-    // — a vitest-only package (e.g. `@attalabs/aeg-core`) still contributes
-    // to `changedPackageNames` above (so a bun-test-compatible package that
-    // imports it is correctly selected), but never has one of ITS OWN files
-    // pushed into `selected`, which the pre-push hook always runs through
-    // `bun test` regardless of which package's file it names.
+    // A non-bun-test-compatible package (e.g. a vitest-only package) never
+    // has one of its OWN files pushed into `selected` — `alwaysRun`/
+    // `addedOrRenamed` are still test files this hook would run through
+    // `bun test`, so a forced test is subject to the exact same restriction
+    // the reachability path already applies, kept symmetric.
     if (!pkg.bunTestCompatible) continue
 
+    const packageChanged = new Set([...absChanged].filter((f) => f.startsWith(`${pkg.dir}/`)))
+    const relevant = packageChanged.size > 0 || changedPackageNames.size > 0
+
     for (const test of testFiles) {
-      if (reachesChangedFile(test, edges, packageChanged, changedPackageNames, pkg.name)) {
+      const forced = alwaysRunRegexes.some((re) => re.test(test.slice(repoRoot.length + 1))) || addedOrRenamed.has(test)
+      if (forced || (relevant && reachesChangedFile(test, edges, packageChanged, changedPackageNames, pkg.name))) {
         selected.push(test)
       }
     }

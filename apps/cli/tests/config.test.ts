@@ -870,6 +870,44 @@ describe('VinayaConfigSchema.tokens — additive-only', () => {
   })
 })
 
+// task-15 (issue-545), O1/O5 — the two additive config keys this task adds.
+describe('VinayaConfigSchema.prePush / .report — additive-only', () => {
+  it("this repo's own vinaya.config.json declares prePush.alwaysRun and still validates", () => {
+    const raw = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', '..', 'vinaya.config.json'), 'utf-8'))
+    const parsed = VinayaConfigSchema.safeParse(raw)
+    expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      expect(parsed.data.prePush?.alwaysRun).toContain('apps/cli/tests/ci-shards.test.ts')
+    }
+  })
+
+  it('an existing config with no "prePush"/"report" key still validates', () => {
+    const parsed = VinayaConfigSchema.safeParse({
+      rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: true }
+    })
+    expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      expect(parsed.data.prePush).toBeUndefined()
+      expect(parsed.data.report).toBeUndefined()
+    }
+  })
+
+  it('accepts a well-formed prePush.alwaysRun glob list', () => {
+    const parsed = VinayaConfigSchema.safeParse({ prePush: { alwaysRun: ['apps/cli/tests/ci-shards.test.ts'] } })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('accepts a well-formed report.commandTimeoutMs', () => {
+    const parsed = VinayaConfigSchema.safeParse({ report: { commandTimeoutMs: 1_800_000 } })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('rejects a non-positive report.commandTimeoutMs', () => {
+    expect(VinayaConfigSchema.safeParse({ report: { commandTimeoutMs: 0 } }).success).toBe(false)
+    expect(VinayaConfigSchema.safeParse({ report: { commandTimeoutMs: -1 } }).success).toBe(false)
+  })
+})
+
 describe('parseTokensCollectDeclaration', () => {
   it('parses a well-formed "<interpreter> <script>" string', async () => {
     const { parseTokensCollectDeclaration } = await import('../src/lib/config.js')
