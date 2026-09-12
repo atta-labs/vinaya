@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   type AmendDepsDeps,
   type AmendDepsFlags,
+  appliesTaskIssueGate,
   edgesEqual,
   formatLeftoverPrint,
   type LeftoverFacts,
@@ -20,6 +21,30 @@ import {
   taskIdFromTitle,
   validateAmendFlags
 } from './open-issue'
+
+describe('appliesTaskIssueGate (task-run-v1 21, #541, round 2 review SECURITY HIGH)', () => {
+  it('applies on a vinaya/tranche:* label alone, even with a body carrying no task-shaped content', () => {
+    expect(appliesTaskIssueGate(['vinaya/tranche:fixture'], 'just an ordinary body')).toBe(true)
+  })
+
+  it('applies on a labelless body that carries an ## Objectives heading — a backlog Issue, not a bypass', () => {
+    const body = ['## Objectives', '', 'O1. Do the thing.', ''].join('\n')
+    expect(appliesTaskIssueGate([], body)).toBe(true)
+  })
+
+  it('applies on a labelless body carrying a Planner rationale field, no Objectives heading needed', () => {
+    const body = '**Boundary** — some rationale text naming the scope.'
+    expect(appliesTaskIssueGate([], body)).toBe(true)
+  })
+
+  it('does NOT apply to a labelless, non-task-shaped body — an ordinary Issue passes through unvalidated, unchanged from before this task', () => {
+    expect(appliesTaskIssueGate([], 'just an ordinary bug report')).toBe(false)
+  })
+
+  it('does NOT apply when body is null and no label is present (create with no body yet)', () => {
+    expect(appliesTaskIssueGate([], null)).toBe(false)
+  })
+})
 
 describe('locateBody', () => {
   it('reads --body-file <path> and records the file source with its arg index', () => {
