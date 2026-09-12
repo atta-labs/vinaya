@@ -23,7 +23,7 @@ run-name: "Vinaya Body Checks PR #${{ github.event.pull_request.number }} @ ${{ 
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, reopened, edited]
 
 # Same collapsing rationale as `vinaya-review.yml`'s concurrency group — see
 # that file's own comment for the two measured failure modes (duplicate
@@ -86,7 +86,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BRANCH: ${{ github.head_ref }}
         run: |
           ATTEMPTS=0
@@ -99,15 +98,6 @@ jobs:
               CLOSES_REGION="$(printf '%s\n' "$BODY" | sed -n '/<!-- AEG:CLOSES:START -->/,/<!-- AEG:CLOSES:END -->/p')"
               if ! printf '%s\n' "$CLOSES_REGION" | grep -qE '#[0-9]+'; then
                 WAIT_FOR="a real Closes #N inside the AEG:CLOSES region for task branch $BRANCH"
-              fi
-            fi
-            if [ -z "$WAIT_FOR" ]; then
-              EVIDENCE_REGION="$(printf '%s\n' "$BODY" | sed -n '/<!-- AEG:EVIDENCE:START -->/,/<!-- AEG:EVIDENCE:END -->/p')"
-              if [ -n "$EVIDENCE_REGION" ]; then
-                EVIDENCE_HEAD="$(printf '%s\n' "$EVIDENCE_REGION" | grep -m1 '^Head: ' | sed 's/^Head: //')"
-                if [ -n "$EVIDENCE_HEAD" ] && [ "$EVIDENCE_HEAD" != "$PR_HEAD_SHA" ]; then
-                  WAIT_FOR="the AEG:EVIDENCE block's Head ($EVIDENCE_HEAD) to catch up to this run's real head ($PR_HEAD_SHA)"
-                fi
               fi
             fi
             if [ -z "$WAIT_FOR" ]; then

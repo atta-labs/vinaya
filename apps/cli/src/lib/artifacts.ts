@@ -451,22 +451,24 @@ ${indented}
  * (\`runBodyChecks\`, O1) before it could exist on the forge at all, so a
  * missing/malformed \`AEG:CLOSES\` region here is never a legitimate,
  * permanent state for a task branch — it is this exact race, and it is
- * safe to wait a few seconds for it to resolve. Same reasoning for a
- * present \`AEG:EVIDENCE\` block whose recorded \`Head:\` is not yet this
- * run's real PR head: \`pr report --push\` re-reads and self-verifies its
- * own write, so a body carrying a STALE head is a write still landing, not
- * a permanently wrong one.
+ * safe to wait a few seconds for it to resolve.
  *
  * Bounded — six attempts, five seconds apart (thirty seconds total) — and
  * loud on exhaustion: names exactly what it waited for rather than quietly
  * running the check suite against a body it already knows may be stale.
+ *
+ * No longer waits for the \`AEG:EVIDENCE\` block's \`Head:\` to catch up (O8,
+ * task-run-v1 20): both workflows this step feeds now trigger on
+ * \`opened\`/\`reopened\`/\`edited\` only, never \`synchronize\` (see each
+ * workflow's own \`on:\` block), so a push landing after this run started
+ * can no longer race it. \`evidence-fresh\` at the merge gate remains the
+ * sole guard against a body whose recorded head lags the branch.
  */
 function verifiedFetchPrBodyStep(): string {
   return `      - name: Fetch PR body
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
-          PR_HEAD_SHA: \${{ github.event.pull_request.head.sha }}
           BRANCH: \${{ github.head_ref }}
         run: |
           ATTEMPTS=0
@@ -479,15 +481,6 @@ function verifiedFetchPrBodyStep(): string {
               CLOSES_REGION="$(printf '%s\\n' "$BODY" | sed -n '/<!-- AEG:CLOSES:START -->/,/<!-- AEG:CLOSES:END -->/p')"
               if ! printf '%s\\n' "$CLOSES_REGION" | grep -qE '#[0-9]+'; then
                 WAIT_FOR="a real Closes #N inside the AEG:CLOSES region for task branch $BRANCH"
-              fi
-            fi
-            if [ -z "$WAIT_FOR" ]; then
-              EVIDENCE_REGION="$(printf '%s\\n' "$BODY" | sed -n '/<!-- AEG:EVIDENCE:START -->/,/<!-- AEG:EVIDENCE:END -->/p')"
-              if [ -n "$EVIDENCE_REGION" ]; then
-                EVIDENCE_HEAD="$(printf '%s\\n' "$EVIDENCE_REGION" | grep -m1 '^Head: ' | sed 's/^Head: //')"
-                if [ -n "$EVIDENCE_HEAD" ] && [ "$EVIDENCE_HEAD" != "$PR_HEAD_SHA" ]; then
-                  WAIT_FOR="the AEG:EVIDENCE block's Head ($EVIDENCE_HEAD) to catch up to this run's real head ($PR_HEAD_SHA)"
-                fi
               fi
             fi
             if [ -z "$WAIT_FOR" ]; then
@@ -516,17 +509,24 @@ name: Vinaya Checks
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, reopened, edited]
 
-# One run per pull request COMMIT, always. Several \`types:\` above can fire in the
-# same instant — \`vinaya pr create\` opens the PR and applies its tranche
-# label immediately after, so \`opened\` and \`labeled\` arrive together and
-# GitHub starts TWO runs of this workflow. Both then report under the same
-# check name, and the merge box counts both: one can go green while its twin
-# holds a stale red, which no later verdict clears because each run only ever
-# re-evaluates itself. Measured live on atta-labs/vinaya#18 — two runs created
-# in the same second, one success, one failure, PR blocked with both reviews
-# already approved.
+# No \`synchronize\` above (O8, task-run-v1 20): a push's own \`vinaya pr
+# report --push\` always follows it with a body edit (\`gh pr edit\`) carrying
+# that push's real head, which fires \`edited\` — the only trigger left this
+# workflow needs, against a body that already names the new head. A push
+# with no following edit simply produces no run, by design; \`evidence-fresh\`
+# at the merge gate is what still catches that case.
+#
+# Several \`types:\` above can still fire in the same instant — \`vinaya pr
+# create\` opens the PR and applies its tranche label immediately after, so
+# \`opened\` and \`labeled\` arrive together and GitHub starts TWO runs of this
+# workflow. Both then report under the same check name, and the merge box
+# counts both: one can go green while its twin holds a stale red, which no
+# later verdict clears because each run only ever re-evaluates itself.
+# Measured live on atta-labs/vinaya#18 — two runs created in the same
+# second, one success, one failure, PR blocked with both reviews already
+# approved.
 #
 # The key carries the head SHA as well as the PR number, and that second half
 # is load-bearing. Keyed on the PR alone, every run for that PR shares one
@@ -916,7 +916,7 @@ run-name: "Vinaya Body Checks PR #\${{ github.event.pull_request.number }} @ \${
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, reopened, edited]
 
 # Same collapsing rationale as \`vinaya-review.yml\`'s concurrency group — see
 # that file's own comment for the two measured failure modes (duplicate
