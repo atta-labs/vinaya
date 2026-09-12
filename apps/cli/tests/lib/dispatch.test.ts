@@ -971,6 +971,45 @@ describe('dispatch observability — wired through a real run (#450)', () => {
   })
 })
 
+describe('dispatch role log — redaction (round 2 review, SECURITY HIGH)', () => {
+  it('never writes a token-shaped string from a rendered agent event to the role log', () => {
+    const home = tempDir('vinaya-rolelog-home-')
+    const cwd = tempDir('vinaya-rolelog-cwd-')
+    const binDir = tempDir('vinaya-rolelog-bin-')
+    const roleLogPath = join(cwd, 'role.log')
+    // A `stream-json` line whose rendered text is exactly what a dispatched
+    // agent's own tool output can echo — a real credential value, not a
+    // synthetic marker — the same shape `openOutputTee`'s own redaction test
+    // above exercises for the tee, now for `appendRoleLine`'s separate sink.
+    const assistantLine = JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: 'GITHUB_TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz' }]
+      }
+    })
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\necho '${assistantLine}'\necho '{"usage":{"input_tokens":1,"output_tokens":2}}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--role-log-path', roleLogPath],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const contents = readFileSync(roleLogPath, 'utf8')
+    expect(contents).toContain('[developer]')
+    expect(contents).toContain('GITHUB_TOKEN=')
+    expect(contents).not.toContain('ghp_0123456789abcdefghijklmnopqrstuvwxyz')
+  })
+})
+
 /**
  * Role-prefixed, per-role-coloured terminal output (Issue #491, O1/O2/O3).
  * `colourEnabled`/`colourAgentLine`/`colourLoopLine` are exported for

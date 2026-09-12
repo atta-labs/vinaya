@@ -1094,7 +1094,10 @@ export async function dispatchRole(
               .map((l) => colourAgentLine(role, l, process.stderr))
               .join('\n')
             process.stderr.write(`${out}\n`)
-            if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, rendered)
+            // Security (round 2 review, HIGH): `rendered` is agent output, the
+            // same untrusted-bytes hazard `openOutputTee`'s `redact` pass
+            // exists for — route this sink through it too before it reaches disk.
+            if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, redact(rendered, homedir()))
           }
         } catch {
           // not a JSON line, or a renderer that refused it — never fatal
