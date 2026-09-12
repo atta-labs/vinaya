@@ -14,6 +14,7 @@ import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
 import { coreCheckRegistry } from '../checks/registry'
 import { buildCheckEnv } from '../checks/runner'
 import { ScanContext } from '../checks/scan-context'
+import { loadConfig } from '../lib/config'
 import { runBodyChecks } from '../lib/forge-write'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../lib/numstat'
 import { packageRoot } from '../lib/package-root.js'
@@ -421,12 +422,19 @@ function renderGroupB(outcomes: GateOutcome[], gradedBodySource: GradedBodySourc
  * `AEG:EVIDENCE` block IS the evidence — never a round comment, never a
  * hand-typed paste.
  *
- * The runner's own per-check default (`apps/cli/src/commands/check.ts`'s
- * `defaultTimeoutMs: 30_000`) is mirrored here, not imported — this is a
- * command's own subprocess budget, not a registered check going through
- * that runner.
+ * Policy, not a mirrored constant (issue-545, O5): `report.commandTimeoutMs`
+ * in `vinaya.config.json`, defaulting to `DEFAULT_COMMAND_TIMEOUT_MS`. The
+ * prior hardcoded `30_000` (mirrored from `apps/cli/src/commands/check.ts`'s
+ * own per-check default) was far too small for a real Test Plan command — a
+ * production build, a booted app, an end-to-end check — so a genuinely slow
+ * command was recorded as a false `timeout` for lack of budget, never for
+ * lack of correctness.
  */
-const AGENT_COMMAND_TIMEOUT_MS = 30_000
+export const DEFAULT_COMMAND_TIMEOUT_MS = 900_000
+
+export function resolveCommandTimeoutMs(): number {
+  return loadConfig()?.report?.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
+}
 
 export type GroupCCommandResult = { command: string; output: string; exitCode: number | null; timedOut: boolean }
 export type GroupC = { commands: GroupCCommandResult[] }
@@ -485,8 +493,9 @@ function truncateAgentOutput(output: string): string {
  * together (most of these commands are CLI invocations that report their
  * real result on either stream, and Group C's job is to show what actually
  * happened, not to pre-judge which stream mattered). A command that exceeds
- * `AGENT_COMMAND_TIMEOUT_MS` is recorded with the literal output `timeout`,
- * never silently dropped from the block.
+ * `timeoutMs` (default `resolveCommandTimeoutMs()`, O5) is recorded with the
+ * budget it exceeded, never silently dropped from the block and never a
+ * bare, budget-less `timeout` string.
  *
  * Spawned with `buildCheckEnv(undefined)` — the same baseline `runner.ts`
  * gives every registered check (`PATH`/`LANG`/`HOME`/proxy vars/`TMPDIR`
@@ -496,16 +505,16 @@ function truncateAgentOutput(output: string): string {
  * what secrets its own §9 line can read, so `GH_TOKEN`/`GITHUB_TOKEN` never
  * reach it.
  */
-export function runAgentCommand(command: string): GroupCCommandResult {
+export function runAgentCommand(command: string, timeoutMs: number = resolveCommandTimeoutMs()): GroupCCommandResult {
   const proc = spawnSync('bash', ['-c', command], {
     cwd: process.cwd(),
     encoding: 'utf8',
-    timeout: AGENT_COMMAND_TIMEOUT_MS,
+    timeout: timeoutMs,
     maxBuffer: 32 * 1024 * 1024,
     env: buildCheckEnv(undefined)
   })
   if (proc.error && (proc.error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
-    return { command, output: 'timeout', exitCode: null, timedOut: true }
+    return { command, output: `timeout (budget ${timeoutMs}ms)`, exitCode: null, timedOut: true }
   }
   const output = truncateAgentOutput(`${proc.stdout ?? ''}${proc.stderr ?? ''}`.trim())
   return { command, output, exitCode: proc.status, timedOut: false }

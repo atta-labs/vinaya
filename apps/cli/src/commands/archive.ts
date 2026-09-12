@@ -18,6 +18,7 @@ import {
   formatTokensLine,
   hasProvenance,
   isEligibleForProvenance,
+  parseDeveloperRoundMarker,
   resolveMeteringCapability,
   taskRefFromBranch,
   trancheLabel,
@@ -30,14 +31,15 @@ import { closeStdin, promptYesNo } from '../lib/prompt.js'
 import { loadConfig } from '../lib/config.js'
 import { realDeps as meteringRealDeps } from './tokens.js'
 
-// `rings.ring2_asyncAudits` is additive, never disabling: `false` (or absent
-// — every pre-existing `vinaya init` starter config reads `false` here) is a
-// no-op, leaving the Archivist's real work running exactly as it does today,
-// unconditionally, for every existing adopter. `true` is the new opt-in
-// accelerator — the only value that changes behavior — and skips it. An
+// `rings.ring2_asyncAudits` means what it says: `true` (the default — an
+// absent key resolves the same way) RUNS the async audits, so the
+// Archivist's real work runs exactly as it always has. `false` is the
+// opt-OUT — the only value that changes behavior — and skips it. An
 // unreadable/invalid config resolves the same as absent: real work runs.
-function ring2Accelerated(): boolean {
-  return loadConfig()?.rings?.ring2_asyncAudits === true
+// (Prior to issue-545/O2 this boolean's sense was inverted; `vinaya upgrade`
+// migrates a config still holding the old values.)
+function ring2AsyncAuditsDisabled(): boolean {
+  return loadConfig()?.rings?.ring2_asyncAudits === false
 }
 
 export type ArchiveDeps = {
@@ -160,10 +162,8 @@ function parseMergeSha(args: string[]): string | null {
 }
 
 export async function runArchive(args: string[], deps: ArchiveDeps): Promise<number> {
-  if (ring2Accelerated()) {
-    process.stdout.write(
-      '[vinaya archive] rings.ring2_asyncAudits is `true` (opt-in accelerator) — skipping, nothing changed.\n'
-    )
+  if (ring2AsyncAuditsDisabled()) {
+    process.stdout.write('[vinaya archive] rings.ring2_asyncAudits is `false` — skipping, nothing changed.\n')
     return 0
   }
 
@@ -304,8 +304,66 @@ export async function archiveCommand(args: string[]): Promise<void> {
 // skips the confirm prompt, same convention as init/eject/upgrade.
 // ---------------------------------------------------------------------------
 
-type Milestone = { number: number; title: string }
+type Milestone = { number: number; title: string; description: string | null }
 type LabeledIssueRef = { number: number; title: string; state: 'OPEN' | 'CLOSED' }
+type TaskPrForRetrospective = { number: number; comments: { body: string }[] }
+
+/**
+ * The highest Developer round marker (`<!-- aeg:developer:round-<n> -->`,
+ * `@attalabs/aeg-core`'s `parseDeveloperRoundMarker`) posted on a merged
+ * task PR — `1` when none is found, since a task that merged on its first
+ * round never had a reason to post one.
+ */
+export function roundsForTaskPr(pr: TaskPrForRetrospective): number {
+  let max = 0
+  for (const c of pr.comments) {
+    const n = parseDeveloperRoundMarker(c.body)
+    if (n !== null && n > max) max = n
+  }
+  return max || 1
+}
+
+/**
+ * The `### Retrospective: <slug>` section `archive tranche` appends to the
+ * Milestone description once a tranche is complete — task count, rounds per
+ * task, and the merged PR list (O4). Pure: takes the tranche's merged task
+ * PRs (each with its own comments, for `roundsForTaskPr`) and renders the
+ * section text; never writes anywhere itself.
+ */
+export function renderRetrospectiveSection(slug: string, taskPrs: TaskPrForRetrospective[]): string {
+  const roundsList = taskPrs.map((pr) => `#${pr.number} (${roundsForTaskPr(pr)})`).join(', ') || 'none'
+  const mergedList = taskPrs.map((pr) => `#${pr.number}`).join(', ') || 'none'
+  return [
+    `### Retrospective: ${slug}`,
+    '',
+    `- Tasks: ${taskPrs.length}`,
+    `- Rounds per task: ${roundsList}`,
+    `- Merged PRs: ${mergedList}`
+  ].join('\n')
+}
+
+/**
+ * Splices `section` into a Milestone description — appended at the end on
+ * a first run, or replacing an EXISTING `### Retrospective: <slug>` block
+ * in place (up to the next `###` heading or end of description) on a
+ * re-run, so re-archiving never duplicates the section.
+ */
+export function appendRetrospectiveSection(description: string, slug: string, section: string): string {
+  const escapedSlug = slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // No `m` flag: `$` must mean the true end of the string, never "before any
+  // line terminator" — with `m` set, the lazy `[\s\S]*?` below matched zero
+  // characters (the blank line right after the heading already satisfies a
+  // multiline `$`), replacing only the heading and leaving the old body
+  // stranded underneath the new one. `(^|\n)` stands in for `^` in multiline
+  // mode instead, and its capture is restored in the replacement so the
+  // separating newline (or true start of description) survives.
+  const existing = new RegExp(`(^|\\n)### Retrospective: ${escapedSlug}\\n[\\s\\S]*?(?=\\n### |$)`)
+  if (existing.test(description)) {
+    return `${description.replace(existing, `$1${section}`).trimEnd()}\n`
+  }
+  const trimmed = description.trimEnd()
+  return `${trimmed}${trimmed.length > 0 ? '\n\n' : ''}${section}\n`
+}
 
 function parseTrancheArgs(args: string[]): { slug: string | null; yes: boolean } {
   const yes = args.includes('--yes')
@@ -414,8 +472,33 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
     }
   }
 
-  sh(['gh', 'api', '-X', 'PATCH', `repos/${repoFlag}/milestones/${milestone.number}`, '-f', 'state=closed'])
-  process.stdout.write(`Tranche '${slug}' closed (Milestone #${milestone.number}).\n`)
+  // The retrospective (O4): every merged task PR on this tranche's own
+  // branch prefix (`task/<slug>/…`), each with its comments so
+  // `roundsForTaskPr` can count Developer rounds from the same round
+  // marker `roles/developer.md`'s post-open sequence posts. Never an
+  // Issue write — the section lands in the Milestone description alone.
+  const taskPrs = shJson<TaskPrForRetrospective[]>([
+    'gh',
+    'pr',
+    'list',
+    '-R',
+    repoFlag,
+    '--state',
+    'merged',
+    '--search',
+    `head:task/${slug}/`,
+    '--json',
+    'number,comments',
+    '--limit',
+    '200'
+  ])
+  const section = renderRetrospectiveSection(slug, taskPrs)
+  const newDescription = appendRetrospectiveSection(milestone.description ?? '', slug, section)
+  sh(
+    ['gh', 'api', '-X', 'PATCH', `repos/${repoFlag}/milestones/${milestone.number}`, '--input', '-'],
+    JSON.stringify({ description: newDescription, state: 'closed' })
+  )
+  process.stdout.write(`Tranche '${slug}' closed (Milestone #${milestone.number}), retrospective recorded.\n`)
   return 0
 }
 

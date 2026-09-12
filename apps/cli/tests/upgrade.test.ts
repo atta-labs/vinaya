@@ -9,7 +9,7 @@ import { runDoctor } from '../src/commands/doctor.js'
 import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
 import type { UpgradeDeps } from '../src/commands/upgrade.js'
-import { runUpgrade } from '../src/commands/upgrade.js'
+import { planRingsMigration, runUpgrade } from '../src/commands/upgrade.js'
 import { CHECKS_WORKFLOW_PATH, CONFIG_PATH, REVIEW_WORKFLOW_PATH } from '../src/lib/artifacts.js'
 import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
 import { CLAUDE_SETTINGS_PATH, CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/claude-stop-hook-emitter.js'
@@ -576,4 +576,110 @@ describe('vinaya upgrade — raw git hooks inside a linked worktree', () => {
       git(root, ['worktree', 'remove', '--force', wtRoot])
     }
   }, 20_000) // real `runInit` + `worktree add` + two `runUpgrade`s + `runDoctor` — bun's 5s default is too tight on a cold CI runner
+})
+
+// issue-545, O2 — rings.ring1_forgeWriteInterception/ring2_asyncAudits had
+// their meaning inverted; `vinaya upgrade` migrates a config still holding
+// the old literal starter default (`false`), version-gated so it fires at
+// most once per repo.
+describe('planRingsMigration', () => {
+  it('migrates both keys when the manifest predates version 3 and both are the stale `false` default', () => {
+    expect(planRingsMigration(2, { ring1_forgeWriteInterception: false, ring2_asyncAudits: false })).toEqual({
+      ring1: { from: false, to: true },
+      ring2: { from: false, to: true }
+    })
+  })
+
+  it('migrates a mixed config — each key flips independently of the other', () => {
+    expect(planRingsMigration(2, { ring1_forgeWriteInterception: false, ring2_asyncAudits: true })).toEqual({
+      ring1: { from: false, to: true },
+      ring2: { from: true, to: false }
+    })
+  })
+
+  it('review round 2, BLOCKER 1: migrates a config holding the old, deliberate opt-in-to-skip `true` too — not just the stale `false` default', () => {
+    expect(planRingsMigration(2, { ring1_forgeWriteInterception: true, ring2_asyncAudits: true })).toEqual({
+      ring1: { from: true, to: false },
+      ring2: { from: true, to: false }
+    })
+  })
+
+  it('never migrates a manifest already at version 3, even if both keys are literally `false`', () => {
+    expect(planRingsMigration(3, { ring1_forgeWriteInterception: false, ring2_asyncAudits: false })).toBeNull()
+  })
+
+  it('never migrates when rings is absent entirely', () => {
+    expect(planRingsMigration(2, undefined)).toBeNull()
+  })
+
+  it('never migrates a key that is absent, even when its sibling key is present and migrates', () => {
+    expect(planRingsMigration(2, { ring1_forgeWriteInterception: false })).toEqual({
+      ring1: { from: false, to: true },
+      ring2: null
+    })
+  })
+})
+
+describe('vinaya upgrade — rings migration end-to-end', () => {
+  it('rewrites a stale `false`/`false` config to `true`/`true`, bumps the manifest version, and prints what changed', async () => {
+    await runInit(['--yes'], initDeps())
+    const configAbs = join(root, CONFIG_PATH)
+    const cfg = JSON.parse(readFileSync(configAbs, 'utf-8'))
+    // Simulate a pre-fix install: the old starter default, at the old
+    // manifest version.
+    cfg.rings = { ring1_forgeWriteInterception: false, ring2_asyncAudits: false }
+    cfg.managed.version = 2
+    writeFileSync(configAbs, `${JSON.stringify(cfg, null, 2)}\n`, 'utf-8')
+
+    let rc = -1
+    const out = await captureStdout(async () => {
+      rc = await runUpgrade(['--yes'], upgradeDeps())
+    })
+    expect(rc).toBe(0)
+    expect(out).toContain('rings.ring1_forgeWriteInterception: false → true')
+    expect(out).toContain('rings.ring2_asyncAudits: false → true')
+
+    const after = JSON.parse(readFileSync(configAbs, 'utf-8'))
+    expect(after.rings).toEqual({ ring1_forgeWriteInterception: true, ring2_asyncAudits: true })
+    expect(after.managed.version).toBe(3)
+  })
+
+  it('review round 2, BLOCKER 1: rewrites a deliberate old opt-in-to-skip `true`/`true` config to `false`/`false`, never leaving it silently reinterpreted as "run"', async () => {
+    await runInit(['--yes'], initDeps())
+    const configAbs = join(root, CONFIG_PATH)
+    const cfg = JSON.parse(readFileSync(configAbs, 'utf-8'))
+    // An adopter who ran `vinaya init` before this fix and deliberately
+    // opted BOTH rings into their old "skip" meaning (`true`).
+    cfg.rings = { ring1_forgeWriteInterception: true, ring2_asyncAudits: true }
+    cfg.managed.version = 2
+    writeFileSync(configAbs, `${JSON.stringify(cfg, null, 2)}\n`, 'utf-8')
+
+    const out = await captureStdout(async () => {
+      await runUpgrade(['--yes'], upgradeDeps())
+    })
+    expect(out).toContain('rings.ring1_forgeWriteInterception: true → false')
+    expect(out).toContain('rings.ring2_asyncAudits: true → false')
+
+    const after = JSON.parse(readFileSync(configAbs, 'utf-8'))
+    expect(after.rings).toEqual({ ring1_forgeWriteInterception: false, ring2_asyncAudits: false })
+    expect(after.managed.version).toBe(3)
+  })
+
+  it('never re-migrates a config already at version 3, even if an adopter deliberately set a ring back to `false`', async () => {
+    await runInit(['--yes'], initDeps())
+    const configAbs = join(root, CONFIG_PATH)
+    const cfg = JSON.parse(readFileSync(configAbs, 'utf-8'))
+    // Already migrated (version 3), but the adopter has since chosen to
+    // opt out of ring 2 on purpose — this must survive untouched.
+    cfg.rings = { ring1_forgeWriteInterception: true, ring2_asyncAudits: false }
+    writeFileSync(configAbs, `${JSON.stringify(cfg, null, 2)}\n`, 'utf-8')
+
+    const out = await captureStdout(async () => {
+      await runUpgrade(['--yes'], upgradeDeps())
+    })
+    expect(out).not.toContain('Rings migrated')
+
+    const after = JSON.parse(readFileSync(configAbs, 'utf-8'))
+    expect(after.rings).toEqual({ ring1_forgeWriteInterception: true, ring2_asyncAudits: false })
+  })
 })

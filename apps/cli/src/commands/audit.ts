@@ -24,28 +24,29 @@ import { loadConfig } from '../lib/config.js'
 import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
 import { printJson } from '../lib/envelope.js'
 
-// `rings.ring2_asyncAudits` is additive, never disabling: `false` (or absent
-// — every pre-existing `vinaya init` starter config reads `false` here) is a
-// no-op, leaving dead-branch-push's real work running exactly as it does
-// today, unconditionally, for every existing adopter. `true` is the new
-// opt-in accelerator — the only value that changes behavior — and skips it.
-// An unreadable/invalid config resolves the same as absent: real work runs.
+// `rings.ring2_asyncAudits` means what it says: `true` (the default — an
+// absent key resolves the same way) RUNS the async audits, so
+// dead-branch-push's real work runs exactly as it always has. `false` is
+// the opt-OUT — the only value that changes behavior — and skips it. An
+// unreadable/invalid config resolves the same as absent: real work runs.
+// (Prior to issue-545/O2 this boolean's sense was inverted; `vinaya upgrade`
+// migrates a config still holding the old values.)
 //
 // Deliberately scoped to dead-branch-push ONLY, never direct-main-push
 // detection (security review finding, HIGH): dead-branch-push is a
-// never-red notification channel — pure bookkeeping, safe to make opt-in.
+// never-red notification channel — pure bookkeeping, safe to make opt-out.
 // direct-main-push-detection is a real pass/fail that fails CI and opens an
 // incident when a commit reaches `main` outside a PR merge — the mechanism
 // that catches a branch-protection bypass. Reading its own on/off switch
 // from ordinary, PR-reachable `vinaya.config.json` content (the same commit
 // being audited) would let the exact actor this check exists to catch
 // silently blind it in the same push, and would let an adopter reaching
-// for the accelerator for the noisy dead-branch notifications unknowingly
+// for the opt-out for the noisy dead-branch notifications unknowingly
 // disable their own direct-push alarm too. So direct-main-push-detection
 // stays unconditional here, same treatment `checkMilestoneShape` already
 // gets — a config flag never gates a security-relevant detection check.
-function ring2Accelerated(): boolean {
-  return loadConfig()?.rings?.ring2_asyncAudits === true
+function ring2AsyncAuditsDisabled(): boolean {
+  return loadConfig()?.rings?.ring2_asyncAudits === false
 }
 
 export type AuditDeps = {
@@ -380,9 +381,9 @@ function parseOnly(args: string[]): OnlyMode {
 export async function runAudit(args: string[], deps: AuditDeps): Promise<number> {
   const jsonOutput = args.includes('--json')
   const only = parseOnly(args)
-  // Scoped to dead-branch-push only — see `ring2Accelerated`'s doc comment.
-  // direct-main-push-detection is never skipped by this flag.
-  const skipDeadBranch = ring2Accelerated()
+  // Scoped to dead-branch-push only — see `ring2AsyncAuditsDisabled`'s doc
+  // comment. direct-main-push-detection is never skipped by this flag.
+  const skipDeadBranch = ring2AsyncAuditsDisabled()
 
   const repo = await deps.detectRepo()
   if (!repo) {
@@ -408,7 +409,7 @@ export async function runAudit(args: string[], deps: AuditDeps): Promise<number>
         only === 'direct-push'
           ? null
           : skipDeadBranch
-            ? { skipped: true, reason: 'rings.ring2_asyncAudits is true (opt-in accelerator)' }
+            ? { skipped: true, reason: 'rings.ring2_asyncAudits is false' }
             : { scanned: deadBranch.scanned, findings: deadBranch.findings },
       directMainPush: directPush ? { sha, ...directPush } : null
     })
@@ -416,7 +417,7 @@ export async function runAudit(args: string[], deps: AuditDeps): Promise<number>
     process.stdout.write('vinaya audit\n\n')
     if (only !== 'direct-push') {
       if (skipDeadBranch) {
-        process.stdout.write('· [dead-branch-push] skipped — rings.ring2_asyncAudits is `true` (opt-in accelerator).\n')
+        process.stdout.write('· [dead-branch-push] skipped — rings.ring2_asyncAudits is `false`.\n')
       } else {
         process.stdout.write(
           `· [dead-branch-push] task branches scanned: ${deadBranch.scanned}, flagged: ${deadBranch.findings.length}\n`

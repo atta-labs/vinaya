@@ -85,9 +85,14 @@ function initRepo(): string {
   execFileSync('git', ['init', '-q'], { cwd: repo })
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
   execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
+  // ring1_forgeWriteInterception: false opts OUT of brief-schema validation
+  // (issue-545, O2 — `false` now means "skip", `true` means "run") so these
+  // fixtures can focus on the legacy-marker-refusal/body-pass-through
+  // behavior alone, without Tier/Test-Plan/etc. brief-schema requirements
+  // getting in the way.
   writeFileSync(
     join(repo, 'vinaya.config.json'),
-    `${JSON.stringify({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } }, null, 2)}\n`
+    `${JSON.stringify({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } }, null, 2)}\n`
   )
   execFileSync('git', ['add', '.'], { cwd: repo })
   execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })

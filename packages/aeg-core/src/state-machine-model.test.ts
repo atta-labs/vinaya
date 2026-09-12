@@ -97,10 +97,14 @@ describe('DERIVATION_RULES — shape', () => {
     }
   })
 
-  it('is total — the last rule matches unconditionally, so evaluation always concludes', () => {
-    const last = DERIVATION_RULES[DERIVATION_RULES.length - 1]
-    expect(last?.matches(facts())).toBe(true)
-    expect(last?.matches(facts({ issueState: 'closed', stateReason: 'completed' }))).toBe(true)
+  it('is total — deriveStatusFromModel always concludes, even though no single rule is unconditional (issue-545, O6)', () => {
+    // No rule in the list matches `() => true` any more (`closed-without-merge`
+    // is scoped to `issueState === 'closed'` so it could move ahead of
+    // `branch-exists`/`issue-open`) — totality is `deriveStatusFromModel`'s
+    // own trailing fallback, exercised here for both an ordinary open Issue
+    // and a closed one.
+    expect(deriveStatusFromModel(facts())).toBe('todo')
+    expect(deriveStatusFromModel(facts({ issueState: 'closed', stateReason: 'completed' }))).toBe('incoherent')
   })
 })
 
@@ -122,10 +126,10 @@ describe('DERIVATION_RULES — order is load-bearing', () => {
       [4, 'pr-merged', 'merged'],
       [5, 'pr-open-changes-requested', 'changes-requested'],
       [5, 'pr-open', 'in-review'],
-      [6, 'branch-exists', 'in-flight'],
-      [7, 'issue-open', 'todo'],
-      [8, 'closed-not-planned', 'dropped'],
-      [8, 'closed-without-merge', 'incoherent']
+      [6, 'closed-not-planned', 'dropped'],
+      [6, 'closed-without-merge', 'incoherent'],
+      [7, 'branch-exists', 'in-flight'],
+      [8, 'issue-open', 'todo']
     ])
   })
 
@@ -142,6 +146,14 @@ describe('DERIVATION_RULES — order is load-bearing', () => {
   it('changes-requested precedes the plain open-PR rule', () => {
     const idx = (id: string) => DERIVATION_RULES.findIndex((r) => r.id === id)
     expect(idx('pr-open-changes-requested')).toBeLessThan(idx('pr-open'))
+  })
+
+  it('issue-545, O6: both closed-Issue rules precede branch-exists AND issue-open', () => {
+    const idx = (id: string) => DERIVATION_RULES.findIndex((r) => r.id === id)
+    expect(idx('closed-not-planned')).toBeLessThan(idx('branch-exists'))
+    expect(idx('closed-not-planned')).toBeLessThan(idx('issue-open'))
+    expect(idx('closed-without-merge')).toBeLessThan(idx('branch-exists'))
+    expect(idx('closed-without-merge')).toBeLessThan(idx('issue-open'))
   })
 })
 
@@ -171,6 +183,20 @@ describe('DERIVATION_RULES — reachability', () => {
     })
   }
 
+  // issue-545, O6 — the fixture proof: a closed NOT_PLANNED Issue whose task
+  // branch was never cleaned up must resolve to `dropped`, not `in-flight`.
+  // Before the reorder, `branch-exists` (which never checks `issueState`)
+  // matched first and this permanently misreported the task as in progress.
+  it('a closed NOT_PLANNED Issue with branchExists: true still resolves to dropped, never in-flight', () => {
+    const f = facts({ issueState: 'closed', stateReason: 'not_planned', branchExists: true })
+    expect(deriveStatusFromModel(f)).toBe('dropped')
+  })
+
+  it('a closed (otherwise-reasoned) Issue with branchExists: true still resolves to incoherent, never in-flight', () => {
+    const f = facts({ issueState: 'closed', stateReason: 'completed', branchExists: true })
+    expect(deriveStatusFromModel(f)).toBe('incoherent')
+  })
+
   it('every rule is individually reachable — no rule is shadowed by an earlier one', () => {
     // A rule shadowed by its predecessors is dead code that would silently
     // never fire; enumerate the fact space and assert each rule wins at least
@@ -193,9 +219,16 @@ describe('DERIVATION_RULES — reachability', () => {
 })
 
 describe('deriveStatusFromModel — equivalence with the pre-refactor if-chain', () => {
-  // The literal chain as it stood before the model existed. Behavior-identity
-  // is the whole bar of this refactor, so it is asserted directly against an
-  // exhaustive fact grid rather than trusted to the fixture suite alone.
+  // The literal chain as it stood before the model existed, WITH the
+  // issue-545/O6 fix folded in (the closed-Issue check moved ahead of the
+  // branchExists check) — this reference chain carried the exact bug O6
+  // fixes (`if (f.branchExists) return 'in-flight'` ran before the closed
+  // check, so a closed Issue with a lingering branch read as in-flight
+  // forever), and the whole point of this test is agreement with the REAL
+  // model, so it must carry the same fix, not the bug it existed to prove
+  // the refactor preserved. Behavior-identity is otherwise the whole bar of
+  // this refactor, asserted directly against an exhaustive fact grid rather
+  // than trusted to the fixture suite alone.
   function legacyDeriveStatus(f: ForgeFacts | undefined): DerivedStatus {
     if (!f) return 'todo'
     if (f.blockedLabel) return 'blocked'
@@ -206,9 +239,11 @@ describe('deriveStatusFromModel — equivalence with the pre-refactor if-chain',
     if (f.prState === 'open') {
       return f.reviewDecision === 'changes_requested' ? 'changes-requested' : 'in-review'
     }
+    if (f.issueState === 'closed') {
+      return f.stateReason === 'not_planned' ? 'dropped' : 'incoherent'
+    }
     if (f.branchExists) return 'in-flight'
-    if (f.issueState === 'open') return 'todo'
-    return f.stateReason === 'not_planned' ? 'dropped' : 'incoherent'
+    return 'todo'
   }
 
   it('agrees on undefined facts', () => {
