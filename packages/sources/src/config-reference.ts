@@ -35,7 +35,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'rings',
     type: 'object (optional)',
     semantics: [
-      'Declarative booleans for the two opt-in accelerator rings. Ring 0 (git hooks) and the CI/branch-protection guarantee are never represented here — they are universal, not configurable — so this object controls only whether the optional rings are on.'
+      'Declarative booleans for the two optional rings, on by default. Ring 0 (git hooks) and the CI/branch-protection guarantee are never represented here — they are universal, not configurable — so this object controls only whether the optional rings stay on.'
     ],
     example: `{
   "rings": {
@@ -48,7 +48,8 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'rings.ring1_forgeWriteInterception',
     type: 'boolean',
     semantics: [
-      'Additive, never disabling. `false` (the default — every `vinaya init` starter config reads `false` here) is a no-op: `pr`/`issue create|edit` validate a body against `briefSchema` before any `gh` write, exactly as they always have. `true` is the opt-in accelerator — the only value that changes behavior — and skips that validation entirely.'
+      '`true` (the default — an absent key resolves the same way) RUNS forge-write interception: `pr`/`issue create|edit` validate a body against `briefSchema` before any `gh` write, exactly as they always have. `false` is the opt-OUT — the only value that changes behavior — and skips that validation entirely.',
+      "Prior to issue-545's O2 fix this boolean's sense was inverted (`true` skipped, `false` ran) — `vinaya upgrade` migrates a config still holding the old values and prints what it changed."
     ],
     example: `{ "rings": { "ring1_forgeWriteInterception": true } }`
   },
@@ -56,7 +57,8 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'rings.ring2_asyncAudits',
     type: 'boolean',
     semantics: [
-      'Additive, never disabling. `false` (the default — every `vinaya init` starter config reads `false` here) is a no-op: `vinaya archive`’s provenance work and `vinaya audit`’s dead-branch-push notification run exactly as they always have. `true` is the opt-in accelerator — the only value that changes behavior — and skips that work, exiting `0` without doing anything.',
+      '`true` (the default — an absent key resolves the same way) RUNS the async audits: `vinaya archive`’s provenance work and `vinaya audit`’s dead-branch-push notification run exactly as they always have. `false` is the opt-OUT — the only value that changes behavior — and skips that work, exiting `0` without doing anything.',
+      "Prior to issue-545's O2 fix this boolean's sense was inverted (`true` skipped, `false` ran) — `vinaya upgrade` migrates a config still holding the old values and prints what it changed.",
       'Deliberately does NOT gate `vinaya audit`’s direct-main-push detection, which stays unconditional regardless of this flag — it is a real pass/fail that catches a branch-protection bypass, and its own on/off switch must never be readable from ordinary, PR-reachable config content (the security-review reasoning: the actor a detector exists to catch must never also be able to disable it in the same push).'
     ],
     example: `{ "rings": { "ring2_asyncAudits": true } }`
@@ -491,6 +493,49 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       "One of `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` (security review's own ordered scale). Defaults to `HIGH` when omitted. Any other value refuses config load with the accepted scale named in the error."
     ],
     example: `{ "reviewPolicy": { "securityThreshold": "HIGH" } }`
+  },
+  {
+    key: 'prePush',
+    type: 'object (optional)',
+    semantics: [
+      "The pre-push hook's test-file selector (`lib/test-selector.ts`) chooses what to run by import-graph reachability from the diff — a rule whose own input is the repository itself (a generated file, an exec bit, a manifest re-derived from the repo tree) is never reached by that graph, so it never runs at push time on its own merits. This object is the escape hatch."
+    ],
+    example: `{
+  "prePush": {
+    "alwaysRun": ["apps/cli/tests/ci-shards.test.ts"]
+  }
+}`
+  },
+  {
+    key: 'prePush.alwaysRun',
+    type: 'string[] (optional)',
+    semantics: [
+      "Glob patterns (matched against a test file's repo-root-relative path) naming test files that run on EVERY push regardless of reachability — additive only, on top of whatever the import graph already selects, never a narrowing of it. Every test file added or renamed in the diff also runs unconditionally, with no config needed for that half."
+    ],
+    example: `{
+  "prePush": {
+    "alwaysRun": [
+      "apps/cli/tests/ci-shards.test.ts",
+      "apps/cli/tests/checks/changeset-coverage*.test.ts"
+    ]
+  }
+}`
+  },
+  {
+    key: 'report',
+    type: 'object (optional)',
+    semantics: [
+      "Policy for `vinaya pr report`'s evidence runner (Group C, the Test Plan's `[agent]` fenced command list)."
+    ],
+    example: `{ "report": { "commandTimeoutMs": 900000 } }`
+  },
+  {
+    key: 'report.commandTimeoutMs',
+    type: 'number (optional)',
+    semantics: [
+      'The wall-time budget, in milliseconds, for each `[agent]` Test Plan command the evidence runner executes. Defaults to `900000` (15 minutes), capped at `3600000` (1 hour) — a config load refuses a value above the cap. A command that exceeds it is recorded in `AEG:EVIDENCE` as `timeout` alongside the budget it exceeded, never silently dropped — raising this key up to the cap is the sanctioned way to give a genuinely slow command more room; the runner never reads a bigger number from anywhere else.'
+    ],
+    example: `{ "report": { "commandTimeoutMs": 1800000 } }`
   }
 ] as const
 

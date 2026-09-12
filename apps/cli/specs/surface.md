@@ -658,6 +658,8 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `PROJECTS_REGISTRY_PATH` | const | `apps/cli/src/lib/registry-write.ts` |
 | `renderConfigProjectEntryDiffLine` | function | `apps/cli/src/lib/registry-write.ts` |
 | `renderRegistryRowDiffLine` | function | `apps/cli/src/lib/registry-write.ts` |
+| `addedOrRenamedFilesSinceRemoteBase` | function | `apps/cli/src/lib/remote-base.ts` |
+| `addedOrRenamedFilesSinceRemoteBaseAbsolute` | function | `apps/cli/src/lib/remote-base.ts` |
 | `changedFilesSinceRemoteBase` | function | `apps/cli/src/lib/remote-base.ts` |
 | `changedFilesSinceRemoteBaseAbsolute` | function | `apps/cli/src/lib/remote-base.ts` |
 | `resolveRemoteBase` | function | `apps/cli/src/lib/remote-base.ts` |
@@ -711,7 +713,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `task status` | `task-status.ts` | `taskStatusCommand` | 5 | exempt — see below | taskStatus (target) |
 | `pr create` | `pr.ts` | `prCreateCommand` | 9 | exempt — see below | forgeWrite (target) |
 | `pr edit` | `pr.ts` | `prEditCommand` | 10 | exempt — see below | forgeWrite (target) |
-| `pr report` | `pr-report.ts` | `prReportCommand` | 4 | exempt — see below | collectTokens (target) |
+| `pr report` | `pr-report.ts` | `prReportCommand` | 5 | exempt — see below | collectTokens (target) |
 | `pr verify-evidence` | `pr-verify-evidence.ts` | `prVerifyEvidenceCommand` | 3 | exempt — see below | collectTokens (target) |
 | `pr rule` | `pr-rule.ts` | `prRuleCommand` | 6 | exempt — see below | forgeWrite (target) |
 | `issue create` | `issue.ts` | `issueCreateCommand` | 11 | exempt — see below | forgeWrite (target) |
@@ -756,7 +758,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `check` | 2026-09-05 | 3 — lib: `loadConfigChecked`, `configPath`, `printJson` | `runChecks` |
 | `pr create` | 2026-09-05 | 9 — lib (9): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `loadConfigChecked`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
 | `pr edit` | 2026-09-11 | 10 — lib (10): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `runBodyChecks`, `parseIssueNumberFromRef`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
-| `pr report` | 2026-09-11 | 4 — lib: `summariseNumstat`, `runBodyChecks`; commands/\*.ts (refused outright): `realDeps`, `meteringRefusalMessage` (`tokens.ts`) | `collectTokens` |
+| `pr report` | 2026-09-12 | 5 — lib: `summariseNumstat`, `runBodyChecks`, `loadConfig` (issue-545, O5: `resolveCommandTimeoutMs`'s `report.commandTimeoutMs` read); commands/\*.ts (refused outright): `realDeps`, `meteringRefusalMessage` (`tokens.ts`) | `collectTokens` |
 | `pr verify-evidence` | 2026-09-05 | 3 — lib: none; commands/\*.ts (refused outright): `buildReport` (`pr-report.ts`), `compareEvidence`, `renderVerdict` (`pr-verify-evidence-logic.ts`) | `collectTokens` |
 | `pr rule` | 2026-09-05 | 6 — lib (6): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `countMarkerComments`, `postMarkedComment`, `printJson` | `forgeWrite` |
 | `issue create` | 2026-09-11 | 11 — lib (11): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `extractLabels`, `refuseUnlabeledTaskShapedBody`, `validateTaskIssue`, `printJson`, `ensureTrancheLabelExists`, `runGhWrite`, `resolveMilestoneAttachArgs` | `forgeWrite` |

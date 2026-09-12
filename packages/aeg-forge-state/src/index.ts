@@ -16,7 +16,8 @@ export {
   listArchivedTrancheSlugsAsync,
   milestoneLifecycleFromTrancheLifecycles,
   releaseFromDescription,
-  resolveMilestoneAttachTarget
+  resolveMilestoneAttachTarget,
+  tranchesAttachedToMilestone
 } from './fetch-milestone'
 export type {
   ActiveTrancheRef,
@@ -66,7 +67,13 @@ export type { ProjectField } from './list-tasks'
 // grammar down a layer does not widen this published package's front door.
 export { stripCode } from './strip-code'
 export type { StripCodeOptions } from './strip-code'
-export { parseRationaleDeps, SECTION_HEADER, splitSlugQualifiedEdge } from './parse-rationale-deps'
+export {
+  AmbiguousBareEdgeError,
+  parseRationaleDeps,
+  requireTrancheQualifiedEdges,
+  SECTION_HEADER,
+  splitSlugQualifiedEdge
+} from './parse-rationale-deps'
 export type { ParsedRationaleDeps, SlugQualifiedEdge } from './parse-rationale-deps'
 export { resolveRepo } from './resolve-repo'
 export type { RepoRef } from './resolve-repo'

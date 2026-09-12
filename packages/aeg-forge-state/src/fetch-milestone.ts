@@ -530,3 +530,30 @@ export async function listActiveTrancheSlugsAsync(owner: string, repo: string): 
 export async function listArchivedTrancheSlugsAsync(owner: string, repo: string): Promise<ActiveTrancheRef[]> {
   return (await indexTrancheMilestonesAsync(owner, repo)).archived
 }
+
+/**
+ * Every distinct tranche (`vinaya/tranche:*` label) among the Issues
+ * attached to one Milestone, by its native number — the fact `dispatch-gate`
+ * needs to know whether a bare `Depends-on`/`Conflicts-with` edge id on an
+ * Issue in this Milestone is genuinely ambiguous (issue-545, O3): a Milestone
+ * holding two or more tranches means the same bare id could belong to
+ * either, where a Milestone holding only one (the ordinary case) leaves no
+ * real ambiguity. One REST fetch, `state=all` — a closed sibling task still
+ * counts toward "this Milestone holds N tranches" exactly as an open one
+ * does; the tranche count is a structural fact about the Milestone, not
+ * about which of its Issues remain open.
+ */
+export function tranchesAttachedToMilestone(owner: string, repo: string, milestoneNumber: number): string[] {
+  const issues = ghApiGet<Array<{ labels: Array<{ name: string } | string> }>>(
+    `repos/${owner}/${repo}/issues?milestone=${milestoneNumber}&state=all&per_page=100`
+  )
+  const slugs = new Set<string>()
+  for (const issue of issues) {
+    for (const label of issue.labels) {
+      const name = typeof label === 'string' ? label : label.name
+      const slug = trancheSlugOf(name)
+      if (slug !== null) slugs.add(slug)
+    }
+  }
+  return [...slugs]
+}

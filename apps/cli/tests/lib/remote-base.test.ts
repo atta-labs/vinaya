@@ -7,7 +7,11 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { changedFilesSinceRemoteBase, resolveRemoteBase } from '../../src/lib/remote-base'
+import {
+  addedOrRenamedFilesSinceRemoteBase,
+  changedFilesSinceRemoteBase,
+  resolveRemoteBase
+} from '../../src/lib/remote-base'
 
 // This suite's own process (`bun test`) can itself be running INSIDE a git
 // hook — the pre-push hook this very selector feeds runs the affected suite
@@ -118,6 +122,27 @@ describe('resolveRemoteBase / changedFilesSinceRemoteBase (task-run-v1 20, O5/O6
 
     try {
       expect(changedFilesSinceRemoteBase(dir)).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('addedOrRenamedFilesSinceRemoteBase reports an added file and a rename, never a plain modification (O1)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-remote-added-'))
+    initRepo(dir)
+    commit(dir, 'a.txt', 'one\n', 'Initial commit')
+    commit(dir, 'orig.txt', 'renamed-away\n', 'Add orig.txt (to be renamed)')
+
+    // One commit, three changes: a plain modification, a brand-new file, and
+    // a rename — proving the filter picks the latter two and drops the first.
+    writeFileSync(join(dir, 'a.txt'), 'one, modified\n')
+    writeFileSync(join(dir, 'new.txt'), 'brand new\n')
+    git(dir, ['add', '--', 'a.txt', 'new.txt'])
+    git(dir, ['mv', 'orig.txt', 'renamed.txt'])
+    git(dir, ['commit', '--quiet', '-m', 'Modify, add, and rename in one commit'])
+
+    try {
+      expect(addedOrRenamedFilesSinceRemoteBase(dir).sort()).toEqual(['new.txt', 'renamed.txt'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

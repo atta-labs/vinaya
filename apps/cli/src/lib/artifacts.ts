@@ -118,10 +118,11 @@ function scaffoldFolderPlaceholder(folder: string, command: string): string {
 // ---------------------------------------------------------------------------
 export function starterConfig(): VinayaConfig {
   return {
-    // Ring 1 (forge-write interception) and Ring 2 (async audits) are opt-in
-    // accelerators, off by default. Ring 0 (git hooks) and the CI
-    // guarantee are non-negotiable and deliberately absent from the schema.
-    rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: false },
+    // Ring 1 (forge-write interception) and Ring 2 (async audits) are on by
+    // default — `true` runs them, `false` opts a repo out. Ring 0 (git
+    // hooks) and the CI guarantee are non-negotiable and deliberately
+    // absent from the schema.
+    rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: true },
     // `checks` starts EMPTY (2026-07-23 minimal-manifest re-ruling). init
     // ships no example checks and no example scripts: a starter config that
     // registered example `checks` was the only thing those scripts backed, and
@@ -1151,6 +1152,22 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya archive
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
         run: ${vinayaRun(selfHost, 'archive')} --merge-sha=\${{ github.sha }}
+      - name: Self-archive the tranche once its last task merges (O4)
+        # \`vinaya archive tranche\` already IS the "any open task Issue left"
+        # check (\`trancheArchivalStatus\`) — this step never re-derives that
+        # rule, it only resolves which slug just merged and asks. Refusing
+        # (exit 1) while task Issues remain open is the expected outcome on
+        # every non-final task merge, never a reason to fail this job.
+        continue-on-error: true
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="$(gh api repos/\${{ github.repository }}/commits/\${{ github.sha }}/pulls --jq '.[0].number // empty')"
+          if [ -z "$PR_NUMBER" ]; then exit 0; fi
+          BRANCH="$(gh pr view "$PR_NUMBER" -R \${{ github.repository }} --json headRefName --jq .headRefName)"
+          SLUG="$(printf '%s' "$BRANCH" | sed -n 's#^task/\\([^/]*\\)/.*#\\1#p')"
+          if [ -z "$SLUG" ]; then exit 0; fi
+          ${vinayaRun(selfHost, 'archive tranche')} "$SLUG" --yes
 
   daily-drift:
     name: Daily Drift Check (dead-branch pushes)
@@ -1462,15 +1479,14 @@ full doctrine lives" below).
   continuous: drift (archive state, dead-branch-push, direct-main-push) is
   surfaced as findings regardless of who or what wrote it.
 
-\`${CONFIG_PATH}\`'s \`rings\` block does not switch these on or off — every
-ring above runs unconditionally, for every adopter, by default.
-\`ring1_forgeWriteInterception\` and \`ring2_asyncAudits\` are opt-in
-**accelerators**, not on/off switches: \`false\` or absent (the default) is a
-no-op — the real work above keeps running exactly as described above;
-\`true\` skips only the non-security-critical part of that ring's work once
-you've outgrown it (brief-schema validation for ring 1; dead-branch-push
-bookkeeping for ring 2). Neither flag ever disables direct-main-push
-detection — that stays unconditional by design.
+\`${CONFIG_PATH}\`'s \`rings\` block does not switch these three rings on or
+off — every ring above runs unconditionally, for every adopter, by default.
+\`ring1_forgeWriteInterception\` and \`ring2_asyncAudits\` name a narrower,
+non-security-critical slice of that work each: \`true\` (or absent — the
+default) runs it, exactly as described above; \`false\` opts OUT of that one
+slice once you've outgrown it (brief-schema validation for ring 1;
+dead-branch-push bookkeeping for ring 2). Neither flag ever disables
+direct-main-push detection — that stays unconditional by design.
 
 ## Your role
 

@@ -11,13 +11,16 @@
  * human-facing "selected N of M" line to STDERR, so the hook's own
  * `$(...)` capture of STDOUT is never polluted by it.
  */
-import { changedFilesSinceRemoteBaseAbsolute } from './remote-base.js'
+import { loadConfig } from './config.js'
+import { addedOrRenamedFilesSinceRemoteBaseAbsolute, changedFilesSinceRemoteBaseAbsolute } from './remote-base.js'
 import { selectAffectedTestFiles } from './test-selector.js'
 
 function main(): void {
   const repoRoot = process.cwd()
   const changed = changedFilesSinceRemoteBaseAbsolute(repoRoot)
-  const { selected, totalTestFiles } = selectAffectedTestFiles(repoRoot, changed)
+  const addedOrRenamed = addedOrRenamedFilesSinceRemoteBaseAbsolute(repoRoot)
+  const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
+  const { selected, totalTestFiles } = selectAffectedTestFiles(repoRoot, changed, { alwaysRun, addedOrRenamed })
 
   for (const file of selected) process.stdout.write(`${file}\n`)
   process.stderr.write(`vinaya pre-push: selected ${selected.length} of ${totalTestFiles} test file(s)\n`)

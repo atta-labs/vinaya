@@ -522,11 +522,10 @@ describe('validateForgeWrite — branch grammar', () => {
   })
 })
 
-// rings.ring1_forgeWriteInterception is additive, never disabling (Issue #45's
-// 2026-08-25 Amendment): `false`/absent is a no-op — every pre-existing
-// `vinaya init` starter config reads `false` here, so this must resolve
-// sections exactly as before the flag existed. `true` is the new opt-in
-// accelerator that skips brief-schema validation entirely.
+// rings.ring1_forgeWriteInterception means what it says (issue-545, O2):
+// `true`/absent RUNS forge-write interception, so this must resolve the
+// configured briefSchema sections. `false` is the opt-OUT that skips
+// brief-schema validation entirely.
 describe('resolveSections — rings.ring1_forgeWriteInterception', () => {
   let tmpDir: string
   let originalCwd: string
@@ -553,17 +552,17 @@ describe('resolveSections — rings.ring1_forgeWriteInterception', () => {
     expect(resolveSections('pr', 'vinaya pr create')).toEqual([{ builtin: 'tier' }])
   })
 
-  it('`false` is a no-op — resolves the same sections as absent', () => {
+  it('`true` is a no-op — resolves the same sections as absent', () => {
     writeConfig({
-      rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: false },
+      rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: true },
       briefSchema: { pr: { sections: [{ builtin: 'tier' }] } }
     })
     expect(resolveSections('pr', 'vinaya pr create')).toEqual([{ builtin: 'tier' }])
   })
 
-  it('`true` is the opt-in accelerator — resolves an empty section set regardless of briefSchema', () => {
+  it('`false` is the opt-out — resolves an empty section set regardless of briefSchema', () => {
     writeConfig({
-      rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false },
+      rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true },
       briefSchema: { pr: { sections: [{ builtin: 'tier' }] } }
     })
     expect(resolveSections('pr', 'vinaya pr create')).toEqual([])
@@ -583,7 +582,7 @@ describe('runBodyChecks — the ONE registry-runner call every forge-write path 
     await expect(runBodyChecks(validPr, 'fix/some-branch', undefined, 'vinaya pr create')).resolves.toBeUndefined()
   })
 
-  describe('rings.ring1_forgeWriteInterception: true', () => {
+  describe('rings.ring1_forgeWriteInterception: false', () => {
     let tmpDir: string
     let originalCwd: string
 
@@ -593,7 +592,7 @@ describe('runBodyChecks — the ONE registry-runner call every forge-write path 
       process.chdir(tmpDir)
       writeFileSync(
         join(tmpDir, 'vinaya.config.json'),
-        JSON.stringify({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } }),
+        JSON.stringify({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } }),
         'utf8'
       )
     })

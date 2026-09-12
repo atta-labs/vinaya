@@ -6,7 +6,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ArchiveDeps } from '../src/commands/archive.js'
 import {
+  appendRetrospectiveSection,
   renderArchiveTokensLine,
+  renderRetrospectiveSection,
+  roundsForTaskPr,
   runArchive,
   runArchiveTranche,
   trancheArchivalStatus
@@ -213,11 +216,9 @@ describe('vinaya archive — provenance posting (fake `gh` on PATH)', () => {
   })
 })
 
-// rings.ring2_asyncAudits is additive, never disabling (Issue #45's
-// 2026-08-25 Amendment): `false`/absent is a no-op — every pre-existing
-// `vinaya init` starter config reads `false` here, so the Archivist's real
-// work must keep running unconditionally. `true` is the new opt-in
-// accelerator that skips it.
+// rings.ring2_asyncAudits means what it says (issue-545, O2): `true`/absent
+// RUNS the async audits, so the Archivist's real work runs. `false` is the
+// opt-OUT that skips it.
 describe('vinaya archive — rings.ring2_asyncAudits', () => {
   let cwd: string
   let originalCwd: string
@@ -236,8 +237,8 @@ describe('vinaya archive — rings.ring2_asyncAudits', () => {
     writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify(config), 'utf8')
   }
 
-  it('`true` skips real work entirely — never even calls detectRepo', async () => {
-    writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } })
+  it('`false` skips real work entirely — never even calls detectRepo', async () => {
+    writeConfig({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } })
     let detectRepoCalled = false
     const exit = await runArchive(
       [],
@@ -252,8 +253,8 @@ describe('vinaya archive — rings.ring2_asyncAudits', () => {
     expect(detectRepoCalled).toBe(false)
   })
 
-  it('`false` is a no-op — real work still runs (fails pre-flight the same as before the flag existed)', async () => {
-    writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: false } })
+  it('`true` is a no-op — real work still runs (fails pre-flight the same as before the flag existed)', async () => {
+    writeConfig({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: true } })
     const exit = await runArchive([], archiveDeps({ detectRepo: async () => null }))
     expect(exit).toBe(1)
   })
@@ -321,5 +322,94 @@ describe('trancheArchivalStatus', () => {
     // tranche's Issues the way the old query did.
     const onlyThisTranchesIssues = [issueRef('CLOSED', 1), issueRef('CLOSED', 2)]
     expect(trancheArchivalStatus(onlyThisTranchesIssues)).toEqual({ kind: 'complete' })
+  })
+})
+
+// issue-545, O4 — the retrospective `archive tranche` appends to the
+// Milestone description once a tranche is complete.
+describe('roundsForTaskPr', () => {
+  it("takes the HIGHEST round marker across a PR's comments", () => {
+    const pr = {
+      number: 7,
+      comments: [
+        { body: 'unrelated comment' },
+        { body: '<!-- aeg:developer:round-1 -->\nHead: abc' },
+        { body: '<!-- aeg:developer:round-3 -->\nHead: def' },
+        { body: '<!-- aeg:developer:round-2 -->\nHead: ghi' }
+      ]
+    }
+    expect(roundsForTaskPr(pr)).toBe(3)
+  })
+
+  it('defaults to 1 when no round marker is present — merged on the first round', () => {
+    expect(roundsForTaskPr({ number: 8, comments: [{ body: 'looks good, merging' }] })).toBe(1)
+    expect(roundsForTaskPr({ number: 9, comments: [] })).toBe(1)
+  })
+})
+
+describe('renderRetrospectiveSection', () => {
+  it('renders the task count, rounds per task, and merged PR list under the slug heading', () => {
+    const taskPrs = [
+      { number: 10, comments: [{ body: '<!-- aeg:developer:round-2 -->' }] },
+      { number: 11, comments: [] }
+    ]
+    const section = renderRetrospectiveSection('my-tranche', taskPrs)
+    expect(section).toContain('### Retrospective: my-tranche')
+    expect(section).toContain('- Tasks: 2')
+    expect(section).toContain('- Rounds per task: #10 (2), #11 (1)')
+    expect(section).toContain('- Merged PRs: #10, #11')
+  })
+
+  it('renders "none" for a tranche with no merged task PRs', () => {
+    const section = renderRetrospectiveSection('empty-tranche', [])
+    expect(section).toContain('- Tasks: 0')
+    expect(section).toContain('- Rounds per task: none')
+    expect(section).toContain('- Merged PRs: none')
+  })
+})
+
+describe('appendRetrospectiveSection', () => {
+  it('appends to a non-empty description, separated by a blank line', () => {
+    const result = appendRetrospectiveSection(
+      '## Goal\n\nShip the thing.',
+      'my-tranche',
+      '### Retrospective: my-tranche\n\n- Tasks: 1'
+    )
+    expect(result).toBe('## Goal\n\nShip the thing.\n\n### Retrospective: my-tranche\n\n- Tasks: 1\n')
+  })
+
+  it('appends cleanly to an empty description', () => {
+    const result = appendRetrospectiveSection('', 'my-tranche', '### Retrospective: my-tranche\n\n- Tasks: 1')
+    expect(result).toBe('### Retrospective: my-tranche\n\n- Tasks: 1\n')
+  })
+
+  it('replaces an EXISTING retrospective for the same slug in place — a re-run never duplicates it', () => {
+    const description = [
+      '## Goal',
+      '',
+      'Ship the thing.',
+      '',
+      '### Retrospective: my-tranche',
+      '',
+      '- Tasks: 1',
+      '',
+      '### Another section',
+      '',
+      'Untouched.'
+    ].join('\n')
+    const result = appendRetrospectiveSection(description, 'my-tranche', '### Retrospective: my-tranche\n\n- Tasks: 2')
+    expect(result).toContain('- Tasks: 2')
+    expect(result).not.toContain('- Tasks: 1')
+    expect(result).toContain('### Another section\n\nUntouched.')
+    expect(result.match(/### Retrospective: my-tranche/g)?.length).toBe(1)
+  })
+
+  it("never touches a DIFFERENT slug's retrospective section sharing the same Milestone", () => {
+    const description = '### Retrospective: sibling-tranche\n\n- Tasks: 5'
+    const result = appendRetrospectiveSection(description, 'my-tranche', '### Retrospective: my-tranche\n\n- Tasks: 1')
+    expect(result).toContain('### Retrospective: sibling-tranche')
+    expect(result).toContain('- Tasks: 5')
+    expect(result).toContain('### Retrospective: my-tranche')
+    expect(result).toContain('- Tasks: 1')
   })
 })

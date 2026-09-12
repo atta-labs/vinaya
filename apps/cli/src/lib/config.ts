@@ -113,6 +113,12 @@ export type RoleEntry = z.infer<typeof RoleEntrySchema>
 
 const HIGH_ENTROPY_MIN_LENGTH = 20
 
+// The upper bound `VinayaConfigSchema`'s `superRefine` enforces on
+// `report.commandTimeoutMs` — 1 hour. A misconfigured value above this could
+// otherwise leave `pr report`'s evidence runner hanging on a stuck
+// subprocess for arbitrarily long (round-2 security ruling, PR #546).
+const MAX_REPORT_COMMAND_TIMEOUT_MS = 3_600_000
+
 /** Loose heuristic, not a secret scanner: a long literal mixing char classes with no whitespace reads more like a pasted token than a hand-typed config value. */
 function looksHighEntropy(value: string): boolean {
   if (value.length < HIGH_ENTROPY_MIN_LENGTH) return false
@@ -243,7 +249,14 @@ export type BriefSchema = z.infer<typeof BriefSchemaSchema>
 //       old-package eject of a migrated install removes the tracked hook
 //       files but leaves `core.hooksPath` set (dangling but harmless: git
 //       finds no hooks there and runs none).
-export const MANAGED_MANIFEST_VERSION = 2
+//   3 — issue-545, O2: `rings.ring1_forgeWriteInterception`/
+//       `ring2_asyncAudits` had their meaning inverted (`true` now RUNS the
+//       ring instead of skipping it; the default flipped from `false` to
+//       `true`). `upgrade` reads THIS version bump, not the rings values
+//       themselves, to decide whether a config predates the fix — a config
+//       already at 3 is never re-migrated even if an adopter later sets a
+//       ring to `false` on purpose.
+export const MANAGED_MANIFEST_VERSION = 3
 
 // A recorded ownership path must be a repo-root-relative path that cannot
 // escape the repo — no absolute path, no `..` segment. This is the parse-layer
@@ -595,6 +608,45 @@ export const VinayaConfigSchema = z.object({
     .object({
       codeReviewThreshold: z.string().min(1).optional(),
       securityThreshold: z.string().min(1).optional()
+    })
+    .optional(),
+  // The pre-push hook's test-file selector (`lib/test-selector.ts`) chooses
+  // what to run by import-graph reachability from the diff — a rule whose
+  // own INPUT is the repository itself (scans `.github/workflows`, walks
+  // `package.json` exec bits, re-derives the changeset/CI-shard manifests)
+  // is never reached by that graph; nothing imports it, so it never ran at
+  // push time at all (O1). `alwaysRun` names test files (glob, matched
+  // against the repo-root-relative path) that run on every push regardless
+  // of reachability — additive only, on top of whatever the import graph
+  // already selects, never a narrowing of it.
+  prePush: z
+    .object({
+      alwaysRun: z.array(z.string()).optional()
+    })
+    .optional(),
+  // The evidence runner's (`vinaya pr report`'s Group C) per-`[agent]`-command
+  // subprocess budget — replaces the runner's own prior hardcoded
+  // `AGENT_COMMAND_TIMEOUT_MS` constant (30 seconds, far too small for a real
+  // Test Plan command — a production build, a booted app, an end-to-end
+  // check) with adopter policy. Absent defaults to `900000` (15 minutes,
+  // `DEFAULT_COMMAND_TIMEOUT_MS` in `commands/pr-report.ts`). Capped by the
+  // `superRefine` below at `3600000` (1 hour) so a misconfigured value cannot
+  // leave `pr report` hanging on a stuck subprocess for arbitrarily long
+  // (round-2 security ruling, PR #546) — checked there, not inline on the
+  // field itself, so this field's own type stays exactly what it always was.
+  report: z
+    .object({
+      commandTimeoutMs: z.number().int().positive().optional()
+    })
+    .superRefine((report, ctx) => {
+      const commandTimeoutMs = report.commandTimeoutMs
+      if (commandTimeoutMs !== undefined && commandTimeoutMs > MAX_REPORT_COMMAND_TIMEOUT_MS) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['commandTimeoutMs'],
+          message: 'must be at most 3600000 (1 hour)'
+        })
+      }
     })
     .optional()
 })

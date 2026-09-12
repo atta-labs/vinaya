@@ -145,6 +145,49 @@ describe('selectAffectedTestFiles (task-run-v1 20, O6, Part 5)', () => {
       rmSync(root, { recursive: true, force: true })
     }
   })
+
+  it('O1: options.alwaysRun selects a test file no import graph reaches, on top of ordinary reachability', () => {
+    const root = minimalTwoPackageFixture()
+    try {
+      // No changed files at all — reachability alone selects nothing — yet
+      // the glob still forces `unrelated.test.ts` in.
+      const { selected, totalTestFiles } = selectAffectedTestFiles(root, [], {
+        alwaysRun: ['packages/a/src/unrelated.test.ts']
+      })
+      expect(totalTestFiles).toBe(3)
+      expect(selected).toEqual([join(root, 'packages', 'a', 'src', 'unrelated.test.ts')])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('O1: options.addedOrRenamed selects a brand-new test file nothing imports yet', () => {
+    const root = minimalTwoPackageFixture()
+    try {
+      const brandNew = join(root, 'packages', 'a', 'src', 'brand-new.test.ts')
+      writeFileSync(brandNew, "test('brand new', () => {})\n")
+      const { selected } = selectAffectedTestFiles(root, [], { addedOrRenamed: [brandNew] })
+      expect(selected).toEqual([brandNew])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('O1: alwaysRun never force-selects a file in a non-bun-test-compatible package', () => {
+    const root = minimalTwoPackageFixture()
+    try {
+      writeFileSync(
+        join(root, 'packages', 'a', 'package.json'),
+        JSON.stringify({ name: '@fixture/a', scripts: { test: 'vitest run' } })
+      )
+      const { selected } = selectAffectedTestFiles(root, [], {
+        alwaysRun: ['packages/a/src/unrelated.test.ts']
+      })
+      expect(selected).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('discoverWorkspacePackages', () => {

@@ -79,3 +79,24 @@ export function changedFilesSinceRemoteBase(repoRoot: string): string[] {
 export function changedFilesSinceRemoteBaseAbsolute(repoRoot: string): string[] {
   return changedFilesSinceRemoteBase(repoRoot).map((f) => join(repoRoot, f))
 }
+
+/**
+ * Repo-root-relative paths of every file ADDED or RENAMED (never merely
+ * modified) since the remote base — the selector's O1 obligation: a
+ * brand-new or renamed test file has nothing importing it yet, so the
+ * import-graph reachability `selectAffectedTestFiles` otherwise relies on
+ * can never select it on its own first push.
+ */
+export function addedOrRenamedFilesSinceRemoteBase(repoRoot: string): string[] {
+  const base = resolveRemoteBase(repoRoot)
+  const out = git(repoRoot, ['diff', '--name-only', '--diff-filter=AR', `${base}...HEAD`])
+  return out
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+/** Absolute paths — the O1 counterpart to `changedFilesSinceRemoteBaseAbsolute`. */
+export function addedOrRenamedFilesSinceRemoteBaseAbsolute(repoRoot: string): string[] {
+  return addedOrRenamedFilesSinceRemoteBase(repoRoot).map((f) => join(repoRoot, f))
+}

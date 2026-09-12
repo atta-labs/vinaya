@@ -326,12 +326,13 @@ export function refuseUnlabeledTaskShapedBody(body: string | null, labels: strin
  * config print green over an unvalidated forge write. No config / no
  * `briefSchema` for this kind → an empty set (adopter-generic pass-through).
  *
- * `rings.ring1_forgeWriteInterception` is additive, never disabling: `false`
- * (or absent — every pre-existing `vinaya init` starter config reads `false`
- * here) is a no-op, leaving brief-schema validation running exactly as it
- * does today, unconditionally, for every existing adopter. `true` is the new
- * opt-in accelerator — the only value that changes behavior — and skips
+ * `rings.ring1_forgeWriteInterception` means what it says: `true` (the
+ * default — an absent key resolves the same way) RUNS forge-write
+ * interception, so brief-schema validation runs exactly as it always has.
+ * `false` is the opt-OUT — the only value that changes behavior — and skips
  * brief-schema validation entirely by resolving to an empty section set.
+ * (Prior to issue-545/O2 this boolean's sense was inverted; `vinaya upgrade`
+ * migrates a config still holding the old values.)
  */
 export function resolveSections(kind: 'pr' | 'issue' | 'milestone', retryCommand: string): BriefSection[] {
   const result = loadConfigChecked()
@@ -344,7 +345,7 @@ export function resolveSections(kind: 'pr' | 'issue' | 'milestone', retryCommand
       )
     ])
   }
-  if (result.config?.rings?.ring1_forgeWriteInterception === true) return []
+  if (result.config?.rings?.ring1_forgeWriteInterception === false) return []
   return result.config?.briefSchema?.[kind]?.sections ?? []
 }
 
@@ -610,12 +611,12 @@ function resolvedRegistry(): CheckSpec[] {
  * `PR_NUMBER` forwarded so a `requiresOpenPr` check resolves the REAL PR
  * rather than taking its no-PR bypass against one that already exists.
  *
- * Skipped entirely when `rings.ring1_forgeWriteInterception` is `true` — the
- * same accelerator `resolveSections` already honors to skip
- * `validateForgeWrite`'s config-driven sections; that flag's whole point is
+ * Skipped entirely when `rings.ring1_forgeWriteInterception` is `false` —
+ * the same opt-out `resolveSections` already honors to skip
+ * `validateForgeWrite`'s config-driven sections; that value's whole point is
  * "skip brief-schema validation entirely," and running this pass
  * unconditionally underneath it would silently reintroduce exactly the
- * validation the accelerator was set to remove.
+ * validation the opt-out was set to remove.
  *
  * Refuses (never returns) on any finding — same contract as `refuse()`
  * itself, which this calls.
@@ -627,7 +628,7 @@ export async function runBodyChecks(
   retryCommand: string
 ): Promise<void> {
   const config = loadConfigChecked()
-  if (config.ok && config.config?.rings?.ring1_forgeWriteInterception === true) return
+  if (config.ok && config.config?.rings?.ring1_forgeWriteInterception === false) return
 
   const specs = resolvedRegistry().filter((s) => s.validates === 'body')
   if (specs.length === 0) return

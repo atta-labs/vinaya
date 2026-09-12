@@ -113,7 +113,11 @@ type ConfigRead =
   | { kind: 'missing' }
   | { kind: 'invalid'; error: string }
   | { kind: 'not-initialized' }
-  | { kind: 'ok'; manifest: ManagedManifest }
+  | {
+      kind: 'ok'
+      manifest: ManagedManifest
+      rings: { ring1_forgeWriteInterception?: boolean; ring2_asyncAudits?: boolean } | undefined
+    }
 
 function readManifest(repoRoot: string): ConfigRead {
   const p = join(repoRoot, CONFIG_PATH)
@@ -132,21 +136,74 @@ function readManifest(repoRoot: string): ConfigRead {
     }
   }
   if (!parsed.data.managed) return { kind: 'not-initialized' }
-  return { kind: 'ok', manifest: parsed.data.managed }
+  return { kind: 'ok', manifest: parsed.data.managed, rings: parsed.data.rings }
+}
+
+// ---------------------------------------------------------------------------
+// issue-545, O2 — `rings.ring1_forgeWriteInterception`/`ring2_asyncAudits`
+// migration. Before this fix `false` (the starter default) meant "run the
+// ring" and `true` meant "skip it" — inverted from what the keys say. The
+// fix flips the meaning (`true` now runs, `false` now skips) and moves the
+// default from `false` to `true`. Every EXPLICIT pre-fix value therefore
+// means the opposite of what it now reads as, in both directions: the
+// starter's own `false` (old "run") would silently start SKIPPING a ring it
+// was never meant to skip, and an adopter's deliberate `true` (old "opt-in
+// to skip") would silently start RUNNING a ring they chose to turn off —
+// review round 2 (BLOCKER) caught the first version of this migration
+// handling only the `false` case. The fix is symmetric: any explicit boolean
+// on a config still below manifest version 3 gets negated, whichever value
+// it holds. Gated on `manifest.version` (bumped to 3 for this exact fix),
+// never on the rings values alone: a config already at version 3 is never
+// re-migrated even if an adopter later sets a ring to `false` (or `true`) on
+// purpose — this runs at most once per repo.
+// ---------------------------------------------------------------------------
+export type RingsMigration = {
+  ring1: { from: boolean; to: boolean } | null
+  ring2: { from: boolean; to: boolean } | null
+}
+
+export function planRingsMigration(
+  manifestVersion: number,
+  rings: { ring1_forgeWriteInterception?: boolean; ring2_asyncAudits?: boolean } | undefined
+): RingsMigration | null {
+  if (manifestVersion >= 3) return null
+  const ring1From = rings?.ring1_forgeWriteInterception
+  const ring2From = rings?.ring2_asyncAudits
+  const ring1 = ring1From !== undefined ? { from: ring1From, to: !ring1From } : null
+  const ring2 = ring2From !== undefined ? { from: ring2From, to: !ring2From } : null
+  if (!ring1 && !ring2) return null
+  return { ring1, ring2 }
 }
 
 /** Rewrite the `managed.version` field, preserving every other top-level key
- * (rings/checks/briefSchema — adopter-owned) exactly as they were. The
+ * (rings/checks/briefSchema — adopter-owned) exactly as they were — except
+ * `ringsMigration`, when given, which is the one deliberate exception to
+ * "adopter-owned content is never touched" (see `planRingsMigration`). The
  * `files`/`blocks`/`labels` arrays are written verbatim from the `manifest`
  * argument — ownership doesn't change from an ordinary content regeneration,
  * so callers normally pass the manifest through unmodified, except the one
  * caller merging in newly-retrofitted ownership via
  * `withClaudeStopHookRecorded` below. */
-function writeManifestVersion(repoRoot: string, manifest: ManagedManifest): void {
+function writeManifestVersion(
+  repoRoot: string,
+  manifest: ManagedManifest,
+  ringsMigration: RingsMigration | null
+): void {
   const configAbs = join(repoRoot, CONFIG_PATH)
   const seed = JSON.parse(readFileSync(configAbs, 'utf-8'))
   const updated: ManagedManifest = { ...manifest, version: MANAGED_MANIFEST_VERSION }
-  writeFileSync(configAbs, `${JSON.stringify({ ...seed, managed: updated }, null, 2)}\n`, 'utf-8')
+  const rings = ringsMigration
+    ? {
+        ...seed.rings,
+        ...(ringsMigration.ring1 ? { ring1_forgeWriteInterception: ringsMigration.ring1.to } : {}),
+        ...(ringsMigration.ring2 ? { ring2_asyncAudits: ringsMigration.ring2.to } : {})
+      }
+    : seed.rings
+  writeFileSync(
+    configAbs,
+    `${JSON.stringify({ ...seed, ...(ringsMigration ? { rings } : {}), managed: updated }, null, 2)}\n`,
+    'utf-8'
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -719,6 +776,8 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
     return 1
   }
 
+  const ringsMigration = planRingsMigration(manifest.version, read.rings)
+
   const recorded = hookDirFromManifest(manifest, deps.hookDirFor(repo.repoRoot))
   const routing = planHookRouting(repo.repoRoot, manifest, recorded, await deps.readHooksPath(repo.repoRoot))
   // Plan (and later persist) against the MIGRATED manifest when hooks move:
@@ -746,8 +805,9 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
     ? staleAgentSkillPaths(doctrineRootForStaleSkills, planManifest.files)
     : []
   const plan = planUpgrade(ops, repo.repoRoot, planManifest, routing, staleSkillPaths)
+  const hasChanges = plan.hasChanges || ringsMigration !== null
 
-  if (!plan.hasChanges) {
+  if (!hasChanges) {
     // A refused hook migration is not a "change", but silence here would
     // leave the adopter stuck on the untracked layout with no explanation —
     // say why, every run, until the blocker is resolved.
@@ -765,6 +825,11 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
   }
 
   process.stdout.write('vinaya upgrade — the full diff of every intended change:\n\n')
+  if (ringsMigration) {
+    process.stdout.write('── Rings (issue-545, O2) ─────────────────────────────\n')
+    process.stdout.write(renderRingsMigration(ringsMigration))
+    process.stdout.write('\n')
+  }
   process.stdout.write(`${renderUpgradeDiff(plan)}\n`)
 
   if (dryRun) {
@@ -783,10 +848,38 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
   applyUpgrade(plan, repo.repoRoot)
   // Arm AFTER the tracked hooks are on disk — never route git at nothing.
   if (routing.arm) await deps.setHooksPath(repo.repoRoot, TRACKED_HOOK_DIR)
-  writeManifestVersion(repo.repoRoot, withClaudeStopHookRecorded(withoutStaleFiles(planManifest, plan), plan))
+  writeManifestVersion(
+    repo.repoRoot,
+    withClaudeStopHookRecorded(withoutStaleFiles(planManifest, plan), plan),
+    ringsMigration
+  )
 
   process.stdout.write('\nVinaya upgraded.\n')
+  if (ringsMigration) {
+    process.stdout.write('\nRings migrated (issue-545, O2):\n')
+    process.stdout.write(renderRingsMigration(ringsMigration))
+  }
   return 0
+}
+
+/** The human-readable "what changed" lines for a rings migration — printed both in the pre-apply diff and, verbatim, after the write actually lands. */
+function ringsMigrationNote(to: boolean): string {
+  return to ? '(now means "run", not "skip")' : '(now means "skip", not "run")'
+}
+
+function renderRingsMigration(migration: RingsMigration): string {
+  const lines: string[] = []
+  if (migration.ring1) {
+    lines.push(
+      `  ~ rings.ring1_forgeWriteInterception: ${migration.ring1.from} → ${migration.ring1.to} ${ringsMigrationNote(migration.ring1.to)}`
+    )
+  }
+  if (migration.ring2) {
+    lines.push(
+      `  ~ rings.ring2_asyncAudits: ${migration.ring2.from} → ${migration.ring2.to} ${ringsMigrationNote(migration.ring2.to)}`
+    )
+  }
+  return `${lines.join('\n')}\n`
 }
 
 export async function upgradeCommand(args: string[]): Promise<void> {
