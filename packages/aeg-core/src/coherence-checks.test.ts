@@ -4,7 +4,7 @@ import {
   checkA1,
   checkA2,
   checkA3,
-  checkClosesN,
+  checkClosesNTopology,
   checkD1,
   checkL1,
   checkL2,
@@ -85,22 +85,22 @@ function passesWithNoFailures(r: CheckResult) {
 
 // ---------- closes-N: Closes #N gate (Layer 1) -------------------------
 
-describe('checkClosesN', () => {
+describe('checkClosesNTopology', () => {
   it('ok — non-task branch bypasses entirely', () => {
-    const r = checkClosesN('fix/something', '', [])
+    const r = checkClosesNTopology('fix/something', '', [])
     expect(r).toEqual({ ok: true })
   })
 
   it('ok — task branch with matching Closes #N in body', () => {
     const files = [makeTrancheFile('aeg-consolidation', false)]
     files[0]!.tranche.tasks = [makeTask('2', 264)]
-    const r = checkClosesN('task/aeg-consolidation/2', 'Summary\n\nCloses #264\n', files)
+    const r = checkClosesNTopology('task/aeg-consolidation/2', 'Summary\n\nCloses #264\n', files)
     expect(r.ok).toBe(true)
     expect(r.expectedIssue).toBe(264)
   })
 
   it('fail — no topology file found for the branch tranche', () => {
-    const r = checkClosesN('task/unknown-iter/2', 'Closes #1', [])
+    const r = checkClosesNTopology('task/unknown-iter/2', 'Closes #1', [])
     expect(r.ok).toBe(false)
     expect(r.message).toMatch(/no topology file found/)
   })
@@ -108,7 +108,7 @@ describe('checkClosesN', () => {
   it('fail — task id not found in topology', () => {
     const files = [makeTrancheFile('aeg-consolidation', false)]
     files[0]!.tranche.tasks = [makeTask('1', 263)]
-    const r = checkClosesN('task/aeg-consolidation/99', 'Closes #1', files)
+    const r = checkClosesNTopology('task/aeg-consolidation/99', 'Closes #1', files)
     expect(r.ok).toBe(false)
     expect(r.message).toMatch(/not found in aeg-consolidation topology/)
   })
@@ -116,7 +116,7 @@ describe('checkClosesN', () => {
   it('fail — task has no Issue number (#TBD)', () => {
     const files = [makeTrancheFile('aeg-consolidation', false)]
     files[0]!.tranche.tasks = [makeTask('2', null)]
-    const r = checkClosesN('task/aeg-consolidation/2', 'Closes #1', files)
+    const r = checkClosesNTopology('task/aeg-consolidation/2', 'Closes #1', files)
     expect(r.ok).toBe(false)
     expect(r.message).toMatch(/has no Issue number/)
   })
@@ -124,7 +124,7 @@ describe('checkClosesN', () => {
   it('fail — PR body does not reference the expected issue', () => {
     const files = [makeTrancheFile('aeg-consolidation', false)]
     files[0]!.tranche.tasks = [makeTask('2', 264)]
-    const r = checkClosesN('task/aeg-consolidation/2', 'Summary\n\nCloses #999\n', files)
+    const r = checkClosesNTopology('task/aeg-consolidation/2', 'Summary\n\nCloses #999\n', files)
     expect(r.ok).toBe(false)
     expect(r.expectedIssue).toBe(264)
     expect(r.message).toMatch(/does not contain `Closes #264`/)
@@ -134,7 +134,7 @@ describe('checkClosesN', () => {
     const files = [makeTrancheFile('aeg-consolidation', false)]
     files[0]!.tranche.tasks = [makeTask('2', 264)]
     for (const phrase of ['Fixes #264', 'RESOLVES #264', 'fix: #264', 'close #264']) {
-      const r = checkClosesN('task/aeg-consolidation/2', phrase, files)
+      const r = checkClosesNTopology('task/aeg-consolidation/2', phrase, files)
       expect(r.ok).toBe(true)
     }
   })
@@ -142,7 +142,7 @@ describe('checkClosesN', () => {
   it('ok — branch with a suffixed task id (e.g. 7a)', () => {
     const files = [makeTrancheFile('aeg-consolidation', false)]
     files[0]!.tranche.tasks = [makeTask('7a', 300)]
-    const r = checkClosesN('task/aeg-consolidation/7a', 'Closes #300', files)
+    const r = checkClosesNTopology('task/aeg-consolidation/7a', 'Closes #300', files)
     expect(r.ok).toBe(true)
     expect(r.expectedIssue).toBe(300)
   })
@@ -152,7 +152,7 @@ describe('checkClosesN', () => {
 
   it('fail — non-task branch closes a real task Issue (reverse gate)', () => {
     const taskIssueRefs = new Map([[509, { trancheSlug: 'vinaya-pages-v1', taskId: '2' }]])
-    const r = checkClosesN('feat/vinaya-landing-v3', 'Closes #509', [], taskIssueRefs)
+    const r = checkClosesNTopology('feat/vinaya-landing-v3', 'Closes #509', [], taskIssueRefs)
     expect(r.ok).toBe(false)
     expect(r.message).toMatch(/^closes-n-reverse:/)
     expect(r.message).toContain('branch "feat/vinaya-landing-v3"')
@@ -163,12 +163,12 @@ describe('checkClosesN', () => {
 
   it('ok — non-task branch closes an ordinary (non-task) Issue', () => {
     const taskIssueRefs = new Map([[42, null]])
-    const r = checkClosesN('fix/some-typo', 'Closes #42', [], taskIssueRefs)
+    const r = checkClosesNTopology('fix/some-typo', 'Closes #42', [], taskIssueRefs)
     expect(r).toEqual({ ok: true })
   })
 
   it('ok — non-task branch closes an Issue absent from the resolved map (unresolved forge lookup)', () => {
-    const r = checkClosesN('fix/some-typo', 'Closes #42', [], new Map())
+    const r = checkClosesNTopology('fix/some-typo', 'Closes #42', [], new Map())
     expect(r).toEqual({ ok: true })
   })
 
@@ -176,7 +176,7 @@ describe('checkClosesN', () => {
     const files = [makeTrancheFile('aeg-consolidation', false)]
     files[0]!.tranche.tasks = [makeTask('2', 264)]
     const taskIssueRefs = new Map([[264, { trancheSlug: 'aeg-consolidation', taskId: '2' }]])
-    const r = checkClosesN('task/aeg-consolidation/2', 'Closes #264', files, taskIssueRefs)
+    const r = checkClosesNTopology('task/aeg-consolidation/2', 'Closes #264', files, taskIssueRefs)
     expect(r.ok).toBe(true)
     expect(r.expectedIssue).toBe(264)
   })
@@ -185,7 +185,7 @@ describe('checkClosesN', () => {
     const files = [makeTrancheFile('aeg-consolidation', false)]
     files[0]!.tranche.tasks = [makeTask('2', 264), makeTask('3', 265)]
     const taskIssueRefs = new Map([[265, { trancheSlug: 'aeg-consolidation', taskId: '3' }]])
-    const r = checkClosesN('task/aeg-consolidation/2', 'Closes #265', files, taskIssueRefs)
+    const r = checkClosesNTopology('task/aeg-consolidation/2', 'Closes #265', files, taskIssueRefs)
     expect(r.ok).toBe(false)
     expect(r.message).toMatch(/^closes-n-reverse:/)
     expect(r.message).toContain('not named "task/aeg-consolidation/3"')
@@ -709,6 +709,22 @@ describe('R1: missing-rationale-field', () => {
 
   it('registry half is dormant when no registry is passed — prior R1 behaviour is unchanged', () => {
     const issuesBySlug = new Map([['iter-1', [makeForgeIssue(105, UNREGISTERED_PROJECT_BODY)]]])
+    passesWithNoFailures(checkR1(issuesBySlug, new Set()))
+  })
+
+  // task 17, O2 — Parts coverage joins the sweep.
+  it('fail — a Part citing an Objective id the Issue never defines', () => {
+    const body = `${FULL_RATIONALE_BODY}\n\n## Objectives\n\nO1. Thing.\n\n## Parts\n\nPart 1 (O9) — does the thing.\n`
+    const issuesBySlug = new Map([['iter-1', [makeForgeIssue(106, body)]]])
+    const r = checkR1(issuesBySlug, new Set())
+    expect(r.status).toBe('fail')
+    expect(r.failures[0]!.issue).toBe(106)
+    expect(r.failures[0]!.reason).toMatch(/Parts/)
+  })
+
+  it('pass — a Part citing a real Objective id', () => {
+    const body = `${FULL_RATIONALE_BODY}\n\n## Objectives\n\nO1. Thing.\n\n## Parts\n\nPart 1 (O1) — does the thing.\n`
+    const issuesBySlug = new Map([['iter-1', [makeForgeIssue(106, body)]]])
     passesWithNoFailures(checkR1(issuesBySlug, new Set()))
   })
 })
@@ -1323,7 +1339,7 @@ describe('extractClosesReferences', () => {
   it('keeps a bare Closes #N in a CRLF body', () => {
     expect([...extractClosesReferences('Ships it. Closes #5\r\n')]).toEqual([5])
   })
-  // Separator bound — must stay identical to `checkClosesN`'s; the two gates
+  // Separator bound — must stay identical to `checkClosesNTopology`'s; the two gates
   // disagreeing about what counts as a reference is the bug class this PR closes.
   it('accepts separators up to the bound and rejects past it', () => {
     expect([...extractClosesReferences(`Closes${' '.repeat(8)}#5`)]).toEqual([5])

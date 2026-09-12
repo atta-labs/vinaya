@@ -1,6 +1,15 @@
 #!/usr/bin/env sh
 
 # >>> vinaya:managed:pre-commit >>>
+# Ring 0: format + lint your staged files, applying every safe fix, then
+# type-check only the packages your staged diff actually touches (O9) —
+# scoped so this hook costs seconds, not the whole repo's worth of work.
+VINAYA_STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACMR)"
+bunx biome check --write --staged . --no-errors-on-unmatched || exit 1
+if [ -n "$VINAYA_STAGED_FILES" ]; then
+  echo "$VINAYA_STAGED_FILES" | xargs git add --
+fi
+bunx turbo typecheck --affected || exit 1
 # Vinaya commit-time gate. Runs the deterministic checks over your staged
 # diff before the commit lands.
 # This repo vendors the CLI, so `npx @attalabs/vinaya` resolves to its own

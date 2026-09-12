@@ -357,6 +357,37 @@ function renderSection3(facts: BriefFacts): string {
   return ['## 3. Technical dependencies', '', `${facts.rationale.dependencyRationale}`].join('\n')
 }
 
+// O6 (task 17): the nearest ancestor directory of `path` that is itself
+// named `tests`/`specs` — e.g. `apps/cli/tests/checks/foo.test.ts` ->
+// `apps/cli/tests`. `checkConsumerTests`'s validator accepts a bare
+// reference to this directory as coverage evidence (same segment-equality
+// convention `checkSurfaceOverlap`'s O4 exemption uses), so this is what the
+// renderer names when the covering FILE itself won't appear in Modify's
+// directory-only listing.
+//
+// Falls back to the covering FILE's own path (never a bare containing
+// directory) when no ancestor segment is literally named `tests`/`specs` —
+// a colocated test file (`packages/sources/src/foo.test.ts`, a real layout
+// this repo's own `packages/sources` and `packages/aeg-core` already use,
+// with no `tests`/`specs` ancestor to name) has no directory form
+// `hasTestPathForConsumer`'s `testDirRe` accepts, but its own `.test.<ext>`
+// path already matches `filePathRe` — a prior version of this fallback
+// named the bare containing directory instead, satisfying neither regex and
+// producing a brief `checkConsumerTests` rejected, reopening the exact class
+// of bug O6 exists to close (round `2` review, BLOCKER).
+function nearestTestDir(path: string): string {
+  const segments = path.split('/')
+  let idx = -1
+  for (let i = segments.length - 1; i >= 0; i--) {
+    if (segments[i] === 'tests' || segments[i] === 'specs') {
+      idx = i
+      break
+    }
+  }
+  if (idx !== -1) return segments.slice(0, idx + 1).join('/')
+  return path
+}
+
 function renderSection4(facts: BriefFacts): string {
   const created = facts.surfaceFiles.filter((f) => f.sha256 === null).map((f) => f.path)
   const modified = facts.surfaceFiles.filter((f) => f.sha256 !== null).map((f) => f.path)
@@ -368,26 +399,6 @@ function renderSection4(facts: BriefFacts): string {
     list.push(f)
     byPackage.set(f.packageName, list)
   }
-
-  // checkConsumerTests (brief-validation.ts) requires, for every workspace
-  // package a touched `packages/<pkg>` consumer depends on, either a named
-  // test path under that consumer OR the `consumer-tests: none — <reason>`
-  // sentinel — ONE sentinel occurrence anywhere in §4 satisfies the whole
-  // section, so a single combined line covers every uncovered consumer.
-  const uncovered: string[] = []
-  for (const pkg of byPackage.keys()) {
-    const shortName = pkg.replace(/^@[^/]+\//, '')
-    for (const consumer of facts.consumersOf(shortName)) {
-      const covered = facts.surfaceFiles.some((f) => f.path.startsWith(`${consumer}/`) && isTestFile(f.path))
-      if (!covered) uncovered.push(`${pkg} (${consumer})`)
-    }
-  }
-  const consumerLines =
-    uncovered.length > 0
-      ? [
-          `- consumer-tests: none — no consumer test path named yet for ${uncovered.join(', ')}; name one before dispatch, or confirm no consumer-facing behavior changed.`
-        ]
-      : []
 
   // O7 (task 8, `#506`): a Boundary that named fewer files than the Issue's
   // own `## Surface` `in:` list is narrower than the real scope — Boundary
@@ -419,6 +430,44 @@ function renderSection4(facts: BriefFacts): string {
     : modified.length > 0
       ? bulletList(modified)
       : '- (none named)'
+
+  // checkConsumerTests (brief-validation.ts) requires, for every workspace
+  // package a touched `packages/<pkg>` consumer depends on, either a named
+  // test path under that consumer OR the `consumer-tests: none — <reason>`
+  // sentinel — ONE sentinel occurrence anywhere in §4 satisfies the whole
+  // section, so a single combined line covers every uncovered consumer.
+  //
+  // O6 (task 17): when `boundaryNarrowsSurface` is true, `modifyLines` above
+  // lists bare Surface DIRECTORIES, never the individual files — so a
+  // covered consumer's actual test FILE path never appears anywhere in §4,
+  // and `checkConsumerTests`'s file-path regex finds nothing even though
+  // real coverage exists (#478's frozen brief: this renderer produced a
+  // brief its own validator rejected). A covered consumer gets an explicit
+  // line naming its covering test DIRECTORY (or the file itself, when no
+  // `tests`/`specs` ancestor exists to name — see `nearestTestDir`) in that
+  // mode — a form `checkConsumerTests` accepts either way — so the renderer
+  // can never again produce a brief its own validator fails.
+  const uncovered: string[] = []
+  const coveredDirLines: string[] = []
+  for (const pkg of byPackage.keys()) {
+    const shortName = pkg.replace(/^@[^/]+\//, '')
+    for (const consumer of facts.consumersOf(shortName)) {
+      const coveringFile = facts.surfaceFiles.find((f) => f.path.startsWith(`${consumer}/`) && isTestFile(f.path))
+      if (!coveringFile) {
+        uncovered.push(`${pkg} (${consumer})`)
+      } else if (boundaryNarrowsSurface) {
+        coveredDirLines.push(`- consumer-tests: ${nearestTestDir(coveringFile.path)} (covers ${pkg})`)
+      }
+    }
+  }
+  const consumerLines = [
+    ...(uncovered.length > 0
+      ? [
+          `- consumer-tests: none — no consumer test path named yet for ${uncovered.join(', ')}; name one before dispatch, or confirm no consumer-facing behavior changed.`
+        ]
+      : []),
+    ...coveredDirLines
+  ]
 
   const lines = [
     '## 4. Technical surface map',

@@ -337,7 +337,7 @@ export function checkForField(prBody: string): BriefSectionResult {
  * convention (a bare ref inside the `AEG:CLOSES` anchor) and fails with an
  * actionable message rather than silently stranding its Issue.
  */
-export function checkClosesN(prBody: string): BriefSectionResult {
+export function checkClosesNPresence(prBody: string): BriefSectionResult {
   const closesPattern = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s{0,8}:?\s{0,8}#\d+/i
   if (closesPattern.test(stripCode(prBody))) {
     return { status: 'pass', errors: [] }
@@ -674,7 +674,7 @@ const FILE_LINE_RE = /\b[\w./-]+\.(?:tsx?|jsx?|mjs|cjs|md|mdx|json|ya?ml|sh|py|t
  * but a single-backtick inline span is left as literal text — the PR #382
  * sentence was exactly an inline span, and this rule must still catch it.
  * This is why `maskCode` (which blanks inline spans too) is the wrong tool
- * here, unlike `checkClosesN`/`isBriefShaped` elsewhere in this file.
+ * here, unlike `checkClosesNPresence`/`isBriefShaped` elsewhere in this file.
  */
 export function checkNoUnpinnedCodeClaims(prBody: string): BriefSectionResult {
   const premiseText = premiseBlockText(prBody)
@@ -784,11 +784,22 @@ function packagesNamedIn(text: string): string[] {
   return [...pkgs]
 }
 
-/** Whether `text` names a test-shaped path (`*.test.<ext>`) under workspace directory `consumerDir` (e.g. `apps/cli`, `packages/sources`). */
+/**
+ * Whether `text` names a test-shaped path under workspace directory
+ * `consumerDir` (e.g. `apps/cli`, `packages/sources`) — either a real
+ * `*.test.<ext>` FILE, or a bare `tests`/`specs` DIRECTORY reference (task
+ * 17, O6: `brief-render.ts`'s `renderSection4` names the latter, never a
+ * file, whenever `boundaryNarrowsSurface` hides individual files from §4's
+ * Modify list — a directory-only brief must never fail the validator its
+ * own renderer produces). Segment equality for the directory form, the same
+ * convention `checkSurfaceOverlap`'s O4 exemption uses — `apps/testsuite`
+ * does not count as `apps/cli/tests` does.
+ */
 function hasTestPathForConsumer(text: string, consumerDir: string): boolean {
   const escaped = consumerDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const re = new RegExp(`${escaped}\\/[\\w./-]*\\.test\\.[A-Za-z0-9]+`)
-  return re.test(text)
+  const filePathRe = new RegExp(`${escaped}\\/[\\w./-]*\\.test\\.[A-Za-z0-9]+`)
+  const testDirRe = new RegExp(`${escaped}\\/(?:[\\w-]+\\/)*(?:tests|specs)(?:\\/|\\b)`)
+  return filePathRe.test(text) || testDirRe.test(text)
 }
 
 /**
@@ -1007,7 +1018,7 @@ export function checkBriefSections(
     ...(issueObjectives !== undefined
       ? [checkObjectivesCopy(prBody, issueObjectives), checkObjectivesCoverage(prBody)]
       : []),
-    ...(requireClosesN ? [checkClosesN(prBody)] : [])
+    ...(requireClosesN ? [checkClosesNPresence(prBody)] : [])
   ]
   return { errors: results.flatMap((r) => r.errors) }
 }

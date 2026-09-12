@@ -69,7 +69,9 @@
       "vinaya.config.json",
       "VINAYA.md",
       ".vinaya/doc-owners",
-      ".claude/settings.json"
+      ".claude/settings.json",
+      "vinaya/checks/.gitkeep",
+      "vinaya/roles/.gitkeep"
     ],
     "blocks": [
       {

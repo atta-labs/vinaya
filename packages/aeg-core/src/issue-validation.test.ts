@@ -12,6 +12,7 @@ import {
   checkIssueRationale,
   checkDocsWithinSurface,
   checkIssueType,
+  checkMilestoneAttach,
   checkNoBriefContent,
   checkPartsCiteDefinedObjectives,
   checkProjectsRegistered,
@@ -21,6 +22,7 @@ import {
   checkSurfaceGlobsResolve,
   checkSurfaceOverlap,
   checkSurfaceScope,
+  checkTrancheLabelPresence,
   declaredProjects,
   frozenSectionsChanged,
   isTaskIssueBodyShaped,
@@ -806,6 +808,52 @@ describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
     const subject = mk('42', ['packages/aeg-core/src/**'], ['#43'])
     const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'], ['#42'])
     expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  // task 17, O4 — shared-by-construction exemptions.
+  it('passes an overlap under a shared `tests` directory — no Conflicts-with edge needed', () => {
+    const subject = mk('42', ['apps/cli/tests/**'])
+    const sibling = mk('43', ['apps/cli/tests/checks/**'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('passes an overlap under a shared `specs` directory', () => {
+    const subject = mk('42', ['packages/aeg-core/specs/**'])
+    const sibling = mk('43', ['packages/aeg-core/specs/foo.md'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('a directory merely named "testsuite" is NOT exempt — segment equality, never a substring test', () => {
+    const subject = mk('42', ['apps/testsuite/**'])
+    const sibling = mk('43', ['apps/testsuite/foo.ts'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+  })
+
+  it('a glob outside tests/specs on the SAME task still overlaps a real one — the exemption is per-glob, not per-task', () => {
+    const subject = mk('42', ['apps/cli/tests/**', 'apps/cli/src/lib/**'])
+    const sibling = mk('43', ['apps/cli/tests/**', 'apps/cli/src/lib/thing.ts'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBe(1)
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/lib/)
+  })
+
+  it('passes a glob every open task in the Milestone declares in common, outside tests/specs', () => {
+    const subject = mk('42', ['aeg-root/roles/**'])
+    const sibling1 = mk('43', ['aeg-root/roles/**'])
+    const sibling2 = mk('44', ['aeg-root/roles/**'])
+    expect(checkSurfaceOverlap(subject, [sibling1, sibling2]).status).toBe('pass')
+  })
+
+  it('does NOT exempt a glob the subject shares with only SOME siblings, not the whole cohort', () => {
+    const subject = mk('42', ['aeg-root/roles/**'])
+    const sibling1 = mk('43', ['aeg-root/roles/**'])
+    const sibling2 = mk('44', ['unrelated/**']) // does not declare aeg-root/roles at all
+    const r = checkSurfaceOverlap(subject, [sibling1, sibling2])
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBe(1)
+    expect(r.errors[0]).toMatch(/43/)
   })
 })
 
@@ -1611,5 +1659,54 @@ describe('checkIssueBriefSections', () => {
     const r = checkIssueBriefSections('a body with nothing but a title.', null)
     expect(r.status).toBe('fail')
     expect(r.errors.length).toBeGreaterThan(0)
+  })
+})
+
+// task 17, O2 — the six write-only rules named apart.
+describe('checkTrancheLabelPresence', () => {
+  it('passes a task-shaped body carrying the tranche label', () => {
+    const r = checkTrancheLabelPresence('## Objectives\n\nO1. Thing.\n', ['vinaya/tranche:demo-v1'])
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails a task-shaped body with no tranche label', () => {
+    const r = checkTrancheLabelPresence('## Objectives\n\nO1. Thing.\n', [])
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/tranche/)
+  })
+
+  it('passes a genuinely non-task body with no label — nothing to require', () => {
+    const r = checkTrancheLabelPresence('just an ordinary Issue about a bug.', [])
+    expect(r.status).toBe('pass')
+  })
+})
+
+describe('checkMilestoneAttach', () => {
+  it('passes a non-task Issue regardless of Milestone state', () => {
+    const r = checkMilestoneAttach([], null, 'v1')
+    expect(r.status).toBe('pass')
+  })
+
+  it('passes when no target Milestone could be resolved — dormant, nothing to compare', () => {
+    const r = checkMilestoneAttach(['vinaya/tranche:demo-v1'], 'some-other-milestone', null)
+    expect(r.status).toBe('pass')
+  })
+
+  it('passes when the live Milestone already matches the resolved target', () => {
+    const r = checkMilestoneAttach(['vinaya/tranche:demo-v1'], 'v1', 'v1')
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails, naming both titles, when the live Milestone diverges from the resolved target', () => {
+    const r = checkMilestoneAttach(['vinaya/tranche:demo-v1'], 'v0', 'v1')
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/"v0"/)
+    expect(r.errors.join(' ')).toMatch(/"v1"/)
+  })
+
+  it('fails, naming "unset", when the task Issue carries no live Milestone at all', () => {
+    const r = checkMilestoneAttach(['vinaya/tranche:demo-v1'], null, 'v1')
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/unset/)
   })
 })

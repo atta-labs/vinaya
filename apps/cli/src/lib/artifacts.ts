@@ -438,6 +438,75 @@ ${indented}
 `
 }
 
+/**
+ * The "Fetch PR body" step body, shared verbatim by \`vinaya-checks.yml\` and
+ * \`vinaya-body-checks.yml\` (task 17, O3) — one rule, not two copies. A
+ * single \`gh pr view\` read is a race: \`pr report --push\` (or a plain
+ * \`pr edit\`) can land on the forge in the gap between this workflow's
+ * trigger firing and its own \`gh pr view\` call, so the run reads a body
+ * from BEFORE that write finished — measured live on atta-labs/vinaya
+ * #485/#520/#523, each red on \`closes-n\` with a body the workflow's own
+ * log later showed was correct, green on the very next run with no code
+ * change. Every real task PR already passed \`closes-n\` at WRITE time
+ * (\`runBodyChecks\`, O1) before it could exist on the forge at all, so a
+ * missing/malformed \`AEG:CLOSES\` region here is never a legitimate,
+ * permanent state for a task branch — it is this exact race, and it is
+ * safe to wait a few seconds for it to resolve. Same reasoning for a
+ * present \`AEG:EVIDENCE\` block whose recorded \`Head:\` is not yet this
+ * run's real PR head: \`pr report --push\` re-reads and self-verifies its
+ * own write, so a body carrying a STALE head is a write still landing, not
+ * a permanently wrong one.
+ *
+ * Bounded — six attempts, five seconds apart (thirty seconds total) — and
+ * loud on exhaustion: names exactly what it waited for rather than quietly
+ * running the check suite against a body it already knows may be stale.
+ */
+function verifiedFetchPrBodyStep(): string {
+  return `      - name: Fetch PR body
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: \${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: \${{ github.event.pull_request.head.sha }}
+          BRANCH: \${{ github.head_ref }}
+        run: |
+          ATTEMPTS=0
+          MAX_ATTEMPTS=6
+          SLEEP_SECONDS=5
+          while :; do
+            BODY="$(gh pr view "$PR_NUMBER" --json body --jq .body)"
+            WAIT_FOR=""
+            if [[ "$BRANCH" =~ ^task/[^/]+/[^/]+$ ]]; then
+              CLOSES_REGION="$(printf '%s\\n' "$BODY" | sed -n '/<!-- AEG:CLOSES:START -->/,/<!-- AEG:CLOSES:END -->/p')"
+              if ! printf '%s\\n' "$CLOSES_REGION" | grep -qE '#[0-9]+'; then
+                WAIT_FOR="a real Closes #N inside the AEG:CLOSES region for task branch $BRANCH"
+              fi
+            fi
+            if [ -z "$WAIT_FOR" ]; then
+              EVIDENCE_REGION="$(printf '%s\\n' "$BODY" | sed -n '/<!-- AEG:EVIDENCE:START -->/,/<!-- AEG:EVIDENCE:END -->/p')"
+              if [ -n "$EVIDENCE_REGION" ]; then
+                EVIDENCE_HEAD="$(printf '%s\\n' "$EVIDENCE_REGION" | grep -m1 '^Head: ' | sed 's/^Head: //')"
+                if [ -n "$EVIDENCE_HEAD" ] && [ "$EVIDENCE_HEAD" != "$PR_HEAD_SHA" ]; then
+                  WAIT_FOR="the AEG:EVIDENCE block's Head ($EVIDENCE_HEAD) to catch up to this run's real head ($PR_HEAD_SHA)"
+                fi
+              fi
+            fi
+            if [ -z "$WAIT_FOR" ]; then
+              break
+            fi
+            ATTEMPTS=$((ATTEMPTS + 1))
+            if [ "$ATTEMPTS" -ge "$MAX_ATTEMPTS" ]; then
+              echo "::error::Gave up after $ATTEMPTS attempts waiting for $WAIT_FOR." >&2
+              exit 1
+            fi
+            sleep "$SLEEP_SECONDS"
+          done
+          DELIM="PR_BODY_$(openssl rand -hex 16)"
+          echo "PR_BODY<<$DELIM" >> "$GITHUB_ENV"
+          printf '%s\\n' "$BODY" >> "$GITHUB_ENV"
+          echo "$DELIM" >> "$GITHUB_ENV"
+`
+}
+
 function checksWorkflow(selfHost: VendoredVinaya | null, ciSetup: string | null): string {
   return `# ${MANAGED_NOTE}
 #
@@ -508,17 +577,10 @@ ${vinayaSetupSteps(selfHost, 'shared-build')}${adopterSetupStep(ciSetup)}      #
       # nothing to check" and pass vacuously regardless of the PR's real
       # content, on every run. Fetched live from the forge, never the
       # event payload — a rerun of an old run must read the body as it
-      # stands NOW, not as it stood when the triggering event fired.
-      - name: Fetch PR body
-        env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: \${{ github.event.pull_request.number }}
-        run: |
-          DELIM="PR_BODY_$(openssl rand -hex 16)"
-          echo "PR_BODY<<$DELIM" >> "$GITHUB_ENV"
-          gh pr view "$PR_NUMBER" --json body --jq .body >> "$GITHUB_ENV"
-          echo "$DELIM" >> "$GITHUB_ENV"
-      - name: Run checks
+      # stands NOW, not as it stood when the triggering event fired. See
+      # \`verifiedFetchPrBodyStep\`'s own doc comment for why this re-reads
+      # with a bounded backoff instead of trusting the first read.
+${verifiedFetchPrBodyStep()}      - name: Run checks
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
@@ -870,17 +932,10 @@ jobs:
 ${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes body-bare-digits EVALUATE at all — the bin
       # reads \`process.env.PR_BODY\` only, never fetches it itself. Fetched
       # live from the forge, never the event payload — same reasoning as
-      # \`vinaya-checks.yml\`'s own PR_BODY step.
-      - name: Fetch PR body
-        env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: \${{ github.event.pull_request.number }}
-        run: |
-          DELIM="PR_BODY_$(openssl rand -hex 16)"
-          echo "PR_BODY<<$DELIM" >> "$GITHUB_ENV"
-          gh pr view "$PR_NUMBER" --json body --jq .body >> "$GITHUB_ENV"
-          echo "$DELIM" >> "$GITHUB_ENV"
-      - name: Body checks
+      # \`vinaya-checks.yml\`'s own PR_BODY step. See \`verifiedFetchPrBodyStep\`'s
+      # own doc comment for why this re-reads with a bounded backoff instead
+      # of trusting the first read.
+${verifiedFetchPrBodyStep()}      - name: Body checks
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           # PR_NUMBER is what makes the Changesets-release exemption
@@ -1230,7 +1285,7 @@ ${hookRun(selfHost, 'check --all --diff-only --local --skip-full')}`
 # type-check only the packages your staged diff actually touches (O9) —
 # scoped so this hook costs seconds, not the whole repo's worth of work.
 VINAYA_STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACMR)"
-bunx biome check --write --staged . || exit 1
+bunx biome check --write --staged . --no-errors-on-unmatched || exit 1
 if [ -n "$VINAYA_STAGED_FILES" ]; then
   echo "$VINAYA_STAGED_FILES" | xargs git add --
 fi

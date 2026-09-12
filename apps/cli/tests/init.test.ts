@@ -1300,12 +1300,12 @@ describe('generated pre-commit hook: scoped format/lint/typecheck (O9)', () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const preCommit = readFileSync(join(root, '.husky/pre-commit'), 'utf-8')
-    expect(preCommit).toContain('bunx biome check --write --staged .')
+    expect(preCommit).toContain('bunx biome check --write --staged . --no-errors-on-unmatched')
     expect(preCommit).toContain('bunx turbo typecheck --affected')
     // The fix-then-restage step must run BEFORE typecheck (so typecheck sees
     // the fixed code) and typecheck must run BEFORE the doctrine gate (cheap,
     // deterministic checks refuse first).
-    expect(preCommit.indexOf('bunx biome check --write --staged .')).toBeLessThan(
+    expect(preCommit.indexOf('bunx biome check --write --staged . --no-errors-on-unmatched')).toBeLessThan(
       preCommit.indexOf('bunx turbo typecheck --affected')
     )
     expect(preCommit.indexOf('bunx turbo typecheck --affected')).toBeLessThan(
@@ -2307,5 +2307,61 @@ describe('generated workflows — PR-body heredoc delimiter is real randomness (
       expect(op.content).toContain('DELIM="PR_BODY_$(openssl rand -hex 16)"')
       expect(op.content).not.toContain('date +%s%N')
     }
+  })
+})
+
+// task 17, O3 — the "Fetch PR body" step re-reads until the body is
+// internally consistent with what this run already knows, instead of
+// trusting a single `gh pr view` that can race a `pr report --push`/`pr
+// edit` still landing on the forge (measured live: #485/#520/#523 went red
+// on closes-n, then green on the very next run with no code change).
+describe('generated workflows — verified PR-body fetch, bounded backoff (O3)', () => {
+  it('both vinaya-checks.yml and vinaya-body-checks.yml wait for a real AEG:CLOSES region and a matching AEG:EVIDENCE head, and fail loudly on exhaustion', () => {
+    const ops = buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost: null,
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
+    })
+    const checks = ops.find((op) => op.kind === 'create-file' && op.path === CHECKS_WORKFLOW_PATH)
+    const bodyChecks = ops.find((op) => op.kind === 'create-file' && op.path === BODY_CHECKS_WORKFLOW_PATH)
+    for (const op of [checks, bodyChecks]) {
+      if (op?.kind !== 'create-file') continue
+      // Retries, bounded — never an infinite wait.
+      expect(op.content).toContain('MAX_ATTEMPTS=6')
+      expect(op.content).toContain('sleep "$SLEEP_SECONDS"')
+      // Waits only for a TASK branch's AEG:CLOSES region, never a non-task one.
+      expect(op.content).toContain('^task/[^/]+/[^/]+$')
+      expect(op.content).toContain('AEG:CLOSES:START')
+      // Waits for the AEG:EVIDENCE block's Head to catch up to the real PR head.
+      expect(op.content).toContain('AEG:EVIDENCE:START')
+      expect(op.content).toContain('PR_HEAD_SHA')
+      // Fails loudly, naming what it waited for, on exhaustion — never a
+      // silent pass-through to the check suite with a body it knows may be stale.
+      expect(op.content).toContain('::error::Gave up after')
+    }
+  })
+
+  it('both workflows generate the exact SAME fetch step — one rule, not two copies', () => {
+    const ops = buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost: null,
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
+    })
+    const checks = ops.find((op) => op.kind === 'create-file' && op.path === CHECKS_WORKFLOW_PATH)
+    const bodyChecks = ops.find((op) => op.kind === 'create-file' && op.path === BODY_CHECKS_WORKFLOW_PATH)
+    if (checks?.kind !== 'create-file' || bodyChecks?.kind !== 'create-file')
+      throw new Error('expected create-file ops')
+    const extractFetchStep = (content: string): string => {
+      const start = content.indexOf('- name: Fetch PR body')
+      const end = content.indexOf('\n      - name:', start + 1)
+      return content.slice(start, end === -1 ? undefined : end)
+    }
+    expect(extractFetchStep(checks.content)).toBe(extractFetchStep(bodyChecks.content))
   })
 })

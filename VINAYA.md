@@ -35,7 +35,7 @@ anything substantive:
 
 prints the absolute path to that role's doctrine — `architect`,
 `developer`, `reviewer`, `planner`, `security`, `archivist`,
-`tranche-archivist`, `brief-author`, or `principal`. If your agent tool
+`tranche-archivist`, or `principal`. If your agent tool
 supports slash-style commands, the same doctrine is likely exposed as
 `/vinaya <role>` — check your tool's command list before falling back to
 the raw CLI form.

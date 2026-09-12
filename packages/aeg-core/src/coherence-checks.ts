@@ -11,6 +11,7 @@ import { anchoredRegion, stripCode } from './anchored-region'
 import {
   checkIssueObjectives,
   checkIssueRationale,
+  checkPartsCiteDefinedObjectives,
   checkProjectsRegistered,
   checkSurfaceExcludesBoundDoc,
   checkSurfaceOverlap,
@@ -478,7 +479,10 @@ export function checkR1(
       const errors = [
         ...checkIssueRationale(issue.body).errors,
         ...checkProjectsRegistered(issue.body, issue.labels, registeredNames).errors,
-        ...checkIssueObjectives(issue.body, issue.number).errors
+        ...checkIssueObjectives(issue.body, issue.number).errors,
+        // task 17, O2 — Parts coverage joins the sweep here: same
+        // dormant-when-absent posture as the other two, zero new inputs.
+        ...checkPartsCiteDefinedObjectives(issue.body).errors
       ]
       if (errors.length === 0) continue
       failures.push({
@@ -795,9 +799,9 @@ export function checkL5(activeTrancheSlugs: string[], entriesBySlug: Map<string,
 }
 
 /** Extracts the set of Issue numbers a PR body's `Closes #N` (and Fixes/
- * Resolves synonyms) references. Shared by `checkClosesN`'s forward and
+ * Resolves synonyms) references. Shared by `checkClosesNTopology`'s forward and
  * reverse directions, and by the CI wiring script that must resolve each
- * referenced Issue's task identity *before* calling `checkClosesN` — one
+ * referenced Issue's task identity *before* calling `checkClosesNTopology` — one
  * grammar, not a second copy of the pattern (discipline). Honors the
  * AEG:CLOSES anchor pair (`anchored-region.ts`, task 30) when present: only
  * references inside the pair count, so a Closes-shaped line in a pasted
@@ -805,10 +809,10 @@ export function checkL5(activeTrancheSlugs: string[], entriesBySlug: Map<string,
  * is additionally `stripCode`d before matching, for parity with GitHub's
  * auto-close parser (which ignores `Closes #N` inside code) — a backticked-only
  * reference resolves to no Issue here exactly as it does on merge, so this
- * repo-wide check and the pre-merge `checkClosesN` agree with GitHub.
+ * repo-wide check and the pre-merge `checkClosesNTopology` agree with GitHub.
  *
  * The separator groups are bounded (`\s{0,8}`) for the same reason, and to the
- * same width, as `checkClosesN`'s — see the ReDoS note there. The two patterns
+ * same width, as `checkClosesNTopology`'s — see the ReDoS note there. The two patterns
  * must stay byte-identical apart from the capture group; a divergence here is
  * a gate-disagreement bug, not a style difference. */
 export function extractClosesReferences(prBody: string): Set<number> {
@@ -851,7 +855,7 @@ export function extractClosesReferences(prBody: string): Set<number> {
  * in BRANCH + PR_BODY env vars (forward) and a batched forge lookup
  * (reverse, see `@attalabs/aeg-forge-state`'s `fetchTaskIssueRefs`).
  */
-export function checkClosesN(
+export function checkClosesNTopology(
   branch: string,
   prBody: string,
   trancheFiles: TrancheFile[],

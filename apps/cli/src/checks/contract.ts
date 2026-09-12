@@ -122,6 +122,31 @@ export type CheckSpec = {
    * the live PR body still carries an unticked `[principal]` item.
    */
   principalOwed?: true
+  /**
+   * What forge-write object this check validates the OUTGOING bytes of, when
+   * it does at all — `'body'` for a pull-request (or Issue) body a
+   * forge-write command is about to ship (`vinaya pr create/edit`, `pr report
+   * --push`, and the Issue write paths' own body checks); `'issue'` for a
+   * rule that only ever applies to a task Issue's own content (title
+   * grammar, Objectives numbering, Parts coverage, Surface glob resolution,
+   * tranche-label presence, Milestone attach) — never a pull request. Absent
+   * for a check that grades the code diff itself, never forge-write content.
+   *
+   * This is the ONE taxonomy `apps/cli/src/lib/forge-write.ts`'s pre-write
+   * validation and `packages/aeg-core/bin/verify-coherence.ts`'s open-Issue
+   * sweep filter the registry by (task 17, O1/O2): a check registered with
+   * `validates: 'body'` is picked up by every `pr`/Issue-body write with no
+   * further wiring, and a check registered with `validates: 'issue'` runs at
+   * Issue-write time and in the coherence sweep, but is never selected into a
+   * pull-request workflow (`vinaya-checks.yml`/`vinaya-body-checks.yml` both
+   * gate PULL REQUESTS — an `'issue'`-scoped check has no pull-request body to
+   * grade in the first place). Plain adopter-facing data, not a privileged
+   * flag: an adopter's own `vinaya.config.json` check entry may declare it
+   * too, and the write path treats every check with this value identically
+   * regardless of core/config origin — same discipline as every other
+   * `CheckSpec` field.
+   */
+  validates?: 'body' | 'issue'
 }
 
 /**

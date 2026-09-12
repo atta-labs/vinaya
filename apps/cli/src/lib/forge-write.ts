@@ -81,7 +81,10 @@ import {
   parseRationaleDeps,
   resolveMilestoneAttachTarget
 } from '@attalabs/aeg-forge-state'
-import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks/contract'
+import { coreCheckRegistry } from '../checks/registry'
+import { resolveChecks } from '../checks/resolver'
+import { defaultParallelism, runChecks } from '../checks/runner'
+import { CHECK_SCHEMA_VERSION, type CheckError, type CheckSpec, emitCheckError } from '../checks/contract'
 import {
   type BriefBuiltin,
   type BriefSection,
@@ -575,6 +578,145 @@ export function validateForgeWrite(input: ForgeValidationInput): CheckError[] {
   }
 
   return errors
+}
+
+// ---------------------------------------------------------------------------
+// O1/O2 (task 17) — the ONE registry-runner call every forge-write path
+// shares. `resolvedRegistry()` merges the core registry with whatever an
+// adopter's own `vinaya.config.json` adds (`resolveChecks`, the same merge
+// `commands/check.ts`/`commands/doctor.ts` already apply) — a config-
+// registered check declaring `validates: 'body'`/`'issue'` is enforced here
+// exactly like a core one, same discipline as every other `CheckSpec` field.
+// ---------------------------------------------------------------------------
+
+function resolvedRegistry(): CheckSpec[] {
+  const result = loadConfigChecked()
+  const configChecks = result.ok ? result.config?.checks : undefined
+  return resolveChecks(coreCheckRegistry(), configChecks).resolved.map((rc) => rc.spec)
+}
+
+/**
+ * Runs every registered check whose `validates` is `'body'` over the exact
+ * bytes about to reach the forge — the SAME `runChecks` entry point
+ * `vinaya check <name>`/`--all` spawns, so a body this refuses is, by
+ * construction, a body CI's `vinaya-checks.yml`/`vinaya-body-checks.yml`
+ * would also refuse, and a check registered `validates: 'body'` LATER is
+ * enforced here with zero further wiring (O1).
+ *
+ * `prNumber` distinguishes the two shapes every body write actually has:
+ * `undefined` (no PR exists yet — `pr create`, before the write) sets
+ * `localOnly: true`, which skips every `requiresOpenPr` check outright
+ * (`closes-n`, `test-plan`, `body-bare-digits`, `token-report`,
+ * `evidence-fresh` all take their own documented "no PR yet" bypass when
+ * actually run — skipping here is cheaper and matches the pre-commit/
+ * pre-push hooks' own `--local` posture); a real number (`pr edit`, `pr
+ * report --push`, both against an already-open PR) runs the full set,
+ * `PR_NUMBER` forwarded so a `requiresOpenPr` check resolves the REAL PR
+ * rather than taking its no-PR bypass against one that already exists.
+ *
+ * Skipped entirely when `rings.ring1_forgeWriteInterception` is `true` — the
+ * same accelerator `resolveSections` already honors to skip
+ * `validateForgeWrite`'s config-driven sections; that flag's whole point is
+ * "skip brief-schema validation entirely," and running this pass
+ * unconditionally underneath it would silently reintroduce exactly the
+ * validation the accelerator was set to remove.
+ *
+ * Refuses (never returns) on any finding — same contract as `refuse()`
+ * itself, which this calls.
+ */
+export async function runBodyChecks(
+  body: string,
+  branch: string,
+  prNumber: number | undefined,
+  retryCommand: string
+): Promise<void> {
+  const config = loadConfigChecked()
+  if (config.ok && config.config?.rings?.ring1_forgeWriteInterception === true) return
+
+  const specs = resolvedRegistry().filter((s) => s.validates === 'body')
+  if (specs.length === 0) return
+
+  const callerEnv: NodeJS.ProcessEnv = { ...process.env, PR_BODY: body, BRANCH: branch }
+  if (prNumber === undefined) delete callerEnv.PR_NUMBER
+  else callerEnv.PR_NUMBER = String(prNumber)
+
+  const outcomes = await runChecks(specs, {
+    parallel: defaultParallelism(),
+    diffOnly: false,
+    changedFiles: null,
+    defaultTimeoutMs: 30_000,
+    callerEnv,
+    localOnly: prNumber === undefined
+  })
+
+  const errors = outcomes.filter((o) => o.status === 'fail' || o.status === 'error').flatMap((o) => o.errors)
+  if (errors.length === 0) return
+  refuse(
+    errors.map((e) =>
+      makeCheckError(e.check, e.message, `${e.agent_recovery_prompt} Fix the body, then re-run \`${retryCommand}\`.`)
+    )
+  )
+}
+
+/**
+ * Runs every registered check whose `validates` is `'issue'` over a task
+ * Issue's own content — title grammar, Objectives numbering, Parts coverage,
+ * Surface glob resolution, tranche-label presence, Milestone attach (O2).
+ * These never apply to a pull request (a PR body has no Milestone, no
+ * `## Objectives` numbering of its own to grade), so they run ONLY from an
+ * Issue write path and from the coherence sweep over open Issues
+ * (`packages/aeg-core/bin/verify-coherence.ts`) — never selected into a
+ * pull-request workflow, matching every `validates: 'issue'` entry's
+ * `ownWorkflow: true` declaration.
+ *
+ * Every fact these checks need is precomputed and injected by the caller as
+ * an env var (`ISSUE_*`) — mirroring `brief-shape`'s own PR_BODY/BRANCH/
+ * PR_NUMBER shape — rather than having each bin re-fetch the same forge
+ * state the caller already fetched for its OWN gates.
+ *
+ * Refuses (never returns) on any finding — same contract as `refuse()`.
+ */
+export async function runIssueChecks(input: {
+  body: string
+  labels: string[]
+  title: string | null
+  issueNumber: number | null
+  currentMilestoneTitle: string | null
+  resolvedMilestoneTitle: string | null
+  retryCommand: string
+}): Promise<void> {
+  const specs = resolvedRegistry().filter((s) => s.validates === 'issue')
+  if (specs.length === 0) return
+
+  const callerEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ISSUE_BODY: input.body,
+    ISSUE_LABELS: input.labels.join(','),
+    ISSUE_TITLE: input.title ?? '',
+    ISSUE_NUMBER: input.issueNumber !== null ? String(input.issueNumber) : '',
+    CURRENT_MILESTONE_TITLE: input.currentMilestoneTitle ?? '',
+    RESOLVED_MILESTONE_TITLE: input.resolvedMilestoneTitle ?? ''
+  }
+
+  const outcomes = await runChecks(specs, {
+    parallel: defaultParallelism(),
+    diffOnly: false,
+    changedFiles: null,
+    defaultTimeoutMs: 30_000,
+    callerEnv
+  })
+
+  const errors = outcomes.filter((o) => o.status === 'fail' || o.status === 'error').flatMap((o) => o.errors)
+  if (errors.length === 0) return
+  refuse(
+    errors.map((e) =>
+      makeCheckError(
+        e.check,
+        e.message,
+        `${e.agent_recovery_prompt} Fix the Issue body, then re-run \`${input.retryCommand}\`.`
+      )
+    )
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -1158,7 +1300,7 @@ function fetchOpenTaskSurfaceSiblings(
     })
 }
 
-export function validateTaskIssue(
+export async function validateTaskIssue(
   body: string | null,
   title: string | null,
   labels: string[],
@@ -1170,7 +1312,7 @@ export function validateTaskIssue(
   // exactly like a Milestone this process could not determine — never a
   // crash, never a silently-wrong Milestone guess.
   milestoneSource?: MilestoneSource
-): void {
+): Promise<void> {
   if (body === null) {
     refuse([
       makeCheckError(
@@ -1213,6 +1355,32 @@ export function validateTaskIssue(
     subjectRef: issueNumber !== null ? String(issueNumber) : ''
   })
   if (contentErrors.length > 0) refuse(contentErrors)
+
+  // O2 (task 17) — the six write-only rules, through the SAME registry
+  // runner `runBodyChecks` uses. `checkMilestoneAttach` stays dormant on
+  // EVERY write-path call (both `currentMilestoneTitle`/`resolvedMilestoneTitle`
+  // null): `create`'s auto-attach action happens as part of THIS SAME write,
+  // once validation passes, so there is nothing to compare against yet
+  // (flagging an attach that has not happened YET as one that never will is
+  // exactly the false positive this must not produce); `edit` never
+  // re-attaches at all, by this system's own design
+  // (`packages/aeg-core/bin/open-issue.ts`'s `resolveMilestoneToAttach`:
+  // "edit never force-attaches retroactively" — `vinaya milestone adopt` is
+  // the sanctioned way to move a tranche's Milestone, and comparing an
+  // adopted Issue's live Milestone against its label's DEFAULT resolution
+  // would flag every legitimately-adopted tranche as a violation). The check
+  // is still registered and directly invocable (`vinaya check
+  // issue-milestone-attach`) — it simply has no write-path moment that is
+  // both meaningful and free of that false-positive risk.
+  await runIssueChecks({
+    body,
+    labels,
+    title,
+    issueNumber,
+    currentMilestoneTitle: null,
+    resolvedMilestoneTitle: null,
+    retryCommand
+  })
 }
 
 /**
@@ -1223,7 +1391,7 @@ export function validateTaskIssue(
  * same path with a temp `--body-file` it wrote itself — one validated write
  * path for every Issue-edit caller, never a second hand-rolled one.
  */
-export function writeValidatedIssueEdit(input: {
+export async function writeValidatedIssueEdit(input: {
   issueRef: string
   ghArgs: string[]
   bodyResult: BodyResult | null
@@ -1232,7 +1400,7 @@ export function writeValidatedIssueEdit(input: {
   quiet?: boolean
   /** `issue objectives edit`'s own escape hatch — see `refuseFrozenSectionChange`'s doc comment. Every other caller omits this (defaults to `false`, the check runs). */
   skipFrozenSectionsCheck?: boolean
-}): void {
+}): Promise<void> {
   const { issueRef, ghArgs, bodyResult, json, retryCommand, quiet, skipFrozenSectionsCheck } = input
   const body = bodyResult?.body ?? null
   const title = extractTitle(ghArgs)
@@ -1245,7 +1413,7 @@ export function writeValidatedIssueEdit(input: {
 
   if (isTaskIssueLabelSet(labels)) {
     refuseFrozenSectionChange(issueRef, body, retryCommand, skipFrozenSectionsCheck ?? false)
-    validateTaskIssue(body, title, labels, retryCommand, parseIssueNumberFromRef(issueRef), {
+    await validateTaskIssue(body, title, labels, retryCommand, parseIssueNumberFromRef(issueRef), {
       kind: 'edit',
       issueRef
     })

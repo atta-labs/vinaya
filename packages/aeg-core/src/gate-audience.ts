@@ -150,7 +150,15 @@ export const CLI_CHECK_RING: Readonly<Record<string, 0 | 1 | 2>> = {
   'main-branch-refusal': 0,
   'token-collection-wired': 0,
   'token-report': 1,
-  'pr-premise-reassert': 0
+  'pr-premise-reassert': 0,
+  // The six write-only rules named apart (task 17, O2) — `ownWorkflow: true`
+  // each, same ring reasoning as `review-gate`/`body-bare-digits` above.
+  'issue-title-grammar': 1,
+  'issue-objectives-numbering': 1,
+  'issue-parts-coverage': 1,
+  'issue-surface-globs': 1,
+  'issue-tranche-label': 1,
+  'issue-milestone-attach': 1
 }
 
 /**

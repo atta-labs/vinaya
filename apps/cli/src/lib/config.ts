@@ -60,7 +60,12 @@ const CheckEntrySchema = z
     // can clear declares this exactly like `test-plan` does in the core
     // registry — see `CheckSpec.principalOwed`'s doc comment for the
     // exclusion semantics this unlocks.
-    principalOwed: z.literal(true).optional()
+    principalOwed: z.literal(true).optional(),
+    // Same discipline again: an adopter's own custom check that validates a
+    // forge-write body/Issue declares this exactly like a core one — see
+    // `CheckSpec.validates`'s doc comment for the write-path/coherence-sweep
+    // wiring this unlocks.
+    validates: z.enum(['body', 'issue']).optional()
   })
   // `anyOf` is keyed BY the variable name it expands to (`{"GITHUB_TOKEN":
   // {"anyOf":["GITHUB_TOKEN","GH_TOKEN"]}}`) — the key must be one of its own

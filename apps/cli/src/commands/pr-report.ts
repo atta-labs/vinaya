@@ -14,6 +14,7 @@ import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
 import { coreCheckRegistry } from '../checks/registry'
 import { buildCheckEnv } from '../checks/runner'
 import { ScanContext } from '../checks/scan-context'
+import { runBodyChecks } from '../lib/forge-write'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../lib/numstat'
 import { packageRoot } from '../lib/package-root.js'
 import { meteringRefusalMessage, realDeps } from './tokens'
@@ -1166,6 +1167,13 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
       console.error(`vinaya pr report: refused — ${err instanceof Error ? err.message : String(err)}`)
       process.exit(1)
     }
+
+    // O1 (task 17): the outgoing spliced bytes go through the SAME registry
+    // runner `pr create`/`pr edit` do before `gh pr edit` ever sees them —
+    // refuses (never returns) on a finding, so a body `pr report --push`
+    // sends is a body CI's own `vinaya-checks.yml`/`vinaya-body-checks.yml`
+    // also accepts.
+    await runBodyChecks(spliced.body, process.env.BRANCH ?? '', Number(pushPr), `vinaya pr report --push ${pushPr}`)
 
     try {
       ghEditBody(pushPr, spliced.body)

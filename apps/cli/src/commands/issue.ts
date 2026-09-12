@@ -45,7 +45,7 @@ function reportPass(json: boolean, command: string): void {
 
 // --- commands ----------------------------------------------------------------
 
-export function issueCreateCommand(args: string[]): void {
+export async function issueCreateCommand(args: string[]): Promise<void> {
   const json = args.includes('--json')
   const validateOnly = args.includes('--validate-only')
   const ghArgs = args.filter((a) => a !== '--json' && a !== '--validate-only')
@@ -62,7 +62,7 @@ export function issueCreateCommand(args: string[]): void {
     // treats `null` as NOT exempted (fail-closed), never as "old enough to
     // skip"; every Issue this repo can newly mint is already far past
     // `OBJECTIVES_SINCE_ISSUE`, so this never blocks a legitimate create.
-    validateTaskIssue(body, title, labels, RETRY_CREATE, null, { kind: 'create', ghArgs })
+    await validateTaskIssue(body, title, labels, RETRY_CREATE, null, { kind: 'create', ghArgs })
   }
 
   if (validateOnly) {
@@ -76,7 +76,7 @@ export function issueCreateCommand(args: string[]): void {
   runGhWrite(['issue', 'create'], resolveMilestoneAttachArgs(ghArgs, labels), bodyResult, json)
 }
 
-export function issueEditCommand(args: string[]): void {
+export async function issueEditCommand(args: string[]): Promise<void> {
   const json = args.includes('--json')
   const validateOnly = args.includes('--validate-only')
   const rest = args.filter((a) => a !== '--json' && a !== '--validate-only')
@@ -105,7 +105,7 @@ export function issueEditCommand(args: string[]): void {
     refuseUnlabeledTaskShapedBody(body, labels, RETRY_EDIT)
     if (isTaskIssueLabelSet(labels)) {
       refuseFrozenSectionChange(issueRef, body, RETRY_EDIT)
-      validateTaskIssue(body, title, labels, RETRY_EDIT, parseIssueNumberFromRef(issueRef), {
+      await validateTaskIssue(body, title, labels, RETRY_EDIT, parseIssueNumberFromRef(issueRef), {
         kind: 'edit',
         issueRef
       })
@@ -114,5 +114,5 @@ export function issueEditCommand(args: string[]): void {
     return
   }
 
-  writeValidatedIssueEdit({ issueRef, ghArgs, bodyResult, json, retryCommand: RETRY_EDIT })
+  await writeValidatedIssueEdit({ issueRef, ghArgs, bodyResult, json, retryCommand: RETRY_EDIT })
 }

@@ -47,6 +47,12 @@ describe('registry env declarations', () => {
         'exec-bits',
         'first-push-dispatch',
         'issue-assignment',
+        'issue-milestone-attach',
+        'issue-objectives-numbering',
+        'issue-parts-coverage',
+        'issue-surface-globs',
+        'issue-title-grammar',
+        'issue-tranche-label',
         'main-branch-refusal',
         'no-disk-state',
         'pr-premise-reassert',
@@ -141,7 +147,10 @@ describe('registry env declarations', () => {
       'ownWorkflow',
       // Same reason (review-validity-v1 11, O1): expressible in config
       // (CheckEntrySchema) exactly like `ownWorkflow`.
-      'principalOwed'
+      'principalOwed',
+      // Same reason (review-validity-v1 17, O1/O2): expressible in config
+      // (CheckEntrySchema) exactly like `ownWorkflow`/`principalOwed`.
+      'validates'
     ])
     for (const spec of specs) {
       const extra = (Object.keys(spec) as Array<keyof CheckSpec>).filter((k) => !ALLOWED_KEYS.has(k))
