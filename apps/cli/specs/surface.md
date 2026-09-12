@@ -446,6 +446,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `resolveHookDir` | function | `apps/cli/src/lib/detect.ts` |
 | `setCoreHooksPath` | function | `apps/cli/src/lib/detect.ts` |
 | `unsetCoreHooksPath` | function | `apps/cli/src/lib/detect.ts` |
+| `buildReexecArgs` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `DEV_REVIEW_LOOP_AGENTS` | const | `apps/cli/src/lib/dev-review-loop.ts` |
 | `devReviewLoop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `DRIVER_OWNED_PATHS` | const | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
@@ -502,6 +503,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `CONFIDENCE_FILE_NAME` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `CONFIDENCE_PROMPT_LINE` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `DevReviewLoopResumeError` | class | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `driverCrashEvents` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `driverDecidedPauseEvents` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `MAX_GATE_STALLED_TURNS` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `parseConfidenceReply` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |

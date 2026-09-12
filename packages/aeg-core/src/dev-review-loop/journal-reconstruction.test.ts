@@ -72,9 +72,30 @@ function stopConditionMet(round: number, seq: number, offsetSeconds: number, con
   return loopEvent({ event: 'stop_condition_met', round, condition }, seq, offsetSeconds)
 }
 
+function journalFinalizedEvent(seq: number, offsetSeconds: number, result: 'merged_ready' | 'stopped') {
+  return loopEvent(
+    {
+      event: 'journal_finalized',
+      rounds: 1,
+      total_wall_ms: 1000,
+      time_to_green_ms: result === 'merged_ready' ? 1000 : null,
+      files_changed_total: 3,
+      final_head: 'head-1',
+      result
+    },
+    seq,
+    offsetSeconds
+  )
+}
+
 describe('reconstructRounds', () => {
   it('returns an empty journal for no events', () => {
-    expect(reconstructRounds([])).toEqual({ rounds: [], totalWallMs: 0, totalFilesChanged: 0 })
+    expect(reconstructRounds([])).toEqual({
+      rounds: [],
+      totalWallMs: 0,
+      totalFilesChanged: 0,
+      journalFinalized: null
+    })
   })
 
   it("rebuilds one RoundRecord per round_ended event, with the round's blockers count as the only populated severity column", () => {
@@ -156,6 +177,43 @@ describe('reconstructRounds', () => {
   it('a non-dev_review_loop or schema-invalid line is silently skipped, never thrown', () => {
     const lines = ['not json at all', JSON.stringify({ kind: 'dispatch', event: 'dispatched' }), '']
     expect(parseLoopEventLines(lines)).toEqual([])
+  })
+
+  // Round 2 review, BLOCKER: `round_ended.outcome` reads 'green' the moment
+  // `assessRound` decides `publish` — logged immediately — but the caller
+  // (`dev-review-loop.ts`'s `seedLoopHistory`) must never treat that alone
+  // as "this task already published": `journal_finalized` is the one
+  // signal deferred until `publishRound` itself returns without throwing,
+  // so a crash between the two leaves exactly this shape — a green
+  // `round_ended` with no `journal_finalized` at all.
+  describe('journalFinalized — the crash-vs-published signal', () => {
+    it('is null when no journal_finalized event was ever logged, even though the newest round reads green', () => {
+      const events = [verdictsRead(1, 0, 0, 0), roundEnded(1, 1, 1, 'green')]
+      expect(reconstructRounds(events).journalFinalized).toBeNull()
+    })
+
+    it('is {result: "merged_ready"} once a real journal_finalized event lands', () => {
+      const events = [
+        verdictsRead(1, 0, 0, 0),
+        roundEnded(1, 1, 1, 'green'),
+        journalFinalizedEvent(2, 2, 'merged_ready')
+      ]
+      expect(reconstructRounds(events).journalFinalized).toEqual({ result: 'merged_ready' })
+    })
+
+    it('is {result: "stopped"} for a paused task\'s own journal_finalized, distinct from a real publish', () => {
+      const events = [roundEnded(1, 0, 0, 'changes_requested'), journalFinalizedEvent(1, 1, 'stopped')]
+      expect(reconstructRounds(events).journalFinalized).toEqual({ result: 'stopped' })
+    })
+
+    it('the newest journal_finalized wins when more than one was logged (a relaunch replaying the same event)', () => {
+      const events = [
+        journalFinalizedEvent(0, 0, 'stopped'),
+        roundEnded(2, 1, 5, 'green'),
+        journalFinalizedEvent(2, 6, 'merged_ready')
+      ]
+      expect(reconstructRounds(events).journalFinalized).toEqual({ result: 'merged_ready' })
+    })
   })
 })
 

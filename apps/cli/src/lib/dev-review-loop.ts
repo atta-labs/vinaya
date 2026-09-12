@@ -122,6 +122,7 @@ import {
   assertDispatchOrEscalate,
   CONFIDENCE_FILE_NAME,
   CONFIDENCE_PROMPT_LINE,
+  driverCrashEvents,
   driverDecidedPauseEvents,
   MAX_GATE_STALLED_TURNS,
   parseConfidenceReply,
@@ -390,8 +391,28 @@ function defaultDeps(): LoopDeps {
 
 // --- the loop -----------------------------------------------------------------
 
-export type LoopInput = { agent: AgentVendor } & ({ task: number } | { resumePr: number })
+export type LoopInput = { agent: AgentVendor; json?: boolean } & ({ task: number } | { resumePr: number })
 export type LoopResult = { finalDecision: Decision; prNumber: number; task: number }
+
+/**
+ * The exact argv `checkStaleDriver`'s re-exec hands to a fresh `vinaya
+ * dev-review-loop` process (O7) — pulled out as its own pure function
+ * (round 2 review MINOR, task-run-v1 21, #541) so the one thing that
+ * actually regresses easily — a flag silently dropped across the restart —
+ * is unit-testable without driving the whole re-exec/driver-lock path.
+ * Carries the ORIGINAL invocation's `--json` intent through: dropping it
+ * would silently switch an unattended, machine-parsed caller over to
+ * human-readable output the moment a moved base restarts this same driver
+ * underneath it.
+ */
+export function buildReexecArgs(input: LoopInput, task: number): string[] {
+  return [
+    ...('resumePr' in input
+      ? ['dev-review-loop', '--resume', String(input.resumePr), '--agent', input.agent]
+      : ['dev-review-loop', '--task', String(task), '--agent', input.agent]),
+    ...(input.json ? ['--json'] : [])
+  ]
+}
 
 export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = {}): Promise<LoopResult> {
   const d: LoopDeps = { ...defaultDeps(), ...deps }
@@ -562,25 +583,36 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * `seedLoopHistory` is called from exactly two sites below: the
      * `resumeFrom` branch, and the `existingPr` attach branch.
      *
-     * Applied only when the newest reconstructed round did NOT conclude
-     * green — a green round already published its verdicts and ended the
-     * loop; re-invoking the driver against that same, still-open PR (a
-     * restart, or a test's own idempotency check) is meant to re-derive the
-     * SAME round from scratch, not invent a round that never happened. This
-     * also protects against the one real hazard seeding would otherwise
-     * create: `assessRound` always APPENDS to `state.rounds`
-     * (`assess-round.ts`'s `buildRoundRecord` call sites), never
-     * deduplicates by round number — seeding round 1's record here, then
-     * letting this same run recompute round 1 live, would double it in the
-     * published table.
+     * Applied whenever this task has NOT actually reached a real terminal
+     * publish — never gated on the newest round's own `outcome: 'green'`
+     * (round 2 review, BLOCKER): that field is logged the moment
+     * `assessRound` decides `publish`, but `journal_finalized` is
+     * deliberately DEFERRED until `publishRound` itself returns without
+     * throwing (this file's own doc comment on `pendingCompletionEvents`,
+     * below). A crash between those two points — `gh` failing mid-publish
+     * — leaves a `round_ended` reading green with no `journal_finalized`
+     * ever landing; treating that green `outcome` alone as "this task is
+     * done" silently dropped every round from the published table and
+     * restarted numbering at `1` on the very next attach, for a task that
+     * never actually published — exactly the failure O9 exists to close.
+     * `loopHistory.journalFinalized` is the one honest signal: present
+     * with `result: 'merged_ready'` ONLY once `publishRound` truly
+     * succeeded. Guards the one real hazard seeding would otherwise
+     * create even when genuinely finalized: `assessRound` always APPENDS
+     * to `state.rounds` (`assess-round.ts`'s `buildRoundRecord` call
+     * sites), never deduplicates by round number — seeding round 1's
+     * record here, then letting THIS SAME run recompute round 1 live
+     * (the "rerun posts nothing twice" idempotency case), would double it
+     * in the published table.
      */
-    let loopHistory: ReconstructedJournal = { rounds: [], totalWallMs: 0, totalFilesChanged: 0 }
-    /** Whether `seedLoopHistory` actually applied — the round-bump below reuses this instead of re-deriving the same "newest round green?" check a second time. */
+    let loopHistory: ReconstructedJournal = { rounds: [], totalWallMs: 0, totalFilesChanged: 0, journalFinalized: null }
+    /** Whether `seedLoopHistory` actually applied — the round-bump below reuses this instead of re-deriving the same "already published?" check a second time. */
     let historyApplies = false
     function seedLoopHistory(): void {
       loopHistory = d.fetchLoopHistory(root, repo, task)
       const newest = loopHistory.rounds[loopHistory.rounds.length - 1]
-      historyApplies = newest !== undefined && newest.outcome !== 'green'
+      const actuallyPublished = loopHistory.journalFinalized?.result === 'merged_ready'
+      historyApplies = newest !== undefined && !actuallyPublished
       if (!historyApplies) return
       state = {
         ...state,
@@ -630,9 +662,27 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       ].join('\n')
     }
 
-    async function dispatchDeveloper(prompt: string, roundNum: number): Promise<DispatchHandle> {
+    /**
+     * O11 (round 2 review, MAJOR): whether THIS prompt carries the context
+     * block above is never gated on `devResumeId !== null` (the vendor
+     * session's own `-r <id>` eligibility) — a `--resume <pr>` run's very
+     * first developer dispatch (the ruling-resume prompt) has no durable
+     * resume record either (this driver never reads one for that path,
+     * only the `existingPr` attach branch does), so gating on it silently
+     * skipped the context block for exactly the prompt O11's own Origin
+     * note (task #538) was about. Every `dispatchDeveloper` call defaults
+     * to carrying it; the one call site that must NOT (the genuinely fresh
+     * round-1 dispatch, opening a brand-new session onto a brand-new
+     * worktree the frozen brief itself already describes) passes
+     * `skipResumeContext: true` explicitly.
+     */
+    async function dispatchDeveloper(
+      prompt: string,
+      roundNum: number,
+      opts: { skipResumeContext?: boolean } = {}
+    ): Promise<DispatchHandle> {
       const isResume = devResumeId !== null
-      const fullPrompt = isResume ? `${resumeContextBlock()}\n\n${prompt}` : prompt
+      const fullPrompt = opts.skipResumeContext ? prompt : `${resumeContextBlock()}\n\n${prompt}`
       const handle = await withPromptFile(fullPrompt, (promptFile) =>
         d.dispatchRole('developer', input.agent, fullPrompt, {
           task: task,
@@ -693,7 +743,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         files.length > 0 ? files.map((f) => `- ${f}`).join('\n') : '(no specific file could be determined)'
       return [
         'This branch is behind the base in a way that conflicts — it cannot merge as-is.',
-        'Merge or rebase the base and resolve before pushing again, per aeg-root/roles/developer.md. Conflicting file(s):',
+        'Merge or rebase the base and resolve before pushing again, per aeg-root/roles/developer.md: run `git merge origin/main` (or `git rebase origin/main`) from this worktree, resolve the conflicting file(s) below, then `git push` once resolved. Conflicting file(s):',
         fileList
       ].join('\n\n')
     }
@@ -986,7 +1036,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // (O1). What happens next — check, at most one resume, poll — is
           // O2/O3/O9's own job, never blind.
           const brief = d.fetchFrozenBrief(task)
-          await dispatchDeveloper(brief, round)
+          await dispatchDeveloper(brief, round, { skipResumeContext: true })
 
           try {
             prNumber = await afterDeveloperTurnBeforePrPoll(false)
@@ -1080,13 +1130,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const pulled = d.pullDefaultBranch()
       let reexecFailureNote = ''
       if (pulled.ok) {
-        const reexecArgs =
-          'resumePr' in input
-            ? ['dev-review-loop', '--resume', String(input.resumePr), '--agent', input.agent]
-            : ['dev-review-loop', '--task', String(task), '--agent', input.agent]
+        const reexecArgs = buildReexecArgs(input, task)
         const exitCode = d.reexecSelf(reexecArgs)
         if (exitCode !== null) {
           d.exitProcess(exitCode)
+          // `exitProcess` is typed `(code: number) => never` — real process.exit
+          // never returns here. This `return` guards a test fake that records
+          // the call instead of truly exiting: without it, such a fake would
+          // fall through into the failure-note/pause path below with a
+          // successful re-exec, logging a spurious stale_driver pause.
+          return true
         }
         reexecFailureNote = `re-exec of \`vinaya ${reexecArgs.join(' ')}\` could not even start after pulling the updated base`
       } else {
@@ -1102,361 +1155,393 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return true
     }
 
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      // Checking more often than the minimum ("every round entry") is
-      // strictly safer, never wrong — this runs before every iteration's
-      // own dispatch/gate/publish logic.
-      if (decision.type !== 'pause') {
-        await checkStaleDriver()
+    /**
+     * O10 (round 2 review, BLOCKER): the outer `finally`'s guaranteed flush
+     * (above) only ever posts whatever this run already logged — it never
+     * synthesizes the terminal event a genuinely uncaught error skips. Left
+     * alone, a crash mid-round left the forge log with `loop_started` and
+     * `round_started` but no `paused`/`journal_finalized` at all,
+     * permanently — exactly the shape O10 calls a test failure.
+     * Deliberately `driverCrashEvents`, never `driverDecidedPauseEvents`:
+     * the latter also fabricates a `round_ended`, wrong the moment the
+     * crash strikes AFTER a real one already logged (`publishRound`
+     * throwing post-green — see `driverCrashEvents`'s own doc comment).
+     * Best-effort on the head: a `resolveHead` failure is itself a
+     * plausible CAUSE of the crash being handled here, so this never lets
+     * a secondary failure mask the original error.
+     */
+    try {
+      return await runRoundLoop()
+    } catch (err) {
+      let head = 'unknown'
+      try {
+        head = d.resolveHead(branch)
+      } catch {
+        // Left as 'unknown' — the schema only requires a string.
       }
+      await logEvents(driverCrashEvents(config.loopId, state, round, head))
+      await d.flushOutbox(task)
+      throw err
+    }
 
-      if (decision.type === 'dispatch_developer') {
-        // O2: `pendingGateRedRetry` (set below, at this round's own two `gate`
-        // observation call sites — never inferred from `decision` itself,
-        // since `assessGate`'s red branch returns a bare `dispatch_developer`
-        // with no reason tag: `Decision`/`PauseReason` live in
-        // `packages/aeg-core`, out of this task's declared Surface, Issue
-        // #488 §4) is true exactly when THIS dispatch is the driver sending
-        // the developer back for a red mechanical gate — the one case that
-        // needs the head-change wait (Traps: never re-read the gate in a
-        // tight loop on an unchanged head — `#479`'s own five-re-dispatches-
-        // in-two-minutes failure).
-        const isGateRedRetry = pendingGateRedRetry
-        // O4/O6: a conflict-resolve retry — READ, never cleared here. Same
-        // persistence discipline as `pendingGateRedRetry`: it survives a
-        // bounded stall's own `continue` unchanged (this branch's own
-        // `dispatch_developer` decision doesn't change either), so the NEXT
-        // iteration rebuilds the SAME conflict prompt and re-runs the SAME
-        // stall check, rather than falling through to a stale fallback
-        // prompt and a fresh, unbounded gate-check/re-detect cycle (found
-        // live: clearing it here let the loop rediscover the same conflict
-        // every OTHER iteration, doubling the dispatches needed to reach the
-        // bound and sending one nonsense prompt per cycle). Cleared only
-        // where it's genuinely resolved — the mergeability re-reads at the
-        // `dispatch_reviewers`/`publish` sites, below.
-        const conflictFiles = pendingConflictFiles
-        if (!firstPass) {
-          const prompt = [
-            conflictFiles !== null
-              ? renderConflictPrompt(conflictFiles)
-              : resumedDispatch
-                ? `Principal ruling on this pause:\n\n${lastReviewContext}\n`
-                : isGateRedRetry
-                  ? `CI is red on the last head. Failing check-run(s): ${
-                      lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
-                    }. Fix the failing check(s), then run \`git push\` from this worktree to push the fix as a new commit on the SAME branch.`
-                  : // `isGateRedRetry` is false here only when this dispatch came from
-                    // `assessVerdicts`' review-findings fallback, which requires
-                    // `dispatch_reviewers` to have already run and set `lastReviewContext`
-                    // — so it is never null in this branch (code review, round 1, MINOR:
-                    // the prior 'CI was red...' fallback below this was unreachable).
-                    `Round ${round} review findings:\n\n${lastReviewContext}\n`,
-            'Address the findings above per aeg-root/roles/developer.md. Push fixes as new commits on the SAME branch; do not open a new PR.',
-            round >= 2 ? CONFIDENCE_PROMPT_LINE : ''
-          ]
-            .filter(Boolean)
-            .join('\n\n')
-          const headBeforeDispatch = isGateRedRetry || conflictFiles !== null ? d.resolveHead(branch) : null
-          roundStartMs = d.now()
-          await dispatchDeveloper(prompt, round)
-          resumedDispatch = false
+    // eslint-disable-next-line no-constant-condition
+    async function runRoundLoop(): Promise<LoopResult> {
+      while (true) {
+        // Checking more often than the minimum ("every round entry") is
+        // strictly safer, never wrong — this runs before every iteration's
+        // own dispatch/gate/publish logic.
+        if (decision.type !== 'pause') {
+          await checkStaleDriver()
+        }
 
-          if (headBeforeDispatch !== null) {
-            const changedHead = await pollUntil(
-              () => {
-                const h = d.resolveHead(branch)
-                return h !== headBeforeDispatch ? h : null
-              },
-              d.gatePollMaxAttempts,
-              d.gatePollIntervalMs,
-              d.sleep,
-              'devReviewLoop: head-change wait timed out'
-            ).catch(() => null)
+        if (decision.type === 'dispatch_developer') {
+          // O2: `pendingGateRedRetry` (set below, at this round's own two `gate`
+          // observation call sites — never inferred from `decision` itself,
+          // since `assessGate`'s red branch returns a bare `dispatch_developer`
+          // with no reason tag: `Decision`/`PauseReason` live in
+          // `packages/aeg-core`, out of this task's declared Surface, Issue
+          // #488 §4) is true exactly when THIS dispatch is the driver sending
+          // the developer back for a red mechanical gate — the one case that
+          // needs the head-change wait (Traps: never re-read the gate in a
+          // tight loop on an unchanged head — `#479`'s own five-re-dispatches-
+          // in-two-minutes failure).
+          const isGateRedRetry = pendingGateRedRetry
+          // O4/O6: a conflict-resolve retry — READ, never cleared here. Same
+          // persistence discipline as `pendingGateRedRetry`: it survives a
+          // bounded stall's own `continue` unchanged (this branch's own
+          // `dispatch_developer` decision doesn't change either), so the NEXT
+          // iteration rebuilds the SAME conflict prompt and re-runs the SAME
+          // stall check, rather than falling through to a stale fallback
+          // prompt and a fresh, unbounded gate-check/re-detect cycle (found
+          // live: clearing it here let the loop rediscover the same conflict
+          // every OTHER iteration, doubling the dispatches needed to reach the
+          // bound and sending one nonsense prompt per cycle). Cleared only
+          // where it's genuinely resolved — the mergeability re-reads at the
+          // `dispatch_reviewers`/`publish` sites, below.
+          const conflictFiles = pendingConflictFiles
+          if (!firstPass) {
+            const prompt = [
+              conflictFiles !== null
+                ? renderConflictPrompt(conflictFiles)
+                : resumedDispatch
+                  ? `Principal ruling on this pause:\n\n${lastReviewContext}\n`
+                  : isGateRedRetry
+                    ? `CI is red on the last head. Failing check-run(s): ${
+                        lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
+                      }. Fix the failing check(s), then run \`git push\` from this worktree to push the fix as a new commit on the SAME branch.`
+                    : // `isGateRedRetry` is false here only when this dispatch came from
+                      // `assessVerdicts`' review-findings fallback, which requires
+                      // `dispatch_reviewers` to have already run and set `lastReviewContext`
+                      // — so it is never null in this branch (code review, round 1, MINOR:
+                      // the prior 'CI was red...' fallback below this was unreachable).
+                      `Round ${round} review findings:\n\n${lastReviewContext}\n`,
+              'Address the findings above per aeg-root/roles/developer.md. Commit the fix, then run `git push` from this worktree to push it as a new commit on the SAME branch; do not open a new PR.',
+              round >= 2 ? CONFIDENCE_PROMPT_LINE : ''
+            ]
+              .filter(Boolean)
+              .join('\n\n')
+            const headBeforeDispatch = isGateRedRetry || conflictFiles !== null ? d.resolveHead(branch) : null
+            roundStartMs = d.now()
+            await dispatchDeveloper(prompt, round)
+            resumedDispatch = false
 
-            if (changedHead === null) {
-              // The developer returned without pushing — not a fresh gate
-              // read (the head never moved), so this feeds the DRIVER's own
-              // bounded stall counter instead of `fetchCiConclusion` again.
-              gateStalledStreak += 1
-              const stats = computeStats(headBeforeDispatch, roundStartMs)
-              const detail =
-                conflictFiles !== null
-                  ? `head ${headBeforeDispatch} unchanged after dispatch; conflict never resolved (file(s): ${
-                      conflictFiles.length > 0 ? conflictFiles.join(', ') : '(unknown)'
-                    })`
-                  : `head ${headBeforeDispatch} unchanged after dispatch; failing check-run(s): ${
-                      lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
-                    }`
-              if (gateStalledStreak < MAX_GATE_STALLED_TURNS) {
+            if (headBeforeDispatch !== null) {
+              const changedHead = await pollUntil(
+                () => {
+                  const h = d.resolveHead(branch)
+                  return h !== headBeforeDispatch ? h : null
+                },
+                d.gatePollMaxAttempts,
+                d.gatePollIntervalMs,
+                d.sleep,
+                'devReviewLoop: head-change wait timed out'
+              ).catch(() => null)
+
+              if (changedHead === null) {
+                // The developer returned without pushing — not a fresh gate
+                // read (the head never moved), so this feeds the DRIVER's own
+                // bounded stall counter instead of `fetchCiConclusion` again.
+                gateStalledStreak += 1
+                const stats = computeStats(headBeforeDispatch, roundStartMs)
+                const detail =
+                  conflictFiles !== null
+                    ? `head ${headBeforeDispatch} unchanged after dispatch; conflict never resolved (file(s): ${
+                        conflictFiles.length > 0 ? conflictFiles.join(', ') : '(unknown)'
+                      })`
+                    : `head ${headBeforeDispatch} unchanged after dispatch; failing check-run(s): ${
+                        lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
+                      }`
+                if (gateStalledStreak < MAX_GATE_STALLED_TURNS) {
+                  await d.flushOutbox(task)
+                  continue
+                }
+                await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+                decision = { type: 'pause', reason: 'infrastructure', detail }
                 await d.flushOutbox(task)
                 continue
               }
-              await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
-              decision = { type: 'pause', reason: 'infrastructure', detail }
-              await d.flushOutbox(task)
-              continue
             }
           }
-        }
-        firstPass = false
+          firstPass = false
 
-        // O4/O7 (round 2 review, BLOCKER): mergeability is checked BEFORE
-        // the CI gate is ever waited on — `waitForGreenGate` below used to
-        // run unconditionally here, so even round 1 burned the full CI poll
-        // budget on a head that might already be `CONFLICTING`, and the
-        // mergeability read at the `dispatch_reviewers` branch (below) never
-        // ran until a whole extra iteration later. Checked here, every time
-        // this branch runs (fresh round-1 entry, a conflict-retry, or a
-        // genuine next round), so a conflicting head is sent back before any
-        // CI wait, never after one.
-        const mergeableBeforeGate = await pollMergeableState(prNumber)
-        if (mergeableBeforeGate === 'CONFLICTING') {
-          pendingConflictFiles = d.fetchConflictingFiles('main', branch)
+          // O4/O7 (round 2 review, BLOCKER): mergeability is checked BEFORE
+          // the CI gate is ever waited on — `waitForGreenGate` below used to
+          // run unconditionally here, so even round 1 burned the full CI poll
+          // budget on a head that might already be `CONFLICTING`, and the
+          // mergeability read at the `dispatch_reviewers` branch (below) never
+          // ran until a whole extra iteration later. Checked here, every time
+          // this branch runs (fresh round-1 entry, a conflict-retry, or a
+          // genuine next round), so a conflicting head is sent back before any
+          // CI wait, never after one.
+          const mergeableBeforeGate = await pollMergeableState(prNumber)
+          if (mergeableBeforeGate === 'CONFLICTING') {
+            pendingConflictFiles = d.fetchConflictingFiles('main', branch)
+            await d.flushOutbox(task)
+            continue
+          }
+          pendingConflictFiles = null
+
+          const gate = await waitForGreenGate(roundStartMs)
+          lastFailingChecks = gate.failingChecks
+          pendingGateRedRetry = !gate.green
+          gateStalledStreak = 0
+          const confidence = round >= 2 && gate.green ? readAndClearConfidence() : undefined
+          const obs: Observations = { kind: 'gate', round, green: gate.green, confidence, stats: gate.stats }
+          const result = assessRound(state, obs)
+          state = result.state
+          decision = result.decision
+          await logEvents(result.events)
           await d.flushOutbox(task)
-          continue
-        }
-        pendingConflictFiles = null
-
-        const gate = await waitForGreenGate(roundStartMs)
-        lastFailingChecks = gate.failingChecks
-        pendingGateRedRetry = !gate.green
-        gateStalledStreak = 0
-        const confidence = round >= 2 && gate.green ? readAndClearConfidence() : undefined
-        const obs: Observations = { kind: 'gate', round, green: gate.green, confidence, stats: gate.stats }
-        const result = assessRound(state, obs)
-        state = result.state
-        decision = result.decision
-        await logEvents(result.events)
-        await d.flushOutbox(task)
-      } else if (decision.type === 'ask_confidence') {
-        const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${CONFIDENCE_PROMPT_LINE}`
-        await dispatchDeveloper(reaskPrompt, round)
-        const head = d.resolveHead(branch)
-        const stats = computeStats(head, roundStartMs)
-        const confidence = readAndClearConfidence()
-        const obs: Observations = { kind: 'gate', round, green: true, confidence, stats }
-        const result = assessRound(state, obs)
-        state = result.state
-        decision = result.decision
-        pendingGateRedRetry = false
-        gateStalledStreak = 0
-        await logEvents(result.events)
-        await d.flushOutbox(task)
-      } else if (decision.type === 'dispatch_reviewers') {
-        // O4/O7: mergeability is read BEFORE any CI
-        // read or reviewer dispatch — a branch in conflict with the base
-        // sends the developer back with the conflicting files named; no
-        // reviewer starts and no CI is waited on for this head. Round
-        // number does not advance (same discipline as the infrastructure
-        // pause below — this round's reviewers never ran).
-        const mergeableForReview = await pollMergeableState(prNumber)
-        if (mergeableForReview === 'CONFLICTING') {
-          pendingConflictFiles = d.fetchConflictingFiles('main', branch)
-          decision = { type: 'dispatch_developer' }
-          await d.flushOutbox(task)
-          continue
-        }
-        // Genuinely resolved (or never conflicting) — clear the retry flag
-        // so a later conflict starts its own fresh stall count rather than
-        // inheriting this one's file list.
-        pendingConflictFiles = null
-
-        const head = d.resolveHead(branch)
-        const ciConclusion = d.fetchCiConclusion(head)
-        const resolvedObjectives = d.resolveIssueObjectives(task)
-        const rulings = d.fetchRulings(prNumber)
-        const rulingOrdinal = d.fetchNewestRulingOrdinal(prNumber)
-        const revision = d.fetchSourceRevision(task)
-        const briefContentAtDispatch = d.fetchFrozenBrief(task)
-        const manifest: ReviewInputManifest = buildReviewInputManifest({
-          headSha: head,
-          briefContent: briefContentAtDispatch,
-          objectivesVersion: resolvedObjectives.version,
-          rulingOrdinal,
-          policy
-        })
-        const facts: ReviewerPromptFacts = {
-          objectives: resolvedObjectives.text,
-          resolvedObjectives: resolvedObjectives.objectives,
-          rulings,
-          ciConclusion,
-          revision,
-          manifest
-        }
-
-        // O5: an infrastructure outcome from either role (after its own
-        // one-retry inside `dispatchReviewer`) is a driver-decided pause —
-        // there is no `Observations` kind for it (adding one would edit
-        // `packages/aeg-core`, out of this task's declared Surface, Issue
-        // #488 §4) — but `driverDecidedPauseEvents` logs the same
-        // `stop_condition_met`/`paused`/`round_ended`/`journal_finalized`
-        // events every policy-decided pause gets (code review, PR #489 round
-        // 2, MAJOR: the driver used to build this `pause` decision by hand
-        // and skip the log entirely). No verdict is held or published for
-        // this round, and the round number does not advance.
-        let verdicts: [RoundVerdictParse, RoundVerdictParse] | null = null
-        try {
-          verdicts = await Promise.all([
-            dispatchReviewer('reviewer', round, facts),
-            dispatchReviewer('security', round, facts)
-          ])
-        } catch (err) {
-          if (!(err instanceof ReviewerInfrastructureFailure) && !(err instanceof ReviewerReportParseFailure)) throw err
+        } else if (decision.type === 'ask_confidence') {
+          const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${CONFIDENCE_PROMPT_LINE}`
+          await dispatchDeveloper(reaskPrompt, round)
+          const head = d.resolveHead(branch)
           const stats = computeStats(head, roundStartMs)
-          await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
-          decision = { type: 'pause', reason: 'infrastructure', detail: err.message }
-        }
+          const confidence = readAndClearConfidence()
+          const obs: Observations = { kind: 'gate', round, green: true, confidence, stats }
+          const result = assessRound(state, obs)
+          state = result.state
+          decision = result.decision
+          pendingGateRedRetry = false
+          gateStalledStreak = 0
+          await logEvents(result.events)
+          await d.flushOutbox(task)
+        } else if (decision.type === 'dispatch_reviewers') {
+          // O4/O7: mergeability is read BEFORE any CI
+          // read or reviewer dispatch — a branch in conflict with the base
+          // sends the developer back with the conflicting files named; no
+          // reviewer starts and no CI is waited on for this head. Round
+          // number does not advance (same discipline as the infrastructure
+          // pause below — this round's reviewers never ran).
+          const mergeableForReview = await pollMergeableState(prNumber)
+          if (mergeableForReview === 'CONFLICTING') {
+            pendingConflictFiles = d.fetchConflictingFiles('main', branch)
+            decision = { type: 'dispatch_developer' }
+            await d.flushOutbox(task)
+            continue
+          }
+          // Genuinely resolved (or never conflicting) — clear the retry flag
+          // so a later conflict starts its own fresh stall count rather than
+          // inheriting this one's file list.
+          pendingConflictFiles = null
 
-        if (verdicts) {
-          // O2: the loop's own publication self-check — objectives may have
-          // moved between the dispatch above (`facts.manifest`, captured
-          // before either reviewer ran) and now, right after both finished
-          // (a principal's `issue objectives edit`, a ruling, a brief
-          // supersession, or — in principle — a policy change can each land
-          // mid-round). Re-resolved BEFORE either verdict is held: neither
-          // `verdicts` value (still in-memory only) is ever written to disk
-          // on a mismatch, so "the held verdicts … are discarded" holds by
-          // never holding them. `compareManifest` — the SAME comparison the
-          // merge gate calls — decides this, field by field, rather than a
-          // second, hand-rolled inequality check per field (task 4, `#478`,
-          // O2): the echo here is simply `facts.manifest` itself, never a
-          // round-trip through the rendered text (Traps to avoid — nothing
-          // to trust or distrust when the value is this driver's own, still
-          // in memory).
-          const reassessedObjectives = d.resolveIssueObjectives(task)
-          const reassessedRulingOrdinal = d.fetchNewestRulingOrdinal(prNumber)
-          const reassessedBriefContent = d.fetchFrozenBrief(task)
-          const currentManifest: ReviewInputManifest = buildReviewInputManifest({
+          const head = d.resolveHead(branch)
+          const ciConclusion = d.fetchCiConclusion(head)
+          const resolvedObjectives = d.resolveIssueObjectives(task)
+          const rulings = d.fetchRulings(prNumber)
+          const rulingOrdinal = d.fetchNewestRulingOrdinal(prNumber)
+          const revision = d.fetchSourceRevision(task)
+          const briefContentAtDispatch = d.fetchFrozenBrief(task)
+          const manifest: ReviewInputManifest = buildReviewInputManifest({
             headSha: head,
-            briefContent: reassessedBriefContent,
-            objectivesVersion: reassessedObjectives.version,
-            rulingOrdinal: reassessedRulingOrdinal,
+            briefContent: briefContentAtDispatch,
+            objectivesVersion: resolvedObjectives.version,
+            rulingOrdinal,
             policy
           })
-          const binding = compareManifest(manifestAsEchoed(facts.manifest), currentManifest)
-          if (!binding.objectivesVersion) {
-            const command = reassessedObjectives.edit
-              ? describeObjectivesEdit(task, reassessedObjectives.edit)
-              : `vinaya issue objectives edit ${task} ... (edit comment not found on re-read)`
-            const detail = `objectives moved from ${facts.manifest.objectivesVersion ?? 'none'} to ${
-              reassessedObjectives.version ?? 'none'
-            } between reviewer dispatch and assessment — superseded by \`${command}\``
-            const stats = computeStats(head, roundStartMs)
-            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
-            decision = { type: 'pause', reason: 'objectives_changed', detail }
-            await d.flushOutbox(task)
-          } else if (!binding.rulingOrdinal) {
-            const detail = `a new ruling landed between reviewer dispatch and assessment — ruling ordinal moved from ${facts.manifest.rulingOrdinal} to ${reassessedRulingOrdinal} — superseded by ruling ${prNumber}-${reassessedRulingOrdinal}`
-            const stats = computeStats(head, roundStartMs)
-            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
-            decision = { type: 'pause', reason: 'ruling_posted', detail }
-            await d.flushOutbox(task)
-          } else if (!binding.briefHash) {
-            const detail = `the frozen brief was superseded between reviewer dispatch and assessment — brief hash moved from ${facts.manifest.briefHash ?? 'none'} to ${currentManifest.briefHash ?? 'none'}`
-            const stats = computeStats(head, roundStartMs)
-            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
-            decision = { type: 'pause', reason: 'brief_superseded', detail }
-            await d.flushOutbox(task)
-          } else if (!binding.policyDigest) {
-            const detail = `the review policy changed between reviewer dispatch and assessment — policy digest moved from ${facts.manifest.policyDigest} to ${currentManifest.policyDigest}`
-            const stats = computeStats(head, roundStartMs)
-            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
-            decision = { type: 'pause', reason: 'policy_changed', detail }
-            await d.flushOutbox(task)
-          } else {
-            const [reviewer, security] = verdicts
-            // Both roles genuinely finished (`Promise.all` did not reject) —
-            // only now is it safe to hold either verdict on disk (O2's "nothing
-            // is held … for that round" invariant; see `dispatchReviewer`'s doc
-            // comment, above).
-            writeHeldVerdict(root, task, round, 'reviewer', reviewer.rendered)
-            writeHeldVerdict(root, task, round, 'security', security.rendered)
-            lastReviewContext = `${reviewer.rendered}\n\n---\n\n${security.rendered}`
-
-            const obs: Observations = {
-              kind: 'verdicts',
-              round,
-              verdicts: [reviewer.observation, security.observation]
-            }
-            const result = assessRound(state, obs)
-            state = result.state
-            decision = result.decision
-            const routed = routeCompletionEvents(result.events, decision.type)
-            pendingCompletionEvents = routed.toDeferUntilPublish
-            await logEvents(routed.toLogNow)
-            await d.flushOutbox(task)
-            if (decision.type === 'dispatch_developer') round += 1
+          const facts: ReviewerPromptFacts = {
+            objectives: resolvedObjectives.text,
+            resolvedObjectives: resolvedObjectives.objectives,
+            rulings,
+            ciConclusion,
+            revision,
+            manifest
           }
-        } else {
-          await d.flushOutbox(task)
+
+          // O5: an infrastructure outcome from either role (after its own
+          // one-retry inside `dispatchReviewer`) is a driver-decided pause —
+          // there is no `Observations` kind for it (adding one would edit
+          // `packages/aeg-core`, out of this task's declared Surface, Issue
+          // #488 §4) — but `driverDecidedPauseEvents` logs the same
+          // `stop_condition_met`/`paused`/`round_ended`/`journal_finalized`
+          // events every policy-decided pause gets (code review, PR #489 round
+          // 2, MAJOR: the driver used to build this `pause` decision by hand
+          // and skip the log entirely). No verdict is held or published for
+          // this round, and the round number does not advance.
+          let verdicts: [RoundVerdictParse, RoundVerdictParse] | null = null
+          try {
+            verdicts = await Promise.all([
+              dispatchReviewer('reviewer', round, facts),
+              dispatchReviewer('security', round, facts)
+            ])
+          } catch (err) {
+            if (!(err instanceof ReviewerInfrastructureFailure) && !(err instanceof ReviewerReportParseFailure))
+              throw err
+            const stats = computeStats(head, roundStartMs)
+            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+            decision = { type: 'pause', reason: 'infrastructure', detail: err.message }
+          }
+
+          if (verdicts) {
+            // O2: the loop's own publication self-check — objectives may have
+            // moved between the dispatch above (`facts.manifest`, captured
+            // before either reviewer ran) and now, right after both finished
+            // (a principal's `issue objectives edit`, a ruling, a brief
+            // supersession, or — in principle — a policy change can each land
+            // mid-round). Re-resolved BEFORE either verdict is held: neither
+            // `verdicts` value (still in-memory only) is ever written to disk
+            // on a mismatch, so "the held verdicts … are discarded" holds by
+            // never holding them. `compareManifest` — the SAME comparison the
+            // merge gate calls — decides this, field by field, rather than a
+            // second, hand-rolled inequality check per field (task 4, `#478`,
+            // O2): the echo here is simply `facts.manifest` itself, never a
+            // round-trip through the rendered text (Traps to avoid — nothing
+            // to trust or distrust when the value is this driver's own, still
+            // in memory).
+            const reassessedObjectives = d.resolveIssueObjectives(task)
+            const reassessedRulingOrdinal = d.fetchNewestRulingOrdinal(prNumber)
+            const reassessedBriefContent = d.fetchFrozenBrief(task)
+            const currentManifest: ReviewInputManifest = buildReviewInputManifest({
+              headSha: head,
+              briefContent: reassessedBriefContent,
+              objectivesVersion: reassessedObjectives.version,
+              rulingOrdinal: reassessedRulingOrdinal,
+              policy
+            })
+            const binding = compareManifest(manifestAsEchoed(facts.manifest), currentManifest)
+            if (!binding.objectivesVersion) {
+              const command = reassessedObjectives.edit
+                ? describeObjectivesEdit(task, reassessedObjectives.edit)
+                : `vinaya issue objectives edit ${task} ... (edit comment not found on re-read)`
+              const detail = `objectives moved from ${facts.manifest.objectivesVersion ?? 'none'} to ${
+                reassessedObjectives.version ?? 'none'
+              } between reviewer dispatch and assessment — superseded by \`${command}\``
+              const stats = computeStats(head, roundStartMs)
+              await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+              decision = { type: 'pause', reason: 'objectives_changed', detail }
+              await d.flushOutbox(task)
+            } else if (!binding.rulingOrdinal) {
+              const detail = `a new ruling landed between reviewer dispatch and assessment — ruling ordinal moved from ${facts.manifest.rulingOrdinal} to ${reassessedRulingOrdinal} — superseded by ruling ${prNumber}-${reassessedRulingOrdinal}`
+              const stats = computeStats(head, roundStartMs)
+              await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+              decision = { type: 'pause', reason: 'ruling_posted', detail }
+              await d.flushOutbox(task)
+            } else if (!binding.briefHash) {
+              const detail = `the frozen brief was superseded between reviewer dispatch and assessment — brief hash moved from ${facts.manifest.briefHash ?? 'none'} to ${currentManifest.briefHash ?? 'none'}`
+              const stats = computeStats(head, roundStartMs)
+              await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+              decision = { type: 'pause', reason: 'brief_superseded', detail }
+              await d.flushOutbox(task)
+            } else if (!binding.policyDigest) {
+              const detail = `the review policy changed between reviewer dispatch and assessment — policy digest moved from ${facts.manifest.policyDigest} to ${currentManifest.policyDigest}`
+              const stats = computeStats(head, roundStartMs)
+              await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+              decision = { type: 'pause', reason: 'policy_changed', detail }
+              await d.flushOutbox(task)
+            } else {
+              const [reviewer, security] = verdicts
+              // Both roles genuinely finished (`Promise.all` did not reject) —
+              // only now is it safe to hold either verdict on disk (O2's "nothing
+              // is held … for that round" invariant; see `dispatchReviewer`'s doc
+              // comment, above).
+              writeHeldVerdict(root, task, round, 'reviewer', reviewer.rendered)
+              writeHeldVerdict(root, task, round, 'security', security.rendered)
+              lastReviewContext = `${reviewer.rendered}\n\n---\n\n${security.rendered}`
+
+              const obs: Observations = {
+                kind: 'verdicts',
+                round,
+                verdicts: [reviewer.observation, security.observation]
+              }
+              const result = assessRound(state, obs)
+              state = result.state
+              decision = result.decision
+              const routed = routeCompletionEvents(result.events, decision.type)
+              pendingCompletionEvents = routed.toDeferUntilPublish
+              await logEvents(routed.toLogNow)
+              await d.flushOutbox(task)
+              if (decision.type === 'dispatch_developer') round += 1
+            }
+          } else {
+            await d.flushOutbox(task)
+          }
         }
-      }
 
-      if (decision.type === 'publish') {
-        // O5: mergeability is read AGAIN before
-        // publication — reviewers can take long enough that a clean head
-        // falls into conflict with the base while they worked. A branch
-        // that fell into conflict has its held verdicts for this round
-        // discarded (never published against a head that cannot merge);
-        // the developer is resumed to resolve, and round does not advance,
-        // so the NEXT reviewer dispatch judges the resolved head.
-        const mergeableForPublish = await pollMergeableState(prNumber)
-        if (mergeableForPublish === 'CONFLICTING') {
-          discardHeldVerdicts(root, task, round)
-          // This round's deferred completion events described an outcome
-          // (`publish`) that is no longer real — dropped rather than logged
-          // against whichever LATER round genuinely publishes next.
-          pendingCompletionEvents = []
-          pendingConflictFiles = d.fetchConflictingFiles('main', branch)
-          decision = { type: 'dispatch_developer' }
+        if (decision.type === 'publish') {
+          // O5: mergeability is read AGAIN before
+          // publication — reviewers can take long enough that a clean head
+          // falls into conflict with the base while they worked. A branch
+          // that fell into conflict has its held verdicts for this round
+          // discarded (never published against a head that cannot merge);
+          // the developer is resumed to resolve, and round does not advance,
+          // so the NEXT reviewer dispatch judges the resolved head.
+          const mergeableForPublish = await pollMergeableState(prNumber)
+          if (mergeableForPublish === 'CONFLICTING') {
+            discardHeldVerdicts(root, task, round)
+            // This round's deferred completion events described an outcome
+            // (`publish`) that is no longer real — dropped rather than logged
+            // against whichever LATER round genuinely publishes next.
+            pendingCompletionEvents = []
+            pendingConflictFiles = d.fetchConflictingFiles('main', branch)
+            decision = { type: 'dispatch_developer' }
+            await d.flushOutbox(task)
+            continue
+          }
+          pendingConflictFiles = null
+
+          // O8 (round 2 review, BLOCKER): re-check staleness here too — a
+          // clean `dispatch_reviewers` → `publish` transition reaches this
+          // point in the SAME iteration, with no loop-back to the top in
+          // between, so the top-of-loop check alone never catches a base that
+          // moved past this driver's own code while reviewers were working.
+          if (await checkStaleDriver()) {
+            await d.flushOutbox(task)
+            continue
+          }
+
+          publishRound(root, {
+            task,
+            round,
+            prNumber,
+            expectedHead: d.resolveHead(branch),
+            journal: { rounds: state.rounds },
+            policy
+          })
+          // Only now — posts confirmed, not merely attempted — does the durable
+          // log get to say this run completed. A throw above (a post that
+          // failed, or re-parsed dirty) skips this entirely, so the log never
+          // claims `merged_ready` for a run that did not actually finish.
+          await logEvents(pendingCompletionEvents)
           await d.flushOutbox(task)
-          continue
+          return { finalDecision: decision, prNumber, task }
         }
-        pendingConflictFiles = null
 
-        // O8 (round 2 review, BLOCKER): re-check staleness here too — a
-        // clean `dispatch_reviewers` → `publish` transition reaches this
-        // point in the SAME iteration, with no loop-back to the top in
-        // between, so the top-of-loop check alone never catches a base that
-        // moved past this driver's own code while reviewers were working.
-        if (await checkStaleDriver()) {
+        if (decision.type === 'pause') {
+          const pauseHead = d.resolveHead(branch)
+          writePauseState(root, {
+            task,
+            round,
+            head: pauseHead,
+            branch,
+            prNumber,
+            reason: decision.reason,
+            detail: decision.detail,
+            pausedAt: new Date().toISOString()
+          })
+          postPauseComment(root, task, round, pauseHead, prNumber, decision.reason, decision.detail)
           await d.flushOutbox(task)
-          continue
+          return { finalDecision: decision, prNumber, task }
         }
-
-        publishRound(root, {
-          task,
-          round,
-          prNumber,
-          expectedHead: d.resolveHead(branch),
-          journal: { rounds: state.rounds },
-          policy
-        })
-        // Only now — posts confirmed, not merely attempted — does the durable
-        // log get to say this run completed. A throw above (a post that
-        // failed, or re-parsed dirty) skips this entirely, so the log never
-        // claims `merged_ready` for a run that did not actually finish.
-        await logEvents(pendingCompletionEvents)
-        await d.flushOutbox(task)
-        return { finalDecision: decision, prNumber, task }
-      }
-
-      if (decision.type === 'pause') {
-        const pauseHead = d.resolveHead(branch)
-        writePauseState(root, {
-          task,
-          round,
-          head: pauseHead,
-          branch,
-          prNumber,
-          reason: decision.reason,
-          detail: decision.detail,
-          pausedAt: new Date().toISOString()
-        })
-        postPauseComment(root, task, round, pauseHead, prNumber, decision.reason, decision.detail)
-        await d.flushOutbox(task)
-        return { finalDecision: decision, prNumber, task }
       }
     }
   }

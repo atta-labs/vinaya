@@ -81,6 +81,23 @@ export type ReconstructedJournal = {
   rounds: RoundRecord[]
   totalWallMs: number
   totalFilesChanged: number
+  /**
+   * The task's own `journal_finalized` event, if one was ever logged — the
+   * ONLY honest signal that this task's loop actually reached a terminal
+   * outcome (round 2 review, BLOCKER): a round's own `round_ended.outcome`
+   * reads `'green'` the moment `assessRound` decides `publish`, logged
+   * immediately — but `journal_finalized` is deliberately DEFERRED until
+   * `publishRound` itself returns without throwing (`dev-review-loop.ts`'s
+   * own doc comment: "held back... until publishRound actually succeeds").
+   * A crash between those two points (a `gh` failure mid-publish) leaves a
+   * `round_ended` reading green with NO `journal_finalized` ever landing —
+   * treating that `outcome: 'green'` alone as "this task is done" (the
+   * bug this field's caller fixes) silently drops every round from the
+   * published table and restarts numbering at `1` on the next attach, for
+   * a task that never actually published. The newest such event by time
+   * wins, matching `reconstructRounds`' own "last write wins" rule.
+   */
+  journalFinalized: { result: 'merged_ready' | 'stopped' } | null
 }
 
 /**
@@ -130,7 +147,13 @@ export function reconstructRounds(events: readonly DevReviewLoopEvent[]): Recons
     totalWallMs += stats.wallMs
     totalFilesChanged += stats.filesChanged
   }
-  return { rounds, totalWallMs, totalFilesChanged }
+
+  let journalFinalized: ReconstructedJournal['journalFinalized'] = null
+  for (const e of sorted) {
+    if (e.event === 'journal_finalized') journalFinalized = { result: e.result }
+  }
+
+  return { rounds, totalWallMs, totalFilesChanged, journalFinalized }
 }
 
 /** Where a fresh round should start numbering after reconstruction — `1` when there is no prior history at all. */

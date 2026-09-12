@@ -60,7 +60,7 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
       process.stderr.write('vinaya dev-review-loop: --resume <pr> requires a positive integer PR number\n')
       process.exit(1)
     }
-    input = { resumePr: parsed.resumePr, agent }
+    input = { resumePr: parsed.resumePr, agent, json: parsed.json }
   } else {
     if (parsed.task === undefined || !Number.isInteger(parsed.task) || parsed.task <= 0) {
       process.stderr.write(
@@ -68,7 +68,7 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
       )
       process.exit(1)
     }
-    input = { task: parsed.task, agent }
+    input = { task: parsed.task, agent, json: parsed.json }
   }
 
   const result = await devReviewLoop(input)

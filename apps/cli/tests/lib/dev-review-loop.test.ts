@@ -57,6 +57,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  buildReexecArgs,
+  CONFIDENCE_PROMPT_LINE,
   describeObjectivesEdit,
   DRIVER_OWNED_PATHS,
   extractObjectivesSection,
@@ -699,10 +701,14 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
     // The regression: `journal_finalized`/`merged_ready` was logged in the
     // SAME breath as the round outcome, before `publishRound` ever ran, so a
     // crash here still left the durable log asserting a completion that
-    // never happened. Fixed: the event is held until `publishRound` returns
-    // without throwing, so a crash here means it never logs at all.
+    // never happened. Fixed: `result: 'merged_ready'` is held until
+    // `publishRound` returns without throwing, so a crash here never logs
+    // THAT — even though O10's own crash-recovery fix (task-run-v1 21,
+    // `#541`) now DOES log its own `journal_finalized` here, with
+    // `result: 'stopped'`, so `loop_started` still gets a terminal event to
+    // pair with (see the O10 test below) — the two must never be confused.
     const journalFinalizedLines = outboxLines(home).filter((l) => l.event === 'journal_finalized')
-    expect(journalFinalizedLines).toHaveLength(0)
+    expect(journalFinalizedLines.some((l) => l.result === 'merged_ready')).toBe(false)
   }, 20000)
 
   it('O10 (task-run-v1 21, #541): still flushes the outbox to the forge on the way out, even though this run ends via an uncaught throw', () => {
@@ -721,6 +727,248 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
 
     const body = readFileSync(join(issueDir, posted[0] as string), 'utf8')
     expect(body).toMatch(/^<!-- aeg:log:/)
+  }, 20000)
+})
+
+/**
+ * Round 2 review, BLOCKER (task-run-v1 21, `#541`, O9): `issue view --json
+ * comments` dynamically replays whatever `issue comment` has actually
+ * posted to `$HOME/.fake-gh-posted-issue-comments` — the static-brief-only
+ * variant every OTHER scenario in this file uses is fine for those (none
+ * of them need a SECOND run to see what a FIRST run flushed), but this
+ * scenario's whole point is that a reattach reconstructs history from
+ * exactly those flushed lines. `pr comment`'s crash-on-the-second-post
+ * logic is unchanged from `writeFakeGhCrashOnSecondPostFlushSucceeds` —
+ * this fixture is that one, plus the dynamic Issue-comment replay.
+ */
+function writeFakeGhCrashOnceThenReattach(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+ISSUE_STATE_DIR="$HOME/.fake-gh-posted-issue-comments"
+mkdir -p "$STATE_DIR" "$ISSUE_STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$ISSUE_STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs.existsSync(dir)
+      ? fs.readdirSync(dir).filter((f) => f.startsWith("comment-")).sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+      : []
+    const flushed = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    const brief = "<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n"
+    const bodies = [brief, ...flushed]
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$N" = "1" ]; then
+    echo "fake gh: simulated crash on the second publish post" >&2
+    exit 1
+  fi
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$ISSUE_STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$ISSUE_STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/issues/${TASK}#issuecomment-$((N + 1))"
+  exit 0
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+/** Same as \`writeFakeGhCrashOnceThenReattach\`, minus the crash-on-second-post logic — every \`pr comment\` succeeds. Swapped in mid-test, after the crash has already happened once, so round 2's own posts don't hit the same count-based trigger. */
+function writeFakeGhReattachSucceeds(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+ISSUE_STATE_DIR="$HOME/.fake-gh-posted-issue-comments"
+mkdir -p "$STATE_DIR" "$ISSUE_STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$ISSUE_STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs.existsSync(dir)
+      ? fs.readdirSync(dir).filter((f) => f.startsWith("comment-")).sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+      : []
+    const flushed = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    const brief = "<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n"
+    const bodies = [brief, ...flushed]
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$ISSUE_STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$ISSUE_STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/issues/${TASK}#issuecomment-$((N + 1))"
+  exit 0
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a crash between a green round_ended and journal_finalized never resets numbering on reattach', () => {
+  it('round 2 dispatches directly (never round 1 again), and the eventual published table still lists round 1', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaude(binDir)
+    writeFakeGhCrashOnceThenReattach(binDir)
+    writeFakeGit(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    // Round 1: gate green, reviewers clean, `round_ended(outcome: 'green')`
+    // logs — then `publishRound` crashes posting the security verdict,
+    // before the REAL `journal_finalized` (the one `publishRound` itself
+    // would trigger) is ever reached. O10's own crash-recovery fix (above)
+    // still logs its OWN `journal_finalized`, but with `result: 'stopped'`
+    // — never `'merged_ready'`, which only the real publish path can ever
+    // write — so it must never be mistaken for a genuine completion. The
+    // flush actually succeeds in THIS fixture (unlike most others in this
+    // file), so both lines have already left the local outbox by the time
+    // `runLoop` returns — read them back from what was flushed to the
+    // Issue instead of the local file.
+    const r1 = runLoop(home, cwd, path)
+    expect(r1.status).not.toBe(0)
+    const issueDir = join(home, '.fake-gh-posted-issue-comments')
+    const flushedAfterCrash = readdirSync(issueDir)
+      .filter((f) => f.startsWith('comment-'))
+      .flatMap((f) => readFileSync(join(issueDir, f), 'utf8').split('\n').filter(Boolean))
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line)]
+        } catch {
+          return []
+        }
+      })
+    expect(flushedAfterCrash.some((l) => l.event === 'round_ended' && l.outcome === 'green')).toBe(true)
+    expect(flushedAfterCrash.some((l) => l.event === 'journal_finalized' && l.result === 'merged_ready')).toBe(false)
+
+    // Swap to a `gh` with no crash logic — round 2's own posts must succeed
+    // — then reattach with a plain `--task`, exactly as an operator
+    // re-running the same command after the crash would. Round ≥ 2's
+    // confidence gate reads a file the developer would normally write; an
+    // ATTACH never dispatches the developer at all (the code is already on
+    // the remote), so it's pre-seeded here exactly as
+    // `setUpAttachRecoversHeldRound`'s own round-2 fixtures do.
+    writeFakeGhReattachSucceeds(binDir)
+    const worktreeDir = join(cwd, '.worktrees', BRANCH)
+    mkdirSync(worktreeDir, { recursive: true })
+    writeFileSync(join(worktreeDir, '.vinaya-confidence'), 'CONFIDENCE: 90 — same code, already reviewed clean once\n')
+    const r2 = runLoop(home, cwd, path)
+    expect(r2.status).toBe(0)
+    expect(r2.stdout).toMatch(/publish/)
+
+    // The bug this test guards: round 2 must be a NEW round on the SAME
+    // code, never round 1 redone. `writeFakeClaude` organizes reviewer
+    // work directories by `$VINAYA_ROUND` — round 2's own directories only
+    // exist if the driver genuinely advanced past round 1's own numbering.
+    const drlRoot = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    expect(existsSync(join(drlRoot, 'round-2-reviewer-work'))).toBe(true)
+    expect(existsSync(join(drlRoot, 'round-2-security-work'))).toBe(true)
+
+    // The published summary — round 2's real, live computation — still
+    // names round 1, reconstructed from what round 1 actually flushed
+    // before it crashed, never dropped just because it never got to
+    // publish (Origin, PR #536).
+    const files = postedCommentFiles(home)
+    const summaryFile = files[files.length - 1] as string
+    const summary = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile), 'utf8')
+    expect(summary).toMatch(/^\| 1 \|/m)
+    expect(summary).toMatch(/^\| 2 \|/m)
   }, 20000)
 })
 
@@ -1083,6 +1331,15 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     expect(devPrompts).toMatch(/Principal ruling on this pause/)
     expect(devPrompts).toMatch(/Go ahead and fix it\./)
 
+    // O11 (task-run-v1 21, #541, round 2 review MAJOR): the ruling-resume
+    // prompt names the task/branch/worktree/head context AND the exact
+    // command expected — not just "push fixes" in prose.
+    expect(devPrompts).toMatch(new RegExp(`^Resuming task Issue #${TASK}\\.$`, 'm'))
+    expect(devPrompts).toMatch(new RegExp(`^Branch: \`${BRANCH}\`$`, 'm'))
+    expect(devPrompts).toMatch(/^Worktree: `.*\.worktrees\//m)
+    expect(devPrompts).toMatch(/^Remote head: [0-9a-f]{40}$/m)
+    expect(devPrompts).toMatch(/`git push`/)
+
     // Published: the two verdicts and the summary, appended after the pause
     // comment and the seeded ruling.
     const allComments = postedCommentFiles(home)
@@ -1274,6 +1531,15 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
     )
     expect(round2Prompt).toMatch(/BLOCKER/)
     expect(round2Prompt).toMatch(/deliberate round-1 blocker/)
+
+    // O11 (task-run-v1 21, #541, round 2 review MAJOR): the round-findings
+    // resume prompt names the task/branch/worktree/head context AND the
+    // exact command expected — not just "push fixes" in prose.
+    expect(round2Prompt).toMatch(new RegExp(`^Resuming task Issue #${TASK}\\.$`, 'm'))
+    expect(round2Prompt).toMatch(new RegExp(`^Branch: \`${BRANCH}\`$`, 'm'))
+    expect(round2Prompt).toMatch(/^Worktree: `.*\.worktrees\//m)
+    expect(round2Prompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
+    expect(round2Prompt).toMatch(/`git push`/)
 
     const round1Verdict = readFileSync(
       join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-reviewer.md'),
@@ -3072,6 +3338,40 @@ describe('devReviewLoop — O7 (task-run-v1 task 15): a moved base re-execs in p
   }, 30000)
 })
 
+describe('buildReexecArgs (pure) — O7 re-exec carries the original --json intent through the restart (task-run-v1 21, #541, round 2 review MINOR)', () => {
+  it('carries --json through a --task re-exec when the original invocation had it', () => {
+    expect(buildReexecArgs({ task: 9001, agent: 'claude', json: true }, 9001)).toEqual([
+      'dev-review-loop',
+      '--task',
+      '9001',
+      '--agent',
+      'claude',
+      '--json'
+    ])
+  })
+
+  it('omits --json entirely when the original invocation did not carry it', () => {
+    expect(buildReexecArgs({ task: 9001, agent: 'claude' }, 9001)).toEqual([
+      'dev-review-loop',
+      '--task',
+      '9001',
+      '--agent',
+      'claude'
+    ])
+  })
+
+  it('carries --json through a --resume re-exec too, same as --task', () => {
+    expect(buildReexecArgs({ resumePr: 42, agent: 'codex', json: true }, 9001)).toEqual([
+      'dev-review-loop',
+      '--resume',
+      '42',
+      '--agent',
+      'codex',
+      '--json'
+    ])
+  })
+})
+
 // --- review-validity-v1 12 (#526), O8 round 2: the split must not narrow stale_driver's own coverage ---
 
 describe('DRIVER_OWNED_PATHS covers every dev-review-loop/*.ts split module (review-validity-v1 12, #526 round 2)', () => {
@@ -3239,6 +3539,16 @@ describe('devReviewLoop — a clean head falls into conflict while reviewers wor
 
     const conflictPrompt = readFileSync(join(home, '.dev-prompt-2.txt'), 'utf8')
     expect(conflictPrompt).toMatch(/behind the base in a way that conflicts/)
+
+    // O11 (task-run-v1 21, #541, round 2 review MAJOR): the conflict-retry
+    // resume prompt names the task/branch/worktree/head context AND the
+    // exact commands expected, not just "merge or rebase" in prose.
+    expect(conflictPrompt).toMatch(new RegExp(`^Resuming task Issue #${TASK}\\.$`, 'm'))
+    expect(conflictPrompt).toMatch(new RegExp(`^Branch: \`${BRANCH}\`$`, 'm'))
+    expect(conflictPrompt).toMatch(/^Worktree: `.*\.worktrees\//m)
+    expect(conflictPrompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
+    expect(conflictPrompt).toMatch(/`git merge origin\/main`/)
+    expect(conflictPrompt).toMatch(/`git push`/)
   }, 20000)
 })
 
@@ -3629,6 +3939,17 @@ describe('extractObjectivesSection (pure)', () => {
 
   it('returns empty string when the Issue has no Objectives heading', () => {
     expect(extractObjectivesSection('Just some prose, no headings at all.')).toBe('')
+  })
+})
+
+describe('CONFIDENCE_PROMPT_LINE (pure) — O11 (task-run-v1 21, #541, round 2 review MAJOR)', () => {
+  it('names the exact command expected, not just the required file format', () => {
+    expect(CONFIDENCE_PROMPT_LINE).toMatch(/`echo '.*' > \.vinaya-confidence`/)
+  })
+
+  it('the confidence re-ask prompt (dispatched via dispatchDeveloper, which always prepends the resume-context block on a resume) still carries this same command, since it is appended verbatim', () => {
+    const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${CONFIDENCE_PROMPT_LINE}`
+    expect(reaskPrompt).toMatch(/`echo '.*' > \.vinaya-confidence`/)
   })
 })
 
