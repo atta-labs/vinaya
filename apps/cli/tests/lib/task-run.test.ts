@@ -39,7 +39,11 @@ const PUBLISH_RESULT: LoopResult = { finalDecision: { type: 'publish' }, prNumbe
 function deps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
   return {
     prepareTask: neverCalled('prepareTask') as unknown as RunTaskDeps['prepareTask'],
+    prepareIssueTask: neverCalled('prepareIssueTask') as unknown as RunTaskDeps['prepareIssueTask'],
     assembleAndRenderBrief: neverCalled('assembleAndRenderBrief') as unknown as RunTaskDeps['assembleAndRenderBrief'],
+    assembleAndRenderBriefForIssue: neverCalled(
+      'assembleAndRenderBriefForIssue'
+    ) as unknown as RunTaskDeps['assembleAndRenderBriefForIssue'],
     developerBranchFor: neverCalled('developerBranchFor') as unknown as RunTaskDeps['developerBranchFor'],
     findOpenPrForBranch: neverCalled('findOpenPrForBranch') as unknown as RunTaskDeps['findOpenPrForBranch'],
     devReviewLoop: neverCalled('devReviewLoop') as unknown as RunTaskDeps['devReviewLoop'],

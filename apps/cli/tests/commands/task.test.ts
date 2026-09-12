@@ -101,3 +101,25 @@ describe('vinaya task brief --supersede — argv parsing (task-run-v1 task 4, #4
     expect(r.stderr).toContain('--reason is only meaningful with --supersede')
   })
 })
+
+// task-run-v1 task 15, O1: `--issue <n>` is `task brief`'s tranche-less form
+// — argv parsing only, mirroring the `<tranche> <n>` block above.
+describe('vinaya task brief --issue — argv parsing (task-run-v1 task 15, O1)', () => {
+  it('refuses both --issue and a positional tranche/n together', () => {
+    const r = runCli(['task', 'brief', 'plan-brief-v1', '427', '--issue', '521'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('pass either <tranche> <n> or --issue <n>, never both')
+  })
+
+  it('refuses a non-numeric --issue value', () => {
+    const r = runCli(['task', 'brief', '--issue', 'five-twenty-one'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--issue must be numeric')
+  })
+
+  it('refuses --supersede with no --reason under --issue too', () => {
+    const r = runCli(['task', 'brief', '--issue', '521', '--supersede'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--supersede requires --reason')
+  })
+})

@@ -39,10 +39,12 @@ import {
   type IssuePart,
   type IssueSurface,
   type IssueTestPlan,
-  type SurfaceFileFact
+  type SurfaceFileFact,
+  type Task
 } from '@attalabs/aeg-core'
+import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
-import { resolveEdge } from '../checks/edge-resolve.js'
+import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../checks/edge-resolve.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
@@ -473,4 +475,200 @@ export async function assembleAndRenderBrief(
   const template = readFileSync(TEMPLATE_PATH, 'utf8')
   const result = renderBrief(facts, template)
   return result.ok ? { ok: true, brief: result.brief, issue: task.issue } : { ok: false, missing: result.missing }
+}
+
+type IssueForBrief = { title: string; body: string; labels: string[]; state: 'OPEN' | 'CLOSED' }
+
+function fetchIssueForBrief(issueNumber: number): IssueForBrief | null {
+  try {
+    const out = execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'title,body,labels,state'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    const parsed = JSON.parse(out) as {
+      title: string
+      body: string
+      labels: { name: string }[]
+      state: 'OPEN' | 'CLOSED'
+    }
+    return {
+      title: parsed.title,
+      body: parsed.body ?? '',
+      labels: parsed.labels.map((l) => l.name),
+      state: parsed.state
+    }
+  } catch {
+    return null
+  }
+}
+
+/** The header's `**Project(s):**`/`**Project:**` field — the one BriefFacts.projects source a backlog Issue has, since it carries no tranche topology row to read `Project(s)` off of. `[]` when absent (the same absent-sentinel convention every other BriefFacts list field already uses). */
+function extractProjectField(body: string): string[] {
+  const headerEnd = body.search(/\n##\s/)
+  const header = headerEnd === -1 ? body : body.slice(0, headerEnd)
+  const m = /^\*{0,2}Project(?:\(s\))?\*{0,2}\s*:\s*(.+)$/im.exec(header)
+  if (!m) return []
+  return (m[1] as string)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+/**
+ * Renders the same twelve-section brief as `assembleAndRenderBrief`, but for
+ * a backlog Issue with no tranche (task-run-v1 task 15, O1) — `<n>` names
+ * the Issue itself, never a tranche+task-id pair. Every section is filled
+ * from the Issue's own `## Objectives`/`## Surface`/`## Parts`/
+ * `## Test plan`/`## Stop conditions` and its "Dependency rationale" field
+ * (`parseRationaleDeps`, edges optional per O2), the same pure parsers
+ * `assembleAndRenderBrief` already uses — never a second grammar. Refuses
+ * (rather than rendering) when the Issue carries a `vinaya/tranche:*` label:
+ * that Issue has a real tranche home and belongs on the tranche path, not
+ * this one.
+ */
+export async function assembleAndRenderBriefForIssue(issueNumber: number): Promise<AssembleAndRenderBriefResult> {
+  const repo = resolveRepo()
+  if (!repo) {
+    return {
+      ok: false,
+      missing: ['could not resolve owner/repo (set AEG_REPO=owner/repo, or confirm `git remote get-url origin`).']
+    }
+  }
+
+  const headSha = git(['rev-parse', 'HEAD'])
+  const staleness = checkStaleAgainstRemote(headSha)
+  if (staleness.length > 0) return { ok: false, missing: staleness }
+
+  const found = fetchIssueForBrief(issueNumber)
+  if (!found) {
+    return { ok: false, missing: [`could not fetch Issue #${issueNumber} (\`gh issue view\`).`] }
+  }
+  if (found.labels.some((l) => l.startsWith('vinaya/tranche:'))) {
+    return {
+      ok: false,
+      missing: [
+        `Issue #${issueNumber} carries a \`vinaya/tranche:*\` label — it belongs to a tranche and renders via \`vinaya task brief <tranche> <n>\`, not the tranche-less backlog path.`
+      ]
+    }
+  }
+  if (found.state !== 'OPEN') {
+    return { ok: false, missing: [`Issue #${issueNumber} is not open (state: ${found.state}) — not renderable.`] }
+  }
+  const issueBody = found.body
+  const issueRationalePass = checkIssueRationale(issueBody).status !== 'fail'
+
+  const { dependsOn: dependsOnIds, conflictsWith: conflictsWithIds } = parseRationaleDeps(issueBody)
+  const task: Task = {
+    id: String(issueNumber),
+    title: found.title,
+    issue: issueNumber,
+    projects: extractProjectField(issueBody),
+    dependsOn: dependsOnIds,
+    conflictsWith: conflictsWithIds,
+    rationaleMarkdown: ''
+  }
+
+  // No same-tranche siblings to resolve a bare id against — a backlog Issue's
+  // own edges resolve only through `resolveEdge`'s `#NNN`/slug-qualified
+  // paths (O2: "optional on such an Issue and enforced when present").
+  const taskById = new Map<string, EdgeTaskRef>()
+  const factsByTaskId = new Map<string, EdgeFactsSubset>()
+  const dependsOn: DispatchDependsOnFact[] = await Promise.all(
+    task.dependsOn.map(async (dep) => {
+      const r = await resolveEdge(dep, taskById, factsByTaskId, repo)
+      return {
+        id: dep,
+        issue: r.issue,
+        merged: r.merged,
+        resolved: r.resolved,
+        issueState: r.issueState,
+        stateReason: r.stateReason,
+        closedByActor: r.closedByActor
+      }
+    })
+  )
+  const conflictsWith: DispatchConflictsWithFact[] = await Promise.all(
+    task.conflictsWith.map(async (c) => {
+      const r = await resolveEdge(c, taskById, factsByTaskId, repo)
+      return { id: c, issue: r.issue, openOrInFlight: r.open }
+    })
+  )
+  const priorTrancheArchival: DispatchPriorTrancheFact[] = []
+
+  const gateInput: DispatchGateInput = {
+    trancheSlug: `issue-${issueNumber}`,
+    task,
+    issue: { number: issueNumber, state: 'open' },
+    issueRationalePass,
+    dependsOn,
+    conflictsWith,
+    priorTask: null,
+    priorTrancheArchival,
+    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  }
+  const gate = checkDispatchReadiness(gateInput)
+
+  const surfaceResult = parseIssueSurface(issueBody)
+  const surface: IssueSurface = surfaceResult.ok ? surfaceResult.value : { in: [], out: [] }
+  const rationale = parseRationaleFields(issueBody)
+
+  const globs = surface.in
+  for (const glob of globs) {
+    if (expandGlob(glob).length === 0) {
+      return { ok: false, missing: [`--surfaces glob "${glob}" matched no tracked file.`] }
+    }
+  }
+
+  const allTrackedFiles = git(['ls-files'])
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const boundaryTokens = extractBoundaryFilePaths(rationale.boundary ?? '')
+  const surfaceFiles: SurfaceFileFact[] = resolveBoundaryPaths(boundaryTokens, allTrackedFiles)
+    .sort()
+    .map((path) => ({ path, sha256: sha256OfFile(path), packageName: packageNameForPath(path) }))
+
+  const dirtiness = checkDirtyPinnedFiles(surfaceFiles.map((f) => f.path))
+  if (dirtiness.length > 0) return { ok: false, missing: dirtiness }
+
+  const workspaces = workspaceGlobs()
+  const consumersOf = buildConsumersOf(workspaces, listDirs, readManifest)
+
+  const partsResult = parseIssueParts(issueBody)
+  const testPlanResult = parseIssueTestPlan(issueBody)
+  const stopConditionsResult = parseIssueStopConditions(issueBody)
+  const parts: IssuePart[] = partsResult.ok ? partsResult.value : []
+  const testPlan: IssueTestPlan = testPlanResult.ok
+    ? testPlanResult.value
+    : { kind: 'commands', lines: [], principal: [] }
+  const stopConditions: string[] = stopConditionsResult.ok ? stopConditionsResult.value : []
+
+  const facts: BriefFacts = {
+    trancheSlug: null,
+    taskId: String(issueNumber),
+    title: task.title,
+    issue: issueNumber,
+    projects: task.projects,
+    dependsOn: task.dependsOn,
+    conflictsWith: task.conflictsWith,
+    rationale,
+    objectives: (() => {
+      const parsed = objectivesOf(issueBody)
+      return parsed.ok ? parsed.objectives : []
+    })(),
+    surface,
+    parts,
+    testPlan,
+    stopConditions,
+    dispatchReady: gate.ready,
+    dispatchBlockers: gate.blockers,
+    surfaceFiles,
+    consumersOf,
+    docOwnersContent: existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null,
+    sourceRevision: headSha
+  }
+
+  const template = readFileSync(TEMPLATE_PATH, 'utf8')
+  const result = renderBrief(facts, template)
+  return result.ok ? { ok: true, brief: result.brief, issue: issueNumber } : { ok: false, missing: result.missing }
 }

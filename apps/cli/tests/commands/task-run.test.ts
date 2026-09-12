@@ -125,3 +125,28 @@ describe('vinaya task run — argv parsing', () => {
     expect(r.status).toBe(3)
   })
 })
+
+// task-run-v1 task 15, O1: `--issue <n>` is `task run`'s tranche-less form —
+// argv parsing only, mirroring the `<tranche> <n>` block above.
+describe('vinaya task run --issue — argv parsing (task-run-v1 task 15, O1)', () => {
+  it('refuses both --issue and a positional tranche/n together', () => {
+    const r = runCli(['task', 'run', 'task-run-v1', '2', '--issue', '521', '--agent', 'claude'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('pass either <tranche> <n> or --issue <n>, never both')
+  })
+
+  it('refuses a non-numeric --issue value', () => {
+    const r = runCli(['task', 'run', '--issue', 'five-twenty-one', '--agent', 'claude'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--issue must be numeric')
+  })
+
+  it('refuses with no --agent at all under --issue too', () => {
+    const home = isolatedCwd()
+    const cwd = isolatedCwd()
+    const r = runCli(['task', 'run', '--issue', '521'], { cwd, home })
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--agent')
+    expect(r.stderr).toContain('is required')
+  })
+})

@@ -14,7 +14,7 @@
  * already there — always paired with `--reason`, never accepted alone.
  */
 
-import { DISPATCH_AGENTS, type DispatchAgent, dispatchTask, prepareTask } from '../lib/dispatch-task.js'
+import { DISPATCH_AGENTS, type DispatchAgent, dispatchTask, prepareTaskOrIssue } from '../lib/dispatch-task.js'
 
 export async function taskDispatchCommand(args: string[]): Promise<void> {
   const trancheSlug = args[0]
@@ -65,11 +65,61 @@ export async function taskDispatchCommand(args: string[]): Promise<void> {
   if (result.commentUrl) process.stdout.write(`\nPosted: ${result.commentUrl}\n`)
 }
 
+/** Parses `--supersede`/`--reason` — shared by the `<tranche> <n>` and `--issue <n>` (task-run-v1 task 15, O1) forms of `task brief`. */
+function parseSupersede(rest: string[], usage: string): { reason: string } | undefined {
+  const hasSupersede = rest.includes('--supersede')
+  const reasonIdx = rest.indexOf('--reason')
+  const reason = reasonIdx !== -1 ? rest[reasonIdx + 1] : undefined
+
+  if (hasSupersede && !reason) {
+    console.error(`vinaya task brief: --supersede requires --reason <text>.\n${usage}`)
+    process.exit(2)
+  }
+  if (!hasSupersede && reasonIdx !== -1) {
+    console.error(`vinaya task brief: --reason is only meaningful with --supersede.\n${usage}`)
+    process.exit(2)
+  }
+  return hasSupersede ? { reason: reason as string } : undefined
+}
+
+const TASK_BRIEF_USAGE = [
+  'Usage: vinaya task brief <tranche> <n> [--supersede --reason <text>]',
+  '   or: vinaya task brief --issue <n> [--supersede --reason <text>]'
+].join('\n')
+
+/**
+ * `--issue <n>` (task-run-v1 task 15, O1) — renders and freezes a backlog
+ * Issue's brief exactly as `<tranche> <n>` does for a tranche task. Mutually
+ * exclusive with the `<tranche> <n>` positional form.
+ */
 export async function taskBriefCommand(args: string[]): Promise<void> {
+  const issueIdx = args.indexOf('--issue')
+  const firstLooksPositional = args[0] !== undefined && !args[0].startsWith('--')
+
+  if (issueIdx !== -1 && firstLooksPositional) {
+    console.error(`vinaya task brief: pass either <tranche> <n> or --issue <n>, never both.\n${TASK_BRIEF_USAGE}`)
+    process.exit(2)
+  }
+
+  if (issueIdx !== -1) {
+    const issueArg = args[issueIdx + 1]
+    const issueN = issueArg !== undefined ? Number.parseInt(issueArg, 10) : Number.NaN
+    if (!issueArg || !Number.isInteger(issueN) || String(issueN) !== issueArg) {
+      console.error(`vinaya task brief: --issue must be numeric — got "${issueArg}".\n${TASK_BRIEF_USAGE}`)
+      process.exit(2)
+    }
+    const rest = [...args.slice(0, issueIdx), ...args.slice(issueIdx + 2)]
+    const supersede = parseSupersede(rest, TASK_BRIEF_USAGE)
+    const result = await prepareTaskOrIssue({ issue: issueN, supersede })
+    process.stdout.write(`${result.brief}\n`)
+    process.stdout.write(`\nPosted (v${result.version}): ${result.commentUrl}\n`)
+    return
+  }
+
   const trancheSlug = args[0]
   const taskIdArg = args[1]
   if (!trancheSlug || !taskIdArg || trancheSlug.startsWith('--')) {
-    console.error('Usage: vinaya task brief <tranche> <n> [--supersede --reason <text>]')
+    console.error(TASK_BRIEF_USAGE)
     process.exit(2)
   }
 
@@ -79,25 +129,8 @@ export async function taskBriefCommand(args: string[]): Promise<void> {
     process.exit(2)
   }
 
-  const rest = args.slice(2)
-  const hasSupersede = rest.includes('--supersede')
-  const reasonIdx = rest.indexOf('--reason')
-  const reason = reasonIdx !== -1 ? rest[reasonIdx + 1] : undefined
-
-  if (hasSupersede && !reason) {
-    console.error('vinaya task brief: --supersede requires --reason <text>.')
-    process.exit(2)
-  }
-  if (!hasSupersede && reasonIdx !== -1) {
-    console.error('vinaya task brief: --reason is only meaningful with --supersede.')
-    process.exit(2)
-  }
-
-  const result = await prepareTask({
-    tranche: trancheSlug,
-    n,
-    supersede: hasSupersede ? { reason: reason as string } : undefined
-  })
+  const supersede = parseSupersede(args.slice(2), TASK_BRIEF_USAGE)
+  const result = await prepareTaskOrIssue({ tranche: trancheSlug, n, supersede })
   process.stdout.write(`${result.brief}\n`)
   process.stdout.write(`\nPosted (v${result.version}): ${result.commentUrl}\n`)
 }

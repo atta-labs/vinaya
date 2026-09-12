@@ -17,7 +17,8 @@
 import { resolveRepo as realResolveRepo, type RepoRef } from '@attalabs/aeg-forge-state'
 import {
   type AssembleAndRenderBriefResult,
-  assembleAndRenderBrief as realAssembleAndRenderBrief
+  assembleAndRenderBrief as realAssembleAndRenderBrief,
+  assembleAndRenderBriefForIssue as realAssembleAndRenderBriefForIssue
 } from './brief-assembly.js'
 import type { AgentVendor } from './dispatch.js'
 import {
@@ -26,7 +27,12 @@ import {
   findOpenPrForBranch as realFindOpenPrForBranch,
   type LoopResult
 } from './dev-review-loop.js'
-import { DispatchTaskError, prepareTask as realPrepareTask, type PrepareTaskResult } from './dispatch-task.js'
+import {
+  DispatchTaskError,
+  prepareIssueTask as realPrepareIssueTask,
+  prepareTask as realPrepareTask,
+  type PrepareTaskResult
+} from './dispatch-task.js'
 
 /** `findOpenPrForBranch`'s own return shape, never redeclared — `dev-review-loop.ts`'s private `PrRef` type stays unexported (loop internals are out of this task's Surface); `ReturnType` derives the identical shape from the real function instead. */
 type OpenPrRef = NonNullable<ReturnType<typeof realFindOpenPrForBranch>>
@@ -53,7 +59,7 @@ export function isAlreadyDispatchedError(err: unknown): boolean {
   return err instanceof DispatchTaskError && ALREADY_DISPATCHED_PATTERN.test(err.message)
 }
 
-export type RunTaskInput = { tranche: string; n: number; agent: AgentVendor }
+export type RunTaskInput = ({ tranche: string; n: number } | { issue: number }) & { agent: AgentVendor }
 /**
  * `prUrl` — the published/paused PR's real `https://github.com/<owner>/<repo>/pull/<n>`
  * URL, per Issue #480's own Sizing story ("...runs the loop to publish and
@@ -75,7 +81,9 @@ export type RunTaskResult = LoopResult & { prUrl: string | null }
  */
 export type RunTaskDeps = {
   prepareTask: (input: { tranche: string; n: number }) => Promise<PrepareTaskResult>
+  prepareIssueTask: (input: { issue: number }) => Promise<PrepareTaskResult>
   assembleAndRenderBrief: (tranche: string, taskId: string) => Promise<AssembleAndRenderBriefResult>
+  assembleAndRenderBriefForIssue: (issueNumber: number) => Promise<AssembleAndRenderBriefResult>
   developerBranchFor: (issueNumber: number) => string
   findOpenPrForBranch: (branch: string) => OpenPrRef | null
   devReviewLoop: (input: { task: number; agent: AgentVendor }) => Promise<LoopResult>
@@ -84,7 +92,9 @@ export type RunTaskDeps = {
 
 const defaultRunTaskDeps: RunTaskDeps = {
   prepareTask: realPrepareTask,
+  prepareIssueTask: realPrepareIssueTask,
   assembleAndRenderBrief: realAssembleAndRenderBrief,
+  assembleAndRenderBriefForIssue: realAssembleAndRenderBriefForIssue,
   developerBranchFor: realDeveloperBranchFor,
   findOpenPrForBranch: realFindOpenPrForBranch,
   devReviewLoop: realDevReviewLoop,
@@ -116,18 +126,24 @@ async function resolvePrUrl(resolveRepo: () => Promise<RepoRef | null>, prNumber
  *    function makes no dispatch decision of its own (Traps to avoid).
  */
 export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRunTaskDeps): Promise<RunTaskResult> {
-  const { tranche, n, agent } = input
+  const { agent } = input
+  const taskLabel = 'tranche' in input ? `task ${input.n} in tranche \`${input.tranche}\`` : `Issue #${input.issue}`
 
   let issue: number
   try {
-    const prep = await deps.prepareTask({ tranche, n })
-    issue = prep.issue
+    issue =
+      'tranche' in input
+        ? (await deps.prepareTask({ tranche: input.tranche, n: input.n })).issue
+        : (await deps.prepareIssueTask({ issue: input.issue })).issue
   } catch (err) {
     if (!isAlreadyDispatchedError(err)) throw err
-    const rendered = await deps.assembleAndRenderBrief(tranche, String(n))
+    const rendered =
+      'tranche' in input
+        ? await deps.assembleAndRenderBrief(input.tranche, String(input.n))
+        : await deps.assembleAndRenderBriefForIssue(input.issue)
     if (!rendered.ok) {
       throw new RunTaskError(
-        `runTask: task ${n} in tranche \`${tranche}\` was already dispatched, but re-resolving its Issue number failed:\n${rendered.missing.map((m) => `  - ${m}`).join('\n')}`
+        `runTask: ${taskLabel} was already dispatched, but re-resolving its Issue number failed:\n${rendered.missing.map((m) => `  - ${m}`).join('\n')}`
       )
     }
     issue = rendered.issue
@@ -147,7 +163,7 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   const existingPr = deps.findOpenPrForBranch(branch)
   if (existingPr) {
     throw new RunTaskError(
-      `runTask: task ${n} in tranche \`${tranche}\`'s developer branch \`${branch}\` already has an open pull request (#${existingPr.number}) — refusing to start a second developer. Resume the review loop instead: \`vinaya dev-review-loop --resume ${existingPr.number}\`.`
+      `runTask: ${taskLabel}'s developer branch \`${branch}\` already has an open pull request (#${existingPr.number}) — refusing to start a second developer. Resume the review loop instead: \`vinaya dev-review-loop --resume ${existingPr.number}\`.`
     )
   }
 

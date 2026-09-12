@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   isPrincipal,
+  issueBranchName,
   newestPrincipalRulingOrdinal,
   type Objective,
   objectivesOf,
@@ -22,6 +23,7 @@ import {
   resolveNewestFrozenBrief,
   type ReviewPolicy
 } from '@attalabs/aeg-core'
+import { hasLabel } from '@attalabs/aeg-forge-state'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist, resolveReviewPolicy } from '../config.js'
 import { sh } from './gate-reading.js'
 
@@ -216,6 +218,11 @@ export function fetchSourceRevision(issueNumber: number): string {
 export function fetchIssueTitle(issueNumber: number): string {
   const out = sh('gh', ['issue', 'view', String(issueNumber), '--json', 'title'])
   return (JSON.parse(out) as { title: string }).title
+}
+
+export function fetchIssueLabels(issueNumber: number): string[] {
+  const out = sh('gh', ['issue', 'view', String(issueNumber), '--json', 'labels'])
+  return (JSON.parse(out) as { labels: { name: string }[] }).labels.map((l) => l.name)
 }
 
 /**
@@ -414,16 +421,30 @@ export function describeObjectivesEdit(issueNumber: number, edit: ObjectivesEdit
 
 const ISSUE_TITLE_SHAPE = /^\[([^\]]+)\]\s+(\d+)\s+[—-]/
 
-/** `task/<tranche>/<n>`, derived from the Issue's own `[<tranche>] <n> — …` title — never guessed or configured separately. */
-export function developerBranchFor(issueNumber: number, fetchTitle: (n: number) => string = fetchIssueTitle): string {
+/**
+ * `task/<tranche>/<n>`, derived from the Issue's own `[<tranche>] <n> — …`
+ * title — never guessed or configured separately. A backlog Issue (task-run-v1
+ * task 15, O1/O3: no `vinaya/tranche:*` label, so no such title either)
+ * derives `task/issue-<n>` instead — the branch is keyed to the Issue itself,
+ * not a tranche+task-id pair. An Issue whose title merely fails to match the
+ * shape while still carrying the tranche label is a real defect (a malformed
+ * tranche-task title), not a backlog Issue, and still throws.
+ */
+export function developerBranchFor(
+  issueNumber: number,
+  fetchTitle: (n: number) => string = fetchIssueTitle,
+  fetchLabels: (n: number) => string[] = fetchIssueLabels
+): string {
   const title = fetchTitle(issueNumber)
   const m = ISSUE_TITLE_SHAPE.exec(title)
-  if (!m) {
+  if (m) return `task/${m[1]}/${m[2]}`
+  const labels = fetchLabels(issueNumber)
+  if (hasLabel('tranche', labels)) {
     throw new Error(
-      `developerBranchFor: Issue #${issueNumber}'s title \`${title}\` does not match the \`[<tranche>] <n> — …\` shape — cannot derive the developer's branch.`
+      `developerBranchFor: Issue #${issueNumber}'s title \`${title}\` does not match the \`[<tranche>] <n> — …\` shape, but it carries a vinaya/tranche:* label — cannot derive the developer's branch.`
     )
   }
-  return `task/${m[1]}/${m[2]}`
+  return issueBranchName(issueNumber)
 }
 
 type PrRef = { number: number; branch: string }

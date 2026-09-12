@@ -77,6 +77,7 @@ import {
   fetchProvenance,
   trancheLabel,
   listActiveTrancheSlugs,
+  parseRationaleDeps,
   resolveGithubToken,
   resolveRepo,
   splitSlugQualifiedEdge,
@@ -446,9 +447,7 @@ async function resolvePriorTrancheArchival(
 
 // ---- leftover detection -------------------------------------------------------
 
-function computeLeftover(trancheSlug: string, taskId: string) {
-  const branch = `task/${trancheSlug}/${taskId}`
-  const worktreeDir = join(REPO_ROOT, '.worktrees', 'task', trancheSlug, taskId)
+function computeLeftoverForBranch(branch: string, worktreeDir: string) {
   const branchExistsRemote = sh('git', ['ls-remote', '--heads', 'origin', branch]).length > 0
   const worktreeExistsLocal = existsSync(worktreeDir)
 
@@ -463,6 +462,19 @@ function computeLeftover(trancheSlug: string, taskId: string) {
   }
 
   return classifyLeftover({ branchExistsRemote, worktreeExistsLocal, commitsAheadOfMain })
+}
+
+function computeLeftover(trancheSlug: string, taskId: string) {
+  return computeLeftoverForBranch(
+    `task/${trancheSlug}/${taskId}`,
+    join(REPO_ROOT, '.worktrees', 'task', trancheSlug, taskId)
+  )
+}
+
+/** `task/issue-<n>` (task-run-v1 task 15, O1) — same leftover classification, keyed to the backlog Issue's own branch/worktree instead of a tranche+task-id pair. */
+function computeLeftoverForIssue(issueNumber: number) {
+  const branch = `task/issue-${issueNumber}`
+  return computeLeftoverForBranch(branch, join(REPO_ROOT, '.worktrees', branch))
 }
 
 // ---- baseline capture ----------------------------------------------------------
@@ -999,6 +1011,109 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
   process.exit(overallReady ? 0 : 1)
 }
 
+/**
+ * `--issue <n>` gate mode (task-run-v1 task 15, O1) — same dispatch-readiness
+ * derivation as `runGateMode`, sourced from a backlog Issue directly instead
+ * of a tranche topology row: no tranche, no Milestone, `dependsOn`/
+ * `conflictsWith` parsed straight off the Issue's own "Dependency rationale"
+ * field (`parseRationaleDeps`) and optional per O2. `resolveDependsOn`/
+ * `resolveConflictsWith` are reused unchanged against an empty synthetic
+ * tranche (no same-tranche sibling ids to match against a backlog Issue —
+ * every edge resolves through their `#NNN`/slug-qualified paths instead,
+ * exactly as O2 requires).
+ *
+ * Narrower than `runGateMode` in one respect, documented rather than
+ * silently matched: no prior-task/prior-tranche-archival predicate (neither
+ * applies with no tranche) and no `--premise`/`--simulate`/`--check-baseline`/
+ * `--surfaces` companion mode — Step 0's own gate check is this mode's whole
+ * job.
+ */
+async function runGateModeForIssue(issueNumber: number): Promise<void> {
+  sh('git', ['fetch', 'origin', 'main', '--quiet'])
+
+  const repo = await resolveRepo()
+  const token = await resolveGithubToken()
+  if (!repo || !token) {
+    console.error(
+      'verify-dispatch severity:infra — could not resolve a GitHub repo/token (set AEG_REPO / GITHUB_TOKEN, or `gh auth login`). Cannot evaluate forge-dependent predicates.'
+    )
+    process.exit(1)
+  }
+
+  const issueJson = ghIssueView(issueNumber, repo)
+  if (!issueJson) {
+    console.error(`verify-dispatch issue-existence: Issue #${issueNumber} does not resolve on the forge.`)
+    process.exit(1)
+  }
+  if (issueJson.labels.some((l) => l.name.startsWith('vinaya/tranche:'))) {
+    console.error(
+      `verify-dispatch: Issue #${issueNumber} carries a vinaya/tranche:* label — it belongs to a tranche; use \`verify-dispatch <tranche> <n>\` instead of --issue.`
+    )
+    process.exit(1)
+  }
+
+  const issueRationalePass = checkIssueRationale(issueJson.body).status === 'pass'
+  const { dependsOn: dependsOnIds, conflictsWith: conflictsWithIds } = parseRationaleDeps(issueJson.body)
+
+  const emptyTranche: Tranche = { name: '', lifecycle: 'active', goal: '', tasks: [], backlog: [] }
+  const noBranchPrs = new Map<string, PrListEntry>()
+  const dependsOn = await resolveDependsOn(dependsOnIds, emptyTranche, noBranchPrs, repo)
+  const conflictsWith = await resolveConflictsWith(conflictsWithIds, emptyTranche, noBranchPrs, repo)
+
+  const task: Task = {
+    id: String(issueNumber),
+    title: '',
+    issue: issueNumber,
+    projects: [],
+    dependsOn: dependsOnIds,
+    conflictsWith: conflictsWithIds,
+    rationaleMarkdown: ''
+  }
+
+  const gateResult = checkDispatchReadiness({
+    trancheSlug: `issue-${issueNumber}`,
+    task,
+    issue: { number: issueNumber, state: issueJson.state === 'OPEN' ? 'open' : 'closed' },
+    issueRationalePass,
+    dependsOn,
+    conflictsWith,
+    priorTask: null,
+    priorTrancheArchival: []
+  })
+
+  const leftover = computeLeftoverForIssue(issueNumber)
+
+  const rawCounts = currentFindingCounts()
+  const nowIso = sh('git', ['log', '-1', '--format=%cI']) || new Date(0).toISOString()
+  const capturedBaseline = captureBaseline(
+    rawCounts.map(({ tool, findingCount }) => ({ tool, findingCount })),
+    nowIso
+  )
+
+  console.log(`\nverify-dispatch: Issue #${issueNumber} (backlog, no tranche)\n`)
+  console.log(`dispatch-readiness: ${gateResult.ready ? 'READY' : 'NOT READY'}`)
+  for (const b of gateResult.blockers) console.log(`  ✗ ${b}`)
+
+  console.log(`\nleftover-detection: ${leftover.verdict}`)
+  console.log(`  ${leftover.reason}`)
+
+  console.log('\nbaseline (informational — captured this run, not a committed file):')
+  for (const raw of rawCounts) {
+    const captured = capturedBaseline.find((b) => b.tool === raw.tool)
+    const capturedAt = captured?.capturedAt ?? nowIso
+    console.log(
+      raw.unavailable
+        ? `  ${raw.tool}: UNAVAILABLE (no usable finding count) at ${capturedAt}`
+        : `  ${raw.tool}: ${raw.findingCount} finding(s) at ${capturedAt}`
+    )
+    if (raw.diagnostic) console.log(`    ↳ ${raw.diagnostic}`)
+  }
+
+  const overallReady = gateResult.ready && leftover.verdict !== 'stop'
+  console.log(`\nverify-dispatch: ${overallReady ? 'READY TO DISPATCH' : 'NOT READY'}`)
+  process.exit(overallReady ? 0 : 1)
+}
+
 /** Raw prior-task lookup (before forge facts are attached) — used only to know which Issue to batch-fetch provenance for. */
 function resolvePriorTaskRaw(tranche: Tranche, taskId: string): Task | null {
   const idx = tranche.tasks.findIndex((t) => t.id === taskId)
@@ -1010,16 +1125,38 @@ function resolvePriorTaskRaw(tranche: Tranche, taskId: string): Task | null {
 
 if (import.meta.main) {
   const argv = process.argv.slice(2)
-  const trancheSlug = argv[0]
-  const taskId = argv[1]
 
-  if (!trancheSlug || !taskId || trancheSlug.startsWith('--')) {
-    console.error(
-      'Usage: verify-dispatch <tranche> <n> [--premise [file]] [--simulate <file>] [--check-baseline <file>] [--surfaces <glob1,glob2,...>]'
-    )
-    process.exit(1)
+  // `--issue <n>` (task-run-v1 task 15, O1) — a backlog Issue with no
+  // tranche. Mutually exclusive with the `<tranche> <n>` positional form;
+  // takes only the default gate mode (see `runGateModeForIssue`'s own doc
+  // comment for the documented narrowing versus the tranche path's other
+  // modes).
+  const issueIdx = argv.indexOf('--issue')
+  if (issueIdx !== -1) {
+    const issueArg = argv[issueIdx + 1]
+    const issueNumber = issueArg !== undefined ? Number.parseInt(issueArg, 10) : Number.NaN
+    if (!issueArg || !Number.isInteger(issueNumber) || String(issueNumber) !== issueArg) {
+      console.error('Usage: verify-dispatch --issue <n>')
+      process.exit(1)
+    }
+    await runGateModeForIssue(issueNumber)
+  } else {
+    const trancheSlug = argv[0]
+    const taskId = argv[1]
+
+    if (!trancheSlug || !taskId || trancheSlug.startsWith('--')) {
+      console.error(
+        'Usage: verify-dispatch <tranche> <n> [--premise [file]] [--simulate <file>] [--check-baseline <file>] [--surfaces <glob1,glob2,...>]\n' +
+          '   or: verify-dispatch --issue <n>'
+      )
+      process.exit(1)
+    }
+
+    await runGateModeOrCompanion(trancheSlug, taskId, argv)
   }
+}
 
+async function runGateModeOrCompanion(trancheSlug: string, taskId: string, argv: string[]): Promise<void> {
   const premiseIdx = argv.indexOf('--premise')
   const simulateIdx = argv.indexOf('--simulate')
   const checkBaselineIdx = argv.indexOf('--check-baseline')

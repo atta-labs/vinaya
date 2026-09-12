@@ -31,9 +31,14 @@ import { runTask, type RunTaskResult } from '../lib/task-run.js'
 /** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */
 const TASK_RUN_FAILURE_EXIT_CODE = 3
 
-const KNOWN_FLAGS = ['--agent']
+const KNOWN_FLAGS = ['--agent', '--issue']
 
-type ParsedFlags = { agent: string | undefined; agentFlagPresent: boolean; unknown: string[] }
+type ParsedFlags = {
+  agent: string | undefined
+  agentFlagPresent: boolean
+  issue: string | undefined
+  unknown: string[]
+}
 
 /**
  * `unknown` collects any `--flag`-shaped or stray token this parser does
@@ -53,63 +58,39 @@ type ParsedFlags = { agent: string | undefined; agentFlagPresent: boolean; unkno
 function parseFlags(rest: string[]): ParsedFlags {
   let agent: string | undefined
   let agentFlagPresent = false
+  let issue: string | undefined
   const unknown: string[] = []
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]
     if (a === '--agent') {
       agentFlagPresent = true
       agent = rest[++i]
+    } else if (a === '--issue') {
+      issue = rest[++i]
     } else if (a !== undefined) unknown.push(a)
   }
-  return { agent, agentFlagPresent, unknown }
+  return { agent, agentFlagPresent, issue, unknown }
 }
 
-export async function taskRunCommand(args: string[]): Promise<void> {
-  const trancheSlug = args[0]
-  const taskIdArg = args[1]
-  if (!trancheSlug || !taskIdArg || trancheSlug.startsWith('--')) {
-    console.error(`Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')}`)
-    process.exit(2)
-  }
+const USAGE = [
+  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')}`,
+  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')}`
+].join('\n')
 
-  const n = Number.parseInt(taskIdArg, 10)
-  if (!Number.isInteger(n) || String(n) !== taskIdArg) {
-    console.error(`vinaya task run: task id must be numeric — got "${taskIdArg}".`)
-    process.exit(2)
-  }
-
-  const parsed = parseFlags(args.slice(2))
-  if (parsed.unknown.length > 0) {
-    console.error(
-      `vinaya task run: unrecognized flag${parsed.unknown.length > 1 ? 's' : ''} ${parsed.unknown.map((f) => `'${f}'`).join(', ')} — expected one of ${KNOWN_FLAGS.join(', ')}`
-    )
-    process.exit(2)
-  }
-  // `--agent` falls back to `dispatch.agent` in `vinaya.config.json` when
-  // omitted entirely — the same fallback `dispatch.ts` and
-  // `dev-review-loop.ts` already give their own `--agent` flags, so a repo
-  // that declares its agent once needs no flag repeated on every command. A
-  // `--agent` given with no value is a malformed flag, not an omission —
-  // never rescued by the config fallback (see `parseFlags`'s own doc
-  // comment on `agentFlagPresent`).
+/** `--agent` falls back to `dispatch.agent` in `vinaya.config.json` when omitted entirely — see `parseFlags`'s own doc comment on `agentFlagPresent`. `null` when no valid agent could be resolved (message already printed). */
+function resolveAgentOrReport(parsed: ParsedFlags): DispatchAgent | null {
   const agentRaw = parsed.agentFlagPresent ? parsed.agent : (parsed.agent ?? loadConfig()?.dispatch?.agent)
   if (!agentRaw || !(DISPATCH_AGENTS as readonly string[]).includes(agentRaw)) {
     console.error(
       `vinaya task run: --agent <${DISPATCH_AGENTS.join('|')}> is required (or set dispatch.agent in vinaya.config.json).`
     )
-    process.exit(2)
+    return null
   }
-  const agent = agentRaw as DispatchAgent
+  return agentRaw as DispatchAgent
+}
 
-  let result: RunTaskResult
-  try {
-    result = await runTask({ tranche: trancheSlug, n, agent })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    process.stderr.write(`Error: ${message}\n`)
-    process.exit(TASK_RUN_FAILURE_EXIT_CODE)
-  }
-
+/** The publish/pause summary — shared by the tranche-keyed and `--issue` (task-run-v1 task 15, O1) invocations, which differ only in how `result` was obtained. */
+function reportRunTaskResult(result: RunTaskResult): void {
   // `prUrl` is `null` only when the repo genuinely could not be resolved
   // (`lib/task-run.ts`'s own `resolvePrUrl` doc comment) — falls back to the
   // bare `PR #<n>` form rather than printing a broken/missing URL.
@@ -143,4 +124,79 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   )
   process.stdout.write(`Resume with: vinaya dev-review-loop --resume ${result.prNumber}\n`)
   process.exit(1)
+}
+
+async function runAndReport(input: Parameters<typeof runTask>[0]): Promise<void> {
+  let result: RunTaskResult
+  try {
+    result = await runTask(input)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    process.stderr.write(`Error: ${message}\n`)
+    process.exit(TASK_RUN_FAILURE_EXIT_CODE)
+  }
+  reportRunTaskResult(result)
+}
+
+/**
+ * `--issue <n>` (task-run-v1 task 15, O1) — a backlog Issue that carries no
+ * `vinaya/tranche:*` label runs the same unattended path as a tranche task:
+ * one frozen brief, one developer on `task/issue-<n>`, the same loop and
+ * gate. Mutually exclusive with the `<tranche> <n>` positional form.
+ */
+export async function taskRunCommand(args: string[]): Promise<void> {
+  const usesIssueFlag = args.includes('--issue')
+  const firstLooksPositional = args[0] !== undefined && !args[0].startsWith('--')
+
+  if (usesIssueFlag && firstLooksPositional) {
+    console.error(`vinaya task run: pass either <tranche> <n> or --issue <n>, never both.\n${USAGE}`)
+    process.exit(2)
+  }
+
+  if (usesIssueFlag) {
+    const parsed = parseFlags(args)
+    if (parsed.unknown.length > 0) {
+      console.error(
+        `vinaya task run: unrecognized flag${parsed.unknown.length > 1 ? 's' : ''} ${parsed.unknown.map((f) => `'${f}'`).join(', ')} — expected one of ${KNOWN_FLAGS.join(', ')}`
+      )
+      process.exit(2)
+    }
+    if (!parsed.issue) {
+      console.error(USAGE)
+      process.exit(2)
+    }
+    const issueN = Number.parseInt(parsed.issue, 10)
+    if (!Number.isInteger(issueN) || String(issueN) !== parsed.issue) {
+      console.error(`vinaya task run: --issue must be numeric — got "${parsed.issue}".`)
+      process.exit(2)
+    }
+    const agent = resolveAgentOrReport(parsed)
+    if (!agent) process.exit(2)
+    await runAndReport({ issue: issueN, agent })
+    return
+  }
+
+  const trancheSlug = args[0]
+  const taskIdArg = args[1]
+  if (!trancheSlug || !taskIdArg || trancheSlug.startsWith('--')) {
+    console.error(USAGE)
+    process.exit(2)
+  }
+
+  const n = Number.parseInt(taskIdArg, 10)
+  if (!Number.isInteger(n) || String(n) !== taskIdArg) {
+    console.error(`vinaya task run: task id must be numeric — got "${taskIdArg}".`)
+    process.exit(2)
+  }
+
+  const parsed = parseFlags(args.slice(2))
+  if (parsed.unknown.length > 0) {
+    console.error(
+      `vinaya task run: unrecognized flag${parsed.unknown.length > 1 ? 's' : ''} ${parsed.unknown.map((f) => `'${f}'`).join(', ')} — expected one of ${KNOWN_FLAGS.join(', ')}`
+    )
+    process.exit(2)
+  }
+  const agent = resolveAgentOrReport(parsed)
+  if (!agent) process.exit(2)
+  await runAndReport({ tranche: trancheSlug, n, agent })
 }
