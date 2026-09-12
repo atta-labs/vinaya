@@ -1,5 +1,5 @@
 /**
- * O9 (`task-run-v1` 21, `#541`): the impure half of round-journal
+ * O9 (`#541`): the impure half of round-journal
  * reconstruction — gathering every `dev_review_loop` log line this task has
  * ever emitted, from the two places it can live: the task Issue's own
  * comments (`log-flush.ts` always flushes this driver's own `log()` calls

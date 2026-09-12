@@ -468,7 +468,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   try {
     return await runDevReviewLoopBody()
   } finally {
-    // O10 (`task-run-v1` 21, `#541`): every explicit return path already
+    // O10 (`#541`): every explicit return path already
     // flushes before leaving (~19 call sites throughout the round loop
     // below) — this is the one flush that is NOT conditional on reaching
     // one of them. An uncaught error thrown from anywhere in the loop
@@ -606,7 +606,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let pendingConflictFiles: string[] | null = null
 
     /**
-     * O11 (`task-run-v1` 21, `#541`): the task Issue, branch, worktree path,
+     * O11 (`#541`): the task Issue, branch, worktree path,
      * and current remote head — every prompt a RESUMED developer session
      * receives names all four, so a session resumed among many worktrees on
      * the same machine never has to ask which branch is meant (Origin, task
