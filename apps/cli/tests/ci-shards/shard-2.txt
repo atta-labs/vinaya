@@ -33,6 +33,8 @@ tests/envelope.test.ts
 tests/forge-write.test.ts
 tests/lib/dispatch-task.test.ts
 tests/lib/dispatch.test.ts
+tests/lib/remote-base.test.ts
+tests/lib/test-selector.test.ts
 tests/ops.test.ts
 tests/package-root.test.ts
 tests/registry-write.test.ts
