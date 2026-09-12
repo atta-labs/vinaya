@@ -1,7 +1,16 @@
 {
   "rings": {
-    "ring1_forgeWriteInterception": false,
-    "ring2_asyncAudits": false
+    "ring1_forgeWriteInterception": true,
+    "ring2_asyncAudits": true
+  },
+  "prePush": {
+    "alwaysRun": [
+      "apps/cli/tests/ci-shards.test.ts",
+      "apps/cli/tests/checks/check-exec-bits.test.ts",
+      "apps/cli/tests/checks/changeset-coverage*.test.ts",
+      "apps/cli/tests/checks/own-workflow.test.ts",
+      "apps/cli/tests/import-boundary.test.ts"
+    ]
   },
   "checks": {
     "atta-labs/secret-scan": {
@@ -58,7 +67,7 @@
     }
   },
   "managed": {
-    "version": 2,
+    "version": 3,
     "files": [
       ".github/workflows/vinaya-checks.yml",
       ".github/workflows/vinaya-review.yml",

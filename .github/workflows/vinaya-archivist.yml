@@ -68,6 +68,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node apps/cli/dist/index.js archive --merge-sha=${{ github.sha }}
+      - name: Self-archive the tranche once its last task merges (O4)
+        # `vinaya archive tranche` already IS the "any open task Issue left"
+        # check (`trancheArchivalStatus`) — this step never re-derives that
+        # rule, it only resolves which slug just merged and asks. Refusing
+        # (exit 1) while task Issues remain open is the expected outcome on
+        # every non-final task merge, never a reason to fail this job.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/pulls --jq '.[0].number // empty')"
+          if [ -z "$PR_NUMBER" ]; then exit 0; fi
+          BRANCH="$(gh pr view "$PR_NUMBER" -R ${{ github.repository }} --json headRefName --jq .headRefName)"
+          SLUG="$(printf '%s' "$BRANCH" | sed -n 's#^task/\([^/]*\)/.*#\1#p')"
+          if [ -z "$SLUG" ]; then exit 0; fi
+          node apps/cli/dist/index.js archive tranche "$SLUG" --yes
 
   daily-drift:
     name: Daily Drift Check (dead-branch pushes)

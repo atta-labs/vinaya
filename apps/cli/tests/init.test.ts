@@ -243,7 +243,7 @@ describe('vinaya init', () => {
     const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
     expect(cfg.checks).toEqual({})
     // manifest recorded in config
-    expect(cfg.managed.version).toBe(2)
+    expect(cfg.managed.version).toBe(3)
     expect(cfg.managed.files).toContain(CHECKS_WORKFLOW_PATH)
     expect(cfg.managed.files).toContain(DOCTRINE_POINTER_PATH)
     expect(cfg.managed.files).toContain(CHECKS_FOLDER_PLACEHOLDER_PATH)
@@ -706,7 +706,7 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
-    expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(6)
+    expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(7)
     // …and none of them unpinned. An unpinned `npx` is NOT "latest". Where
     // the generated checks workflow carries an install step — only when the
     // adopter declares `ci.setup` — a repo carrying `@attalabs/vinaya` as a
@@ -740,8 +740,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
     // Count, not just uniqueness: a set-only assertion would still pass if the
     // workflows lost their pin entirely and the hook alone contributed the
-    // single value. Six workflow invocations plus one hook.
-    expect(specs).toHaveLength(7)
+    // single value. Seven workflow invocations (O4, issue-545: the
+    // archivist's post-merge job now also self-archives the tranche) plus
+    // one hook.
+    expect(specs).toHaveLength(8)
     expect([...new Set(specs)]).toEqual([OWN_VERSION])
   })
 
@@ -952,9 +954,9 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
-    // All six invocations move — none left on the broken path.
+    // All seven invocations move — none left on the broken path.
     expect(occurrences(files, 'npx --yes @attalabs/vinaya')).toBe(0)
-    expect(occurrences(files, VENDORED_BIN)).toBe(6)
+    expect(occurrences(files, VENDORED_BIN)).toBe(7)
     // Every job in `WORKFLOWS` installs (6 — see the setup-bun count above);
     // only the jobs that actually BUILD their own copy run the build
     // command — every one except `vinaya-checks.yml`, which downloads the
@@ -1074,8 +1076,9 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       // body, run checks) + 1 more when vendored (find the shared build,
       // O2), review 2 (require a verdict before building, O3; review gate),
       // retrigger 1 (its own workflow file, Issue #402 O4), verdict 3
-      // (resolve-head, evaluate, retrigger), archivist 3.
-      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 12 : 11)
+      // (resolve-head, evaluate, retrigger), archivist 4 (archive, the O4
+      // self-archive step, dead-branch audit, direct-push audit).
+      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 13 : 12)
     }
   })
 
