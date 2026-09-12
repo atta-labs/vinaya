@@ -978,6 +978,86 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
   }, 20000)
 })
 
+// --- task-run-v1 15, O8: --resume accepts a moved head once a ruling exists ---
+
+/** Same as `writeFakeGit`, except `ls-remote` answers a NEW head sha once `$HOME/.fix-pushed-after-pause` exists — the developer pushing a fix while this loop was paused, out of band, before `--resume` ever runs. */
+function writeFakeGitHeadMovesAfterPause(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    if [ -f "$HOME/.fix-pushed-after-pause" ]; then
+      echo "${'f'.repeat(40)}	refs/heads/${BRANCH}"
+    else
+      echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+    fi
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+function setUpPauseResumeHeadMoves(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudePauseThenResumeScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGitHeadMovesAfterPause(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — O8 (task-run-v1 task 15): --resume accepts a moved head after a ruling', () => {
+  it('never refuses a moved head once a ruling exists — dispatches reviewers directly (no re-dispatched developer) and publishes', () => {
+    const { home, cwd, path } = setUpPauseResumeHeadMoves()
+
+    const paused = runLoop(home, cwd, path)
+    expect(paused.status).not.toBe(0)
+    expect(paused.stdout).toMatch(/paused \(escalation\)/)
+
+    // Seed a Principal ruling, THEN simulate the developer pushing a fix
+    // out of band, before --resume ever runs — "a ruling followed by a fix
+    // push," the exact normal case O8 names.
+    writeFileSync(
+      join(home, '.fake-gh-posted-comments', 'comment-2.md'),
+      `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
+    )
+    writeFileSync(join(home, '.fix-pushed-after-pause'), '')
+
+    const resumed = runResume(home, cwd, path, 123)
+    expect(resumed.status).toBe(0)
+    expect(resumed.stdout).toMatch(/publish/)
+
+    // No developer re-dispatch on the resumed run — dev-prompts.txt carries
+    // only round 1's original brief prompt (written before the pause),
+    // never a "Principal ruling on this pause" entry, which only the
+    // SAME-head resume path (the sibling describe block above) ever writes.
+    const devPromptsPath = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'dev-prompts.txt')
+    if (existsSync(devPromptsPath)) {
+      expect(readFileSync(devPromptsPath, 'utf8')).not.toMatch(/Principal ruling on this pause/)
+    }
+  }, 20000)
+})
+
 // --- round 2: a genuine resume, not just a clean round 1 -------------------
 
 /**

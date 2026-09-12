@@ -395,6 +395,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   let branch: string
   let prNumber = -1 // resolved below, before any use — never read while -1
   let resumeFrom: PauseState | null = null
+  /** O8 (task-run-v1 task 15): true when `--resume` found the head already moved past the pause-time head — a ruling followed by a fix push, the normal case. Widens `firstPass` below so the loop skips redispatching the developer (it already acted) and goes straight to the gate/reviewer path on the new head. */
+  let resumeHeadAlreadyMoved = false
 
   if ('resumePr' in input) {
     const resumePr = input.resumePr
@@ -422,15 +424,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       )
     }
     const currentHead = d.resolveHead(held.branch)
-    if (currentHead !== held.head) {
-      throw new Error(
-        `devReviewLoop --resume: PR #${resumePr}'s head has moved since it paused (paused at ${held.head}, now ${currentHead}) — restart from round ${held.round} against the new head; resume never silently replays from round 1.`
-      )
-    }
+    // O8: a moved head is accepted, never refused, once a ruling exists —
+    // "a ruling followed by a fix push is the normal case." The ruling is
+    // itself the round-cap override it declares: the round counter
+    // restarts at the ruling's own newest ordinal (`fetchNewestRulingOrdinal`,
+    // the same integer `ruling_posted` mid-round invalidation already reads)
+    // rather than continuing from `held.round`, which may already sit past
+    // `MAX_ROUNDS` and would otherwise re-trigger the very pause this
+    // `--resume` exists to lift.
+    resumeHeadAlreadyMoved = currentHead !== held.head
     task = held.task
     branch = held.branch
     prNumber = held.prNumber
-    resumeFrom = held
+    resumeFrom = resumeHeadAlreadyMoved ? { ...held, round: d.fetchNewestRulingOrdinal(resumePr) } : held
   } else {
     task = input.task
     branch = d.developerBranchFor(task)
@@ -804,7 +810,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
     let roundStartMs = d.now()
     let decision: Decision = { type: 'dispatch_developer' }
-    let firstPass = !resumeFrom
+    // O8: `resumeHeadAlreadyMoved` widens this exactly like a fresh round-1
+    // attach — the developer already pushed the fix a ruling asked for, so
+    // this run dispatches no developer at all and goes straight to the
+    // gate/reviewer path below, on the head that's already there.
+    let firstPass = !resumeFrom || resumeHeadAlreadyMoved
     if (resumeFrom) {
       // O2: resuming — the PR and branch are already known (`resumeFrom`), so
       // there is no round-1 dispatch and no PR to poll for. `lastReviewContext`
