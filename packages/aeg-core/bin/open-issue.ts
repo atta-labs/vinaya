@@ -776,7 +776,7 @@ function ensureTrancheLabelExists(slug: string): void {
  * Whether the task-Issue content gate (rationale, blast-radius, project
  * registry, brief content, docs-read, Parts/Objectives/Surface, task-type)
  * applies at all. True on a `vinaya/tranche:*` label, same as before this
- * task, OR — O2/O3 (task-run-v1 21, #541, round 2 review SECURITY HIGH) — a
+ * task, OR — O2/O3 (task 21, `#541`, round 2 review SECURITY HIGH) — a
  * labelless body that is still task-shaped: a legitimate backlog Issue,
  * never a Planner mistake to wave through unvalidated. Pulled out as its own
  * pure predicate (mirroring `apps/cli/src/lib/forge-write.ts`'s identical
@@ -834,7 +834,7 @@ export function main(): void {
     if (trancheLabelResult.status === 'fail') fail(trancheLabelResult.errors.join(' '))
   }
 
-  // O2/O3 (task-run-v1 21, #541, round 2 review SECURITY HIGH): a labelless
+  // O2/O3 (task 21, `#541`, round 2 review SECURITY HIGH): a labelless
   // backlog Issue is task-shaped content too — gating this whole content
   // gate on the label alone let a labelless body through with NONE of
   // `checkIssueRationale`/`checkBlastRadiusScope`/`checkProjectsRegistered`/

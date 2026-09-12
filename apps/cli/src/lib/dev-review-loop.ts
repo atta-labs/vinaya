@@ -397,7 +397,7 @@ export type LoopResult = { finalDecision: Decision; prNumber: number; task: numb
 /**
  * The exact argv `checkStaleDriver`'s re-exec hands to a fresh `vinaya
  * dev-review-loop` process (O7) — pulled out as its own pure function
- * (round 2 review MINOR, task-run-v1 21, #541) so the one thing that
+ * (task 21, `#541`, round 2 review MINOR) so the one thing that
  * actually regresses easily — a flag silently dropped across the restart —
  * is unit-testable without driving the whole re-exec/driver-lock path.
  * Carries the ORIGINAL invocation's `--json` intent through: dropping it
