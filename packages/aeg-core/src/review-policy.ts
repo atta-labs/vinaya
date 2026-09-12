@@ -61,18 +61,27 @@ const FILE_SHAPED_LOCATION = /\.[a-zA-Z0-9]{1,10}(:\d+)?\s*$/
 
 /**
  * (`doctrine-fixes-v1` task 1, `#543`, O5) `true` when `location` names the
- * PR body, a PR/review comment, or a role file — prose surfaces this
- * evaluator caps at `MINOR` before counting a finding toward the blocking
- * threshold, regardless of the severity the reviewer actually reported.
- * Never a source or test file: those match none of these patterns (a
- * `aeg-root/roles/*.md` role file is the one deliberate exception — it IS a
- * file, and is still prose by this task's own design).
+ * PR body or a PR/review comment — prose surfaces this evaluator caps at
+ * `MINOR` before counting a finding toward the blocking threshold, regardless
+ * of the severity the reviewer actually reported. Each of these, gated on
+ * `FILE_SHAPED_LOCATION` below (round-2 review, LOW, `#547`): a real file
+ * whose own name happens to contain one of these words or phrases —
+ * `apps/cli/tests/commands/pr-create-brief-comment.test.ts`, or any of the
+ * repo's own `pr-body-*.md` fixtures — is a source or test file, never
+ * prose, no matter which of these patterns its path text also matches. The
+ * `aeg-root/roles/` pattern is deliberately NOT in this group and is checked
+ * separately, ungated: it IS a real file, and is still prose by this task's
+ * own design (see `isProseLocation` below).
  */
-const PROSE_LOCATION_PATTERNS = [/\bpr\s*body\b/i, /(^|\/)aeg-root\/roles\//i] as const
+const PROSE_LOCATION_PATTERNS = [/\bpr\s*body\b/i, /\bcomment\b/i] as const
+
+/** A role doc IS a file, yet still counts as prose — the one deliberate exception the file-shape gate never applies to. */
+const ROLE_FILE_LOCATION = /(^|\/)aeg-root\/roles\//i
 
 export function isProseLocation(location: string): boolean {
-  if (PROSE_LOCATION_PATTERNS.some((pattern) => pattern.test(location))) return true
-  return /\bcomment\b/i.test(location) && !FILE_SHAPED_LOCATION.test(location)
+  if (ROLE_FILE_LOCATION.test(location)) return true
+  if (FILE_SHAPED_LOCATION.test(location)) return false
+  return PROSE_LOCATION_PATTERNS.some((pattern) => pattern.test(location))
 }
 
 /**

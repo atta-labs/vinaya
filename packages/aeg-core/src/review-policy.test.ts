@@ -134,6 +134,15 @@ describe('isProseLocation (#543 O5)', () => {
     expect(isProseLocation('apps/cli/tests/commands/pr-create-brief-comment.test.ts')).toBe(false)
     expect(isProseLocation('apps/cli/tests/commands/pr-create-brief-comment.test.ts:42')).toBe(false)
   })
+
+  test('the file-shape exemption applies to every prose pattern, not only "comment" (round 2 review, LOW, #547)', () => {
+    // Real fixture files this repo already ships, each containing the literal
+    // substring `pr-body` in its own name — a source/test-file location, not
+    // the PR body itself, so the `\bpr\s*body\b` pattern must never cap it
+    // either, the same guarantee the "comment" pattern already had.
+    expect(isProseLocation('packages/aeg-core/tests/fixtures/pr-body-394-as-opened.md')).toBe(false)
+    expect(isProseLocation('apps/cli/tests/fixtures/pr-body-473.md:1')).toBe(false)
+  })
 })
 
 describe('evaluateReviewFindings — prose cap (#543 O5)', () => {
