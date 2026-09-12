@@ -129,6 +129,11 @@ describe('isProseLocation (#543 O5)', () => {
     expect(isProseLocation('apps/cli/tests/foo.test.ts:1')).toBe(false)
     expect(isProseLocation('aeg-root/contracts/planner-developer.md:5')).toBe(false)
   })
+
+  test('a test file whose NAME contains the word "comment" is never prose-capped (round 2 review, BLOCKER)', () => {
+    expect(isProseLocation('apps/cli/tests/commands/pr-create-brief-comment.test.ts')).toBe(false)
+    expect(isProseLocation('apps/cli/tests/commands/pr-create-brief-comment.test.ts:42')).toBe(false)
+  })
 })
 
 describe('evaluateReviewFindings — prose cap (#543 O5)', () => {

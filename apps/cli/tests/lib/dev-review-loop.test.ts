@@ -2282,6 +2282,18 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
     expect(resumeComment).toBeDefined()
     expect(resumeComment as string).toMatch(/unpushed_work_resume/)
     expect(resumeComment as string).toMatch(/smoke\.ts/)
+
+    // Round 2 review, MAJOR: the resume must ALSO land in the real
+    // `dev_review_loop` journal, not only the marked PR comment above — a
+    // real `unpushed_work_resume` event, readable the same way every other
+    // driver-logged event in this suite is (`outboxLines`).
+    const resumeEvent = outboxLines(home).find((l) => l.event === 'unpushed_work_resume') as
+      | Record<string, unknown>
+      | undefined
+    expect(resumeEvent).toBeDefined()
+    expect(resumeEvent?.kind).toBe('dev_review_loop')
+    expect(resumeEvent?.branch).toBe(BRANCH)
+    expect(resumeEvent?.detail as string).toMatch(/smoke\.ts/)
   }, 20000)
 })
 

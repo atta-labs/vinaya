@@ -44,16 +44,35 @@ export type ReviewPolicy = {
 export type PolicyFinding = { severity: string; location?: string }
 
 /**
+ * A location shaped like a real file reference — a path ending in a
+ * `.<ext>` segment, optionally followed by `:<line>` — the shape every
+ * `findings.txt` location actually takes (`SEVERITY|file:line|description`).
+ * Round 2 review, BLOCKER: `/\bcomment\b/i` alone matched `comment` as a
+ * plain substring, so a real test file whose NAME happens to contain the
+ * word (`apps/cli/tests/commands/pr-create-brief-comment.test.ts`) was
+ * wrongly treated as "the finding's location is a comment" and capped to
+ * `MINOR` — exactly the trap O5's own brief forbids (never cap a source or
+ * test file). Gating the comment pattern on "does NOT also look like a real
+ * file" closes this: a genuine PR/review-comment location the reviewer
+ * writes (`PR comment`, `a review comment`, bare `comment`) never carries a
+ * file extension, so it is unaffected.
+ */
+const FILE_SHAPED_LOCATION = /\.[a-zA-Z0-9]{1,10}(:\d+)?\s*$/
+
+/**
  * (`doctrine-fixes-v1` task 1, `#543`, O5) `true` when `location` names the
  * PR body, a PR/review comment, or a role file — prose surfaces this
  * evaluator caps at `MINOR` before counting a finding toward the blocking
  * threshold, regardless of the severity the reviewer actually reported.
- * Never a source or test file: those match none of these patterns.
+ * Never a source or test file: those match none of these patterns (a
+ * `aeg-root/roles/*.md` role file is the one deliberate exception — it IS a
+ * file, and is still prose by this task's own design).
  */
-const PROSE_LOCATION_PATTERNS = [/\bpr\s*body\b/i, /\bcomment\b/i, /(^|\/)aeg-root\/roles\//i] as const
+const PROSE_LOCATION_PATTERNS = [/\bpr\s*body\b/i, /(^|\/)aeg-root\/roles\//i] as const
 
 export function isProseLocation(location: string): boolean {
-  return PROSE_LOCATION_PATTERNS.some((pattern) => pattern.test(location))
+  if (PROSE_LOCATION_PATTERNS.some((pattern) => pattern.test(location))) return true
+  return /\bcomment\b/i.test(location) && !FILE_SHAPED_LOCATION.test(location)
 }
 
 /**

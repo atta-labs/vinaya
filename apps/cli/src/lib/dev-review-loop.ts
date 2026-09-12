@@ -804,16 +804,47 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       '`git push` from this task’s worktree.'
     ].join('\n\n')
 
+    /** (`#543` O2) Shared by the journal event and the PR comment below, so the two never describe the same stall differently. */
+    function unpushedWorkResumeDetail(unpushed: { dirtyFiles: string[]; aheadCount: number }): string {
+      return unpushed.dirtyFiles.length > 0
+        ? `dirty file(s): ${unpushed.dirtyFiles.join(', ')}`
+        : `${unpushed.aheadCount} commit(s) ahead of the remote, worktree clean`
+    }
+
+    /**
+     * (`#543` O2, round 2 review, MAJOR) Logs the driver's own mid-round
+     * resume as a real `dev_review_loop` journal event — `unpushed_work_resume`
+     * (`schema.ts`) — not only the marked PR comment below: the objective's
+     * own wording is "records the resume in the journal," and only a real
+     * event reaches `fetchLoopHistory`/`reconstructRounds`, the journal this
+     * same PR's `apps/cli/specs/loop.md` names. Mid-round, never terminal —
+     * flushed immediately anyway, matching every other `logEvents` call site
+     * in this file, so the event is durable on the forge even if the
+     * resumed developer's own turn crashes the process before the round
+     * ends.
+     */
+    async function logUnpushedWorkResume(roundNum: number, detail: string): Promise<void> {
+      await logEvents([
+        {
+          kind: 'dev_review_loop' as const,
+          payload: {},
+          loop_id: config.loopId,
+          event: 'unpushed_work_resume' as const,
+          round: roundNum,
+          branch,
+          detail
+        }
+      ])
+      await d.flushOutbox(task)
+    }
+
     /** (`#543` O2) Records the mid-round unpushed-work resume as its own marked, idempotent PR comment — the same `postForgeEffectOnce`/`postMarkedComment` mechanism `postPauseComment` already uses, keyed by round+head so a genuine re-run of the same stall posts only once. */
     async function postUnpushedWorkResumeComment(
       roundNum: number,
       head: string,
       unpushed: { dirtyFiles: string[]; aheadCount: number }
     ): Promise<void> {
-      const detail =
-        unpushed.dirtyFiles.length > 0
-          ? `dirty file(s): ${unpushed.dirtyFiles.join(', ')}`
-          : `${unpushed.aheadCount} commit(s) ahead of the remote, worktree clean`
+      const detail = unpushedWorkResumeDetail(unpushed)
       const body = [
         `unpushed_work_resume: the developer's last turn on \`${branch}\` ended with unpushed work (${detail}) and no new head on the branch (last known head \`${head}\`).`,
         '',
@@ -1457,6 +1488,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 const unpushed = d.readUnpushedWorkDetail(worktreePathForBranch())
                 if (unpushed.dirtyFiles.length > 0 || unpushed.aheadCount > 0) {
                   unpushedResumeAttempted = true
+                  await logUnpushedWorkResume(round, unpushedWorkResumeDetail(unpushed))
                   await postUnpushedWorkResumeComment(round, headBeforeDispatch, unpushed)
                   await dispatchDeveloper(COMMIT_AND_PUSH_PROMPT, round)
                   const resumedHead = await pollUntil(
