@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { deriveReviewStatus, renderReviewStatus } from '@attalabs/aeg-core'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config'
+import { reviewPolicy } from '../lib/dev-review-loop/developer-dispatch.js'
 
 /**
  * `vinaya review status <pr>` — the review loop's own state, printed.
@@ -24,8 +25,6 @@ import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config'
  * Exit `0` on `CONTINUE` with a branch that is not behind; `1` otherwise —
  * so a script can gate on it without parsing the text.
  */
-
-const MAX_ROUNDS = 3
 
 type PrView = {
   comments: { body: string; author?: { login?: string } | null }[]
@@ -81,7 +80,7 @@ export async function reviewStatusCommand(args: string[]): Promise<void> {
     comments: pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
     headSha: pr.headRefOid,
     principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig()),
-    maxRounds: MAX_ROUNDS
+    maxRounds: reviewPolicy().maxRounds
   })
 
   process.stdout.write(`${renderReviewStatus(status)}\n`)

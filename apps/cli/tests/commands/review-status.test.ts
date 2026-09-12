@@ -90,6 +90,49 @@ function principalComment(body: string) {
   return { body, author: { login: 'daniboomerang' } }
 }
 
+function roundComment(n: number): { body: string; author: { login: string } } {
+  return principalComment(`Head: ${HEAD}\n\n<!-- aeg:developer:round-${n} -->\n\nAll green.`)
+}
+
+/**
+ * A `gh` + `git` pair like `stubPath`, but also serving `gh api
+ * repos/<repo>/contents/vinaya.config.json --jq .content` — the trust-anchor
+ * read `resolveReviewPolicy` (O4, `#543`) is now sourced through — so a test
+ * can prove `reviewPolicy.maxRounds` from repo config is actually honored,
+ * not the module's own retired `MAX_ROUNDS = 3` constant. `GITHUB_REPOSITORY`
+ * is set so `trustAnchorRepo()` never falls through to a real `git remote`
+ * call.
+ */
+function stubPathWithConfig(pr: unknown, behind: number, config: unknown): Record<string, string> {
+  const dir = tempDir('fake-forge-config-')
+  const gh = join(dir, 'gh')
+  const contentB64 = Buffer.from(JSON.stringify(config), 'utf-8').toString('base64')
+  writeFileSync(
+    gh,
+    [
+      '#!/bin/sh',
+      'if [ "$1" = "pr" ] && [ "$2" = "view" ]; then',
+      "  cat <<'JSON'",
+      JSON.stringify(pr),
+      'JSON',
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "api" ]; then',
+      `  echo '${contentB64}'`,
+      '  exit 0',
+      'fi',
+      'echo "gh stub: unhandled: $*" >&2',
+      'exit 1',
+      ''
+    ].join('\n')
+  )
+  chmodSync(gh, 0o755)
+  const git = join(dir, 'git')
+  writeFileSync(git, `#!/bin/sh\nif [ "$1" = "rev-list" ]; then\n  echo ${behind}\n  exit 0\nfi\nexit 1\n`)
+  chmodSync(git, 0o755)
+  return { PATH: `${dir}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'acme/repo' }
+}
+
 describe('vinaya review status', () => {
   it('prints CONTINUE and no behind-main line, exit 0, when the loop is converging at head', () => {
     const env = stubPath(
@@ -168,6 +211,36 @@ describe('vinaya review status', () => {
     const result = runCli(['review', 'status'], stubPath({}, 0))
     expect(result.stderr).toContain('Usage: vinaya review status <pr-number>')
     expect(result.status).toBe(2)
+  })
+
+  it('reads reviewPolicy.maxRounds from repo config instead of a hardcoded cap (#543 O4)', () => {
+    const threeRoundHistory = [
+      principalComment(verdict('1111111', ['1. [MAJOR] a.ts:1 — F1 correctness: x'])),
+      roundComment(1),
+      principalComment(
+        verdict('2222222', ['1. [MAJOR] a.ts:1 — F1 correctness resolved: x', '2. [MAJOR] a.ts:2 — F2 correctness: y'])
+      ),
+      roundComment(2),
+      principalComment(verdict(HEAD, ['2. [MAJOR] a.ts:2 — F2 correctness resolved: y']))
+    ]
+    const pr = { comments: threeRoundHistory, headRefOid: HEAD, baseRefName: 'main' }
+
+    // No config on the default branch (the `gh` stub 404s the `api` call
+    // exactly like `stubPath`'s does): the default `DEFAULT_MAX_ROUNDS` of 3
+    // applies, and a 3-round history PAUSEs.
+    const defaultResult = runCli(['review', 'status', '381'], stubPath(pr, 0))
+    expect(statusLines(defaultResult.stdout)).toEqual(['PAUSE: max-rounds'])
+    expect(defaultResult.status).toBe(1)
+
+    // The SAME 3-round history, with repo config raising `reviewPolicy.maxRounds`
+    // to 5: the loop has not reached the configured cap, so it CONTINUEs —
+    // proving this command reads the resolved policy, not a retired constant.
+    const configuredResult = runCli(
+      ['review', 'status', '381'],
+      stubPathWithConfig(pr, 0, { reviewPolicy: { maxRounds: 5 } })
+    )
+    expect(statusLines(configuredResult.stdout)).toEqual(['CONTINUE'])
+    expect(configuredResult.status).toBe(0)
   })
 
   it('refuses with exit 2 — never a status line — when `gh pr view` cannot answer', () => {
