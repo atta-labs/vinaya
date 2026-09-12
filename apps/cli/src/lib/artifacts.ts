@@ -1359,10 +1359,12 @@ ${hookRun(selfHost, 'check --all --local')}`
   //    before.
   return `${doctrineGate}
 # Ring 0 (O5): Biome over the files changed since the remote base, before
-# anything else that follows costs real time.
+# anything else that follows costs real time. The trailing "--" stops flag
+# parsing before the file list, so a tracked file named like a Biome option
+# is passed through as a literal path, never interpreted as one.
 VINAYA_CHANGED_FILES="$(${libBinInvocation(selfHost, 'pre-push-changed-files.ts', 'vinaya-changed-files')})"
 if [ -n "$VINAYA_CHANGED_FILES" ]; then
-  echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched || exit 1
+  echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched -- || exit 1
 fi
 # Ring 0 (O6): typecheck, then only the test files the real import graph
 # says the changed files could affect.
@@ -1385,7 +1387,12 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   for _vinaya_git_var in $(env | grep -o '^GIT_[A-Z_]*='); do
     unset "\${_vinaya_git_var%=*}"
   done
-  echo "$VINAYA_SELECTED_TESTS" | xargs bun test || exit 1
+  # The trailing "--" stops flag parsing before the file list: a tracked
+  # file named like a global bun flag (e.g. "--preload=path", which loads
+  # and executes an arbitrary module before tests run) would otherwise be
+  # forwarded as that flag rather than a literal test-file path — confirmed
+  # live against bun 1.2.14 without the separator.
+  echo "$VINAYA_SELECTED_TESTS" | xargs bun test -- || exit 1
 fi`
 }
 

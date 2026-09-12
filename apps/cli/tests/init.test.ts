@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { DOC_OWNERS_PATH, LABELS, parseRegistry, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
@@ -1263,7 +1273,7 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
-    expect(prePush).toContain('bunx biome check --no-errors-on-unmatched || exit 1')
+    expect(prePush).toContain('bunx biome check --no-errors-on-unmatched -- || exit 1')
     expect(prePush).toContain('bunx turbo typecheck --affected || exit 1')
     expect(prePush).toContain('bun apps/cli/src/lib/pre-push-changed-files.ts')
     expect(prePush).toContain('bun apps/cli/src/lib/pre-push-select-tests.ts')
@@ -1313,6 +1323,46 @@ git rev-parse --git-dir 2>&1 || true
     const out = execFileSync('sh', ['-c', script], { cwd: '/tmp', encoding: 'utf8' })
     expect(out).toContain('GIT_DIR after unset: []')
     expect(out).not.toContain('/tmp/should-never-be-read')
+  })
+
+  it("both xargs pipelines stop flag parsing with a trailing '--' before the file list, so a tracked file named like a CLI flag is never forwarded as one (round-4 security review, HIGH/MEDIUM)", async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+    expect(prePush).toContain('xargs bunx biome check --no-errors-on-unmatched -- ||')
+    expect(prePush).toContain('xargs bun test -- ||')
+  })
+
+  it("real subprocess: 'bun test --' really does refuse to treat a selected file named like a flag as one — without it, a tracked file named '--preload=<module>' would load and run that module (round-4 security review, HIGH)", () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-xargs-injection-'))
+    try {
+      writeFileSync(join(dir, 'evil.js'), 'console.log("EVIL PRELOAD RAN")\n')
+      mkdirSync(join(dir, 'sub'))
+      writeFileSync(
+        join(dir, 'sub/normal.test.ts'),
+        'import { expect, test } from "bun:test"\ntest("ok", () => { expect(1).toBe(1) })\n'
+      )
+      // The malicious "selected test file" is a bare flag string, exactly the
+      // shape `xargs` would forward verbatim with no `--` ahead of it.
+      const selected = 'sub/normal.test.ts\n--preload=./evil.js'
+
+      const withoutSeparator = execFileSync('sh', ['-c', 'xargs bun test 2>&1'], {
+        cwd: dir,
+        input: selected,
+        encoding: 'utf8'
+      })
+      expect(withoutSeparator).toContain('EVIL PRELOAD RAN')
+
+      const withSeparator = execFileSync('sh', ['-c', 'xargs bun test -- 2>&1'], {
+        cwd: dir,
+        input: selected,
+        encoding: 'utf8'
+      })
+      expect(withSeparator).not.toContain('EVIL PRELOAD RAN')
+      expect(withSeparator).toContain('normal.test.ts')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('the old --concurrency=1 guard leaves no trace in turbo.json either — no repo-wide setting CI or the hook would inherit', () => {
