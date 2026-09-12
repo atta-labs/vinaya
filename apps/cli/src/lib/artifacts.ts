@@ -815,6 +815,20 @@ on:
     workflows: [CI]
     types: [completed]
 
+# Keyed per PR, falling back to the run id for a non-PR branch (no PR to
+# key on). Cancelling an older, still-running retrigger for the SAME PR is
+# safe and desirable, not merely tolerable: this job executes nothing of
+# its own — it only calls \`gh run rerun\` on the one required run matching
+# the CURRENT head's immutable title (see the lookup below). A newer CI
+# completion means a newer push superseded the head the older retrigger was
+# chasing, so letting the older one finish would at best re-run a gate for
+# a head nobody will read and at worst race the newer retrigger for the
+# same required run — cancelling it loses nothing the newer completion
+# doesn't already redo.
+concurrency:
+  group: vinaya-review-retrigger-\${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
+  cancel-in-progress: true
+
 jobs:
   retrigger-on-ci-green:
     name: vinaya review gate (retrigger on CI green)

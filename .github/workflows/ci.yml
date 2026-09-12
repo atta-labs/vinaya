@@ -21,6 +21,21 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# Keyed on the PR alone — deliberately NOT the head SHA, unlike the
+# vinaya-managed `pull_request`/`pull_request_target` workflows in this
+# directory (`vinaya-checks.yml`, `vinaya-review.yml`,
+# `vinaya-body-checks.yml`; see `apps/cli/specs/self-hosting.md`'s "One run
+# per pull request"). Those key on PR+head because each run judges THAT
+# commit and a later push's rerun of an earlier commit's run must not
+# collide with the current commit's own run. This job does the opposite on
+# purpose: it is the expensive suite (build + typecheck + test, now sharded
+# — O3), and a superseded push's copy of it is pure waste nobody will ever
+# read once a newer push exists. Cancelling it costs nothing: the newer
+# push's own run re-covers the same ground from a fresher head.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   typecheck-and-test:
     name: Vinaya CI

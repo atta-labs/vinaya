@@ -760,6 +760,39 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
   })
 
+  it('the review-gate retrigger workflow carries its own concurrency group — a superseded head cancels its stale retrigger', async () => {
+    // O1 (task-run-v1 20): a newer CI-green completion means a newer push
+    // superseded the head the older retrigger was chasing — cancelling it
+    // loses nothing the newer completion doesn't already redo. Falls back to
+    // the run id when there is no PR (a non-PR branch's CI run), so the
+    // group expression never evaluates to an empty string.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const retrigger = generated().get(REVIEW_RETRIGGER_WORKFLOW_PATH) ?? ''
+    expect(retrigger).toContain('concurrency:')
+    expect(retrigger).toContain('cancel-in-progress: true')
+    expect(retrigger).toContain('github.event.workflow_run.pull_requests[0].number')
+    expect(retrigger).toContain('github.event.workflow_run.id')
+  })
+
+  it('the verdict workflow and the archivist workflow deliberately carry NO concurrency group', async () => {
+    // vinaya-review-verdict.yml: self-hosting.md's "One run per pull
+    // request" section — serializing the verdict evaluator would delay the
+    // retrigger that exists to clear a red gate promptly, and (unlike
+    // ci.yml/vinaya-checks.yml) a cancelled evaluation is a verdict that
+    // never answers. vinaya-archivist.yml: its three jobs fire on disjoint
+    // events (push to main, a daily schedule, workflow_dispatch) and the
+    // post-merge job archives a SPECIFIC merge SHA — cancelling an
+    // in-progress run for a newer trigger could skip that merge's
+    // provenance entirely, unlike the pure-re-evaluation jobs a concurrency
+    // group is safe for elsewhere in this file.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+    for (const path of [REVIEW_VERDICT_WORKFLOW_PATH, ARCHIVIST_WORKFLOW_PATH]) {
+      const wf = files.get(path) ?? ''
+      expect(`${path}: ${wf.includes('concurrency:')}`).toBe(`${path}: false`)
+    }
+  })
+
   it('the verdict retrigger re-runs ONE run — re-running all fights the concurrency group', async () => {
     // Re-running every matching run puts them all in one concurrency group at
     // once; `cancel-in-progress` then kills all but the last, and cancelled
