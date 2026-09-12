@@ -39,7 +39,11 @@ const PUBLISH_RESULT: LoopResult = { finalDecision: { type: 'publish' }, prNumbe
 function deps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
   return {
     prepareTask: neverCalled('prepareTask') as unknown as RunTaskDeps['prepareTask'],
+    prepareIssueTask: neverCalled('prepareIssueTask') as unknown as RunTaskDeps['prepareIssueTask'],
     assembleAndRenderBrief: neverCalled('assembleAndRenderBrief') as unknown as RunTaskDeps['assembleAndRenderBrief'],
+    assembleAndRenderBriefForIssue: neverCalled(
+      'assembleAndRenderBriefForIssue'
+    ) as unknown as RunTaskDeps['assembleAndRenderBriefForIssue'],
     developerBranchFor: neverCalled('developerBranchFor') as unknown as RunTaskDeps['developerBranchFor'],
     findOpenPrForBranch: neverCalled('findOpenPrForBranch') as unknown as RunTaskDeps['findOpenPrForBranch'],
     devReviewLoop: neverCalled('devReviewLoop') as unknown as RunTaskDeps['devReviewLoop'],
@@ -170,6 +174,115 @@ describe('runTask — O1: fresh task, one developer started', () => {
       })
     )
     expect(result.prUrl).toBeNull()
+  })
+})
+
+// O1 (task-run-v1 21, #541, round 2 review MAJOR): the identical
+// composition story, off `{ issue }` instead of `{ tranche, n }` — a
+// backlog Issue with no tranche runs through `prepareIssueTask`/
+// `assembleAndRenderBriefForIssue` rather than `prepareTask`/
+// `assembleAndRenderBrief`, never both, and every other step (branch
+// derivation, the open-PR guard, the one `devReviewLoop` call) is
+// unchanged code shared with the tranche path already proven above.
+describe('runTask — O1 (task-run-v1 21, #541): a backlog Issue runs the identical unattended path off --issue', () => {
+  it('calls prepareIssueTask (never prepareTask), then developerBranchFor/findOpenPrForBranch off the resolved Issue, then devReviewLoop exactly once', async () => {
+    const calls: string[] = []
+    const result = await runTask(
+      { issue: 541, agent: 'claude' },
+      deps({
+        prepareIssueTask: async (input) => {
+          calls.push('prepareIssueTask')
+          expect(input).toEqual({ issue: 541 })
+          return {
+            issue: 541,
+            brief: 'brief text',
+            commentUrl: 'https://github.com/x/y/issues/541#issuecomment-1',
+            version: 1
+          }
+        },
+        developerBranchFor: (issueNumber) => {
+          calls.push('developerBranchFor')
+          expect(issueNumber).toBe(541)
+          return 'task/issue-541'
+        },
+        findOpenPrForBranch: (branch) => {
+          calls.push('findOpenPrForBranch')
+          expect(branch).toBe('task/issue-541')
+          return null
+        },
+        devReviewLoop: async (input) => {
+          calls.push('devReviewLoop')
+          expect(input).toEqual({ task: 541, agent: 'claude' })
+          return PUBLISH_RESULT
+        }
+      })
+    )
+
+    expect(calls).toEqual(['prepareIssueTask', 'developerBranchFor', 'findOpenPrForBranch', 'devReviewLoop'])
+    expect(result).toEqual({ ...PUBLISH_RESULT, prUrl: null })
+  })
+
+  it('on an "already dispatched" refusal, re-resolves the Issue via assembleAndRenderBriefForIssue (read-only) and still calls devReviewLoop once', async () => {
+    const calls: string[] = []
+    const result = await runTask(
+      { issue: 541, agent: 'claude' },
+      deps({
+        prepareIssueTask: async () => {
+          calls.push('prepareIssueTask')
+          throw new DispatchTaskError('Issue #541 is already dispatched — see some-url')
+        },
+        assembleAndRenderBriefForIssue: async (issueNumber) => {
+          calls.push('assembleAndRenderBriefForIssue')
+          expect(issueNumber).toBe(541)
+          return { ok: true, brief: 'irrelevant', issue: 541 }
+        },
+        developerBranchFor: () => 'task/issue-541',
+        findOpenPrForBranch: () => null,
+        devReviewLoop: async (input) => {
+          calls.push('devReviewLoop')
+          expect(input).toEqual({ task: 541, agent: 'claude' })
+          return PUBLISH_RESULT
+        }
+      })
+    )
+
+    expect(calls).toEqual(['prepareIssueTask', 'assembleAndRenderBriefForIssue', 'devReviewLoop'])
+    expect(result).toEqual({ ...PUBLISH_RESULT, prUrl: null })
+  })
+
+  it('an open developer pull request refuses a second start on the --issue path too, never calling devReviewLoop', async () => {
+    let loopCalled = false
+    await expect(
+      runTask(
+        { issue: 541, agent: 'claude' },
+        deps({
+          prepareIssueTask: async () => ({ issue: 541, brief: '', commentUrl: '', version: 1 }),
+          developerBranchFor: () => 'task/issue-541',
+          findOpenPrForBranch: (branch) => {
+            expect(branch).toBe('task/issue-541')
+            return { number: 601, branch }
+          },
+          devReviewLoop: async () => {
+            loopCalled = true
+            return PUBLISH_RESULT
+          }
+        })
+      )
+    ).rejects.toThrow(RunTaskError)
+    expect(loopCalled).toBe(false)
+  })
+
+  it('propagates a refused preparation unchanged, calling neither assembleAndRenderBriefForIssue nor devReviewLoop', async () => {
+    await expect(
+      runTask(
+        { issue: 541, agent: 'claude' },
+        deps({
+          prepareIssueTask: async () => {
+            throw new DispatchTaskError('cannot dispatch — brief render refused:\n  - missing ## Objectives')
+          }
+        })
+      )
+    ).rejects.toThrow(/brief render refused/)
   })
 })
 

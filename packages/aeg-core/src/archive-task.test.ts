@@ -66,6 +66,13 @@ describe('taskRefFromBranch', () => {
   it('returns null for a malformed task branch (extra segment)', () => {
     expect(taskRefFromBranch('task/aeg-governance-hardening/5d/extra')).toBeNull()
   })
+
+  // task-run-v1 task 15, O4: a backlog Issue's branch — `tranche: null`, the
+  // Issue number as `taskId` — is eligible for provenance on this signal
+  // alone, no `vinaya/tranche:*` label needed.
+  it('parses a backlog-Issue branch as { tranche: null, taskId: <issue> }', () => {
+    expect(taskRefFromBranch('task/issue-521')).toEqual({ tranche: null, taskId: '521' })
+  })
 })
 
 // #524/#530 regression: a task PR can close a tranche-labeled Issue from a
@@ -285,6 +292,15 @@ describe('buildProvenanceBlock', () => {
   it('labels the task from the branch when headRefName does not match task/<tranche>/<n>', () => {
     const { block } = buildProvenanceBlock(facts({ body: FULL_BODY, headRefName: 'fix/some-branch' }))
     expect(block.split('\n')[0]).toBe('### AEG provenance — task (branch fix/some-branch)')
+  })
+
+  // task-run-v1 task 15, O4: a backlog Issue's `task/issue-<n>` branch labels
+  // as its own Issue, not a tranche/task-id pair.
+  it('labels a backlog-Issue branch as its own Issue, not a tranche/task-id pair', () => {
+    const { block } = buildProvenanceBlock(
+      facts({ body: FULL_BODY.replace('Closes #309', 'Closes #521'), headRefName: 'task/issue-521' })
+    )
+    expect(block.split('\n')[0]).toBe('### AEG provenance — task (backlog Issue #521)')
   })
 
   it('flags a missing Project field as DANGLING', () => {

@@ -1,0 +1,12 @@
+---
+"@attalabs/vinaya": patch
+"@attalabs/aeg-core": patch
+---
+
+A backlog Issue with no tranche now runs like a tranche task, end to end. `vinaya task run --issue <n>`, `task brief --issue <n>`, and `dev-review-loop --issue <n>` derive a `task/issue-<n>` branch, render and freeze the same twelve-section brief from the Issue's own body, and run through the same dispatch-readiness gate (`verify-dispatch.ts --issue <n>`); `closes-n`, `surface-scope`, and `dispatch-readiness` resolve the new branch shape directly against the Issue, with `Depends-on`/`Conflicts-with` optional; `issue create`/`edit` validate a task-shaped body the same way whether or not it carries a `vinaya/tranche:*` label; and `archive` closes a backlog Issue's PR on merge the same way it closes a tranche task's.
+
+`issue objectives edit --add` now requires a `--part "Part <n> (O<k>) — <outcome>"` for the objective it adds, written into `## Parts` in the same edit; `--drop` prunes the Part lines that cited only the dropped objective.
+
+Every driver (`task run`, `dev-review-loop`) tees its own role-prefixed stream to `~/.vinaya/loops/<owner>-<repo>/<issue>.log`, appended across relaunches with a run-start marker; `vinaya task status --follow` (and `--issue <n> --follow`) tails it live. A stale driver (a base moving past this driver's own code mid-run) now re-execs itself from the updated base and reattaches to the same task, pausing only if that re-exec itself fails. `dev-review-loop --resume` accepts a head that moved since it paused — a ruling followed by a fix push is the normal case — restarting the round counter at the ruling's own ordinal and dispatching reviewers directly on the new head.
+
+On attach or resume, the loop now reconstructs the task's ENTIRE round journal — every prior round, from the already-flushed forge log and this machine's own still-unflushed outbox — rather than publishing a table that only ever showed the current process's own rounds; round numbering recovers the same way when no locally-held state survives to say where the last driver left off. Every driver path now guarantees one final outbox flush on the way out, including an uncaught error, not only a clean `pause`/`publish` return. Every prompt sent to a resumed developer session now names the task Issue, branch, worktree path, and current remote head, so a session resumed among many worktrees never has to ask which branch is meant.

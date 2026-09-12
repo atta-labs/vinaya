@@ -100,6 +100,24 @@ export type WorkspacePackage = {
   dir: string
   /** `package.json`'s own `name`, e.g. `@attalabs/aeg-core`. */
   name: string
+  /**
+   * Whether this package's own declared `test` script actually runs under
+   * `bun test` — the one runner this hook's `pre-push-select-tests.ts`
+   * caller invokes on whatever this function selects. A package whose real
+   * `test` script is something else (`vitest run`, most commonly — real
+   * `vi.mock` support `bun:test`'s own compat shim does not provide) is
+   * never bun-test-compatible: selecting one of its files here would hand
+   * the hook a file it cannot correctly execute regardless of which lines
+   * changed, a tool mismatch no import-graph refinement fixes. A package
+   * with no declared `test` script at all is trivially compatible — it has
+   * nothing this selector could mis-select.
+   */
+  bunTestCompatible: boolean
+}
+
+function isBunTestScript(script: string | undefined): boolean {
+  if (!script) return true
+  return /(^|[\s;&|])bun\s+test\b/.test(script)
 }
 
 /** Reads `<repoRoot>/package.json`'s `workspaces` globs (`apps/*`, `packages/*` shape only — no other glob forms are in use in this repo) and returns every member with a real `package.json`. */
@@ -127,8 +145,8 @@ export function discoverWorkspacePackages(repoRoot: string): WorkspacePackage[] 
       const dir = join(parentDir, entry)
       const pkgPath = join(dir, 'package.json')
       try {
-        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name?: string }
-        if (pkg.name) out.push({ dir, name: pkg.name })
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name?: string; scripts?: { test?: string } }
+        if (pkg.name) out.push({ dir, name: pkg.name, bunTestCompatible: isBunTestScript(pkg.scripts?.test) })
       } catch {}
     }
   }
@@ -214,6 +232,14 @@ export function selectAffectedTestFiles(repoRoot: string, changedFiles: string[]
 
     const packageChanged = new Set([...absChanged].filter((f) => f.startsWith(`${pkg.dir}/`)))
     if (packageChanged.size === 0 && changedPackageNames.size === 0) continue
+    // A package's own test files are only ever candidates for THIS
+    // selection when its own `test` script actually runs under `bun test`
+    // — a vitest-only package (e.g. `@attalabs/aeg-core`) still contributes
+    // to `changedPackageNames` above (so a bun-test-compatible package that
+    // imports it is correctly selected), but never has one of ITS OWN files
+    // pushed into `selected`, which the pre-push hook always runs through
+    // `bun test` regardless of which package's file it names.
+    if (!pkg.bunTestCompatible) continue
 
     for (const test of testFiles) {
       if (reachesChangedFile(test, edges, packageChanged, changedPackageNames, pkg.name)) {

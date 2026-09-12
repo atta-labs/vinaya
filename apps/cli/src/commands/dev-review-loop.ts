@@ -26,7 +26,11 @@ function parseArgs(args: string[]): ParsedArgs {
   let json = false
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
-    if (a === '--task') task = Number(args[++i])
+    // `--issue` is `--task`'s exact synonym (O1): the
+    // loop's `task` field is already the Issue number, tranche or not, so a
+    // backlog Issue needs no new input shape here — only the naming that
+    // matches `task run --issue <n>` / `task brief --issue <n>`.
+    if (a === '--task' || a === '--issue') task = Number(args[++i])
     else if (a === '--resume') resumePr = Number(args[++i])
     else if (a === '--agent') agent = args[++i]
     else if (a === '--json') json = true
@@ -56,13 +60,15 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
       process.stderr.write('vinaya dev-review-loop: --resume <pr> requires a positive integer PR number\n')
       process.exit(1)
     }
-    input = { resumePr: parsed.resumePr, agent }
+    input = { resumePr: parsed.resumePr, agent, json: parsed.json }
   } else {
     if (parsed.task === undefined || !Number.isInteger(parsed.task) || parsed.task <= 0) {
-      process.stderr.write('vinaya dev-review-loop: --task <n> is required (a positive integer Issue number)\n')
+      process.stderr.write(
+        'vinaya dev-review-loop: --task <n> is required (a positive integer Issue number) — --issue <n> is accepted as its exact synonym\n'
+      )
       process.exit(1)
     }
-    input = { task: parsed.task, agent }
+    input = { task: parsed.task, agent, json: parsed.json }
   }
 
   const result = await devReviewLoop(input)

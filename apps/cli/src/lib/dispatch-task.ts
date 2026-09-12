@@ -39,7 +39,7 @@ import {
   resolveNewestFrozenBrief
 } from '@attalabs/aeg-core'
 import { dispatchRole, isAgentClass, resolveClassModel, type AgentClass } from './dispatch.js'
-import { assembleAndRenderBrief } from './brief-assembly.js'
+import { assembleAndRenderBrief, assembleAndRenderBriefForIssue } from './brief-assembly.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { currentGhLogin, postMarkedComment } from './forge-write.js'
 
@@ -223,6 +223,32 @@ function resolveDispatchAuthorization(): DispatchAuthorization {
   return { authorized: login !== null && isPrincipal(login, allowlist), login }
 }
 
+/**
+ * Shared by `prepareTask` and `prepareIssueTask` — a `--supersede` reason
+ * must be non-empty and single-line regardless of which path is preparing
+ * the task, same authorization/corruption reasoning either way.
+ *
+ * Security review, PR #503 round 2, MEDIUM: the reason is spliced into a
+ * SINGLE header line (`Supersedes: <url> — <reason>`) that every reader
+ * (`frozenBriefContent`/`contentAfterNLines`) counts as exactly one of the
+ * fixed three header lines for a v2+ comment. A `\n`/`\r` in the reason
+ * would shift that count, corrupting `.content` for every reader of the
+ * superseding version with no error surfaced anywhere.
+ */
+function validateSupersede(supersede: { reason: string } | undefined): void {
+  if (!supersede) return
+  if (supersede.reason.trim().length === 0) {
+    throw new DispatchTaskError(
+      '--supersede requires --reason <text> — a superseding brief must name why the prior one was wrong, same authorization as a first freeze, never a silent rewrite.'
+    )
+  }
+  if (/[\r\n]/.test(supersede.reason)) {
+    throw new DispatchTaskError(
+      "--reason must be a single line — it becomes one line of the frozen comment header, and a newline in it would corrupt every reader's header-line count for this version."
+    )
+  }
+}
+
 export type PrepareTaskInput = {
   tranche: string
   n: number
@@ -297,22 +323,7 @@ export async function prepareTask(
     }
   }
 
-  if (supersede && supersede.reason.trim().length === 0) {
-    throw new DispatchTaskError(
-      '--supersede requires --reason <text> — a superseding brief must name why the prior one was wrong, same authorization as a first freeze, never a silent rewrite.'
-    )
-  }
-  // Security review, PR #503 round 2, MEDIUM: the reason is spliced into a
-  // SINGLE header line (`Supersedes: <url> — <reason>`) that every reader
-  // (`frozenBriefContent`/`contentAfterNLines`) counts as exactly one of the
-  // fixed three header lines for a v2+ comment. A `\n`/`\r` in the reason
-  // would shift that count, corrupting `.content` for every reader of the
-  // superseding version with no error surfaced anywhere.
-  if (supersede && /[\r\n]/.test(supersede.reason)) {
-    throw new DispatchTaskError(
-      "--reason must be a single line — it becomes one line of the frozen comment header, and a newline in it would corrupt every reader's header-line count for this version."
-    )
-  }
+  validateSupersede(supersede)
 
   const result = await deps.assembleAndRenderBrief(tranche, String(n))
   if (!result.ok) {
@@ -364,6 +375,113 @@ export async function prepareTask(
   const url = deps.postMarkedComment('issue', String(issue), marker, commentBody)
 
   return { issue, brief: result.brief, commentUrl: url, version }
+}
+
+export type PrepareIssueTaskInput = {
+  issue: number
+  /** Same meaning as `PrepareTaskInput.supersede` — see that field's doc comment. */
+  supersede?: { reason: string }
+}
+
+/** Same shape as `PrepareTaskDeps`, over `assembleAndRenderBriefForIssue` instead of the tranche-keyed renderer. */
+export type PrepareIssueTaskDeps = {
+  assembleAndRenderBriefForIssue: typeof assembleAndRenderBriefForIssue
+  findExistingFrozenBrief: (n: number) => (IssueComment & { version: number }) | null
+  postMarkedComment: typeof postMarkedComment
+  resolveDispatchAuthorization: () => DispatchAuthorization
+  beforePost?: (issue: number) => void | Promise<void>
+}
+
+const defaultPrepareIssueTaskDeps: PrepareIssueTaskDeps = {
+  assembleAndRenderBriefForIssue,
+  findExistingFrozenBrief,
+  postMarkedComment,
+  resolveDispatchAuthorization
+}
+
+/**
+ * `prepareTask`'s tranche-less twin (O1) — renders the
+ * brief from a backlog Issue's own body (`assembleAndRenderBriefForIssue`)
+ * and posts it as the same frozen `aeg:brief:v<k>` Issue comment, with the
+ * same authorization, existing-brief and supersede rules. Starts no agent,
+ * same as `prepareTask`.
+ */
+export async function prepareIssueTask(
+  input: PrepareIssueTaskInput,
+  deps: PrepareIssueTaskDeps = defaultPrepareIssueTaskDeps
+): Promise<PrepareTaskResult> {
+  const { issue: n, supersede } = input
+
+  {
+    const { authorized, login } = deps.resolveDispatchAuthorization()
+    if (!authorized) {
+      throw new DispatchTaskError(
+        login === null
+          ? 'could not resolve the identity `gh` is authenticated as — preparing a task is Principal-only and refuses rather than proceeding with an unverified actor.'
+          : `\`${login}\` is not on the Principal allowlist — preparing a task is Principal-only.`
+      )
+    }
+  }
+
+  validateSupersede(supersede)
+
+  const result = await deps.assembleAndRenderBriefForIssue(n)
+  if (!result.ok) {
+    throw new DispatchTaskError(
+      `cannot dispatch — brief render refused:\n${result.missing.map((m) => `  - ${m}`).join('\n')}`
+    )
+  }
+  const issue = result.issue
+
+  const existing = deps.findExistingFrozenBrief(issue)
+  const hash = briefHash(result.brief)
+
+  let marker: string
+  let commentBody: string
+  let version: number
+
+  if (supersede) {
+    if (!existing) {
+      throw new DispatchTaskError(
+        `Issue #${n} has no frozen brief yet — nothing to supersede. Run \`vinaya task brief --issue ${n}\` without --supersede first.`
+      )
+    }
+    version = existing.version + 1
+    marker = briefMarkerFor(version)
+    commentBody = `Brief hash: ${hash}\nSupersedes: ${existing.url} — ${supersede.reason}\n${result.brief}`
+  } else {
+    if (existing) {
+      throw new DispatchTaskError(`Issue #${n} is already dispatched — see ${existing.url}`)
+    }
+    version = 1
+    marker = AEG_BRIEF_V1_MARKER
+    commentBody = `Brief hash: ${hash}\n${result.brief}`
+  }
+
+  if (deps.beforePost) {
+    await deps.beforePost(issue)
+  }
+
+  const url = deps.postMarkedComment('issue', String(issue), marker, commentBody)
+
+  return { issue, brief: result.brief, commentUrl: url, version }
+}
+
+export type PrepareTaskOrIssueInput =
+  | ({ tranche: string; n: number } & Pick<PrepareTaskInput, 'supersede'>)
+  | ({ issue: number } & Pick<PrepareIssueTaskInput, 'supersede'>)
+
+/**
+ * `taskBriefCommand`'s one named lib function (`apps/cli/specs/surface.md`'s
+ * one-lib-call-per-command rule, O1) — `prepareTask` and
+ * `prepareIssueTask` each stay a real, independently-testable function, but
+ * the command that can dispatch either shape calls through this single
+ * chokepoint rather than two named lib calls.
+ */
+export async function prepareTaskOrIssue(input: PrepareTaskOrIssueInput): Promise<PrepareTaskResult> {
+  return 'tranche' in input
+    ? prepareTask({ tranche: input.tranche, n: input.n, supersede: input.supersede })
+    : prepareIssueTask({ issue: input.issue, supersede: input.supersede })
 }
 
 /**

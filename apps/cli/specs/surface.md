@@ -45,6 +45,8 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `resolveWorkspaceEntry` | function | `packages/aeg-core/src/blast-radius-domains.ts` |
 | `checkBranchTopology` | function | `packages/aeg-core/src/branch-topology-gate.ts` |
 | `taskBranchTopologyFields` | function | `packages/aeg-core/src/branch-topology-gate.ts` |
+| `issueBranchName` | function | `packages/aeg-core/src/task-branch-identity.ts` |
+| `parseTaskBranchIdentity` | function | `packages/aeg-core/src/task-branch-identity.ts` |
 | `extractBoundaryFilePaths` | function | `packages/aeg-core/src/brief-render.ts` |
 | `extractSourceRevision` | function | `packages/aeg-core/src/brief-render.ts` |
 | `parseRationaleFields` | function | `packages/aeg-core/src/brief-render.ts` |
@@ -124,6 +126,10 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `globsOverlap` | function | `packages/aeg-core/src/derive-section7.ts` |
 | `deriveTranche` | function | `packages/aeg-core/src/derive-tranche.ts` |
 | `assessRound` | function | `packages/aeg-core/src/dev-review-loop/assess-round.ts` |
+| `extractLoopEventsFromCommentBody` | function | `packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts` |
+| `nextRoundNumber` | function | `packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts` |
+| `parseLoopEventLines` | function | `packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts` |
+| `reconstructRounds` | function | `packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts` |
 | `renderSummary` | function | `packages/aeg-core/src/dev-review-loop/render-summary.ts` |
 | `initialLoopState` | function | `packages/aeg-core/src/dev-review-loop/types.ts` |
 | `deriveDiagramModel` | function | `packages/aeg-core/src/diagram-model.ts` |
@@ -373,6 +379,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `starterConfig` | function | `apps/cli/src/lib/artifacts.ts` |
 | `TRACKED_HOOK_DIR` | const | `apps/cli/src/lib/artifacts.ts` |
 | `assembleAndRenderBrief` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `assembleAndRenderBriefForIssue` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `checkDirtyPinnedFiles` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `checkStaleAgainstRemote` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `expandGlob` | function | `apps/cli/src/lib/brief-assembly.ts` |
@@ -439,6 +446,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `resolveHookDir` | function | `apps/cli/src/lib/detect.ts` |
 | `setCoreHooksPath` | function | `apps/cli/src/lib/detect.ts` |
 | `unsetCoreHooksPath` | function | `apps/cli/src/lib/detect.ts` |
+| `buildReexecArgs` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `DEV_REVIEW_LOOP_AGENTS` | const | `apps/cli/src/lib/dev-review-loop.ts` |
 | `devReviewLoop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `DRIVER_OWNED_PATHS` | const | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
@@ -457,6 +465,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `extractObjectivesSection` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
 | `fetchDeveloperStop` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
 | `fetchFrozenBrief` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `fetchIssueLabels` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
 | `fetchIssueTitle` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
 | `fetchNewestRulingOrdinal` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
 | `fetchPrBody` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
@@ -494,6 +503,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `CONFIDENCE_FILE_NAME` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `CONFIDENCE_PROMPT_LINE` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `DevReviewLoopResumeError` | class | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `driverCrashEvents` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `driverDecidedPauseEvents` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `MAX_GATE_STALLED_TURNS` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `parseConfidenceReply` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
@@ -504,6 +514,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `waitForOwnLoopLine` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `postForgeEffectOnce` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
 | `publishRound` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
+| `fetchLoopHistory` | function | `apps/cli/src/lib/dev-review-loop/journal-history.ts` |
 | `clearDriverLock` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `isDriverPidAlive` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `pauseMarker` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
@@ -526,7 +537,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `dispatchTask` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `DispatchTaskError` | class | `apps/cli/src/lib/dispatch-task.ts` |
 | `extractAgentClass` | function | `apps/cli/src/lib/dispatch-task.ts` |
+| `prepareIssueTask` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `prepareTask` | function | `apps/cli/src/lib/dispatch-task.ts` |
+| `prepareTaskOrIssue` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `resolveModelFromRationale` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `AGENT_CLASS_VALUES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `AGENT_VENDOR_NAMES` | const | `apps/cli/src/lib/dispatch.ts` |
@@ -603,6 +616,13 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `log` | function | `apps/cli/src/lib/log-sink.ts` |
 | `OUTBOX_MAX_BYTES` | const | `apps/cli/src/lib/log-sink.ts` |
 | `outboxPathFor` | function | `apps/cli/src/lib/log-sink.ts` |
+| `appendLoopLogLine` | function | `apps/cli/src/lib/loop-log.ts` |
+| `appendRoleLine` | function | `apps/cli/src/lib/loop-log.ts` |
+| `appendRunStartMarker` | function | `apps/cli/src/lib/loop-log.ts` |
+| `followLoopLog` | function | `apps/cli/src/lib/loop-log.ts` |
+| `LOOP_LOG_MAX_BYTES` | const | `apps/cli/src/lib/loop-log.ts` |
+| `loopLogPathFor` | function | `apps/cli/src/lib/loop-log.ts` |
+| `loopsRoot` | function | `apps/cli/src/lib/loop-log.ts` |
 | `EVIDENCE_SUMMARY_PREFIX` | const | `apps/cli/src/lib/numstat.ts` |
 | `summariseNumstat` | function | `apps/cli/src/lib/numstat.ts` |
 | `appendBlock` | function | `apps/cli/src/lib/ops.ts` |
@@ -686,9 +706,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `new role` | `new-role.ts` | `newRoleCommand` | 0 | compliant | — (self-contained) |
 | `brief render` | `brief.ts` | `briefRenderCommand` | 1 | compliant | `assembleAndRenderBrief` |
 | `task dispatch` | `task.ts` | `taskDispatchCommand` | 1 | compliant | `dispatchTask` |
-| `task brief` | `task.ts` | `taskBriefCommand` | 1 | compliant | `prepareTask` |
+| `task brief` | `task.ts` | `taskBriefCommand` | 1 | compliant | `prepareTaskOrIssue` |
 | `task run` | `task-run.ts` | `taskRunCommand` | 3 | exempt — see below | sharedCommandShell (target) |
-| `task status` | `task-status.ts` | `taskStatusCommand` | 3 | exempt — see below | taskStatus (target) |
+| `task status` | `task-status.ts` | `taskStatusCommand` | 5 | exempt — see below | taskStatus (target) |
 | `pr create` | `pr.ts` | `prCreateCommand` | 9 | exempt — see below | forgeWrite (target) |
 | `pr edit` | `pr.ts` | `prEditCommand` | 10 | exempt — see below | forgeWrite (target) |
 | `pr report` | `pr-report.ts` | `prReportCommand` | 4 | exempt — see below | collectTokens (target) |
@@ -764,7 +784,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `dispatch` | 2026-09-11 | 5 — lib (5): `loadConfig`, `isAgentVendor`, `dispatchRole`, `flushOutbox`, `printJson` | `sharedCommandShell` |
 | `dev-review-loop` | 2026-09-10 | 5 — lib: `loadConfig`, `isAgentVendor`, `devReviewLoop`, `printJson`, `colourLoopLine` | `sharedCommandShell` |
 | `task run` | 2026-09-11 | 3 — lib: `runTask`, `colourLoopLine`, `loadConfig` | `sharedCommandShell` |
-| `task status` | 2026-09-11 | 3 — lib: `printJson`, `gatherTaskStatusList`, `gatherSingleTaskStatus` | `taskStatus` |
+| `task status` | 2026-09-12 | 5 — lib: `printJson`, `gatherTaskStatusList`, `gatherSingleTaskStatus`, `loopLogPathFor`, `followLoopLog` | `taskStatus` |
 
 `dispatchRole` retires no row today — its own command (`dispatch`) is new, not a retirement of an existing exempt row. `devReviewLoop` (this task) likewise retires no row today — it is itself a new named chokepoint (`## Effects` intro), and `dev-review-loop`'s own command calls it alongside the same three argv-plumbing calls `dispatch` already carries (`loadConfig`/`isAgentVendor`/`printJson`) — once `sharedCommandShell` absorbs those, this command is left calling only `devReviewLoop`, becoming compliant on its own rather than needing a second named target.
 
@@ -778,7 +798,9 @@ Every non-compliant command from the table above, dated, with the count of disti
 
 `dispatchRole` (Issue #491, role-prefixed and coloured terminal output) gains three exports — `colourEnabled`, `colourAgentLine`, `colourLoopLine`, all listed above — and drops none. Exported so a fixture stream can assert the TTY/`NO_COLOR` predicate and the per-role prefix directly, without spawning a real vendor process. Applied only at the point a line reaches `process.stderr`/`process.stdout` (never where a line is produced), so `openOutputTee`'s own tee and `dispatchRole`'s existing `[vinaya dispatch <id>] …` lifecycle-line text are unaffected by this addition; `dev-review-loop`'s own two `process.stdout.write` calls (`devReviewLoopCommand`) now route their text through `colourLoopLine`, calling only `dispatch.ts`'s already-exported surface — one new in-scope lib call, raising that command's own exemption row from 4 to 5 (both the Commands table and the Exemptions row below, updated together).
 
-`prepareTask` (task-run-v1 task 1, O1) is the preparation half extracted from what used to be all of `dispatchTask`'s body — it retires no row today (`dispatchTask` remains, deprecated, and stays `task dispatch`'s own one lib call, unchanged); it is the one lib function `task brief` (`taskBriefCommand`, this task's O2) calls.
+`prepareTask` (task-run-v1 task 1, O1) is the preparation half extracted from what used to be all of `dispatchTask`'s body — it retires no row today (`dispatchTask` remains, deprecated, and stays `task dispatch`'s own one lib call, unchanged); it was, at that task, the one lib function `task brief` (`taskBriefCommand`) called.
+
+`prepareIssueTask` (`dispatch-task.ts`) is `prepareTask`'s tranche-less twin (task-run-v1 task 15, O1) — same authorization/supersede/frozen-comment rules, sourced from `assembleAndRenderBriefForIssue` (`brief-assembly.ts`) instead of the tranche-keyed renderer, for a backlog Issue with no `vinaya/tranche:*` label. `taskBriefCommand` can now dispatch either shape (`<tranche> <n>` or `--issue <n>`), so it no longer calls `prepareTask` directly: `prepareTaskOrIssue` (`dispatch-task.ts`) is the one chokepoint it calls instead, branching internally to `prepareTask`/`prepareIssueTask` — `task brief`'s own compliance status and one-lib-call count are unchanged (still `1`), only the named function it calls.
 
 `runTask` (task-run-v1 task 2) is the new named chokepoint the `## Effects` intro already anticipated — the "forward-looking, no shipped command yet" caveat above no longer applies. It composes `prepareTask` (`dispatch-task.ts`, unchanged) with `devReviewLoop` (`dev-review-loop.ts`, unchanged — this task calls it, never edits it). Retires no row: neither composed function's own exemption/compliance status changes.
 
@@ -793,4 +815,6 @@ Round 2 review, second round (security, HIGH/MEDIUM): `taskRunCommand` now catch
 `killGraceMs` (task-run-v1 task 20, O2) is a new optional field on `VinayaConfigSchema`'s `dispatch` object, an already-exported const (`apps/cli/src/lib/config.ts`) — per this file's own rule (`## The rule`), a field on an already-exported const needs no new row. It overrides the SIGTERM-to-SIGKILL grace window `dispatchRole` (`apps/cli/src/lib/dispatch.ts`) already enforced at a hardcoded constant, so a test proving the escalation itself happens can configure a small, real, non-zero window instead of paying the production-sized default. `dispatchRole`'s own exported surface and exemption status are unchanged. (`apps/cli/src/checks/runner.ts`'s own `KILL_GRACE_MS`/`RunOptions` are out of this task's declared Surface — `apps/cli/src/checks` — and were left untouched; its own timeout-ceiling tests stay at their measured baseline, listed as such in the PR body.)
 
 `apps/cli/src/lib/test-selector.ts` and `apps/cli/src/lib/remote-base.ts` (task-run-v1 task 20, O6/O5 — the pre-push hook's real import-graph test selector and its shared "changed since remote base" computation) are two new files under `apps/cli/src/lib/`, each with real function exports, added as new rows above. `apps/cli/src/lib/pre-push-select-tests.ts` and `apps/cli/src/lib/pre-push-changed-files.ts` are also new files in the same directory but need no rows: both are standalone entrypoint scripts (the same shape `apps/cli/src/checks/bin/*.ts` already uses, one layer over) whose only top-level code is an unexported `main()` called at module scope — zero exported functions/consts/classes, so per this file's own rule there is nothing for a row to name. `scripts/build.ts` bundles both into `dist/lib/` and two new `package.json` `bin` entries (`vinaya-select-tests`, `vinaya-changed-files`) ship them for adopters — the same `npx --yes -p @attalabs/vinaya@<version> <bin>` shape `hookRun`'s own adopter branch already uses for the routed `vinaya` entrypoint, applied to a second and third bin that bypass the CLI's own argv router entirely.
+
+`dispatch` (PR #544, round 2 review, SECURITY HIGH) gains a `--role-log-path <path>` flag on `commands/dispatch.ts`, threading into `dispatchRole`'s own already-declared `DispatchOpts.roleLogPath` field — per this file's own rule (`## The rule`, line 11), a new CLI flag on an already-listed command needs no new row; `dispatchCommand` still calls only `dispatchRole`, unchanged. The flag exists so a test can drive `appendRoleLine`'s redaction fix below through a real dispatched run rather than importing `dispatchRole` in-process (this file's test conventions never do that — `GLOBAL_VINAYA_HOME` is frozen at import from the real machine's `$HOME`). Inside `dispatchRole` itself, the rendered-agent-event line reaching `appendRoleLine` (the role-prefixed mirror to `opts.roleLogPath`) is now passed through `redact` (`@attalabs/aeg-core`, already unrestricted for this layer to call) first — the same scrub `openOutputTee`'s own tee already applied, previously missing on this second sink, so a token a dispatched agent's own tool output echoed reached the role log unredacted. No new export either side of that fix.
 

@@ -66,13 +66,15 @@ const RATIONALE_TAIL = [
   ''
 ].join('\n')
 
-function issueBody(objectivesSection: string[]): string {
+function issueBody(objectivesSection: string[], partsSection: string[] = THREE_PARTS): string {
   return [
     '## Task Issue',
     '',
     'Intro text before the Objectives section.',
     '',
     ...objectivesSection,
+    '',
+    ...partsSection,
     '',
     RATIONALE_TAIL
   ].join('\n')
@@ -84,6 +86,16 @@ const THREE_OBJECTIVES = [
   'O1. First objective sentence here.',
   'O2. Second objective sentence here.',
   'O3. Third objective sentence here.'
+]
+
+// task-run-v1 task 15, O5: every `--add` fixture needs a real `## Parts`
+// section to append its `--part` line into.
+const THREE_PARTS = [
+  '## Parts',
+  '',
+  'Part 1 (O1) — outcome one.',
+  'Part 2 (O2) — outcome two.',
+  'Part 3 (O3) — outcome three.'
 ]
 
 /**
@@ -246,7 +258,18 @@ describe('vinaya issue objectives edit', () => {
       commentUrl: 'https://github.com/acme/widget/issues/413#issuecomment-5'
     })
     const r = runCli(
-      ['issue', 'objectives', 'edit', '413', '--add', 'Fourth objective sentence here.', '--reason', 'scope grew'],
+      [
+        'issue',
+        'objectives',
+        'edit',
+        '413',
+        '--add',
+        'Fourth objective sentence here.',
+        '--part',
+        'Part 4 (O4) — outcome four.',
+        '--reason',
+        'scope grew'
+      ],
       repo,
       path
     )
@@ -258,6 +281,8 @@ describe('vinaya issue objectives edit', () => {
 
     const editedBody = readFileSync(editedBodyLogPath, 'utf-8')
     expect(editedBody).toContain('O4. Fourth objective sentence here.')
+    // task-run-v1 task 15, O5: the --part line lands in `## Parts` in the SAME edit.
+    expect(editedBody).toContain('Part 4 (O4) — outcome four.')
     expect(editedBody).toContain(RATIONALE_TAIL.trim())
     expect(editedBody).toContain('Intro text before the Objectives section.')
 
@@ -301,6 +326,10 @@ describe('vinaya issue objectives edit', () => {
     expect(editedBody).toContain('O1. First objective sentence here.')
     expect(editedBody).toContain('O2. Second objective sentence here.')
     expect(editedBody).not.toContain('O3.')
+    // task-run-v1 task 15, O5: Part 3 cited ONLY O3 — removed in the same edit.
+    expect(editedBody).not.toContain('Part 3 (O3)')
+    expect(editedBody).toContain('Part 1 (O1) — outcome one.')
+    expect(editedBody).toContain('Part 2 (O2) — outcome two.')
   })
 
   it('--drop of a middle objective is refused — never renumbers, reports the contiguity contradiction', () => {
@@ -327,7 +356,18 @@ describe('vinaya issue objectives edit', () => {
       commentUrl: 'https://github.com/acme/widget/issues/413#issuecomment-9'
     })
     const r = runCli(
-      ['issue', 'objectives', 'edit', '413', '--add', 'Fourth objective sentence here.', '--reason', 'scope grew'],
+      [
+        'issue',
+        'objectives',
+        'edit',
+        '413',
+        '--add',
+        'Fourth objective sentence here.',
+        '--part',
+        'Part 4 (O4) — outcome four.',
+        '--reason',
+        'scope grew'
+      ],
       repo,
       path
     )
@@ -346,7 +386,18 @@ describe('vinaya issue objectives edit', () => {
       login: 'some-random-collaborator'
     })
     const r = runCli(
-      ['issue', 'objectives', 'edit', '413', '--add', 'Fourth objective sentence here.', '--reason', 'scope grew'],
+      [
+        'issue',
+        'objectives',
+        'edit',
+        '413',
+        '--add',
+        'Fourth objective sentence here.',
+        '--part',
+        'Part 4 (O4) — outcome four.',
+        '--reason',
+        'scope grew'
+      ],
       repo,
       path
     )
@@ -376,7 +427,18 @@ describe('vinaya issue objectives edit', () => {
       title: 'not a task-shaped title at all'
     })
     const r = runCli(
-      ['issue', 'objectives', 'edit', '413', '--add', 'Fourth objective sentence here.', '--reason', 'scope grew'],
+      [
+        'issue',
+        'objectives',
+        'edit',
+        '413',
+        '--add',
+        'Fourth objective sentence here.',
+        '--part',
+        'Part 4 (O4) — outcome four.',
+        '--reason',
+        'scope grew'
+      ],
       repo,
       path
     )
@@ -387,5 +449,120 @@ describe('vinaya issue objectives edit', () => {
     // this refusal reports the resulting disagreement, it does not undo it.
     const posted = readFileSync(commentsLogPath, 'utf-8')
     expect(posted).toContain('<!-- aeg:objectives:v1 -->')
+  })
+})
+
+// task-run-v1 task 15, O5: `--add` requires a `--part` citing the objective
+// it just created, written into `## Parts` in the same edit; `--part` is
+// meaningless (refused) outside `--add`.
+describe('vinaya issue objectives edit --part (task-run-v1 task 15, O5)', () => {
+  it('refuses --add with no --part, naming the rule', () => {
+    const repo = tempDir('issue-objectives-repo-')
+    const r = runCli(
+      ['issue', 'objectives', 'edit', '413', '--add', 'Fourth objective sentence here.', '--reason', 'scope grew'],
+      repo,
+      {}
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('objectives-part-required')
+    expect(r.stderr).toContain('--part')
+  })
+
+  it('refuses --part given with --drop', () => {
+    const repo = tempDir('issue-objectives-repo-')
+    const r = runCli(
+      ['issue', 'objectives', 'edit', '413', '--drop', 'O3', '--part', 'Part 4 (O4) — x.', '--reason', 'descoped'],
+      repo,
+      {}
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('--part` is only meaningful with `--add`')
+  })
+
+  it('refuses a --part that does not cite the newly added objective', () => {
+    const repo = tempDir('issue-objectives-repo-')
+    const { path, editedBodyLogPath, commentsLogPath } = stubGh({
+      body: issueBody(THREE_OBJECTIVES),
+      comments: [],
+      issueUrl: 'https://github.com/acme/widget/issues/413',
+      commentUrl: 'https://github.com/acme/widget/issues/413#issuecomment-5'
+    })
+    const r = runCli(
+      [
+        'issue',
+        'objectives',
+        'edit',
+        '413',
+        '--add',
+        'Fourth objective sentence here.',
+        '--part',
+        'Part 4 (O1) — wrong citation.',
+        '--reason',
+        'scope grew'
+      ],
+      repo,
+      path
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('does not cite O4')
+    expect(readFileSync(editedBodyLogPath, 'utf-8')).toBe('')
+    expect(readFileSync(commentsLogPath, 'utf-8')).toBe('')
+  })
+
+  it('refuses a malformed --part line', () => {
+    const repo = tempDir('issue-objectives-repo-')
+    const { path, editedBodyLogPath } = stubGh({
+      body: issueBody(THREE_OBJECTIVES),
+      comments: [],
+      issueUrl: 'https://github.com/acme/widget/issues/413',
+      commentUrl: 'https://github.com/acme/widget/issues/413#issuecomment-5'
+    })
+    const r = runCli(
+      [
+        'issue',
+        'objectives',
+        'edit',
+        '413',
+        '--add',
+        'Fourth objective sentence here.',
+        '--part',
+        'not a well-formed Part line',
+        '--reason',
+        'scope grew'
+      ],
+      repo,
+      path
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('objectives-part-malformed')
+    expect(readFileSync(editedBodyLogPath, 'utf-8')).toBe('')
+  })
+
+  it('a Part citing the dropped objective ALONGSIDE another is left untouched, and the existing citation gate refuses the dangling reference', () => {
+    // `removePartLinesCitingOnly` only ever removes a Part whose citation is
+    // EXACTLY the dropped objective (O5's own stated scope) — Part 2 here
+    // cites O2 too, so it survives untouched, still citing the
+    // now-removed O3. `writeValidatedIssueEdit`'s own pre-existing
+    // `checkPartsCiteDefinedObjectives` gate (unrelated to this task) then
+    // correctly refuses that dangling reference — the Planner resolves it by
+    // hand (fix the Part's citation, or `--replace` first), never silently.
+    const repo = tempDir('issue-objectives-repo-')
+    const { path, editedBodyLogPath, commentsLogPath } = stubGh({
+      body: issueBody(THREE_OBJECTIVES, [
+        '## Parts',
+        '',
+        'Part 1 (O1) — outcome one.',
+        'Part 2 (O2, O3) — outcome two and three together.',
+        'Part 3 (O3) — outcome three alone.'
+      ]),
+      comments: [],
+      issueUrl: 'https://github.com/acme/widget/issues/413',
+      commentUrl: 'https://github.com/acme/widget/issues/413#issuecomment-5'
+    })
+    const r = runCli(['issue', 'objectives', 'edit', '413', '--drop', 'O3', '--reason', 'descoped'], repo, path)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('Part 2 cites O3')
+    expect(readFileSync(editedBodyLogPath, 'utf-8')).toBe('')
+    expect(readFileSync(commentsLogPath, 'utf-8')).toBe('')
   })
 })

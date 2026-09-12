@@ -60,6 +60,7 @@ import { homedir } from 'node:os'
 import { redact } from '@attalabs/aeg-core'
 import type { Role } from '@attalabs/aeg-core'
 import { createLogSink, outboxPathFor } from './log-sink.js'
+import { appendRoleLine } from './loop-log.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
 import { dirname, join } from 'node:path'
 
@@ -159,6 +160,16 @@ export type DispatchOpts = {
    * caller's `--prompt-file` value has one obvious place to travel through.
    */
   promptFile: string
+  /**
+   * O6: when given, every lifecycle line this call
+   * writes to the terminal (`writeLifecycle`) and every rendered agent-event
+   * line is ALSO mirrored, plainly (no ANSI), to this path — the driver's
+   * own role-prefixed stream, appended across relaunches. The caller
+   * (`dev-review-loop.ts`) resolves this once per loop run, from the same
+   * `~/.vinaya/loops/<owner>-<repo>/<issue>.log` convention
+   * `loop-log.ts` names.
+   */
+  roleLogPath?: string
 }
 
 export type DispatchFailureReason = 'timeout' | 'crash' | 'refused'
@@ -943,9 +954,10 @@ export async function dispatchRole(
   const effectId = randomUUID()
   const vendor = VENDOR_TABLE[agent]
   const start = Date.now()
-  /** Every lifecycle line this call writes goes through this one point (O2) — restyled, never re-prefixed. */
+  /** Every lifecycle line this call writes goes through this one point (O2) — restyled, never re-prefixed. O6: also mirrored, plainly, to `opts.roleLogPath` when the caller named one. */
   const writeLifecycle = (msg: string): void => {
     process.stderr.write(`${colourLoopLine(msg, process.stderr)}\n`)
+    if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, msg)
   }
   const roundField = opts.round !== undefined ? { round: opts.round } : {}
   // O2: never the vendor name (`agent`) — that is the defect this task
@@ -1082,6 +1094,10 @@ export async function dispatchRole(
               .map((l) => colourAgentLine(role, l, process.stderr))
               .join('\n')
             process.stderr.write(`${out}\n`)
+            // Security (round 2 review, HIGH): `rendered` is agent output, the
+            // same untrusted-bytes hazard `openOutputTee`'s `redact` pass
+            // exists for — route this sink through it too before it reaches disk.
+            if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, redact(rendered, homedir()))
           }
         } catch {
           // not a JSON line, or a renderer that refused it — never fatal

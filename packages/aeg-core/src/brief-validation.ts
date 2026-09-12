@@ -442,7 +442,9 @@ export function checkPlanPrNoCloses(branch: string, prBody: string): BriefSectio
 const BRIEF_SHAPE_MARKERS = [checkSurfaceMap, checkDocUpdateList, checkStopConditions, checkAutonomyClause] as const
 
 /**
- * A task branch, per the topology naming convention (`task/<tranche>/<n>`).
+ * A task branch, per the topology naming convention (`task/<tranche>/<n>`)
+ * OR the tranche-less backlog-Issue convention (`task/issue-<n>`,
+ * task-run-v1 task 15, O1/O2) — a task whose Issue is `<n>` with no tranche.
  * The one shared copy — `bin/verify-brief.ts`, `test-plan-gate.ts`, and
  * `archive-task.ts` each still define this pattern locally (out of this
  * export's blast radius; not deduped onto it here), but a new consumer
@@ -450,9 +452,10 @@ const BRIEF_SHAPE_MARKERS = [checkSurfaceMap, checkDocUpdateList, checkStopCondi
  * fourth copy.
  */
 const TASK_BRANCH_PATTERN = /^task\/[^/]+\/[^/]+$/
+const TASK_ISSUE_BRANCH_PATTERN = /^task\/issue-\d+$/
 
 export function isTaskBranch(branch: string): boolean {
-  return TASK_BRANCH_PATTERN.test(branch)
+  return TASK_BRANCH_PATTERN.test(branch) || TASK_ISSUE_BRANCH_PATTERN.test(branch)
 }
 
 /**

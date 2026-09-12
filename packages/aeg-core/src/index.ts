@@ -358,6 +358,8 @@ export { findDeadBranchPushes } from './dead-branch-push-audit'
 export type { DeadBranchFact, DeadBranchPush } from './dead-branch-push-audit'
 export { checkBranchTopology, taskBranchTopologyFields } from './branch-topology-gate'
 export type { BranchTopologyInput, BranchTopologyResult, BranchTopologyVerdict } from './branch-topology-gate'
+export { issueBranchName, parseTaskBranchIdentity } from './task-branch-identity'
+export type { TaskBranchIdentity } from './task-branch-identity'
 export { checkFirstPushDispatchGate, parseTaskBranch } from './first-push-dispatch-gate'
 export type {
   DispatchReadinessFact,
@@ -424,7 +426,15 @@ export {
   resolveObjectivesSource
 } from './objectives'
 export type { Objective, ObjectivesSource, ParsedObjectives } from './objectives'
-export { assessRound, initialLoopState, renderSummary } from './dev-review-loop'
+export {
+  assessRound,
+  extractLoopEventsFromCommentBody,
+  initialLoopState,
+  nextRoundNumber,
+  parseLoopEventLines,
+  reconstructRounds,
+  renderSummary
+} from './dev-review-loop'
 export type {
   Confidence,
   Decision,
@@ -437,6 +447,7 @@ export type {
   Observations,
   PauseReason,
   PendingRound,
+  ReconstructedJournal,
   RoundOutcome,
   RoundRecord,
   RoundStats,

@@ -18,6 +18,7 @@ tests/commands/check-principal-owed.test.ts
 tests/commands/check-roles-plan.test.ts
 tests/commands/check.test.ts
 tests/commands/dev-review-loop.test.ts
+tests/commands/issue-objectives-parts.test.ts
 tests/commands/pr-verify-evidence-cwd.test.ts
 tests/commands/review-post-print-only.test.ts
 tests/commands/review-post.test.ts

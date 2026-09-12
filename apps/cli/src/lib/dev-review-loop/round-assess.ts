@@ -24,7 +24,7 @@ import type { AgentVendor, DispatchHandle } from '../dispatch.js'
  * so this constant needs no per-round interpolation to stay fixed.
  */
 export const CONFIDENCE_PROMPT_LINE =
-  "Before ending this turn, write your confidence in this round's changes to a file named `.vinaya-confidence` at the root of your worktree, containing exactly one line: `CONFIDENCE: <0-100> — <one-sentence reason>` (a whole number from 0 to 100, an em dash, then your reason in one sentence). This is read by the review loop before it decides the next step — do not skip it."
+  "Before ending this turn, write your confidence in this round's changes to a file named `.vinaya-confidence` at the root of your worktree, containing exactly one line: `CONFIDENCE: <0-100> — <one-sentence reason>` (a whole number from 0 to 100, an em dash, then your reason in one sentence) — for example: `echo 'CONFIDENCE: 90 — fixed the reported issue' > .vinaya-confidence`. This is read by the review loop before it decides the next step — do not skip it."
 
 const CONFIDENCE_LINE = /^CONFIDENCE:\s*(\d{1,3})\s*(?:—|-)\s*(.+)$/m
 
@@ -242,6 +242,47 @@ export function driverDecidedPauseEvents(
       time_to_green_ms: null,
       files_changed_total: state.totalFilesChanged + stats.filesChanged,
       final_head: stats.head,
+      result: 'stopped'
+    }
+  ]
+}
+
+/**
+ * `paused`/`journal_finalized` for a genuinely UNCAUGHT error — the
+ * `finally`-adjacent catch wrapping the whole round loop in
+ * `dev-review-loop.ts` (task 21, `#541`, O10, round 2 review BLOCKER).
+ * Deliberately NOT `driverDecidedPauseEvents`: that helper also logs its
+ * own `round_ended` with a hardcoded `outcome: 'changes_requested'` and
+ * bumps `journal_finalized.rounds` by one, both correct only when the
+ * CURRENT round never reached its own real `round_ended` at all. An
+ * uncaught error can just as easily strike AFTER a genuine `round_ended`
+ * already logged a real outcome (a crash between `round_ended` and the
+ * (deferred) `journal_finalized` — precisely `publishRound` throwing after
+ * a green round, the shape O9's `journalFinalized` signal exists to
+ * detect) — reusing `driverDecidedPauseEvents` there would silently
+ * overwrite that real, already-true outcome with a fabricated one and
+ * double-count the round. This helper never touches `round_ended` at all:
+ * it closes the journal with whatever `state.rounds` ALREADY holds,
+ * honest about a run that ended with no clean decision either way.
+ */
+export function driverCrashEvents(
+  loopId: string,
+  state: LoopState,
+  round: number,
+  head: string
+): DevReviewLoopEventInput[] {
+  const envelope = { kind: 'dev_review_loop' as const, payload: {} }
+  return [
+    { ...envelope, loop_id: loopId, event: 'paused', round, reason: 'principal_item' },
+    {
+      ...envelope,
+      loop_id: loopId,
+      event: 'journal_finalized',
+      rounds: state.rounds.length,
+      total_wall_ms: state.totalWallMs,
+      time_to_green_ms: null,
+      files_changed_total: state.totalFilesChanged,
+      final_head: head,
       result: 'stopped'
     }
   ]

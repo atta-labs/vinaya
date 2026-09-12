@@ -32,6 +32,7 @@ import {
   headerRegion,
   inferBranchFromBody,
   isBriefShaped,
+  isTaskBranch,
   parseBriefMarkerVersion,
   partitionBriefErrorsByRollout,
   resolveNewestFrozenBrief
@@ -1183,5 +1184,28 @@ describe('resolveNewestFrozenBrief (task-run-v1 task 4, #483, O3) — the single
     ]
     const resolved = resolveNewestFrozenBrief(comments, ALLOWLIST)
     expect(resolved?.url).toBe('https://github.com/acme/widget/issues/1#issuecomment-1')
+  })
+})
+
+// task-run-v1 21, #541, O2: `check-brief-shape.ts` gates its
+// `requireClosesN` behavior entirely on this predicate — a backlog Issue's
+// `task/issue-<n>` branch must read as a task branch exactly like a
+// tranche-shaped `task/<tranche>/<n>` one, never falling through to the
+// non-task/`Closes #N`-optional path.
+describe('isTaskBranch', () => {
+  it('is true for a tranche-shaped task branch', () => {
+    expect(isTaskBranch('task/task-run-v1/21')).toBe(true)
+  })
+
+  it('is true for a backlog Issue branch (task/issue-<n>)', () => {
+    expect(isTaskBranch('task/issue-541')).toBe(true)
+  })
+
+  it('is false for a non-task branch', () => {
+    expect(isTaskBranch('fix/some-typo')).toBe(false)
+  })
+
+  it('is false for a task/issue-<n>-shaped string with a non-numeric suffix', () => {
+    expect(isTaskBranch('task/issue-abc')).toBe(false)
   })
 })

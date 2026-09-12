@@ -105,6 +105,22 @@ describe('checkClosesNTopology', () => {
     expect(r.message).toMatch(/no topology file found/)
   })
 
+  // task-run-v1 21, #541, O2: a backlog Issue's task/issue-<n> branch — no
+  // tranche, no topology file, ever — resolves entirely off the branch's
+  // own issue number, never falling into the "no topology file found"
+  // failure a tranche-shaped branch with an unresolvable slug would hit.
+  it('ok — backlog Issue branch (task/issue-<n>) with matching Closes #N, no topology file needed at all', () => {
+    const r = checkClosesNTopology('task/issue-541', 'Summary\n\nCloses #541\n', [])
+    expect(r).toEqual({ ok: true, expectedIssue: 541 })
+  })
+
+  it('fail — backlog Issue branch (task/issue-<n>) whose PR body is missing its own Closes #N', () => {
+    const r = checkClosesNTopology('task/issue-541', 'Summary\n\nCloses #999\n', [])
+    expect(r.ok).toBe(false)
+    expect(r.expectedIssue).toBe(541)
+    expect(r.message).toMatch(/does not contain `Closes #541`/)
+  })
+
   it('fail — task id not found in topology', () => {
     const files = [makeTrancheFile('aeg-consolidation', false)]
     files[0]!.tranche.tasks = [makeTask('1', 263)]

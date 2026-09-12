@@ -83,6 +83,7 @@ import {
   checkProjectsRegistered,
   checkRationaleNamesDocs,
   checkSurfaceGlobsResolve,
+  checkTrancheLabelPresence,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   type ProjectPath,
@@ -771,6 +772,22 @@ function ensureTrancheLabelExists(slug: string): void {
   }
 }
 
+/**
+ * Whether the task-Issue content gate (rationale, blast-radius, project
+ * registry, brief content, docs-read, Parts/Objectives/Surface, task-type)
+ * applies at all. True on a `vinaya/tranche:*` label, same as before this
+ * task, OR — O2/O3 (task 21, `#541`, round 2 review SECURITY HIGH) — a
+ * labelless body that is still task-shaped: a legitimate backlog Issue,
+ * never a Planner mistake to wave through unvalidated. Pulled out as its own
+ * pure predicate (mirroring `apps/cli/src/lib/forge-write.ts`'s identical
+ * `isTaskIssueLabelSet(labels) || (body !== null && isTaskIssueBodyShaped(body))`
+ * OR-clause) so this file's own ring-0 `gh issue create/edit` interception
+ * gate is unit-testable without a real `gh` call.
+ */
+export function appliesTaskIssueGate(labels: string[], body: string | null): boolean {
+  return isTaskIssueLabelSet(labels) || (body !== null && isTaskIssueBodyShaped(body))
+}
+
 export function main(): void {
   const argv = process.argv.slice(2)
   const validateOnly = argv.includes('--validate-only')
@@ -805,22 +822,30 @@ export function main(): void {
     labels = [...new Set([...forgeLabels, ...labels])]
   }
 
-  // O1 (task-run-v1 task 11) — a body carrying the Planner's `## Objectives`/
-  // `## Planner's rationale` sections but posted with no `vinaya/tranche:*`
-  // label reads, to the `isTaskIssueLabelSet` gate just below, as "not a task
-  // Issue" and would otherwise sail through every check that gate guards,
-  // unvalidated — a task Issue reaching the forge unlabeled. Mirrors
-  // `apps/cli/src/lib/forge-write.ts`'s `refuseUnlabeledTaskShapedBody`
-  // (the CLI's own copy of this same gate), never infers the label and adds
-  // it silently — the Planner types it; this only refuses and names what's
-  // missing.
-  if (body !== null && !isTaskIssueLabelSet(labels) && isTaskIssueBodyShaped(body)) {
-    fail(
-      "the body carries task-Issue sections (`## Objectives` / `## Planner's rationale`) but no `vinaya/tranche:*` label was given — a task Issue never reaches the forge unlabeled. Add one with `--label vinaya/tranche:<slug>`."
-    )
+  // Retired (task-run-v1 task 15, O3) — `checkTrancheLabelPresence` (this
+  // file's `isTaskIssueBodyShaped`/`isTaskIssueLabelSet`-based predicate,
+  // mirrored from `apps/cli/src/lib/forge-write.ts`'s own copy) now always
+  // passes: a task-shaped, unlabeled body is a legitimate backlog Issue, not
+  // a Planner mistake. See that function's own doc comment in
+  // `@attalabs/aeg-core` for the full rationale. Delegated here (rather than
+  // deleted) so this call site stays wired to the one shared rule.
+  if (body !== null) {
+    const trancheLabelResult = checkTrancheLabelPresence(body, labels)
+    if (trancheLabelResult.status === 'fail') fail(trancheLabelResult.errors.join(' '))
   }
 
-  if (isTaskIssueLabelSet(labels)) {
+  // O2/O3 (task 21, `#541`, round 2 review SECURITY HIGH): a labelless
+  // backlog Issue is task-shaped content too — gating this whole content
+  // gate on the label alone let a labelless body through with NONE of
+  // `checkIssueRationale`/`checkBlastRadiusScope`/`checkProjectsRegistered`/
+  // `checkNoBriefContent`/`checkRationaleNamesDocs`/
+  // `checkPartsCiteDefinedObjectives`/`checkSurfaceGlobsResolve` ever
+  // running against it, via this file's own ring-0 `gh issue create/edit`
+  // interception path — a real bypass distinct from (and narrower than) the
+  // `apps/cli` command paths, which already carry this same
+  // `isTaskIssueLabelSet(labels) || isTaskIssueBodyShaped(body)` OR-clause
+  // (`forge-write.ts`, `commands/issue.ts`).
+  if (appliesTaskIssueGate(labels, body)) {
     // GitHub caps a label name at 50 characters and `vinaya/tranche:` spends
     // 15 of them, so a slug that reads fine in prose can be one the forge
     // refuses to create. Caught here — the first place a new tranche's label

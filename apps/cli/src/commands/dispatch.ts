@@ -34,6 +34,7 @@ type ParsedArgs = {
   pr: number | undefined
   round: number | undefined
   resume: string | undefined
+  roleLogPath: string | undefined
   json: boolean
   /** Any `--flag`-shaped or stray positional token this parser does not
    * recognize — `dispatchCommand` refuses rather than silently dropping it.
@@ -45,7 +46,17 @@ type ParsedArgs = {
   unknown: string[]
 }
 
-const KNOWN_FLAGS = ['--agent', '--model', '--prompt-file', '--task', '--pr', '--round', '--resume', '--json']
+const KNOWN_FLAGS = [
+  '--agent',
+  '--model',
+  '--prompt-file',
+  '--task',
+  '--pr',
+  '--round',
+  '--resume',
+  '--role-log-path',
+  '--json'
+]
 
 function parseArgs(args: string[]): ParsedArgs {
   const role = args[0]
@@ -56,6 +67,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let pr: number | undefined
   let round: number | undefined
   let resume: string | undefined
+  let roleLogPath: string | undefined
   let json = false
   const unknown: string[] = []
   for (let i = 1; i < args.length; i++) {
@@ -67,10 +79,11 @@ function parseArgs(args: string[]): ParsedArgs {
     else if (a === '--pr') pr = Number(args[++i])
     else if (a === '--round') round = Number(args[++i])
     else if (a === '--resume') resume = args[++i]
+    else if (a === '--role-log-path') roleLogPath = args[++i]
     else if (a === '--json') json = true
     else if (a !== undefined) unknown.push(a)
   }
-  return { role, agent, model, promptFile, task, pr, round, resume, json, unknown }
+  return { role, agent, model, promptFile, task, pr, round, resume, roleLogPath, json, unknown }
 }
 
 export async function dispatchCommand(args: string[]): Promise<void> {
@@ -136,7 +149,8 @@ export async function dispatchCommand(args: string[]): Promise<void> {
     round: parsed.round,
     resumeId: parsed.resume,
     model: parsed.model,
-    promptFile
+    promptFile,
+    roleLogPath: parsed.roleLogPath
   })
 
   if (parsed.json) {

@@ -537,16 +537,20 @@ export function isTaskIssueBodyShaped(body: string): boolean {
  * mirrored inline check already enforce; this names it once so a registered
  * `issue`-scope check and the coherence sweep can both call the SAME
  * function instead of re-deriving the same two-line condition.
+ *
+ * **Retired to an always-pass check (task-run-v1 task 15, O3).** A task-
+ * shaped body reaching the forge with no `vinaya/tranche:*` label is no
+ * longer, by itself, evidence of a mistake — it is the exact shape of a
+ * legitimate backlog Issue (`task run --issue <n>`'s own dispatch target),
+ * which carries the same body grammar as a tranche task with the label
+ * simply omitted. The invariant this rule enforced ("a task Issue never
+ * reaches the forge unlabeled") no longer holds; kept as a function (never
+ * deleted) so every caller above stays wired to one place rather than three
+ * independently-updated copies, and so a future rule needing this exact
+ * shape has somewhere to register itself apart from a fresh predicate.
  */
-export function checkTrancheLabelPresence(body: string, labels: string[]): IssueSectionResult {
-  if (isTaskIssueLabelSet(labels)) return { status: 'pass', errors: [] }
-  if (!isTaskIssueBodyShaped(body)) return { status: 'pass', errors: [] }
-  return {
-    status: 'fail',
-    errors: [
-      "issue-validation tranche label: this body carries task-Issue sections (`## Objectives` / `## Planner's rationale`) but no `vinaya/tranche:*` label was given — a task Issue never reaches the forge unlabeled."
-    ]
-  }
+export function checkTrancheLabelPresence(_body: string, _labels: string[]): IssueSectionResult {
+  return { status: 'pass', errors: [] }
 }
 
 /**

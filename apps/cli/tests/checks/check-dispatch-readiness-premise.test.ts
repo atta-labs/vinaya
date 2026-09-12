@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
 import { reassertPremiseFile } from '../../src/checks/premise-reassert-logic'
@@ -33,6 +33,100 @@ async function run(env: Record<string, string>): Promise<{ exitCode: number; std
   const exitCode = await proc.exited
   return { exitCode, stderr }
 }
+
+/**
+ * `runIssueMode` (task-run-v1 21, #541, O2, round 2 review MAJOR): a
+ * `task/issue-<n>` branch resolves `checkDispatchReadiness` straight off the
+ * Issue itself — no topology row, no Milestone. A fake `gh` on `PATH`
+ * answers `gh issue view <n> --json number,state,body,labels`; no other
+ * forge call happens for a rationale-empty Issue with no dependency edges
+ * (`resolveEdge`/`resolveToken` are never reached), so no live network is
+ * needed to exercise the three routing branches below.
+ */
+function writeFakeGh(dir: string, issueJson: Record<string, unknown> | null): void {
+  const p = join(dir, 'gh')
+  const body = issueJson === null ? null : JSON.stringify(issueJson)
+  writeFileSync(
+    p,
+    `#!/bin/sh
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+${body === null ? '  exit 1' : `  printf '%s' '${body.replace(/'/g, "'\\''")}'\n  exit 0`}
+fi
+echo "unhandled fake gh call in dispatch-readiness issue-mode test: $*" >&2
+exit 1
+`
+  )
+  chmodSync(p, 0o755)
+}
+
+async function runBin(binDir: string, env: Record<string, string>): Promise<{ exitCode: number; stderr: string }> {
+  const proc = Bun.spawn(['bun', BIN], {
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, ...env },
+    cwd: REPO_ROOT,
+    stdout: 'ignore',
+    stderr: 'pipe'
+  })
+  const stderr = await new Response(proc.stderr).text()
+  const exitCode = await proc.exited
+  return { exitCode, stderr }
+}
+
+describe('check-dispatch-readiness: runIssueMode (task-run-v1 21, #541, O2, round 2 review MAJOR)', () => {
+  it("an Issue that does not resolve on the forge fails with the issue-existence blocker, naming the branch's own Issue number", async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'dispatch-readiness-issue-bin-'))
+    try {
+      writeFakeGh(binDir, null)
+      const result = await runBin(binDir, { BRANCH: 'task/issue-541' })
+      expect(result.exitCode).toBe(1)
+      const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
+      const error = JSON.parse(jsonLine ?? '')
+      expect(error.check).toBe('dispatch-readiness')
+      expect(error.message).toContain('Issue #541 does not resolve on the forge')
+    } finally {
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('an Issue carrying a vinaya/tranche:* label refuses — it has a real tranche home, not the backlog path', async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'dispatch-readiness-issue-bin-'))
+    try {
+      writeFakeGh(binDir, {
+        number: 541,
+        state: 'OPEN',
+        body: '',
+        labels: [{ name: 'vinaya/tranche:fixture-tranche' }]
+      })
+      const result = await runBin(binDir, { BRANCH: 'task/issue-541' })
+      expect(result.exitCode).toBe(1)
+      const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
+      const error = JSON.parse(jsonLine ?? '')
+      expect(error.check).toBe('dispatch-readiness')
+      expect(error.message).toContain('vinaya/tranche:* label')
+    } finally {
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('an Issue with no rationale fields reaches checkDispatchReadiness and fails the rationale gate, naming its own Issue number', async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'dispatch-readiness-issue-bin-'))
+    try {
+      writeFakeGh(binDir, {
+        number: 541,
+        state: 'OPEN',
+        body: 'An Issue body with no rationale fields at all.',
+        labels: []
+      })
+      const result = await runBin(binDir, { BRANCH: 'task/issue-541', AEG_REPO: 'atta-labs/vinaya-fixture' })
+      expect(result.exitCode).toBe(1)
+      const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
+      const error = JSON.parse(jsonLine ?? '')
+      expect(error.check).toBe('dispatch-readiness')
+      expect(error.message).toContain('dispatch-gate rationale: Issue #541')
+    } finally {
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+})
 
 describe('check-dispatch-readiness: PREMISE_FILE on a non-task branch (bypass unaffected)', () => {
   it('PREMISE_FILE unset: exits 0 with no findings (pre-existing bypass, unchanged)', async () => {

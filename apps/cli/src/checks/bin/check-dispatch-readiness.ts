@@ -55,16 +55,19 @@ import {
   checkIssueRationale,
   fetchForgeFacts,
   fetchOpenIssuesByLabel,
+  parseTaskBranchIdentity,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
   type DispatchGateInput,
-  type DispatchPriorTrancheFact
+  type DispatchPriorTrancheFact,
+  type Task
 } from '@attalabs/aeg-core'
+import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 import { containedAbs } from '../../lib/ops'
-import { resolveEdge } from '../edge-resolve'
+import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve'
 import { reassertPremiseFile } from '../premise-reassert-logic'
 
 const CHECK_NAME = 'dispatch-readiness'
@@ -213,15 +216,138 @@ function containedRealPath(root: string, p: string): string | null {
   }
 }
 
+type IssueJson = { number: number; state: 'OPEN' | 'CLOSED'; body: string; labels: { name: string }[] }
+
+function fetchIssueJson(issueNumber: number): IssueJson | null {
+  try {
+    const out = execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'number,state,body,labels'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    return JSON.parse(out) as IssueJson
+  } catch {
+    return null
+  }
+}
+
+/**
+ * `--issue <n>` gate: O2. Same `checkDispatchReadiness`
+ * evaluation as the tranche path, sourced from a backlog Issue directly — no
+ * topology row, no Milestone, `dependsOn`/`conflictsWith` parsed straight
+ * off the Issue's own "Dependency rationale" field and optional (per O2)
+ * rather than required. No prior-tranche-archival predicate applies (there
+ * is no tranche); premise re-assertion still runs (`PREMISE_FILE`),
+ * unchanged.
+ */
+async function runIssueMode(issueNumber: number): Promise<void> {
+  const issueJson = fetchIssueJson(issueNumber)
+  if (!issueJson) {
+    fail(
+      `dispatch-gate issue-existence: Issue #${issueNumber} does not resolve on the forge.`,
+      'Confirm the Issue number is correct and `gh auth status` passes, then re-run `vinaya check dispatch-readiness`.'
+    )
+  }
+  if (issueJson.labels.some((l) => l.name.startsWith('vinaya/tranche:'))) {
+    fail(
+      `dispatch-gate: Issue #${issueNumber} carries a vinaya/tranche:* label — it belongs to a tranche, not the tranche-less backlog path.`,
+      'This Issue has a real tranche home — run this check on its tranche-shaped branch instead.'
+    )
+  }
+
+  const repo = resolveRepo()
+  if (!repo) {
+    fail(
+      'dispatch-gate severity:infra — could not resolve owner/repo.',
+      'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya check dispatch-readiness`.'
+    )
+  }
+
+  const issueRationalePass = checkIssueRationale(issueJson.body).status !== 'fail'
+  const { dependsOn: dependsOnIds, conflictsWith: conflictsWithIds } = parseRationaleDeps(issueJson.body)
+
+  const taskById = new Map<string, EdgeTaskRef>()
+  const factsByTaskId = new Map<string, EdgeFactsSubset>()
+  const dependsOn: DispatchDependsOnFact[] = await Promise.all(
+    dependsOnIds.map(async (dep) => {
+      const r = await resolveEdge(dep, taskById, factsByTaskId, repo)
+      return {
+        id: dep,
+        issue: r.issue,
+        merged: r.merged,
+        resolved: r.resolved,
+        issueState: r.issueState,
+        stateReason: r.stateReason,
+        closedByActor: r.closedByActor
+      }
+    })
+  )
+  const conflictsWith: DispatchConflictsWithFact[] = await Promise.all(
+    conflictsWithIds.map(async (c) => {
+      const r = await resolveEdge(c, taskById, factsByTaskId, repo)
+      return { id: c, issue: r.issue, openOrInFlight: r.open }
+    })
+  )
+
+  const task: Task = {
+    id: String(issueNumber),
+    title: '',
+    issue: issueNumber,
+    projects: [],
+    dependsOn: dependsOnIds,
+    conflictsWith: conflictsWithIds,
+    rationaleMarkdown: ''
+  }
+
+  const input: DispatchGateInput = {
+    trancheSlug: `issue-${issueNumber}`,
+    task,
+    issue: { number: issueNumber, state: issueJson.state === 'OPEN' ? 'open' : 'closed' },
+    issueRationalePass,
+    dependsOn,
+    conflictsWith,
+    priorTask: null,
+    priorTrancheArchival: [],
+    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  }
+
+  const result = checkDispatchReadiness(input)
+
+  let ready = true
+  if (!result.ready) {
+    for (const blocker of result.blockers) {
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'error',
+        message: blocker,
+        agent_recovery_prompt: recoveryPromptFor(blocker)
+      })
+    }
+    ready = false
+  }
+
+  if (!checkPremiseReassertion()) ready = false
+
+  process.exit(ready ? 0 : 1)
+}
+
 async function main(): Promise<void> {
   const branch = currentBranch()
-  const m = branch.match(/^task\/([^/]+)\/(.+)$/)
-  if (!m) {
+  const ref = parseTaskBranchIdentity(branch)
+  if (!ref) {
     // Non-task branch — nothing scoped to evaluate. Mirrors verify-brief.ts's bypass.
     process.exit(0)
   }
-  const trancheSlug = m[1] as string
-  const taskId = m[2] as string
+
+  // O2: a backlog Issue with no tranche — resolved
+  // straight from the Issue itself, no topology lookup.
+  if (ref.kind === 'issue') {
+    await runIssueMode(ref.issueNumber)
+    return
+  }
+
+  const trancheSlug = ref.tranche
+  const taskId = ref.taskId
 
   const repo = resolveRepo()
   if (!repo) {

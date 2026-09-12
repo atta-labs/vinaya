@@ -347,14 +347,15 @@ function assessVerdicts(
     events.push(pausedEvent(state, obs.round, 'escalation'))
     events.push(roundEndedEvent(state, obs.round, pending.stats, 'escalated'))
     const record = buildRoundRecord(obs.round, obs.verdicts, confidence, 'escalated')
-    const newState: LoopState = {
+    const preFinalize: LoopState = {
       ...state,
       rounds: [...state.rounds, record],
       pending: null,
       lastIds: carriedIds,
       ...withRoundStats(state, pending.stats)
     }
-    return { decision: { type: 'pause', reason: 'escalation' }, state: newState, events }
+    events.push(journalFinalizedEvent(preFinalize, pending.stats.head, 'stopped'))
+    return { decision: { type: 'pause', reason: 'escalation' }, state: preFinalize, events }
   }
 
   const allObjectivesMet = obs.verdicts.every((v) => v.objectives.every((o) => o.met))

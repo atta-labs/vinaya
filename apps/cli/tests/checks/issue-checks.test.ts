@@ -128,12 +128,14 @@ describe('issue-tranche-label (bin)', () => {
     expect(outcome?.status).toBe('pass')
   })
 
-  it('fails a task-shaped body with no tranche label', async () => {
+  // Retired to an always-pass check by task-run-v1 task 15, O3: a task-shaped
+  // body with no tranche label is now a legitimate backlog Issue.
+  it('passes a task-shaped body with no tranche label — a legitimate backlog Issue (task-run-v1 task 15, O3)', async () => {
     const outcome = await run('issue-tranche-label', {
       ISSUE_BODY: "## Objectives\n\nO1. Thing.\n\n## Planner's rationale\n\nsome rationale\n",
       ISSUE_LABELS: ''
     })
-    expect(outcome?.status).toBe('fail')
+    expect(outcome?.status).toBe('pass')
   })
 })
 

@@ -254,3 +254,54 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
     expect(r.stderr).toContain('Usage: vinaya task status')
   })
 })
+
+// task-run-v1 task 15, O6: `--follow` tails the task's per-run driver log
+// live — argv refusals here, the tail-read wiring proven with a bounded
+// (timeout-killed, `tail -f` is never expected to exit on its own) run below.
+describe('vinaya task status --follow (task-run-v1 task 15, O6)', () => {
+  it('refuses with usage when --follow is given with no tranche/n and no --issue', () => {
+    const { env } = setUp()
+    const r = runCli(['task', 'status', '--follow'], env)
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('Usage: vinaya task status')
+  })
+
+  it('refuses a non-numeric --issue value', () => {
+    const { env } = setUp()
+    const r = runCli(['task', 'status', '--issue', 'nope', '--follow'], env)
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--issue must be numeric')
+  })
+
+  it('refuses naming the task when the <tranche> <n> form does not resolve to an open task Issue', () => {
+    const { env } = setUp()
+    const r = runCli(['task', 'status', 'demo', '99', '--follow'], env)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('task 99 in tranche `demo` is not an open task Issue')
+  })
+
+  it("--issue <n> --follow prints the log file's existing content, then keeps running (killed by timeout, same as a real tail -f)", () => {
+    const { home, env } = setUp()
+    const logPath = join(home, '.vinaya', 'loops', 'acme-widget', '521.log')
+    mkdirSync(dirname(logPath), { recursive: true })
+    writeFileSync(
+      logPath,
+      '=== run started 2026-09-12T00:00:00.000Z role=dev-review-loop pid=1 ===\n[developer] hello\n'
+    )
+
+    let caught: { stdout?: string } | null = null
+    try {
+      execFileSync('bun', [INDEX, 'task', 'status', '--issue', '521', '--follow'], {
+        cwd: CLI_ROOT,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, ...env, AEG_REPO: 'acme/widget' },
+        timeout: 1500
+      })
+    } catch (e) {
+      caught = e as { stdout?: string }
+    }
+    expect(caught).not.toBeNull()
+    expect(String(caught?.stdout ?? '')).toContain('[developer] hello')
+  })
+})
