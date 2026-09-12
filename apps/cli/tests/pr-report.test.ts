@@ -14,6 +14,7 @@ import {
   composeWrittenBody,
   computeGroupA,
   computeGroupC,
+  DEFAULT_COMMAND_TIMEOUT_MS,
   extractAgentCommandLines,
   type GateOutcome,
   type GateRunner,
@@ -24,6 +25,7 @@ import {
   prReportCommand,
   prReportExitCode,
   replaceEvidenceBlock,
+  resolveCommandTimeoutMs,
   runAgentCommand,
   spliceIntoLiveBody,
   UnresolvableMergeBaseError,
@@ -401,6 +403,57 @@ describe('runAgentCommand — real subprocess, no network', () => {
       } else {
         process.env.GITHUB_TOKEN = previousGithubToken
       }
+    }
+  })
+
+  // issue-545, O5 — the budget is policy (`report.commandTimeoutMs`), and a
+  // command that exceeds it is recorded with the budget it exceeded.
+  it('a command that exceeds an explicit timeoutMs is recorded with that exact budget, never a bare "timeout"', () => {
+    const result = runAgentCommand('sleep 5', 50)
+    expect(result.timedOut).toBe(true)
+    expect(result.exitCode).toBeNull()
+    expect(result.output).toBe('timeout (budget 50ms)')
+  })
+})
+
+describe('resolveCommandTimeoutMs (issue-545, O5)', () => {
+  it('defaults to DEFAULT_COMMAND_TIMEOUT_MS (900000) with no vinaya.config.json report key', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-timeout-default-'))
+    const cwd = process.cwd()
+    process.chdir(dir)
+    try {
+      expect(resolveCommandTimeoutMs()).toBe(DEFAULT_COMMAND_TIMEOUT_MS)
+    } finally {
+      process.chdir(cwd)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads report.commandTimeoutMs from vinaya.config.json when set', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-timeout-config-'))
+    writeFileSync(join(dir, 'vinaya.config.json'), JSON.stringify({ report: { commandTimeoutMs: 1_800_000 } }))
+    const cwd = process.cwd()
+    process.chdir(dir)
+    try {
+      expect(resolveCommandTimeoutMs()).toBe(1_800_000)
+    } finally {
+      process.chdir(cwd)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('runAgentCommand with no explicit timeoutMs picks up the config-resolved budget', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-timeout-wired-'))
+    writeFileSync(join(dir, 'vinaya.config.json'), JSON.stringify({ report: { commandTimeoutMs: 50 } }))
+    const cwd = process.cwd()
+    process.chdir(dir)
+    try {
+      const result = runAgentCommand('sleep 5')
+      expect(result.timedOut).toBe(true)
+      expect(result.output).toBe('timeout (budget 50ms)')
+    } finally {
+      process.chdir(cwd)
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })
