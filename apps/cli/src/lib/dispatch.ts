@@ -161,7 +161,7 @@ export type DispatchOpts = {
    */
   promptFile: string
   /**
-   * O6 (task-run-v1 task 15): when given, every lifecycle line this call
+   * O6: when given, every lifecycle line this call
    * writes to the terminal (`writeLifecycle`) and every rendered agent-event
    * line is ALSO mirrored, plainly (no ANSI), to this path — the driver's
    * own role-prefixed stream, appended across relaunches. The caller

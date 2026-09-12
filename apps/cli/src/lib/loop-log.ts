@@ -1,5 +1,5 @@
 /**
- * O6 (task-run-v1 task 15) — the one text log every driver (`task run`,
+ * O6 — the one text log every driver (`task run`,
  * `dev-review-loop`) tees its own role-prefixed stream to, regardless of
  * where it was launched: `~/.vinaya/loops/<owner>-<repo>/<issue>.log`. Same
  * repo-directory convention `log-sink.ts`'s `outboxPathFor` already uses

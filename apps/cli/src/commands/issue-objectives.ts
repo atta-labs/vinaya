@@ -212,7 +212,7 @@ function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditO
     ])
   }
 
-  // task-run-v1 task 15, O5: `--add` without a `--part` would freeze an
+  // O5: `--add` without a `--part` would freeze an
   // objective no `## Parts` line ever cites — `checkPartsCiteDefinedObjectives`
   // stays silent about it (it only checks a citation names a REAL objective,
   // never the reverse), so a frozen brief re-issued after this edit would
@@ -366,7 +366,7 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
   const updated = applyOp(previous, op)
   const objectivesBody = spliceObjectivesSection(body, renderObjectives(updated))
 
-  // task-run-v1 task 15, O5: `--add` writes its `--part` line into `## Parts`
+  // O5: `--add` writes its `--part` line into `## Parts`
   // in this SAME edit, so a frozen brief re-issued right after this command
   // always passes `checkObjectivesCoverage`/`checkPartsCiteDefinedObjectives`
   // — never a two-step "edit Objectives, then remember to edit Parts too."

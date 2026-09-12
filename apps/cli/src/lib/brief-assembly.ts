@@ -516,7 +516,7 @@ function extractProjectField(body: string): string[] {
 
 /**
  * Renders the same twelve-section brief as `assembleAndRenderBrief`, but for
- * a backlog Issue with no tranche (task-run-v1 task 15, O1) — `<n>` names
+ * a backlog Issue with no tranche (O1) — `<n>` names
  * the Issue itself, never a tranche+task-id pair. Every section is filled
  * from the Issue's own `## Objectives`/`## Surface`/`## Parts`/
  * `## Test plan`/`## Stop conditions` and its "Dependency rationale" field

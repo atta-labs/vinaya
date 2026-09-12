@@ -89,7 +89,7 @@ function resolveAgentOrReport(parsed: ParsedFlags): DispatchAgent | null {
   return agentRaw as DispatchAgent
 }
 
-/** The publish/pause summary — shared by the tranche-keyed and `--issue` (task-run-v1 task 15, O1) invocations, which differ only in how `result` was obtained. */
+/** The publish/pause summary — shared by the tranche-keyed and `--issue` (O1) invocations, which differ only in how `result` was obtained. */
 function reportRunTaskResult(result: RunTaskResult): void {
   // `prUrl` is `null` only when the repo genuinely could not be resolved
   // (`lib/task-run.ts`'s own `resolvePrUrl` doc comment) — falls back to the
@@ -139,7 +139,7 @@ async function runAndReport(input: Parameters<typeof runTask>[0]): Promise<void>
 }
 
 /**
- * `--issue <n>` (task-run-v1 task 15, O1) — a backlog Issue that carries no
+ * `--issue <n>` (O1) — a backlog Issue that carries no
  * `vinaya/tranche:*` label runs the same unattended path as a tranche task:
  * one frozen brief, one developer on `task/issue-<n>`, the same loop and
  * gate. Mutually exclusive with the `<tranche> <n>` positional form.

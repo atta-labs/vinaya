@@ -231,7 +231,7 @@ function fetchIssueJson(issueNumber: number): IssueJson | null {
 }
 
 /**
- * `--issue <n>` gate: task-run-v1 task 15, O2. Same `checkDispatchReadiness`
+ * `--issue <n>` gate: O2. Same `checkDispatchReadiness`
  * evaluation as the tranche path, sourced from a backlog Issue directly — no
  * topology row, no Milestone, `dependsOn`/`conflictsWith` parsed straight
  * off the Issue's own "Dependency rationale" field and optional (per O2)
@@ -339,7 +339,7 @@ async function main(): Promise<void> {
     process.exit(0)
   }
 
-  // task-run-v1 task 15, O2: a backlog Issue with no tranche — resolved
+  // O2: a backlog Issue with no tranche — resolved
   // straight from the Issue itself, no topology lookup.
   if (ref.kind === 'issue') {
     await runIssueMode(ref.issueNumber)

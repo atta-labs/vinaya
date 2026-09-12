@@ -65,7 +65,7 @@ export async function taskDispatchCommand(args: string[]): Promise<void> {
   if (result.commentUrl) process.stdout.write(`\nPosted: ${result.commentUrl}\n`)
 }
 
-/** Parses `--supersede`/`--reason` — shared by the `<tranche> <n>` and `--issue <n>` (task-run-v1 task 15, O1) forms of `task brief`. */
+/** Parses `--supersede`/`--reason` — shared by the `<tranche> <n>` and `--issue <n>` (O1) forms of `task brief`. */
 function parseSupersede(rest: string[], usage: string): { reason: string } | undefined {
   const hasSupersede = rest.includes('--supersede')
   const reasonIdx = rest.indexOf('--reason')
@@ -88,7 +88,7 @@ const TASK_BRIEF_USAGE = [
 ].join('\n')
 
 /**
- * `--issue <n>` (task-run-v1 task 15, O1) — renders and freezes a backlog
+ * `--issue <n>` (O1) — renders and freezes a backlog
  * Issue's brief exactly as `<tranche> <n>` does for a tranche task. Mutually
  * exclusive with the `<tranche> <n>` positional form.
  */

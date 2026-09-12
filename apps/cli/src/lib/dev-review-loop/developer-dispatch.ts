@@ -423,8 +423,8 @@ const ISSUE_TITLE_SHAPE = /^\[([^\]]+)\]\s+(\d+)\s+[—-]/
 
 /**
  * `task/<tranche>/<n>`, derived from the Issue's own `[<tranche>] <n> — …`
- * title — never guessed or configured separately. A backlog Issue (task-run-v1
- * task 15, O1/O3: no `vinaya/tranche:*` label, so no such title either)
+ * title — never guessed or configured separately. A backlog Issue (O1/O3: no
+ * `vinaya/tranche:*` label, so no such title either)
  * derives `task/issue-<n>` instead — the branch is keyed to the Issue itself,
  * not a tranche+task-id pair. An Issue whose title merely fails to match the
  * shape while still carrying the tranche label is a real defect (a malformed

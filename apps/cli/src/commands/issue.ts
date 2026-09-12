@@ -57,7 +57,7 @@ export async function issueCreateCommand(args: string[]): Promise<void> {
 
   refuseUnlabeledTaskShapedBody(body, labels, RETRY_CREATE)
 
-  // task-run-v1 task 15, O3: a backlog Issue (task-shaped body, no
+  // O3: a backlog Issue (task-shaped body, no
   // `vinaya/tranche:*` label) gets the same brief-schema validation as a
   // tranche task — everything except the tranche-specific label/Milestone
   // machinery below, which stays gated on `isTaskIssueLabelSet` alone since

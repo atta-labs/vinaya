@@ -110,7 +110,7 @@ async function main(): Promise<void> {
   const ref = parseTaskBranchIdentity(branch)
   if (!ref) process.exit(0)
 
-  // task-run-v1 task 15, O2: a backlog Issue's `<n>` IS the Issue — no
+  // O2: a backlog Issue's `<n>` IS the Issue — no
   // tranche topology lookup needed to find which Issue's `## Surface`
   // applies.
   if (ref.kind === 'issue') {

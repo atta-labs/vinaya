@@ -400,7 +400,7 @@ const defaultPrepareIssueTaskDeps: PrepareIssueTaskDeps = {
 }
 
 /**
- * `prepareTask`'s tranche-less twin (task-run-v1 task 15, O1) — renders the
+ * `prepareTask`'s tranche-less twin (O1) — renders the
  * brief from a backlog Issue's own body (`assembleAndRenderBriefForIssue`)
  * and posts it as the same frozen `aeg:brief:v<k>` Issue comment, with the
  * same authorization, existing-brief and supersede rules. Starts no agent,
@@ -473,7 +473,7 @@ export type PrepareTaskOrIssueInput =
 
 /**
  * `taskBriefCommand`'s one named lib function (`apps/cli/specs/surface.md`'s
- * one-lib-call-per-command rule, task-run-v1 task 15, O1) — `prepareTask` and
+ * one-lib-call-per-command rule, O1) — `prepareTask` and
  * `prepareIssueTask` each stay a real, independently-testable function, but
  * the command that can dispatch either shape calls through this single
  * chokepoint rather than two named lib calls.

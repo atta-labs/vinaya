@@ -3,7 +3,7 @@
  * pull request, and whether its dev-review-loop is running, paused,
  * published, or has no driver at all. `vinaya task status <tranche> <n>`
  * narrows to one task and adds the last round's verdict lines plus the
- * exact resume command when paused. `--follow` (task-run-v1 task 15, O6),
+ * exact resume command when paused. `--follow` (O6),
  * on either the `<tranche> <n>` form or `--issue <n>`, tails that task's
  * driver log — `~/.vinaya/loops/<owner>-<repo>/<issue>.log` — live,
  * `tail -f` style, so the state of any run is one command away regardless

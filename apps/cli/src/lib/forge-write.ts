@@ -295,7 +295,7 @@ export function resolveMilestoneAttachArgs(ghArgs: string[], labels: string[]): 
 const CHECK_ISSUE_LABEL = 'issue-label'
 
 /**
- * **Retired (task-run-v1 task 15, O3).** Used to refuse a task-shaped body
+ * **Retired (O3).** Used to refuse a task-shaped body
  * with no `vinaya/tranche:*` label — that invariant no longer holds: a task-
  * shaped, unlabeled body is now the exact shape of a legitimate backlog
  * Issue (see `checkTrancheLabelPresence`'s own doc comment, `@attalabs/aeg-core`,
@@ -1407,7 +1407,7 @@ export async function writeValidatedIssueEdit(input: {
 
   refuseUnlabeledTaskShapedBody(body, labels, retryCommand)
 
-  // task-run-v1 task 15, O3: same widened gate as `issueCreateCommand`'s —
+  // O3: same widened gate as `issueCreateCommand`'s —
   // a backlog Issue's edit is validated too, minus the tranche-specific
   // label/Milestone machinery below.
   if (isTaskIssueLabelSet(labels) || (body !== null && isTaskIssueBodyShaped(body))) {

@@ -248,7 +248,7 @@ export type LoopDeps = {
   fetchConflictingFiles: typeof fetchConflictingFiles
   /** O8: commits touching `DRIVER_OWNED_PATHS` between two base-branch shas. */
   gitCommitsTouchingDriverPaths: typeof gitCommitsTouchingDriverPaths
-  /** O7 (task-run-v1 task 15): pulls the default branch in place. `{ok:true}` on success; `{ok:false, reason}` on any failure (merge conflict, network, detached HEAD) — never throws. */
+  /** O7: pulls the default branch in place. `{ok:true}` on success; `{ok:false, reason}` on any failure (merge conflict, network, detached HEAD) — never throws. */
   pullDefaultBranch: () => { ok: true } | { ok: false; reason: string }
   /** O7: re-execs this same process (same interpreter, same entry script) with `args` replacing the subcommand/flags, `stdio: 'inherit'`. Returns the child's exit code, or `null` when the spawn itself could not even start. Never throws. */
   reexecSelf: (args: string[]) => number | null
@@ -395,7 +395,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   let branch: string
   let prNumber = -1 // resolved below, before any use — never read while -1
   let resumeFrom: PauseState | null = null
-  /** O8 (task-run-v1 task 15): true when `--resume` found the head already moved past the pause-time head — a ruling followed by a fix push, the normal case. Widens `firstPass` below so the loop skips redispatching the developer (it already acted) and goes straight to the gate/reviewer path on the new head. */
+  /** O8: true when `--resume` found the head already moved past the pause-time head — a ruling followed by a fix push, the normal case. Widens `firstPass` below so the loop skips redispatching the developer (it already acted) and goes straight to the gate/reviewer path on the new head. */
   let resumeHeadAlreadyMoved = false
 
   if ('resumePr' in input) {
@@ -974,7 +974,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const touching = d.gitCommitsTouchingDriverPaths(baseHeadAtStart, currentBaseHead)
       if (touching.length === 0) return false
 
-      // O7 (task-run-v1 task 15): a moved base costs a restart, never a
+      // O7: a moved base costs a restart, never a
       // hand — re-exec this same process from the updated base, reattaching
       // to the same task with the same arguments (`--resume <pr>` when this
       // run itself started that way, `--task <n>` otherwise — both forms

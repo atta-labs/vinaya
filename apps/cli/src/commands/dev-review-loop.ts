@@ -26,7 +26,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let json = false
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
-    // `--issue` is `--task`'s exact synonym (task-run-v1 task 15, O1): the
+    // `--issue` is `--task`'s exact synonym (O1): the
     // loop's `task` field is already the Issue number, tranche or not, so a
     // backlog Issue needs no new input shape here — only the naming that
     // matches `task run --issue <n>` / `task brief --issue <n>`.
