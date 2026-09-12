@@ -400,10 +400,23 @@ describe('dispatchRole — two dispatches in the same process', () => {
       ].join('\n')
     )
 
+    // Strip an inherited `VINAYA_RUN_ID`: this test's own process can
+    // itself be running inside a `vinaya dispatch` call (a nested dev-loop
+    // invocation, or — found live — this very test suite run from inside
+    // an agent session that `vinaya dispatch developer` started), which
+    // sets `VINAYA_RUN_ID` in ITS OWN env for its own bookkeeping. Spreading
+    // `...process.env` unfiltered would leak that value into the spawned
+    // script, and `createLogSink`'s `VINAYA_RUN_ID || randomUUID()` would
+    // then have both calls inherit the SAME id instead of minting two
+    // distinct ones — collapsing the exact invariant this test exists to
+    // prove, for a reason that has nothing to do with `dispatchRole` itself.
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+    delete spawnEnv.VINAYA_RUN_ID
+
     execFileSync('bun', [script], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+      env: spawnEnv
     })
 
     // Each call's own `dispatched`/`outcome_received` pair legitimately

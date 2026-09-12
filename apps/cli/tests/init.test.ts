@@ -1269,7 +1269,7 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     )
   }
 
-  it('runs Biome (O5), then typecheck + the file-level test selector (O6), after the check, with no --concurrency=1 (O7) — vendored repo only', async () => {
+  it('runs Biome (O5) as the hook literal first step, then the check, then typecheck + the file-level test selector (O6), with no --concurrency=1 (O7) — vendored repo only', async () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
@@ -1279,15 +1279,15 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     expect(prePush).toContain('bun apps/cli/src/lib/pre-push-select-tests.ts')
     expect(prePush).not.toContain('--concurrency=1')
     expect(prePush).not.toContain('turbo test --affected')
-    // Ordering: check, then Biome (O5's "before anything else" is relative
-    // to the OTHER new steps, not the doctrine gate, which is unrelated),
-    // then typecheck, then the selector.
-    const checkIdx = prePush.indexOf('check --all --local')
+    // Ordering (round-5 ruling): Biome runs literally before anything else
+    // in the hook, including the doctrine gate — then the check, then
+    // typecheck, then the selector.
     const biomeIdx = prePush.indexOf('bunx biome check')
+    const checkIdx = prePush.indexOf('check --all --local')
     const typecheckIdx = prePush.indexOf('bunx turbo typecheck --affected')
     const selectorIdx = prePush.indexOf('pre-push-select-tests.ts')
-    expect(checkIdx).toBeLessThan(biomeIdx)
-    expect(biomeIdx).toBeLessThan(typecheckIdx)
+    expect(biomeIdx).toBeLessThan(checkIdx)
+    expect(checkIdx).toBeLessThan(typecheckIdx)
     expect(typecheckIdx).toBeLessThan(selectorIdx)
   })
 
@@ -2477,7 +2477,7 @@ describe('generated workflows — verified PR-body fetch, bounded backoff (O3)',
     }
   })
 
-  it("no longer waits for the AEG:EVIDENCE block's Head to catch up (O8, task-run-v1 20) — both workflows now trigger only on events where the body already carries the fresh head, so evidence-fresh at the merge gate is the sole guard left", () => {
+  it("no longer waits for the AEG:EVIDENCE block's Head to catch up (O1, task-run-v1 20) — both workflows now trigger only on events where the body already carries the fresh head, so evidence-fresh at the merge gate is the sole guard left", () => {
     const ops = buildInitOps({
       owner: 'acme',
       repo: 'widget',
@@ -2496,7 +2496,7 @@ describe('generated workflows — verified PR-body fetch, bounded backoff (O3)',
     }
   })
 
-  it('vinaya-checks.yml and vinaya-body-checks.yml trigger on opened, reopened, and edited only — never synchronize (O8, task-run-v1 20)', () => {
+  it('vinaya-checks.yml and vinaya-body-checks.yml trigger on opened, reopened, and edited only — never synchronize (O1, task-run-v1 20)', () => {
     const ops = buildInitOps({
       owner: 'acme',
       repo: 'widget',

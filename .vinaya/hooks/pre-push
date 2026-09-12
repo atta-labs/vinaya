@@ -1,6 +1,15 @@
 #!/usr/bin/env sh
 
 # >>> vinaya:managed:pre-push >>>
+# Ring 0 (O5): Biome over the files changed since the remote base —
+# literally the hook's first step, before the doctrine gate and everything
+# else that follows costs real time. The trailing "--" stops flag parsing
+# before the file list, so a tracked file named like a Biome option is
+# passed through as a literal path, never interpreted as one.
+VINAYA_CHANGED_FILES="$(bun apps/cli/src/lib/pre-push-changed-files.ts)"
+if [ -n "$VINAYA_CHANGED_FILES" ]; then
+  echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched -- || exit 1
+fi
 # Vinaya pre-push gate. Runs branch/dispatch checks before the push leaves.
 # Forward git's own pre-push stdin (one "<local ref> <local sha> <remote
 # ref> <remote sha>" line per ref being pushed) so main-branch-refusal can
@@ -14,14 +23,6 @@ if [ ! -f apps/cli/dist/index.js ]; then
   exit 1
 fi
 node apps/cli/dist/index.js check --all --local || exit 1
-# Ring 0 (O5): Biome over the files changed since the remote base, before
-# anything else that follows costs real time. The trailing "--" stops flag
-# parsing before the file list, so a tracked file named like a Biome option
-# is passed through as a literal path, never interpreted as one.
-VINAYA_CHANGED_FILES="$(bun apps/cli/src/lib/pre-push-changed-files.ts)"
-if [ -n "$VINAYA_CHANGED_FILES" ]; then
-  echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched -- || exit 1
-fi
 # Ring 0 (O6): typecheck, then only the test files the real import graph
 # says the changed files could affect.
 bunx turbo typecheck --affected || exit 1

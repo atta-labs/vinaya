@@ -1334,11 +1334,17 @@ ${hookRun(selfHost, 'check --all --local')}`
   // old single `turbo test --affected` line entirely:
   //
   // 1. O5: Biome lint+format on the files changed since the remote base —
-  //    BEFORE anything else, so a formatting slip never even reaches the
-  //    doctrine gate. Report-only (no `--write`): a push can't safely
-  //    rewrite-and-restage the way the pre-commit hook's own staged-file
-  //    fix does, since the commits are already made — the contributor fixes
-  //    with `bunx biome check --write .` locally, same as CI's own message.
+  //    literally the hook's first step, before the doctrine gate and
+  //    everything else, so a formatting slip never even reaches it (round-5
+  //    ruling: "before anything else" is the hook's own first line, not
+  //    merely first among the new O5/O6/O7 steps). Report-only (no
+  //    `--write`): a push can't safely rewrite-and-restage the way the
+  //    pre-commit hook's own staged-file fix does, since the commits are
+  //    already made — the contributor fixes with `bunx biome check --write
+  //    .` locally, same as CI's own message. Reads only git state (the
+  //    remote-base diff) — never git's own pre-push stdin, so running it
+  //    before the doctrine gate's `VINAYA_PUSH_REFS="$(cat)"` below leaves
+  //    that read untouched.
   // 2. The doctrine gate (unchanged).
   // 3. O6: `turbo typecheck --affected` (unchanged mechanism) plus the new
   //    file-level test selector (`vinaya-select-tests`,
@@ -1357,15 +1363,16 @@ ${hookRun(selfHost, 'check --all --local')}`
   //    processes) cannot recur when there is only ever one. The full,
   //    unscoped affected suite stays CI's job, on the one push, exactly as
   //    before.
-  return `${doctrineGate}
-# Ring 0 (O5): Biome over the files changed since the remote base, before
-# anything else that follows costs real time. The trailing "--" stops flag
-# parsing before the file list, so a tracked file named like a Biome option
-# is passed through as a literal path, never interpreted as one.
+  return `# Ring 0 (O5): Biome over the files changed since the remote base —
+# literally the hook's first step, before the doctrine gate and everything
+# else that follows costs real time. The trailing "--" stops flag parsing
+# before the file list, so a tracked file named like a Biome option is
+# passed through as a literal path, never interpreted as one.
 VINAYA_CHANGED_FILES="$(${libBinInvocation(selfHost, 'pre-push-changed-files.ts', 'vinaya-changed-files')})"
 if [ -n "$VINAYA_CHANGED_FILES" ]; then
   echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched -- || exit 1
 fi
+${doctrineGate}
 # Ring 0 (O6): typecheck, then only the test files the real import graph
 # says the changed files could affect.
 bunx turbo typecheck --affected || exit 1
