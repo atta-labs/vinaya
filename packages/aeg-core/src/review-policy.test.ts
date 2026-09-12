@@ -13,7 +13,7 @@ import {
   securityBlockingSeverities
 } from './review-policy'
 
-const THIS_REPO_POLICY: ReviewPolicy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' }
+const THIS_REPO_POLICY: ReviewPolicy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 }
 
 describe('blockingSeverities', () => {
   test('is the scale prefix ending at threshold, inclusive', () => {

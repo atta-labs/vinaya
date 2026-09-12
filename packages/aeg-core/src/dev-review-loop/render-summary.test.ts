@@ -9,7 +9,8 @@ const CONFIG: LoopConfig = {
   loopId: 'loop-1',
   task: 414,
   reviewers: ['code-reviewer', 'security'],
-  models: { 'code-reviewer': 'sonnet', security: 'sonnet' }
+  models: { 'code-reviewer': 'sonnet', security: 'sonnet' },
+  maxRounds: 3
 }
 
 function freshState() {

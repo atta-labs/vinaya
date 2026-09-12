@@ -23,15 +23,21 @@ export type CodeReviewSeverity = (typeof CODE_REVIEW_SEVERITY_ORDER)[number]
 export const SECURITY_SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const
 export type SecuritySeverity = (typeof SECURITY_SEVERITY_ORDER)[number]
 
-/** An omitted policy means today's behaviour (O1): code review at `BLOCKER`, security at `HIGH`. */
+/** (`doctrine-fixes-v1` task 1, `#543`, O4) The dev-review-loop's own round cap, default — replaces the `assess-round.ts` constant this once was; overridable via `reviewPolicy.maxRounds` in `vinaya.config.json`. */
+export const DEFAULT_MAX_ROUNDS = 3
+
+/** An omitted policy means today's behaviour (O1): code review at `BLOCKER`, security at `HIGH`, `DEFAULT_MAX_ROUNDS` rounds. */
 export const DEFAULT_REVIEW_POLICY: ReviewPolicy = {
   codeReviewThreshold: 'BLOCKER',
-  securityThreshold: 'HIGH'
+  securityThreshold: 'HIGH',
+  maxRounds: DEFAULT_MAX_ROUNDS
 }
 
 export type ReviewPolicy = {
   codeReviewThreshold: CodeReviewSeverity
   securityThreshold: SecuritySeverity
+  /** (`#543` O4) The dev-review-loop's own round cap — repository policy, not a hardcoded constant. Resolved once per loop run, same trust class as the two thresholds above. */
+  maxRounds: number
 }
 
 /** The minimal shape the evaluator needs — every real finding type (review-post.ts's `Finding`, a gate-side severity-only extraction) satisfies it. */

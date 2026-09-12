@@ -613,7 +613,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // fails schema validation silently (`log()` never throws — `loop_started`
       // just never lands in the outbox; found live authoring this task).
       reviewers: ['code-reviewer', 'security'],
-      models: { developer: input.agent, 'code-reviewer': input.agent, security: input.agent }
+      models: { developer: input.agent, 'code-reviewer': input.agent, security: input.agent },
+      // (`#543` O4) Repository policy, resolved once above (`reviewPolicy()`)
+      // — never a hardcoded constant here or in `assessRound`.
+      maxRounds: policy.maxRounds
     }
     let state: LoopState = initialLoopState(config)
 

@@ -25,9 +25,10 @@ export function pauseMarker(reason: PauseReason): string {
  * The pause comment's body — the reason and the exact resume command,
  * nothing verdict-shaped. `detail` is set for `reason: 'infrastructure'`
  * (O2, the role and missing artifact(s) the driver observed on both dispatch
- * attempts) and for `reason: 'no_push'` (`#543` O2, the branch and dirty
- * file(s) the driver observed) — appended to the first line either way;
- * every other reason carries no detail and renders exactly as before.
+ * attempts), for `reason: 'no_push'` (`#543` O2, the branch and dirty
+ * file(s) the driver observed), and for `reason: 'max_rounds'` (`#543` O4,
+ * the configured round cap) — appended to the first line either way; every
+ * other reason carries no detail and renders exactly as before.
  */
 export function renderPauseComment(prNumber: number, reason: PauseReason, detail?: string): string {
   return [

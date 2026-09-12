@@ -192,6 +192,8 @@ export type LoopConfig = {
   task: number
   reviewers: string[]
   models: Record<string, string>
+  /** (`#543` O4) The round cap — resolved by the driver from `ReviewPolicy.maxRounds` (repository config), never read here: this module has no config read of its own. */
+  maxRounds: number
 }
 
 /** A round awaiting its `verdicts` observation, or awaiting a confidence re-ask — never both logged twice. */

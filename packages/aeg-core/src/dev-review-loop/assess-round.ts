@@ -58,8 +58,6 @@ import {
   type VerdictObservation
 } from './types'
 
-const MAX_ROUNDS = 3
-
 function loopEventEnvelope(state: LoopState): {
   kind: 'dev_review_loop'
   payload: Record<string, never>
@@ -74,7 +72,9 @@ function loopStartedEvent(state: LoopState): DevReviewLoopEventInput {
     event: 'loop_started',
     task: state.config.task,
     policy: {
-      max_rounds: MAX_ROUNDS,
+      // (`#543` O4) Repository policy, resolved once by the driver into
+      // `LoopConfig.maxRounds` — never a hardcoded constant here.
+      max_rounds: state.config.maxRounds,
       reviewers: state.config.reviewers as never,
       models: state.config.models as never
     }
@@ -415,7 +415,7 @@ function assessVerdicts(
     return { decision: { type: 'pause', reason: 'no_progress' }, state: preFinalize, events }
   }
 
-  if (obs.round > MAX_ROUNDS) {
+  if (obs.round > state.config.maxRounds) {
     events.push(stopConditionMetEvent(state, obs.round, 'max_rounds'))
     events.push(pausedEvent(state, obs.round, 'principal_item'))
     events.push(roundEndedEvent(state, obs.round, pending.stats, 'changes_requested'))
@@ -428,7 +428,12 @@ function assessVerdicts(
       ...withRoundStats(state, pending.stats)
     }
     events.push(journalFinalizedEvent(preFinalize, pending.stats.head, 'stopped'))
-    return { decision: { type: 'pause', reason: 'max_rounds' }, state: preFinalize, events }
+    // (`#543` O4) The pause names the configured cap, not a bare "max_rounds".
+    return {
+      decision: { type: 'pause', reason: 'max_rounds', detail: `max rounds: ${state.config.maxRounds}` },
+      state: preFinalize,
+      events
+    }
   }
 
   events.push(roundEndedEvent(state, obs.round, pending.stats, 'changes_requested'))

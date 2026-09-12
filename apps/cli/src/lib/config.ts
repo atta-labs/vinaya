@@ -594,7 +594,13 @@ export const VinayaConfigSchema = z.object({
   reviewPolicy: z
     .object({
       codeReviewThreshold: z.string().min(1).optional(),
-      securityThreshold: z.string().min(1).optional()
+      securityThreshold: z.string().min(1).optional(),
+      // (`#543` O4) Same deliberately-loose typing as the two thresholds
+      // above, for the same reason: a `z.number().int().positive()` failure
+      // here would fail the WHOLE config's schema parse (silently falling
+      // back to null everywhere) rather than this field's own loud refusal
+      // in `resolveReviewPolicy`, below.
+      maxRounds: z.number().optional()
     })
     .optional()
 })
@@ -780,9 +786,20 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
       `vinaya.config.json: reviewPolicy.securityThreshold "${securityThreshold}" is not one of ${SECURITY_SEVERITY_ORDER.join(' > ')} — fix the config, this never falls back to a default.`
     )
   }
+  // (`doctrine-fixes-v1` task 1, `#543`, O4) The dev-review-loop's own round
+  // cap, replacing `assess-round.ts`'s hardcoded constant. Same refuse-never-
+  // downgrade discipline as the two thresholds above: a present-but-invalid
+  // value (non-integer, zero, negative) is a config defect to fix.
+  const maxRounds = raw.maxRounds ?? DEFAULT_REVIEW_POLICY.maxRounds
+  if (!Number.isInteger(maxRounds) || maxRounds < 1) {
+    throw new Error(
+      `vinaya.config.json: reviewPolicy.maxRounds "${maxRounds}" is not a positive integer — fix the config, this never falls back to a default.`
+    )
+  }
   return {
     codeReviewThreshold: codeReviewThreshold as ReviewPolicy['codeReviewThreshold'],
-    securityThreshold: securityThreshold as ReviewPolicy['securityThreshold']
+    securityThreshold: securityThreshold as ReviewPolicy['securityThreshold'],
+    maxRounds
   }
 }
 

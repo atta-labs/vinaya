@@ -4534,7 +4534,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
 describe('a loop-published verdict agrees with the merge gate under policy (review-validity-v1 task 8, #506, O2/O4)', () => {
   const HEAD = 'e'.repeat(40)
   const TOKENS = { taskId: '506', model: 'claude', tokensIn: '8', tokensOut: '4', cost: '—', sessionId: 's1' }
-  const THIS_REPO_POLICY = { codeReviewThreshold: 'MAJOR' as const, securityThreshold: 'HIGH' as const }
+  const THIS_REPO_POLICY = { codeReviewThreshold: 'MAJOR' as const, securityThreshold: 'HIGH' as const, maxRounds: 3 }
 
   it("a MAJOR finding drives REQUEST_CHANGES at the loop (never reaches a clean round to publish) under this repo's MAJOR/HIGH policy", () => {
     const findings = [{ severity: 'MAJOR', location: 'a.ts:1', description: 'off-by-one' }]
@@ -4599,9 +4599,9 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
 
   it('the identical MAJOR-carrying comment passes under the DEFAULT (BLOCKER) policy — the gate and the default-policy derivation agree too', () => {
     const findings = [{ severity: 'MAJOR', location: 'a.ts:1', description: 'off-by-one' }]
-    expect(deriveCodeReviewVerdict(findings, { codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH' })).toBe(
-      'APPROVE'
-    )
+    expect(
+      deriveCodeReviewVerdict(findings, { codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3 })
+    ).toBe('APPROVE')
 
     const reviewerComment = renderCodeReviewComment({
       ...TOKENS,

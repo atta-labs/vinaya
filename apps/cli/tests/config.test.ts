@@ -120,18 +120,21 @@ describe('config', () => {
   it('resolveReviewPolicy defaults a per-field omission independently', () => {
     expect(resolveReviewPolicy({ reviewPolicy: { codeReviewThreshold: 'MAJOR' } })).toEqual({
       codeReviewThreshold: 'MAJOR',
-      securityThreshold: 'HIGH'
+      securityThreshold: 'HIGH',
+      maxRounds: 3
     })
     expect(resolveReviewPolicy({ reviewPolicy: { securityThreshold: 'MEDIUM' } })).toEqual({
       codeReviewThreshold: 'BLOCKER',
-      securityThreshold: 'MEDIUM'
+      securityThreshold: 'MEDIUM',
+      maxRounds: 3
     })
   })
 
   it('resolveReviewPolicy resolves this repository’s own configured MAJOR/HIGH', () => {
     expect(resolveReviewPolicy({ reviewPolicy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' } })).toEqual({
       codeReviewThreshold: 'MAJOR',
-      securityThreshold: 'HIGH'
+      securityThreshold: 'HIGH',
+      maxRounds: 3
     })
   })
 
@@ -149,6 +152,23 @@ describe('config', () => {
 
   it('resolveReviewPolicy REFUSES a threshold from the wrong role’s scale (security value on the code-review field)', () => {
     expect(() => resolveReviewPolicy({ reviewPolicy: { codeReviewThreshold: 'HIGH' } })).toThrow(/not one of/)
+  })
+
+  it('resolveReviewPolicy (#543 O4) resolves a configured maxRounds, defaults to 3 when omitted', () => {
+    expect(resolveReviewPolicy({ reviewPolicy: { maxRounds: 5 } })).toEqual({
+      codeReviewThreshold: 'BLOCKER',
+      securityThreshold: 'HIGH',
+      maxRounds: 5
+    })
+    expect(resolveReviewPolicy({})).toEqual(expect.objectContaining({ maxRounds: 3 }))
+  })
+
+  it('resolveReviewPolicy (#543 O4) REFUSES a non-positive-integer maxRounds, never falls back', () => {
+    expect(() => resolveReviewPolicy({ reviewPolicy: { maxRounds: 0 } })).toThrow(
+      /maxRounds "0" is not a positive integer/
+    )
+    expect(() => resolveReviewPolicy({ reviewPolicy: { maxRounds: -1 } })).toThrow(/maxRounds/)
+    expect(() => resolveReviewPolicy({ reviewPolicy: { maxRounds: 2.5 } })).toThrow(/maxRounds/)
   })
 
   it('configPath returns local path when vinaya.config.json exists in cwd', () => {
