@@ -543,6 +543,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `resolveModelFromRationale` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `AGENT_CLASS_VALUES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `AGENT_VENDOR_NAMES` | const | `apps/cli/src/lib/dispatch.ts` |
+| `BACKGROUND_DENY_REASON` | const | `apps/cli/src/lib/dispatch.ts` |
 | `colourAgentLine` | function | `apps/cli/src/lib/dispatch.ts` |
 | `colourEnabled` | function | `apps/cli/src/lib/dispatch.ts` |
 | `colourLoopLine` | function | `apps/cli/src/lib/dispatch.ts` |
@@ -565,6 +566,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `renderGeminiEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `resolveClassModel` | function | `apps/cli/src/lib/dispatch.ts` |
 | `timeoutWarningLeadMs` | function | `apps/cli/src/lib/dispatch.ts` |
+| `writeDispatchSettings` | function | `apps/cli/src/lib/dispatch.ts` |
 | `appendDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `applyDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `freshDocOwners` | function | `apps/cli/src/lib/doc-owners-write.ts` |

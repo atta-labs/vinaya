@@ -587,7 +587,16 @@ describe('dispatchRole — resume identifier (round-trip, per vendor)', () => {
         path
       )
       expect(second.status).toBe(0)
-      expect(readArgv(argvOut)).toEqual(fixture.resumeArgv(synthId))
+      // O1 (#543): claude alone gets a trailing `--settings <path>` pair
+      // (see the dedicated O1 describe block below) — stripped here so this
+      // test keeps asserting the vendor-specific resume shape it always has.
+      const actualArgv = readArgv(argvOut)
+      if (fixture.agent === 'claude') {
+        expect(actualArgv.slice(-2, -1)).toEqual(['--settings'])
+        expect(actualArgv.slice(0, -2)).toEqual(fixture.resumeArgv(synthId))
+      } else {
+        expect(actualArgv).toEqual(fixture.resumeArgv(synthId))
+      }
     })
   }
 })
@@ -1322,7 +1331,14 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
         `${binDir}:${pathWithoutRealVendors()}`
       )
       expect(r.status).toBe(0)
-      expect(readArgv(argvOut)).toEqual(fixture.argv)
+      // O1 (#543): claude alone gets a trailing `--settings <path>` pair.
+      const actualArgv = readArgv(argvOut)
+      if (fixture.agent === 'claude') {
+        expect(actualArgv.slice(-2, -1)).toEqual(['--settings'])
+        expect(actualArgv.slice(0, -2)).toEqual(fixture.argv)
+      } else {
+        expect(actualArgv).toEqual(fixture.argv)
+      }
     })
   }
 
@@ -1346,7 +1362,10 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
       `${binDir}:${pathWithoutRealVendors()}`
     )
     expect(r.status).toBe(0)
-    expect(readArgv(argvOut)).toEqual(['-p', '--verbose', '--output-format', 'stream-json'])
+    // O1 (#543): claude alone gets a trailing `--settings <path>` pair.
+    const actualArgv = readArgv(argvOut)
+    expect(actualArgv.slice(-2, -1)).toEqual(['--settings'])
+    expect(actualArgv.slice(0, -2)).toEqual(['-p', '--verbose', '--output-format', 'stream-json'])
   })
 
   it('O2: dispatched records the requested model as a marked request label, never bare (no receipt possible yet)', () => {
@@ -1494,5 +1513,100 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     // guessed, version-pinned model name.
     expect(resolveClassModel('codex', 'high')).toBeNull()
     expect(resolveClassModel('gemini', 'high')).toBeNull()
+  })
+})
+
+describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
+  it('wires --settings into a claude dispatch, whose hook denies a Bash call with run_in_background:true and is silent otherwise', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+    const settingsIdx = argv.indexOf('--settings')
+    expect(settingsIdx).toBeGreaterThan(-1)
+    const settingsPath = argv[settingsIdx + 1] as string
+    expect(existsSync(settingsPath)).toBe(true)
+
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }> }
+    }
+    const preToolUse = settings.hooks.PreToolUse
+    expect(preToolUse).toHaveLength(1)
+    expect(preToolUse[0]?.matcher).toBe('Bash')
+    expect(preToolUse[0]?.hooks[0]?.type).toBe('command')
+    const hookCommand = preToolUse[0]?.hooks[0]?.command as string
+    expect(hookCommand).toMatch(/^bun "/)
+
+    // Behavioral proof, not just structural: actually run the referenced
+    // hook script both ways.
+    const scriptPath = hookCommand.slice('bun "'.length, -1)
+    const denied = spawnSync('bun', [scriptPath], {
+      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'sleep 100', run_in_background: true } }),
+      encoding: 'utf8'
+    })
+    expect(denied.status).toBe(0)
+    const deniedOut = JSON.parse(denied.stdout) as {
+      hookSpecificOutput: { hookEventName: string; permissionDecision: string; permissionDecisionReason: string }
+    }
+    expect(deniedOut.hookSpecificOutput.hookEventName).toBe('PreToolUse')
+    expect(deniedOut.hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(deniedOut.hookSpecificOutput.permissionDecisionReason).toMatch(/foreground/)
+
+    const allowed = spawnSync('bun', [scriptPath], {
+      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo hi', run_in_background: false } }),
+      encoding: 'utf8'
+    })
+    expect(allowed.status).toBe(0)
+    expect(allowed.stdout.trim()).toBe('')
+
+    const nonBash = spawnSync('bun', [scriptPath], {
+      input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path: '/tmp/x' } }),
+      encoding: 'utf8'
+    })
+    expect(nonBash.status).toBe(0)
+    expect(nonBash.stdout.trim()).toBe('')
+  })
+
+  it('never wires --settings for codex or gemini — no confirmed-live equivalent deny mechanism for either', () => {
+    for (const agent of ['codex', 'gemini']) {
+      const home = tempDir('vinaya-dispatch-home-')
+      const cwd = tempDir('vinaya-dispatch-cwd-')
+      const binDir = tempDir('vinaya-dispatch-bin-')
+      const argvOut = join(cwd, 'argv.out')
+      writeFakeBinary(
+        binDir,
+        agent,
+        `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+      )
+      const promptFile = join(cwd, 'prompt.txt')
+      writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+      const r = runDispatch(
+        ['developer', '--agent', agent, '--prompt-file', promptFile],
+        cwd,
+        home,
+        `${binDir}:${pathWithoutRealVendors()}`
+      )
+      expect(r.status).toBe(0)
+      const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+      expect(argv.includes('--settings')).toBe(false)
+    }
   })
 })
