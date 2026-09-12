@@ -1,5 +1,5 @@
 /**
- * task-run-v1 20, O5/O6 — "the files changed since the remote base" is one
+ * "The files changed since the remote base" is one
  * fact both the pre-push hook's Biome step and its test-file selector need
  * identically; computed once here so the two can never quietly diverge on
  * what "changed" means.

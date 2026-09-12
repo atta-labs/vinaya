@@ -1,5 +1,5 @@
 /**
- * task-run-v1 20, O6 — resolves, through the real import graph, which test
+ * Resolves, through the real import graph, which test
  * files a set of changed files could affect. Never a folder heuristic: a
  * changed file selects a test only when that test's own transitive import
  * closure actually reaches it, so a change in one file of a large directory

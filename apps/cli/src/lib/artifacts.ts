@@ -1307,7 +1307,7 @@ bunx turbo typecheck --affected || exit 1
 ${doctrineGate}`
 }
 
-/** `bun <dir>/src/lib/<file>.ts` self-hosted, `npx --yes -p @attalabs/vinaya@<version> <bin>` for an adopter's real install — the same two-shape split `hookRun` already draws, for a script that isn't routed through the CLI's own argv dispatch at all (task-run-v1 20, O5/O6). */
+/** `bun <dir>/src/lib/<file>.ts` self-hosted, `npx --yes -p @attalabs/vinaya@<version> <bin>` for an adopter's real install — the same two-shape split `hookRun` already draws, for a script that isn't routed through the CLI's own argv dispatch at all. */
 function libBinInvocation(selfHost: VendoredVinaya | null, file: string, bin: string): string {
   if (selfHost) return `bun ${selfHost.dir}/src/lib/${file}`
   return `npx --yes -p @attalabs/vinaya@${ownVersion()} ${bin}`
@@ -1330,7 +1330,7 @@ ${hookRun(selfHost, 'check --all --local')}`
   // `biome`/`turbo` existing, the same line `preCommitBody`'s O9 block
   // already draws.
   //
-  // task-run-v1 20 (O5, O6, O7) — three steps, in this order, replacing the
+  // O5, O6, O7 — three steps, in this order, replacing the
   // old single `turbo test --affected` line entirely:
   //
   // 1. O5: Biome lint+format on the files changed since the remote base —

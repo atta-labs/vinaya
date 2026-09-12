@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * task-run-v1 20, O6 — the pre-push hook's own entrypoint into the test
+ * The pre-push hook's own entrypoint into the test
  * selector. Standalone (not routed through `index.ts`/`commands/`) so it
  * bundles and ships exactly like `checks/bin/*.ts` does, and so the hook can
  * invoke it directly without paying for the whole CLI's argv-parsing layer.
