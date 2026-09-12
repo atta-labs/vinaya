@@ -126,6 +126,10 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `globsOverlap` | function | `packages/aeg-core/src/derive-section7.ts` |
 | `deriveTranche` | function | `packages/aeg-core/src/derive-tranche.ts` |
 | `assessRound` | function | `packages/aeg-core/src/dev-review-loop/assess-round.ts` |
+| `extractLoopEventsFromCommentBody` | function | `packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts` |
+| `nextRoundNumber` | function | `packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts` |
+| `parseLoopEventLines` | function | `packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts` |
+| `reconstructRounds` | function | `packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts` |
 | `renderSummary` | function | `packages/aeg-core/src/dev-review-loop/render-summary.ts` |
 | `initialLoopState` | function | `packages/aeg-core/src/dev-review-loop/types.ts` |
 | `deriveDiagramModel` | function | `packages/aeg-core/src/diagram-model.ts` |
@@ -508,6 +512,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `waitForOwnLoopLine` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `postForgeEffectOnce` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
 | `publishRound` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
+| `fetchLoopHistory` | function | `apps/cli/src/lib/dev-review-loop/journal-history.ts` |
 | `clearDriverLock` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `isDriverPidAlive` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `pauseMarker` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |

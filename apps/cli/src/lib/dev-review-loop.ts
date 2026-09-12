@@ -51,12 +51,14 @@ import {
   compareManifest,
   initialLoopState,
   manifestAsEchoed,
+  nextRoundNumber,
   type Confidence,
   type Decision,
   type DevReviewLoopEventInput,
   type LoopConfig,
   type LoopState,
   type Observations,
+  type ReconstructedJournal,
   type ReviewInputManifest,
   type RoundStats
 } from '@attalabs/aeg-core'
@@ -130,6 +132,7 @@ import {
   waitForOwnLoopLine
 } from './dev-review-loop/round-assess.js'
 import { postForgeEffectOnce, publishRound } from './dev-review-loop/publication.js'
+import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
 import {
   clearDriverLock,
   isDriverPidAlive,
@@ -232,6 +235,8 @@ export type LoopDeps = {
   gitFetch: (sha: string) => void
   gitDiffShortstat: (base: string, head: string) => string
   flushOutbox: (task: number) => Promise<void>
+  /** O9: the task's complete round journal, replayed from the forge's already-flushed record plus this machine's still-unflushed outbox. */
+  fetchLoopHistory: (root: string, repo: { owner: string; repo: string } | null, task: number) => ReconstructedJournal
   sleep: (ms: number) => Promise<void>
   now: () => number
   prPollMaxAttempts: number
@@ -360,6 +365,7 @@ function defaultDeps(): LoopDeps {
     gitFetch: defaultGitFetch,
     gitDiffShortstat: defaultGitDiffShortstat,
     flushOutbox: defaultFlushOutbox,
+    fetchLoopHistory,
     sleep: defaultSleep,
     now: () => Date.now(),
     // O3: env-overridable the same way the gate poll
@@ -462,6 +468,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   try {
     return await runDevReviewLoopBody()
   } finally {
+    // O10 (`task-run-v1` 21, `#541`): every explicit return path already
+    // flushes before leaving (~19 call sites throughout the round loop
+    // below) — this is the one flush that is NOT conditional on reaching
+    // one of them. An uncaught error thrown from anywhere in the loop
+    // (a `gh` call, `assessRound`, a rejected promise) unwinds straight
+    // through every one of those sites without calling any of them, and
+    // this `finally` is the only code that still runs on that path.
+    // `d.flushOutbox` never throws (`defaultFlushOutbox`'s own doc comment:
+    // every failure is caught and written to stderr, non-fatal) — safe to
+    // call unconditionally here, including while a real error is already
+    // propagating out of the `try`.
+    await d.flushOutbox(task)
     clearDriverLock(root, task)
   }
 
@@ -536,6 +554,43 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
     let state: LoopState = initialLoopState(config)
 
+    /**
+     * O9: the round journal is the task's, not this process's — on attach
+     * or resume (never a genuine round-1 dispatch, which by construction
+     * has no prior round to recover), replay every `dev_review_loop` event
+     * the task has ever emitted before this run logs one of its own.
+     * `seedLoopHistory` is called from exactly two sites below: the
+     * `resumeFrom` branch, and the `existingPr` attach branch.
+     *
+     * Applied only when the newest reconstructed round did NOT conclude
+     * green — a green round already published its verdicts and ended the
+     * loop; re-invoking the driver against that same, still-open PR (a
+     * restart, or a test's own idempotency check) is meant to re-derive the
+     * SAME round from scratch, not invent a round that never happened. This
+     * also protects against the one real hazard seeding would otherwise
+     * create: `assessRound` always APPENDS to `state.rounds`
+     * (`assess-round.ts`'s `buildRoundRecord` call sites), never
+     * deduplicates by round number — seeding round 1's record here, then
+     * letting this same run recompute round 1 live, would double it in the
+     * published table.
+     */
+    let loopHistory: ReconstructedJournal = { rounds: [], totalWallMs: 0, totalFilesChanged: 0 }
+    /** Whether `seedLoopHistory` actually applied — the round-bump below reuses this instead of re-deriving the same "newest round green?" check a second time. */
+    let historyApplies = false
+    function seedLoopHistory(): void {
+      loopHistory = d.fetchLoopHistory(root, repo, task)
+      const newest = loopHistory.rounds[loopHistory.rounds.length - 1]
+      historyApplies = newest !== undefined && newest.outcome !== 'green'
+      if (!historyApplies) return
+      state = {
+        ...state,
+        rounds: loopHistory.rounds,
+        totalWallMs: loopHistory.totalWallMs,
+        totalFilesChanged: loopHistory.totalFilesChanged
+      }
+    }
+    if (resumeFrom) seedLoopHistory()
+
     let round = resumeFrom ? resumeFrom.round : 1
     let devResumeId: string | null = null
     let devDispatchSucceededBefore = false
@@ -550,10 +605,36 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /** O4/O6: the conflicting file(s) from the last mergeability read, consumed by the very next `dispatch_developer` prompt, then cleared — never a CI-red retry (never sets `pendingGateRedRetry`), so the head-change-wait that follows always re-checks the gate fresh rather than replaying `lastFailingChecks`. */
     let pendingConflictFiles: string[] | null = null
 
+    /**
+     * O11 (`task-run-v1` 21, `#541`): the task Issue, branch, worktree path,
+     * and current remote head — every prompt a RESUMED developer session
+     * receives names all four, so a session resumed among many worktrees on
+     * the same machine never has to ask which branch is meant (Origin, task
+     * #538: exactly that, with forty stale worktrees present). Never
+     * prepended to a genuinely fresh round-1 dispatch — that prompt is the
+     * frozen brief itself, opening a brand-new session with no worktree to
+     * be confused about yet.
+     */
+    function resumeContextBlock(): string {
+      let remoteHead: string | null
+      try {
+        remoteHead = d.resolveHead(branch)
+      } catch {
+        remoteHead = null
+      }
+      return [
+        `Resuming task Issue #${task}.`,
+        `Branch: \`${branch}\``,
+        `Worktree: \`${worktreePathForBranch()}\``,
+        `Remote head: ${remoteHead ?? '(no head on origin)'}`
+      ].join('\n')
+    }
+
     async function dispatchDeveloper(prompt: string, roundNum: number): Promise<DispatchHandle> {
       const isResume = devResumeId !== null
-      const handle = await withPromptFile(prompt, (promptFile) =>
-        d.dispatchRole('developer', input.agent, prompt, {
+      const fullPrompt = isResume ? `${resumeContextBlock()}\n\n${prompt}` : prompt
+      const handle = await withPromptFile(fullPrompt, (promptFile) =>
+        d.dispatchRole('developer', input.agent, fullPrompt, {
           task: task,
           round: roundNum,
           resumeId: devResumeId ?? undefined,
@@ -840,6 +921,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         prNumber = existingPr.number
         const rec = d.readResumeRecord(task, input.agent, repo)
         if (rec) devResumeId = rec.resumeId
+        seedLoopHistory()
 
         // O4 (task 3, `#482`): a prior process may have
         // dispatched round k's reviewers, held REQUEST-CHANGES verdicts on
@@ -927,6 +1009,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         }
       }
     }
+
+    // O9: an attach with no locally-held request-changes file to recover
+    // `round` from (`latestHeldRequestChanges`, above, returned null — a
+    // different machine, or local state already cleaned) must still not
+    // restart round numbering at 1 when the reconstructed history shows
+    // real, still-unfinished prior rounds (`historyApplies` — see
+    // `seedLoopHistory`'s own doc comment for why a newest-round-green
+    // history never reaches here). Never applied to `--resume`: that round
+    // is deliberately the ruling's own ordinal (O8), not the next
+    // sequential round, and `Math.max` never regresses the more-precise,
+    // locally-held recovery above when both agree or the local one is
+    // ahead.
+    if (!resumeFrom && historyApplies) round = Math.max(round, nextRoundNumber(loopHistory.rounds))
 
     // Held back from `logEvents` until `publishRound` (below) actually
     // succeeds — `assessRound`'s one `journal_finalized`/`merged_ready` event
@@ -1050,7 +1145,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 : isGateRedRetry
                   ? `CI is red on the last head. Failing check-run(s): ${
                       lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
-                    }. Fix and push.`
+                    }. Fix the failing check(s), then run \`git push\` from this worktree to push the fix as a new commit on the SAME branch.`
                   : // `isGateRedRetry` is false here only when this dispatch came from
                     // `assessVerdicts`' review-findings fallback, which requires
                     // `dispatch_reviewers` to have already run and set `lastReviewContext`

@@ -51,6 +51,15 @@ import { fileURLToPath } from 'node:url'
  * file) drops out of both allowlists below — it no longer touches the
  * outbox or imports `log-sink.js` at all, only argv-parses and calls the
  * one lib function — and `LOG_FLUSH_LIB_PATH` takes its place in both.
+ *
+ * Amended by task 21 (`task-run-v1`, `#541`, O9): `journal-history.ts`
+ * (`apps/cli/src/lib/dev-review-loop/`) imports `outboxPathFor` from
+ * `log-sink.js` — never `log()` itself — to locate this machine's
+ * still-unflushed outbox file for a task, reading it directly with
+ * `readFileSync` rather than through the sink. Read-only, the same
+ * "polls/reads, never appends or truncates" category `dispatch.ts` already
+ * occupies in this allowlist, so it joins `CALLER_ALLOWLIST` alone, neither
+ * truncate nor held-verdict allowlist.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
@@ -62,8 +71,15 @@ const DEV_REVIEW_LOOP_PATH = 'apps/cli/src/lib/dev-review-loop.ts'
 const DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH = 'apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts'
 const DEV_REVIEW_LOOP_PUBLICATION_PATH = 'apps/cli/src/lib/dev-review-loop/publication.ts'
 const DEV_REVIEW_LOOP_PAUSE_RESUME_PATH = 'apps/cli/src/lib/dev-review-loop/pause-resume.ts'
+const DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH = 'apps/cli/src/lib/dev-review-loop/journal-history.ts'
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
-const CALLER_ALLOWLIST = new Set([...FUTURE_CALLER_ALLOWLIST, LOG_FLUSH_LIB_PATH, DISPATCH_PATH, DEV_REVIEW_LOOP_PATH])
+const CALLER_ALLOWLIST = new Set([
+  ...FUTURE_CALLER_ALLOWLIST,
+  LOG_FLUSH_LIB_PATH,
+  DISPATCH_PATH,
+  DEV_REVIEW_LOOP_PATH,
+  DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH
+])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_FLUSH_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
   DEV_REVIEW_LOOP_PATH,

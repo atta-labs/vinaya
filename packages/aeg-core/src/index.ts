@@ -426,7 +426,15 @@ export {
   resolveObjectivesSource
 } from './objectives'
 export type { Objective, ObjectivesSource, ParsedObjectives } from './objectives'
-export { assessRound, initialLoopState, renderSummary } from './dev-review-loop'
+export {
+  assessRound,
+  extractLoopEventsFromCommentBody,
+  initialLoopState,
+  nextRoundNumber,
+  parseLoopEventLines,
+  reconstructRounds,
+  renderSummary
+} from './dev-review-loop'
 export type {
   Confidence,
   Decision,
@@ -439,6 +447,7 @@ export type {
   Observations,
   PauseReason,
   PendingRound,
+  ReconstructedJournal,
   RoundOutcome,
   RoundRecord,
   RoundStats,
