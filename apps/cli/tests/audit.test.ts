@@ -28,11 +28,9 @@ describe('vinaya audit — pre-flight', () => {
   })
 })
 
-// rings.ring2_asyncAudits is additive, never disabling (Issue #45's
-// 2026-08-25 Amendment): `false`/absent is a no-op — every pre-existing
-// `vinaya init` starter config reads `false` here, so dead-branch-push's
-// real work must keep running unconditionally. `true` is the new opt-in
-// accelerator that skips it.
+// rings.ring2_asyncAudits means what it says (issue-545, O2): `true`/absent
+// RUNS the async audits, so dead-branch-push's real work runs. `false` is
+// the opt-OUT that skips it.
 //
 // Deliberately scoped to dead-branch-push only (security review finding,
 // HIGH, fixed here): direct-main-push-detection is a real pass/fail that
@@ -57,8 +55,8 @@ describe('vinaya audit — rings.ring2_asyncAudits', () => {
     writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify(config), 'utf8')
   }
 
-  it('`true` skips dead-branch-push, but direct-main-push-detection still runs for real', async () => {
-    writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } })
+  it('`false` skips dead-branch-push, but direct-main-push-detection still runs for real', async () => {
+    writeConfig({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } })
     let detectRepoCalled = false
     let directPushChecked = false
     const exit = await runAudit(
@@ -79,8 +77,8 @@ describe('vinaya audit — rings.ring2_asyncAudits', () => {
     expect(directPushChecked).toBe(true)
   })
 
-  it('`true` — a genuine direct-push violation still fails and still opens the incident (the strongest proof: not just that the check runs, but that its real verdict survives)', async () => {
-    writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } })
+  it('`false` — a genuine direct-push violation still fails and still opens the incident (the strongest proof: not just that the check runs, but that its real verdict survives)', async () => {
+    writeConfig({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } })
     let incidentOpened = 0
     const exit = await runAudit(
       ['--sha=abc123'],
@@ -99,8 +97,8 @@ describe('vinaya audit — rings.ring2_asyncAudits', () => {
     expect(incidentOpened).toBe(1)
   })
 
-  it('`true` with `--only=dead-branches` — dead-branch-push is the only work requested, and it is skipped', async () => {
-    writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } })
+  it('`false` with `--only=dead-branches` — dead-branch-push is the only work requested, and it is skipped', async () => {
+    writeConfig({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } })
     const exit = await runAudit(
       ['--only=dead-branches', '--sha=abc123'],
       auditDeps({ detectRepo: async () => ({ repoRoot: cwd, owner: 'acme', repo: 'widget' }) })
@@ -108,8 +106,8 @@ describe('vinaya audit — rings.ring2_asyncAudits', () => {
     expect(exit).toBe(0)
   })
 
-  it('`true` with `--only=direct-push` — unaffected by the flag, runs for real', async () => {
-    writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } })
+  it('`false` with `--only=direct-push` — unaffected by the flag, runs for real', async () => {
+    writeConfig({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } })
     let calls = 0
     const exit = await runAudit(
       ['--only=direct-push', '--sha=abc123'],
@@ -125,8 +123,8 @@ describe('vinaya audit — rings.ring2_asyncAudits', () => {
     expect(calls).toBe(1)
   })
 
-  it('`false` is a no-op — dead-branch-push still runs (fails pre-flight the same as before the flag existed)', async () => {
-    writeConfig({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: false } })
+  it('`true` is a no-op — dead-branch-push still runs (fails pre-flight the same as before the flag existed)', async () => {
+    writeConfig({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: true } })
     const exit = await runAudit([], auditDeps({ detectRepo: async () => null }))
     expect(exit).toBe(1)
   })
@@ -235,14 +233,14 @@ describe('vinaya audit — `--json` output mode', () => {
   // for this branch is only observable via the JSON stdout body — `AuditDeps`
   // has no injectable writer — so this only asserts the exit code, not that
   // payload, per §6 Part 2's "never on console output."
-  it('with `--only=dead-branches` and ring2 accelerated (no subprocess reachable at all) → exit 0', async () => {
+  it('with `--only=dead-branches` and ring2 opted out (no subprocess reachable at all) → exit 0', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'vinaya-audit-json-test-'))
     const originalCwd = process.cwd()
     process.chdir(cwd)
     try {
       writeFileSync(
         join(cwd, 'vinaya.config.json'),
-        JSON.stringify({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } }),
+        JSON.stringify({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } }),
         'utf8'
       )
       const exit = await runAudit(

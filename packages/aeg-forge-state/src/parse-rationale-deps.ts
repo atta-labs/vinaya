@@ -180,3 +180,51 @@ export function parseRationaleDeps(body: string): ParsedRationaleDeps {
 
   return { dependsOn, conflictsWith }
 }
+
+/**
+ * Thrown by `requireTrancheQualifiedEdges` for a bare edge id that has
+ * become ambiguous — `token` is the exact id as written (never re-formatted,
+ * so the refusal quotes what the author actually typed), `tranches` is
+ * every tranche label the Issue's Milestone carries, in the order given.
+ */
+export class AmbiguousBareEdgeError extends Error {
+  readonly token: string
+  readonly tranches: string[]
+
+  constructor(token: string, tranches: string[]) {
+    super(
+      `Edge \`${token}\` is a bare id, but its Milestone holds ${tranches.length} tranches ` +
+        `(${tranches.join(', ')}) — a bare id is ambiguous here. Qualify it as \`<slug> ${token}\`, ` +
+        'naming which one.'
+    )
+    this.name = 'AmbiguousBareEdgeError'
+    this.token = token
+    this.tranches = tranches
+  }
+}
+
+/**
+ * A bare edge id (`1`, `#372` — `splitSlugQualifiedEdge` returns `null`)
+ * resolves unambiguously against "this tranche" only while its Issue's
+ * Milestone holds exactly one tranche. Once a Milestone holds two or more
+ * (`vinaya-milestone-model-v1`'s shared Milestone), the same bare token
+ * could belong to any of them, and silently resolving it against whichever
+ * tranche happens to be parsing it is a real misattribution risk — Issue
+ * #388's own body already needed a slug qualifier for exactly this reason
+ * (see `resolveIds`'s doc comment) once a second tranche entered the
+ * picture.
+ *
+ * Call after `parseRationaleDeps` with the Issue's own Milestone's full
+ * tranche-label list; throws `AmbiguousBareEdgeError` on the FIRST bare id
+ * found once that list has two or more entries. A single-tranche (or
+ * tranche-less) Milestone is the ordinary case and this is a no-op for it —
+ * every id parsed today keeps resolving exactly as it always has.
+ */
+export function requireTrancheQualifiedEdges(ids: readonly string[], milestoneTranches: readonly string[]): void {
+  if (milestoneTranches.length < 2) return
+  for (const id of ids) {
+    if (splitSlugQualifiedEdge(id) === null) {
+      throw new AmbiguousBareEdgeError(id, [...milestoneTranches])
+    }
+  }
+}

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parseRationaleDeps } from './parse-rationale-deps'
+import { AmbiguousBareEdgeError, parseRationaleDeps, requireTrancheQualifiedEdges } from './parse-rationale-deps'
 
 const FIXTURES = join(__dirname, '..', 'tests', 'fixtures')
 /** Captured verbatim via `gh issue view <n> --json body` on 2026-07-06 — the
@@ -105,5 +105,53 @@ describe('parseRationaleDeps', () => {
       dependsOn: [],
       conflictsWith: []
     })
+  })
+})
+
+// issue-545, O3 — a bare edge id is ambiguous once its Milestone holds two
+// or more tranches.
+describe('requireTrancheQualifiedEdges', () => {
+  it('is a no-op for a single-tranche Milestone — the ordinary case', () => {
+    expect(() => requireTrancheQualifiedEdges(['1', '#372'], ['solo-tranche'])).not.toThrow()
+  })
+
+  it('is a no-op for a tranche-less Milestone (empty list)', () => {
+    expect(() => requireTrancheQualifiedEdges(['1'], [])).not.toThrow()
+  })
+
+  it('is a no-op when every id is already slug-qualified, even across several tranches', () => {
+    expect(() =>
+      requireTrancheQualifiedEdges(['tranche-a 1', 'tranche-b #372'], ['tranche-a', 'tranche-b', 'tranche-c'])
+    ).not.toThrow()
+  })
+
+  it('refuses a bare task id once the Milestone holds two tranches, quoting the token and listing both', () => {
+    expect(() => requireTrancheQualifiedEdges(['1'], ['tranche-a', 'tranche-b'])).toThrow(AmbiguousBareEdgeError)
+    try {
+      requireTrancheQualifiedEdges(['1'], ['tranche-a', 'tranche-b'])
+      expect.unreachable('must throw')
+    } catch (e) {
+      const err = e as AmbiguousBareEdgeError
+      expect(err.token).toBe('1')
+      expect(err.tranches).toEqual(['tranche-a', 'tranche-b'])
+      expect(err.message).toContain('`1`')
+      expect(err.message).toContain('tranche-a')
+      expect(err.message).toContain('tranche-b')
+    }
+  })
+
+  it('refuses a bare #NNN Issue ref the same way', () => {
+    expect(() => requireTrancheQualifiedEdges(['#372'], ['tranche-a', 'tranche-b', 'tranche-c'])).toThrow(
+      AmbiguousBareEdgeError
+    )
+  })
+
+  it('reports the FIRST bare id, not a later qualified one that happens to sit beside it', () => {
+    try {
+      requireTrancheQualifiedEdges(['tranche-a 5', '9'], ['tranche-a', 'tranche-b'])
+      expect.unreachable('must throw')
+    } catch (e) {
+      expect((e as AmbiguousBareEdgeError).token).toBe('9')
+    }
   })
 })
