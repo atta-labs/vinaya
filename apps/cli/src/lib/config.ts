@@ -113,6 +113,12 @@ export type RoleEntry = z.infer<typeof RoleEntrySchema>
 
 const HIGH_ENTROPY_MIN_LENGTH = 20
 
+// The upper bound `VinayaConfigSchema`'s `superRefine` enforces on
+// `report.commandTimeoutMs` — 1 hour. A misconfigured value above this could
+// otherwise leave `pr report`'s evidence runner hanging on a stuck
+// subprocess for arbitrarily long (round-2 security ruling, PR #546).
+const MAX_REPORT_COMMAND_TIMEOUT_MS = 3_600_000
+
 /** Loose heuristic, not a secret scanner: a long literal mixing char classes with no whitespace reads more like a pasted token than a hand-typed config value. */
 function looksHighEntropy(value: string): boolean {
   if (value.length < HIGH_ENTROPY_MIN_LENGTH) return false
@@ -623,18 +629,24 @@ export const VinayaConfigSchema = z.object({
   // `AGENT_COMMAND_TIMEOUT_MS` constant (30 seconds, far too small for a real
   // Test Plan command — a production build, a booted app, an end-to-end
   // check) with adopter policy. Absent defaults to `900000` (15 minutes,
-  // `DEFAULT_COMMAND_TIMEOUT_MS` in `commands/pr-report.ts`). Capped at
-  // `3600000` (1 hour) so a misconfigured value cannot leave `pr report`
-  // hanging on a stuck subprocess for arbitrarily long (round-2 security
-  // ruling, PR #546).
+  // `DEFAULT_COMMAND_TIMEOUT_MS` in `commands/pr-report.ts`). Capped by the
+  // `superRefine` below at `3600000` (1 hour) so a misconfigured value cannot
+  // leave `pr report` hanging on a stuck subprocess for arbitrarily long
+  // (round-2 security ruling, PR #546) — checked there, not inline on the
+  // field itself, so this field's own type stays exactly what it always was.
   report: z
     .object({
-      commandTimeoutMs: z
-        .number()
-        .int()
-        .positive()
-        .max(3_600_000, { message: 'must be at most 3600000 (1 hour)' })
-        .optional()
+      commandTimeoutMs: z.number().int().positive().optional()
+    })
+    .superRefine((report, ctx) => {
+      const commandTimeoutMs = report.commandTimeoutMs
+      if (commandTimeoutMs !== undefined && commandTimeoutMs > MAX_REPORT_COMMAND_TIMEOUT_MS) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['commandTimeoutMs'],
+          message: 'must be at most 3600000 (1 hour)'
+        })
+      }
     })
     .optional()
 })
