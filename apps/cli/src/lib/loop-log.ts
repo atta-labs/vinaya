@@ -2,11 +2,11 @@
  * O6 — the one text log every driver (`task run`,
  * `dev-review-loop`) tees its own role-prefixed stream to, regardless of
  * where it was launched: `~/.vinaya/loops/<owner>-<repo>/<issue>.log`. Same
- * repo-directory convention `log-sink.ts`'s `outboxPathFor` already uses
- * (`<owner>-<repo>`, or `unresolved`), a separate root (`loops/`, not
- * `outbox/`) and a plain, human-readable `.log` text file — never ndjson;
- * this is narration for `vinaya task status --follow` to tail, not a
- * structured event the forge or a check reads.
+ * repo-directory convention `log-sink.ts`'s own per-task path builder already
+ * uses (`<owner>-<repo>`, or `unresolved`), a separate root (`loops/`, not
+ * that other log's own root) and a plain, human-readable `.log` text file —
+ * never ndjson; this is narration for `vinaya task status --follow` to
+ * tail, not a structured event the forge or a check reads.
  *
  * Appends across relaunches: nothing here ever truncates or overwrites an
  * existing file, and `appendRunStartMarker` names each new process's start
@@ -35,7 +35,7 @@ export function loopsRoot(): string {
   return join(GLOBAL_VINAYA_HOME, 'loops')
 }
 
-/** `~/.vinaya/loops/<owner>-<repo>/<issue>.log`, or `.../unresolved/<issue>.log` when `repo` could not be resolved — the same fallback `outboxPathFor` takes, never a value spliced from an unvalidated source (callers pass the same already-resolved `repo` `log()`/`dispatchRole` themselves trust). */
+/** `~/.vinaya/loops/<owner>-<repo>/<issue>.log`, or `.../unresolved/<issue>.log` when `repo` could not be resolved — the same fallback the other per-task log's own path builder takes, never a value spliced from an unvalidated source (callers pass the same already-resolved `repo` `log()`/`dispatchRole` themselves trust). */
 export function loopLogPathFor(repo: LoopLogRepo, issue: number, root: string = loopsRoot()): string {
   const dirName = repo ? `${repo.owner}-${repo.repo}` : 'unresolved'
   return join(root, dirName, `${issue}.log`)
