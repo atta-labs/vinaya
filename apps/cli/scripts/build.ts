@@ -84,6 +84,21 @@ for (const f of readdirSync(checkBinDir).filter((f) => f.endsWith('.ts'))) {
   normalizeExecutable(join(checkOutdir, f.replace(/\.ts$/, '.js')))
 }
 
+// task-run-v1 20, O5/O6 — the pre-push hook's changed-files lister and test
+// selector, two more `bin` entries (`package.json`'s `vinaya-changed-files`,
+// `vinaya-select-tests`) alongside the main `vinaya` entrypoint, bundled
+// exactly like a check bin so an adopter's published install can
+// `npx --yes -p @attalabs/vinaya@<version> <bin>` either one without going
+// through the CLI's own argv router at all.
+const libBinDir = join(pkgRoot, 'src', 'lib')
+const libBinNames = ['pre-push-select-tests.ts', 'pre-push-changed-files.ts']
+const libOutdir = join(pkgRoot, 'dist', 'lib')
+await build(
+  libBinNames.map((f) => join(libBinDir, f)),
+  libOutdir
+)
+for (const f of libBinNames) normalizeExecutable(join(libOutdir, f.replace(/\.ts$/, '.js')))
+
 console.log(
-  `built dist/index.js + ${checkEntrypoints.length} check bin(s) in dist/checks/bin/ (external: ${external.join(', ') || 'none'})`
+  `built dist/index.js + ${checkEntrypoints.length} check bin(s) in dist/checks/bin/ + ${libBinNames.length} lib bin(s) in dist/lib/ (external: ${external.join(', ') || 'none'})`
 )

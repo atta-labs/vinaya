@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { DOC_OWNERS_PATH, LABELS, parseRegistry, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
@@ -760,6 +770,39 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
   })
 
+  it('the review-gate retrigger workflow carries its own concurrency group — a superseded head cancels its stale retrigger', async () => {
+    // O1 (task-run-v1 20): a newer CI-green completion means a newer push
+    // superseded the head the older retrigger was chasing — cancelling it
+    // loses nothing the newer completion doesn't already redo. Falls back to
+    // the run id when there is no PR (a non-PR branch's CI run), so the
+    // group expression never evaluates to an empty string.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const retrigger = generated().get(REVIEW_RETRIGGER_WORKFLOW_PATH) ?? ''
+    expect(retrigger).toContain('concurrency:')
+    expect(retrigger).toContain('cancel-in-progress: true')
+    expect(retrigger).toContain('github.event.workflow_run.pull_requests[0].number')
+    expect(retrigger).toContain('github.event.workflow_run.id')
+  })
+
+  it('the verdict workflow and the archivist workflow deliberately carry NO concurrency group', async () => {
+    // vinaya-review-verdict.yml: self-hosting.md's "One run per pull
+    // request" section — serializing the verdict evaluator would delay the
+    // retrigger that exists to clear a red gate promptly, and (unlike
+    // ci.yml/vinaya-checks.yml) a cancelled evaluation is a verdict that
+    // never answers. vinaya-archivist.yml: its three jobs fire on disjoint
+    // events (push to main, a daily schedule, workflow_dispatch) and the
+    // post-merge job archives a SPECIFIC merge SHA — cancelling an
+    // in-progress run for a newer trigger could skip that merge's
+    // provenance entirely, unlike the pure-re-evaluation jobs a concurrency
+    // group is safe for elsewhere in this file.
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const files = generated()
+    for (const path of [REVIEW_VERDICT_WORKFLOW_PATH, ARCHIVIST_WORKFLOW_PATH]) {
+      const wf = files.get(path) ?? ''
+      expect(`${path}: ${wf.includes('concurrency:')}`).toBe(`${path}: false`)
+    }
+  })
+
   it('the verdict retrigger re-runs ONE run — re-running all fights the concurrency group', async () => {
     // Re-running every matching run puts them all in one concurrency group at
     // once; `cancel-in-progress` then kills all but the last, and cancelled
@@ -1226,43 +1269,136 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     )
   }
 
-  it('runs `bunx turbo test --affected --concurrency=1` after the check, and refuses the push on failure — vendored repo only', async () => {
+  it('runs Biome (O5) as the hook literal first step, then the check, then typecheck + the file-level test selector (O6), with no --concurrency=1 (O7) — vendored repo only', async () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
-    expect(prePush).toContain('bunx turbo test --affected --concurrency=1 || exit 1')
-    // Must run AFTER the check, not before — a failing check should refuse
-    // before ever spending time on the test suite.
-    expect(prePush.indexOf('check --all --local')).toBeLessThan(prePush.indexOf('bunx turbo test --affected'))
+    expect(prePush).toContain('bunx biome check --no-errors-on-unmatched -- || exit 1')
+    expect(prePush).toContain('bunx turbo typecheck --affected || exit 1')
+    expect(prePush).toContain('bun apps/cli/src/lib/pre-push-changed-files.ts')
+    expect(prePush).toContain('bun apps/cli/src/lib/pre-push-select-tests.ts')
+    expect(prePush).not.toContain('--concurrency=1')
+    expect(prePush).not.toContain('turbo test --affected')
+    // Ordering (round-5 ruling): Biome runs literally before anything else
+    // in the hook, including the doctrine gate — then the check, then
+    // typecheck, then the selector.
+    const biomeIdx = prePush.indexOf('bunx biome check')
+    const checkIdx = prePush.indexOf('check --all --local')
+    const typecheckIdx = prePush.indexOf('bunx turbo typecheck --affected')
+    const selectorIdx = prePush.indexOf('pre-push-select-tests.ts')
+    expect(biomeIdx).toBeLessThan(checkIdx)
+    expect(checkIdx).toBeLessThan(typecheckIdx)
+    expect(typecheckIdx).toBeLessThan(selectorIdx)
   })
 
-  it('the concurrency=1 override is local to this hook — turbo.json carries no repo-wide concurrency setting CI would also inherit (O9)', () => {
+  it("unsets every GIT_* variable before running the selected tests, AFTER selecting them (a fixture test creating its own git repo elsewhere must never inherit this hook invocation's own GIT_DIR/GIT_WORK_TREE) — vendored repo only", async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+    expect(prePush).toContain("for _vinaya_git_var in $(env | grep -o '^GIT_[A-Z_]*='); do")
+    expect(prePush).toContain('unset "${_vinaya_git_var%=*}"')
+    const selectIdx = prePush.indexOf('pre-push-select-tests.ts')
+    const unsetIdx = prePush.indexOf('_vinaya_git_var')
+    const runTestsIdx = prePush.indexOf('xargs bun test')
+    expect(selectIdx).toBeLessThan(unsetIdx)
+    expect(unsetIdx).toBeLessThan(runTestsIdx)
+  })
+
+  it('the GIT_* unset step really does isolate a child process from an ambient GIT_DIR/GIT_WORK_TREE — real subprocess, real env, no simulation shortcuts', () => {
+    // Extracts and runs the hook's own unset snippet in a real `sh`, exactly
+    // as the generated hook would, then proves a `git` call afterward can no
+    // longer see the ambient GIT_DIR/GIT_WORK_TREE this test seeds — the
+    // exact live incident (task-run-v1 20): a fixture test's own git fixture,
+    // created elsewhere, inherited the pre-push hook's real GIT_DIR and had
+    // several of its own commits land for real on the branch being pushed.
+    const script = `
+GIT_DIR=/tmp/should-never-be-read GIT_WORK_TREE=/tmp/should-never-be-read
+export GIT_DIR GIT_WORK_TREE
+for _vinaya_git_var in $(env | grep -o '^GIT_[A-Z_]*='); do
+  unset "\${_vinaya_git_var%=*}"
+done
+echo "GIT_DIR after unset: [$GIT_DIR]"
+git rev-parse --git-dir 2>&1 || true
+`
+    const out = execFileSync('sh', ['-c', script], { cwd: '/tmp', encoding: 'utf8' })
+    expect(out).toContain('GIT_DIR after unset: []')
+    expect(out).not.toContain('/tmp/should-never-be-read')
+  })
+
+  it("both xargs pipelines stop flag parsing with a trailing '--' before the file list, so a tracked file named like a CLI flag is never forwarded as one (round-4 security review, HIGH/MEDIUM)", async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+    expect(prePush).toContain('xargs bunx biome check --no-errors-on-unmatched -- ||')
+    expect(prePush).toContain('xargs bun test -- ||')
+  })
+
+  it("real subprocess: 'bun test --' really does refuse to treat a selected file named like a flag as one — without it, a tracked file named '--preload=<module>' would load and run that module (round-4 security review, HIGH)", () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-xargs-injection-'))
+    try {
+      writeFileSync(join(dir, 'evil.js'), 'console.log("EVIL PRELOAD RAN")\n')
+      mkdirSync(join(dir, 'sub'))
+      writeFileSync(
+        join(dir, 'sub/normal.test.ts'),
+        'import { expect, test } from "bun:test"\ntest("ok", () => { expect(1).toBe(1) })\n'
+      )
+      // The malicious "selected test file" is a bare flag string, exactly the
+      // shape `xargs` would forward verbatim with no `--` ahead of it.
+      const selected = 'sub/normal.test.ts\n--preload=./evil.js'
+
+      const withoutSeparator = execFileSync('sh', ['-c', 'xargs bun test 2>&1'], {
+        cwd: dir,
+        input: selected,
+        encoding: 'utf8'
+      })
+      expect(withoutSeparator).toContain('EVIL PRELOAD RAN')
+
+      const withSeparator = execFileSync('sh', ['-c', 'xargs bun test -- 2>&1'], {
+        cwd: dir,
+        input: selected,
+        encoding: 'utf8'
+      })
+      expect(withSeparator).not.toContain('EVIL PRELOAD RAN')
+      expect(withSeparator).toContain('normal.test.ts')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('the old --concurrency=1 guard leaves no trace in turbo.json either — no repo-wide setting CI or the hook would inherit', () => {
     const turboJson = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', '..', 'turbo.json'), 'utf-8'))
     expect(turboJson).not.toHaveProperty('concurrency')
     expect(turboJson.tasks?.test).not.toHaveProperty('concurrency')
   })
 
-  it('an ordinary (non-vendored) adopter never gets the turbo step — no assumption they run Bun/Turborepo', async () => {
+  it('an ordinary (non-vendored) adopter never gets the Biome/typecheck/selector steps — no assumption they run Bun/Biome/Turborepo', async () => {
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
     expect(prePush).not.toContain('bunx turbo')
+    expect(prePush).not.toContain('bunx biome')
+    expect(prePush).not.toContain('pre-push-select-tests')
+    expect(prePush).not.toContain('pre-push-changed-files')
   })
 
-  it('refuses the push (non-zero exit) when the affected test run fails — real end-to-end execution', async () => {
+  it('refuses the push (non-zero exit) when typecheck fails — real end-to-end execution', async () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
 
     // Stand in for the built CLI (`node <bin> check --all --local`) so the
     // check half of the hook passes cleanly and execution reaches the
-    // turbo step this test is actually about.
+    // steps this test is actually about. No real git repo exists in this
+    // fixture, so the changed-files/selector scripts' own `git` calls
+    // fail closed to "nothing changed" (empty output, never a thrown
+    // error) — the Biome step is skipped as a result, and execution
+    // reaches the fake `bunx` below at the typecheck line.
     mkdirSync(join(root, 'apps/cli/dist'), { recursive: true })
     writeFileSync(join(root, 'apps/cli/dist/index.js'), 'process.exit(0)\n')
 
-    // A fake `bunx` on PATH that fails, exactly as a real red test run
+    // A fake `bunx` on PATH that fails, exactly as a real red typecheck
     // would — this is the mechanism under test, not the real turbo binary.
     const fakeBinDir = join(root, 'fake-bin')
     mkdirSync(fakeBinDir, { recursive: true })
-    writeFileSync(join(fakeBinDir, 'bunx'), '#!/bin/sh\necho "fake turbo: affected test run failed" >&2\nexit 1\n', {
+    writeFileSync(join(fakeBinDir, 'bunx'), '#!/bin/sh\necho "fake turbo: typecheck failed" >&2\nexit 1\n', {
       mode: 0o755
     })
 
@@ -1279,7 +1415,7 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     }
     expect(error).toBeDefined()
     const stderr = String((error as { stderr?: Buffer })?.stderr ?? '')
-    expect(stderr).toContain('fake turbo: affected test run failed')
+    expect(stderr).toContain('fake turbo: typecheck failed')
   })
 })
 
@@ -2316,7 +2452,7 @@ describe('generated workflows — PR-body heredoc delimiter is real randomness (
 // edit` still landing on the forge (measured live: #485/#520/#523 went red
 // on closes-n, then green on the very next run with no code change).
 describe('generated workflows — verified PR-body fetch, bounded backoff (O3)', () => {
-  it('both vinaya-checks.yml and vinaya-body-checks.yml wait for a real AEG:CLOSES region and a matching AEG:EVIDENCE head, and fail loudly on exhaustion', () => {
+  it('both vinaya-checks.yml and vinaya-body-checks.yml wait for a real AEG:CLOSES region, and fail loudly on exhaustion', () => {
     const ops = buildInitOps({
       owner: 'acme',
       repo: 'widget',
@@ -2335,12 +2471,51 @@ describe('generated workflows — verified PR-body fetch, bounded backoff (O3)',
       // Waits only for a TASK branch's AEG:CLOSES region, never a non-task one.
       expect(op.content).toContain('^task/[^/]+/[^/]+$')
       expect(op.content).toContain('AEG:CLOSES:START')
-      // Waits for the AEG:EVIDENCE block's Head to catch up to the real PR head.
-      expect(op.content).toContain('AEG:EVIDENCE:START')
-      expect(op.content).toContain('PR_HEAD_SHA')
       // Fails loudly, naming what it waited for, on exhaustion — never a
       // silent pass-through to the check suite with a body it knows may be stale.
       expect(op.content).toContain('::error::Gave up after')
+    }
+  })
+
+  it("no longer waits for the AEG:EVIDENCE block's Head to catch up (O1, task-run-v1 20) — both workflows now trigger only on events where the body already carries the fresh head, so evidence-fresh at the merge gate is the sole guard left", () => {
+    const ops = buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost: null,
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
+    })
+    const checks = ops.find((op) => op.kind === 'create-file' && op.path === CHECKS_WORKFLOW_PATH)
+    const bodyChecks = ops.find((op) => op.kind === 'create-file' && op.path === BODY_CHECKS_WORKFLOW_PATH)
+    for (const op of [checks, bodyChecks]) {
+      if (op?.kind !== 'create-file') continue
+      expect(op.content).not.toContain('AEG:EVIDENCE:START')
+      expect(op.content).not.toContain('PR_HEAD_SHA')
+      expect(op.content).not.toContain('catch up')
+    }
+  })
+
+  it('vinaya-checks.yml and vinaya-body-checks.yml trigger on opened, reopened, and edited only — never synchronize (O1, task-run-v1 20)', () => {
+    const ops = buildInitOps({
+      owner: 'acme',
+      repo: 'widget',
+      hookDir: '.husky',
+      selfHost: null,
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
+    })
+    const checks = ops.find((op) => op.kind === 'create-file' && op.path === CHECKS_WORKFLOW_PATH)
+    const bodyChecks = ops.find((op) => op.kind === 'create-file' && op.path === BODY_CHECKS_WORKFLOW_PATH)
+    for (const op of [checks, bodyChecks]) {
+      if (op?.kind !== 'create-file') continue
+      expect(op.content).toContain('types: [opened, reopened, edited]')
+      // No OTHER trigger type list survives in either workflow's own `on:`
+      // block — this is the sole `types:` line each file declares, so a
+      // future edit re-adding `synchronize` there cannot hide behind a
+      // second, differently-worded trigger list.
+      const typesLines = op.content.match(/^\s*types: \[.*\]$/gm) ?? []
+      expect(typesLines).toEqual(['    types: [opened, reopened, edited]'])
     }
   })
 

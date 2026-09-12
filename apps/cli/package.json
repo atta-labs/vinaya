@@ -6,7 +6,9 @@
   "license": "Apache-2.0",
   "author": "Daniel Estevez",
   "bin": {
-    "vinaya": "./dist/index.js"
+    "vinaya": "./dist/index.js",
+    "vinaya-select-tests": "./dist/lib/pre-push-select-tests.js",
+    "vinaya-changed-files": "./dist/lib/pre-push-changed-files.js"
   },
   "files": [
     "dist",

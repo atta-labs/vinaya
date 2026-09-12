@@ -451,22 +451,24 @@ ${indented}
  * (\`runBodyChecks\`, O1) before it could exist on the forge at all, so a
  * missing/malformed \`AEG:CLOSES\` region here is never a legitimate,
  * permanent state for a task branch — it is this exact race, and it is
- * safe to wait a few seconds for it to resolve. Same reasoning for a
- * present \`AEG:EVIDENCE\` block whose recorded \`Head:\` is not yet this
- * run's real PR head: \`pr report --push\` re-reads and self-verifies its
- * own write, so a body carrying a STALE head is a write still landing, not
- * a permanently wrong one.
+ * safe to wait a few seconds for it to resolve.
  *
  * Bounded — six attempts, five seconds apart (thirty seconds total) — and
  * loud on exhaustion: names exactly what it waited for rather than quietly
  * running the check suite against a body it already knows may be stale.
+ *
+ * No longer waits for the \`AEG:EVIDENCE\` block's \`Head:\` to catch up: both
+ * workflows this step feeds now trigger on
+ * \`opened\`/\`reopened\`/\`edited\` only, never \`synchronize\` (see each
+ * workflow's own \`on:\` block), so a push landing after this run started
+ * can no longer race it. \`evidence-fresh\` at the merge gate remains the
+ * sole guard against a body whose recorded head lags the branch.
  */
 function verifiedFetchPrBodyStep(): string {
   return `      - name: Fetch PR body
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
-          PR_HEAD_SHA: \${{ github.event.pull_request.head.sha }}
           BRANCH: \${{ github.head_ref }}
         run: |
           ATTEMPTS=0
@@ -479,15 +481,6 @@ function verifiedFetchPrBodyStep(): string {
               CLOSES_REGION="$(printf '%s\\n' "$BODY" | sed -n '/<!-- AEG:CLOSES:START -->/,/<!-- AEG:CLOSES:END -->/p')"
               if ! printf '%s\\n' "$CLOSES_REGION" | grep -qE '#[0-9]+'; then
                 WAIT_FOR="a real Closes #N inside the AEG:CLOSES region for task branch $BRANCH"
-              fi
-            fi
-            if [ -z "$WAIT_FOR" ]; then
-              EVIDENCE_REGION="$(printf '%s\\n' "$BODY" | sed -n '/<!-- AEG:EVIDENCE:START -->/,/<!-- AEG:EVIDENCE:END -->/p')"
-              if [ -n "$EVIDENCE_REGION" ]; then
-                EVIDENCE_HEAD="$(printf '%s\\n' "$EVIDENCE_REGION" | grep -m1 '^Head: ' | sed 's/^Head: //')"
-                if [ -n "$EVIDENCE_HEAD" ] && [ "$EVIDENCE_HEAD" != "$PR_HEAD_SHA" ]; then
-                  WAIT_FOR="the AEG:EVIDENCE block's Head ($EVIDENCE_HEAD) to catch up to this run's real head ($PR_HEAD_SHA)"
-                fi
               fi
             fi
             if [ -z "$WAIT_FOR" ]; then
@@ -516,17 +509,24 @@ name: Vinaya Checks
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, reopened, edited]
 
-# One run per pull request COMMIT, always. Several \`types:\` above can fire in the
-# same instant — \`vinaya pr create\` opens the PR and applies its tranche
-# label immediately after, so \`opened\` and \`labeled\` arrive together and
-# GitHub starts TWO runs of this workflow. Both then report under the same
-# check name, and the merge box counts both: one can go green while its twin
-# holds a stale red, which no later verdict clears because each run only ever
-# re-evaluates itself. Measured live on atta-labs/vinaya#18 — two runs created
-# in the same second, one success, one failure, PR blocked with both reviews
-# already approved.
+# No \`synchronize\` above: a push's own \`vinaya pr
+# report --push\` always follows it with a body edit (\`gh pr edit\`) carrying
+# that push's real head, which fires \`edited\` — the only trigger left this
+# workflow needs, against a body that already names the new head. A push
+# with no following edit simply produces no run, by design; \`evidence-fresh\`
+# at the merge gate is what still catches that case.
+#
+# Several \`types:\` above can still fire in the same instant — \`vinaya pr
+# create\` opens the PR and applies its tranche label immediately after, so
+# \`opened\` and \`labeled\` arrive together and GitHub starts TWO runs of this
+# workflow. Both then report under the same check name, and the merge box
+# counts both: one can go green while its twin holds a stale red, which no
+# later verdict clears because each run only ever re-evaluates itself.
+# Measured live on atta-labs/vinaya#18 — two runs created in the same
+# second, one success, one failure, PR blocked with both reviews already
+# approved.
 #
 # The key carries the head SHA as well as the PR number, and that second half
 # is load-bearing. Keyed on the PR alone, every run for that PR shares one
@@ -815,6 +815,20 @@ on:
     workflows: [CI]
     types: [completed]
 
+# Keyed per PR, falling back to the run id for a non-PR branch (no PR to
+# key on). Cancelling an older, still-running retrigger for the SAME PR is
+# safe and desirable, not merely tolerable: this job executes nothing of
+# its own — it only calls \`gh run rerun\` on the one required run matching
+# the CURRENT head's immutable title (see the lookup below). A newer CI
+# completion means a newer push superseded the head the older retrigger was
+# chasing, so letting the older one finish would at best re-run a gate for
+# a head nobody will read and at worst race the newer retrigger for the
+# same required run — cancelling it loses nothing the newer completion
+# doesn't already redo.
+concurrency:
+  group: vinaya-review-retrigger-\${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
+  cancel-in-progress: true
+
 jobs:
   retrigger-on-ci-green:
     name: vinaya review gate (retrigger on CI green)
@@ -902,7 +916,7 @@ run-name: "Vinaya Body Checks PR #\${{ github.event.pull_request.number }} @ \${
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, reopened, edited]
 
 # Same collapsing rationale as \`vinaya-review.yml\`'s concurrency group — see
 # that file's own comment for the two measured failure modes (duplicate
@@ -1293,8 +1307,14 @@ bunx turbo typecheck --affected || exit 1
 ${doctrineGate}`
 }
 
+/** `bun <dir>/src/lib/<file>.ts` self-hosted, `npx --yes -p @attalabs/vinaya@<version> <bin>` for an adopter's real install — the same two-shape split `hookRun` already draws, for a script that isn't routed through the CLI's own argv dispatch at all. */
+function libBinInvocation(selfHost: VendoredVinaya | null, file: string, bin: string): string {
+  if (selfHost) return `bun ${selfHost.dir}/src/lib/${file}`
+  return `npx --yes -p @attalabs/vinaya@${ownVersion()} ${bin}`
+}
+
 function prePushBody(selfHost: VendoredVinaya | null): string {
-  const base = `# Vinaya pre-push gate. Runs branch/dispatch checks before the push leaves.
+  const doctrineGate = `# Vinaya pre-push gate. Runs branch/dispatch checks before the push leaves.
 # Forward git's own pre-push stdin (one "<local ref> <local sha> <remote
 # ref> <remote sha>" line per ref being pushed) so main-branch-refusal can
 # tell a tag-only push apart from one that also carries a branch ref.
@@ -1302,26 +1322,85 @@ VINAYA_PUSH_REFS="$(cat)"
 export VINAYA_PUSH_REFS
 ${hookRun(selfHost, 'check --all --local')}`
 
-  if (!selfHost) return base
+  if (!selfHost) return doctrineGate
 
-  // Ring 0 also runs the affected test suite before a push leaves the
-  // machine (#407, O4) — turbo derives the package set from the diff
-  // against the remote-tracking base, so this always covers every package
-  // a Part actually touched, never just the one a local run happened to be
-  // filtered to (PR #409 went red in CI on a `packages/sources` test the
-  // Developer's own filtered local run never exercised). Gated on
-  // `selfHost`: only a repo vendoring `@attalabs/vinaya` as a workspace
-  // member is assumed to run this repo's own Bun/Turborepo toolchain — an
-  // ordinary adopter's push is not made to depend on `turbo` existing.
-  return `${base}
-# Ring 0: the affected test suite. A failing test refuses the push with
-# its own output (#407, O4). --concurrency=1 (O9, found live 2026-09-04):
-# a local machine already running other work (another worktree's own
-# build/test, an IDE indexer) alongside this hook's parallel package
-# suites was measured pushing a git-clone-heavy fixture test past its
-# timeout under real contention — CI's own runner is dedicated and keeps
-# turbo.json's default concurrency; only this hook invocation is serialized.
-bunx turbo test --affected --concurrency=1 || exit 1`
+  // Gated on `selfHost`: only a repo vendoring `@attalabs/vinaya` as a
+  // workspace member is assumed to run this repo's own Bun/Biome/Turborepo
+  // toolchain — an ordinary adopter's push is not made to depend on
+  // `biome`/`turbo` existing, the same line `preCommitBody`'s O9 block
+  // already draws.
+  //
+  // O5, O6, O7 — three steps, in this order, replacing the
+  // old single `turbo test --affected` line entirely:
+  //
+  // 1. O5: Biome lint+format on the files changed since the remote base —
+  //    literally the hook's first step, before the doctrine gate and
+  //    everything else, so a formatting slip never even reaches it (round-5
+  //    ruling: "before anything else" is the hook's own first line, not
+  //    merely first among the new O5/O6/O7 steps). Report-only (no
+  //    `--write`): a push can't safely rewrite-and-restage the way the
+  //    pre-commit hook's own staged-file fix does, since the commits are
+  //    already made — the contributor fixes with `bunx biome check --write
+  //    .` locally, same as CI's own message. Reads only git state (the
+  //    remote-base diff) — never git's own pre-push stdin, so running it
+  //    before the doctrine gate's `VINAYA_PUSH_REFS="$(cat)"` below leaves
+  //    that read untouched.
+  // 2. The doctrine gate (unchanged).
+  // 3. O6: `turbo typecheck --affected` (unchanged mechanism) plus the new
+  //    file-level test selector (`vinaya-select-tests`,
+  //    `lib/pre-push-select-tests.ts`) — resolved through the REAL import
+  //    graph of the files changed since that same remote base, never a
+  //    folder heuristic (`lib/test-selector.ts`). Prints how many files it
+  //    selected. O7: no `--concurrency=1` anywhere in this block — that
+  //    guard was always a `turbo` flag bounding how many PACKAGES' own
+  //    `bun test` subprocesses it ran at once (#438); `bun test` itself has
+  //    no concurrency flag of its own (confirmed against `bun test
+  //    --help` — it runs whatever files it's handed as one job). This step
+  //    never asks turbo to fan out a subprocess per affected package at
+  //    all: the selector hands every selected file, across every affected
+  //    package, to ONE `bun test` invocation — the exact resource
+  //    contention the guard existed to bound (many concurrent `bun test`
+  //    processes) cannot recur when there is only ever one. The full,
+  //    unscoped affected suite stays CI's job, on the one push, exactly as
+  //    before.
+  return `# Ring 0 (O5): Biome over the files changed since the remote base —
+# literally the hook's first step, before the doctrine gate and everything
+# else that follows costs real time. The trailing "--" stops flag parsing
+# before the file list, so a tracked file named like a Biome option is
+# passed through as a literal path, never interpreted as one.
+VINAYA_CHANGED_FILES="$(${libBinInvocation(selfHost, 'pre-push-changed-files.ts', 'vinaya-changed-files')})"
+if [ -n "$VINAYA_CHANGED_FILES" ]; then
+  echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched -- || exit 1
+fi
+${doctrineGate}
+# Ring 0 (O6): typecheck, then only the test files the real import graph
+# says the changed files could affect.
+bunx turbo typecheck --affected || exit 1
+VINAYA_SELECTED_TESTS="$(${libBinInvocation(selfHost, 'pre-push-select-tests.ts', 'vinaya-select-tests')})"
+if [ -n "$VINAYA_SELECTED_TESTS" ]; then
+  # A git hook's own invoking git sets GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE
+  # for THIS repo — correct for every step above, which all operate on this
+  # repo on purpose. A selected test that creates and operates on its OWN
+  # throwaway git fixture elsewhere inherits those same variables unless it
+  # explicitly overrides them, and GIT_DIR silently overrides discovery
+  # regardless of that fixture's own directory — a real, load-bearing
+  # incident, not a hypothetical: a fixture test with no remote of its own
+  # resolved this branch's real upstream and landed several of its own
+  # git commit calls as genuine commits on it, recoverable only via a hard
+  # reset to the last real commit. Unset every GIT_* variable right before
+  # the one step that can run arbitrary test-owned git fixtures — every
+  # step above stays on this repo either way, since cwd-based discovery
+  # finds the exact same repo these variables already named.
+  for _vinaya_git_var in $(env | grep -o '^GIT_[A-Z_]*='); do
+    unset "\${_vinaya_git_var%=*}"
+  done
+  # The trailing "--" stops flag parsing before the file list: a tracked
+  # file named like a global bun flag (e.g. "--preload=path", which loads
+  # and executes an arbitrary module before tests run) would otherwise be
+  # forwarded as that flag rather than a literal test-file path — confirmed
+  # live against bun 1.2.14 without the separator.
+  echo "$VINAYA_SELECTED_TESTS" | xargs bun test -- || exit 1
+fi`
 }
 
 // `commit-msg` validates the MESSAGE — the file git hands the hook as `$1`,

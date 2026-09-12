@@ -6,25 +6,54 @@
 # Runs unscoped (no --affected, no --filter): the suite is ~1-2 minutes and
 # scoping has hidden failures here before.
 #
-# This job also builds the CLI once and uploads it as the `vinaya-cli-dist`
-# artifact (O2) — the exact name `CLI_DIST_ARTIFACT_NAME` in
+# The `build` job also builds the CLI once and uploads it as the
+# `vinaya-cli-dist` artifact (O2) — the exact name `CLI_DIST_ARTIFACT_NAME` in
 # `apps/cli/src/lib/artifacts.ts` names — so the sibling `pull_request`
 # workflow `vinaya-checks.yml` downloads it instead of building its own copy.
 # Both run at the same trust level (untrusted PR content), so sharing here
 # crosses no boundary; see `apps/cli/specs/self-hosting.md`. The build and
 # upload always run, even on a docs-only diff, because `vinaya-checks.yml`
-# needs the artifact regardless of whether the test job below ran.
-
+# needs the artifact regardless of whether the test jobs below ran.
+#
+# The apps/cli suite (by far the largest — 123 files, on
+# the order of 2000 tests) is sharded across three jobs (`test-cli`, a
+# `matrix.shard` of 1..3), each running an explicit, pre-measured-balanced
+# file list (`apps/cli/tests/ci-shards/shard-<n>.txt`, one path per line,
+# `apps/cli/tests/ci-shards.test.ts` proving the three lists union to
+# exactly the files on disk, none dropped or duplicated) — never a directory
+# split, which would concentrate this suite's few genuinely slow files
+# (`dispatch.test.ts`, `quickstart.test.ts`, `demo.test.ts`) whichever
+# directory happens to hold them, defeating the balance a shard exists to
+# provide. `aggregate` is the one job branch protection should require: it
+# depends on every other job here and is the sole "Vinaya CI" name, so
+# sharding the work never means sharding the required check.
 name: CI
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# Keyed on the PR alone — deliberately NOT the head SHA, unlike the
+# vinaya-managed `pull_request`/`pull_request_target` workflows in this
+# directory (`vinaya-checks.yml`, `vinaya-review.yml`,
+# `vinaya-body-checks.yml`; see `apps/cli/specs/self-hosting.md`'s "One run
+# per pull request"). Those key on PR+head because each run judges THAT
+# commit and a later push's rerun of an earlier commit's run must not
+# collide with the current commit's own run. This workflow does the opposite
+# on purpose: it is the expensive suite (build + typecheck + test, now
+# sharded — O3), and a superseded push's copy of it is pure waste nobody will
+# ever read once a newer push exists. Cancelling it costs nothing: the newer
+# push's own run re-covers the same ground from a fresher head.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  typecheck-and-test:
-    name: Vinaya CI
+  build:
+    name: Build, lint & typecheck
     runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.docs-only.outputs.docs_only }}
     permissions:
       contents: read
       issues: read
@@ -148,12 +177,114 @@ jobs:
         if: steps.docs-only.outputs.docs_only != 'true'
         run: bunx turbo typecheck
 
-      - name: Test
-        if: steps.docs-only.outputs.docs_only != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bunx turbo test --concurrency=1
-
       - name: Docs-only skip report
         if: steps.docs-only.outputs.docs_only == 'true'
         run: echo "Docs-only diff (**/*.md, .changeset/**, aeg-root/**) — lint/typecheck/test skipped." >> "$GITHUB_STEP_SUMMARY"
+
+  # Every workspace package except `@attalabs/vinaya` (apps/cli) — that one
+  # is by far the largest and is sharded below (O3). `--concurrency=1`
+  # carries forward from this job's own pre-shard history (`#438`): running
+  # every package's own test task at once starved shared subprocess-spawning
+  # tests of resources, five distinct tests each failing once with an
+  # identical empty-stderr signature, each passing standalone. That finding
+  # was about CROSS-PACKAGE concurrency, not about sharding apps/cli's own
+  # suite by file — unrelated axis, left exactly as it was.
+  test-shared-packages:
+    name: Test (shared packages)
+    needs: build
+    if: needs.build.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Test
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bunx turbo test --filter='!@attalabs/vinaya' --concurrency=1
+
+  # apps/cli's own suite, split across three jobs by an
+  # explicit, pre-measured-balanced file list — see this file's header
+  # comment and `apps/cli/tests/ci-shards.test.ts`. Bypasses `turbo`/the
+  # package's own `test` script (which has no notion of a file subset) and
+  # calls `bun test` directly with that shard's file list, from `apps/cli`
+  # — the same cwd `turbo` would have run it from, and the same
+  # `--timeout=30000` the package's own script passes (`apps/cli/
+  # package.json`), so a shard enforces the identical per-test ceiling the
+  # unsharded suite always did.
+  test-cli:
+    name: Test (apps/cli, shard ${{ matrix.shard }})
+    needs: build
+    if: needs.build.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Test shard ${{ matrix.shard }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: apps/cli
+        run: bun test --timeout=30000 $(tr '\n' ' ' < tests/ci-shards/shard-${{ matrix.shard }}.txt)
+
+  # The one job branch protection should require. Depends on every job
+  # above and reports under the historical "Vinaya CI" name (`run-name`
+  # left unset — the JOB name is what a required-check setting matches),
+  # so sharding the work behind it never means sharding, renaming, or
+  # multiplying the required check `vinaya-review-retrigger.yml`'s
+  # `workflow_run: workflows: [CI]` trigger and every adopter's branch
+  # protection already key on. `if: always()` — this must still run (and
+  # fail loudly) when an upstream job fails, never be skipped alongside it.
+  aggregate:
+    name: Vinaya CI
+    needs: [build, test-shared-packages, test-cli]
+    if: always()
+    runs-on: ubuntu-latest
+    # Least-privilege, matching every other job in this file — this job does
+    # no checkout and runs no PR-controlled content, so it needs no more than
+    # the default read scope, made explicit rather than left implicit.
+    permissions:
+      contents: read
+    steps:
+      - name: Every upstream job succeeded or was correctly skipped (docs-only)
+        run: |
+          for result in "${{ needs.build.result }}" "${{ needs.test-shared-packages.result }}" "${{ needs.test-cli.result }}"; do
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              echo "A required job did not succeed: $result" >&2
+              exit 1
+            fi
+          done
