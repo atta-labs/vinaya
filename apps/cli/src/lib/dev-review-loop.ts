@@ -42,7 +42,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
@@ -248,6 +248,12 @@ export type LoopDeps = {
   fetchConflictingFiles: typeof fetchConflictingFiles
   /** O8: commits touching `DRIVER_OWNED_PATHS` between two base-branch shas. */
   gitCommitsTouchingDriverPaths: typeof gitCommitsTouchingDriverPaths
+  /** O7 (task-run-v1 task 15): pulls the default branch in place. `{ok:true}` on success; `{ok:false, reason}` on any failure (merge conflict, network, detached HEAD) — never throws. */
+  pullDefaultBranch: () => { ok: true } | { ok: false; reason: string }
+  /** O7: re-execs this same process (same interpreter, same entry script) with `args` replacing the subcommand/flags, `stdio: 'inherit'`. Returns the child's exit code, or `null` when the spawn itself could not even start. Never throws. */
+  reexecSelf: (args: string[]) => number | null
+  /** O7: the driver's actual process-exit call, injected so a test can observe "the driver would hand off here" without killing the test process. Production default is the real `process.exit`. */
+  exitProcess: (code: number) => never
 }
 
 function defaultRepoRoot(): string {
@@ -316,6 +322,24 @@ function gatePollEnvOverride(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback
 }
 
+/** O7: `git pull --ff-only origin main` — the exact update `checkStaleDriver` re-execs from. `--ff-only` refuses rather than fabricating a merge commit on a base this driver never touches directly. */
+function defaultPullDefaultBranch(): { ok: true } | { ok: false; reason: string } {
+  try {
+    execFileSync('git', ['pull', '--ff-only', 'origin', 'main'], { stdio: ['ignore', 'ignore', 'pipe'] })
+    return { ok: true }
+  } catch (err) {
+    const stderr = err && typeof err === 'object' && 'stderr' in err ? String((err as { stderr: unknown }).stderr) : ''
+    return { ok: false, reason: stderr.trim() || (err instanceof Error ? err.message : String(err)) }
+  }
+}
+
+/** O7: `process.argv[0]`/`[1]` are the interpreter and entry script this process itself was started with — re-spawning them with a fresh `args` tail reattaches under the exact same runtime, whether that's `bun apps/cli/src/index.ts` from source or a bundled `vinaya` binary. `stdio: 'inherit'` so the reattached run's own output reaches whatever terminal/log is watching this one. */
+function defaultReexecSelf(args: string[]): number | null {
+  const result = spawnSync(process.argv[0] as string, [process.argv[1] as string, ...args], { stdio: 'inherit' })
+  if (result.error) return null
+  return result.status ?? 1
+}
+
 function defaultDeps(): LoopDeps {
   return {
     dispatchRole: realDispatchRole,
@@ -351,7 +375,10 @@ function defaultDeps(): LoopDeps {
     fetchDeveloperStop,
     fetchMergeableState,
     fetchConflictingFiles,
-    gitCommitsTouchingDriverPaths
+    gitCommitsTouchingDriverPaths,
+    pullDefaultBranch: defaultPullDefaultBranch,
+    reexecSelf: defaultReexecSelf,
+    exitProcess: (code) => process.exit(code)
   }
 }
 
@@ -936,9 +963,34 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       if (currentBaseHead === baseHeadAtStart) return false
       const touching = d.gitCommitsTouchingDriverPaths(baseHeadAtStart, currentBaseHead)
       if (touching.length === 0) return false
+
+      // O7 (task-run-v1 task 15): a moved base costs a restart, never a
+      // hand — re-exec this same process from the updated base, reattaching
+      // to the same task with the same arguments (`--resume <pr>` when this
+      // run itself started that way, `--task <n>` otherwise — both forms
+      // `dev-review-loop`'s own round-1 entry already treats as "attach if a
+      // PR/pause state exists, start fresh otherwise"). Pausing is reserved
+      // for when the re-exec attempt ITSELF fails — the pull, or the spawn —
+      // never for the staleness alone.
+      const pulled = d.pullDefaultBranch()
+      let reexecFailureNote = ''
+      if (pulled.ok) {
+        const reexecArgs =
+          'resumePr' in input
+            ? ['dev-review-loop', '--resume', String(input.resumePr), '--agent', input.agent]
+            : ['dev-review-loop', '--task', String(task), '--agent', input.agent]
+        const exitCode = d.reexecSelf(reexecArgs)
+        if (exitCode !== null) {
+          d.exitProcess(exitCode)
+        }
+        reexecFailureNote = `re-exec of \`vinaya ${reexecArgs.join(' ')}\` could not even start after pulling the updated base`
+      } else {
+        reexecFailureNote = `could not pull the default branch to re-exec from: ${pulled.reason}`
+      }
+
       const head = d.resolveHead(branch)
       const stats = computeStats(head, roundStartMs)
-      const detail = `base moved from ${baseHeadAtStart} to ${currentBaseHead}, touching this driver's own code (${touching.join('; ')})`
+      const detail = `base moved from ${baseHeadAtStart} to ${currentBaseHead}, touching this driver's own code (${touching.join('; ')}) — ${reexecFailureNote}`
       await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
       decision = { type: 'pause', reason: 'stale_driver', detail }
       await d.flushOutbox(task)

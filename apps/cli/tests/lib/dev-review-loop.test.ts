@@ -2672,6 +2672,88 @@ describe('devReviewLoop — a base that moves past this driver’s own code WHIL
   }, 20000)
 })
 
+// --- task-run-v1 15, O7: a moved base re-execs in place, reattaching to the same task, rather than pausing outright ---
+
+/** Same as `writeFakeGitBaseMoves`, plus a `pull --ff-only origin main` that succeeds (touching a marker file so the test can prove the pull path was actually taken) rather than being unhandled. */
+function writeFakeGitBaseMovesWithSuccessfulPull(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "pull" ]; then
+  touch "$HOME/.git-pull-called" 2>/dev/null
+  exit 0
+fi
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  if [ -f "$HOME/.base-moved" ]; then
+    echo "${'c'.repeat(40)}"
+  else
+    echo "${BASE_SHA}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+if [ "$1" = "log" ]; then
+  echo "dddddddddd Fix(cli): something touching the driver"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+describe('devReviewLoop — O7 (task-run-v1 task 15): a moved base re-execs in place instead of pausing', () => {
+  it('pulls the default branch, re-execs onto the same task, and never pauses stale_driver', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaudeBaseMovesAfterFirstTurn(binDir)
+    writeFakeGh(binDir)
+    writeFakeGitBaseMovesWithSuccessfulPull(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    // The re-exec attaches to the same task in a genuinely fresh process
+    // (the whole point of O7 — a stale in-memory driver must not keep
+    // running), so the polls that fresh process makes finding the
+    // already-open PR/gate need the same fast-poll overrides any other
+    // fixture exercising real polling in test time already uses.
+    runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_PR_POLL_MAX_ATTEMPTS: '5',
+      VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '5',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
+    })
+
+    // The pull path was actually taken — proof the re-exec attempt ran at all.
+    expect(existsSync(join(home, '.git-pull-called'))).toBe(true)
+
+    // Never the stale_driver pause anywhere this run's own comments landed —
+    // the re-exec absorbed the staleness instead of handing it to a human.
+    const commentsDir = join(home, '.fake-gh-posted-comments')
+    if (existsSync(commentsDir)) {
+      for (const file of readdirSync(commentsDir)) {
+        expect(readFileSync(join(commentsDir, file), 'utf8')).not.toMatch(/aeg:loop:paused:stale_driver/)
+      }
+    }
+  }, 30000)
+})
+
 // --- review-validity-v1 12 (#526), O8 round 2: the split must not narrow stale_driver's own coverage ---
 
 describe('DRIVER_OWNED_PATHS covers every dev-review-loop/*.ts split module (review-validity-v1 12, #526 round 2)', () => {
