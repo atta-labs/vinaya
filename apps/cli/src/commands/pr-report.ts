@@ -1061,7 +1061,7 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
   const writePath = writeIdx !== -1 ? args[writeIdx + 1] : undefined
   const pushIdx = args.indexOf('--push')
   const pushPr = pushIdx !== -1 ? args[pushIdx + 1] : undefined
-  // (`doctrine-fixes-v1` task 1, `#543`, O6) `--body-file <path>` names the
+  // (`#543`, O6) `--body-file <path>` names the
   // local file that IS the whole body source for this push — every byte of
   // it, not only the freshly regenerated AEG:EVIDENCE/AEG:TOKENS blocks,
   // reaches the forge (`composeWrittenBody`, the SAME whole-body composer

@@ -786,7 +786,7 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
       `vinaya.config.json: reviewPolicy.securityThreshold "${securityThreshold}" is not one of ${SECURITY_SEVERITY_ORDER.join(' > ')} — fix the config, this never falls back to a default.`
     )
   }
-  // (`doctrine-fixes-v1` task 1, `#543`, O4) The dev-review-loop's own round
+  // (`#543`, O4) The dev-review-loop's own round
   // cap, replacing `assess-round.ts`'s hardcoded constant. Same refuse-never-
   // downgrade discipline as the two thresholds above: a present-but-invalid
   // value (non-integer, zero, negative) is a config defect to fix.
