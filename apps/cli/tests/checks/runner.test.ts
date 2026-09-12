@@ -183,7 +183,7 @@ describe('runChecks', () => {
     // runChecks() resolving on the direct child's own exit.
     await new Promise((resolve) => setTimeout(resolve, 2500))
 
-    const survivors = execSync('ps -eo pid,command | grep "sleep 60" | grep -v grep || true', {
+    const survivors = execSync('ps -eo pid,command | grep "sleep 1234" | grep -v grep || true', {
       encoding: 'utf8'
     }).trim()
     expect(survivors).toBe('')
