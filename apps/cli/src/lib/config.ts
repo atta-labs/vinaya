@@ -564,9 +564,18 @@ export const VinayaConfigSchema = z.object({
   // list is fixed at three and reviewed alongside any change to
   // `dispatch.ts`'s own `AgentVendor` union, which stays the source of truth
   // for the type.
+  // `killGraceMs` (task-run-v1 20, O2): the window between the SIGTERM sent
+  // at `timeoutMs` and the SIGKILL escalation that follows it — absent
+  // defaults to five seconds (`SIGKILL_GRACE_MS` in `dispatch.ts`). Exists
+  // so a test proving the SIGTERM-then-SIGKILL escalation itself happens
+  // does not have to pay the real production grace window to observe it: a
+  // test config can set this to a few milliseconds and assert the same
+  // behavior in a fraction of the wall time, without faking the process
+  // signalling it exercises.
   dispatch: z
     .object({
       timeoutMs: z.number().int().positive().optional(),
+      killGraceMs: z.number().int().positive().optional(),
       agent: z.enum(['claude', 'codex', 'gemini']).optional()
     })
     .optional(),

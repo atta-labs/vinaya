@@ -185,7 +185,12 @@ export type DispatchHandle = {
  */
 export const DEFAULT_TIMEOUT_MS = 14_400_000
 
-/** Grace window between `SIGTERM` and `SIGKILL` once the ceiling fires. */
+/**
+ * Default grace window between `SIGTERM` and `SIGKILL` once the ceiling
+ * fires — overridable via `dispatch.killGraceMs` (`VinayaConfigSchema`,
+ * task-run-v1 20, O2) so a test proving the escalation itself happens does
+ * not have to pay this real wall time to observe it.
+ */
 const SIGKILL_GRACE_MS = 5_000
 
 /** How often a still-running dispatch announces that it is alive (O1). */
@@ -1022,6 +1027,7 @@ export async function dispatchRole(
   }
 
   const timeoutMs = loadConfig()?.dispatch?.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const killGraceMs = loadConfig()?.dispatch?.killGraceMs ?? SIGKILL_GRACE_MS
 
   return new Promise<DispatchHandle>((resolve) => {
     const child = spawn(
@@ -1119,7 +1125,7 @@ export async function dispatchRole(
           `[vinaya dispatch ${effectId}] ${role} via ${agent}: still alive after SIGTERM — sending SIGKILL`
         )
         child.kill('SIGKILL')
-      }, SIGKILL_GRACE_MS)
+      }, killGraceMs)
     }, timeoutMs)
 
     async function finish(handle: DispatchHandle, event: string, priorSize: number): Promise<void> {

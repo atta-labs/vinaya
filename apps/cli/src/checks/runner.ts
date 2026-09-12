@@ -38,6 +38,15 @@ export type RunOptions = {
    * pre-push/CI" from every other caller.
    */
   skipFull?: boolean
+  /**
+   * Grace window between `SIGTERM` and the `SIGKILL` escalation, both for a
+   * timed-out check's own process group and for the whole-process
+   * `SIGINT`/`SIGTERM` forwarding path (task-run-v1 20, O2). Absent defaults
+   * to `KILL_GRACE_MS`. Exists so a test proving the escalation itself
+   * happens — real spawn, real signals, real process-group teardown — does
+   * not have to pay the production-sized window to observe it.
+   */
+  killGraceMs?: number
 }
 
 /** A sane cpu-derived default — callers may override via `--parallel`. */
@@ -108,7 +117,7 @@ let signalForwardingInstalled = false
  * conventional 128+signal code — mirroring the per-check escalation below
  * at the whole-CLI level.
  */
-function installSignalForwarding(): void {
+function installSignalForwarding(killGraceMs: number): void {
   if (signalForwardingInstalled) return
   signalForwardingInstalled = true
   const forward = (_signal: NodeJS.Signals, exitCode: number): void => {
@@ -116,7 +125,7 @@ function installSignalForwarding(): void {
     setTimeout(() => {
       for (const kill of activeKillers) kill('SIGKILL')
       process.exit(exitCode)
-    }, KILL_GRACE_MS)
+    }, killGraceMs)
   }
   process.on('SIGINT', () => forward('SIGINT', 130))
   process.on('SIGTERM', () => forward('SIGTERM', 143))
@@ -217,7 +226,12 @@ function missingEnvErrors(spec: CheckSpec, callerEnv: NodeJS.ProcessEnv): CheckE
   return errors
 }
 
-async function runOne(spec: CheckSpec, timeoutMs: number, callerEnv: NodeJS.ProcessEnv): Promise<CheckOutcome> {
+async function runOne(
+  spec: CheckSpec,
+  timeoutMs: number,
+  callerEnv: NodeJS.ProcessEnv,
+  killGraceMs: number
+): Promise<CheckOutcome> {
   const start = performance.now()
 
   const envErrors = missingEnvErrors(spec, callerEnv)
@@ -264,7 +278,7 @@ async function runOne(spec: CheckSpec, timeoutMs: number, callerEnv: NodeJS.Proc
     }
   }
 
-  installSignalForwarding()
+  installSignalForwarding(killGraceMs)
   activeKillers.add(killTree)
 
   /**
@@ -325,7 +339,7 @@ async function runOne(spec: CheckSpec, timeoutMs: number, callerEnv: NodeJS.Proc
         // KILL_GRACE_MS down to this callback's own execution.
         if (pid !== undefined && groupStillAlive(pid)) killTree('SIGKILL')
         resolve()
-      }, KILL_GRACE_MS)
+      }, killGraceMs)
       cancelEscalation = () => {
         clearTimeout(graceTimer)
         resolve()
@@ -478,6 +492,7 @@ async function runOne(spec: CheckSpec, timeoutMs: number, callerEnv: NodeJS.Proc
  */
 export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<CheckOutcome[]> {
   const callerEnv = opts.callerEnv ?? process.env
+  const killGraceMs = opts.killGraceMs ?? KILL_GRACE_MS
   const results: CheckOutcome[] = new Array(specs.length)
   const toRun: number[] = []
 
@@ -504,7 +519,7 @@ export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<C
       const idx = toRun[cursor] as number
       cursor += 1
       const spec = specs[idx] as CheckSpec
-      results[idx] = await runOne(spec, spec.timeoutMs ?? opts.defaultTimeoutMs, callerEnv)
+      results[idx] = await runOne(spec, spec.timeoutMs ?? opts.defaultTimeoutMs, callerEnv, killGraceMs)
     }
   }
 

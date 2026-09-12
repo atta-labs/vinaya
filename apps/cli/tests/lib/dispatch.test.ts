@@ -247,9 +247,12 @@ describe('dispatchRole — present but not executable', () => {
 
 describe('dispatchRole — timeout ceiling', () => {
   it('SIGTERMs a child that ignores it, then SIGKILLs after the grace window, and the pid is actually gone', () => {
-    // Real wall time: `timeoutMs` (1000) + the hardcoded `SIGKILL_GRACE_MS`
-    // (5000) + process overhead — past bun:test's default 5000ms per-test
-    // timeout, so this test needs its own explicit budget (3rd `it` arg).
+    // `killGraceMs` (task-run-v1 20, O2): the escalation this test proves —
+    // SIGTERM ignored, SIGKILL follows once the grace window elapses — does
+    // not need the real 5000ms production default to be observed, only a
+    // real, non-zero window the child can be caught inside. Configuring it
+    // down to 200ms cuts this test's real wall time by ~4.8s without
+    // faking any of the process signalling it exercises.
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
@@ -263,7 +266,7 @@ describe('dispatchRole — timeout ceiling', () => {
     // producing a false pass for the wrong reason (found live, authoring
     // this test: 300ms failed consistently, 1000ms failed intermittently
     // under full-suite contention).
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { timeoutMs: 2500 } }))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { timeoutMs: 2500, killGraceMs: 200 } }))
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
 
@@ -281,7 +284,7 @@ describe('dispatchRole — timeout ceiling', () => {
 
     const pid = Number(readFileSync(pidFile, 'utf8').trim())
     expect(() => process.kill(pid, 0)).toThrow()
-  }, 15_000)
+  }, 10_000)
 
   it('reports timeout even when the child exits cleanly on SIGTERM alone (no SIGKILL needed)', () => {
     const home = tempDir('vinaya-dispatch-home-')
@@ -323,7 +326,10 @@ describe('dispatchRole — timeout ceiling', () => {
       'claude',
       `#!/bin/sh\necho '{"usage":{"input_tokens":184327,"output_tokens":22190}}'\ntrap '' TERM\ncat > /dev/null &\nsleep 30\n`
     )
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { timeoutMs: 2500 } }))
+    // killGraceMs: 200 — same reasoning as the escalation test above; this
+    // test's own concern (usage survives the kill) needs only that a
+    // SIGKILL eventually happens, not the production-sized window before it.
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { timeoutMs: 2500, killGraceMs: 200 } }))
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
 
@@ -341,7 +347,7 @@ describe('dispatchRole — timeout ceiling', () => {
       | undefined
     expect(failed?.reason).toBe('timeout')
     expect(failed?.usage).toEqual({ input: 184327, output: 22190 })
-  }, 15_000)
+  }, 10_000)
 })
 
 describe('dispatchRole — stderr content never decides the outcome', () => {

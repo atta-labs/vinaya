@@ -1,5 +1,7 @@
 import { execSync } from 'node:child_process'
 import { describe, expect, it } from 'bun:test'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CheckSpec } from '../../src/checks/contract'
 import { buildCheckEnv, runChecks } from '../../src/checks/runner'
@@ -73,17 +75,19 @@ describe('runChecks', () => {
     // stubborn-sleeper.ts ignores SIGTERM entirely — if the runner only ever
     // sent SIGTERM, `proc.exited` would never resolve and this test would
     // hang past bun:test's own timeout. Its completion IS the proof the
-    // SIGKILL escalation actually terminates the process.
+    // SIGKILL escalation actually terminates the process. killGraceMs
+    // (task-run-v1 20, O2): a small, real, non-zero grace window is enough
+    // to observe the escalation without paying the production-sized one.
     const start = performance.now()
     const [outcome] = await runChecks(
       [fullScope({ name: 'stubborn', run: STUBBORN_SLEEPER, args: ['10000'], timeoutMs: 300 })],
-      BASE_OPTS
+      { ...BASE_OPTS, killGraceMs: 150 }
     )
     const elapsed = performance.now() - start
     expect(outcome?.status).toBe('timeout')
     expect(outcome?.exitCode).toBeNull()
     // Bounded by timeoutMs + the runner's SIGKILL grace period + slack.
-    expect(elapsed).toBeLessThan(4000)
+    expect(elapsed).toBeLessThan(2000)
   }, 10_000)
 
   it('caps concurrency — 6 checks at 300ms each with parallel=2 take at least ~900ms', async () => {
@@ -172,33 +176,55 @@ describe('runChecks', () => {
   })
 
   it("kills a timed-out check's whole process group — a grandchild it spawned does not survive", async () => {
+    // killGraceMs (task-run-v1 20, O2): the escalation this test proves —
+    // the group-wide SIGKILL that reaps a grandchild — does not need the
+    // production-sized grace window to be observed, only a real, non-zero
+    // one the runner can be caught inside.
+    //
+    // The grandchild's own pid is handed back via GRANDCHILD_PID_FILE
+    // (task-run-v1 20, O2) so this test probes that EXACT pid instead of
+    // grepping the system process list for the literal string "sleep 60" —
+    // a plain `sleep 60` is not distinctive enough to rule out an unrelated
+    // process elsewhere on a shared machine happening to run the same
+    // command, which made this test flaky by coincidence, not by defect.
+    const pidFile = join(mkdtempSync(join(tmpdir(), 'vinaya-runner-')), 'grandchild.pid')
     const [outcome] = await runChecks(
-      [fullScope({ name: 'spawns-grandchild', run: SPAWNS_GRANDCHILD, timeoutMs: 1000 })],
-      BASE_OPTS
+      [
+        fullScope({
+          name: 'spawns-grandchild',
+          run: SPAWNS_GRANDCHILD,
+          timeoutMs: 500,
+          env: { GRANDCHILD_PID_FILE: true }
+        })
+      ],
+      {
+        ...BASE_OPTS,
+        killGraceMs: 200,
+        callerEnv: { ...process.env, GRANDCHILD_PID_FILE: pidFile }
+      }
     )
     expect(outcome?.status).toBe('timeout')
 
-    // Grace period (KILL_GRACE_MS) must fully elapse before the grandchild
-    // is provably gone — the SIGKILL escalation is async relative to
-    // runChecks() resolving on the direct child's own exit.
-    await new Promise((resolve) => setTimeout(resolve, 2500))
+    // Grace period (killGraceMs) must fully elapse before the grandchild is
+    // provably gone — the SIGKILL escalation is async relative to
+    // runChecks() resolving on the direct child's own exit, and the OS
+    // needs a moment past the signal to actually reap the process.
+    await new Promise((resolve) => setTimeout(resolve, 600))
 
-    const survivors = execSync('ps -eo pid,command | grep "sleep 60" | grep -v grep || true', {
-      encoding: 'utf8'
-    }).trim()
-    expect(survivors).toBe('')
+    const grandchildPid = Number(readFileSync(pidFile, 'utf8').trim())
+    expect(() => process.kill(grandchildPid, 0)).toThrow()
   }, 10_000)
 
   it("kills a SIGTERM-trapping grandchild even though the DIRECT child's own close fires almost immediately", async () => {
     // The direct child (spawns-stubborn-grandchild.ts) does not trap
     // SIGTERM, so it dies on the group's initial signal well inside
-    // KILL_GRACE_MS — its own 'close' event resolving early is exactly the
+    // killGraceMs — its own 'close' event resolving early is exactly the
     // condition that used to cancel the pending SIGKILL escalation. The
     // grandchild it spawned (stubborn-sleeper.ts) DOES trap SIGTERM and can
     // only be reaped by that escalation actually running to completion.
     const [outcome] = await runChecks(
-      [fullScope({ name: 'stubborn-grandchild', run: SPAWNS_STUBBORN_GRANDCHILD, timeoutMs: 500 })],
-      BASE_OPTS
+      [fullScope({ name: 'stubborn-grandchild', run: SPAWNS_STUBBORN_GRANDCHILD, timeoutMs: 300 })],
+      { ...BASE_OPTS, killGraceMs: 150 }
     )
     expect(outcome?.status).toBe('timeout')
 
@@ -214,19 +240,21 @@ describe('runChecks', () => {
   it('forwards SIGINT to every in-flight check so Ctrl+C does not orphan them', async () => {
     // Runs in a SEPARATE process (not this test process) — sending SIGINT
     // to the test runner itself would kill the whole suite, not exercise
-    // the runner's own forwarding path.
+    // the runner's own forwarding path. The wrapper (run-and-hang.ts) sets
+    // its own killGraceMs to a small, real, non-zero window (task-run-v1
+    // 20, O2) so this test doesn't have to pay the production-sized one.
     const wrapper = Bun.spawn(['bun', RUN_AND_HANG], { stdio: ['ignore', 'ignore', 'ignore'] })
 
     // Give the wrapper time to start and spawn its own (detached) check
     // child before interrupting it.
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    await new Promise((resolve) => setTimeout(resolve, 300))
 
     wrapper.kill('SIGINT')
     await wrapper.exited
 
     // Grace period for the forwarded SIGTERM/SIGKILL escalation to finish
     // reaping the detached check group.
-    await new Promise((resolve) => setTimeout(resolve, 2500))
+    await new Promise((resolve) => setTimeout(resolve, 400))
 
     const survivors = execSync('ps -eo pid,command | grep "fixtures/checks/sleeper.ts" | grep -v grep || true', {
       encoding: 'utf8'
