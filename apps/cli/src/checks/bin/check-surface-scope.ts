@@ -45,7 +45,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkSurfaceScope, parseIssueSurface, taskBranchTopologyFields } from '@attalabs/aeg-core'
+import { checkSurfaceScope, parseIssueSurface, parseTaskBranchIdentity } from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
@@ -107,8 +107,18 @@ function refuse(message: string, agent_recovery_prompt: string): never {
 
 async function main(): Promise<void> {
   const branch = process.env.BRANCH || git(['rev-parse', '--abbrev-ref', 'HEAD'])
-  const fields = taskBranchTopologyFields(branch)
-  if (!fields) process.exit(0)
+  const ref = parseTaskBranchIdentity(branch)
+  if (!ref) process.exit(0)
+
+  // task-run-v1 task 15, O2: a backlog Issue's `<n>` IS the Issue — no
+  // tranche topology lookup needed to find which Issue's `## Surface`
+  // applies.
+  if (ref.kind === 'issue') {
+    await checkAgainstIssue(ref.issueNumber)
+    return
+  }
+
+  const fields = ref
 
   const repo = resolveRepo()
   if (!repo) {
@@ -137,6 +147,11 @@ async function main(): Promise<void> {
     )
   }
 
+  await checkAgainstIssue(issue)
+}
+
+/** Once `issue` is known (either resolved from a tranche's topology, or the branch's own backlog-Issue number), the rest of the check is identical. */
+async function checkAgainstIssue(issue: number): Promise<void> {
   const body = fetchIssueBody(issue)
   if (body === null) {
     refuse(
