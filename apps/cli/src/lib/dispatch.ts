@@ -187,9 +187,9 @@ export const DEFAULT_TIMEOUT_MS = 14_400_000
 
 /**
  * Default grace window between `SIGTERM` and `SIGKILL` once the ceiling
- * fires — overridable via `dispatch.killGraceMs` (`VinayaConfigSchema`,
- * task-run-v1 20, O2) so a test proving the escalation itself happens does
- * not have to pay this real wall time to observe it.
+ * fires — overridable via `dispatch.killGraceMs` (`VinayaConfigSchema`) so a
+ * test proving the escalation itself happens does not have to pay this real
+ * wall time to observe it.
  */
 const SIGKILL_GRACE_MS = 5_000
 

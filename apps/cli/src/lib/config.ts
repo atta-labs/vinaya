@@ -564,7 +564,7 @@ export const VinayaConfigSchema = z.object({
   // list is fixed at three and reviewed alongside any change to
   // `dispatch.ts`'s own `AgentVendor` union, which stays the source of truth
   // for the type.
-  // `killGraceMs` (task-run-v1 20, O2): the window between the SIGTERM sent
+  // `killGraceMs`: the window between the SIGTERM sent
   // at `timeoutMs` and the SIGKILL escalation that follows it — absent
   // defaults to five seconds (`SIGKILL_GRACE_MS` in `dispatch.ts`). Exists
   // so a test proving the SIGTERM-then-SIGKILL escalation itself happens
