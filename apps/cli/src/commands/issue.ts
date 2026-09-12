@@ -1,4 +1,4 @@
-import { findTrancheSlug, isTaskIssueLabelSet } from '@attalabs/aeg-core'
+import { findTrancheSlug, isTaskIssueBodyShaped, isTaskIssueLabelSet } from '@attalabs/aeg-core'
 import { printJson } from '../lib/envelope'
 import {
   type BodyResult,
@@ -57,7 +57,12 @@ export async function issueCreateCommand(args: string[]): Promise<void> {
 
   refuseUnlabeledTaskShapedBody(body, labels, RETRY_CREATE)
 
-  if (isTaskIssueLabelSet(labels)) {
+  // task-run-v1 task 15, O3: a backlog Issue (task-shaped body, no
+  // `vinaya/tranche:*` label) gets the same brief-schema validation as a
+  // tranche task — everything except the tranche-specific label/Milestone
+  // machinery below, which stays gated on `isTaskIssueLabelSet` alone since
+  // there is no tranche to ensure a label for or attach a Milestone from.
+  if (isTaskIssueLabelSet(labels) || (body !== null && isTaskIssueBodyShaped(body))) {
     // No number exists until the write completes — `checkIssueObjectives`
     // treats `null` as NOT exempted (fail-closed), never as "old enough to
     // skip"; every Issue this repo can newly mint is already far past
@@ -103,7 +108,7 @@ export async function issueEditCommand(args: string[]): Promise<void> {
     // applicability.
     const labels = [...new Set([...fetchForgeLabels(issueRef, RETRY_EDIT), ...extractLabels(ghArgs)])]
     refuseUnlabeledTaskShapedBody(body, labels, RETRY_EDIT)
-    if (isTaskIssueLabelSet(labels)) {
+    if (isTaskIssueLabelSet(labels) || (body !== null && isTaskIssueBodyShaped(body))) {
       refuseFrozenSectionChange(issueRef, body, RETRY_EDIT)
       await validateTaskIssue(body, title, labels, RETRY_EDIT, parseIssueNumberFromRef(issueRef), {
         kind: 'edit',

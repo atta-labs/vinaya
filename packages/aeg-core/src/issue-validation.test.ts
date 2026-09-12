@@ -1663,16 +1663,18 @@ describe('checkIssueBriefSections', () => {
 })
 
 // task 17, O2 — the six write-only rules named apart.
+// Retired to an always-pass check by task-run-v1 task 15, O3: a task-shaped
+// body with no tranche label is now a legitimate backlog Issue, not a
+// Planner mistake — see the function's own doc comment.
 describe('checkTrancheLabelPresence', () => {
   it('passes a task-shaped body carrying the tranche label', () => {
     const r = checkTrancheLabelPresence('## Objectives\n\nO1. Thing.\n', ['vinaya/tranche:demo-v1'])
     expect(r.status).toBe('pass')
   })
 
-  it('fails a task-shaped body with no tranche label', () => {
+  it('passes a task-shaped body with no tranche label — a legitimate backlog Issue (task-run-v1 task 15, O3)', () => {
     const r = checkTrancheLabelPresence('## Objectives\n\nO1. Thing.\n', [])
-    expect(r.status).toBe('fail')
-    expect(r.errors.join(' ')).toMatch(/tranche/)
+    expect(r.status).toBe('pass')
   })
 
   it('passes a genuinely non-task body with no label — nothing to require', () => {

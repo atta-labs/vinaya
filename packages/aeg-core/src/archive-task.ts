@@ -16,6 +16,7 @@ import { hasLabel } from '@attalabs/aeg-forge-state'
 import { type AnchorField, anchoredRegion, stripCode } from './anchored-region'
 import { headerRegion } from './brief-validation'
 import { readTierFromPrBody } from './pr-tier'
+import { parseTaskBranchIdentity } from './task-branch-identity'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
 
 export type MergedPrFacts = {
@@ -39,10 +40,8 @@ export type MergedPrFacts = {
   briefCommentUrl?: string | null
 }
 
-const TASK_BRANCH_PATTERN = /^task\/([^/]+)\/([^/]+)$/
-
 /**
- * null when headRefName is not task/<tranche>/<taskId>.
+ * null when headRefName is not task/<tranche>/<taskId> or task/issue-<n>.
  *
  * This is ONE of two independent eligibility signals for provenance —
  * the branch-name pattern — not the only one. A PR that closes a
@@ -57,11 +56,18 @@ const TASK_BRANCH_PATTERN = /^task\/([^/]+)\/([^/]+)$/
  * the sole gate. (Confirmed gap: a task whose Issue carried a
  * `vinaya/tranche:*` label was closed by a `fix/*`-branch PR;
  * branch-name-only detection silently skipped provenance forever.)
+ *
+ * `tranche: null` for a backlog Issue's `task/issue-<n>` branch (task-run-v1
+ * task 15, O4) — `taskId` is the Issue number itself, so this signal alone
+ * makes a backlog task's PR eligible for provenance, with no
+ * `vinaya/tranche:*` label needed at all.
  */
-export function taskRefFromBranch(branch: string): { tranche: string; taskId: string } | null {
-  const m = branch.match(TASK_BRANCH_PATTERN)
-  if (!m) return null
-  return { tranche: m[1] as string, taskId: m[2] as string }
+export function taskRefFromBranch(branch: string): { tranche: string | null; taskId: string } | null {
+  const ref = parseTaskBranchIdentity(branch)
+  if (!ref) return null
+  return ref.kind === 'issue'
+    ? { tranche: null, taskId: String(ref.issueNumber) }
+    : { tranche: ref.tranche, taskId: ref.taskId }
 }
 
 /**
@@ -72,7 +78,7 @@ export function taskRefFromBranch(branch: string): { tranche: string; taskId: st
  * or the closed Issue's own labels carry an `vinaya/tranche:*` tag.
  */
 export function isEligibleForProvenance(
-  ref: { tranche: string; taskId: string } | null,
+  ref: { tranche: string | null; taskId: string } | null,
   issueLabels: string[]
 ): boolean {
   if (ref !== null) return true
@@ -199,7 +205,11 @@ export function buildProvenanceBlock(facts: MergedPrFacts): {
 
   const ticket = extractField(facts.body, 'Ticket') ?? 'none'
 
-  const taskLabel = ref ? `task ${ref.taskId} (tranche ${ref.tranche})` : `task (branch ${facts.headRefName})`
+  const taskLabel = ref
+    ? ref.tranche !== null
+      ? `task ${ref.taskId} (tranche ${ref.tranche})`
+      : `task (backlog Issue #${ref.taskId})`
+    : `task (branch ${facts.headRefName})`
 
   const lines = [
     `${PROVENANCE_HEADING} — ${taskLabel}`,

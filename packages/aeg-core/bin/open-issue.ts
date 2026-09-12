@@ -83,7 +83,7 @@ import {
   checkProjectsRegistered,
   checkRationaleNamesDocs,
   checkSurfaceGlobsResolve,
-  isTaskIssueBodyShaped,
+  checkTrancheLabelPresence,
   isTaskIssueLabelSet,
   type ProjectPath,
   type TaskIssueFacts
@@ -805,19 +805,16 @@ export function main(): void {
     labels = [...new Set([...forgeLabels, ...labels])]
   }
 
-  // O1 (task-run-v1 task 11) — a body carrying the Planner's `## Objectives`/
-  // `## Planner's rationale` sections but posted with no `vinaya/tranche:*`
-  // label reads, to the `isTaskIssueLabelSet` gate just below, as "not a task
-  // Issue" and would otherwise sail through every check that gate guards,
-  // unvalidated — a task Issue reaching the forge unlabeled. Mirrors
-  // `apps/cli/src/lib/forge-write.ts`'s `refuseUnlabeledTaskShapedBody`
-  // (the CLI's own copy of this same gate), never infers the label and adds
-  // it silently — the Planner types it; this only refuses and names what's
-  // missing.
-  if (body !== null && !isTaskIssueLabelSet(labels) && isTaskIssueBodyShaped(body)) {
-    fail(
-      "the body carries task-Issue sections (`## Objectives` / `## Planner's rationale`) but no `vinaya/tranche:*` label was given — a task Issue never reaches the forge unlabeled. Add one with `--label vinaya/tranche:<slug>`."
-    )
+  // Retired (task-run-v1 task 15, O3) — `checkTrancheLabelPresence` (this
+  // file's `isTaskIssueBodyShaped`/`isTaskIssueLabelSet`-based predicate,
+  // mirrored from `apps/cli/src/lib/forge-write.ts`'s own copy) now always
+  // passes: a task-shaped, unlabeled body is a legitimate backlog Issue, not
+  // a Planner mistake. See that function's own doc comment in
+  // `@attalabs/aeg-core` for the full rationale. Delegated here (rather than
+  // deleted) so this call site stays wired to the one shared rule.
+  if (body !== null) {
+    const trancheLabelResult = checkTrancheLabelPresence(body, labels)
+    if (trancheLabelResult.status === 'fail') fail(trancheLabelResult.errors.join(' '))
   }
 
   if (isTaskIssueLabelSet(labels)) {

@@ -53,6 +53,7 @@ import {
   checkTestPlan,
   checkTestPlanExclusivity,
   checkTierField,
+  checkTrancheLabelPresence,
   checkWorktreeStep0,
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
@@ -294,30 +295,25 @@ export function resolveMilestoneAttachArgs(ghArgs: string[], labels: string[]): 
 const CHECK_ISSUE_LABEL = 'issue-label'
 
 /**
- * **O1 (Issue #502) — refuses a task-shaped body with no
- * `vinaya/tranche:*` label, naming the label.** `isTaskIssueLabelSet`-gated
- * validation (`validateTaskIssue`, below) never runs at all for a body with
- * no tranche label — by design, a genuinely non-task Issue must pass through
- * unvalidated. That design has a hole: a body that actually carries the
- * Planner's `## Objectives`/`## Planner's rationale` sections but was posted
- * with no label reads, to that same gate, as "not a task Issue" and sails
- * through unvalidated too — a task Issue reaching the forge unlabeled. This
- * runs BEFORE the `isTaskIssueLabelSet` branch at every call site, closing
- * that hole without loosening the branch itself: a genuinely non-task body
- * (`isTaskIssueBodyShaped` false) is untouched.
- *
- * Deliberately never infers the label from the body/title and adds it
- * silently — the Planner types the label; this only refuses and names what's
- * missing.
+ * **Retired (task-run-v1 task 15, O3).** Used to refuse a task-shaped body
+ * with no `vinaya/tranche:*` label — that invariant no longer holds: a task-
+ * shaped, unlabeled body is now the exact shape of a legitimate backlog
+ * Issue (see `checkTrancheLabelPresence`'s own doc comment, `@attalabs/aeg-core`,
+ * for the full rationale). Delegates to that now-always-pass rule rather
+ * than being deleted outright, so every call site stays wired to the one
+ * shared predicate instead of independently re-deriving "never refuses"
+ * three times over. `validateTaskIssue`'s own gate (below) is what changed
+ * to actually run validation for an unlabeled-but-task-shaped body, closing
+ * the hole this function used to guard from the other side.
  */
 export function refuseUnlabeledTaskShapedBody(body: string | null, labels: string[], retryCommand: string): void {
   if (body === null) return
-  if (isTaskIssueLabelSet(labels)) return
-  if (!isTaskIssueBodyShaped(body)) return
+  const result = checkTrancheLabelPresence(body, labels)
+  if (result.status === 'pass') return
   refuse([
     makeCheckError(
       CHECK_ISSUE_LABEL,
-      "This body carries task-Issue sections (`## Objectives` / `## Planner's rationale`) but no `vinaya/tranche:*` label was given — a task Issue never reaches the forge unlabeled.",
+      result.errors.join(' '),
       `Add a \`vinaya/tranche:<slug>\` label (e.g. \`--label vinaya/tranche:<slug>\`), then re-run \`${retryCommand}\`.`
     )
   ])
@@ -1411,7 +1407,10 @@ export async function writeValidatedIssueEdit(input: {
 
   refuseUnlabeledTaskShapedBody(body, labels, retryCommand)
 
-  if (isTaskIssueLabelSet(labels)) {
+  // task-run-v1 task 15, O3: same widened gate as `issueCreateCommand`'s —
+  // a backlog Issue's edit is validated too, minus the tranche-specific
+  // label/Milestone machinery below.
+  if (isTaskIssueLabelSet(labels) || (body !== null && isTaskIssueBodyShaped(body))) {
     refuseFrozenSectionChange(issueRef, body, retryCommand, skipFrozenSectionsCheck ?? false)
     await validateTaskIssue(body, title, labels, retryCommand, parseIssueNumberFromRef(issueRef), {
       kind: 'edit',

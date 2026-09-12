@@ -106,6 +106,29 @@ describe('vinaya issue create --validate-only', () => {
     expect(r.stdout).toContain('PASS')
   })
 
+  // task-run-v1 task 15, O3: the same task-shaped body, `--label` omitted
+  // entirely, is a legitimate backlog Issue — validated the same way (the
+  // rationale gate above still runs), no longer refused for lacking a
+  // `vinaya/tranche:*` label.
+  it('passes a backlog task Issue (task-shaped body, no --label) through the same validation', () => {
+    const r = runCli(
+      ['issue', 'create', '--validate-only', '--body-file', join(FORGE_FIXTURES, 'issue-valid-with-objectives.md')],
+      cwd
+    )
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('PASS')
+  })
+
+  // The `## Objectives` heading alone is enough of a task-shape signal to
+  // trigger validation with no label at all — omitting `--label` is never a
+  // way to dodge the rationale gate.
+  it('refuses a backlog task Issue (Objectives heading, no rationale, no --label) — the gate still runs', () => {
+    const bodyFile = join(cwd, 'backlog-no-rationale.md')
+    writeFileSync(bodyFile, '## Objectives\n\nO1. Thing.\n', 'utf8')
+    const r = runCli(['issue', 'create', '--validate-only', '--body-file', bodyFile], cwd)
+    expect(r.status).toBe(1)
+  })
+
   it('passes a non-task Issue through unvalidated (no tranche label)', () => {
     const r = runCli(
       ['issue', 'create', '--validate-only', '--body-file', join(FORGE_FIXTURES, 'issue-no-rationale.md')],
