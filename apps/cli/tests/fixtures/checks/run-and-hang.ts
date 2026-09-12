@@ -14,9 +14,5 @@ await runChecks([{ name: 'hang', run: SLEEPER, args: ['60000'], scope: 'full' }]
   parallel: 1,
   diffOnly: false,
   changedFiles: null,
-  defaultTimeoutMs: 60_000,
-  // A small, real, non-zero grace window is enough to prove the forwarded
-  // SIGTERM/SIGKILL escalation (task-run-v1 20, O2) — this fixture never
-  // needs the production-sized default.
-  killGraceMs: 150
+  defaultTimeoutMs: 60_000
 })

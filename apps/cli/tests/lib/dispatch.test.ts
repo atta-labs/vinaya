@@ -293,8 +293,12 @@ describe('dispatchRole — timeout ceiling', () => {
     writeFakeBinary(binDir, 'claude', `#!/bin/sh\ncat > /dev/null &\ntrap 'exit 0' TERM\nsleep 30\n`)
     // Same startup-latency reasoning as the test above: the shell needs
     // real wall time, under this file's own subprocess contention, to
-    // reach its own `trap` before `SIGTERM` arrives.
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { timeoutMs: 2500 } }))
+    // reach its own `trap` before `SIGTERM` arrives. killGraceMs: 200 (same
+    // reasoning as the escalation test above) — the child exits cleanly on
+    // SIGTERM alone here, so the grace window is never actually consumed
+    // by a SIGKILL, but a small one still keeps this test from paying the
+    // production default while the parent's own escalation timer is armed.
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { timeoutMs: 2500, killGraceMs: 200 } }))
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
 
