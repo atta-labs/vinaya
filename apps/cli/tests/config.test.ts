@@ -906,6 +906,18 @@ describe('VinayaConfigSchema.prePush / .report — additive-only', () => {
     expect(VinayaConfigSchema.safeParse({ report: { commandTimeoutMs: 0 } }).success).toBe(false)
     expect(VinayaConfigSchema.safeParse({ report: { commandTimeoutMs: -1 } }).success).toBe(false)
   })
+
+  it('rejects a report.commandTimeoutMs above the 1-hour cap, naming the bound', () => {
+    const parsed = VinayaConfigSchema.safeParse({ report: { commandTimeoutMs: 3_600_001 } })
+    expect(parsed.success).toBe(false)
+    if (!parsed.success) {
+      expect(parsed.error.issues[0]?.message).toBe('must be at most 3600000 (1 hour)')
+    }
+  })
+
+  it('accepts report.commandTimeoutMs exactly at the 1-hour cap', () => {
+    expect(VinayaConfigSchema.safeParse({ report: { commandTimeoutMs: 3_600_000 } }).success).toBe(true)
+  })
 })
 
 describe('parseTokensCollectDeclaration', () => {

@@ -533,7 +533,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'report.commandTimeoutMs',
     type: 'number (optional)',
     semantics: [
-      'The wall-time budget, in milliseconds, for each `[agent]` Test Plan command the evidence runner executes. Defaults to `900000` (15 minutes). A command that exceeds it is recorded in `AEG:EVIDENCE` as `timeout` alongside the budget it exceeded, never silently dropped — raising this key is the sanctioned way to give a genuinely slow command more room; the runner never reads a bigger number from anywhere else.'
+      'The wall-time budget, in milliseconds, for each `[agent]` Test Plan command the evidence runner executes. Defaults to `900000` (15 minutes), capped at `3600000` (1 hour) — a config load refuses a value above the cap. A command that exceeds it is recorded in `AEG:EVIDENCE` as `timeout` alongside the budget it exceeded, never silently dropped — raising this key up to the cap is the sanctioned way to give a genuinely slow command more room; the runner never reads a bigger number from anywhere else.'
     ],
     example: `{ "report": { "commandTimeoutMs": 1800000 } }`
   }

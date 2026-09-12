@@ -623,10 +623,18 @@ export const VinayaConfigSchema = z.object({
   // `AGENT_COMMAND_TIMEOUT_MS` constant (30 seconds, far too small for a real
   // Test Plan command — a production build, a booted app, an end-to-end
   // check) with adopter policy. Absent defaults to `900000` (15 minutes,
-  // `DEFAULT_COMMAND_TIMEOUT_MS` in `commands/pr-report.ts`).
+  // `DEFAULT_COMMAND_TIMEOUT_MS` in `commands/pr-report.ts`). Capped at
+  // `3600000` (1 hour) so a misconfigured value cannot leave `pr report`
+  // hanging on a stuck subprocess for arbitrarily long (round-2 security
+  // ruling, PR #546).
   report: z
     .object({
-      commandTimeoutMs: z.number().int().positive().optional()
+      commandTimeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .max(3_600_000, { message: 'must be at most 3600000 (1 hour)' })
+        .optional()
     })
     .optional()
 })
