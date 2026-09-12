@@ -1307,8 +1307,14 @@ bunx turbo typecheck --affected || exit 1
 ${doctrineGate}`
 }
 
+/** `bun <dir>/src/lib/<file>.ts` self-hosted, `npx --yes -p @attalabs/vinaya@<version> <bin>` for an adopter's real install — the same two-shape split `hookRun` already draws, for a script that isn't routed through the CLI's own argv dispatch at all (task-run-v1 20, O5/O6). */
+function libBinInvocation(selfHost: VendoredVinaya | null, file: string, bin: string): string {
+  if (selfHost) return `bun ${selfHost.dir}/src/lib/${file}`
+  return `npx --yes -p @attalabs/vinaya@${ownVersion()} ${bin}`
+}
+
 function prePushBody(selfHost: VendoredVinaya | null): string {
-  const base = `# Vinaya pre-push gate. Runs branch/dispatch checks before the push leaves.
+  const doctrineGate = `# Vinaya pre-push gate. Runs branch/dispatch checks before the push leaves.
 # Forward git's own pre-push stdin (one "<local ref> <local sha> <remote
 # ref> <remote sha>" line per ref being pushed) so main-branch-refusal can
 # tell a tag-only push apart from one that also carries a branch ref.
@@ -1316,26 +1322,55 @@ VINAYA_PUSH_REFS="$(cat)"
 export VINAYA_PUSH_REFS
 ${hookRun(selfHost, 'check --all --local')}`
 
-  if (!selfHost) return base
+  if (!selfHost) return doctrineGate
 
-  // Ring 0 also runs the affected test suite before a push leaves the
-  // machine (#407, O4) — turbo derives the package set from the diff
-  // against the remote-tracking base, so this always covers every package
-  // a Part actually touched, never just the one a local run happened to be
-  // filtered to (PR #409 went red in CI on a `packages/sources` test the
-  // Developer's own filtered local run never exercised). Gated on
-  // `selfHost`: only a repo vendoring `@attalabs/vinaya` as a workspace
-  // member is assumed to run this repo's own Bun/Turborepo toolchain — an
-  // ordinary adopter's push is not made to depend on `turbo` existing.
-  return `${base}
-# Ring 0: the affected test suite. A failing test refuses the push with
-# its own output (#407, O4). --concurrency=1 (O9, found live 2026-09-04):
-# a local machine already running other work (another worktree's own
-# build/test, an IDE indexer) alongside this hook's parallel package
-# suites was measured pushing a git-clone-heavy fixture test past its
-# timeout under real contention — CI's own runner is dedicated and keeps
-# turbo.json's default concurrency; only this hook invocation is serialized.
-bunx turbo test --affected --concurrency=1 || exit 1`
+  // Gated on `selfHost`: only a repo vendoring `@attalabs/vinaya` as a
+  // workspace member is assumed to run this repo's own Bun/Biome/Turborepo
+  // toolchain — an ordinary adopter's push is not made to depend on
+  // `biome`/`turbo` existing, the same line `preCommitBody`'s O9 block
+  // already draws.
+  //
+  // task-run-v1 20 (O5, O6, O7) — three steps, in this order, replacing the
+  // old single `turbo test --affected` line entirely:
+  //
+  // 1. O5: Biome lint+format on the files changed since the remote base —
+  //    BEFORE anything else, so a formatting slip never even reaches the
+  //    doctrine gate. Report-only (no `--write`): a push can't safely
+  //    rewrite-and-restage the way the pre-commit hook's own staged-file
+  //    fix does, since the commits are already made — the contributor fixes
+  //    with `bunx biome check --write .` locally, same as CI's own message.
+  // 2. The doctrine gate (unchanged).
+  // 3. O6: `turbo typecheck --affected` (unchanged mechanism) plus the new
+  //    file-level test selector (`vinaya-select-tests`,
+  //    `lib/pre-push-select-tests.ts`) — resolved through the REAL import
+  //    graph of the files changed since that same remote base, never a
+  //    folder heuristic (`lib/test-selector.ts`). Prints how many files it
+  //    selected. O7: no `--concurrency=1` anywhere in this block — that
+  //    guard was always a `turbo` flag bounding how many PACKAGES' own
+  //    `bun test` subprocesses it ran at once (#438); `bun test` itself has
+  //    no concurrency flag of its own (confirmed against `bun test
+  //    --help` — it runs whatever files it's handed as one job). This step
+  //    never asks turbo to fan out a subprocess per affected package at
+  //    all: the selector hands every selected file, across every affected
+  //    package, to ONE `bun test` invocation — the exact resource
+  //    contention the guard existed to bound (many concurrent `bun test`
+  //    processes) cannot recur when there is only ever one. The full,
+  //    unscoped affected suite stays CI's job, on the one push, exactly as
+  //    before.
+  return `${doctrineGate}
+# Ring 0 (O5): Biome over the files changed since the remote base, before
+# anything else that follows costs real time.
+VINAYA_CHANGED_FILES="$(${libBinInvocation(selfHost, 'pre-push-changed-files.ts', 'vinaya-changed-files')})"
+if [ -n "$VINAYA_CHANGED_FILES" ]; then
+  echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched || exit 1
+fi
+# Ring 0 (O6): typecheck, then only the test files the real import graph
+# says the changed files could affect.
+bunx turbo typecheck --affected || exit 1
+VINAYA_SELECTED_TESTS="$(${libBinInvocation(selfHost, 'pre-push-select-tests.ts', 'vinaya-select-tests')})"
+if [ -n "$VINAYA_SELECTED_TESTS" ]; then
+  echo "$VINAYA_SELECTED_TESTS" | xargs bun test || exit 1
+fi`
 }
 
 // `commit-msg` validates the MESSAGE — the file git hands the hook as `$1`,

@@ -14,12 +14,17 @@ if [ ! -f apps/cli/dist/index.js ]; then
   exit 1
 fi
 node apps/cli/dist/index.js check --all --local || exit 1
-# Ring 0: the affected test suite. A failing test refuses the push with
-# its own output (#407, O4). --concurrency=1 (O9, found live 2026-09-04):
-# a local machine already running other work (another worktree's own
-# build/test, an IDE indexer) alongside this hook's parallel package
-# suites was measured pushing a git-clone-heavy fixture test past its
-# timeout under real contention — CI's own runner is dedicated and keeps
-# turbo.json's default concurrency; only this hook invocation is serialized.
-bunx turbo test --affected --concurrency=1 || exit 1
+# Ring 0 (O5): Biome over the files changed since the remote base, before
+# anything else that follows costs real time.
+VINAYA_CHANGED_FILES="$(bun apps/cli/src/lib/pre-push-changed-files.ts)"
+if [ -n "$VINAYA_CHANGED_FILES" ]; then
+  echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched || exit 1
+fi
+# Ring 0 (O6): typecheck, then only the test files the real import graph
+# says the changed files could affect.
+bunx turbo typecheck --affected || exit 1
+VINAYA_SELECTED_TESTS="$(bun apps/cli/src/lib/pre-push-select-tests.ts)"
+if [ -n "$VINAYA_SELECTED_TESTS" ]; then
+  echo "$VINAYA_SELECTED_TESTS" | xargs bun test || exit 1
+fi
 # <<< vinaya:managed:pre-push <<<

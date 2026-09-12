@@ -638,6 +638,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `PROJECTS_REGISTRY_PATH` | const | `apps/cli/src/lib/registry-write.ts` |
 | `renderConfigProjectEntryDiffLine` | function | `apps/cli/src/lib/registry-write.ts` |
 | `renderRegistryRowDiffLine` | function | `apps/cli/src/lib/registry-write.ts` |
+| `changedFilesSinceRemoteBase` | function | `apps/cli/src/lib/remote-base.ts` |
+| `changedFilesSinceRemoteBaseAbsolute` | function | `apps/cli/src/lib/remote-base.ts` |
+| `resolveRemoteBase` | function | `apps/cli/src/lib/remote-base.ts` |
 | `REVIEW_GATE_CHECK_RUN_NAME` | const | `apps/cli/src/lib/review-gate-check-name.ts` |
 | `detectVendoredVinaya` | function | `apps/cli/src/lib/self-host.ts` |
 | `resolveAuthorRepoSourceEntry` | function | `apps/cli/src/lib/self-host.ts` |
@@ -656,11 +659,17 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `lastRoundVerdictLines` | function | `apps/cli/src/lib/task-status.ts` |
 | `renderTaskStatusRow` | function | `apps/cli/src/lib/task-status.ts` |
 | `resumeCommandFor` | function | `apps/cli/src/lib/task-status.ts` |
+| `discoverWorkspacePackages` | function | `apps/cli/src/lib/test-selector.ts` |
+| `extractImportSpecifiers` | function | `apps/cli/src/lib/test-selector.ts` |
+| `isTestFile` | function | `apps/cli/src/lib/test-selector.ts` |
+| `resolveRelativeImport` | function | `apps/cli/src/lib/test-selector.ts` |
+| `selectAffectedTestFiles` | function | `apps/cli/src/lib/test-selector.ts` |
+| `walkFiles` | function | `apps/cli/src/lib/test-selector.ts` |
 | `AEG_BRIEF_V1_MARKER` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(239 exports.)
+(248 exports.)
 
 ## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
@@ -782,4 +791,6 @@ Round 2 review, second round (security, HIGH/MEDIUM): `taskRunCommand` now catch
 `CheckSpec.principalOwed` (review-validity-v1 task 11, O1) is a new optional field on `CheckSpec`, an already-exported type (`apps/cli/src/checks/contract.ts`) — per this file's own rule (`## The rule`), a field on an already-exported type needs no new row. The matching `CheckEntry` field in `apps/cli/src/lib/config.ts` (`CheckEntrySchema`) is the same kind of addition. `check.ts`'s new `isRunFailed` export is the `checkCommand` entry function's own exit-code aggregation, pulled out for direct unit coverage — it calls no `apps/cli/src/lib` export, so the `check` row's in-scope call count above (`3`) is unchanged. `check-test-plan.ts`'s `buildTestPlanCheckErrors` is an export of `apps/cli/src/checks/bin/check-test-plan.ts`, outside this file's three indexed layers (Policy/Effects/Commands) entirely, so it needs no row either. (Same task, O2: `check-review-gate.ts`'s `uncheckedPrincipalReason` is the identical case — checks/bin/*.ts, no row.)
 
 `killGraceMs` (task-run-v1 task 20, O2) is a new optional field on `VinayaConfigSchema`'s `dispatch` object, an already-exported const (`apps/cli/src/lib/config.ts`) — per this file's own rule (`## The rule`), a field on an already-exported const needs no new row. It overrides the SIGTERM-to-SIGKILL grace window `dispatchRole` (`apps/cli/src/lib/dispatch.ts`) already enforced at a hardcoded constant, so a test proving the escalation itself happens can configure a small, real, non-zero window instead of paying the production-sized default. `dispatchRole`'s own exported surface and exemption status are unchanged. (`apps/cli/src/checks/runner.ts`'s own `KILL_GRACE_MS`/`RunOptions` are out of this task's declared Surface — `apps/cli/src/checks` — and were left untouched; its own timeout-ceiling tests stay at their measured baseline, listed as such in the PR body.)
+
+`apps/cli/src/lib/test-selector.ts` and `apps/cli/src/lib/remote-base.ts` (task-run-v1 task 20, O6/O5 — the pre-push hook's real import-graph test selector and its shared "changed since remote base" computation) are two new files under `apps/cli/src/lib/`, each with real function exports, added as new rows above. `apps/cli/src/lib/pre-push-select-tests.ts` and `apps/cli/src/lib/pre-push-changed-files.ts` are also new files in the same directory but need no rows: both are standalone entrypoint scripts (the same shape `apps/cli/src/checks/bin/*.ts` already uses, one layer over) whose only top-level code is an unexported `main()` called at module scope — zero exported functions/consts/classes, so per this file's own rule there is nothing for a row to name. `scripts/build.ts` bundles both into `dist/lib/` and two new `package.json` `bin` entries (`vinaya-select-tests`, `vinaya-changed-files`) ship them for adopters — the same `npx --yes -p @attalabs/vinaya@<version> <bin>` shape `hookRun`'s own adopter branch already uses for the routed `vinaya` entrypoint, applied to a second and third bin that bypass the CLI's own argv router entirely.
 

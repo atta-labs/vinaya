@@ -1259,43 +1259,62 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     )
   }
 
-  it('runs `bunx turbo test --affected --concurrency=1` after the check, and refuses the push on failure — vendored repo only', async () => {
+  it('runs Biome (O5), then typecheck + the file-level test selector (O6), after the check, with no --concurrency=1 (O7) — vendored repo only', async () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
-    expect(prePush).toContain('bunx turbo test --affected --concurrency=1 || exit 1')
-    // Must run AFTER the check, not before — a failing check should refuse
-    // before ever spending time on the test suite.
-    expect(prePush.indexOf('check --all --local')).toBeLessThan(prePush.indexOf('bunx turbo test --affected'))
+    expect(prePush).toContain('bunx biome check --no-errors-on-unmatched || exit 1')
+    expect(prePush).toContain('bunx turbo typecheck --affected || exit 1')
+    expect(prePush).toContain('bun apps/cli/src/lib/pre-push-changed-files.ts')
+    expect(prePush).toContain('bun apps/cli/src/lib/pre-push-select-tests.ts')
+    expect(prePush).not.toContain('--concurrency=1')
+    expect(prePush).not.toContain('turbo test --affected')
+    // Ordering: check, then Biome (O5's "before anything else" is relative
+    // to the OTHER new steps, not the doctrine gate, which is unrelated),
+    // then typecheck, then the selector.
+    const checkIdx = prePush.indexOf('check --all --local')
+    const biomeIdx = prePush.indexOf('bunx biome check')
+    const typecheckIdx = prePush.indexOf('bunx turbo typecheck --affected')
+    const selectorIdx = prePush.indexOf('pre-push-select-tests.ts')
+    expect(checkIdx).toBeLessThan(biomeIdx)
+    expect(biomeIdx).toBeLessThan(typecheckIdx)
+    expect(typecheckIdx).toBeLessThan(selectorIdx)
   })
 
-  it('the concurrency=1 override is local to this hook — turbo.json carries no repo-wide concurrency setting CI would also inherit (O9)', () => {
+  it('the old --concurrency=1 guard leaves no trace in turbo.json either — no repo-wide setting CI or the hook would inherit', () => {
     const turboJson = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', '..', 'turbo.json'), 'utf-8'))
     expect(turboJson).not.toHaveProperty('concurrency')
     expect(turboJson.tasks?.test).not.toHaveProperty('concurrency')
   })
 
-  it('an ordinary (non-vendored) adopter never gets the turbo step — no assumption they run Bun/Turborepo', async () => {
+  it('an ordinary (non-vendored) adopter never gets the Biome/typecheck/selector steps — no assumption they run Bun/Biome/Turborepo', async () => {
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
     expect(prePush).not.toContain('bunx turbo')
+    expect(prePush).not.toContain('bunx biome')
+    expect(prePush).not.toContain('pre-push-select-tests')
+    expect(prePush).not.toContain('pre-push-changed-files')
   })
 
-  it('refuses the push (non-zero exit) when the affected test run fails — real end-to-end execution', async () => {
+  it('refuses the push (non-zero exit) when typecheck fails — real end-to-end execution', async () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
 
     // Stand in for the built CLI (`node <bin> check --all --local`) so the
     // check half of the hook passes cleanly and execution reaches the
-    // turbo step this test is actually about.
+    // steps this test is actually about. No real git repo exists in this
+    // fixture, so the changed-files/selector scripts' own `git` calls
+    // fail closed to "nothing changed" (empty output, never a thrown
+    // error) — the Biome step is skipped as a result, and execution
+    // reaches the fake `bunx` below at the typecheck line.
     mkdirSync(join(root, 'apps/cli/dist'), { recursive: true })
     writeFileSync(join(root, 'apps/cli/dist/index.js'), 'process.exit(0)\n')
 
-    // A fake `bunx` on PATH that fails, exactly as a real red test run
+    // A fake `bunx` on PATH that fails, exactly as a real red typecheck
     // would — this is the mechanism under test, not the real turbo binary.
     const fakeBinDir = join(root, 'fake-bin')
     mkdirSync(fakeBinDir, { recursive: true })
-    writeFileSync(join(fakeBinDir, 'bunx'), '#!/bin/sh\necho "fake turbo: affected test run failed" >&2\nexit 1\n', {
+    writeFileSync(join(fakeBinDir, 'bunx'), '#!/bin/sh\necho "fake turbo: typecheck failed" >&2\nexit 1\n', {
       mode: 0o755
     })
 
@@ -1312,7 +1331,7 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     }
     expect(error).toBeDefined()
     const stderr = String((error as { stderr?: Buffer })?.stderr ?? '')
-    expect(stderr).toContain('fake turbo: affected test run failed')
+    expect(stderr).toContain('fake turbo: typecheck failed')
   })
 })
 
