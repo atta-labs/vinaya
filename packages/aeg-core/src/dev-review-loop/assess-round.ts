@@ -326,7 +326,7 @@ function assessGate(
 
 function assessVerdicts(
   state: LoopState,
-  obs: { round: number; verdicts: VerdictObservation[] }
+  obs: { round: number; verdicts: VerdictObservation[]; findingsUncitable?: boolean }
 ): { decision: Decision; state: LoopState; events: DevReviewLoopEventInput[] } {
   const pending = state.pending
   if (pending === null || pending.round !== obs.round) {
@@ -394,7 +394,12 @@ function assessVerdicts(
   }
 
   const resolvedEmptyThisRound = fc.resolved.length === 0
-  if (resolvedEmptyThisRound && state.previousResolvedEmpty === true) {
+  // (`#543` O3) `findingsUncitable` means this round's own ids are not
+  // trustworthy — never counted toward `no_progress`, which is exactly the
+  // id-comparison this flag is warning about. Every other stop condition
+  // above (escalation, green, reappearance) is decided before this line and
+  // is unaffected.
+  if (!obs.findingsUncitable && resolvedEmptyThisRound && state.previousResolvedEmpty === true) {
     events.push(stopConditionMetEvent(state, obs.round, 'no_progress'))
     events.push(pausedEvent(state, obs.round, 'principal_item'))
     events.push(roundEndedEvent(state, obs.round, pending.stats, 'changes_requested'))
@@ -433,7 +438,11 @@ function assessVerdicts(
     rounds: [...state.rounds, record],
     pending: null,
     lastIds: carriedIds,
-    previousResolvedEmpty: resolvedEmptyThisRound,
+    // (`#543` O3) An uncitable round neither starts nor extends the
+    // no-progress streak — it carries the PRIOR value forward unchanged,
+    // so a real two-consecutive-round stall either side of it is still
+    // caught, but this round itself is never counted as either half of it.
+    previousResolvedEmpty: obs.findingsUncitable ? state.previousResolvedEmpty : resolvedEmptyThisRound,
     ...withRoundStats(state, pending.stats)
   }
   return { decision: { type: 'dispatch_developer' }, state: newState, events }

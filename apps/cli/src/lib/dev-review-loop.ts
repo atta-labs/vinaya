@@ -246,6 +246,16 @@ export type LoopDeps = {
   gatePollIntervalMs: number
   /** O2/O3: the developer's own worktree HEAD (`.worktrees/<branch>`), or `null` when unreadable/unknown. */
   readWorktreeHead: typeof readWorktreeHead
+  /**
+   * (`#543` O2) The developer's own worktree's uncommitted files (`git
+   * status --porcelain`, one path per entry) and how many commits its local
+   * `HEAD` sits ahead of its upstream — read fresh after every developer
+   * turn that ends with no new head on the branch, to tell "stopped without
+   * pushing real work" (either signal non-zero) apart from a genuinely idle
+   * turn (both zero). Best-effort: an unreadable worktree or a branch with
+   * no upstream tracking ref reports zero for that half, never throws.
+   */
+  readUnpushedWorkDetail: (worktreePath: string) => { dirtyFiles: string[]; aheadCount: number }
   /** O9: the newest developer-stop comment on the task Issue, or `null`. */
   fetchDeveloperStop: typeof fetchDeveloperStop
   /** O4/O5/O7: the forge's own mergeable state for a PR. */
@@ -284,6 +294,37 @@ function defaultGitDiffShortstat(base: string, head: string): string {
   } catch {
     return ''
   }
+}
+
+/** (`#543` O2) See `LoopDeps.readUnpushedWorkDetail`'s own doc comment. */
+function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: string[]; aheadCount: number } {
+  let dirtyFiles: string[] = []
+  try {
+    // Deliberately NOT `sh()`: its own blanket `.trim()` on the whole output
+    // destroys porcelain's own leading space on line 1 when the status code
+    // there is ` M` (unstaged modify) — the single most common code — before
+    // this function's own fixed-width slice ever runs. `execFileSync` here
+    // keeps every byte porcelain actually printed.
+    const raw = execFileSync('git', ['-C', worktreePath, 'status', '--porcelain'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    dirtyFiles = raw
+      .split('\n')
+      .filter((line) => line.length > 3)
+      .map((line) => line.slice(3))
+  } catch {
+    // Worktree unreadable — nothing to report.
+  }
+  let aheadCount = 0
+  try {
+    const count = sh('git', ['-C', worktreePath, 'rev-list', '--count', '@{u}..HEAD'])
+    const parsed = Number.parseInt(count.trim(), 10)
+    aheadCount = Number.isFinite(parsed) ? parsed : 0
+  } catch {
+    // No upstream tracking ref (or the worktree is unreadable) — zero, not a throw.
+  }
+  return { dirtyFiles, aheadCount }
 }
 
 /**
@@ -379,6 +420,7 @@ function defaultDeps(): LoopDeps {
     gatePollMaxAttempts: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS', 120),
     gatePollIntervalMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS', 15_000),
     readWorktreeHead,
+    readUnpushedWorkDetail: defaultReadUnpushedWorkDetail,
     fetchDeveloperStop,
     fetchMergeableState,
     fetchConflictingFiles,
@@ -646,6 +688,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let pendingGateRedRetry = false
     /** O2: consecutive gate-red developer turns that produced no push on one head — reset to 0 by every genuine `gate` observation. */
     let gateStalledStreak = 0
+    /** (`#543` O2) True once this stall episode has already used its one unpushed-work resume — reset alongside `gateStalledStreak`, by every genuine `gate` observation, so a LATER stall gets its own resume. */
+    let unpushedResumeAttempted = false
     /** O4/O6: the conflicting file(s) from the last mergeability read, consumed by the very next `dispatch_developer` prompt, then cleared — never a CI-red retry (never sets `pendingGateRedRetry`), so the head-change-wait that follows always re-checks the gate fresh rather than replaying `lastFailingChecks`. */
     let pendingConflictFiles: string[] | null = null
 
@@ -749,6 +793,34 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       '`bun apps/cli/src/index.ts pr create --body-file <path> --title "<title>"`.'
     ].join('\n\n')
 
+    /** (`#543` O2) Mid-round unpushed-work resume — distinct from `PUSH_AND_OPEN_PROMPT` (round-1 entry, no head at all yet): this branch already has commits on the remote, the developer's LATEST turn just didn't add a new one. */
+    const COMMIT_AND_PUSH_PROMPT = [
+      'Your last turn ended without pushing: this worktree has uncommitted changes and/or local commits ahead of the remote, but the branch has no new head.',
+      'Committing and pushing are foreground steps per aeg-root/roles/developer.md — run them now, in the foreground, and wait for each to finish:',
+      '`git add -A && git commit -m "<message>"` (only if there are uncommitted changes), then',
+      '`git push` from this task’s worktree.'
+    ].join('\n\n')
+
+    /** (`#543` O2) Records the mid-round unpushed-work resume as its own marked, idempotent PR comment — the same `postForgeEffectOnce`/`postMarkedComment` mechanism `postPauseComment` already uses, keyed by round+head so a genuine re-run of the same stall posts only once. */
+    async function postUnpushedWorkResumeComment(
+      roundNum: number,
+      head: string,
+      unpushed: { dirtyFiles: string[]; aheadCount: number }
+    ): Promise<void> {
+      const detail =
+        unpushed.dirtyFiles.length > 0
+          ? `dirty file(s): ${unpushed.dirtyFiles.join(', ')}`
+          : `${unpushed.aheadCount} commit(s) ahead of the remote, worktree clean`
+      const body = [
+        `unpushed_work_resume: the developer's last turn on \`${branch}\` ended with unpushed work (${detail}) and no new head on the branch (last known head \`${head}\`).`,
+        '',
+        'Resumed once, in the foreground, with a commit-and-push instruction.'
+      ].join('\n')
+      postForgeEffectOnce(root, task, `unpushed-work-resume-${roundNum}-${head}`, () =>
+        postMarkedComment('pr', String(prNumber), '<!-- aeg:loop:unpushed-work-resume -->', body)
+      )
+    }
+
     /** O4/O6: the loop's own conflict prompt — names the conflicting file(s) so the developer does not have to re-derive mergeability itself. */
     function renderConflictPrompt(files: readonly string[]): string {
       const fileList =
@@ -840,11 +912,91 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * after `Promise.all` itself resolves — i.e. only once it knows neither
      * role failed.
      */
+    /** (`#543` O3) `report.txt`'s `FINDING_IDS:` line — one id per `findings.txt` line, in order, comma-separated. `true` when there is nothing to cite (an empty findings list) or the line's ids exactly cover the findings, one each, no duplicates. */
+    function findingIdsCited(workDir: string, findingCount: number): boolean {
+      if (findingCount === 0) return true
+      const raw = readIfExists(join(workDir, 'report.txt')) ?? ''
+      const line = raw.split('\n').find((l) => l.trim().toUpperCase().startsWith('FINDING_IDS:'))
+      if (!line) return false
+      const ids = line
+        .slice(line.indexOf(':') + 1)
+        .split(',')
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0)
+      return ids.length === findingCount && new Set(ids).size === ids.length
+    }
+
+    function citeFindingIdsPrompt(workDir: string): string {
+      return [
+        "Your last report.txt did not cite finding ids: findings.txt has finding(s), but report.txt's `FINDING_IDS:` line is missing, or does not carry exactly one id per findings.txt line.",
+        `Rewrite findings.txt and report.txt (same grammar as before) at ${join(workDir, 'findings.txt')} and ${join(workDir, 'report.txt')} — this time including a \`FINDING_IDS:\` line in report.txt, one id per findings.txt line, in the same order, comma-separated (e.g. \`F1,F2,F3\`) — so this round's findings are comparable to the next round's.`
+      ].join('\n\n')
+    }
+
+    /**
+     * (`#543` O3) A round's own findings must carry reviewer-cited ids to be
+     * comparable across rounds at all (`assessRound`'s own `no_progress`
+     * derivation compares finding ids between rounds, and a fresh
+     * `findings.txt` each round has no other stable identity to compare on).
+     * A report missing them is sent back ONCE with `CITE_FINDING_IDS_PROMPT`,
+     * into a fresh work directory (`attempt` 3 — never overwriting either of
+     * `dispatchReviewer`'s own two attempts) — a FRESH dispatch, deliberately
+     * never `--resume`: this file's own module doc states, as a load-bearing
+     * invariant, that a reviewer session is never resumed (only the
+     * developer's is); "the same reviewer session" in this task's own
+     * wording is read as "the same round's reviewer work, redone," matching
+     * the fresh-dispatch shape `dispatchReviewer`'s own missing-artifact/
+     * parse-failure retries already use. Still uncitable after that resend
+     * is `report_uncitable`: the round proceeds on `verdict`'s severities —
+     * whichever attempt actually produced a parseable verdict — never
+     * treated as though no report came back at all.
+     */
+    async function resendForFindingIds(
+      role: 'reviewer' | 'security',
+      roundNum: number,
+      facts: ReviewerPromptFacts,
+      firstVerdict: RoundVerdictParse
+    ): Promise<{ verdict: RoundVerdictParse; findingsUncitable: boolean }> {
+      const hasObjectives = hasObjectivesFacts(facts)
+      const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
+      const workDir = reviewerWorkDir(root, task, roundNum, role, 3)
+      mkdirSync(workDir, { recursive: true })
+      const prompt = citeFindingIdsPrompt(workDir)
+      const handle = await withPromptFile(prompt, (promptFile) =>
+        d.dispatchRole(dispatchRoleName, input.agent, prompt, {
+          task: task,
+          round: roundNum,
+          promptFile,
+          roleLogPath: loopLogPath
+        })
+      )
+      await assertDispatchOrEscalate(handle, input.agent, false, false)
+      if (missingReviewerArtifacts(workDir, hasObjectives).length > 0) {
+        return { verdict: firstVerdict, findingsUncitable: true }
+      }
+      try {
+        const verdict = buildVerdictFromReport(
+          role,
+          workDir,
+          input.agent,
+          task,
+          handle,
+          facts.manifest,
+          policy,
+          facts.resolvedObjectives
+        )
+        return { verdict, findingsUncitable: !findingIdsCited(workDir, verdict.observation.findings.length) }
+      } catch (err) {
+        if (!(err instanceof ReviewerReportParseFailure)) throw err
+        return { verdict: firstVerdict, findingsUncitable: true }
+      }
+    }
+
     async function dispatchReviewer(
       role: 'reviewer' | 'security',
       roundNum: number,
       facts: ReviewerPromptFacts
-    ): Promise<RoundVerdictParse> {
+    ): Promise<{ verdict: RoundVerdictParse; findingsUncitable: boolean }> {
       const hasObjectives = hasObjectivesFacts(facts)
       const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
       let lastMissing: string[] = []
@@ -873,7 +1025,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // parse is retried once, into a fresh work directory, before it
         // becomes a pause.
         try {
-          return buildVerdictFromReport(
+          const verdict = buildVerdictFromReport(
             role,
             workDir,
             input.agent,
@@ -883,6 +1035,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             policy,
             facts.resolvedObjectives
           )
+          if (findingIdsCited(workDir, verdict.observation.findings.length)) {
+            return { verdict, findingsUncitable: false }
+          }
+          return await resendForFindingIds(role, roundNum, facts, verdict)
         } catch (err) {
           if (!(err instanceof ReviewerReportParseFailure)) throw err
           lastParseFailure = err
@@ -1256,24 +1412,80 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             ]
               .filter(Boolean)
               .join('\n\n')
+            // Unchanged from before this task: a head-change wait runs ONLY
+            // for a CI-red retry or a conflict retry — never for the plain
+            // review-findings retry, whose own next `dispatch_reviewers`
+            // phase re-reads whatever head exists rather than waiting for
+            // one to CHANGE (Traps: never re-read the gate in a tight loop
+            // on an unchanged head — `#479`'s own five-re-dispatches). O2
+            // (`#543`) adds the unpushed-work resume ONLY inside this same,
+            // already-narrower scope — widening it to the review-findings
+            // path would mean every existing fixture for that path (there is
+            // no real push to wait for there today) would need to start
+            // simulating one, well beyond this fix's own boundary.
             const headBeforeDispatch = isGateRedRetry || conflictFiles !== null ? d.resolveHead(branch) : null
             roundStartMs = d.now()
             await dispatchDeveloper(prompt, round)
             resumedDispatch = false
 
-            if (headBeforeDispatch !== null) {
-              const changedHead = await pollUntil(
-                () => {
-                  const h = d.resolveHead(branch)
-                  return h !== headBeforeDispatch ? h : null
-                },
-                d.gatePollMaxAttempts,
-                d.gatePollIntervalMs,
-                d.sleep,
-                'devReviewLoop: head-change wait timed out'
-              ).catch(() => null)
+            const changedHead =
+              headBeforeDispatch !== null
+                ? await pollUntil(
+                    () => {
+                      const h = d.resolveHead(branch)
+                      return h !== headBeforeDispatch ? h : null
+                    },
+                    d.gatePollMaxAttempts,
+                    d.gatePollIntervalMs,
+                    d.sleep,
+                    'devReviewLoop: head-change wait timed out'
+                  ).catch(() => null)
+                : 'not-applicable'
 
-              if (changedHead === null) {
+            if (headBeforeDispatch !== null && changedHead === null) {
+              // (`#543` O2) Before charging this to the driver's generic
+              // bounded stall counter, tell "stopped without pushing REAL
+              // work" apart from a genuinely idle turn: a dirty worktree or
+              // local commits ahead of the remote is real, unpushed work —
+              // resumed ONCE, foreground, with a dedicated commit-and-push
+              // instruction (Traps: never resume more than once for this).
+              let resolvedByUnpushedResume = false
+              if (!unpushedResumeAttempted) {
+                const unpushed = d.readUnpushedWorkDetail(worktreePathForBranch())
+                if (unpushed.dirtyFiles.length > 0 || unpushed.aheadCount > 0) {
+                  unpushedResumeAttempted = true
+                  await postUnpushedWorkResumeComment(round, headBeforeDispatch, unpushed)
+                  await dispatchDeveloper(COMMIT_AND_PUSH_PROMPT, round)
+                  const resumedHead = await pollUntil(
+                    () => {
+                      const h = d.resolveHead(branch)
+                      return h !== headBeforeDispatch ? h : null
+                    },
+                    d.gatePollMaxAttempts,
+                    d.gatePollIntervalMs,
+                    d.sleep,
+                    'devReviewLoop: head-change wait timed out after unpushed-work resume'
+                  ).catch(() => null)
+
+                  if (resumedHead !== null) {
+                    resolvedByUnpushedResume = true
+                  } else {
+                    const stillUnpushed = d.readUnpushedWorkDetail(worktreePathForBranch())
+                    const stats = computeStats(headBeforeDispatch, roundStartMs)
+                    const detail = `branch ${branch}; dirty file(s): ${
+                      stillUnpushed.dirtyFiles.length > 0
+                        ? stillUnpushed.dirtyFiles.join(', ')
+                        : '(none — commits ahead of the remote only)'
+                    }`
+                    await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+                    decision = { type: 'pause', reason: 'no_push', detail }
+                    await d.flushOutbox(task)
+                    continue
+                  }
+                }
+              }
+
+              if (!resolvedByUnpushedResume) {
                 // The developer returned without pushing — not a fresh gate
                 // read (the head never moved), so this feeds the DRIVER's own
                 // bounded stall counter instead of `fetchCiConclusion` again.
@@ -1296,6 +1508,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 await d.flushOutbox(task)
                 continue
               }
+              // else: `resolvedByUnpushedResume` — fall through exactly like
+              // a normal `changedHead !== null` success, into the
+              // mergeable/gate checks below.
             }
           }
           firstPass = false
@@ -1321,6 +1536,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           lastFailingChecks = gate.failingChecks
           pendingGateRedRetry = !gate.green
           gateStalledStreak = 0
+          unpushedResumeAttempted = false
           const confidence = round >= 2 && gate.green ? readAndClearConfidence() : undefined
           const obs: Observations = { kind: 'gate', round, green: gate.green, confidence, stats: gate.stats }
           const result = assessRound(state, obs)
@@ -1340,6 +1556,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           decision = result.decision
           pendingGateRedRetry = false
           gateStalledStreak = 0
+          unpushedResumeAttempted = false
           await logEvents(result.events)
           await d.flushOutbox(task)
         } else if (decision.type === 'dispatch_reviewers') {
@@ -1394,7 +1611,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // 2, MAJOR: the driver used to build this `pause` decision by hand
           // and skip the log entirely). No verdict is held or published for
           // this round, and the round number does not advance.
-          let verdicts: [RoundVerdictParse, RoundVerdictParse] | null = null
+          let verdicts:
+            | [
+                { verdict: RoundVerdictParse; findingsUncitable: boolean },
+                { verdict: RoundVerdictParse; findingsUncitable: boolean }
+              ]
+            | null = null
           try {
             verdicts = await Promise.all([
               dispatchReviewer('reviewer', round, facts),
@@ -1470,14 +1692,37 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // only now is it safe to hold either verdict on disk (O2's "nothing
               // is held … for that round" invariant; see `dispatchReviewer`'s doc
               // comment, above).
-              writeHeldVerdict(root, task, round, 'reviewer', reviewer.rendered)
-              writeHeldVerdict(root, task, round, 'security', security.rendered)
-              lastReviewContext = `${reviewer.rendered}\n\n---\n\n${security.rendered}`
+              writeHeldVerdict(root, task, round, 'reviewer', reviewer.verdict.rendered)
+              writeHeldVerdict(root, task, round, 'security', security.verdict.rendered)
+              lastReviewContext = `${reviewer.verdict.rendered}\n\n---\n\n${security.verdict.rendered}`
+
+              // (`#543` O3) Recorded once per round, so a Principal reading
+              // the PR sees WHICH role's ids the driver could not trust —
+              // never silent just because the round still proceeded.
+              const uncitableRoles = [
+                reviewer.findingsUncitable ? 'reviewer' : null,
+                security.findingsUncitable ? 'security' : null
+              ].filter((r): r is string => r !== null)
+              if (uncitableRoles.length > 0) {
+                postForgeEffectOnce(root, task, `report-uncitable-${round}`, () =>
+                  postMarkedComment(
+                    'pr',
+                    String(prNumber),
+                    '<!-- aeg:loop:report-uncitable -->',
+                    `report_uncitable: ${uncitableRoles.join(', ')} still carried findings with no citable \`FINDING_IDS:\` after one resend this round. Proceeding on this round's severities — never counted toward \`no_progress\`.`
+                  )
+                )
+              }
 
               const obs: Observations = {
                 kind: 'verdicts',
                 round,
-                verdicts: [reviewer.observation, security.observation]
+                verdicts: [reviewer.verdict.observation, security.verdict.observation],
+                // (`#543` O3) Either role's report still uncitable after its
+                // one resend — `assessRound` never derives `no_progress` for
+                // this round; every other stop condition (reappearance,
+                // confidence, max_rounds, escalation) is unaffected.
+                findingsUncitable: reviewer.findingsUncitable || security.findingsUncitable
               }
               const result = assessRound(state, obs)
               state = result.state

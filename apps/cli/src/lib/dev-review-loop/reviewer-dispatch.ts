@@ -507,6 +507,10 @@ export function renderReviewerDispatchPrompt(
       : []),
     `Write a short report to ${join(workDir, 'report.txt')} as one \`KEY: value\` line per field:`,
     role === 'reviewer' ? '  BRIEF_CONFORMANCE, SPEC_CONFORMANCE, SCOPE, TESTS, DOCS' : '  CONFIG_SCAN, SECRETS',
+    // (#543 O3) A round's own findings are compared to the NEXT round's by
+    // id — never by writing order, which is not stable across two separate
+    // dispatches. Skipped only when findings.txt is empty (nothing to cite).
+    '  If findings.txt is non-empty, also write `FINDING_IDS: <id>,<id>,...` — one id per findings.txt line, in the SAME order, e.g. `F1,F2,F3`. A report with findings but no matching `FINDING_IDS:` line is sent back once for this alone.',
     ...(role === 'security'
       ? [
           '`SECRETS:` is required — never leave it blank or omit it, even when you found nothing: write `SECRETS: none found` only after you actually checked.'

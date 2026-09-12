@@ -60,7 +60,20 @@ export type RoundStats = {
  */
 export type Observations =
   | ({ kind: 'gate' } & { round: number; green: boolean; confidence?: Confidence; stats: RoundStats })
-  | ({ kind: 'verdicts' } & { round: number; verdicts: VerdictObservation[] })
+  | ({ kind: 'verdicts' } & {
+      round: number
+      verdicts: VerdictObservation[]
+      /**
+       * (`doctrine-fixes-v1` task 1, `#543`, O3) Set when a reviewer's report
+       * still carried no citable finding ids after the driver's one resend
+       * (`report_uncitable`) — this round's `open`/`resolved` id comparison
+       * is untrustworthy, so it is excluded from the `no_progress` check
+       * only; every other stop condition (reappearance, confidence,
+       * max_rounds, escalation) still applies. Omitted (or `false`) is the
+       * default, unchanged behavior.
+       */
+      findingsUncitable?: boolean
+    })
 
 /**
  * `'infrastructure'` (task `review-validity-v1` 1, `#475`, O2): a review
@@ -114,6 +127,17 @@ export type Observations =
  * now so the manifest's comparison is symmetric on every field, matching
  * what the merge gate (which DOES re-resolve policy fresh on every run)
  * already checks.
+ *
+ * `'no_push'` (`doctrine-fixes-v1` task 1, `#543`, O2): a developer turn
+ * ended with a dirty worktree or local commits ahead of the remote, and no
+ * new head appeared on the branch even after one foreground resume asking
+ * it to commit and push. Same shape as the driver-decided reasons above:
+ * `devReviewLoop` detects and decides this itself (reading the worktree's
+ * own git status, not something `assessRound` can see from an
+ * `Observations` value) — it exists only so this pause shares the same
+ * vocabulary and rendering path every other pause reason already uses.
+ * `detail` is set for this reason too, naming the branch and the dirty
+ * file(s) observed.
  */
 export type PauseReason =
   | 'escalation'
@@ -122,6 +146,7 @@ export type PauseReason =
   | 'confidence'
   | 'reappearance'
   | 'infrastructure'
+  | 'no_push'
   | 'objectives_changed'
   | 'ruling_posted'
   | 'stale_driver'
