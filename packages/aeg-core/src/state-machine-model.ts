@@ -20,9 +20,14 @@
  * **Order is load-bearing, not incidental.** `blocked` must win over every
  * other conclusion; the reopened-after-merge rules must precede the plain
  * `merged` rule or a reopened Issue would permanently read `merged` off a
- * stale fact. `deriveStatus` (`derive-tranche.ts`) executes this list
- * verbatim, so reordering entries here changes real status everywhere — every
- * gate, the Studio, and the CLI read their status through it.
+ * stale fact; the closed-Issue rules (`closed-not-planned`, `closed-without-
+ * merge`) must precede `branch-exists`/`issue-open` — neither of those two
+ * checks `issueState`, so a closed Issue whose task branch was never cleaned
+ * up used to be swallowed by `branch-exists` and read as permanently
+ * `in-flight` instead of `dropped`/`incoherent` (issue-545, O6). `deriveStatus`
+ * (`derive-tranche.ts`) executes this list verbatim, so reordering entries
+ * here changes real status everywhere — every gate, the Studio, and the CLI
+ * read their status through it.
  *
  * **Deliberately not imported here: the label vocabulary.** Derivation works
  * on `ForgeFacts` — booleans and enums — never on label *strings*; the one
@@ -153,8 +158,12 @@ export type DerivationRule = {
 }
 
 /**
- * The ordered chain. First match wins; the final rule matches unconditionally,
- * so the list is total and evaluation always concludes.
+ * The ordered chain. First match wins. No single rule here is unconditional
+ * any more (issue-545, O6 narrowed `closed-without-merge`'s predicate to
+ * `issueState === 'closed'` so it could move ahead of `branch-exists`/
+ * `issue-open` without swallowing every open Issue too) — totality is
+ * guaranteed one level up, by `deriveStatusFromModel`'s own trailing
+ * fallback, not by a catch-all entry in this list.
  *
  * Every predicate is written to be safe against `undefined` facts even though
  * only the first rule can observe that case — the guard is structural, so
@@ -218,36 +227,36 @@ export const DERIVATION_RULES: DerivationRule[] = [
     why: 'Opening the PR is itself the in-flight → in-review transition; no status is ever written to record it.'
   },
   {
-    id: 'branch-exists',
+    id: 'closed-not-planned',
     chainStep: 6,
+    when: 'Issue closed NOT_PLANNED, with no merged PR',
+    matches: (facts) => facts?.issueState === 'closed' && facts.stateReason === 'not_planned',
+    status: 'dropped',
+    why: 'A legitimately abandoned task. Must precede branch-exists/issue-open (issue-545, O6): neither checks issueState, so a closed NOT_PLANNED Issue whose task branch was never cleaned up used to be swallowed by branch-exists and read as in-flight forever.'
+  },
+  {
+    id: 'closed-without-merge',
+    chainStep: 6,
+    when: 'Issue closed for any other reason, with no merged PR',
+    matches: (facts) => facts?.issueState === 'closed',
+    status: 'incoherent',
+    why: "The honest terminal case for a closed, unprovable Issue. Same ordering fix as closed-not-planned (issue-545, O6) and for the identical reason: must precede branch-exists/issue-open or a closed Issue with a lingering branch read as in-flight instead. No longer the list’s unconditional catch-all — `deriveStatusFromModel`’s own trailing fallback (below) is what keeps the function total now that this predicate is scoped to `issueState === 'closed'`."
+  },
+  {
+    id: 'branch-exists',
+    chainStep: 7,
     when: 'A task branch exists, with no PR',
     matches: (facts) => facts?.branchExists === true,
     status: 'in-flight',
-    why: 'Publishing the branch is the todo → in-flight transition. Below the PR rules, since a PR is the stronger signal.'
+    why: "Publishing the branch is the todo → in-flight transition. Below the PR rules (a PR is the stronger signal) and below the closed-Issue rules (issue-545, O6) — every fact set reaching this rule already has issueState === 'open'."
   },
   {
     id: 'issue-open',
-    chainStep: 7,
+    chainStep: 8,
     when: 'The Issue is open, with no branch and no PR',
     matches: (facts) => facts?.issueState === 'open',
     status: 'todo',
     why: 'Not started. Assigned or not, both are todo inside a tranche.'
-  },
-  {
-    id: 'closed-not-planned',
-    chainStep: 8,
-    when: 'Issue closed NOT_PLANNED, with no merged PR',
-    matches: (facts) => facts?.stateReason === 'not_planned',
-    status: 'dropped',
-    why: 'A legitimately abandoned task. Reached only when the Issue is closed and nothing merged.'
-  },
-  {
-    id: 'closed-without-merge',
-    chainStep: 8,
-    when: 'Issue closed for any other reason, with no merged PR',
-    matches: () => true,
-    status: 'incoherent',
-    why: 'The honest terminal fallback: closed but unprovable must never read as todo. Total by design, so derivation always concludes.'
   }
 ]
 
@@ -257,9 +266,13 @@ export const DERIVATION_RULES: DerivationRule[] = [
  * rendered rules and the real derivation are the same list — the whole point
  * of the discipline.
  *
- * The trailing return is unreachable by construction (the final rule matches
- * unconditionally) and exists only to satisfy the type checker;
- * `state-machine-model.test.ts` asserts that totality directly.
+ * The trailing `return 'incoherent'` is this function's own totality
+ * guarantee (issue-545, O6): no rule in `DERIVATION_RULES` is unconditional
+ * any more, so the type checker cannot see the list as exhaustive, and in
+ * practice every real `ForgeFacts` (`issueState` is always `'open'` or
+ * `'closed'`) is fully covered by the rules above it — this line exists for
+ * the type checker and as a defensive floor, not as the reachable case
+ * `state-machine-model.test.ts` used to assert of the last array entry.
  */
 export function deriveStatusFromModel(facts: ForgeFacts | undefined): DerivedStatus {
   for (const rule of DERIVATION_RULES) {
