@@ -274,6 +274,11 @@ jobs:
     needs: [build, test-shared-packages, test-cli]
     if: always()
     runs-on: ubuntu-latest
+    # Least-privilege, matching every other job in this file — this job does
+    # no checkout and runs no PR-controlled content, so it needs no more than
+    # the default read scope, made explicit rather than left implicit.
+    permissions:
+      contents: read
     steps:
       - name: Every upstream job succeeded or was correctly skipped (docs-only)
         run: |
