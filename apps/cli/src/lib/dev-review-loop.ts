@@ -576,12 +576,26 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let state: LoopState = initialLoopState(config)
 
     /**
-     * O9: the round journal is the task's, not this process's — on attach
-     * or resume (never a genuine round-1 dispatch, which by construction
-     * has no prior round to recover), replay every `dev_review_loop` event
-     * the task has ever emitted before this run logs one of its own.
-     * `seedLoopHistory` is called from exactly two sites below: the
-     * `resumeFrom` branch, and the `existingPr` attach branch.
+     * O9: the round journal is the task's, not this process's — on a plain
+     * attach (never a genuine round-1 dispatch, which by construction has
+     * no prior round to recover), replay every `dev_review_loop` event the
+     * task has ever emitted before this run logs one of its own.
+     * `seedLoopHistory` is called from exactly one site below: the
+     * `existingPr` attach branch.
+     *
+     * Deliberately NEVER called on `--resume` (round 2 review, BLOCKER):
+     * `resumeFrom.round` is the exact round the paused process already
+     * logged a `round_ended` for before it exited — that round is already
+     * the newest entry `fetchLoopHistory` would replay. Seeding here, then
+     * letting this same resumed run recompute and append that identical
+     * round number again, is the precise double-count this function's own
+     * append-only `state.rounds` guards against elsewhere (see below) — the
+     * attach branch never hits it because attach always continues at
+     * `held.round + 1`, one past anything replayed, while resume
+     * deliberately continues AT `resumeFrom.round` to give the ruling's fix
+     * a chance in the same round. `state.rounds` starts empty on resume and
+     * accumulates only the rounds this process itself computes from here
+     * on.
      *
      * Applied whenever this task has NOT actually reached a real terminal
      * publish — never gated on the newest round's own `outcome: 'green'`
@@ -621,8 +635,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         totalFilesChanged: loopHistory.totalFilesChanged
       }
     }
-    if (resumeFrom) seedLoopHistory()
-
     let round = resumeFrom ? resumeFrom.round : 1
     let devResumeId: string | null = null
     let devDispatchSucceededBefore = false
@@ -1133,6 +1145,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const reexecArgs = buildReexecArgs(input, task)
         const exitCode = d.reexecSelf(reexecArgs)
         if (exitCode !== null) {
+          // Round 2 review, MINOR: whatever this process already logged
+          // durably to the local outbox is worth posting now, not left for
+          // whenever the re-exec'd process's own next flush happens to run.
+          await d.flushOutbox(task)
           d.exitProcess(exitCode)
           // `exitProcess` is typed `(code: number) => never` — real process.exit
           // never returns here. This `return` guards a test fake that records
