@@ -1292,9 +1292,12 @@ describe('prReportCommand — --push --body-file writes the whole local body (#5
 
       // Ring 1 skips `runBodyChecks` entirely — this test is about the
       // whole-body write path, not the body-validating check registry.
+      // `false` skips the ring since issue-545 O2 inverted these keys'
+      // meaning (`true` now RUNS a ring, not skips it — config.ts's
+      // `MANAGED_MANIFEST_VERSION` doc comment, version 3).
       writeFileSync(
         join(dir, 'vinaya.config.json'),
-        JSON.stringify({ rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: false } })
+        JSON.stringify({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: false } })
       )
 
       // A minimal forge fake: `pr view` prints whatever `pr edit --body-file`
