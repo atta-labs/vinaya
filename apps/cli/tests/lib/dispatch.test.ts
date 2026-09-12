@@ -1584,6 +1584,60 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     expect(nonBash.stdout.trim()).toBe('')
   })
 
+  it('round-2 HIGH (#547, O1): denies a Bash call backgrounded by shell shape alone, not only by run_in_background:true', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+    const settingsIdx = argv.indexOf('--settings')
+    const settingsPath = argv[settingsIdx + 1] as string
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> }
+    }
+    const hookCommand = settings.hooks.PreToolUse[0]?.hooks[0]?.command as string
+    const scriptPath = hookCommand.slice('bun "'.length, -1)
+
+    const run = (command: string) => {
+      const result = spawnSync('bun', [scriptPath], {
+        input: JSON.stringify({ tool_name: 'Bash', tool_input: { command, run_in_background: false } }),
+        encoding: 'utf8'
+      })
+      expect(result.status).toBe(0)
+      return result.stdout.trim()
+    }
+    const isDenied = (out: string) => out !== '' && JSON.parse(out).hookSpecificOutput.permissionDecision === 'deny'
+
+    // Each backgrounding shape, run_in_background left false throughout —
+    // proving the deny fires on the command text itself, not the SDK flag.
+    expect(isDenied(run('sleep 100 &'))).toBe(true)
+    expect(isDenied(run('nohup sleep 100'))).toBe(true)
+    expect(isDenied(run('bg; disown'))).toBe(true)
+    expect(isDenied(run('setsid sleep 100'))).toBe(true)
+
+    // A legitimate `&&` chain, and a quoted `&` inside a printed string,
+    // never trigger the deny — the whole point of checking shape, not
+    // merely scanning for the `&` character.
+    expect(isDenied(run('npm run build && npm test'))).toBe(false)
+    expect(isDenied(run('echo "background job &"'))).toBe(false)
+  })
+
   it('never wires --settings for codex or gemini — no confirmed-live equivalent deny mechanism for either', () => {
     for (const agent of ['codex', 'gemini']) {
       const home = tempDir('vinaya-dispatch-home-')

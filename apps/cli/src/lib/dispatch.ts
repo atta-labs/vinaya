@@ -340,6 +340,38 @@ export function openOutputTee(effectId: string): {
 export const BACKGROUND_DENY_REASON =
   'Dispatched sessions cannot run shell commands in the background — run this command in the foreground instead.'
 
+/**
+ * Round-2 HIGH (`#547`, O1): `run_in_background === true` is the SDK's own
+ * flag for a backgrounded tool call, but a dispatched agent can background a
+ * process by shell shape alone, with `run_in_background` left `false` — a
+ * trailing `&` (never `&&`, a legitimate chain operator), or a command that
+ * launches its process through `nohup`, `disown`, or `setsid`. This is the
+ * shared detector the hook script below embeds verbatim (as a string — it
+ * runs inside a generated `.mjs` file, not this module), so the fixtures in
+ * `dispatch.test.ts` exercise the exact same source the shipped hook runs,
+ * never a parallel reimplementation that could silently drift from it.
+ *
+ * Quote-stripping is naive (no escape handling) — good enough to keep a
+ * quoted `&` inside an `echo` argument, e.g. `echo "job &"`, from a false
+ * deny, without attempting a full shell parse.
+ */
+export function backgroundShapeDetectorSource(): string {
+  return [
+    'function stripQuoted(s) {',
+    "  return s.replace(/'[^']*'/g, '').replace(/\"[^\"]*\"/g, '');",
+    '}',
+    'function commandBackgrounds(command) {',
+    "  if (typeof command !== 'string') return false;",
+    '  const bare = stripQuoted(command).trimEnd();',
+    '  if (/(^|[^&])&$/.test(bare)) return true;',
+    '  if (/(^|[;&|]|\\s)nohup\\s/.test(bare)) return true;',
+    '  if (/\\bdisown\\b/.test(bare)) return true;',
+    '  if (/(^|[;&|]|\\s)setsid\\s/.test(bare)) return true;',
+    '  return false;',
+    '}'
+  ].join('\n')
+}
+
 function backgroundDenyHookScript(): string {
   return [
     "let d = '';",
@@ -347,7 +379,9 @@ function backgroundDenyHookScript(): string {
     "process.stdin.on('end', () => {",
     '  try {',
     '    const e = JSON.parse(d);',
-    "    if (e.tool_name === 'Bash' && e.tool_input && e.tool_input.run_in_background === true) {",
+    backgroundShapeDetectorSource(),
+    '    const input = e.tool_input || {};',
+    "    if (e.tool_name === 'Bash' && (input.run_in_background === true || commandBackgrounds(input.command))) {",
     '      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: ' +
       "'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: " +
       JSON.stringify(BACKGROUND_DENY_REASON) +
