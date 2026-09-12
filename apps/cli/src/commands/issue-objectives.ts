@@ -7,6 +7,7 @@ import {
   type Objective,
   objectivesOf,
   objectivesVersion,
+  parseIssueParts,
   renderObjectives,
   resolveNewestFrozenBrief
 } from '@attalabs/aeg-core'
@@ -77,11 +78,69 @@ export function withoutObjectivesSection(body: string): string {
   return next ? before + afterHeading.slice(next.index) : before
 }
 
+const PARTS_HEADING_RE = /^##[ \t]*Parts[ \t]*$/im
+
+/** `{ headingEnd, sectionEnd }` byte offsets of the `## Parts` section's own content (heading excluded, next `##` heading excluded) — `null` when there is no `## Parts` heading at all. */
+function partsSectionBounds(body: string): { headingEnd: number; sectionEnd: number } | null {
+  const heading = PARTS_HEADING_RE.exec(body)
+  if (!heading) return null
+  const headingEnd = heading.index + heading[0].length
+  const afterHeading = body.slice(headingEnd)
+  const next = NEXT_HEADING_RE.exec(afterHeading)
+  const sectionEnd = next ? headingEnd + next.index : body.length
+  return { headingEnd, sectionEnd }
+}
+
+/**
+ * Appends `partLine` as a new line at the end of the `## Parts` section —
+ * `--add`'s own write, in the SAME edit as the Objectives change (O5).
+ * Throws when there is no `## Parts` heading at all: a pre-cutover Issue
+ * with no Parts section has no self-serve add path here — the same posture
+ * the brief-sections cutover already takes for a Surface-less Issue.
+ */
+export function appendPartLine(body: string, partLine: string): string {
+  const bounds = partsSectionBounds(body)
+  if (!bounds) {
+    throw new Error('appendPartLine: no `## Parts` heading in this Issue body — cannot add a Part.')
+  }
+  const before = body.slice(0, bounds.headingEnd)
+  const section = body.slice(bounds.headingEnd, bounds.sectionEnd).replace(/\s+$/, '')
+  const tail = body.slice(bounds.sectionEnd)
+  return `${before}${section}\n${partLine}\n${tail}`
+}
+
+/**
+ * Removes every `## Parts` line whose citation is EXACTLY `droppedId` (and
+ * nothing else) — `--drop`'s own write (O5). A Part citing the dropped
+ * objective alongside another is left untouched, unchanged from before this
+ * edit: narrowing a multi-objective citation is out of this rule's scope. If
+ * that leaves a Part citing an objective no longer defined,
+ * `writeValidatedIssueEdit`'s own pre-existing `checkPartsCiteDefinedObjectives`
+ * gate refuses the write naming the dangling citation — the Planner resolves
+ * it by hand before the drop can proceed. A no-op when there is no
+ * `## Parts` heading.
+ */
+export function removePartLinesCitingOnly(body: string, droppedId: string): string {
+  const bounds = partsSectionBounds(body)
+  if (!bounds) return body
+  const droppedN = Number.parseInt(droppedId.replace(/^O/i, ''), 10)
+  const before = body.slice(0, bounds.headingEnd)
+  const section = body.slice(bounds.headingEnd, bounds.sectionEnd)
+  const tail = body.slice(bounds.sectionEnd)
+  const kept = section.split('\n').filter((line) => {
+    const m = /^Part\s+\d+\s*\(([^)]*)\)\s*[-—–]/i.exec(line.trim())
+    if (!m) return true
+    const refs = [...(m[1] as string).matchAll(/O(\d+)/gi)].map((r) => Number.parseInt(r[1] as string, 10))
+    return !(refs.length === 1 && refs[0] === droppedN)
+  })
+  return `${before}${kept.join('\n')}${tail}`
+}
+
 function formatList(objectives: Objective[]): string {
   return objectives.map((o) => `${o.id}. ${o.text}`).join('\n')
 }
 
-function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditOp; reason: string } {
+function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditOp; reason: string; part?: string } {
   const json = args.includes('--json')
   const rest = args.filter((a) => a !== '--json')
 
@@ -98,6 +157,7 @@ function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditO
 
   const ops: EditOp[] = []
   let reason: string | undefined
+  let part: string | undefined
   const flagArgs = rest.slice(1)
   for (let i = 0; i < flagArgs.length; i++) {
     const a = flagArgs[i] as string
@@ -111,6 +171,8 @@ function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditO
       ops.push({ kind: 'replace', id, sentence })
     } else if (a === '--reason') {
       reason = flagArgs[++i]
+    } else if (a === '--part') {
+      part = flagArgs[++i]
     }
   }
 
@@ -150,7 +212,32 @@ function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditO
     ])
   }
 
-  return { json, issueRef, op: ops[0] as EditOp, reason: reason as string }
+  // task-run-v1 task 15, O5: `--add` without a `--part` would freeze an
+  // objective no `## Parts` line ever cites — `checkPartsCiteDefinedObjectives`
+  // stays silent about it (it only checks a citation names a REAL objective,
+  // never the reverse), so a frozen brief re-issued after this edit would
+  // simply omit the new objective from every Part with nothing to fail on.
+  // Refused here, naming the rule, rather than discovered downstream.
+  if (ops[0]?.kind === 'add' && (!part || part.trim().length === 0)) {
+    refuse([
+      makeCheckError(
+        'objectives-part-required',
+        '`--add` requires `--part "Part <n> (O<k>) — <outcome>"` for the objective it adds — an objective with no citing Part is never covered by a frozen brief re-issued after this edit.',
+        `Pass --part "Part <n> (O<k>) — <outcome>", then re-run \`${RETRY}\`.`
+      )
+    ])
+  }
+  if (ops[0]?.kind !== 'add' && part !== undefined) {
+    refuse([
+      makeCheckError(
+        'forge-args',
+        '`--part` is only meaningful with `--add`.',
+        `Remove --part, then re-run \`${RETRY}\`.`
+      )
+    ])
+  }
+
+  return { json, issueRef, op: ops[0] as EditOp, reason: reason as string, part }
 }
 
 /** A comment reduced to what both `countMarkerComments` (body only) and `resolveNewestFrozenBrief` (body + author, O6) need, plus its own URL to name in a superseding-brief context. */
@@ -260,7 +347,7 @@ function applyOp(previous: Objective[], op: EditOp): Objective[] {
 }
 
 export async function issueObjectivesEditCommand(args: string[]): Promise<void> {
-  const { json, issueRef, op, reason } = parseArgs(args)
+  const { json, issueRef, op, reason, part } = parseArgs(args)
   refuseUnlessPrincipal(RETRY)
 
   const { body, title, labels, comments } = fetchIssueBodyAndComments(issueRef)
@@ -277,11 +364,44 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
   const previous = parsed.objectives
 
   const updated = applyOp(previous, op)
-  const newBody = spliceObjectivesSection(body, renderObjectives(updated))
+  const objectivesBody = spliceObjectivesSection(body, renderObjectives(updated))
+
+  // task-run-v1 task 15, O5: `--add` writes its `--part` line into `## Parts`
+  // in this SAME edit, so a frozen brief re-issued right after this command
+  // always passes `checkObjectivesCoverage`/`checkPartsCiteDefinedObjectives`
+  // — never a two-step "edit Objectives, then remember to edit Parts too."
+  // `--drop` removes the Part lines that cited only the dropped objective.
+  let finalBody = objectivesBody
+  if (op.kind === 'add') {
+    finalBody = appendPartLine(finalBody, part as string)
+    const reparsedParts = parseIssueParts(finalBody)
+    if (!reparsedParts.ok) {
+      refuse([
+        makeCheckError(
+          'objectives-part-malformed',
+          `--part "${part}" produced a malformed \`## Parts\` section: ${reparsedParts.errors.join(' ')}`,
+          `Fix --part to match \`Part <n> (O<k>) — <outcome>\`, then re-run \`${RETRY}\`.`
+        )
+      ])
+    }
+    const addedId = (updated[updated.length - 1] as Objective).id
+    const addedN = Number.parseInt(addedId.slice(1), 10)
+    if (!reparsedParts.value.some((p) => p.objectiveIds.includes(addedN))) {
+      refuse([
+        makeCheckError(
+          'objectives-part-mismatch',
+          `--part "${part}" does not cite ${addedId}, the objective this --add just created.`,
+          `Pass --part "Part <n> (${addedId}) — <outcome>", then re-run \`${RETRY}\`.`
+        )
+      ])
+    }
+  } else if (op.kind === 'drop') {
+    finalBody = removePartLinesCitingOnly(finalBody, op.id)
+  }
 
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-objectives-edit-'))
   const tmp = join(dir, 'body.md')
-  writeFileSync(tmp, newBody, 'utf8')
+  writeFileSync(tmp, finalBody, 'utf8')
   try {
     const ghArgs = ['--body-file', tmp]
     await writeValidatedIssueEdit({
@@ -292,11 +412,10 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
       retryCommand: RETRY,
       quiet: true,
       // This command IS the sanctioned Objectives-change path O3 names as
-      // its own escape hatch — it never touches `## Surface`/`## Parts`
-      // (`spliceObjectivesSection` only ever rewrites the Objectives
-      // section), and it posts its own superseding `aeg:brief:v<k+1>`
-      // comment below (O6) rather than being refused by the gate it is
-      // the sanctioned alternative to.
+      // its own escape hatch — `## Parts` is also rewritten here, in the
+      // same edit, per O5 above — and it posts its own superseding
+      // `aeg:brief:v<k+1>` comment below (O6) rather than being refused by
+      // the gate it is the sanctioned alternative to.
       skipFrozenSectionsCheck: true
     })
   } finally {
