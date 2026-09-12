@@ -16,7 +16,8 @@ export {
   listArchivedTrancheSlugsAsync,
   milestoneLifecycleFromTrancheLifecycles,
   releaseFromDescription,
-  resolveMilestoneAttachTarget
+  resolveMilestoneAttachTarget,
+  tranchesAttachedToMilestone
 } from './fetch-milestone'
 export type {
   ActiveTrancheRef,

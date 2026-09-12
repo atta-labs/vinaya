@@ -144,16 +144,22 @@ function readManifest(repoRoot: string): ConfigRead {
 // migration. Before this fix `false` (the starter default) meant "run the
 // ring" and `true` meant "skip it" — inverted from what the keys say. The
 // fix flips the meaning (`true` now runs, `false` now skips) and moves the
-// default from `false` to `true`, so a config still holding the literal old
-// default (`false`) would, unmigrated, silently start SKIPPING a ring it was
-// never meant to skip. Gated on `manifest.version` (bumped to 3 for this
-// exact fix), never on the rings values alone: a config already at version 3
-// is never re-migrated even if an adopter later sets a ring to `false` on
+// default from `false` to `true`. Every EXPLICIT pre-fix value therefore
+// means the opposite of what it now reads as, in both directions: the
+// starter's own `false` (old "run") would silently start SKIPPING a ring it
+// was never meant to skip, and an adopter's deliberate `true` (old "opt-in
+// to skip") would silently start RUNNING a ring they chose to turn off —
+// review round 2 (BLOCKER) caught the first version of this migration
+// handling only the `false` case. The fix is symmetric: any explicit boolean
+// on a config still below manifest version 3 gets negated, whichever value
+// it holds. Gated on `manifest.version` (bumped to 3 for this exact fix),
+// never on the rings values alone: a config already at version 3 is never
+// re-migrated even if an adopter later sets a ring to `false` (or `true`) on
 // purpose — this runs at most once per repo.
 // ---------------------------------------------------------------------------
 export type RingsMigration = {
-  ring1: { from: false; to: true } | null
-  ring2: { from: false; to: true } | null
+  ring1: { from: boolean; to: boolean } | null
+  ring2: { from: boolean; to: boolean } | null
 }
 
 export function planRingsMigration(
@@ -161,8 +167,10 @@ export function planRingsMigration(
   rings: { ring1_forgeWriteInterception?: boolean; ring2_asyncAudits?: boolean } | undefined
 ): RingsMigration | null {
   if (manifestVersion >= 3) return null
-  const ring1 = rings?.ring1_forgeWriteInterception === false ? ({ from: false, to: true } as const) : null
-  const ring2 = rings?.ring2_asyncAudits === false ? ({ from: false, to: true } as const) : null
+  const ring1From = rings?.ring1_forgeWriteInterception
+  const ring2From = rings?.ring2_asyncAudits
+  const ring1 = ring1From !== undefined ? { from: ring1From, to: !ring1From } : null
+  const ring2 = ring2From !== undefined ? { from: ring2From, to: !ring2From } : null
   if (!ring1 && !ring2) return null
   return { ring1, ring2 }
 }
@@ -187,8 +195,8 @@ function writeManifestVersion(
   const rings = ringsMigration
     ? {
         ...seed.rings,
-        ...(ringsMigration.ring1 ? { ring1_forgeWriteInterception: true } : {}),
-        ...(ringsMigration.ring2 ? { ring2_asyncAudits: true } : {})
+        ...(ringsMigration.ring1 ? { ring1_forgeWriteInterception: ringsMigration.ring1.to } : {}),
+        ...(ringsMigration.ring2 ? { ring2_asyncAudits: ringsMigration.ring2.to } : {})
       }
     : seed.rings
   writeFileSync(
@@ -855,16 +863,20 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
 }
 
 /** The human-readable "what changed" lines for a rings migration — printed both in the pre-apply diff and, verbatim, after the write actually lands. */
+function ringsMigrationNote(to: boolean): string {
+  return to ? '(now means "run", not "skip")' : '(now means "skip", not "run")'
+}
+
 function renderRingsMigration(migration: RingsMigration): string {
   const lines: string[] = []
   if (migration.ring1) {
     lines.push(
-      `  ~ rings.ring1_forgeWriteInterception: ${migration.ring1.from} → ${migration.ring1.to} (now means "run", not "skip")`
+      `  ~ rings.ring1_forgeWriteInterception: ${migration.ring1.from} → ${migration.ring1.to} ${ringsMigrationNote(migration.ring1.to)}`
     )
   }
   if (migration.ring2) {
     lines.push(
-      `  ~ rings.ring2_asyncAudits: ${migration.ring2.from} → ${migration.ring2.to} (now means "run", not "skip")`
+      `  ~ rings.ring2_asyncAudits: ${migration.ring2.from} → ${migration.ring2.to} ${ringsMigrationNote(migration.ring2.to)}`
     )
   }
   return `${lines.join('\n')}\n`

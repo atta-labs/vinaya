@@ -18,7 +18,8 @@ const {
   intentLines,
   milestoneLifecycleFromTrancheLifecycles,
   releaseFromDescription,
-  resolveMilestoneAttachTarget
+  resolveMilestoneAttachTarget,
+  tranchesAttachedToMilestone
 } = await import('./fetch-milestone')
 
 const OWNER = 'daniboomerang'
@@ -715,5 +716,42 @@ describe('indexTrancheMilestonesAsync reads every page', () => {
     // both lifecycles (even index ⇒ open ⇒ active, odd ⇒ closed ⇒ complete).
     expect(index.facts.get('tranche-136-v1')).toEqual({ goal: '', lifecycle: 'active' })
     expect(index.facts.get('tranche-135-v1')).toEqual({ goal: '', lifecycle: 'complete' })
+  })
+})
+
+// issue-545, O3 — the tranche-count fact `requireTrancheQualifiedEdges`
+// needs: how many distinct tranches share one Milestone.
+describe('tranchesAttachedToMilestone', () => {
+  it('collects every distinct vinaya/tranche:* label among the Milestone issues, deduplicated', () => {
+    vi.mocked(ghApiGet).mockReturnValue([
+      { labels: [{ name: 'vinaya/tranche:tranche-a' }, { name: 'vinaya/tier:1' }] },
+      { labels: [{ name: 'vinaya/tranche:tranche-b' }] },
+      { labels: [{ name: 'vinaya/tranche:tranche-a' }] }
+    ])
+    expect(tranchesAttachedToMilestone(OWNER, REPO, 42).sort()).toEqual(['tranche-a', 'tranche-b'])
+  })
+
+  it('requests the state=all issue set for the given Milestone number', () => {
+    vi.mocked(ghApiGet).mockReturnValue([])
+    tranchesAttachedToMilestone(OWNER, REPO, 7)
+    expect(ghApiGet).toHaveBeenCalledWith(`repos/${OWNER}/${REPO}/issues?milestone=7&state=all&per_page=100`)
+  })
+
+  it('returns a single-entry list for an ordinary, single-tranche Milestone', () => {
+    vi.mocked(ghApiGet).mockReturnValue([
+      { labels: [{ name: 'vinaya/tranche:solo-tranche' }] },
+      { labels: [{ name: 'vinaya/tranche:solo-tranche' }] }
+    ])
+    expect(tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual(['solo-tranche'])
+  })
+
+  it('returns an empty list when no issue carries a tranche label at all', () => {
+    vi.mocked(ghApiGet).mockReturnValue([{ labels: [{ name: 'vinaya/tier:0' }] }])
+    expect(tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual([])
+  })
+
+  it('tolerates the REST API returning a bare label-string array, not just {name} objects', () => {
+    vi.mocked(ghApiGet).mockReturnValue([{ labels: ['vinaya/tranche:tranche-a'] }])
+    expect(tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual(['tranche-a'])
   })
 })

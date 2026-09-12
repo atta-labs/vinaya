@@ -590,10 +590,17 @@ describe('planRingsMigration', () => {
     })
   })
 
-  it('migrates only the key that is still `false` — a key already `true` is left alone', () => {
+  it('migrates a mixed config — each key flips independently of the other', () => {
     expect(planRingsMigration(2, { ring1_forgeWriteInterception: false, ring2_asyncAudits: true })).toEqual({
       ring1: { from: false, to: true },
-      ring2: null
+      ring2: { from: true, to: false }
+    })
+  })
+
+  it('review round 2, BLOCKER 1: migrates a config holding the old, deliberate opt-in-to-skip `true` too — not just the stale `false` default', () => {
+    expect(planRingsMigration(2, { ring1_forgeWriteInterception: true, ring2_asyncAudits: true })).toEqual({
+      ring1: { from: true, to: false },
+      ring2: { from: true, to: false }
     })
   })
 
@@ -605,8 +612,11 @@ describe('planRingsMigration', () => {
     expect(planRingsMigration(2, undefined)).toBeNull()
   })
 
-  it('never migrates when both keys are already `true`', () => {
-    expect(planRingsMigration(2, { ring1_forgeWriteInterception: true, ring2_asyncAudits: true })).toBeNull()
+  it('never migrates a key that is absent, even when its sibling key is present and migrates', () => {
+    expect(planRingsMigration(2, { ring1_forgeWriteInterception: false })).toEqual({
+      ring1: { from: false, to: true },
+      ring2: null
+    })
   })
 })
 
@@ -631,6 +641,27 @@ describe('vinaya upgrade — rings migration end-to-end', () => {
 
     const after = JSON.parse(readFileSync(configAbs, 'utf-8'))
     expect(after.rings).toEqual({ ring1_forgeWriteInterception: true, ring2_asyncAudits: true })
+    expect(after.managed.version).toBe(3)
+  })
+
+  it('review round 2, BLOCKER 1: rewrites a deliberate old opt-in-to-skip `true`/`true` config to `false`/`false`, never leaving it silently reinterpreted as "run"', async () => {
+    await runInit(['--yes'], initDeps())
+    const configAbs = join(root, CONFIG_PATH)
+    const cfg = JSON.parse(readFileSync(configAbs, 'utf-8'))
+    // An adopter who ran `vinaya init` before this fix and deliberately
+    // opted BOTH rings into their old "skip" meaning (`true`).
+    cfg.rings = { ring1_forgeWriteInterception: true, ring2_asyncAudits: true }
+    cfg.managed.version = 2
+    writeFileSync(configAbs, `${JSON.stringify(cfg, null, 2)}\n`, 'utf-8')
+
+    const out = await captureStdout(async () => {
+      await runUpgrade(['--yes'], upgradeDeps())
+    })
+    expect(out).toContain('rings.ring1_forgeWriteInterception: true → false')
+    expect(out).toContain('rings.ring2_asyncAudits: true → false')
+
+    const after = JSON.parse(readFileSync(configAbs, 'utf-8'))
+    expect(after.rings).toEqual({ ring1_forgeWriteInterception: false, ring2_asyncAudits: false })
     expect(after.managed.version).toBe(3)
   })
 
