@@ -457,8 +457,8 @@ ${indented}
  * loud on exhaustion: names exactly what it waited for rather than quietly
  * running the check suite against a body it already knows may be stale.
  *
- * No longer waits for the \`AEG:EVIDENCE\` block's \`Head:\` to catch up (O8,
- * task-run-v1 20): both workflows this step feeds now trigger on
+ * No longer waits for the \`AEG:EVIDENCE\` block's \`Head:\` to catch up: both
+ * workflows this step feeds now trigger on
  * \`opened\`/\`reopened\`/\`edited\` only, never \`synchronize\` (see each
  * workflow's own \`on:\` block), so a push landing after this run started
  * can no longer race it. \`evidence-fresh\` at the merge gate remains the
@@ -511,7 +511,7 @@ on:
   pull_request:
     types: [opened, reopened, edited]
 
-# No \`synchronize\` above (O8, task-run-v1 20): a push's own \`vinaya pr
+# No \`synchronize\` above: a push's own \`vinaya pr
 # report --push\` always follows it with a body edit (\`gh pr edit\`) carrying
 # that push's real head, which fires \`edited\` — the only trigger left this
 # workflow needs, against a body that already names the new head. A push

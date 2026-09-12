@@ -8,7 +8,7 @@ on:
   pull_request:
     types: [opened, reopened, edited]
 
-# No `synchronize` above (O8, task-run-v1 20): a push's own `vinaya pr
+# No `synchronize` above: a push's own `vinaya pr
 # report --push` always follows it with a body edit (`gh pr edit`) carrying
 # that push's real head, which fires `edited` — the only trigger left this
 # workflow needs, against a body that already names the new head. A push
