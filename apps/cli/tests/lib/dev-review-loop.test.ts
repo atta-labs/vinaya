@@ -978,6 +978,86 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
   }, 20000)
 })
 
+// --- task-run-v1 15, O8: --resume accepts a moved head once a ruling exists ---
+
+/** Same as `writeFakeGit`, except `ls-remote` answers a NEW head sha once `$HOME/.fix-pushed-after-pause` exists — the developer pushing a fix while this loop was paused, out of band, before `--resume` ever runs. */
+function writeFakeGitHeadMovesAfterPause(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    if [ -f "$HOME/.fix-pushed-after-pause" ]; then
+      echo "${'f'.repeat(40)}	refs/heads/${BRANCH}"
+    else
+      echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+    fi
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+function setUpPauseResumeHeadMoves(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudePauseThenResumeScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGitHeadMovesAfterPause(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — O8 (task-run-v1 task 15): --resume accepts a moved head after a ruling', () => {
+  it('never refuses a moved head once a ruling exists — dispatches reviewers directly (no re-dispatched developer) and publishes', () => {
+    const { home, cwd, path } = setUpPauseResumeHeadMoves()
+
+    const paused = runLoop(home, cwd, path)
+    expect(paused.status).not.toBe(0)
+    expect(paused.stdout).toMatch(/paused \(escalation\)/)
+
+    // Seed a Principal ruling, THEN simulate the developer pushing a fix
+    // out of band, before --resume ever runs — "a ruling followed by a fix
+    // push," the exact normal case O8 names.
+    writeFileSync(
+      join(home, '.fake-gh-posted-comments', 'comment-2.md'),
+      `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
+    )
+    writeFileSync(join(home, '.fix-pushed-after-pause'), '')
+
+    const resumed = runResume(home, cwd, path, 123)
+    expect(resumed.status).toBe(0)
+    expect(resumed.stdout).toMatch(/publish/)
+
+    // No developer re-dispatch on the resumed run — dev-prompts.txt carries
+    // only round 1's original brief prompt (written before the pause),
+    // never a "Principal ruling on this pause" entry, which only the
+    // SAME-head resume path (the sibling describe block above) ever writes.
+    const devPromptsPath = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'dev-prompts.txt')
+    if (existsSync(devPromptsPath)) {
+      expect(readFileSync(devPromptsPath, 'utf8')).not.toMatch(/Principal ruling on this pause/)
+    }
+  }, 20000)
+})
+
 // --- round 2: a genuine resume, not just a clean round 1 -------------------
 
 /**
@@ -2670,6 +2750,88 @@ describe('devReviewLoop — a base that moves past this driver’s own code WHIL
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:stale_driver -->$/m)
     expect(pauseComment).toMatch(new RegExp(`base moved from ${BASE_SHA} to ${'e'.repeat(40)}`))
   }, 20000)
+})
+
+// --- task-run-v1 15, O7: a moved base re-execs in place, reattaching to the same task, rather than pausing outright ---
+
+/** Same as `writeFakeGitBaseMoves`, plus a `pull --ff-only origin main` that succeeds (touching a marker file so the test can prove the pull path was actually taken) rather than being unhandled. */
+function writeFakeGitBaseMovesWithSuccessfulPull(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "pull" ]; then
+  touch "$HOME/.git-pull-called" 2>/dev/null
+  exit 0
+fi
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  if [ -f "$HOME/.base-moved" ]; then
+    echo "${'c'.repeat(40)}"
+  else
+    echo "${BASE_SHA}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+if [ "$1" = "log" ]; then
+  echo "dddddddddd Fix(cli): something touching the driver"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+describe('devReviewLoop — O7 (task-run-v1 task 15): a moved base re-execs in place instead of pausing', () => {
+  it('pulls the default branch, re-execs onto the same task, and never pauses stale_driver', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaudeBaseMovesAfterFirstTurn(binDir)
+    writeFakeGh(binDir)
+    writeFakeGitBaseMovesWithSuccessfulPull(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    // The re-exec attaches to the same task in a genuinely fresh process
+    // (the whole point of O7 — a stale in-memory driver must not keep
+    // running), so the polls that fresh process makes finding the
+    // already-open PR/gate need the same fast-poll overrides any other
+    // fixture exercising real polling in test time already uses.
+    runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_PR_POLL_MAX_ATTEMPTS: '5',
+      VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '5',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
+    })
+
+    // The pull path was actually taken — proof the re-exec attempt ran at all.
+    expect(existsSync(join(home, '.git-pull-called'))).toBe(true)
+
+    // Never the stale_driver pause anywhere this run's own comments landed —
+    // the re-exec absorbed the staleness instead of handing it to a human.
+    const commentsDir = join(home, '.fake-gh-posted-comments')
+    if (existsSync(commentsDir)) {
+      for (const file of readdirSync(commentsDir)) {
+        expect(readFileSync(join(commentsDir, file), 'utf8')).not.toMatch(/aeg:loop:paused:stale_driver/)
+      }
+    }
+  }, 30000)
 })
 
 // --- review-validity-v1 12 (#526), O8 round 2: the split must not narrow stale_driver's own coverage ---

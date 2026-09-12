@@ -19,6 +19,7 @@ import {
   parseIssueSurface,
   type TaskSurfaceFacts
 } from './issue-validation'
+import { parseTaskBranchIdentity } from './task-branch-identity'
 import { isPrincipal, PRINCIPAL_ALLOWLIST } from './waiver-label'
 import type { ForgeIssue, TaskIssueRef } from '@attalabs/aeg-types'
 import type { GhIssue } from '@attalabs/aeg-forge-state'
@@ -877,11 +878,26 @@ export function checkClosesNTopology(
     }
   }
 
-  const m = branch.match(/^task\/([^/]+)\/([^/]+)$/)
-  if (!m) return { ok: true } // non-task branch — forward direction bypass
+  const ref = parseTaskBranchIdentity(branch)
+  if (!ref) return { ok: true } // non-task branch — forward direction bypass
 
-  const trancheSlug = m[1] as string
-  const taskId = m[2] as string
+  // task-run-v1 task 15, O2: a backlog Issue's task IS its Issue — the
+  // expected `Closes #N` is the branch's own issue number, no topology
+  // lookup needed at all.
+  if (ref.kind === 'issue') {
+    const expectedIssue = ref.issueNumber
+    if (!referenced.has(expectedIssue)) {
+      return {
+        ok: false,
+        expectedIssue,
+        message: `closes-n: PR body does not contain \`Closes #${expectedIssue}\` (required for branch "${branch}"). Add it to the PR body Summary section.`
+      }
+    }
+    return { ok: true, expectedIssue }
+  }
+
+  const trancheSlug = ref.tranche
+  const taskId = ref.taskId
 
   const trancheFile = trancheFiles.find((f) => f.slug === trancheSlug)
   if (!trancheFile) {

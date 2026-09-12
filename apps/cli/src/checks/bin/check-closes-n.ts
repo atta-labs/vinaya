@@ -24,7 +24,13 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkClosesNTopology, extractClosesReferences, fetchTaskIssueRefs, type TrancheFile } from '@attalabs/aeg-core'
+import {
+  checkClosesNTopology,
+  extractClosesReferences,
+  fetchTaskIssueRefs,
+  parseTaskBranchIdentity,
+  type TrancheFile
+} from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
@@ -62,9 +68,9 @@ async function main(): Promise<void> {
   const repo = resolveRepo()
   const files: TrancheFile[] = []
 
-  const taskMatch = branch.match(/^task\/([^/]+)\/[^/]+$/)
-  if (taskMatch && repo) {
-    const slug = taskMatch[1] as string
+  const ref = parseTaskBranchIdentity(branch)
+  if (ref?.kind === 'tranche' && repo) {
+    const slug = ref.tranche
     try {
       const source = createForgeSource({ owner: repo.owner, repo: repo.repo })
       const tranche = await source.getTranche(slug)

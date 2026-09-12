@@ -67,6 +67,16 @@ describe('vinaya dev-review-loop — argv refusals', () => {
     expect(r.stderr).toMatch(/--agent <claude\|codex\|gemini> is required/)
   })
 
+  // task-run-v1 task 15, O1: `--issue <n>` is `--task <n>`'s exact synonym —
+  // it parses past the "--task is required" refusal, reaching the next gate
+  // (--agent), the same way --task itself does.
+  it('accepts --issue as a synonym for --task', () => {
+    const r = run(['--issue', '415'])
+    expect(r.status).not.toBe(0)
+    expect(r.stderr).not.toMatch(/--task <n> is required/)
+    expect(r.stderr).toMatch(/--agent <claude\|codex\|gemini> is required/)
+  })
+
   it('refuses an invalid --agent vendor', () => {
     const r = run(['--task', '415', '--agent', 'chatgpt'])
     expect(r.status).not.toBe(0)

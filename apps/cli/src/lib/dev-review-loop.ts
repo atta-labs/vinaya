@@ -42,7 +42,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
@@ -70,6 +70,7 @@ import {
 } from './dispatch.js'
 import { postMarkedComment } from './forge-write.js'
 import { createLogSink, outboxPathFor } from './log-sink.js'
+import { appendRunStartMarker, loopLogPathFor } from './loop-log.js'
 import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
@@ -247,6 +248,12 @@ export type LoopDeps = {
   fetchConflictingFiles: typeof fetchConflictingFiles
   /** O8: commits touching `DRIVER_OWNED_PATHS` between two base-branch shas. */
   gitCommitsTouchingDriverPaths: typeof gitCommitsTouchingDriverPaths
+  /** O7: pulls the default branch in place. `{ok:true}` on success; `{ok:false, reason}` on any failure (merge conflict, network, detached HEAD) — never throws. */
+  pullDefaultBranch: () => { ok: true } | { ok: false; reason: string }
+  /** O7: re-execs this same process (same interpreter, same entry script) with `args` replacing the subcommand/flags, `stdio: 'inherit'`. Returns the child's exit code, or `null` when the spawn itself could not even start. Never throws. */
+  reexecSelf: (args: string[]) => number | null
+  /** O7: the driver's actual process-exit call, injected so a test can observe "the driver would hand off here" without killing the test process. Production default is the real `process.exit`. */
+  exitProcess: (code: number) => never
 }
 
 function defaultRepoRoot(): string {
@@ -315,6 +322,24 @@ function gatePollEnvOverride(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback
 }
 
+/** O7: `git pull --ff-only origin main` — the exact update `checkStaleDriver` re-execs from. `--ff-only` refuses rather than fabricating a merge commit on a base this driver never touches directly. */
+function defaultPullDefaultBranch(): { ok: true } | { ok: false; reason: string } {
+  try {
+    execFileSync('git', ['pull', '--ff-only', 'origin', 'main'], { stdio: ['ignore', 'ignore', 'pipe'] })
+    return { ok: true }
+  } catch (err) {
+    const stderr = err && typeof err === 'object' && 'stderr' in err ? String((err as { stderr: unknown }).stderr) : ''
+    return { ok: false, reason: stderr.trim() || (err instanceof Error ? err.message : String(err)) }
+  }
+}
+
+/** O7: `process.argv[0]`/`[1]` are the interpreter and entry script this process itself was started with — re-spawning them with a fresh `args` tail reattaches under the exact same runtime, whether that's `bun apps/cli/src/index.ts` from source or a bundled `vinaya` binary. `stdio: 'inherit'` so the reattached run's own output reaches whatever terminal/log is watching this one. */
+function defaultReexecSelf(args: string[]): number | null {
+  const result = spawnSync(process.argv[0] as string, [process.argv[1] as string, ...args], { stdio: 'inherit' })
+  if (result.error) return null
+  return result.status ?? 1
+}
+
 function defaultDeps(): LoopDeps {
   return {
     dispatchRole: realDispatchRole,
@@ -350,7 +375,10 @@ function defaultDeps(): LoopDeps {
     fetchDeveloperStop,
     fetchMergeableState,
     fetchConflictingFiles,
-    gitCommitsTouchingDriverPaths
+    gitCommitsTouchingDriverPaths,
+    pullDefaultBranch: defaultPullDefaultBranch,
+    reexecSelf: defaultReexecSelf,
+    exitProcess: (code) => process.exit(code)
   }
 }
 
@@ -367,6 +395,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   let branch: string
   let prNumber = -1 // resolved below, before any use — never read while -1
   let resumeFrom: PauseState | null = null
+  /** O8: true when `--resume` found the head already moved past the pause-time head — a ruling followed by a fix push, the normal case. Widens `firstPass` below so the loop skips redispatching the developer (it already acted) and goes straight to the gate/reviewer path on the new head. */
+  let resumeHeadAlreadyMoved = false
 
   if ('resumePr' in input) {
     const resumePr = input.resumePr
@@ -394,15 +424,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       )
     }
     const currentHead = d.resolveHead(held.branch)
-    if (currentHead !== held.head) {
-      throw new Error(
-        `devReviewLoop --resume: PR #${resumePr}'s head has moved since it paused (paused at ${held.head}, now ${currentHead}) — restart from round ${held.round} against the new head; resume never silently replays from round 1.`
-      )
-    }
+    // O8: a moved head is accepted, never refused, once a ruling exists —
+    // "a ruling followed by a fix push is the normal case." The ruling is
+    // itself the round-cap override it declares: the round counter
+    // restarts at the ruling's own newest ordinal (`fetchNewestRulingOrdinal`,
+    // the same integer `ruling_posted` mid-round invalidation already reads)
+    // rather than continuing from `held.round`, which may already sit past
+    // `MAX_ROUNDS` and would otherwise re-trigger the very pause this
+    // `--resume` exists to lift.
+    resumeHeadAlreadyMoved = currentHead !== held.head
     task = held.task
     branch = held.branch
     prNumber = held.prNumber
-    resumeFrom = held
+    resumeFrom = resumeHeadAlreadyMoved ? { ...held, round: d.fetchNewestRulingOrdinal(resumePr) } : held
   } else {
     task = input.task
     branch = d.developerBranchFor(task)
@@ -459,6 +493,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     const baseHeadAtStart = d.gitRevParseOriginMain()
     const loopOutboxPath = outboxPathFor({ outboxRoot: () => root }, repo, task)
     /**
+     * O6: the one file this run's own role-prefixed stream tees to,
+     * regardless of where it was launched — `vinaya task status --follow`
+     * tails it live. Resolved once, from the same `repo`/`task` every other
+     * per-run path here already uses; the run-start marker delineates this
+     * process's own narration from an earlier relaunch's still-appended one.
+     */
+    const loopLogPath = loopLogPathFor(repo, task)
+    appendRunStartMarker(loopLogPath, { role: 'dev-review-loop', pid: process.pid, runId })
+    /**
      * Awaits EACH event's own landing before firing the next `log()` call —
      * not just the batch's last one. `resolveRepo()` only caches a
      * DETERMINISTIC outcome (a parsed `AEG_REPO`, or a successful git-remote
@@ -514,7 +557,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           task: task,
           round: roundNum,
           resumeId: devResumeId ?? undefined,
-          promptFile
+          promptFile,
+          roleLogPath: loopLogPath
         })
       )
       await assertDispatchOrEscalate(handle, input.agent, isResume, devDispatchSucceededBefore)
@@ -667,7 +711,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         mkdirSync(workDir, { recursive: true })
         const prompt = renderReviewerDispatchPrompt(role, facts, workDir)
         const handle = await withPromptFile(prompt, (promptFile) =>
-          d.dispatchRole(dispatchRoleName, input.agent, prompt, { task: task, round: roundNum, promptFile })
+          d.dispatchRole(dispatchRoleName, input.agent, prompt, {
+            task: task,
+            round: roundNum,
+            promptFile,
+            roleLogPath: loopLogPath
+          })
         )
         await assertDispatchOrEscalate(handle, input.agent, false, false)
         const missing = missingReviewerArtifacts(workDir, hasObjectives)
@@ -761,7 +810,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
     let roundStartMs = d.now()
     let decision: Decision = { type: 'dispatch_developer' }
-    let firstPass = !resumeFrom
+    // O8: `resumeHeadAlreadyMoved` widens this exactly like a fresh round-1
+    // attach — the developer already pushed the fix a ruling asked for, so
+    // this run dispatches no developer at all and goes straight to the
+    // gate/reviewer path below, on the head that's already there.
+    let firstPass = !resumeFrom || resumeHeadAlreadyMoved
     if (resumeFrom) {
       // O2: resuming — the PR and branch are already known (`resumeFrom`), so
       // there is no round-1 dispatch and no PR to poll for. `lastReviewContext`
@@ -920,9 +973,34 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       if (currentBaseHead === baseHeadAtStart) return false
       const touching = d.gitCommitsTouchingDriverPaths(baseHeadAtStart, currentBaseHead)
       if (touching.length === 0) return false
+
+      // O7: a moved base costs a restart, never a
+      // hand — re-exec this same process from the updated base, reattaching
+      // to the same task with the same arguments (`--resume <pr>` when this
+      // run itself started that way, `--task <n>` otherwise — both forms
+      // `dev-review-loop`'s own round-1 entry already treats as "attach if a
+      // PR/pause state exists, start fresh otherwise"). Pausing is reserved
+      // for when the re-exec attempt ITSELF fails — the pull, or the spawn —
+      // never for the staleness alone.
+      const pulled = d.pullDefaultBranch()
+      let reexecFailureNote = ''
+      if (pulled.ok) {
+        const reexecArgs =
+          'resumePr' in input
+            ? ['dev-review-loop', '--resume', String(input.resumePr), '--agent', input.agent]
+            : ['dev-review-loop', '--task', String(task), '--agent', input.agent]
+        const exitCode = d.reexecSelf(reexecArgs)
+        if (exitCode !== null) {
+          d.exitProcess(exitCode)
+        }
+        reexecFailureNote = `re-exec of \`vinaya ${reexecArgs.join(' ')}\` could not even start after pulling the updated base`
+      } else {
+        reexecFailureNote = `could not pull the default branch to re-exec from: ${pulled.reason}`
+      }
+
       const head = d.resolveHead(branch)
       const stats = computeStats(head, roundStartMs)
-      const detail = `base moved from ${baseHeadAtStart} to ${currentBaseHead}, touching this driver's own code (${touching.join('; ')})`
+      const detail = `base moved from ${baseHeadAtStart} to ${currentBaseHead}, touching this driver's own code (${touching.join('; ')}) — ${reexecFailureNote}`
       await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
       decision = { type: 'pause', reason: 'stale_driver', detail }
       await d.flushOutbox(task)

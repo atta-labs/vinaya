@@ -172,7 +172,12 @@ export type SurfaceFileFact = {
 }
 
 export type BriefFacts = {
-  trancheSlug: string
+  /**
+   * `null` for a backlog Issue with no tranche (task-run-v1 task 15, O1) —
+   * the brief renders `task/issue-<n>` as its branch and the Issue's own
+   * title as its PR title, instead of the tranche+task-id forms below.
+   */
+  trancheSlug: string | null
   taskId: string
   title: string
   issue: number
@@ -303,13 +308,23 @@ function renderHeader(facts: BriefFacts, template: string): string {
   return lines.join('\n')
 }
 
+/** `task/<tranche>/<n>`, or `task/issue-<n>` for a backlog Issue (`facts.trancheSlug === null`, task-run-v1 task 15, O1). */
+function developerBranchForFacts(facts: BriefFacts): string {
+  return facts.trancheSlug !== null ? `task/${facts.trancheSlug}/${facts.taskId}` : `task/issue-${facts.issue}`
+}
+
 function renderSection2(facts: BriefFacts): string {
   const depends = facts.dependsOn.length > 0 ? facts.dependsOn.join(', ') : '—'
   const conflicts = facts.conflictsWith.length > 0 ? facts.conflictsWith.join(', ') : '—'
+  const branch = developerBranchForFacts(facts)
+  const identityLine =
+    facts.trancheSlug !== null
+      ? `- **Tranche:** \`${facts.trancheSlug}\`, task ${facts.taskId}, Issue #${facts.issue}. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm \`READY TO DISPATCH\` at your own Step 0.`
+      : `- **Backlog Issue:** #${facts.issue}, no tranche. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm \`READY TO DISPATCH\` at your own Step 0.`
   const lines = [
     '## 2. Context — read before doing anything',
     '',
-    `- **Tranche:** \`${facts.trancheSlug}\`, task ${facts.taskId}, Issue #${facts.issue}. Branch \`task/${facts.trancheSlug}/${facts.taskId}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm \`READY TO DISPATCH\` at your own Step 0.`,
+    identityLine,
     `- **Read Issue #${facts.issue} in full** for the complete rationale — do not re-derive it.`,
     `- **Revision:** rendered at \`${facts.sourceRevision}\` — the checkout's HEAD equaled the remote default branch, and no pinned file below carried an uncommitted change, when these facts were read.`,
     `- ${facts.rationale.boundary}`,
@@ -497,17 +512,22 @@ function renderSection4(facts: BriefFacts): string {
 }
 
 function renderSection5(facts: BriefFacts): string {
+  const branch = developerBranchForFacts(facts)
+  const verifyLine =
+    facts.trancheSlug !== null
+      ? '2. `bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>` → `READY TO DISPATCH` (re-derived at render time: it was).'
+      : `2. \`bun packages/aeg-core/bin/verify-dispatch.ts --issue ${facts.issue}\` → \`READY TO DISPATCH\` (re-derived at render time: it was).`
   const lines = [
     '## 5. Pre-flight checks',
     '',
     '**Step 0 (mandatory, verbatim):**',
     '',
     '```',
-    `git worktree add .worktrees/task/${facts.trancheSlug}/${facts.taskId} -b task/${facts.trancheSlug}/${facts.taskId} --no-track origin/main && cd .worktrees/task/${facts.trancheSlug}/${facts.taskId} && git config push.autoSetupRemote true && bun install --frozen-lockfile --silent`,
+    `git worktree add .worktrees/${branch} -b ${branch} --no-track origin/main && cd .worktrees/${branch} && git config push.autoSetupRemote true && bun install --frozen-lockfile --silent`,
     '```',
     '',
     '1. Clean status; parent `origin/main`; branch suffix literal-matches the task id.',
-    '2. `bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>` → `READY TO DISPATCH` (re-derived at render time: it was).',
+    verifyLine,
     '',
     'On any failure: STOP and report.'
   ]
@@ -701,10 +721,11 @@ function renderSection11(template: string, facts: BriefFacts): string {
 }
 
 function renderSection12(facts: BriefFacts): string {
+  const prTitle = facts.trancheSlug !== null ? `[${facts.trancheSlug}] ${facts.taskId} — ${facts.title}` : facts.title
   return [
     '## 12. Deliverable',
     '',
-    `- PR title (exact): \`[${facts.trancheSlug}] ${facts.taskId} — ${facts.title}\``,
+    `- PR title (exact): \`${prTitle}\``,
     '- Open the PR only via `bun apps/cli/src/index.ts pr create --body-file <path> --title "<title above>"`.',
     "- PR body = the Developer's PR report (start from `aeg-root/templates/pr-report-template.md`), with this entire brief pasted as the reference copy inside a collapsed `<details>` block, and `Closes #" +
       facts.issue +
