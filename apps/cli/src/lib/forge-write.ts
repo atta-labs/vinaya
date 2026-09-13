@@ -1357,7 +1357,7 @@ const CHECK_BRIEF_SHAPE_PREWRITE = 'brief-shape'
  * the task to already exist in its tranche's forge-derived task list
  * (`getTranche`), which is circular before the Issue itself is created —
  * `assembleAndRenderBriefForIssue` only ever renders the tranche-less
- * backlog-Issue shape (`task-run-v1` task 21's now-standard path). A
+ * backlog-Issue shape (now the standard shape for a task with no tranche). A
  * tranche-labeled write keeps today's behaviour: the issue-content/schema
  * gates above still run, only this whole-brief render is skipped.
  *
