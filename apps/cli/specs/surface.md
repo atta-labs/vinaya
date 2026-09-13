@@ -171,7 +171,10 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `checkIssueType` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkMilestoneAttach` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkNoBriefContent` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkNoForeignTaskOwnership` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkObjectivesRespectBoundary` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkPartsCiteDefinedObjectives` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkPartsCoverageAndSequence` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkProjectsRegistered` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkRationaleNamesDocs` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkRationaleSurfaceCoverage` | function | `packages/aeg-core/src/issue-validation.ts` |

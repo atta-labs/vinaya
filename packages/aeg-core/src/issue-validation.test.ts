@@ -14,7 +14,10 @@ import {
   checkIssueType,
   checkMilestoneAttach,
   checkNoBriefContent,
+  checkNoForeignTaskOwnership,
+  checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
+  checkPartsCoverageAndSequence,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
   checkRationaleSurfaceCoverage,
@@ -1295,6 +1298,180 @@ describe('checkPartsCiteDefinedObjectives (O2)', () => {
   it('passes trivially when Parts is malformed — reported by parseIssueParts instead', () => {
     const body = `${objectives}\n## Parts\n\nnothing part-shaped here\n`
     expect(checkPartsCiteDefinedObjectives(body).status).toBe('pass')
+  })
+})
+
+describe('checkObjectivesRespectBoundary (plan-coherence-v1 task 1, Issue #542, O2)', () => {
+  it('passes when nothing named in Objectives/Parts/Test plan falls under an excluded path', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib/forge-write.ts`. Out: what any brief section means, the loop.',
+      '',
+      '## Objectives',
+      '',
+      'O1. `apps/cli/src/lib/forge-write.ts` renders and validates the brief.',
+      '',
+      '## Surface',
+      '',
+      'in: apps/cli/src/lib',
+      'out: apps/cli/src/checks',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — the write gate renders and validates the brief.'
+    ].join('\n')
+    expect(checkObjectivesRespectBoundary(body).status).toBe('pass')
+  })
+
+  it('fails, quoting both lines, when an Objective names a path the Surface `out:` excludes', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib`. Out: nothing else.',
+      '',
+      '## Objectives',
+      '',
+      'O1. `apps/cli/src/checks/registry.ts` gains a new check the write gate runs.',
+      '',
+      '## Surface',
+      '',
+      'in: apps/cli/src/lib',
+      'out: apps/cli/src/checks',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — the registry gains the new check.'
+    ].join('\n')
+    const r = checkObjectivesRespectBoundary(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/O1/)
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/checks\/registry\.ts/)
+    expect(r.errors[0]).toMatch(/out:.*apps\/cli\/src\/checks/)
+  })
+
+  it('fails, quoting both lines, when a Part names a path the Boundary `Out:` clause excludes', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib`. Out: `packages/sources`, never touched.',
+      '',
+      '## Objectives',
+      '',
+      'O1. The write gate validates the brief before it reaches the forge.',
+      '',
+      '## Surface',
+      '',
+      'in: apps/cli/src/lib',
+      'out: —',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — deliberately also edits `packages/sources/index.ts` here.'
+    ].join('\n')
+    const r = checkObjectivesRespectBoundary(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/Part 1/)
+    expect(r.errors[0]).toMatch(/packages\/sources\/index\.ts/)
+    expect(r.errors[0]).toMatch(/packages\/sources/)
+  })
+
+  it('fails when a Test plan line names an excluded path', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib`. Out: `apps/cli/src/checks`.',
+      '',
+      '## Objectives',
+      '',
+      'O1. The write gate validates the brief before it reaches the forge.',
+      '',
+      '## Surface',
+      '',
+      'in: apps/cli/src/lib',
+      'out: apps/cli/src/checks',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — the write gate validates the brief.',
+      '',
+      '## Test plan',
+      '',
+      '```',
+      'bun test apps/cli/src/checks/registry.test.ts → 0 fail',
+      '```'
+    ].join('\n')
+    const r = checkObjectivesRespectBoundary(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/checks\/registry\.test\.ts/)
+  })
+})
+
+describe('checkNoForeignTaskOwnership (plan-coherence-v1 task 1, Issue #542, O3)', () => {
+  it('passes when a Traps sentence merely mentions another task with no ownership verb', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib`. Out: nothing.',
+      '',
+      '**Traps to avoid** — Do NOT reimplement the bare-id rule in the gate; call the primitive #545 ships.',
+      '',
+      '**Stop-and-escalate** — If rendering needs tree facts that cannot be stubbed, escalate.'
+    ].join('\n')
+    expect(checkNoForeignTaskOwnership(body).status).toBe('pass')
+  })
+
+  it('passes when a task reference lives in Dependency rationale, never scanned here', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib`. Out: nothing.',
+      '',
+      '**Dependency rationale** — O2 is owned by task-run-v1 21; land after it.'
+    ].join('\n')
+    expect(checkNoForeignTaskOwnership(body).status).toBe('pass')
+  })
+
+  it('fails, naming the field and quoting the sentence, when Traps assigns ownership to another task', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib`. Out: nothing.',
+      '',
+      '**Traps to avoid** — O2 is owned by task-run-v1 21, so skip it here.'
+    ].join('\n')
+    const r = checkNoForeignTaskOwnership(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/Traps to avoid/)
+    expect(r.errors[0]).toMatch(/owned by task-run-v1 21/)
+  })
+
+  it('fails when a Boundary sentence defers ownership to a bare `#N` reference', () => {
+    const body = '**Boundary** — In: `apps/cli/src/lib`. This objective is handled by #545 instead.'
+    const r = checkNoForeignTaskOwnership(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/Boundary/)
+    expect(r.errors[0]).toMatch(/#545/)
+  })
+})
+
+describe('checkPartsCoverageAndSequence (plan-coherence-v1 task 1, Issue #542, O3)', () => {
+  const objectives = '## Objectives\n\nO1. Do the first thing.\nO2. Do the second thing.\n'
+
+  it('passes when every objective is cited by some Part and Parts are numbered contiguously from 1', () => {
+    const body = `${objectives}\n## Parts\n\nPart 1 (O1) — the parsers.\nPart 2 (O2) — the render.\n`
+    expect(checkPartsCoverageAndSequence(body).status).toBe('pass')
+  })
+
+  it('fails, naming the objective, when no Part cites it', () => {
+    const body = `${objectives}\n## Parts\n\nPart 1 (O1) — the parsers.\n`
+    const r = checkPartsCoverageAndSequence(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/O2/)
+    expect(r.errors[0]).toMatch(/not cited by any/)
+  })
+
+  it('fails, naming the position and the numbers, when Parts skip a number', () => {
+    const body = `${objectives}\n## Parts\n\nPart 1 (O1) — the parsers.\nPart 3 (O2) — the render.\n`
+    const r = checkPartsCoverageAndSequence(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors.some((e) => /line 2 is numbered Part 3, expected Part 2/.test(e))).toBe(true)
+  })
+
+  it('passes trivially when Objectives is malformed — reported by checkIssueObjectives instead', () => {
+    const body = '## Parts\n\nPart 1 (O1) — the parsers.\n'
+    expect(checkPartsCoverageAndSequence(body).status).toBe('pass')
+  })
+
+  it('passes trivially when Parts is malformed — reported by parseIssueParts instead', () => {
+    const body = `${objectives}\n## Parts\n\nnothing part-shaped here\n`
+    expect(checkPartsCoverageAndSequence(body).status).toBe('pass')
   })
 })
 

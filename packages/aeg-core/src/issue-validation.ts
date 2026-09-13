@@ -1541,6 +1541,217 @@ export function checkSurfaceOverlap(subject: TaskSurfaceFacts, siblings: TaskSur
 }
 
 // ---------------------------------------------------------------------------
+// Plan-coherence-v1 task 1 (Issue #542) — three predicates closing the gap
+// between what a task Issue's Objectives/Parts/Test-plan lines CLAIM and
+// what its own Boundary/Surface `out:` and rationale actually authorize.
+// Wired into `apps/cli`'s `validateIssueContent` (O1's own write gate) and
+// into `open-issue.ts`'s content gate — never a second copy of either.
+// ---------------------------------------------------------------------------
+
+/**
+ * The Boundary field's own `Out:` sub-clause — everything from its `Out:`
+ * marker to the field's end. Scanned separately from the field's `In:` half:
+ * a path Boundary names under `In:` is a legitimate touch-claim (exactly
+ * what `checkRationaleSurfaceCoverage`'s O4 already grades against
+ * `## Surface`'s `in:` list), never an exclusion, and must never trip this
+ * rule.
+ */
+const BOUNDARY_OUT_RE = /\bOut\s*:\s*([\s\S]*)$/im
+
+function boundaryOutText(body: string): string {
+  const boundary = rationaleFieldText(PATH_TEXT(body), 'Boundary')
+  const m = BOUNDARY_OUT_RE.exec(boundary)
+  return m ? (m[1] as string) : ''
+}
+
+/** Every backticked, `/`-shaped repo-path token in `text` — the same token shape `checkRationaleSurfaceCoverage`'s O4 reads out of Boundary, reused rather than a second matcher. Never a URL. */
+function namedPathsIn(text: string): string[] {
+  return [...new Set([...text.matchAll(RATIONALE_PATH_RE_GLOBAL)].map((m) => m[1] as string))].filter(
+    (p) => !/^https?:\/\//i.test(p)
+  )
+}
+
+/** A bare (unbackticked), `/`-shaped repo-path token — at least two `/`-separated segments, same shape as `RATIONALE_PATH_RE_GLOBAL`'s capture, minus the backtick requirement. */
+const BARE_PATH_RE_GLOBAL = /\b[\w.@-]+(?:\/[\w.@-]+)+\b/g
+
+/**
+ * Every path-shaped token in a Test plan COMMAND line — never backtick-only:
+ * a fenced `[agent]` command list is already inside a code block, so its own
+ * paths are written bare (`bun test apps/cli/tests`), not re-wrapped in
+ * backticks. Prose fields (Objectives/Parts) keep the backtick-only
+ * `namedPathsIn` above — a bare two-segment slash token in ordinary prose
+ * ("either/or") is not a path claim, but inside a command line it always is.
+ */
+function namedPathsInCommandLine(text: string): string[] {
+  return [...new Set([...text.matchAll(BARE_PATH_RE_GLOBAL)].map((m) => m[0]))].filter((p) => !/^https?:\/\//i.test(p))
+}
+
+/**
+ * **O2 (Issue #542) — the Boundary and the Objectives agree by
+ * construction.** An objective, a Part, or a Test plan line that names a
+ * file, directory, package, or subsystem the Boundary's `Out:` clause or the
+ * Surface's `out:` list names is refused, quoting both the offending line
+ * and the excluding one — this task cannot both disclaim a path and require
+ * work inside it in the same breath.
+ *
+ * `excludes` checks the Surface's own `out:` globs first (`globCoversPath`,
+ * this module's Surface-vs-path matcher, reused verbatim) and falls back to
+ * a backticked path named in the Boundary's `Out:` sub-clause — two sources
+ * of "excluded", never two matchers.
+ */
+export function checkObjectivesRespectBoundary(body: string): IssueSectionResult {
+  const surface = parseIssueSurface(body)
+  const outGlobs = surface.ok ? surface.value.out : []
+  const boundaryOutPaths = namedPathsIn(boundaryOutText(body))
+  if (outGlobs.length === 0 && boundaryOutPaths.length === 0) return { status: 'pass', errors: [] }
+
+  const excludes = (path: string): string | null => {
+    const glob = outGlobs.find((g) => globCoversPath(g, path))
+    if (glob) return `the Surface's \`out:\` glob \`${glob}\``
+    const boundaryPath = boundaryOutPaths.find((p) => globCoversPath(p, path))
+    return boundaryPath ? `the Boundary's \`Out:\` clause naming \`${boundaryPath}\`` : null
+  }
+
+  const errors: string[] = []
+
+  const objectives = objectivesOf(body)
+  if (objectives.ok) {
+    for (const o of objectives.objectives) {
+      for (const path of namedPathsIn(o.text)) {
+        const excluder = excludes(path)
+        if (excluder) {
+          errors.push(
+            `issue-validation Objectives/Boundary: ${o.id} ("${o.text}") names \`${path}\`, which ${excluder} excludes.`
+          )
+        }
+      }
+    }
+  }
+
+  const parts = parseIssueParts(body)
+  if (parts.ok) {
+    for (const part of parts.value) {
+      for (const path of namedPathsIn(part.text)) {
+        const excluder = excludes(path)
+        if (excluder) {
+          errors.push(
+            `issue-validation Parts/Boundary: Part ${part.n} ("${part.text}") names \`${path}\`, which ${excluder} excludes.`
+          )
+        }
+      }
+    }
+  }
+
+  const testPlan = parseIssueTestPlan(body)
+  if (testPlan.ok && testPlan.value.kind === 'commands') {
+    for (const line of [...testPlan.value.lines, ...testPlan.value.principal]) {
+      for (const path of namedPathsInCommandLine(line)) {
+        const excluder = excludes(path)
+        if (excluder) {
+          errors.push(`issue-validation Test plan/Boundary: "${line}" names \`${path}\`, which ${excluder} excludes.`)
+        }
+      }
+    }
+  }
+
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+/**
+ * **O3a (Issue #542) — the rationale belongs to this task.** A Traps,
+ * Stop-and-escalate, or Boundary sentence that names another task's
+ * slug-and-number as the OWNER of work this task's own objectives require is
+ * refused. Scoped to those three fields only — `Dependency rationale` is
+ * where a task reference legitimately belongs (ordering, never ownership),
+ * so scanning it here would misread every `Depends-on`/`Conflicts-with` line
+ * as a violation.
+ *
+ * "Assigns ownership" is a lexical heuristic, same posture as
+ * `BLAST_RADIUS_ACK_RE`/`NO_DOC_SURFACE_RE` elsewhere in this module: an
+ * ownership-shaped verb phrase in the same sentence as a task reference
+ * (`#<n>`, or the `<slug> <n>` shape `Dependency rationale`'s own edges
+ * already use). Merely MENTIONING another task trips nothing — this very
+ * Issue's own Traps field ("call the primitive #545 ships") carries a task
+ * reference with no ownership verb anywhere near it, and stays green.
+ */
+const OWNERSHIP_VERB_RE =
+  /\b(?:is\s+owned\s+by|owned\s+by|owns|is\s+handled\s+by|handled\s+by|is\s+done\s+by|done\s+by|is\s+implemented\s+by|implemented\s+by|is\s+delivered\s+by|delivered\s+by|is\s+(?:the\s+)?responsibility\s+of|is\s+left\s+to|left\s+to|is\s+deferred\s+to|deferred\s+to|belongs\s+to)\b/i
+const TASK_REF_RE = /#\d+|\b[a-z][a-z0-9]*(?:-[a-z0-9]+)*-v\d+\s+\d+\b/i
+const SENTENCE_RE = /[^.\n]+[.\n]?/g
+
+export function checkNoForeignTaskOwnership(body: string): IssueSectionResult {
+  const text = PATH_TEXT(body)
+  const fields: Array<[string, string]> = [
+    ['Traps to avoid', rationaleFieldText(text, 'Traps')],
+    ['Stop-and-escalate', rationaleFieldText(text, 'Stop-and-escalate')],
+    ['Boundary', rationaleFieldText(text, 'Boundary')]
+  ]
+  const errors: string[] = []
+  for (const [name, fieldText] of fields) {
+    if (!fieldText) continue
+    for (const match of fieldText.match(SENTENCE_RE) ?? []) {
+      const sentence = match.trim()
+      if (sentence.length === 0) continue
+      if (OWNERSHIP_VERB_RE.test(sentence) && TASK_REF_RE.test(sentence)) {
+        errors.push(
+          `issue-validation ${name}: "${sentence}" assigns ownership of work to another task — the rationale belongs to THIS task; depend on the other task instead (\`Dependency rationale\`), or fold the work back into this task's own Objectives/Parts.`
+        )
+      }
+    }
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+/**
+ * **O3b (Issue #542) — Parts and Objectives agree by construction.** A Part
+ * citing an objective `## Objectives` does not define is already refused by
+ * `checkPartsCiteDefinedObjectives`, above; this predicate closes the other
+ * two defects O3 names: an objective no Part cites at all, and Parts
+ * numbered out of sequence (not contiguous from 1, in document order).
+ *
+ * Passes trivially when either section fails to parse — `parseIssueParts`/
+ * `objectivesOf`'s own callers already report a malformed section; this
+ * predicate only grades an otherwise well-formed pair.
+ *
+ * The sequence check stops at the first divergence rather than reporting
+ * every downstream index (unlike this module's usual "every violation, not
+ * only the first" convention): one wrong Part number cascades into every
+ * later index also failing "equals its own position", which is one root
+ * cause, not several independent ones — reporting all of them would just be
+ * noise around the single number that needs fixing.
+ */
+export function checkPartsCoverageAndSequence(body: string): IssueSectionResult {
+  const parts = parseIssueParts(body)
+  const objectives = objectivesOf(body)
+  if (!parts.ok || !objectives.ok) return { status: 'pass', errors: [] }
+
+  const errors: string[] = []
+
+  const citedIds = new Set(parts.value.flatMap((p) => p.objectiveIds))
+  for (const o of objectives.objectives) {
+    const id = Number.parseInt(o.id.slice(1), 10)
+    if (!citedIds.has(id)) {
+      errors.push(
+        `issue-validation Parts coverage: ${o.id} ("${o.text}") is not cited by any \`## Parts\` line — every objective must be cited by at least one Part.`
+      )
+    }
+  }
+
+  const numbers = parts.value.map((p) => p.n)
+  for (let i = 0; i < numbers.length; i++) {
+    const expected = i + 1
+    if (numbers[i] !== expected) {
+      errors.push(
+        `issue-validation Parts sequence: \`## Parts\` line ${i + 1} is numbered Part ${numbers[i]}, expected Part ${expected} — Parts must be numbered contiguously from 1, in document order.`
+      )
+      break
+    }
+  }
+
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+// ---------------------------------------------------------------------------
 // O3 (task-run-v1 task 11, review round 1) — an edit that changes
 // `## Objectives`, `## Surface`, or `## Parts` on a task Issue whose brief is
 // already frozen is refused. Design: compare the LIVE Issue body before and
