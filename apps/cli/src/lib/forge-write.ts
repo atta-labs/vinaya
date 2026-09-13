@@ -415,6 +415,18 @@ const CHECK_BRIEF_SCHEMA = 'brief-schema'
 const CHECK_FORGE_TITLE = 'forge-title'
 
 /**
+ * O2 — every recovery prompt this file emits quotes the specific finding it
+ * refuses (the underlying check's own message already names the offending
+ * line/field, e.g. `checkForgeTitle`'s `"<bad title>" matches neither…`),
+ * THEN states the edit that clears it. A prompt built only from a per-check
+ * static template restates the rule; prefixing the quoted message makes every
+ * prompt name its own fix rather than its rule, per-instance, not per-check-kind.
+ */
+function nameTheFix(message: string, fixInstruction: string): string {
+  return `Refused for: \`${message}\` — ${fixInstruction}`
+}
+
+/**
  * Maps each built-in section name to the `@attalabs/aeg-core` validator that backs
  * it. The `Record<BriefBuiltin, …>` type makes this exhaustive — adding a name
  * to `BRIEF_BUILTINS` without wiring it here is a compile error.
@@ -534,7 +546,10 @@ export function validateForgeWrite(input: ForgeValidationInput): CheckError[] {
           makeCheckError(
             CHECK_FORGE_TITLE,
             message,
-            `Rewrite the \`--title\` to match the forge-title grammar (\`Type: description\` / \`Type(scope): description\`, or \`[tranche] id — description\`), then re-run \`${input.retryCommand}\`.`
+            nameTheFix(
+              message,
+              `Rewrite \`--title\` (currently \`${input.title}\`) to match the forge-title grammar (\`Type: description\` / \`Type(scope): description\`, or \`[tranche] id — description\`), then re-run \`${input.retryCommand}\`.`
+            )
           )
         )
       }
@@ -575,14 +590,16 @@ export function validateForgeWrite(input: ForgeValidationInput): CheckError[] {
       continue
     }
     if ('builtin' in section) {
-      const recovery = BUILTIN_RECOVERY[section.builtin].replace('{cmd}', input.retryCommand)
+      const instruction = BUILTIN_RECOVERY[section.builtin].replace('{cmd}', input.retryCommand)
       for (const message of runBuiltin(section.builtin, input)) {
-        errors.push(makeCheckError(CHECK_BRIEF_SCHEMA, message, recovery))
+        errors.push(makeCheckError(CHECK_BRIEF_SCHEMA, message, nameTheFix(message, instruction)))
       }
     } else {
       const message = runCustomSection(section, input.body)
       if (message !== null) {
-        errors.push(makeCheckError(CHECK_BRIEF_SCHEMA, message, customRecovery(section, input.retryCommand)))
+        errors.push(
+          makeCheckError(CHECK_BRIEF_SCHEMA, message, nameTheFix(message, customRecovery(section, input.retryCommand)))
+        )
       }
     }
   }
@@ -684,7 +701,10 @@ export async function runBodyChecks(
  * PR_NUMBER shape — rather than having each bin re-fetch the same forge
  * state the caller already fetched for its OWN gates.
  *
- * Refuses (never returns) on any finding — same contract as `refuse()`.
+ * **O1 — returns findings, never refuses.** Used to call `refuse()` directly
+ * on any finding; `collectTaskIssueErrors` needs this group's findings
+ * returned instead, so they fold into the same union every other group
+ * contributes to, refused once by the caller.
  */
 export async function runIssueChecks(input: {
   body: string
@@ -694,9 +714,9 @@ export async function runIssueChecks(input: {
   currentMilestoneTitle: string | null
   resolvedMilestoneTitle: string | null
   retryCommand: string
-}): Promise<void> {
+}): Promise<CheckError[]> {
   const specs = resolvedRegistry().filter((s) => s.validates === 'issue')
-  if (specs.length === 0) return
+  if (specs.length === 0) return []
 
   const callerEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -717,14 +737,11 @@ export async function runIssueChecks(input: {
   })
 
   const errors = outcomes.filter((o) => o.status === 'fail' || o.status === 'error').flatMap((o) => o.errors)
-  if (errors.length === 0) return
-  refuse(
-    errors.map((e) =>
-      makeCheckError(
-        e.check,
-        e.message,
-        `${e.agent_recovery_prompt} Fix the Issue body, then re-run \`${input.retryCommand}\`.`
-      )
+  return errors.map((e) =>
+    makeCheckError(
+      e.check,
+      e.message,
+      `${e.agent_recovery_prompt} Fix the Issue body, then re-run \`${input.retryCommand}\`.`
     )
   )
 }
@@ -949,8 +966,10 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
   ]
   const errors: CheckError[] = []
   for (const [messages, kind] of findings) {
-    const recovery = ISSUE_CONTENT_RECOVERY[kind].replace('{cmd}', input.retryCommand)
-    for (const message of messages) errors.push(makeCheckError(CHECK_ISSUE_CONTENT, message, recovery))
+    const instruction = ISSUE_CONTENT_RECOVERY[kind].replace('{cmd}', input.retryCommand)
+    for (const message of messages) {
+      errors.push(makeCheckError(CHECK_ISSUE_CONTENT, message, nameTheFix(message, instruction)))
+    }
   }
   return errors
 }
@@ -1250,17 +1269,30 @@ function resolveMilestoneTitleForCreate(ghArgs: string[], labels: string[]): str
  * `gh` itself pages through the API internally to satisfy a `--limit` this
  * large in one invocation — no separate cursor loop is needed here.
  *
- * Unlike the Milestone read above, a failure HERE is a hard refusal: by this
- * point a real Milestone is known, so degrading silently to "no siblings
- * found" would let a real collision through rather than merely skip a
- * cosmetic lookup — the same fail-closed posture `fetchForgeLabels` already
- * takes for the rationale gate's own applicability fetch.
+ * Unlike the Milestone read above, a failure HERE is still a hard refusal —
+ * by this point a real Milestone is known, so degrading silently to "no
+ * siblings found" would let a real collision through rather than merely skip
+ * a cosmetic lookup, the same fail-closed posture `fetchForgeLabels` already
+ * takes for the rationale gate's own applicability fetch — but O1 (this
+ * task): the refusal is now a RETURNED finding, not a direct `refuse()`
+ * call. This function used to call `refuse()` itself on a fetch/parse
+ * failure, which — called from inside `collectTaskIssueErrors`, AFTER that
+ * function had already pushed the schema group's own findings into its
+ * union — discarded every finding already collected: a `gh` hiccup
+ * coinciding with a real title-grammar or content defect reported only the
+ * fetch error, hiding the real defect until a later run, exactly the
+ * stop-at-first-group cost this task exists to remove. The caller folds a
+ * returned error into the SAME union every other group contributes to; the
+ * write still refuses (a `forge-fetch` finding is never dropped), it just no
+ * longer erases what came before it.
  */
+type FetchSiblingsResult = { ok: true; siblings: TaskSurfaceFacts[] } | { ok: false; error: CheckError }
+
 function fetchOpenTaskSurfaceSiblings(
   milestoneTitle: string,
   excludeIssueNumber: number | null,
   retryCommand: string
-): TaskSurfaceFacts[] {
+): FetchSiblingsResult {
   let out: string
   try {
     out = execFileSync(
@@ -1280,13 +1312,14 @@ function fetchOpenTaskSurfaceSiblings(
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
     )
   } catch (err) {
-    refuse([
-      makeCheckError(
+    return {
+      ok: false,
+      error: makeCheckError(
         'forge-fetch',
         `Could not list open Issues (\`gh issue list\`) to check \`## Surface\` overlap against Milestone "${milestoneTitle}": ${(err as Error).message}`,
         `Check \`gh auth status\` and network, then re-run \`${retryCommand}\`. The write is refused rather than passed through unvalidated.`
       )
-    ])
+    }
   }
   let issues: Array<{
     number: number
@@ -1297,26 +1330,30 @@ function fetchOpenTaskSurfaceSiblings(
   try {
     issues = JSON.parse(out)
   } catch {
-    refuse([
-      makeCheckError(
+    return {
+      ok: false,
+      error: makeCheckError(
         'forge-fetch',
         'Could not parse `gh issue list --json number,body,labels,milestone` output.',
         `Re-run \`${retryCommand}\`; the write is refused rather than passed through unvalidated.`
       )
-    ])
+    }
   }
-  return issues
-    .filter((i) => i.number !== excludeIssueNumber)
-    .filter((i) => i.milestone?.title === milestoneTitle)
-    .filter((i) => isTaskIssueLabelSet(i.labels.map((l) => l.name)))
-    .map((i) => {
-      const surface = parseIssueSurface(i.body)
-      return {
-        ref: String(i.number),
-        surfaceIn: surface.ok ? surface.value.in : [],
-        conflictsWith: parseRationaleDeps(i.body).conflictsWith
-      }
-    })
+  return {
+    ok: true,
+    siblings: issues
+      .filter((i) => i.number !== excludeIssueNumber)
+      .filter((i) => i.milestone?.title === milestoneTitle)
+      .filter((i) => isTaskIssueLabelSet(i.labels.map((l) => l.name)))
+      .map((i) => {
+        const surface = parseIssueSurface(i.body)
+        return {
+          ref: String(i.number),
+          surfaceIn: surface.ok ? surface.value.in : [],
+          conflictsWith: parseRationaleDeps(i.body).conflictsWith
+        }
+      })
+  }
 }
 
 /**
@@ -1380,6 +1417,13 @@ const CHECK_BRIEF_SHAPE_PREWRITE = 'brief-shape'
  * own contract treats `prNumber === null` as NOT grandfathered — every
  * finding here is blocking, the same fail-closed posture that contract
  * documents.
+ *
+ * **O1 — returns findings, never refuses.** Used to call `refuse()` directly
+ * (twice — once for a render gap, once for `checkBriefSections`'s own
+ * findings), which stopped `validateTaskIssue` from ever reaching its later
+ * groups. Returns every finding as a `CheckError[]` instead so the caller can
+ * fold this group's findings into the SAME union every other group
+ * contributes to, and refuse once.
  */
 async function validateRenderedBriefForIssue(input: {
   issueNumber: number | null
@@ -1387,15 +1431,15 @@ async function validateRenderedBriefForIssue(input: {
   body: string
   labels: string[]
   retryCommand: string
-}): Promise<void> {
-  if (!canRenderBriefFromHere()) return
+}): Promise<CheckError[]> {
+  if (!canRenderBriefFromHere()) return []
 
   const trancheSlug = findTrancheSlug(input.labels)
   let rendered: AssembleAndRenderBriefResult
   if (trancheSlug !== null) {
-    if (input.issueNumber === null) return
+    if (input.issueNumber === null) return []
     const taskId = await resolveTrancheTaskId(trancheSlug, input.issueNumber)
-    if (taskId === null) return
+    if (taskId === null) return []
     rendered = await assembleAndRenderBrief(trancheSlug, taskId, undefined, input.body)
   } else {
     rendered = await assembleAndRenderBriefForIssue(input.issueNumber ?? DRAFT_ISSUE_SENTINEL, {
@@ -1405,10 +1449,11 @@ async function validateRenderedBriefForIssue(input: {
     })
   }
   if (!rendered.ok) {
-    refuse(
-      rendered.missing.map((m) =>
-        makeCheckError(
-          CHECK_BRIEF_RENDER,
+    return rendered.missing.map((m) =>
+      makeCheckError(
+        CHECK_BRIEF_RENDER,
+        `brief-render: ${m}`,
+        nameTheFix(
           `brief-render: ${m}`,
           `Fix the named gap so this Issue renders a valid brief, then re-run \`${input.retryCommand}\`.`
         )
@@ -1419,17 +1464,150 @@ async function validateRenderedBriefForIssue(input: {
   const briefErrors = checkBriefSections(rendered.brief, readTierFromPrBody, {
     consumersOf: buildWorkspaceConsumersOf()
   }).errors
-  if (briefErrors.length > 0) {
-    refuse(
-      briefErrors.map((e) =>
-        makeCheckError(
-          CHECK_BRIEF_SHAPE_PREWRITE,
-          e,
-          `Fix the named section in the Issue body — as written it would freeze into a brief \`pr create\` refuses — then re-run \`${input.retryCommand}\`.`
-        )
+  return briefErrors.map((e) =>
+    makeCheckError(
+      CHECK_BRIEF_SHAPE_PREWRITE,
+      e,
+      nameTheFix(
+        e,
+        `Fix the named section in the Issue body — as written it would freeze into a brief \`pr create\` refuses — then re-run \`${input.retryCommand}\`.`
       )
     )
+  )
+}
+
+/**
+ * Test-only injection point (O1) — `collectTaskIssueErrors`'s last two
+ * groups are the two that need live forge/filesystem/template state to run
+ * for real (a rendered brief, a spawned registry check). Defaulted to the
+ * real implementations everywhere except a test that wants to exercise the
+ * union across all four groups without standing up that state.
+ */
+export type TaskIssueValidationDeps = {
+  computeRenderedBriefErrors: typeof validateRenderedBriefForIssue
+  runIssueChecks: typeof runIssueChecks
+}
+
+const defaultTaskIssueValidationDeps: TaskIssueValidationDeps = {
+  computeRenderedBriefErrors: validateRenderedBriefForIssue,
+  runIssueChecks
+}
+
+/**
+ * **O1 — runs every gate group over the SAME body/title/labels and returns
+ * the union of every finding, never refusing early.** Used to be four
+ * separate refusal points (schema, content, rendered-brief-shape, registry),
+ * each stopping `validateTaskIssue` before the next group ever ran — opening
+ * one Issue with three independent defects cost three round-trips, one group
+ * fixed per run, because each run only ever saw the ONE group it happened to
+ * reach first. Every group below is independent of the others' outcome (none
+ * needs a prior group to have PASSED to run — they all grade the same
+ * already-buffered `body`/`title`/`labels`), so all four always run and
+ * contribute to one combined list; `validateTaskIssue` refuses ONCE with
+ * whatever that list holds.
+ *
+ * The one render (`deps.computeRenderedBriefErrors`) still happens exactly
+ * once, not once per group — the brief-shape group's own findings come out
+ * of that single render, same as before this change.
+ */
+export async function collectTaskIssueErrors(
+  body: string,
+  title: string | null,
+  labels: string[],
+  retryCommand: string,
+  issueNumber: number | null,
+  milestoneSource?: MilestoneSource,
+  deps: TaskIssueValidationDeps = defaultTaskIssueValidationDeps
+): Promise<CheckError[]> {
+  const errors: CheckError[] = []
+
+  const sections = resolveSections('issue', retryCommand)
+  errors.push(
+    ...validateForgeWrite({
+      body,
+      title,
+      sections,
+      changedFiles: [],
+      retryCommand,
+      issueNumber
+    })
+  )
+
+  const milestoneTitle =
+    milestoneSource === undefined
+      ? null
+      : milestoneSource.kind === 'edit'
+        ? fetchForgeMilestoneBestEffort(milestoneSource.issueRef)
+        : resolveMilestoneTitleForCreate(milestoneSource.ghArgs, labels)
+  // O1 — a fetch failure here folds into the SAME union every other group
+  // contributes to, rather than refusing immediately and discarding the
+  // schema group's findings already pushed above.
+  let milestoneSiblings: TaskSurfaceFacts[] | null = null
+  if (milestoneTitle !== null) {
+    const siblingsResult = fetchOpenTaskSurfaceSiblings(milestoneTitle, issueNumber, retryCommand)
+    if (siblingsResult.ok) {
+      milestoneSiblings = siblingsResult.siblings
+    } else {
+      errors.push(siblingsResult.error)
+    }
   }
+
+  errors.push(
+    ...validateIssueContent({
+      body,
+      labels,
+      sharedPackages: readSharedPackages(),
+      projectPaths: readProjectPaths(),
+      retryCommand,
+      issueNumber,
+      resolvesToFile: (glob) => expandGlob(glob).length > 0,
+      docOwnersContent: readDocOwnersContent(),
+      milestoneSiblings,
+      subjectRef: issueNumber !== null ? String(issueNumber) : ''
+    })
+  )
+
+  // Render the brief this write would freeze and grade it with the same
+  // brief-shape gate `pr create` applies, before the write. `title` is null
+  // on a plain `issue edit`/`issue objectives edit` that doesn't re-pass
+  // `--title`; the Issue's own live title fills the gap (used only on the
+  // backlog path — a tranche-labeled render reads its title from the
+  // tranche's own task list instead).
+  const effectiveTitle =
+    title ?? (milestoneSource?.kind === 'edit' ? fetchForgeTitleBestEffort(milestoneSource.issueRef) : '')
+  errors.push(
+    ...(await deps.computeRenderedBriefErrors({ issueNumber, title: effectiveTitle, body, labels, retryCommand }))
+  )
+
+  // O2 (task 17) — the six write-only rules, through the SAME registry
+  // runner `runBodyChecks` uses. `checkMilestoneAttach` stays dormant on
+  // EVERY write-path call (both `currentMilestoneTitle`/`resolvedMilestoneTitle`
+  // null): `create`'s auto-attach action happens as part of THIS SAME write,
+  // once validation passes, so there is nothing to compare against yet
+  // (flagging an attach that has not happened YET as one that never will is
+  // exactly the false positive this must not produce); `edit` never
+  // re-attaches at all, by this system's own design
+  // (`packages/aeg-core/bin/open-issue.ts`'s `resolveMilestoneToAttach`:
+  // "edit never force-attaches retroactively" — `vinaya milestone adopt` is
+  // the sanctioned way to move a tranche's Milestone, and comparing an
+  // adopted Issue's live Milestone against its label's DEFAULT resolution
+  // would flag every legitimately-adopted tranche as a violation). The check
+  // is still registered and directly invocable (`vinaya check
+  // issue-milestone-attach`) — it simply has no write-path moment that is
+  // both meaningful and free of that false-positive risk.
+  errors.push(
+    ...(await deps.runIssueChecks({
+      body,
+      labels,
+      title,
+      issueNumber,
+      currentMilestoneTitle: null,
+      resolvedMilestoneTitle: null,
+      retryCommand
+    }))
+  )
+
+  return errors
 }
 
 export async function validateTaskIssue(
@@ -1454,75 +1632,9 @@ export async function validateTaskIssue(
       )
     ])
   }
-  const sections = resolveSections('issue', retryCommand)
-  const schemaErrors = validateForgeWrite({
-    body,
-    title,
-    sections,
-    changedFiles: [],
-    retryCommand,
-    issueNumber
-  })
-  if (schemaErrors.length > 0) refuse(schemaErrors)
 
-  const milestoneTitle =
-    milestoneSource === undefined
-      ? null
-      : milestoneSource.kind === 'edit'
-        ? fetchForgeMilestoneBestEffort(milestoneSource.issueRef)
-        : resolveMilestoneTitleForCreate(milestoneSource.ghArgs, labels)
-  const milestoneSiblings =
-    milestoneTitle !== null ? fetchOpenTaskSurfaceSiblings(milestoneTitle, issueNumber, retryCommand) : null
-
-  const contentErrors = validateIssueContent({
-    body,
-    labels,
-    sharedPackages: readSharedPackages(),
-    projectPaths: readProjectPaths(),
-    retryCommand,
-    issueNumber,
-    resolvesToFile: (glob) => expandGlob(glob).length > 0,
-    docOwnersContent: readDocOwnersContent(),
-    milestoneSiblings,
-    subjectRef: issueNumber !== null ? String(issueNumber) : ''
-  })
-  if (contentErrors.length > 0) refuse(contentErrors)
-
-  // Render the brief this write would freeze and grade it with the same
-  // brief-shape gate `pr create` applies, before the write. `title` is null
-  // on a plain `issue edit`/`issue objectives edit` that doesn't re-pass
-  // `--title`; the Issue's own live title fills the gap (used only on the
-  // backlog path — a tranche-labeled render reads its title from the
-  // tranche's own task list instead).
-  const effectiveTitle =
-    title ?? (milestoneSource?.kind === 'edit' ? fetchForgeTitleBestEffort(milestoneSource.issueRef) : '')
-  await validateRenderedBriefForIssue({ issueNumber, title: effectiveTitle, body, labels, retryCommand })
-
-  // O2 (task 17) — the six write-only rules, through the SAME registry
-  // runner `runBodyChecks` uses. `checkMilestoneAttach` stays dormant on
-  // EVERY write-path call (both `currentMilestoneTitle`/`resolvedMilestoneTitle`
-  // null): `create`'s auto-attach action happens as part of THIS SAME write,
-  // once validation passes, so there is nothing to compare against yet
-  // (flagging an attach that has not happened YET as one that never will is
-  // exactly the false positive this must not produce); `edit` never
-  // re-attaches at all, by this system's own design
-  // (`packages/aeg-core/bin/open-issue.ts`'s `resolveMilestoneToAttach`:
-  // "edit never force-attaches retroactively" — `vinaya milestone adopt` is
-  // the sanctioned way to move a tranche's Milestone, and comparing an
-  // adopted Issue's live Milestone against its label's DEFAULT resolution
-  // would flag every legitimately-adopted tranche as a violation). The check
-  // is still registered and directly invocable (`vinaya check
-  // issue-milestone-attach`) — it simply has no write-path moment that is
-  // both meaningful and free of that false-positive risk.
-  await runIssueChecks({
-    body,
-    labels,
-    title,
-    issueNumber,
-    currentMilestoneTitle: null,
-    resolvedMilestoneTitle: null,
-    retryCommand
-  })
+  const errors = await collectTaskIssueErrors(body, title, labels, retryCommand, issueNumber, milestoneSource)
+  if (errors.length > 0) refuse(errors)
 }
 
 /**

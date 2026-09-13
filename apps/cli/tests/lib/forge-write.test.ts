@@ -1,0 +1,450 @@
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { CHECK_SCHEMA_VERSION, type CheckError } from '../../src/checks/contract'
+import {
+  collectTaskIssueErrors,
+  runIssueChecks,
+  type TaskIssueValidationDeps,
+  validateForgeWrite,
+  validateIssueContent
+} from '../../src/lib/forge-write'
+
+const CLI_ROOT = join(import.meta.dir, '..', '..')
+const REPO_ROOT = join(CLI_ROOT, '..', '..')
+
+// ---------------------------------------------------------------------------
+// O1 — the write gate runs every group over one body and refuses once with
+// the union of findings, instead of stopping at the first group.
+//
+// `collectTaskIssueErrors` (`issue create`/`issue edit`'s own aggregation
+// core) is the unit under test — real for the schema and content groups
+// (both pure, no I/O), injected for the rendered-brief-shape and registry
+// groups (both need live forge/filesystem/template state that a fixture-less
+// unit test should not have to stand up — the CLI-level `pr create`/
+// `issue create` suites already exercise those for real).
+// ---------------------------------------------------------------------------
+
+describe('collectTaskIssueErrors — one gate sequence, every group, one refusal (O1)', () => {
+  let cwd: string
+  let originalCwd: string
+
+  beforeEach(() => {
+    // Isolated from the real repo's own `vinaya.config.json` (whose
+    // `briefSchema.issue.sections` requires far more than this fixture
+    // means to exercise) — an empty section set here means the schema
+    // group's ONLY possible finding is title grammar, which always runs
+    // regardless of config. A real (if tiny) git repo, with a tracked file
+    // under `apps/cli`, so `checkSurfaceGlobsResolve`'s `in: apps/cli` glob
+    // resolves — this fixture means to name exactly one content-group
+    // defect (the Surface-versus-Test-plan one), not a second, unrelated one.
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-collect-task-issue-errors-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ briefSchema: { issue: { sections: [] } } }), 'utf8')
+    execFileSync('git', ['init', '-q'], { cwd })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
+    mkdirSync(join(cwd, 'apps', 'cli'), { recursive: true })
+    writeFileSync(join(cwd, 'apps', 'cli', 'dummy.ts'), '')
+    execFileSync('git', ['add', '.'], { cwd })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  // Surface `out:` and a Test plan command line both name
+  // `apps/cli/src/checks/foo.test.ts` — `apps/cli/src/checks` is excluded by
+  // `out:`, so `checkObjectivesRespectBoundary` (the `issue-content` group)
+  // refuses it. `Docs to keep coherent` carries the `no-doc-surface`
+  // sentinel so the OTHER content check this body would otherwise also trip
+  // (`checkRationaleNamesDocs`) stays quiet — this fixture means to name
+  // exactly one content-group defect, not two.
+  const surfaceVsTestPlanBody = [
+    '## Surface',
+    '',
+    'in: apps/cli',
+    'out: apps/cli/src/checks',
+    '',
+    '## Test plan',
+    '',
+    '```',
+    'bun test apps/cli/src/checks/foo.test.ts → 0 fail',
+    '```',
+    '',
+    '**Docs to keep coherent** — no-doc-surface.'
+  ].join('\n')
+
+  const fakeConsumerTestFinding: CheckError = {
+    schema: CHECK_SCHEMA_VERSION,
+    check: 'brief-shape',
+    severity: 'error',
+    message:
+      'brief-validation consumer tests: §4 names a path under packages/aeg-core/, and apps/cli depends on @attalabs/aeg-core, but no test path under apps/cli is named in §4 — name one, or add `consumer-tests: none — <reason>`.',
+    agent_recovery_prompt:
+      'Refused for: `brief-validation consumer tests: §4 names a path under packages/aeg-core/, and apps/cli depends on @attalabs/aeg-core, but no test path under apps/cli is named in §4 — name one, or add `consumer-tests: none — <reason>`.` — Name a test path under apps/cli in §4, or add the `consumer-tests: none — <reason>` sentinel, then re-run `vinaya issue create --validate-only …`.'
+  }
+
+  it("a body failing title grammar, a Surface-versus-Test-plan rule, and the rendered brief's consumer-test rule is refused once with three findings", async () => {
+    const deps: TaskIssueValidationDeps = {
+      computeRenderedBriefErrors: async () => [fakeConsumerTestFinding],
+      runIssueChecks: async () => []
+    }
+
+    const errors = await collectTaskIssueErrors(
+      surfaceVsTestPlanBody,
+      'not a valid title',
+      [],
+      'vinaya issue create --validate-only …',
+      null,
+      undefined,
+      deps
+    )
+
+    expect(errors.length).toBe(3)
+    expect(errors.map((e) => e.check).sort()).toEqual(['brief-shape', 'forge-title', 'issue-content'])
+  })
+
+  it('the same body with all three defects fixed passes in one run', async () => {
+    const fixedBody = [
+      '## Surface',
+      '',
+      'in: apps/cli',
+      // No longer overlaps the Test plan's named path.
+      'out: apps/cli/src/other',
+      '',
+      '## Test plan',
+      '',
+      '```',
+      'bun test apps/cli/src/checks/foo.test.ts → 0 fail',
+      '```',
+      '',
+      '**Docs to keep coherent** — no-doc-surface.'
+    ].join('\n')
+
+    const deps: TaskIssueValidationDeps = {
+      computeRenderedBriefErrors: async () => [],
+      runIssueChecks: async () => []
+    }
+
+    const errors = await collectTaskIssueErrors(
+      fixedBody,
+      'Feat: a well-formed title',
+      [],
+      'vinaya issue create --validate-only …',
+      null,
+      undefined,
+      deps
+    )
+
+    expect(errors).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Round-3 review finding (MEDIUM) — a `gh` fetch failure inside the O5
+// sibling-overlap lookup used to call `refuse()` directly, discarding every
+// finding `collectTaskIssueErrors` had already pushed into its union (the
+// schema group's own findings, computed just before this lookup runs) —
+// recreating the exact stop-at-first-group cost O1 exists to remove, one
+// layer down inside the content group. The fetch failure must fold into the
+// SAME union instead.
+// ---------------------------------------------------------------------------
+
+describe('a gh fetch failure inside the content group folds into the union instead of discarding prior findings', () => {
+  let cwd: string
+  let originalCwd: string
+  let originalPath: string | undefined
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-sibling-fetch-failure-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ briefSchema: { issue: { sections: [] } } }), 'utf8')
+
+    // A fake `gh` that fails `issue list` (the O5 sibling-overlap query) but
+    // answers nothing else — the point is this ONE lookup failing, not a
+    // general forge outage.
+    const gh = join(cwd, 'gh')
+    writeFileSync(
+      gh,
+      `#!/bin/sh
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  echo "gh: network unreachable" >&2
+  exit 1
+fi
+exit 1
+`
+    )
+    execFileSync('chmod', ['+x', gh])
+
+    originalPath = process.env.PATH
+    process.env.PATH = `${cwd}:${process.env.PATH ?? ''}`
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    process.env.PATH = originalPath
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it("keeps the schema group's own findings when the sibling-overlap fetch fails, refusing once with both", async () => {
+    const deps: TaskIssueValidationDeps = {
+      computeRenderedBriefErrors: async () => [],
+      runIssueChecks: async () => []
+    }
+
+    const errors = await collectTaskIssueErrors(
+      // `no-doc-surface` sentinel keeps `checkRationaleNamesDocs` quiet — this
+      // fixture means to name exactly one content-group defect via the
+      // fetch failure itself, not a second, unrelated one.
+      '**Docs to keep coherent** — no-doc-surface.',
+      'not a valid title', // trips the schema group's title-grammar check
+      [],
+      'vinaya issue create --validate-only …',
+      null,
+      // `--milestone` given explicitly short-circuits milestone RESOLUTION
+      // (no `gh` call needed to resolve one) straight to the sibling-overlap
+      // fetch, which the fake `gh` above fails.
+      { kind: 'create', ghArgs: ['--milestone', 'v1'] },
+      deps
+    )
+
+    expect(errors.length).toBe(2)
+    const checks = errors.map((e) => e.check).sort()
+    expect(checks).toEqual(['forge-fetch', 'forge-title'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Round-3 review finding (MINOR) — the O2 audit below exercises
+// `validateForgeWrite`'s and `validateIssueContent`'s real output, but the
+// rendered-brief-shape group's real (non-injected) output was only ever
+// proven compliant by a hand-built fixture. This drives the REAL render
+// path (`collectTaskIssueErrors`'s default deps, no injection) against a
+// body missing `## Stop conditions` — a genuine render gap — so the
+// `brief-render` finding this produces carries `nameTheFix`'s ACTUAL
+// wrapping, not a stand-in.
+// ---------------------------------------------------------------------------
+
+describe('the real (non-injected) rendered-brief-shape group also names its own fix', () => {
+  let cwd: string
+  let originalCwd: string
+  let originalAegRepo: string | undefined
+
+  const RATIONALE = [
+    "## Task Issue — Planner's rationale",
+    '',
+    '**Boundary** — In: nothing real. Out: nothing.',
+    '',
+    '**Sizing** — n/a, test fixture.',
+    '',
+    '**Project(s) + blast radius** — `Project: cli`. No shared-primitive fan-out.',
+    '',
+    '**Dependency rationale** — `Depends-on: —`; `Conflicts-with: —`.',
+    '',
+    '**Traps to avoid** — n/a.',
+    '',
+    '**Suggested agent-class** — fast — test fixture.',
+    '',
+    '**Stop-and-escalate** — n/a.',
+    '',
+    '**Docs to keep coherent** — no-doc-surface.'
+  ].join('\n')
+
+  // Deliberately missing `## Stop conditions` — a section the brief renderer
+  // requires past its own cutover — so rendering this body genuinely fails
+  // (`rendered.ok === false`), producing a real `brief-render` finding.
+  const bodyMissingStopConditions = [
+    '**Project:** cli',
+    '',
+    '## Objectives',
+    '',
+    'O1. The fixture exercises the real render path.',
+    '',
+    '## Surface',
+    '',
+    'in: aeg-root',
+    'out: —',
+    '',
+    '## Parts',
+    '',
+    'Part 1 (O1) — the only part, citing the only objective.',
+    '',
+    '## Test plan',
+    '',
+    'Test Plan: unit-tests-only',
+    '',
+    RATIONALE
+  ].join('\n')
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-real-render-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ briefSchema: { issue: { sections: [] } } }), 'utf8')
+    execFileSync('git', ['init', '-q'], { cwd })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
+    mkdirSync(join(cwd, 'aeg-root', 'templates'), { recursive: true })
+    cpSync(
+      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
+      join(cwd, 'aeg-root', 'templates', 'brief-template.md')
+    )
+    execFileSync('git', ['add', '.'], { cwd })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
+
+    originalAegRepo = process.env.AEG_REPO
+    process.env.AEG_REPO = 'test-owner/test-repo'
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    process.env.AEG_REPO = originalAegRepo
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it('a real render-gap finding quotes the gap and states the fix, not just the rule', async () => {
+    // No `deps` override — `computeRenderedBriefErrors` runs the REAL
+    // `validateRenderedBriefForIssue`, exercising its own `nameTheFix` calls.
+    const errors = await collectTaskIssueErrors(
+      bodyMissingStopConditions,
+      'Feat: a well-formed title',
+      [],
+      'vinaya issue create --validate-only …',
+      null
+    )
+
+    const renderFindings = errors.filter((e) => e.check === 'brief-render' || e.check === 'brief-shape')
+    expect(renderFindings.length).toBeGreaterThan(0)
+    for (const e of renderFindings) expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// O2 — every recovery prompt names its own fix, not its rule: it quotes the
+// specific finding it refuses (never merely the check's static rule text)
+// and states the edit that clears it.
+// ---------------------------------------------------------------------------
+
+/** True only when `finding`'s recovery prompt both quotes the finding it refuses AND states a concrete edit — never a bare restatement of the rule. */
+function recoveryNamesItsFix(finding: CheckError): boolean {
+  const quotesTheFinding = finding.agent_recovery_prompt.includes(finding.message)
+  const isJustTheRuleRestated = finding.agent_recovery_prompt.trim() === finding.message.trim()
+  const namesAnEdit = /\b(Add|Remove|Delete|Fix|Rewrite|Move|Widen|Narrow|Drop|Correct|Name)\b/.test(
+    finding.agent_recovery_prompt
+  )
+  return quotesTheFinding && !isJustTheRuleRestated && namesAnEdit
+}
+
+describe('every brief-schema/issue-content recovery prompt names its own fix (O2)', () => {
+  // A representative registry of gate messages: one fixture per builtin/
+  // content-check family already exercised elsewhere in this test suite,
+  // reused here rather than re-derived, so this audit tracks the real
+  // registry of messages `forge-write.ts` emits.
+  it('every finding from a title-grammar failure quotes the bad title and states the fix', () => {
+    const errors = validateForgeWrite({
+      body: 'irrelevant',
+      title: 'not a valid title',
+      sections: [],
+      changedFiles: [],
+      retryCommand: 'vinaya pr create --validate-only …'
+    })
+    expect(errors.length).toBeGreaterThan(0)
+    for (const e of errors) expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+
+  it('every finding from a missing built-in section quotes the diagnosis and states the fix', () => {
+    const errors = validateForgeWrite({
+      body: 'Nothing here.',
+      title: null,
+      sections: [{ builtin: 'tier' }, { builtin: 'testPlan' }, { builtin: 'surfaceMap' }],
+      changedFiles: [],
+      retryCommand: 'vinaya pr create --validate-only …'
+    })
+    expect(errors.length).toBe(3)
+    for (const e of errors) expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+
+  it('every finding from a missing rationale field quotes the field and states the fix', () => {
+    const errors = validateForgeWrite({
+      body: 'A task Issue body carrying none of the eight rationale fields.',
+      title: null,
+      sections: [{ builtin: 'issueRationale' }],
+      changedFiles: [],
+      retryCommand: 'vinaya issue create --validate-only …'
+    })
+    expect(errors.length).toBe(8)
+    for (const e of errors) expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+
+  it('every finding from a Surface-versus-Test-plan violation quotes the line and states the fix', () => {
+    const body = [
+      '## Surface',
+      '',
+      'in: apps/cli',
+      'out: apps/cli/src/checks',
+      '',
+      '## Test plan',
+      '',
+      '```',
+      'bun test apps/cli/src/checks/foo.test.ts → 0 fail',
+      '```',
+      '',
+      '**Docs to keep coherent** — no-doc-surface.'
+    ].join('\n')
+    const errors = validateIssueContent({
+      body,
+      labels: [],
+      sharedPackages: [],
+      projectPaths: [],
+      retryCommand: 'vinaya issue create --validate-only …',
+      issueNumber: null,
+      resolvesToFile: () => true,
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: ''
+    })
+    expect(errors.length).toBe(1)
+    for (const e of errors) expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+
+  it('a finding whose recovery prompt only restates the rule fails this same audit', () => {
+    const ruleOnly: CheckError = {
+      schema: CHECK_SCHEMA_VERSION,
+      check: 'brief-schema',
+      severity: 'error',
+      message: 'brief-schema tier: no `Tier:` field found in the body header.',
+      // Bare restatement of the rule — no quote of a specific finding beyond
+      // the rule itself, no edit named.
+      agent_recovery_prompt: 'brief-schema tier: no `Tier:` field found in the body header.'
+    }
+    expect(recoveryNamesItsFix(ruleOnly)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// `runIssueChecks` (O1) — returns findings instead of refusing, so
+// `collectTaskIssueErrors` can fold its registry-check group into the same
+// union every other group contributes to.
+// ---------------------------------------------------------------------------
+
+describe('runIssueChecks returns findings rather than refusing (O1)', () => {
+  it("resolves an empty array for a subject every registered `validates: 'issue'` check passes", async () => {
+    const errors = await runIssueChecks({
+      body: "## Objectives\n\nO1. Something happens.\n\n## Planner's rationale\n\nsome rationale\n",
+      labels: ['vinaya/tranche:demo-v1'],
+      title: 'Feat: a well-formed title',
+      issueNumber: null,
+      currentMilestoneTitle: null,
+      resolvedMilestoneTitle: null,
+      retryCommand: 'vinaya issue create'
+    })
+    expect(errors).toEqual([])
+  })
+})

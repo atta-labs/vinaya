@@ -30,6 +30,7 @@ tests/doctor.test.ts
 tests/gemini-command-emitter.test.ts
 tests/init.test.ts
 tests/lib/brief-assembly.test.ts
+tests/lib/forge-write.test.ts
 tests/lib/task-run.test.ts
 tests/lib/task-status.test.ts
 tests/milestone.test.ts

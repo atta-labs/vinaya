@@ -66,7 +66,15 @@ describe('vinaya issue create --validate-only', () => {
     rmSync(cwd, { recursive: true, force: true })
   })
 
-  it('refuses a task Issue (tranche:* label) lacking the rationale', () => {
+  // O1 (task 17, this task): this fixture is missing not only the eight
+  // rationale fields (`brief-schema`) but also a concrete doc pointer
+  // (`issue-content`) and any `## Objectives` heading at all
+  // (`issue-objectives-numbering`, a registered `validates: 'issue'` check)
+  // — three independent gate groups. Before this task, the run stopped at
+  // the FIRST group and only ever reported the eight `brief-schema`
+  // findings; the later two groups' real defects were invisible until a
+  // second and third run. One run now reports all ten together.
+  it('refuses a task Issue (tranche:* label) lacking the rationale, docs pointer, and Objectives — all in one run', () => {
     const r = runCli(
       [
         'issue',
@@ -81,10 +89,12 @@ describe('vinaya issue create --validate-only', () => {
     )
     expect(r.status).toBe(1)
     const lines = r.stderr.trim().split('\n').filter(Boolean)
-    expect(lines.length).toBe(8)
-    for (const line of lines) {
-      const finding = JSON.parse(line)
-      expect(finding.check).toBe('brief-schema')
+    const findings = lines.map((line) => JSON.parse(line))
+    expect(findings.length).toBe(10)
+    expect(findings.filter((f) => f.check === 'brief-schema').length).toBe(8)
+    expect(findings.filter((f) => f.check === 'issue-content').length).toBe(1)
+    expect(findings.filter((f) => f.check === 'issue-objectives-numbering').length).toBe(1)
+    for (const finding of findings) {
       expect(finding.agent_recovery_prompt).toContain('vinaya issue create')
     }
   })
