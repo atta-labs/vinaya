@@ -8,7 +8,7 @@
  * level constant frozen at first import — internally).
  *
  * The forge-reading half (`listOpenTaskIssues`, `hasFrozenBrief`,
- * `findPrForTask`) shells out to real `gh` and is exercised instead through
+ * `findPrForRef`) shells out to real `gh` and is exercised instead through
  * the CLI end-to-end, in `apps/cli/tests/commands/task-status.test.ts`.
  */
 

@@ -37,7 +37,17 @@ function readIfExists(path: string): string | null {
 
 // --- task list (forge) -------------------------------------------------
 
-type TaskRef = { tranche: string; id: string; issue: number }
+/**
+ * O2 (Issue #583): a tranche-labeled Issue carries its identity in its own
+ * title/label (`resolveTaskIssueRef`); a backlog Issue (no `vinaya/tranche:*`
+ * label at all) carries none — it is identified by its Issue number alone,
+ * the same identity `developerBranchFor`'s own `task/issue-<n>` branch and
+ * the outbox's `<outboxRoot>/dev-review-loop/<n>/` directory already key by.
+ * Never derived from the title for a backlog Issue (Traps to avoid) — only
+ * the label decides which variant applies, same rule `developerBranchFor`
+ * itself already enforces.
+ */
+type TaskRef = { kind: 'tranche'; tranche: string; id: string; issue: number } | { kind: 'backlog'; issue: number }
 
 type RawIssue = { number: number; title: string; labels: Array<{ name: string }> }
 
@@ -45,11 +55,12 @@ type RawIssue = { number: number; title: string; labels: Array<{ name: string }>
 const OPEN_ISSUE_LIST_LIMIT = 200
 
 /**
- * Every open Issue whose title and labels resolve to a Vinaya task
- * (`resolveTaskIssueRef` — the same `[<slug>] <n> — …` title shape plus
- * `vinaya/tranche:<slug>` label authoritative-membership discipline
- * `list-tasks.ts` documents), across every tranche — one `gh issue list`
- * call, no tranche slug known in advance.
+ * Every open Issue, tagged by which identity it carries
+ * (`resolveTaskIssueRef`'s tranche shape, or backlog when that resolution
+ * fails) — one `gh issue list` call, no tranche slug known in advance. A
+ * backlog tag here is not yet a claim that the Issue is a real dispatched
+ * task — `gatherTaskStatusList` narrows that with a cheap, local pre-filter
+ * before ever asking the forge whether one carries a frozen brief.
  */
 function listOpenTaskIssues(): TaskRef[] {
   const raw = sh('gh', [
@@ -69,9 +80,38 @@ function listOpenTaskIssues(): TaskRef[] {
       issue.title,
       issue.labels.map((l) => l.name)
     )
-    if (ref) refs.push({ tranche: ref.trancheSlug, id: ref.taskId, issue: issue.number })
+    refs.push(
+      ref
+        ? { kind: 'tranche', tranche: ref.trancheSlug, id: ref.taskId, issue: issue.number }
+        : { kind: 'backlog', issue: issue.number }
+    )
   }
   return refs
+}
+
+/** The branch this ref's developer worked on — `task/<tranche>/<id>` for a tranche task, `task/issue-<n>` for a backlog one — the same two shapes `developerBranchFor` derives, mirrored here rather than reached for (that function is `async`-shaped around a live label/title fetch this file already has in hand). */
+function branchForRef(ref: TaskRef): string {
+  return ref.kind === 'tranche' ? `task/${ref.tranche}/${ref.id}` : `task/issue-${ref.issue}`
+}
+
+/**
+ * O2's own local pre-filter, cheap and network-free: a backlog Issue only
+ * ever becomes a candidate row when the loop has already written it an
+ * outbox directory (`<outboxRoot>/dev-review-loop/<n>/`) — the driver lock,
+ * pause record, or verdict files a real dispatched run leaves behind (Traps
+ * to avoid: never derive a backlog task's identity from its title). Without
+ * this, every open backlog Issue in the repo — bug reports and feature
+ * requests included — would cost one `gh issue view --json comments` call
+ * just to learn it carries no frozen brief. A tranche-labeled Issue carries
+ * no such gate: its identity is already real, the same as before this task.
+ */
+function hasOutboxDir(root: string, task: number): boolean {
+  try {
+    readdirSync(taskOutboxDir(root, task))
+    return true
+  } catch {
+    return false
+  }
 }
 
 type RawComment = { body: string; author?: { login?: string } | null }
@@ -92,9 +132,9 @@ function hasFrozenBrief(issue: number, allowlist: readonly string[]): boolean {
   return resolveNewestFrozenBrief(fetchIssueComments(issue), allowlist as string[]) !== null
 }
 
-/** The open pull request on this task's `task/<tranche>/<n>` branch, or `null` — `findOpenPrForBranch` unchanged, the branch name derived the same way every other reader in this codebase derives it. */
-function findPrForTask(tranche: string, id: string): { number: number } | null {
-  const pr = findOpenPrForBranch(`task/${tranche}/${id}`)
+/** The open pull request on this ref's developer branch, or `null` — `findOpenPrForBranch` unchanged, `branchForRef` deriving the tranche or backlog branch name the same way every other reader in this codebase derives it. */
+function findPrForRef(ref: TaskRef): { number: number } | null {
+  const pr = findOpenPrForBranch(branchForRef(ref))
   return pr ? { number: pr.number } : null
 }
 
@@ -383,13 +423,14 @@ export function renderTaskStatusRow(row: TaskStatusRow): string {
   return `[${row.tranche}] ${row.id} — Issue #${row.issue} — ${prText} — ${renderStateText(row.state)}`
 }
 
+/** O2: a backlog ref renders through the SAME row shape as a tranche one — `tranche` reads `backlog`, `id` reads the Issue number, everything else (PR lookup, loop state) already generalizes over `TaskRef`'s two kinds via `branchForRef`. */
 function buildRow(ref: TaskRef, allowlist: readonly string[]): TaskStatusRow | null {
   if (!hasFrozenBrief(ref.issue, allowlist)) return null
   return {
-    tranche: ref.tranche,
-    id: ref.id,
+    tranche: ref.kind === 'tranche' ? ref.tranche : 'backlog',
+    id: ref.kind === 'tranche' ? ref.id : String(ref.issue),
     issue: ref.issue,
-    pr: findPrForTask(ref.tranche, ref.id),
+    pr: findPrForRef(ref),
     state: deriveLoopState(outboxRoot(), ref.issue)
   }
 }
@@ -407,8 +448,14 @@ export type TaskStatusListRow = { row: TaskStatusRow; line: string }
  */
 export function gatherTaskStatusList(): TaskStatusListRow[] {
   const allowlist = principalAllowlist()
+  const root = outboxRoot()
   const rows: TaskStatusListRow[] = []
   for (const ref of listOpenTaskIssues()) {
+    // O2: a backlog ref only ever becomes a candidate once the loop has
+    // already written it an outbox directory — see `hasOutboxDir`'s own doc
+    // comment. A tranche-labeled ref carries no such gate, unchanged from
+    // before this task.
+    if (ref.kind === 'backlog' && !hasOutboxDir(root, ref.issue)) continue
     const row = buildRow(ref, allowlist)
     if (row) rows.push({ row, line: renderTaskStatusRow(row) })
   }
@@ -428,7 +475,7 @@ export type SingleTaskStatus =
 
 /** O2's entire read for the single-task form — the ONE function `commands/task-status.ts` calls for it, same discipline as `gatherTaskStatusList`. */
 export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskStatus {
-  const ref = listOpenTaskIssues().find((r) => r.tranche === tranche && r.id === id)
+  const ref = listOpenTaskIssues().find((r) => r.kind === 'tranche' && r.tranche === tranche && r.id === id)
   if (!ref) return { kind: 'not_found' }
 
   const row = buildRow(ref, principalAllowlist())

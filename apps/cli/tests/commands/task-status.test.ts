@@ -71,13 +71,20 @@ function frozenBriefComment(): { body: string; author: { login: string } } {
 const ISSUES = [
   { number: 601, title: '[demo] 1 — Running task', labels: [{ name: 'vinaya/tranche:demo' }] },
   { number: 602, title: '[demo] 2 — Paused task', labels: [{ name: 'vinaya/tranche:demo' }] },
-  { number: 603, title: '[demo] 3 — Published task', labels: [{ name: 'vinaya/tranche:demo' }] }
+  { number: 603, title: '[demo] 3 — Published task', labels: [{ name: 'vinaya/tranche:demo' }] },
+  // O2 (Issue #583): a backlog Issue — no `vinaya/tranche:*` label at all.
+  // 604 carries an outbox dir (a real dispatched task) and is expected to
+  // list; 605 carries none and must be pre-filtered before ever costing an
+  // `issue view` call (the stub below fails loudly if 605 is ever fetched).
+  { number: 604, title: 'A backlog bug that grew into a real task', labels: [] },
+  { number: 605, title: 'An ordinary open Issue, never dispatched', labels: [] }
 ]
 
 const PR_BY_BRANCH: Record<string, number> = {
   'task/demo/1': 701,
   'task/demo/2': 702,
-  'task/demo/3': 703
+  'task/demo/3': 703,
+  'task/issue-604': 704
 }
 
 function stubGh(home: string): string {
@@ -98,9 +105,17 @@ JSON
   exit 0
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
-  cat <<'JSON'
+  case "$3" in
+    605)
+      echo "gh stub: issue view unexpectedly called for Issue 605 (no outbox dir — must be pre-filtered, O2)" >&2
+      exit 1
+      ;;
+    *)
+      cat <<'JSON'
 ${JSON.stringify({ comments: [frozenBriefComment()] })}
 JSON
+      ;;
+  esac
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
@@ -176,6 +191,38 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       '[demo] 1 — Issue #601 — PR #701 — no driver',
       '[demo] 2 — Issue #602 — PR #702 — no driver',
       '[demo] 3 — Issue #603 — PR #703 — no driver'
+    ])
+    expect(r.status).toBe(0)
+  })
+
+  // O2 (Issue #583): a backlog Issue with a frozen brief and a driver lock
+  // renders one row, right alongside the tranche-labeled ones — same shape,
+  // `[backlog]` in place of a tranche slug and the Issue number as its id.
+  // Issue 605 (no outbox dir at all) never appears — the pre-filter never
+  // even asks the forge about it (the stub fails loudly if it does).
+  it('lists a frozen backlog task beside tranche tasks — one row like a tranche task, in its derived state', () => {
+    const { home, env } = setUp()
+    writeOutbox(home, 601, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
+    writeOutbox(home, 602, 'pause-state.json', {
+      task: 602,
+      round: 1,
+      head: 'abc123',
+      branch: 'task/demo/2',
+      prNumber: 702,
+      reason: 'escalation',
+      pausedAt: '2026-09-10T00:00:00.000Z'
+    })
+    writeOutbox(home, 603, 'effect-1-reviewer-verdict.json', { effectId: 'a', status: 'posted' })
+    writeOutbox(home, 603, 'effect-1-security-verdict.json', { effectId: 'b', status: 'posted' })
+    writeOutbox(home, 604, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
+
+    const r = runCli(['task', 'status'], env)
+
+    expect(outputLines(r.stdout)).toEqual([
+      `[demo] 1 — Issue #601 — PR #701 — running (pid ${process.pid})`,
+      '[demo] 2 — Issue #602 — PR #702 — paused (escalation)',
+      '[demo] 3 — Issue #603 — PR #703 — published',
+      `[backlog] 604 — Issue #604 — PR #704 — running (pid ${process.pid})`
     ])
     expect(r.status).toBe(0)
   })
