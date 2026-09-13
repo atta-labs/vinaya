@@ -33,7 +33,13 @@ function makeInput(overrides: Partial<DispatchGateInput> = {}): DispatchGateInpu
 describe('checkDispatchReadiness', () => {
   it('is ready when every predicate holds', () => {
     const result = checkDispatchReadiness(makeInput())
-    expect(result).toEqual({ ready: true, blockers: [] })
+    expect(result).toEqual({ ready: true, blockers: [], blockerDetails: [] })
+  })
+
+  it('pairs each blocker message with its DispatchBlockerClass in blockerDetails', () => {
+    const result = checkDispatchReadiness(makeInput({ task: makeTask({ issue: null }), issue: null }))
+    expect(result.blockerDetails).toHaveLength(1)
+    expect(result.blockerDetails[0]).toEqual({ class: 'issue-existence', message: result.blockers[0] })
   })
 
   it('blocks when the topology row has no Issue (#TBD)', () => {
@@ -336,6 +342,11 @@ describe('checkDispatchReadiness — self-dependency guard', () => {
     const result = checkDispatchReadiness(makeInput({ dependsOn: [{ id: '12', issue: null, merged: true }] }))
     expect(result.ready).toBe(false)
     expect(result.blockers[0]).toContain('INTERNAL:')
+  })
+
+  it('tags the self-dependency blocker with the internal-self-dependency class, not depends-on-not-merged', () => {
+    const result = checkDispatchReadiness(makeInput({ dependsOn: [{ id: '12', issue: null, merged: false }] }))
+    expect(result.blockerDetails[0]?.class).toBe('internal-self-dependency')
   })
 })
 

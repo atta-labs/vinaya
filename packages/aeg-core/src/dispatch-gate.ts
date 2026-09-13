@@ -143,7 +143,40 @@ export type DispatchGateInput = {
   principalAllowlist?: string[]
 }
 
-export type DispatchResult = { ready: boolean; blockers: string[] }
+/**
+ * Every distinct dispatch-readiness blocker shape `checkDispatchReadiness`
+ * can produce, named apart from its human `message` string (Issue #355) —
+ * the recovery-prompt switch in `check-dispatch-readiness.ts` matches on
+ * THIS, never on parsing `message`'s text. Closed deliberately: a new
+ * blocker kind that reuses an existing member here silently inherits that
+ * member's (possibly wrong) recovery prompt, while adding a genuinely new
+ * member without a matching `case` in the consumer's switch fails typecheck
+ * via that switch's exhaustiveness check — the trap `#350` fell into (a new
+ * self-dependency class read as depends-on, whose stock prompt said "close
+ * the dependency" for a dependency that can never close) is now a compile
+ * error, not a live incident.
+ */
+export type DispatchBlockerClass =
+  | 'internal-self-dependency'
+  | 'issue-existence'
+  | 'rationale'
+  | 'depends-on-unresolvable'
+  | 'depends-on-not-merged'
+  | 'conflicts-with'
+  | 'prior-tranche-archival'
+
+/** A blocker's machine-readable class, beside the human string it always also carries. */
+export type DispatchBlocker = { class: DispatchBlockerClass; message: string }
+
+/**
+ * `blockers` stays the plain message list existing callers (`brief-render.ts`
+ * via `brief-assembly.ts`, `bin/verify-dispatch.ts`) already depend on —
+ * unchanged, byte-identical to before this task. `blockerDetails` is the new,
+ * additive field: the same blockers, each now paired with its
+ * `DispatchBlockerClass`, for a consumer (`check-dispatch-readiness.ts`) that
+ * needs to route on the class rather than re-parse the string.
+ */
+export type DispatchResult = { ready: boolean; blockers: string[]; blockerDetails: DispatchBlocker[] }
 
 /**
  * True when a parsed `depends-on` edge points back at its own host task.
@@ -182,23 +215,29 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
   const { trancheSlug, task } = input
   const taskLabel = `task ${task.id} (tranche ${trancheSlug})`
   const principalAllowlist = input.principalAllowlist ?? PRINCIPAL_ALLOWLIST
-  const blockers: string[] = []
+  const blockerDetails: DispatchBlocker[] = []
+  const push = (blockerClass: DispatchBlockerClass, message: string): void => {
+    blockerDetails.push({ class: blockerClass, message })
+  }
 
   // Issue-existence — the topology row itself has no Issue number.
   if (task.issue === null) {
-    blockers.push(
+    push(
+      'issue-existence',
       `dispatch-gate issue-existence: ${taskLabel} has no Issue (#TBD or blank) in the topology — not dispatchable until the Planner cuts the Issue.`
     )
   } else if (input.issue === null) {
     // Row names an Issue number, but it doesn't resolve on the forge — phantom ref (T1's fail class).
-    blockers.push(
+    push(
+      'issue-existence',
       `dispatch-gate issue-existence: ${taskLabel} names Issue #${task.issue}, but it does not resolve to a real GitHub Issue (phantom reference).`
     )
   }
 
   // Planner-rationale completeness — only evaluable when the Issue itself resolved.
   if (input.issue !== null && !input.issueRationalePass) {
-    blockers.push(
+    push(
+      'rationale',
       `dispatch-gate rationale: Issue #${input.issue.number} for ${taskLabel} fails the rationale gate (checkIssueRationale) — the Planner must complete the eight-field rationale before this task is dispatchable.`
     )
   }
@@ -213,7 +252,8 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
     // not actually the fault.
     if (isSelfDependency(dep, task, input.issue)) {
       const issueStr = input.issue !== null ? `#${input.issue.number}` : '?'
-      blockers.push(
+      push(
+        'internal-self-dependency',
         `dispatch-gate INTERNAL: parsed a self-dependency for task ${task.id} (${issueStr}) — this is a parser bug in parseRationaleDeps, not a real dependency. Please report it upstream. Re-run once the rationale is corrected or the fix ships.`
       )
       continue
@@ -224,14 +264,16 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
       // claim would misattribute the failure to the forge rather than to
       // the edge text. Still blocks — the conservative default is correct
       // for a genuinely unresolvable edge — but says so honestly.
-      blockers.push(
+      push(
+        'depends-on-unresolvable',
         `dispatch-gate depends-on: ${taskLabel} depends on "${dep.id}", which is UNRESOLVABLE — the resolver could not find a matching tranche/task/Issue for this edge (not a claim about merge status). Not dispatchable until the edge is corrected.`
       )
       continue
     }
     if (!dep.merged && !isHandClosedByRecognizedPrincipal(dep, principalAllowlist)) {
       const issueStr = dep.issue !== null ? ` (#${dep.issue})` : ''
-      blockers.push(
+      push(
+        'depends-on-not-merged',
         `dispatch-gate depends-on: ${taskLabel} depends on ${dep.id}${issueStr}, whose PR is not merged yet — not dispatchable, it serializes behind it.`
       )
     }
@@ -241,7 +283,8 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
   for (const c of input.conflictsWith) {
     if (c.openOrInFlight) {
       const issueStr = c.issue !== null ? ` (#${c.issue})` : ''
-      blockers.push(
+      push(
+        'conflicts-with',
         `dispatch-gate conflicts-with: ${taskLabel} conflicts with ${c.id}${issueStr}, whose PR is open or in-flight — not dispatchable until it merges.`
       )
     }
@@ -258,11 +301,12 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
   // Prior-tranche archival, per project named in Project(s).
   for (const proj of input.priorTrancheArchival) {
     if (proj.priorTrancheSlug !== null && !proj.archived) {
-      blockers.push(
+      push(
+        'prior-tranche-archival',
         `dispatch-gate prior-tranche-archival: project \`${proj.project}\`'s previous tranche \`${proj.priorTrancheSlug}\` is not archived — the Tranche Archivist must run before new work on this product.`
       )
     }
   }
 
-  return { ready: blockers.length === 0, blockers }
+  return { ready: blockerDetails.length === 0, blockers: blockerDetails.map((b) => b.message), blockerDetails }
 }
