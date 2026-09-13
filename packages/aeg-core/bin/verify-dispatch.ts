@@ -175,14 +175,26 @@ export function checkBareEdgeQualification(
   repo: RepoRef
 ): string | null {
   if (!milestone) return null
-  const tranches = tranchesAttachedToMilestone(repo.owner, repo.repo, milestone.number)
-  if (tranches.length < 2) return null
+  // The forge fetch (`tranchesAttachedToMilestone`) and the qualification
+  // check both live in one try: a live Milestone can hold far more Issues
+  // than `requireTrancheQualifiedEdges` itself ever anticipated (found live
+  // against this repo's own Milestone #15, 80+ Issues — `tranchesAttachedToMilestone`'s
+  // raw `gh api` fetch overran `execFileSync`'s default output buffer,
+  // `ENOBUFS`, before `requireTrancheQualifiedEdges` ever ran). An
+  // `AmbiguousBareEdgeError` is this predicate's own, expected finding; any
+  // OTHER error means the check could not run at all, which this gate
+  // reports as its own blocker rather than crashing the whole run uncaught —
+  // the same fail-loud-but-not-uncaught posture `resolveRepo`/
+  // `resolveGithubToken` failures already take a few lines up.
   try {
+    const tranches = tranchesAttachedToMilestone(repo.owner, repo.repo, milestone.number)
+    if (tranches.length < 2) return null
     requireTrancheQualifiedEdges([...dependsOnIds, ...conflictsWithIds], tranches)
     return null
   } catch (e) {
     if (e instanceof AmbiguousBareEdgeError) return e.message
-    throw e
+    const message = e instanceof Error ? e.message : String(e)
+    return `verify-dispatch severity:infra — could not determine whether a bare edge id is ambiguous against Milestone #${milestone.number} (${message}).`
   }
 }
 

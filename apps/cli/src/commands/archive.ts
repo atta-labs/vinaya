@@ -314,10 +314,10 @@ type TaskPrForRetrospective = { number: number; comments: { body: string }[] }
 /**
  * The Milestone this tranche's own task Issues are actually attached to —
  * never a Milestone titled exactly the slug (O7, Issue #542). Several
- * tranches can legitimately share one Milestone whose title names neither
- * (`vinaya-milestone-model-v1`) — reading it off the Issues themselves is
- * the only way to find the right one. `null` when no Issue in the tranche
- * carries a Milestone at all — nothing to write a retrospective into.
+ * tranches can legitimately share one Milestone whose title names neither —
+ * reading it off the Issues themselves is the only way to find the right
+ * one. `null` when no Issue in the tranche carries a Milestone at all —
+ * nothing to write a retrospective into.
  */
 export function resolveTaskMilestone(issues: readonly LabeledIssueRef[]): TaskMilestoneRef | null {
   for (const issue of issues) {
@@ -420,8 +420,8 @@ export function trancheArchivalStatus(
  *
  * The target Milestone (O7, Issue #542) is whatever the tranche's own task
  * Issues are attached to — `resolveTaskMilestone`, never a Milestone titled
- * exactly the slug, since `vinaya-milestone-model-v1` lets several tranches
- * share one Milestone whose title names neither. A complete tranche with no
+ * exactly the slug, since several tranches can share one Milestone whose
+ * title names neither. A complete tranche with no
  * Issue attached to any Milestone reports done with nothing to write into,
  * rather than erroring. The Milestone closes only once nothing else inside
  * it is still open — a shared Milestone stays open for its other tenants,
@@ -487,9 +487,9 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
   }
   const milestone = shJson<Milestone>(['gh', 'api', `repos/${repoFlag}/milestones/${taskMilestone.number}`])
 
-  // O7: the Milestone can hold other tranches or backlog tasks
-  // (`vinaya-milestone-model-v1`) — closing it the moment THIS tranche
-  // finishes would close out work that is still open. Same
+  // O7: the Milestone can hold other tranches or backlog tasks — closing
+  // it the moment THIS tranche finishes would close out work that is
+  // still open. Same
   // `?milestone=<n>&state=all` REST shape `tranchesAttachedToMilestone`
   // (`@attalabs/aeg-forge-state`) already uses for the identical "what else
   // lives in this Milestone" question, `state=all` because a per-Issue
