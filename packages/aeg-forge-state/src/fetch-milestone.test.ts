@@ -721,37 +721,65 @@ describe('indexTrancheMilestonesAsync reads every page', () => {
 
 // issue-545, O3 — the tranche-count fact `requireTrancheQualifiedEdges`
 // needs: how many distinct tranches share one Milestone.
+//
+// issue-586, O1: fetches labels only, paginated, through
+// `ghApiGetAllPagesAsync` (the buffered async `gh` client) rather than a
+// single unpaginated, un-filtered `ghApiGet` — so it is async now, and its
+// own fixtures exercise the paginated fetcher directly rather than `ghApiGet`.
 describe('tranchesAttachedToMilestone', () => {
-  it('collects every distinct vinaya/tranche:* label among the Milestone issues, deduplicated', () => {
-    vi.mocked(ghApiGet).mockReturnValue([
+  it('collects every distinct vinaya/tranche:* label among the Milestone issues, deduplicated', async () => {
+    vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue([
       { labels: [{ name: 'vinaya/tranche:tranche-a' }, { name: 'vinaya/tier:1' }] },
       { labels: [{ name: 'vinaya/tranche:tranche-b' }] },
       { labels: [{ name: 'vinaya/tranche:tranche-a' }] }
     ])
-    expect(tranchesAttachedToMilestone(OWNER, REPO, 42).sort()).toEqual(['tranche-a', 'tranche-b'])
+    expect((await tranchesAttachedToMilestone(OWNER, REPO, 42)).sort()).toEqual(['tranche-a', 'tranche-b'])
   })
 
-  it('requests the state=all issue set for the given Milestone number', () => {
-    vi.mocked(ghApiGet).mockReturnValue([])
-    tranchesAttachedToMilestone(OWNER, REPO, 7)
-    expect(ghApiGet).toHaveBeenCalledWith(`repos/${OWNER}/${REPO}/issues?milestone=7&state=all&per_page=100`)
+  it('requests the labels-only, state=all issue set for the given Milestone number, via a -q server-side filter', async () => {
+    vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue([])
+    await tranchesAttachedToMilestone(OWNER, REPO, 7)
+    expect(ghApiGetAllPagesAsync).toHaveBeenCalledWith(`repos/${OWNER}/${REPO}/issues?milestone=7&state=all`, {
+      jq: '[.[] | {labels: .labels}]'
+    })
   })
 
-  it('returns a single-entry list for an ordinary, single-tranche Milestone', () => {
-    vi.mocked(ghApiGet).mockReturnValue([
+  it('returns a single-entry list for an ordinary, single-tranche Milestone', async () => {
+    vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue([
       { labels: [{ name: 'vinaya/tranche:solo-tranche' }] },
       { labels: [{ name: 'vinaya/tranche:solo-tranche' }] }
     ])
-    expect(tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual(['solo-tranche'])
+    expect(await tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual(['solo-tranche'])
   })
 
-  it('returns an empty list when no issue carries a tranche label at all', () => {
-    vi.mocked(ghApiGet).mockReturnValue([{ labels: [{ name: 'vinaya/tier:0' }] }])
-    expect(tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual([])
+  it('returns an empty list when no issue carries a tranche label at all', async () => {
+    vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue([{ labels: [{ name: 'vinaya/tier:0' }] }])
+    expect(await tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual([])
   })
 
-  it('tolerates the REST API returning a bare label-string array, not just {name} objects', () => {
-    vi.mocked(ghApiGet).mockReturnValue([{ labels: ['vinaya/tranche:tranche-a'] }])
-    expect(tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual(['tranche-a'])
+  it('tolerates the REST API returning a bare label-string array, not just {name} objects', async () => {
+    vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue([{ labels: ['vinaya/tranche:tranche-a'] }])
+    expect(await tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual(['tranche-a'])
+  })
+
+  it('a Milestone holding 80+ Issues with full bodies over 1MB each, delivered across three pages, yields the union of their tranche slugs — the fixture the ENOBUFS fix must survive', async () => {
+    const bigBody = 'x'.repeat(1024 * 1024 + 1)
+    // The real REST payload `gh` would have downloaded per Issue (full body
+    // and all) — proving the fix does not depend on the fixture already
+    // being labels-only, only on `ghApiGetAllPagesAsync`'s own `-q` filter
+    // trimming it before this reader ever sees it (this fake forge, standing
+    // in for that filter, returns the trimmed `{labels}` shape directly).
+    const page = (start: number, count: number, slug: string) =>
+      Array.from({ length: count }, (_, i) => ({
+        number: start + i,
+        body: bigBody,
+        labels: [{ name: `vinaya/tranche:${slug}` }]
+      }))
+    vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue([
+      ...page(1, 30, 'tranche-a'),
+      ...page(31, 30, 'tranche-b'),
+      ...page(61, 25, 'tranche-c')
+    ])
+    expect((await tranchesAttachedToMilestone(OWNER, REPO, 15)).sort()).toEqual(['tranche-a', 'tranche-b', 'tranche-c'])
   })
 })

@@ -84,8 +84,17 @@ const MAX_PAGES = 100
  * the result is a single parseable array on every `gh` version (bare
  * `--paginate` concatenates separate JSON arrays, which is not valid JSON, and
  * `--slurp` is not available everywhere). Stops on the first short page.
+ *
+ * `opts.jq` passes a `-q` filter straight to `gh api` — the response is
+ * trimmed server-side (by `gh` itself, after it downloads the full page)
+ * before a single byte reaches this process's stdout pipe. This is what lets
+ * a caller ask for one field (e.g. `labels`) off a collection whose full
+ * representation (e.g. an Issue's `body`) can be arbitrarily large: the
+ * 16 MB `runAsync` buffer only ever has to hold the FILTERED page, not the
+ * page GitHub actually sent `gh`, so per-item size stops being a page-size
+ * constraint at all.
  */
-export async function ghApiGetAllPagesAsync<T>(pathWithoutPage: string): Promise<T[]> {
+export async function ghApiGetAllPagesAsync<T>(pathWithoutPage: string, opts?: { jq?: string }): Promise<T[]> {
   const [base = pathWithoutPage, query = ''] = pathWithoutPage.split('?')
   const params = new URLSearchParams(query)
   params.set('per_page', String(MAX_PER_PAGE))
@@ -93,7 +102,9 @@ export async function ghApiGetAllPagesAsync<T>(pathWithoutPage: string): Promise
   const all: T[] = []
   for (let page = 1; page <= MAX_PAGES; page++) {
     params.set('page', String(page))
-    const batch = JSON.parse(await runAsync(['api', `${base}?${params.toString()}`])) as T[]
+    const args = ['api', `${base}?${params.toString()}`]
+    if (opts?.jq) args.push('-q', opts.jq)
+    const batch = JSON.parse(await runAsync(args)) as T[]
     all.push(...batch)
     if (batch.length < MAX_PER_PAGE) return all
   }

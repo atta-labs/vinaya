@@ -168,26 +168,26 @@ function ghIssueView(num: number, repo: RepoRef): IssueJson | null {
  * `requireTrancheQualifiedEdges` itself is a no-op there, but the forge
  * fetch is worth skipping rather than paying it on every gate run.
  */
-export function checkBareEdgeQualification(
+export async function checkBareEdgeQualification(
   dependsOnIds: readonly string[],
   conflictsWithIds: readonly string[],
   milestone: { number: number; title: string } | null,
   repo: RepoRef
-): string | null {
+): Promise<string | null> {
   if (!milestone) return null
   // The forge fetch (`tranchesAttachedToMilestone`) and the qualification
   // check both live in one try: a live Milestone can hold far more Issues
   // than `requireTrancheQualifiedEdges` itself ever anticipated (found live
-  // against this repo's own Milestone #15, 80+ Issues — `tranchesAttachedToMilestone`'s
-  // raw `gh api` fetch overran `execFileSync`'s default output buffer,
-  // `ENOBUFS`, before `requireTrancheQualifiedEdges` ever ran). An
+  // against this repo's own Milestone #15, 80+ Issues — `tranchesAttachedToMilestone`
+  // now fetches labels only, paginated, through the buffered async `gh`
+  // client, so a Milestone this large never overruns the process buffer). An
   // `AmbiguousBareEdgeError` is this predicate's own, expected finding; any
   // OTHER error means the check could not run at all, which this gate
   // reports as its own blocker rather than crashing the whole run uncaught —
   // the same fail-loud-but-not-uncaught posture `resolveRepo`/
   // `resolveGithubToken` failures already take a few lines up.
   try {
-    const tranches = tranchesAttachedToMilestone(repo.owner, repo.repo, milestone.number)
+    const tranches = await tranchesAttachedToMilestone(repo.owner, repo.repo, milestone.number)
     if (tranches.length < 2) return null
     requireTrancheQualifiedEdges([...dependsOnIds, ...conflictsWithIds], tranches)
     return null
@@ -1115,7 +1115,7 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
   // `checkDispatchReadiness` itself, since it is the one predicate in this
   // gate that reads a SECOND forge object (the Milestone's other Issues)
   // rather than facts already gathered for `task`/`dependsOn`/`conflictsWith`.
-  const ambiguousEdge = checkBareEdgeQualification(
+  const ambiguousEdge = await checkBareEdgeQualification(
     task.dependsOn,
     task.conflictsWith,
     issueJson?.milestone ?? null,
@@ -1230,7 +1230,7 @@ async function runGateModeForIssue(issueNumber: number): Promise<void> {
   // ordinary case for a tranche-less backlog Issue, but nothing stops one
   // from being attached by hand — honor `issueJson.milestone` if present
   // rather than assuming it never is.
-  const ambiguousEdge = checkBareEdgeQualification(dependsOnIds, conflictsWithIds, issueJson.milestone, repo)
+  const ambiguousEdge = await checkBareEdgeQualification(dependsOnIds, conflictsWithIds, issueJson.milestone, repo)
 
   const leftover = computeLeftoverForIssue(issueNumber)
 

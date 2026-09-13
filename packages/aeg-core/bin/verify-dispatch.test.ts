@@ -15,20 +15,33 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  */
 
 const spawnSyncMock = vi.fn()
-// `checkBareEdgeQualification` (and the `tranchesAttachedToMilestone`
-// it calls, in `@attalabs/aeg-forge-state`) shell out via `execFileSync`, not
+// `checkBareEdgeQualification` shells out via `execFileSync`, not
 // `spawnSync` — stubbed here alongside it so those tests never touch a real
 // `gh` invocation. Unmocked by default (each test below sets its own
 // `mockImplementation`); a call this suite's own currentFindingCounts/
 // resolvePremiseBriefText tests never make.
 const execFileSyncMock = vi.fn()
+// `tranchesAttachedToMilestone` (`@attalabs/aeg-forge-state`, issue-586 O1)
+// fetches labels only, paginated, through the forge client's own ASYNC
+// buffered call (`promisify(execFile)`) — a different `node:child_process`
+// primitive than the sync one every other call in this suite uses, stubbed
+// here the same way `gh.test.ts` stubs it (the `promisify.custom` symbol),
+// so `checkBareEdgeQualification`'s own tests below never touch a real `gh`.
+const execFileAsyncMock = vi.fn()
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
+  const { promisify } = await import('node:util')
+  const execFile = (() => {
+    throw new Error('callback form not used by these tests')
+  }) as unknown as typeof actual.execFile
+  ;(execFile as unknown as Record<symbol, unknown>)[promisify.custom] = async (...args: unknown[]) =>
+    execFileAsyncMock(...args)
   return {
     ...actual,
     spawnSync: (...args: unknown[]) => spawnSyncMock(...args),
-    execFileSync: (...args: unknown[]) => execFileSyncMock(...args)
+    execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
+    execFile
   }
 })
 
@@ -37,6 +50,7 @@ const { checkBareEdgeQualification, currentFindingCounts, resolvePremiseBriefTex
 beforeEach(() => {
   spawnSyncMock.mockReset()
   execFileSyncMock.mockReset()
+  execFileAsyncMock.mockReset()
 })
 
 function successResult(stdout: string, status = 0): { stdout: string; stderr: string; status: number } {
@@ -609,81 +623,57 @@ describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', 
 // unit-tested but never called from a real gate.
 describe('checkBareEdgeQualification', () => {
   const REPO = { owner: 'atta-labs', repo: 'vinaya' }
+  /** The exact `gh api` path `tranchesAttachedToMilestone` requests for Milestone #9 (issue-586, O1: labels only, page 1). */
+  const MILESTONE_9_PATH = 'repos/atta-labs/vinaya/issues?milestone=9&state=all&per_page=100&page=1'
 
-  it('is a no-op with no Milestone at all — never calls the forge', () => {
-    expect(checkBareEdgeQualification(['1'], [], null, REPO)).toBeNull()
-    expect(execFileSyncMock).not.toHaveBeenCalled()
+  /** Mocks a single short page of labels-only issues for Milestone #9 — the async, buffered `gh` call `tranchesAttachedToMilestone` now makes. */
+  function mockMilestone9Issues(issues: Array<{ labels: Array<{ name: string }> }>): void {
+    execFileAsyncMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args[0] === 'api' && args[1] === MILESTONE_9_PATH) {
+        return Promise.resolve({ stdout: JSON.stringify(issues), stderr: '' })
+      }
+      throw new Error(`unmocked execFile: ${args?.join(' ')}`)
+    })
+  }
+
+  it('is a no-op with no Milestone at all — never calls the forge', async () => {
+    expect(await checkBareEdgeQualification(['1'], [], null, REPO)).toBeNull()
+    expect(execFileAsyncMock).not.toHaveBeenCalled()
   })
 
-  it('is a no-op when the Milestone holds only one tranche — the ordinary case', () => {
-    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (
-        cmd === 'gh' &&
-        args[0] === 'api' &&
-        args[1] === 'repos/atta-labs/vinaya/issues?milestone=9&state=all&per_page=100'
-      ) {
-        return JSON.stringify([{ labels: [{ name: 'vinaya/tranche:solo-tranche' }] }])
-      }
-      throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
-    })
-    expect(checkBareEdgeQualification(['1'], [], { number: 9, title: 'solo' }, REPO)).toBeNull()
+  it('is a no-op when the Milestone holds only one tranche — the ordinary case', async () => {
+    mockMilestone9Issues([{ labels: [{ name: 'vinaya/tranche:solo-tranche' }] }])
+    expect(await checkBareEdgeQualification(['1'], [], { number: 9, title: 'solo' }, REPO)).toBeNull()
   })
 
-  it('refuses a bare id once the Milestone holds two or more tranches, naming the token and both tranches', () => {
-    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (
-        cmd === 'gh' &&
-        args[0] === 'api' &&
-        args[1] === 'repos/atta-labs/vinaya/issues?milestone=9&state=all&per_page=100'
-      ) {
-        return JSON.stringify([
-          { labels: [{ name: 'vinaya/tranche:tranche-a' }] },
-          { labels: [{ name: 'vinaya/tranche:tranche-b' }] }
-        ])
-      }
-      throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
-    })
-    const result = checkBareEdgeQualification(['1'], [], { number: 9, title: 'shared' }, REPO)
+  it('refuses a bare id once the Milestone holds two or more tranches, naming the token and both tranches', async () => {
+    mockMilestone9Issues([
+      { labels: [{ name: 'vinaya/tranche:tranche-a' }] },
+      { labels: [{ name: 'vinaya/tranche:tranche-b' }] }
+    ])
+    const result = await checkBareEdgeQualification(['1'], [], { number: 9, title: 'shared' }, REPO)
     expect(result).not.toBeNull()
     expect(result).toContain('`1`')
     expect(result).toContain('tranche-a')
     expect(result).toContain('tranche-b')
   })
 
-  it('a slug-qualified edge in the same multi-tranche Milestone is never flagged', () => {
-    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (
-        cmd === 'gh' &&
-        args[0] === 'api' &&
-        args[1] === 'repos/atta-labs/vinaya/issues?milestone=9&state=all&per_page=100'
-      ) {
-        return JSON.stringify([
-          { labels: [{ name: 'vinaya/tranche:tranche-a' }] },
-          { labels: [{ name: 'vinaya/tranche:tranche-b' }] }
-        ])
-      }
-      throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
-    })
+  it('a slug-qualified edge in the same multi-tranche Milestone is never flagged', async () => {
+    mockMilestone9Issues([
+      { labels: [{ name: 'vinaya/tranche:tranche-a' }] },
+      { labels: [{ name: 'vinaya/tranche:tranche-b' }] }
+    ])
     expect(
-      checkBareEdgeQualification(['tranche-a 1'], ['tranche-b 2'], { number: 9, title: 'shared' }, REPO)
+      await checkBareEdgeQualification(['tranche-a 1'], ['tranche-b 2'], { number: 9, title: 'shared' }, REPO)
     ).toBeNull()
   })
 
-  it('checks conflictsWith ids too, not only dependsOn', () => {
-    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (
-        cmd === 'gh' &&
-        args[0] === 'api' &&
-        args[1] === 'repos/atta-labs/vinaya/issues?milestone=9&state=all&per_page=100'
-      ) {
-        return JSON.stringify([
-          { labels: [{ name: 'vinaya/tranche:tranche-a' }] },
-          { labels: [{ name: 'vinaya/tranche:tranche-b' }] }
-        ])
-      }
-      throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
-    })
-    const result = checkBareEdgeQualification([], ['#372'], { number: 9, title: 'shared' }, REPO)
+  it('checks conflictsWith ids too, not only dependsOn', async () => {
+    mockMilestone9Issues([
+      { labels: [{ name: 'vinaya/tranche:tranche-a' }] },
+      { labels: [{ name: 'vinaya/tranche:tranche-b' }] }
+    ])
+    const result = await checkBareEdgeQualification([], ['#372'], { number: 9, title: 'shared' }, REPO)
     expect(result).toContain('`#372`')
   })
 })
@@ -700,7 +690,7 @@ describe('O3 wiring reaches both gate modes, not just checkBareEdgeQualification
     // Substrings, not one exact-formatted literal: a formatter is free to
     // wrap this call's argument list across lines, and the test must not
     // pin whichever wrapping happened to be current when it was written.
-    expect(src).toContain('const ambiguousEdge = checkBareEdgeQualification(')
+    expect(src).toContain('const ambiguousEdge = await checkBareEdgeQualification(')
     expect(src).toContain('task.dependsOn')
     expect(src).toContain('task.conflictsWith')
     expect(src).toContain('issueJson?.milestone ?? null')
@@ -708,7 +698,7 @@ describe('O3 wiring reaches both gate modes, not just checkBareEdgeQualification
 
   it('runGateModeForIssue computes ambiguousEdge the same way, off the parsed raw ids', () => {
     expect(src).toContain(
-      'const ambiguousEdge = checkBareEdgeQualification(dependsOnIds, conflictsWithIds, issueJson.milestone, repo)'
+      'const ambiguousEdge = await checkBareEdgeQualification(dependsOnIds, conflictsWithIds, issueJson.milestone, repo)'
     )
   })
 
