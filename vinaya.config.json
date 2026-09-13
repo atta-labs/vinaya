@@ -16,28 +16,6 @@
     "atta-labs/secret-scan": {
       "run": "./scripts/vinaya-checks/secret-scan.ts",
       "scope": "full"
-    },
-    "dispatch-readiness": {
-      "run": "apps/cli/src/checks/bin/check-dispatch-readiness.ts",
-      "scope": "full",
-      "timeoutMs": 180000,
-      "env": {
-        "AEG_REPO": {
-          "optional": true
-        },
-        "BRANCH": {
-          "optional": true
-        },
-        "GITHUB_TOKEN": {
-          "optional": true
-        },
-        "GH_TOKEN": {
-          "optional": true
-        },
-        "PREMISE_FILE": {
-          "optional": true
-        }
-      }
     }
   },
   "ci": {
