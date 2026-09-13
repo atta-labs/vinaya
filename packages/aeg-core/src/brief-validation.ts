@@ -775,8 +775,15 @@ export function checkCommandsCarryOutput(prBody: string): BriefSectionResult {
 
 const CONSUMER_TESTS_SENTINEL_RE = /consumer-tests\s*:\s*none\s*[-—–]\s*\S/i
 
-/** Every distinct `packages/<pkg>/` reference in `text` — the packages a §4 surface map names. */
-function packagesNamedIn(text: string): string[] {
+/**
+ * Every distinct `packages/<pkg>/` reference in `text` — the packages a §4
+ * surface map names. Exported (#579, O4) so `brief-render.ts`'s
+ * `renderSection4` can scan the same rendered text with the same regex
+ * before `checkConsumerTests` ever re-scans it — one implementation of the
+ * trigger, read on both sides, rather than a renderer-side heuristic that
+ * could silently disagree with this validator's own scan.
+ */
+export function packagesNamedIn(text: string): string[] {
   const re = /\bpackages\/([A-Za-z0-9_-]+)\//g
   const pkgs = new Set<string>()
   let m: RegExpExecArray | null = re.exec(text)

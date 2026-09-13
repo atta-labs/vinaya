@@ -19,6 +19,7 @@
  * hand after render.
  */
 
+import { packagesNamedIn } from './brief-validation'
 import { deriveSection7 } from './derive-section7'
 import {
   BRIEF_SECTIONS_SINCE_ISSUE,
@@ -407,14 +408,6 @@ function renderSection4(facts: BriefFacts): string {
   const created = facts.surfaceFiles.filter((f) => f.sha256 === null).map((f) => f.path)
   const modified = facts.surfaceFiles.filter((f) => f.sha256 !== null).map((f) => f.path)
 
-  const byPackage = new Map<string, SurfaceFileFact[]>()
-  for (const f of facts.surfaceFiles) {
-    if (!f.packageName) continue
-    const list = byPackage.get(f.packageName) ?? []
-    list.push(f)
-    byPackage.set(f.packageName, list)
-  }
-
   // O7 (task 8, `#506`): a Boundary that named fewer files than the Issue's
   // own `## Surface` `in:` list is narrower than the real scope — Boundary
   // prose justifies a few files, it is never an exhaustive enumeration.
@@ -446,32 +439,43 @@ function renderSection4(facts: BriefFacts): string {
       ? bulletList(modified)
       : '- (none named)'
 
+  const createdBlock = created.length > 0 ? bulletList(created) : '- (none — every surface file already exists)'
+  const outOfSurfaceLine =
+    '**Out of surface:** ' +
+    (facts.surface.out.length > 0
+      ? facts.surface.out.join(', ')
+      : "(none named — the Issue's `## Surface` `out:` line is empty)")
+  const premisePinsBlock = bulletList(
+    facts.surfaceFiles
+      .filter((f): f is SurfaceFileFact & { sha256: string } => f.sha256 !== null)
+      .map((f) => `${f.path} sha256: ${f.sha256}`)
+  )
+
   // checkConsumerTests (brief-validation.ts) requires, for every workspace
   // package a touched `packages/<pkg>` consumer depends on, either a named
   // test path under that consumer OR the `consumer-tests: none — <reason>`
   // sentinel — ONE sentinel occurrence anywhere in §4 satisfies the whole
   // section, so a single combined line covers every uncovered consumer.
   //
-  // O6 (task 17): when `boundaryNarrowsSurface` is true, `modifyLines` above
-  // lists bare Surface DIRECTORIES, never the individual files — so a
-  // covered consumer's actual test FILE path never appears anywhere in §4,
-  // and `checkConsumerTests`'s file-path regex finds nothing even though
-  // real coverage exists (#478's frozen brief: this renderer produced a
-  // brief its own validator rejected). A covered consumer gets an explicit
-  // line naming its covering test DIRECTORY (or the file itself, when no
-  // `tests`/`specs` ancestor exists to name — see `nearestTestDir`) in that
-  // mode — a form `checkConsumerTests` accepts either way — so the renderer
-  // can never again produce a brief its own validator fails.
+  // O4 (#579): the trigger reads `packagesNamedIn` against the SAME text
+  // `checkConsumerTests` will re-scan (Create + Modify + Out of surface +
+  // Premise pins, everything but the consumer lines themselves, not yet
+  // computed) — never `facts.surfaceFiles`' per-file `packageName` alone.
+  // A Boundary that narrows Modify to bare Surface DIRECTORIES (`in:`
+  // globs with no individual file pinned under them) named a shared
+  // package nowhere a file-based scan could see, so the renderer emitted no
+  // consumer-tests line at all for it — reproduced live on this Issue's own
+  // write, before its Boundary named a consumer test file by path.
+  const prelude = [createdBlock, modifyLines, outOfSurfaceLine, premisePinsBlock].join('\n')
   const uncovered: string[] = []
   const coveredDirLines: string[] = []
-  for (const pkg of byPackage.keys()) {
-    const shortName = pkg.replace(/^@[^/]+\//, '')
-    for (const consumer of facts.consumersOf(shortName)) {
+  for (const pkg of packagesNamedIn(prelude)) {
+    for (const consumer of facts.consumersOf(pkg)) {
       const coveringFile = facts.surfaceFiles.find((f) => f.path.startsWith(`${consumer}/`) && isTestFile(f.path))
       if (!coveringFile) {
-        uncovered.push(`${pkg} (${consumer})`)
+        uncovered.push(`@attalabs/${pkg} (${consumer})`)
       } else if (boundaryNarrowsSurface) {
-        coveredDirLines.push(`- consumer-tests: ${nearestTestDir(coveringFile.path)} (covers ${pkg})`)
+        coveredDirLines.push(`- consumer-tests: ${nearestTestDir(coveringFile.path)} (covers @attalabs/${pkg})`)
       }
     }
   }
@@ -488,25 +492,18 @@ function renderSection4(facts: BriefFacts): string {
     '## 4. Technical surface map',
     '',
     '**Create:**',
-    created.length > 0 ? bulletList(created) : '- (none — every surface file already exists)',
+    createdBlock,
     '',
     '**Modify:**',
     modifyLines,
     ...(consumerLines.length > 0 ? ['', ...consumerLines] : []),
     '',
-    '**Out of surface:** ' +
-      (facts.surface.out.length > 0
-        ? facts.surface.out.join(', ')
-        : "(none named — the Issue's `## Surface` `out:` line is empty)"),
+    outOfSurfaceLine,
     '',
     '#### Premise pins',
     '',
     '**Premise:**',
-    bulletList(
-      facts.surfaceFiles
-        .filter((f): f is SurfaceFileFact & { sha256: string } => f.sha256 !== null)
-        .map((f) => `${f.path} sha256: ${f.sha256}`)
-    )
+    premisePinsBlock
   ]
   return lines.join('\n')
 }
