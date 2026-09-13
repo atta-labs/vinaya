@@ -90,6 +90,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `isBriefShaped` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `isGrandfatherableBriefRuleError` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `isTaskBranch` | function | `packages/aeg-core/src/brief-validation.ts` |
+| `packagesNamedIn` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `parseBriefMarkerVersion` | function | `packages/aeg-core/src/brief-validation.ts` |
 | `PART_CITATION_RE` | const | `packages/aeg-core/src/brief-validation.ts` |
 | `partitionBriefErrorsByRollout` | function | `packages/aeg-core/src/brief-validation.ts` |
