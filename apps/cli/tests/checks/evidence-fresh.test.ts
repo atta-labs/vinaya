@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { anchoredRegion } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
-import { compareEvidenceBlock } from '../../src/checks/evidence-fresh-logic'
+import { EVIDENCE_PLACEHOLDER_TEXT, compareEvidenceBlock } from '../../src/checks/evidence-fresh-logic'
 import { type ResolvedRegion, ScanContext, resolveAnchoredRegion } from '../../src/checks/scan-context'
 import { type GroupCCommandResult, renderGroupC } from '../../src/commands/pr-report'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../src/lib/numstat'
@@ -99,6 +99,53 @@ describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)',
   it('malformed block (no Head line) → fail rather than a silent pass', () => {
     const malformed = ['<!-- AEG:EVIDENCE:START -->', '```', NUMSTAT, '```', '<!-- AEG:EVIDENCE:END -->'].join('\n')
     const result = compareEvidenceBlock(regionOf(malformed), HEAD, NUMSTAT)
+    expect(result.status).toBe('fail')
+  })
+})
+
+describe('compareEvidenceBlock — the untouched placeholder (O1, Issue #583)', () => {
+  function placeholderBody(): string {
+    return [
+      '## Evidence',
+      '',
+      '<!-- AEG:EVIDENCE:START -->',
+      EVIDENCE_PLACEHOLDER_TEXT,
+      '<!-- AEG:EVIDENCE:END -->'
+    ].join('\n')
+  }
+
+  it('a body whose evidence block is the untouched placeholder passes on a fresh head — no driver report has run yet', () => {
+    const result = compareEvidenceBlock(regionOf(placeholderBody()), HEAD, NUMSTAT)
+    expect(result.status).toBe('pass')
+  })
+
+  it('passes regardless of the supplied Group C expectation or patchIdOf — the placeholder never binds to a head at all', () => {
+    let calls = 0
+    const countingPatchId = () => {
+      calls += 1
+      return 'irrelevant'
+    }
+    const result = compareEvidenceBlock(regionOf(placeholderBody()), HEAD, NUMSTAT, ['some command'], countingPatchId)
+    expect(result.status).toBe('pass')
+    expect(calls).toBe(0)
+  })
+
+  it('a stale FILLED block still fails — the placeholder pass never masks a real, out-of-date report', () => {
+    const staleHead = 'b'.repeat(40)
+    const body = evidenceBody(staleHead, NUMSTAT)
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT)
+    expect(result.status).toBe('fail')
+    expect(result.status === 'fail' && result.errors.join('\n')).toContain('Group B is stale')
+  })
+
+  it('a body carrying extra text alongside the placeholder line is NOT treated as the placeholder — still malformed, still fails', () => {
+    const body = [
+      '<!-- AEG:EVIDENCE:START -->',
+      EVIDENCE_PLACEHOLDER_TEXT,
+      'plus a hand-typed line',
+      '<!-- AEG:EVIDENCE:END -->'
+    ].join('\n')
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT)
     expect(result.status).toBe('fail')
   })
 })
