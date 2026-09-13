@@ -171,7 +171,10 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `checkIssueType` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkMilestoneAttach` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkNoBriefContent` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkNoForeignTaskOwnership` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkObjectivesRespectBoundary` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkPartsCiteDefinedObjectives` | function | `packages/aeg-core/src/issue-validation.ts` |
+| `checkPartsCoverageAndSequence` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkProjectsRegistered` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkRationaleNamesDocs` | function | `packages/aeg-core/src/issue-validation.ts` |
 | `checkRationaleSurfaceCoverage` | function | `packages/aeg-core/src/issue-validation.ts` |
@@ -381,12 +384,16 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `TRACKED_HOOK_DIR` | const | `apps/cli/src/lib/artifacts.ts` |
 | `assembleAndRenderBrief` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `assembleAndRenderBriefForIssue` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `buildWorkspaceConsumersOf` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `canRenderBriefFromHere` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `checkDirtyPinnedFiles` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `checkStaleAgainstRemote` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `DRAFT_ISSUE_SENTINEL` | const | `apps/cli/src/lib/brief-assembly.ts` |
 | `expandGlob` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `packageNameForPath` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `resolveBoundaryPaths` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `resolveRemoteDefaultBranch` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `resolveTrancheTaskId` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `sha256OfFile` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `taskNotFoundMessage` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `buildClaudeCommandOps` | function | `apps/cli/src/lib/claude-command-emitter.ts` |
