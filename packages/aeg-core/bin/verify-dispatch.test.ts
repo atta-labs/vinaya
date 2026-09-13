@@ -15,7 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  */
 
 const spawnSyncMock = vi.fn()
-// issue-545, O3 — `checkBareEdgeQualification` (and the `tranchesAttachedToMilestone`
+// `checkBareEdgeQualification` (and the `tranchesAttachedToMilestone`
 // it calls, in `@attalabs/aeg-forge-state`) shell out via `execFileSync`, not
 // `spawnSync` — stubbed here alongside it so those tests never touch a real
 // `gh` invocation. Unmocked by default (each test below sets its own
@@ -600,10 +600,10 @@ describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', 
   })
 })
 
-// issue-545, O3 — real end-to-end wiring: `verify-dispatch`'s gate now
+// Real end-to-end wiring: `verify-dispatch`'s gate now
 // refuses a bare edge id once its Issue's Milestone holds two or more
-// tranches (review round 2, BLOCKER 2 — `requireTrancheQualifiedEdges` was
-// implemented and unit-tested but never called from a real gate).
+// tranches — `requireTrancheQualifiedEdges` was previously implemented and
+// unit-tested but never called from a real gate.
 describe('checkBareEdgeQualification', () => {
   const REPO = { owner: 'atta-labs', repo: 'vinaya' }
 

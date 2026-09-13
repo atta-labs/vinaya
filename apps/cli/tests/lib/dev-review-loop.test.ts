@@ -2080,7 +2080,7 @@ describe('devReviewLoop — the reviewer prompt names the objectives file, and o
     // status rule and that `|` never appears in a description.
     expect(reviewerPrompt).toMatch(/bare leading word/)
     expect(reviewerPrompt).toMatch(/`\|` never appears in a description/)
-    // O6 (Issue #542): a reviewer never declines an objective — NOT MET is a
+    // A reviewer never declines an objective — NOT MET is a
     // verified fact, and an out-of-lens objective is MET, never NOT MET with
     // an out-of-scope note.
     expect(reviewerPrompt).toMatch(/NOT MET means you verified the objective is not met — never a decline/)

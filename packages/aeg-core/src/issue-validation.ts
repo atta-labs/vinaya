@@ -1541,11 +1541,11 @@ export function checkSurfaceOverlap(subject: TaskSurfaceFacts, siblings: TaskSur
 }
 
 // ---------------------------------------------------------------------------
-// Plan-coherence-v1 task 1 (Issue #542) — three predicates closing the gap
-// between what a task Issue's Objectives/Parts/Test-plan lines CLAIM and
-// what its own Boundary/Surface `out:` and rationale actually authorize.
-// Wired into `apps/cli`'s `validateIssueContent` (O1's own write gate) and
-// into `open-issue.ts`'s content gate — never a second copy of either.
+// Three predicates closing the gap between what a task Issue's
+// Objectives/Parts/Test-plan lines CLAIM and what its own Boundary/Surface
+// `out:` and rationale actually authorize. Wired into `apps/cli`'s
+// `validateIssueContent` (the pre-write brief-render gate) and into
+// `open-issue.ts`'s content gate — never a second copy of either.
 // ---------------------------------------------------------------------------
 
 /**
@@ -1564,7 +1564,7 @@ function boundaryOutText(body: string): string {
   return m ? (m[1] as string) : ''
 }
 
-/** Every backticked, `/`-shaped repo-path token in `text` — the same token shape `checkRationaleSurfaceCoverage`'s O4 reads out of Boundary, reused rather than a second matcher. Never a URL. */
+/** Every backticked, `/`-shaped repo-path token in `text` — the same token shape `checkRationaleSurfaceCoverage` reads out of Boundary, reused rather than a second matcher. Never a URL. */
 function namedPathsIn(text: string): string[] {
   return [...new Set([...text.matchAll(RATIONALE_PATH_RE_GLOBAL)].map((m) => m[1] as string))].filter(
     (p) => !/^https?:\/\//i.test(p)
@@ -1587,8 +1587,8 @@ function namedPathsInCommandLine(text: string): string[] {
 }
 
 /**
- * **O2 (Issue #542) — the Boundary and the Objectives agree by
- * construction.** An objective, a Part, or a Test plan line that names a
+ * **The Boundary and the Objectives agree by construction.** An objective,
+ * a Part, or a Test plan line that names a
  * file, directory, package, or subsystem the Boundary's `Out:` clause or the
  * Surface's `out:` list names is refused, quoting both the offending line
  * and the excluding one — this task cannot both disclaim a path and require
@@ -1658,21 +1658,21 @@ export function checkObjectivesRespectBoundary(body: string): IssueSectionResult
 }
 
 /**
- * **O3a (Issue #542) — the rationale belongs to this task.** A Traps,
- * Stop-and-escalate, or Boundary sentence that names another task's
- * slug-and-number as the OWNER of work this task's own objectives require is
- * refused. Scoped to those three fields only — `Dependency rationale` is
- * where a task reference legitimately belongs (ordering, never ownership),
- * so scanning it here would misread every `Depends-on`/`Conflicts-with` line
- * as a violation.
+ * **The rationale belongs to this task.** A Traps, Stop-and-escalate, or
+ * Boundary sentence that names another task's slug-and-number as the OWNER
+ * of work this task's own objectives require is refused. Scoped to those
+ * three fields only — `Dependency rationale` is where a task reference
+ * legitimately belongs (ordering, never ownership), so scanning it here
+ * would misread every `Depends-on`/`Conflicts-with` line as a violation.
  *
  * "Assigns ownership" is a lexical heuristic, same posture as
  * `BLAST_RADIUS_ACK_RE`/`NO_DOC_SURFACE_RE` elsewhere in this module: an
  * ownership-shaped verb phrase in the same sentence as a task reference
  * (`#<n>`, or the `<slug> <n>` shape `Dependency rationale`'s own edges
- * already use). Merely MENTIONING another task trips nothing — this very
- * Issue's own Traps field ("call the primitive #545 ships") carries a task
- * reference with no ownership verb anywhere near it, and stays green.
+ * already use). Merely MENTIONING another task trips nothing — a Traps
+ * sentence that names a primitive another task ships (e.g. "call the
+ * primitive the dependency ships") carries a task reference with no
+ * ownership verb anywhere near it, and stays green.
  */
 const OWNERSHIP_VERB_RE =
   /\b(?:is\s+owned\s+by|owned\s+by|owns|is\s+handled\s+by|handled\s+by|is\s+done\s+by|done\s+by|is\s+implemented\s+by|implemented\s+by|is\s+delivered\s+by|delivered\s+by|is\s+(?:the\s+)?responsibility\s+of|is\s+left\s+to|left\s+to|is\s+deferred\s+to|deferred\s+to|belongs\s+to)\b/i
@@ -1703,11 +1703,11 @@ export function checkNoForeignTaskOwnership(body: string): IssueSectionResult {
 }
 
 /**
- * **O3b (Issue #542) — Parts and Objectives agree by construction.** A Part
+ * **Parts and Objectives agree by construction, the other half.** A Part
  * citing an objective `## Objectives` does not define is already refused by
  * `checkPartsCiteDefinedObjectives`, above; this predicate closes the other
- * two defects O3 names: an objective no Part cites at all, and Parts
- * numbered out of sequence (not contiguous from 1, in document order).
+ * two defects: an objective no Part cites at all, and Parts numbered out of
+ * sequence (not contiguous from 1, in document order).
  *
  * Passes trivially when either section fails to parse — `parseIssueParts`/
  * `objectivesOf`'s own callers already report a malformed section; this

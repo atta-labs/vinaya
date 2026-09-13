@@ -392,6 +392,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `packageNameForPath` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `resolveBoundaryPaths` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `resolveRemoteDefaultBranch` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `resolveTrancheTaskId` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `sha256OfFile` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `taskNotFoundMessage` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `buildClaudeCommandOps` | function | `apps/cli/src/lib/claude-command-emitter.ts` |

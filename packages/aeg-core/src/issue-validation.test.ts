@@ -1301,7 +1301,7 @@ describe('checkPartsCiteDefinedObjectives (O2)', () => {
   })
 })
 
-describe('checkObjectivesRespectBoundary (plan-coherence-v1 task 1, Issue #542, O2)', () => {
+describe('checkObjectivesRespectBoundary', () => {
   it('passes when nothing named in Objectives/Parts/Test plan falls under an excluded path', () => {
     const body = [
       '**Boundary** — In: `apps/cli/src/lib/forge-write.ts`. Out: what any brief section means, the loop.',
@@ -1399,7 +1399,7 @@ describe('checkObjectivesRespectBoundary (plan-coherence-v1 task 1, Issue #542, 
   })
 })
 
-describe('checkNoForeignTaskOwnership (plan-coherence-v1 task 1, Issue #542, O3)', () => {
+describe('checkNoForeignTaskOwnership', () => {
   it('passes when a Traps sentence merely mentions another task with no ownership verb', () => {
     const body = [
       '**Boundary** — In: `apps/cli/src/lib`. Out: nothing.',
@@ -1441,7 +1441,7 @@ describe('checkNoForeignTaskOwnership (plan-coherence-v1 task 1, Issue #542, O3)
   })
 })
 
-describe('checkPartsCoverageAndSequence (plan-coherence-v1 task 1, Issue #542, O3)', () => {
+describe('checkPartsCoverageAndSequence', () => {
   const objectives = '## Objectives\n\nO1. Do the first thing.\nO2. Do the second thing.\n'
 
   it('passes when every objective is cited by some Part and Parts are numbered contiguously from 1', () => {

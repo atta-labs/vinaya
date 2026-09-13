@@ -569,17 +569,18 @@ describe('vinaya issue objectives edit --part (task-run-v1 task 15, O5)', () => 
 })
 
 /**
- * Issue #542, O4 — `issue objectives edit` re-renders and re-validates the
- * WHOLE brief in the same command (Part 1's `validateRenderedBriefForIssue`,
- * reached via `writeValidatedIssueEdit` \u2192 `validateTaskIssue`, the same
+ * `issue objectives edit` re-renders and re-validates the
+ * WHOLE brief in the same command (`validateRenderedBriefForIssue`,
+ * reached via `writeValidatedIssueEdit` → `validateTaskIssue`, the same
  * validated-write path every edit in this file already goes through) and
  * posts only when it validates. Needs a real git+template fixture (this
- * file's other tests never reach that gate: their bodies always carry a
- * `vinaya/tranche:*` label, which stays dormant for the whole-brief render —
- * see `validateRenderedBriefForIssue`'s own doc comment). A BACKLOG
- * (unlabeled) Issue is required to actually exercise it.
+ * file's other tests never reach that gate: their fixture has no
+ * `AEG_REPO`/real forge remote, so `canRenderBriefFromHere()` is false and
+ * the whole render stays dormant — see `validateRenderedBriefForIssue`'s own
+ * doc comment). A BACKLOG (unlabeled) Issue is required to actually
+ * exercise it here, without also standing up a real tranche fixture.
  */
-describe('vinaya issue objectives edit \u2014 re-renders and re-validates the brief (Issue #542, O4)', () => {
+describe('vinaya issue objectives edit \u2014 re-renders and re-validates the brief', () => {
   function backlogGh(
     dir: string,
     opts: { body: string; issueUrl: string; commentUrl: string }

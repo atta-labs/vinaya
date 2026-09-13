@@ -162,7 +162,7 @@ function ghIssueView(num: number, repo: RepoRef): IssueJson | null {
 }
 
 /**
- * O3 (issue-545): a bare `Depends-on`/`Conflicts-with` edge id is ambiguous
+ * A bare `Depends-on`/`Conflicts-with` edge id is ambiguous
  * once its Issue's Milestone holds two or more tranches. `null` when the
  * Issue carries no Milestone, or its Milestone holds fewer than two —
  * `requireTrancheQualifiedEdges` itself is a no-op there, but the forge
@@ -1024,7 +1024,7 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
     priorTrancheArchival
   })
 
-  // O3 (issue-545): a bare edge id is ambiguous once this Issue's Milestone
+  // A bare edge id is ambiguous once this Issue's Milestone
   // holds two or more tranches — checked here, not folded into
   // `checkDispatchReadiness` itself, since it is the one predicate in this
   // gate that reads a SECOND forge object (the Milestone's other Issues)
@@ -1140,7 +1140,7 @@ async function runGateModeForIssue(issueNumber: number): Promise<void> {
     priorTrancheArchival: []
   })
 
-  // O3 (issue-545): this mode's doc comment says "no Milestone" as the
+  // This mode's doc comment says "no Milestone" as the
   // ordinary case for a tranche-less backlog Issue, but nothing stops one
   // from being attached by hand — honor `issueJson.milestone` if present
   // rather than assuming it never is.

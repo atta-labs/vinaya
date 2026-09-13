@@ -300,8 +300,8 @@ export async function archiveCommand(args: string[]): Promise<void> {
 // closing a tranche with unresolved work is never silently allowed, matching
 // this product's refuse-by-default posture everywhere else. When the
 // tranche is complete and its own task Issues are attached to a Milestone
-// (O7, Issue #542 — never a Milestone titled exactly the slug, the retired
-// legacy assumption), writes the retrospective into that Milestone's
+// (never a Milestone titled exactly the slug, the retired legacy
+// assumption), writes the retrospective into that Milestone's
 // description and closes it only when no other task in it is still open.
 // --yes skips the confirm prompt, same convention as init/eject/upgrade.
 // ---------------------------------------------------------------------------
@@ -313,7 +313,7 @@ type TaskPrForRetrospective = { number: number; comments: { body: string }[] }
 
 /**
  * The Milestone this tranche's own task Issues are actually attached to —
- * never a Milestone titled exactly the slug (O7, Issue #542). Several
+ * never a Milestone titled exactly the slug. Several
  * tranches can legitimately share one Milestone whose title names neither —
  * reading it off the Issues themselves is the only way to find the right
  * one. `null` when no Issue in the tranche carries a Milestone at all —
@@ -418,7 +418,7 @@ export function trancheArchivalStatus(
  * tranche done" is answered from its OWN Issues, before anything asks
  * whether a Milestone exists to close.
  *
- * The target Milestone (O7, Issue #542) is whatever the tranche's own task
+ * The target Milestone is whatever the tranche's own task
  * Issues are attached to — `resolveTaskMilestone`, never a Milestone titled
  * exactly the slug, since several tranches can share one Milestone whose
  * title names neither. A complete tranche with no
@@ -473,7 +473,7 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
     return 1
   }
 
-  // O7 (Issue #542): the target Milestone is whatever the tranche's own task
+  // The target Milestone is whatever the tranche's own task
   // Issues are attached to — never a Milestone titled exactly the slug
   // (the legacy, now-superseded assumption). No Issue in the tranche
   // carrying a Milestone at all means there is nothing to write a

@@ -74,10 +74,10 @@ function resolveRepo(): { owner: string; repo: string } | null {
 }
 
 /**
- * Whether this checkout has enough infra to attempt a brief render at all
- * (Issue #542, O1) — the brief template exists on disk AND the owner/repo
- * resolves (`AEG_REPO`, or a GitHub `origin` remote). `false` means the
- * pre-write brief-render gate (`forge-write.ts`'s `validateRenderedBriefForIssue`)
+ * Whether this checkout has enough infra to attempt a brief render at all —
+ * the brief template exists on disk AND the owner/repo resolves
+ * (`AEG_REPO`, or a GitHub `origin` remote). `false` means the pre-write
+ * brief-render gate (`forge-write.ts`'s `validateRenderedBriefForIssue`)
  * stays DORMANT — never refused — the same dormant-when-infra-absent posture
  * this file's `docOwnersContent`/`sharedPackages` seams already take
  * elsewhere. A real `vinaya` invocation always runs inside a cloned repo
@@ -86,7 +86,7 @@ function resolveRepo(): { owner: string; repo: string } | null {
  * fixture with no repo/template infra of its own), never the normal path —
  * and it is checked BEFORE the render's own staleness/dispatch-readiness/
  * missing-section checks run, so a real checkout still gets the full,
- * fail-closed gate O1 requires.
+ * fail-closed gate this pre-write validation requires.
  */
 export function canRenderBriefFromHere(): boolean {
   return existsSync(TEMPLATE_PATH) && resolveRepo() !== null
@@ -274,7 +274,7 @@ function workspaceGlobs(): string[] {
 /**
  * `consumersOf(pkg)` built from the live workspace dependency graph — the
  * exact enumeration both `assembleAndRenderBrief*` functions already build
- * inline, exported (Issue #542, O1) so `forge-write.ts`'s pre-write
+ * inline, exported so `forge-write.ts`'s pre-write
  * `checkBriefSections` call uses the SAME consumer enumeration
  * `checkConsumerTests` grades a dispatched brief against, rather than a
  * second, independently-derived one.
@@ -325,11 +325,21 @@ export function taskNotFoundMessage(trancheSlug: string, taskId: string, openIss
  * through as zero globs, and `renderBrief`'s own missing-fact check already
  * refuses on `facts.surface.in.length === 0`, naming the Surface section —
  * the same refusal a `--surfaces`-less `brief render` call would produce.
+ *
+ * `bodyOverride`, when given, replaces the live forge Issue body used for
+ * every section this renders (Objectives/Surface/Parts/Test plan/Stop
+ * conditions/rationale) — the pre-write validation path (`forge-write.ts`'s
+ * `validateRenderedBriefForIssue`) needs to grade the bytes a tranche-labeled
+ * `issue edit`/`issue objectives edit` is ABOUT to send, not what is on the
+ * forge before it lands. `task`/`dependsOn`/`conflictsWith` still come from
+ * the tranche's own forge-derived task list, unaffected by a body edit — the
+ * same source `assembleAndRenderBrief` always reads those from.
  */
 export async function assembleAndRenderBrief(
   trancheSlug: string,
   taskId: string,
-  surfaceGlobsOverride?: string[]
+  surfaceGlobsOverride?: string[],
+  bodyOverride?: string
 ): Promise<AssembleAndRenderBriefResult> {
   const repo = resolveRepo()
   if (!repo) {
@@ -388,7 +398,7 @@ export async function assembleAndRenderBrief(
       ]
     }
   }
-  const issueBody = openIssueMatch.body
+  const issueBody = bodyOverride ?? openIssueMatch.body
   const issueRationalePass = checkIssueRationale(issueBody).status !== 'fail'
 
   const taskRefs = tranche.tasks.map((t) => ({ id: t.id, issue: t.issue }))
@@ -509,19 +519,40 @@ export async function assembleAndRenderBrief(
 }
 
 /**
+ * The tranche task id already carrying `issueNumber`, or `null` when the
+ * tranche cannot be derived or no task in its forge-derived list carries
+ * this Issue number yet — the pre-write render/validate gate's own way of
+ * telling an ordinary edit of an existing tranche-attached task Issue (this
+ * lookup succeeds; render it) apart from a brand-new `issue create` still in
+ * flight (no real Issue number exists yet to look up — genuinely circular,
+ * left dormant the same way it always was).
+ */
+export async function resolveTrancheTaskId(trancheSlug: string, issueNumber: number): Promise<string | null> {
+  const repo = resolveRepo()
+  if (!repo) return null
+  try {
+    const source = createForgeSource({ owner: repo.owner, repo: repo.repo })
+    const tranche = await source.getTranche(trancheSlug)
+    return tranche.tasks.find((t) => t.issue === issueNumber)?.id ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
  * A not-yet-created (or not-yet-written) Issue has no real number to compare
  * against a cutover-by-Issue-number rule (`checkIssueObjectives`,
  * `checkBlastRadiusScope`'s O4, `checkDocsWithinSurface`,
  * `checkRationaleSurfaceCoverage`) — this sentinel forces every such
  * comparison unambiguously past every cutover, the same fail-closed posture
- * those rules already take for `issueNumber === null` (task 17, Issue #542,
- * O1): never a guess that a draft might be old enough to skip a rule.
+ * those rules already take for `issueNumber === null`: never a guess that a
+ * draft might be old enough to skip a rule.
  */
 export const DRAFT_ISSUE_SENTINEL = Number.MAX_SAFE_INTEGER
 
 /**
- * `assembleAndRenderBriefForIssue`'s pre-write escape hatch (Issue #542,
- * O1) — the drafted title/body/labels a forge write is ABOUT to send, so the
+ * `assembleAndRenderBriefForIssue`'s pre-write escape hatch — the drafted
+ * title/body/labels a forge write is ABOUT to send, so the
  * brief renders from the bytes the write will produce rather than
  * `fetchIssueForBrief`'s live (pre-edit) read of what is on the forge NOW.
  * Given, the function skips the fetch entirely and treats the draft as
@@ -569,17 +600,17 @@ function extractProjectField(body: string): string[] {
 
 /**
  * Renders the same twelve-section brief as `assembleAndRenderBrief`, but for
- * a backlog Issue with no tranche (O1) — `<n>` names
+ * a backlog Issue with no tranche — `<n>` names
  * the Issue itself, never a tranche+task-id pair. Every section is filled
  * from the Issue's own `## Objectives`/`## Surface`/`## Parts`/
  * `## Test plan`/`## Stop conditions` and its "Dependency rationale" field
- * (`parseRationaleDeps`, edges optional per O2), the same pure parsers
+ * (`parseRationaleDeps`, edges optional), the same pure parsers
  * `assembleAndRenderBrief` already uses — never a second grammar. Refuses
  * (rather than rendering) when the Issue carries a `vinaya/tranche:*` label:
  * that Issue has a real tranche home and belongs on the tranche path, not
  * this one.
  *
- * `override` (Issue #542, O1), when given, skips `fetchIssueForBrief`
+ * `override`, when given, skips `fetchIssueForBrief`
  * entirely and renders from the SUPPLIED title/body/labels instead of a live
  * forge read — the pre-write validation path (`forge-write.ts`'s
  * `validateRenderedBriefForIssue`) needs to grade the bytes a write is about

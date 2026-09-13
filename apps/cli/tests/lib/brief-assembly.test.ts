@@ -12,6 +12,7 @@ import {
   DRAFT_ISSUE_SENTINEL,
   resolveBoundaryPaths,
   resolveRemoteDefaultBranch,
+  resolveTrancheTaskId,
   taskNotFoundMessage
 } from '../../src/lib/brief-assembly.js'
 
@@ -170,7 +171,7 @@ describe('checkStaleAgainstRemote / checkDirtyPinnedFiles — fixture repo, both
 })
 
 /**
- * Issue #542, O1 — `assembleAndRenderBriefForIssue`'s pre-write `override`
+ * `assembleAndRenderBriefForIssue`'s pre-write `override`
  * escape hatch and `canRenderBriefFromHere`'s infra-readiness gate. Reuses
  * this file's own real-fixture-repo pattern (no mocked git) rather than a
  * live network call — `assembleAndRenderBriefForIssue` shells out to real
@@ -180,7 +181,7 @@ describe('checkStaleAgainstRemote / checkDirtyPinnedFiles — fixture repo, both
  * is a local file path, which `resolveRepo`'s GitHub-URL patterns don't
  * match) — the same env-var escape hatch production code already reads.
  */
-describe('assembleAndRenderBriefForIssue — override (Issue #542, O1)', () => {
+describe('assembleAndRenderBriefForIssue — pre-write override', () => {
   let tmpDir: string
   let remoteDir: string
   let localDir: string
@@ -337,5 +338,41 @@ describe('assembleAndRenderBriefForIssue — override (Issue #542, O1)', () => {
         expect(r.missing[0]).toMatch(/vinaya\/tranche:\*/)
       }
     })
+  })
+})
+
+/**
+ * A tranche-labeled EDIT is not circular the way a tranche-labeled CREATE
+ * is: the task already exists in its tranche's forge-derived task list, with
+ * a real Issue number to look up. `resolveTrancheTaskId` is the lookup that
+ * lets `forge-write.ts` route such an edit through `assembleAndRenderBrief`
+ * instead of leaving the whole-brief render dormant.
+ *
+ * The lookup itself (`createForgeSource(...).getTranche(slug)`) goes through
+ * `@attalabs/aeg-forge-state`'s `gh` module, whose `execFileSync('gh', ...)`
+ * calls run against a `PATH` snapshotted into a module-level constant at
+ * import time — a PATH-boundary fake bin placed after that snapshot is
+ * silently ignored, so only the local, network-free guard (no resolvable
+ * repo at all) is unit-testable here; the same live-network gap
+ * `apps/cli/tests/commands/brief-render.test.ts` documents for
+ * `assembleAndRenderBrief`'s own forge reads.
+ */
+describe('resolveTrancheTaskId', () => {
+  it('returns null when the repo cannot be resolved at all', () => {
+    const originalAegRepo = process.env.AEG_REPO
+    delete process.env.AEG_REPO
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-no-repo-'))
+    const originalCwd = process.cwd()
+    process.chdir(dir)
+    return resolveTrancheTaskId('fixture-tranche', 501)
+      .then((id) => {
+        expect(id).toBeNull()
+      })
+      .finally(() => {
+        process.chdir(originalCwd)
+        rmSync(dir, { recursive: true, force: true })
+        if (originalAegRepo === undefined) delete process.env.AEG_REPO
+        else process.env.AEG_REPO = originalAegRepo
+      })
   })
 })

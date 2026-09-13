@@ -416,7 +416,7 @@ describe('appendRetrospectiveSection', () => {
   })
 })
 
-describe('resolveTaskMilestone (O7, Issue #542)', () => {
+describe('resolveTaskMilestone', () => {
   it('returns the Milestone the first attached Issue carries', () => {
     const m = { number: 15, title: 'Q3 shared milestone' }
     expect(resolveTaskMilestone([issueRef('CLOSED', 1, 'a', m), issueRef('CLOSED', 2, 'b', null)])).toEqual(m)
@@ -432,7 +432,7 @@ describe('resolveTaskMilestone (O7, Issue #542)', () => {
   })
 })
 
-// O7 (Issue #542) — the Milestone `archive tranche` writes into is resolved
+// The Milestone `archive tranche` writes into is resolved
 // from the tranche's own task Issues, never a Milestone titled exactly the
 // slug, and it stays open when the Milestone holds other open work.
 function withFakeGhForTranche<T>(

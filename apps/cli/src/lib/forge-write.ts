@@ -80,11 +80,14 @@ import {
   trancheLabel
 } from '@attalabs/aeg-core'
 import {
+  assembleAndRenderBrief,
   assembleAndRenderBriefForIssue,
+  type AssembleAndRenderBriefResult,
   buildWorkspaceConsumersOf,
   canRenderBriefFromHere,
   DRAFT_ISSUE_SENTINEL,
-  expandGlob
+  expandGlob,
+  resolveTrancheTaskId
 } from './brief-assembly'
 import {
   findMilestoneAttachTargetForSlug,
@@ -1341,11 +1344,11 @@ const CHECK_BRIEF_RENDER = 'brief-render'
 const CHECK_BRIEF_SHAPE_PREWRITE = 'brief-shape'
 
 /**
- * **O1 (Issue #542) — the write gate becomes the brief gate.** Renders the
- * SAME twelve-section brief `task brief`/`vinaya task brief` would produce
- * from this draft — never a second renderer, `assembleAndRenderBriefForIssue`
- * is the one `apps/cli` already has, driven by its `override` escape hatch
- * (Issue #542) so it grades the bytes this write is ABOUT to send rather
+ * **The write gate becomes the brief gate.** Renders the SAME twelve-section
+ * brief `task brief`/`vinaya task brief` would produce from this draft —
+ * never a second renderer, `assembleAndRenderBrief`/`assembleAndRenderBriefForIssue`
+ * are the ones `apps/cli` already has, driven by an `override`/`bodyOverride`
+ * escape hatch so each grades the bytes this write is ABOUT to send rather
  * than what is on the forge before it lands — then runs the SAME
  * `brief-shape` gate `pr create` applies (`checkBriefSections`,
  * `@attalabs/aeg-core`) over the rendered text — never a second validator. A
@@ -1353,13 +1356,18 @@ const CHECK_BRIEF_SHAPE_PREWRITE = 'brief-shape'
  * instead: `checkBriefSections`'s own error strings already name both the
  * section (`brief-validation <Section>: …`) and the rule that failed.
  *
- * **Dormant for a tranche-labeled task Issue.** Rendering that shape needs
- * the task to already exist in its tranche's forge-derived task list
- * (`getTranche`), which is circular before the Issue itself is created —
- * `assembleAndRenderBriefForIssue` only ever renders the tranche-less
- * backlog-Issue shape (now the standard shape for a task with no tranche). A
- * tranche-labeled write keeps today's behaviour: the issue-content/schema
- * gates above still run, only this whole-brief render is skipped.
+ * **A tranche-labeled Issue renders through the tranche path.** An EDIT of
+ * an Issue already carrying a `vinaya/tranche:*` label has a real Issue
+ * number to look up in its tranche's forge-derived task list
+ * (`resolveTrancheTaskId`) — found, `assembleAndRenderBrief` renders it with
+ * the drafted body substituted in. **Dormant only for a tranche-labeled
+ * CREATE** (`issueNumber === null`): no Issue number exists yet to look up,
+ * genuinely circular before the Issue itself lands — and dormant when the
+ * lookup itself finds nothing (a label naming a tranche this checkout cannot
+ * derive, or an Issue number not yet reflected in that tranche's task list),
+ * the same fail-open-on-cannot-render posture as every other dormancy here.
+ * A backlog Issue (no tranche label at all) always renders through
+ * `assembleAndRenderBriefForIssue`, as before.
  *
  * Also dormant when `canRenderBriefFromHere()` is false — no brief template
  * on disk, or no resolvable owner/repo. A real `vinaya` invocation always has
@@ -1380,14 +1388,22 @@ async function validateRenderedBriefForIssue(input: {
   labels: string[]
   retryCommand: string
 }): Promise<void> {
-  if (isTaskIssueLabelSet(input.labels)) return
   if (!canRenderBriefFromHere()) return
 
-  const rendered = await assembleAndRenderBriefForIssue(input.issueNumber ?? DRAFT_ISSUE_SENTINEL, {
-    title: input.title,
-    body: input.body,
-    labels: input.labels
-  })
+  const trancheSlug = findTrancheSlug(input.labels)
+  let rendered: AssembleAndRenderBriefResult
+  if (trancheSlug !== null) {
+    if (input.issueNumber === null) return
+    const taskId = await resolveTrancheTaskId(trancheSlug, input.issueNumber)
+    if (taskId === null) return
+    rendered = await assembleAndRenderBrief(trancheSlug, taskId, undefined, input.body)
+  } else {
+    rendered = await assembleAndRenderBriefForIssue(input.issueNumber ?? DRAFT_ISSUE_SENTINEL, {
+      title: input.title,
+      body: input.body,
+      labels: input.labels
+    })
+  }
   if (!rendered.ok) {
     refuse(
       rendered.missing.map((m) =>
@@ -1472,10 +1488,12 @@ export async function validateTaskIssue(
   })
   if (contentErrors.length > 0) refuse(contentErrors)
 
-  // O1 (Issue #542) — render the brief this write would freeze and grade it
-  // with the same brief-shape gate `pr create` applies, before the write.
-  // `title` is null on a plain `issue edit`/`issue objectives edit` that
-  // doesn't re-pass `--title`; the Issue's own live title fills the gap.
+  // Render the brief this write would freeze and grade it with the same
+  // brief-shape gate `pr create` applies, before the write. `title` is null
+  // on a plain `issue edit`/`issue objectives edit` that doesn't re-pass
+  // `--title`; the Issue's own live title fills the gap (used only on the
+  // backlog path — a tranche-labeled render reads its title from the
+  // tranche's own task list instead).
   const effectiveTitle =
     title ?? (milestoneSource?.kind === 'edit' ? fetchForgeTitleBestEffort(milestoneSource.issueRef) : '')
   await validateRenderedBriefForIssue({ issueNumber, title: effectiveTitle, body, labels, retryCommand })

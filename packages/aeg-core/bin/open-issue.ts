@@ -946,11 +946,11 @@ export function main(): void {
       ...checkIssueObjectives(body, issueNumber).errors,
       ...checkPartsCiteDefinedObjectives(body).errors,
       ...checkSurfaceGlobsResolve(body, globResolvesToFile).errors,
-      // plan-coherence-v1 task 1 (Issue #542), O2/O3 — the three new
-      // predicates, wired here identically to `apps/cli`'s own
-      // `validateIssueContent` so this repo's own dogfooded Issue-write path
-      // (this script) and the packaged CLI's `issue create`/`edit` can never
-      // disagree about whether an Issue's Objectives/Boundary/Parts agree.
+      // The three Boundary/ownership/Parts-coverage predicates, wired here
+      // identically to `apps/cli`'s own `validateIssueContent` so this
+      // repo's own dogfooded Issue-write path (this script) and the
+      // packaged CLI's `issue create`/`edit` can never disagree about
+      // whether an Issue's Objectives/Boundary/Parts agree.
       ...checkObjectivesRespectBoundary(body).errors,
       ...checkNoForeignTaskOwnership(body).errors,
       ...checkPartsCoverageAndSequence(body).errors,
