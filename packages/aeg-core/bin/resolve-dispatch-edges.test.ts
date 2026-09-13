@@ -11,13 +11,27 @@ import type { Task, Tranche } from '../src/types'
  */
 
 const execFileSyncMock = vi.fn()
+// `fetchBacklogIssuePrsBatch` (issue-586, O2 round 2 self-fix) shells out
+// through the ASYNC, larger-buffer `execFile` (`promisify.custom`), not the
+// sync `execFileSync` every other call in this suite uses — a real `gh pr
+// list --json …,body --limit 300` on this repo is several MB, well past
+// `execFileSync`'s 1 MB default, which is exactly the bug this fetcher
+// first shipped with (silently returning zero PRs). Stubbed the same way
+// `gh.test.ts`/`verify-dispatch.test.ts` stub it.
+const execFileAsyncMock = vi.fn()
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
-  return { ...actual, execFileSync: (...args: unknown[]) => execFileSyncMock(...args) }
+  const { promisify } = await import('node:util')
+  const execFile = (() => {
+    throw new Error('callback form not used by these tests')
+  }) as unknown as typeof actual.execFile
+  ;(execFile as unknown as Record<symbol, unknown>)[promisify.custom] = async (...args: unknown[]) =>
+    execFileAsyncMock(...args)
+  return { ...actual, execFileSync: (...args: unknown[]) => execFileSyncMock(...args), execFile }
 })
 
-const { resolveConflictsWith, resolveDependsOn } = await import('./verify-dispatch')
+const { fetchBacklogIssuePrsBatch, resolveConflictsWith, resolveDependsOn } = await import('./verify-dispatch')
 
 const REPO = { owner: 'atta-labs', repo: 'vinaya' }
 
@@ -43,6 +57,16 @@ beforeEach(() => {
       return JSON.stringify({ data: { repository: { i_192: { state: 'CLOSED' } } } })
     }
     throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
+  })
+  execFileAsyncMock.mockReset()
+  // `resolveDependsOn`'s OTHER batched fetcher (`fetchBacklogIssuePrsBatch`,
+  // issue-586 O2) — every direct-edge row also probes for the Issue's own
+  // `task/issue-<n>` pull request. No PR by default, so every row above
+  // that never opts into a fixture below falls back to the Issue-state
+  // check exactly as before this task.
+  execFileAsyncMock.mockImplementation((_bin: string, args: string[]) => {
+    if (args[0] === 'pr' && args[1] === 'list') return Promise.resolve({ stdout: '[]', stderr: '' })
+    throw new Error(`unmocked execFile: ${args?.join(' ')}`)
   })
 })
 
@@ -110,6 +134,148 @@ describe('resolveDependsOn — #196 regression table', () => {
     ])
     const [fact] = await resolveDependsOn(['2'], homeTranche, branchPrs, REPO)
     expect(fact).toEqual({ id: '2', issue: 111, merged: false })
+  })
+})
+
+describe('resolveDependsOn — O2: a backlog Issue resolves through its own pull request', () => {
+  const homeTranche = makeTranche('home-tranche', [])
+
+  it('a merged `task/issue-<n>` pull request makes the dependency dispatchable, regardless of the fetched Issue state', async () => {
+    const fetchIssueStates = () => new Map<number, 'OPEN' | 'CLOSED'>([[586, 'CLOSED']])
+    const fetchBacklogPrs = vi.fn(
+      async (numbers: number[]) =>
+        new Map(
+          numbers.map((n) => [
+            n,
+            { number: 900, headRefName: 'task/issue-586', state: 'MERGED' as const, mergedAt: '2026-09-14' }
+          ])
+        )
+    )
+    const [fact] = await resolveDependsOn(
+      ['#586'],
+      homeTranche,
+      new Map(),
+      REPO,
+      async () => null,
+      fetchIssueStates,
+      fetchBacklogPrs
+    )
+    expect(fact).toEqual({ id: '#586', issue: 586, merged: true })
+    expect(fetchBacklogPrs).toHaveBeenCalledTimes(1)
+    expect(fetchBacklogPrs.mock.calls[0]?.[0]).toEqual([586])
+  })
+
+  it('an open `task/issue-<n>` pull request refuses the dependency, naming it, even though the Issue itself is not closed', async () => {
+    const fetchIssueStates = () => new Map<number, 'OPEN' | 'CLOSED'>([[586, 'OPEN']])
+    const fetchBacklogPrs = async () =>
+      new Map([[586, { number: 900, headRefName: 'task/issue-586', state: 'OPEN' as const, mergedAt: null }]])
+    const [fact] = await resolveDependsOn(
+      ['#586'],
+      homeTranche,
+      new Map(),
+      REPO,
+      async () => null,
+      fetchIssueStates,
+      fetchBacklogPrs
+    )
+    expect(fact).toEqual({ id: '#586', issue: 586, merged: false })
+  })
+
+  it('trap: an Issue closed WITHOUT a merge (its PR is open) never reads as merged', async () => {
+    const fetchIssueStates = () => new Map<number, 'OPEN' | 'CLOSED'>([[586, 'CLOSED']])
+    const fetchBacklogPrs = async () =>
+      new Map([[586, { number: 900, headRefName: 'task/issue-586', state: 'OPEN' as const, mergedAt: null }]])
+    const [fact] = await resolveDependsOn(
+      ['#586'],
+      homeTranche,
+      new Map(),
+      REPO,
+      async () => null,
+      fetchIssueStates,
+      fetchBacklogPrs
+    )
+    expect(fact).toEqual({ id: '#586', issue: 586, merged: false })
+  })
+
+  it('no PR resolves by branch or body: falls back to the Issue closed/open state, unchanged from before this task', async () => {
+    const fetchIssueStates = () => new Map<number, 'OPEN' | 'CLOSED'>([[586, 'CLOSED']])
+    const fetchBacklogPrs = async () => new Map()
+    const [fact] = await resolveDependsOn(
+      ['#586'],
+      homeTranche,
+      new Map(),
+      REPO,
+      async () => null,
+      fetchIssueStates,
+      fetchBacklogPrs
+    )
+    expect(fact).toEqual({ id: '#586', issue: 586, merged: true })
+  })
+})
+
+describe('fetchBacklogIssuePrsBatch', () => {
+  it('matches by the task/issue-<n> branch first', async () => {
+    execFileAsyncMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args[0] === 'pr' && args[1] === 'list') {
+        return Promise.resolve({
+          stdout: JSON.stringify([
+            { number: 900, headRefName: 'task/issue-586', state: 'MERGED', mergedAt: '2026-09-14', body: '' }
+          ]),
+          stderr: ''
+        })
+      }
+      throw new Error(`unmocked execFile: ${args?.join(' ')}`)
+    })
+    const result = await fetchBacklogIssuePrsBatch([586], REPO)
+    expect(result.get(586)?.number).toBe(900)
+  })
+
+  it('falls back to a `Closes #<n>` body match when no branch matches', async () => {
+    execFileAsyncMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args[0] === 'pr' && args[1] === 'list') {
+        return Promise.resolve({
+          stdout: JSON.stringify([
+            {
+              number: 901,
+              headRefName: 'fix/control-store-fast-path',
+              state: 'MERGED',
+              mergedAt: '2026-09-14',
+              body: 'Summary\n\nCloses #586\n'
+            }
+          ]),
+          stderr: ''
+        })
+      }
+      throw new Error(`unmocked execFile: ${args?.join(' ')}`)
+    })
+    const result = await fetchBacklogIssuePrsBatch([586], REPO)
+    expect(result.get(586)?.number).toBe(901)
+  })
+
+  it('returns no entry for a number matching neither a branch nor a Closes body', async () => {
+    execFileAsyncMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args[0] === 'pr' && args[1] === 'list') return Promise.resolve({ stdout: '[]', stderr: '' })
+      throw new Error(`unmocked execFile: ${args?.join(' ')}`)
+    })
+    expect((await fetchBacklogIssuePrsBatch([586], REPO)).has(586)).toBe(false)
+  })
+
+  it("tolerates a `gh pr list --json …,body` payload past execFileSync's 1 MB default — the ENOBUFS shape this fetcher first shipped with", async () => {
+    const bigBody = 'x'.repeat(2 * 1024 * 1024)
+    execFileAsyncMock.mockImplementation((_bin: string, args: string[], opts: { maxBuffer?: number }) => {
+      if (args[0] === 'pr' && args[1] === 'list') {
+        expect(opts?.maxBuffer).toBeGreaterThan(2 * 1024 * 1024)
+        return Promise.resolve({
+          stdout: JSON.stringify([
+            { number: 900, headRefName: 'task/issue-586', state: 'MERGED', mergedAt: '2026-09-14', body: bigBody }
+          ]),
+          stderr: ''
+        })
+      }
+      throw new Error(`unmocked execFile: ${args?.join(' ')}`)
+    })
+    const result = await fetchBacklogIssuePrsBatch([586], REPO)
+    expect(result.get(586)?.number).toBe(900)
   })
 })
 

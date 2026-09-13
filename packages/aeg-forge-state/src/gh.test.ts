@@ -16,10 +16,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  */
 
 const forge = vi.hoisted(() => ({
-  /** Every `gh api <path>` this module asked for, in order. */
-  requested: [] as string[],
-  /** Answers one page; overridden per test. */
-  respond: (_page: number): unknown[] => []
+  /** Every full `gh` arg vector this module issued, in order. */
+  requested: [] as string[][],
+  /** Answers one page, given its args vector (so a test can inspect/react to `-q` too); overridden per test. */
+  respond: (_page: number, _args: string[]): unknown[] => []
 }))
 
 vi.mock('node:child_process', async () => {
@@ -29,10 +29,10 @@ vi.mock('node:child_process', async () => {
   }) as unknown as ((...args: unknown[]) => void) & Record<symbol, unknown>
 
   execFile[promisify.custom] = async (_bin: string, args: string[]) => {
+    forge.requested.push(args)
     const path = args[1] as string
-    forge.requested.push(path)
     const page = Number(new URLSearchParams(path.split('?')[1] ?? '').get('page') ?? '1')
-    return { stdout: JSON.stringify(forge.respond(page)), stderr: '' }
+    return { stdout: JSON.stringify(forge.respond(page, args)), stderr: '' }
   }
 
   return { execFile, execFileSync: () => '[]' }
@@ -44,18 +44,18 @@ const items = (n: number, offset = 0): { id: number }[] => Array.from({ length: 
 
 /** The `page=` value of each request, in order. */
 const requestedPages = (): number[] =>
-  forge.requested.map((p) => Number(new URLSearchParams(p.split('?')[1] ?? '').get('page')))
+  forge.requested.map((args) => Number(new URLSearchParams((args[1] as string).split('?')[1] ?? '').get('page')))
 
 /** The `per_page` value of each request, in order. */
 const requestedPerPage = (): (string | null)[] =>
-  forge.requested.map((p) => new URLSearchParams(p.split('?')[1] ?? '').get('per_page'))
+  forge.requested.map((args) => new URLSearchParams((args[1] as string).split('?')[1] ?? '').get('per_page'))
+
+beforeEach(() => {
+  forge.requested.length = 0
+  forge.respond = () => []
+})
 
 describe('ghApiGetAllPagesAsync', () => {
-  beforeEach(() => {
-    forge.requested.length = 0
-    forge.respond = () => []
-  })
-
   it('walks pages until a short one and concatenates them in order', async () => {
     forge.respond = (page) => (page <= 2 ? items(100, (page - 1) * 100) : items(7, 200))
 
@@ -86,7 +86,7 @@ describe('ghApiGetAllPagesAsync', () => {
 
     expect(all).toHaveLength(104)
     expect(requestedPerPage()).toEqual(['100', '100'])
-    expect(forge.requested[0]).toContain('state=all')
+    expect(forge.requested[0]?.[1]).toContain('state=all')
   })
 
   it('supplies per_page when the caller omitted it — GitHub defaults to 30', async () => {
@@ -98,7 +98,7 @@ describe('ghApiGetAllPagesAsync', () => {
     // because the request asked for 100. Unset, it would be page 1 of many.
     expect(all).toHaveLength(30)
     expect(requestedPerPage()).toEqual(['100'])
-    expect(forge.requested[0]).toBe('repos/o/r/milestones?per_page=100&page=1')
+    expect(forge.requested[0]).toEqual(['api', 'repos/o/r/milestones?per_page=100&page=1'])
   })
 
   it('refuses to walk forever when every page comes back full', async () => {
@@ -109,5 +109,80 @@ describe('ghApiGetAllPagesAsync', () => {
 
     await expect(ghApiGetAllPagesAsync('repos/o/r/milestones?state=all')).rejects.toThrow(/did not terminate within/)
     expect(forge.requested).toHaveLength(100)
+  })
+
+  it('opts.jq appends a `-q <expression>` pair, after the path, on every page requested', async () => {
+    forge.respond = (page) => (page === 1 ? items(100) : items(3, 100))
+
+    await ghApiGetAllPagesAsync('repos/o/r/issues?state=all', { jq: '[.[] | {labels: .labels}]' })
+
+    expect(forge.requested).toHaveLength(2)
+    for (const args of forge.requested) {
+      expect(args.slice(-2)).toEqual(['-q', '[.[] | {labels: .labels}]'])
+    }
+  })
+
+  it('omits -q entirely when no jq option is given — every existing caller keeps its old arg vector', async () => {
+    forge.respond = () => items(6)
+
+    await ghApiGetAllPagesAsync('repos/o/r/milestones?state=all')
+
+    expect(forge.requested[0]).not.toContain('-q')
+  })
+})
+
+/**
+ * `tranchesAttachedToMilestone`'s own fixture, driven for real: `./gh` is
+ * NOT mocked in this file (only `node:child_process` is), so this exercises
+ * the actual paginated walk and the actual `-q` filter together, not a
+ * caller's assumption about what `ghApiGetAllPagesAsync` does with them.
+ * Every other `tranchesAttachedToMilestone` test (`fetch-milestone.test.ts`)
+ * mocks `ghApiGetAllPagesAsync` itself, which proves the caller's own logic
+ * but nothing about the filter actually reaching `gh` or the walk actually
+ * paging — the gap a round-2 review found.
+ */
+describe('tranchesAttachedToMilestone — the real paginated, filtered fetch, end to end', () => {
+  const OVER_ONE_MEGABYTE = 'x'.repeat(1024 * 1024 + 1)
+
+  /** One full-shaped Issue (`body` included) per number in `[start, start + count)`, all carrying `slug`'s tranche label. */
+  function issuePage(start: number, count: number, slug: string) {
+    return Array.from({ length: count }, (_, i) => ({
+      number: start + i,
+      body: OVER_ONE_MEGABYTE,
+      labels: [{ name: `vinaya/tranche:${slug}` }]
+    }))
+  }
+
+  it('an 80+ Issue Milestone, full bodies over one megabyte each, delivered across three pages, resolves to the union of their tranche slugs — and the filter is what actually keeps the parsed payload small, not a mock standing in for it', async () => {
+    const byPage: Record<number, ReturnType<typeof issuePage>> = {
+      1: issuePage(1, 100, 'tranche-a'),
+      2: issuePage(101, 100, 'tranche-b'),
+      3: issuePage(201, 25, 'tranche-c')
+    }
+
+    // Stands in for `gh`'s own server-side `-q` evaluation: full bodies
+    // survive UNLESS the exact filter this module sends is present, so a
+    // regression that drops the filter (or sends the wrong expression)
+    // shows up as megabyte-scale JSON here, not a silent pass.
+    forge.respond = (page, args) => {
+      const full = byPage[page] ?? []
+      const jqIdx = args.indexOf('-q')
+      if (jqIdx !== -1 && args[jqIdx + 1] === '[.[] | {labels: .labels}]') {
+        return full.map((issue) => ({ labels: issue.labels }))
+      }
+      return full
+    }
+
+    const { tranchesAttachedToMilestone } = await import('./fetch-milestone')
+    const slugs = await tranchesAttachedToMilestone('o', 'r', 15)
+
+    expect(slugs.sort()).toEqual(['tranche-a', 'tranche-b', 'tranche-c'])
+    expect(requestedPages()).toEqual([1, 2, 3])
+    // Every one of the three requests carried the labels-only filter — none
+    // slipped through unfiltered, which is what would have let a full,
+    // over-one-megabyte body back into this process.
+    for (const args of forge.requested) {
+      expect(args.slice(-2)).toEqual(['-q', '[.[] | {labels: .labels}]'])
+    }
   })
 })

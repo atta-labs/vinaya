@@ -538,14 +538,31 @@ export async function listArchivedTrancheSlugsAsync(owner: string, repo: string)
  * Issue in this Milestone is genuinely ambiguous (issue-545, O3): a Milestone
  * holding two or more tranches means the same bare id could belong to
  * either, where a Milestone holding only one (the ordinary case) leaves no
- * real ambiguity. One REST fetch, `state=all` — a closed sibling task still
- * counts toward "this Milestone holds N tranches" exactly as an open one
- * does; the tranche count is a structural fact about the Milestone, not
- * about which of its Issues remain open.
+ * real ambiguity. `state=all` — a closed sibling task still counts toward
+ * "this Milestone holds N tranches" exactly as an open one does; the tranche
+ * count is a structural fact about the Milestone, not about which of its
+ * Issues remain open.
+ *
+ * Labels only, paginated: a Milestone's Issue count is
+ * unbounded, and this predicate needs nothing off an Issue but its labels —
+ * fetching the REST default (full issue, including `body`) through
+ * `ghApiGetAllPagesAsync`'s own `-q` server-side filter means the buffered
+ * call only ever has to hold one page's worth of `{labels}` objects, never
+ * one page's worth of full issue bodies (found live against this repo's own
+ * Milestone #15, 80+ Issues with full bodies: the old single, unpaginated,
+ * un-filtered `ghApiGet` fetch overran `execFileSync`'s default output
+ * buffer, `ENOBUFS`, before this predicate ever ran). Raising the buffer
+ * size would not have fixed this — a Milestone can always grow past
+ * whatever ceiling was picked; only fetching less per Issue scales.
  */
-export function tranchesAttachedToMilestone(owner: string, repo: string, milestoneNumber: number): string[] {
-  const issues = ghApiGet<Array<{ labels: Array<{ name: string } | string> }>>(
-    `repos/${owner}/${repo}/issues?milestone=${milestoneNumber}&state=all&per_page=100`
+export async function tranchesAttachedToMilestone(
+  owner: string,
+  repo: string,
+  milestoneNumber: number
+): Promise<string[]> {
+  const issues = await ghApiGetAllPagesAsync<{ labels: Array<{ name: string } | string> }>(
+    `repos/${owner}/${repo}/issues?milestone=${milestoneNumber}&state=all`,
+    { jq: '[.[] | {labels: .labels}]' }
   )
   const slugs = new Set<string>()
   for (const issue of issues) {
