@@ -63,7 +63,43 @@ export const R1_GRANDFATHERED_ISSUES: ReadonlySet<number> = new Set([279, 280, 2
 
 // ---------- types -------------------------------------------------------------
 
+/**
+ * Every distinct coherence-failure shape this module's checks can produce,
+ * named apart from `CheckFailure.reason`'s human string (Issue #355) — the
+ * recovery-prompt switch in `check-coherence.ts` matches on THIS, never on
+ * parsing `reason`'s text or `CheckResult.check`'s code alone. Closed
+ * deliberately, and split finer than the `check` code where one check code
+ * hides two failures needing opposite advice: `checkD1` produces both
+ * `d1-self-dependency` (unsatisfiable by construction, escalate) and
+ * `dispatched-on-unmet-deps` (an ordinary unmet dependency, close it) under
+ * the same `D1` check code — keying recovery on `check` alone told an agent
+ * to close an uncloseable dependency (the live incident this task fixes).
+ * Adding a member here without a matching `case` in the consumer's switch
+ * fails typecheck via that switch's exhaustiveness check.
+ */
+export type CoherenceFailureCode =
+  | 'closed-without-merge'
+  | 'archived-without-provenance'
+  | 'auto-close-misfire'
+  | 'phantom-issue-ref'
+  | 'orphan-task'
+  | 'tbd-in-active-tranche'
+  | 'd1-self-dependency'
+  | 'dispatched-on-unmet-deps'
+  | 'missing-rationale-field'
+  | 'surface-excludes-bound-doc'
+  | 'surface-overlap'
+  | 'archive-recommended'
+  | 'premature-archive'
+  | 'milestone-drift'
+  | 'tranche-not-archived'
+  | 'doc-owners-dangling-pointer'
+  | 'doc-owners-duplicate-glob'
+  | 'forge-read-unavailable'
+
 export type CheckFailure = {
+  /** The failure's machine-readable class, beside `reason`'s human string. */
+  code: CoherenceFailureCode
   issue?: number | null
   tranche: string
   task?: string
@@ -123,6 +159,7 @@ export function checkA1(entries: TaskEntry[], principalAllowlist: string[] = PRI
       const handClosed = e.facts.stateReason === 'completed' && isPrincipal(e.facts.closedByActor, principalAllowlist)
       if (handClosed) continue
       failures.push({
+        code: 'closed-without-merge',
         issue: e.task.issue,
         tranche: e.trancheSlug,
         task: e.task.id,
@@ -161,6 +198,7 @@ export function checkA2(entries: TaskEntry[], hasProvenanceByKey: Map<string, bo
     if (hasProvenance === undefined) continue
     if (!hasProvenance) {
       failures.push({
+        code: 'archived-without-provenance',
         issue: e.task.issue,
         tranche: e.trancheSlug,
         task: e.task.id,
@@ -190,6 +228,7 @@ export function checkA3(entries: TaskEntry[]): CheckResult {
     if (!e.facts) continue
     if (e.facts.prState === 'merged' && e.facts.issueState !== 'closed') {
       failures.push({
+        code: 'auto-close-misfire',
         issue: e.task.issue,
         tranche: e.trancheSlug,
         task: e.task.id,
@@ -223,6 +262,7 @@ export function checkT1(entries: TaskEntry[]): CheckResult {
     // facts === undefined and issue !== null → forge query returned nothing for this issue
     if (e.facts === undefined) {
       failures.push({
+        code: 'phantom-issue-ref',
         issue: e.task.issue,
         tranche: e.trancheSlug,
         task: e.task.id,
@@ -260,6 +300,7 @@ export function checkT2(
     for (const num of openNums) {
       if (!topologySet.has(num)) {
         failures.push({
+          code: 'orphan-task',
           issue: num,
           tranche: slug,
           reason: `Issue #${num} is open and labeled ${trancheLabel(slug)} but does not appear in the topology file`
@@ -341,6 +382,7 @@ export function checkT3(
 
       if (forgeUnavailableSlugs?.has(e.trancheSlug)) {
         failures.push({
+          code: 'tbd-in-active-tranche',
           issue: null,
           tranche: e.trancheSlug,
           task: e.task.id,
@@ -351,6 +393,7 @@ export function checkT3(
       }
 
       failures.push({
+        code: 'tbd-in-active-tranche',
         issue: null,
         tranche: e.trancheSlug,
         task: e.task.id,
@@ -402,6 +445,7 @@ export function checkD1(
       const sameIssue = depEntry.task.issue !== null && e.task.issue !== null && depEntry.task.issue === e.task.issue
       if (sameTask || sameIssue) {
         failures.push({
+          code: 'd1-self-dependency',
           issue: e.task.issue,
           tranche: e.trancheSlug,
           task: e.task.id,
@@ -414,6 +458,7 @@ export function checkD1(
       const depClosed = depFacts?.issueState === 'closed'
       if (!depClosed) {
         failures.push({
+          code: 'dispatched-on-unmet-deps',
           issue: e.task.issue,
           tranche: e.trancheSlug,
           task: e.task.id,
@@ -487,6 +532,7 @@ export function checkR1(
       ]
       if (errors.length === 0) continue
       failures.push({
+        code: 'missing-rationale-field',
         issue: issue.number,
         tranche: slug,
         reason: `Issue #${issue.number} fails the rationale gate: ${errors.join(' | ')}`,
@@ -532,6 +578,7 @@ export function checkR2(issuesBySlug: Map<string, ForgeIssue[]>, docOwnersConten
       const errors = checkSurfaceExcludesBoundDoc(issue.body, docOwnersContent).errors
       if (errors.length === 0) continue
       failures.push({
+        code: 'surface-excludes-bound-doc',
         issue: issue.number,
         tranche: slug,
         reason: `Issue #${issue.number} fails the surface/doc-owners gate: ${errors.join(' | ')}`
@@ -596,6 +643,7 @@ export function checkR3(issuesBySlug: Map<string, GhIssue[]>): CheckResult {
       const errors = checkSurfaceOverlap(entry.facts, siblings).errors
       if (errors.length === 0) continue
       failures.push({
+        code: 'surface-overlap',
         issue: entry.issue.number,
         tranche: entry.slug,
         reason: `Issue #${entry.issue.number} fails the cross-task surface-overlap gate: ${errors.join(' | ')}`
@@ -624,6 +672,7 @@ export function checkL1(files: TrancheFile[], entriesBySlug: Map<string, TaskEnt
     const allClosed = withFacts.every((e) => e.facts?.issueState === 'closed')
     if (allClosed) {
       failures.push({
+        code: 'archive-recommended',
         tranche: f.slug,
         reason: 'Active tranche has no open task-Issues — consider archiving to completed/'
       })
@@ -655,6 +704,7 @@ export function checkL2(files: TrancheFile[], entriesBySlug: Map<string, TaskEnt
       if (!e.facts) continue
       if (e.facts.issueState === 'open') {
         failures.push({
+          code: 'premature-archive',
           issue: e.task.issue,
           tranche: f.slug,
           task: e.task.id,
@@ -726,6 +776,7 @@ export function checkL4(
     if (!activeSet.has(f.tranche)) continue
     if (f.milestoneTitle === f.tranche) continue
     failures.push({
+      code: 'milestone-drift',
       issue: f.issue,
       tranche: f.tranche,
       reason:
@@ -783,6 +834,7 @@ export function checkL5(activeTrancheSlugs: string[], entriesBySlug: Map<string,
     const allClosed = withFacts.every((e) => e.facts?.issueState === 'closed')
     if (allClosed) {
       failures.push({
+        code: 'tranche-not-archived',
         tranche: slug,
         reason: 'Every task Issue is closed but the tranche is not recorded as complete — archive it'
       })

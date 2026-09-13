@@ -171,7 +171,14 @@ export {
   R1_GRANDFATHERED_ISSUES,
   scopeT2ToPlanPr
 } from './coherence-checks'
-export type { CheckFailure, CheckResult, ForgeIssue, TrancheFile, TaskEntry } from './coherence-checks'
+export type {
+  CheckFailure,
+  CheckResult,
+  CoherenceFailureCode,
+  ForgeIssue,
+  TrancheFile,
+  TaskEntry
+} from './coherence-checks'
 export {
   buildProvenanceBlock,
   extractIssue,
@@ -335,6 +342,8 @@ export type {
 } from './local-anchor-coverage'
 export { checkDispatchReadiness } from './dispatch-gate'
 export type {
+  DispatchBlocker,
+  DispatchBlockerClass,
   DispatchConflictsWithFact,
   DispatchDependsOnFact,
   DispatchEdgeFact,
