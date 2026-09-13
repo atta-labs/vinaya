@@ -2574,6 +2574,123 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
   }, 20000)
 })
 
+/**
+ * O4 (Issue #583): CI itself reads green (`conclusion: success`) — the ONLY
+ * reason the gate reads red here is the PR body's own `Premise:` pin, which
+ * names a symbol `pinned.ts` no longer contains (the fixture's stand-in for
+ * "the head deleted it"). Isolates the premise path from the plain
+ * CI-red path the test above already covers.
+ */
+function writeFakeGhStalePremiseGreenCi(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  printf '%s\\n' '{"body":"**Premise:**\\n- pinned.ts contains: OLD_SYMBOL\\n\\nCloses #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+function setUpStalePremise(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeNeverPushes(binDir)
+  writeFakeGhStalePremiseGreenCi(binDir)
+  writeFakeGit(binDir)
+  // The premise's own pin target — `reassertPrBodyPremise`'s default file
+  // reader resolves paths relative to `process.cwd()` (the driver's real
+  // cwd, `cwd` here), no git needed (this dir is deliberately non-git, same
+  // as `setUp`'s own). Never contains `OLD_SYMBOL` — the fixture's stand-in
+  // for "the head deleted it since the brief was authored."
+  writeFileSync(join(cwd, 'pinned.ts'), 'export const CURRENT_SYMBOL = 1\n')
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a stale Premise pin pauses like a red gate, never a driver exit (O4, Issue #583)', () => {
+  it('produces one developer resume naming the failing premise line, then the SAME bounded infrastructure pause — never an uncaught exit', () => {
+    const { home, cwd, path } = setUpStalePremise()
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
+    })
+    // A clean, decided pause — never an uncaught crash. `not.toBe(0)` is the
+    // SAME non-zero a clean pause always exits with (a pause is not success),
+    // distinguished from a genuine crash by everything below: a real
+    // `paused (infrastructure)` decision, a real pause-state file, a real
+    // marked PR comment — none of which a raw uncaught exception leaves
+    // behind coherently.
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // The developer's SECOND turn (the first resume — round 1's own fresh
+    // push-and-open dispatch is `.dev-prompt-1.txt`) is where the premise
+    // failure first reaches it: one resume, naming the exact failing line,
+    // never a bare "CI is red" with nothing underneath.
+    const premisePrompt = readFileSync(join(home, '.dev-prompt-2.txt'), 'utf8')
+    expect(premisePrompt).toMatch(/CI is red on the last head/)
+    expect(premisePrompt).toMatch(/dispatch-gate premise:/)
+    expect(premisePrompt).toMatch(/pinned\.ts/)
+    expect(premisePrompt).toMatch(/OLD_SYMBOL/)
+    expect(premisePrompt).toMatch(/`git push`/)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', 'comment-1.md'), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    expect(pauseComment).toMatch(/dispatch-gate premise:/)
+  }, 20000)
+})
+
 // --- O2 (#543): unpushed-work resume, then no_push, distinct from a genuinely idle stall ---
 
 /**

@@ -138,6 +138,8 @@ import {
   waitForOwnLoopLine
 } from './dev-review-loop/round-assess.js'
 import { buildReport, gh, runReportForOpenPr } from './pr-report-engine.js'
+import { reassertPrBodyPremise } from '../checks/bin/check-pr-premise-reassert.js'
+import type { PremiseReassertResult } from '../checks/premise-reassert-logic.js'
 import { postForgeEffectOnce, publishRound } from './dev-review-loop/publication.js'
 import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
 import {
@@ -1174,6 +1176,26 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return { baseHead, head, filesChanged, insertions, deletions, wallMs: d.now() - roundStartMs }
     }
 
+    /**
+     * O4: the dispatch gate's premise re-assertion against `prNumber`'s LIVE
+     * body — `null` on any failure to even fetch it (a forge-read hiccup,
+     * exactly the class O6 names) OR when the body carries no `Premise:`
+     * block at all; both are dormant, never a reason to treat the premise
+     * itself as failed. Wrapped here, not inside `reassertPrBodyPremise`
+     * itself, because that function's own contract is pure-ish (a supplied
+     * body in, a verdict out) — the live `fetchPrBody` round-trip is this
+     * call site's own addition, and its failure mode belongs here.
+     */
+    function checkPremiseAtHead(pr: number): PremiseReassertResult | null {
+      let body: string
+      try {
+        body = fetchPrBody(pr)
+      } catch {
+        return null
+      }
+      return reassertPrBodyPremise(body)
+    }
+
     async function waitForGreenGate(roundStartMs: number): Promise<{
       green: boolean
       stats: RoundStats
@@ -1748,12 +1770,30 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           pendingConflictFiles = null
 
           const gate = await waitForGreenGate(roundStartMs)
-          lastFailingChecks = gate.failingChecks
-          pendingGateRedRetry = !gate.green
+          // O4 (Issue #583): the dispatch gate's own premise re-assertion,
+          // re-run against the PR's live body at this exact head — a stale
+          // `Premise:` pin (a symbol the head deleted since the brief was
+          // authored) is a developer finding sent back through the SAME
+          // gate-red retry prompt below, never a reason for this driver to
+          // exit. `reassertPrBodyPremise` returns `null` for a body with no
+          // `Premise:` block at all — dormant, same as every other PR. Runs
+          // on every round's gate check, which is also the first thing a
+          // re-exec'd child evaluates once it reaches this same point — one
+          // call site covers both "on first run and on re-exec" (Traps to
+          // avoid: no separate re-exec-only path to fall out of sync with
+          // this one). Best-effort, like `runEvidenceReport`: a body-fetch
+          // failure here is its own infrastructure hiccup, never grounds to
+          // treat the premise itself as failed.
+          const premiseResult: PremiseReassertResult | null = checkPremiseAtHead(prNumber)
+          const premiseFailed = premiseResult !== null && !premiseResult.pass
+          const premiseFailureLines = premiseResult !== null ? premiseResult.errors.map((e) => e.message) : []
+          const gateGreen = gate.green && !premiseFailed
+          lastFailingChecks = [...gate.failingChecks, ...premiseFailureLines]
+          pendingGateRedRetry = !gateGreen
           gateStalledStreak = 0
           unpushedResumeAttempted = false
-          const confidence = round >= 2 && gate.green ? readAndClearConfidence() : undefined
-          const obs: Observations = { kind: 'gate', round, green: gate.green, confidence, stats: gate.stats }
+          const confidence = round >= 2 && gateGreen ? readAndClearConfidence() : undefined
+          const obs: Observations = { kind: 'gate', round, green: gateGreen, confidence, stats: gate.stats }
           const result = assessRound(state, obs)
           state = result.state
           decision = result.decision
