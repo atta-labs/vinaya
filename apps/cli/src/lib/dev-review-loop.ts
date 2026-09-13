@@ -49,6 +49,7 @@ import {
   assessRound,
   buildReviewInputManifest,
   compareManifest,
+  DEFAULT_REVIEW_POLICY,
   initialLoopState,
   manifestAsEchoed,
   nextRoundNumber,
@@ -60,6 +61,7 @@ import {
   type Observations,
   type ReconstructedJournal,
   type ReviewInputManifest,
+  type ReviewPolicy,
   type RoundStats
 } from '@attalabs/aeg-core'
 import {
@@ -138,18 +140,20 @@ import {
   waitForOwnLoopLine
 } from './dev-review-loop/round-assess.js'
 import { buildReport, gh, runReportForOpenPr } from './pr-report-engine.js'
+import { reassertPrBodyPremise } from '../checks/bin/check-pr-premise-reassert.js'
+import type { PremiseReassertResult } from '../checks/premise-reassert-logic.js'
 import { postForgeEffectOnce, publishRound } from './dev-review-loop/publication.js'
 import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
 import {
   clearDriverLock,
   isDriverPidAlive,
-  pauseMarker,
   type PauseState,
+  postIssuePauseComment,
   postPauseComment,
   printDriverLockLine,
   readDriverLock,
   readPauseState,
-  renderNoPushStopComment,
+  sanitizePublicPauseDetail,
   writeDriverLock,
   writePauseState
 } from './dev-review-loop/pause-resume.js'
@@ -384,6 +388,19 @@ function defaultSleep(ms: number): Promise<void> {
 }
 
 /**
+ * The redaction itself lives in `sanitizePublicPauseDetail`
+ * (`dev-review-loop/pause-resume.js`), applied unconditionally INSIDE
+ * `postPauseComment` — every pause reason's `detail` is sanitized there, not
+ * only this file's own uncaught-error path. This wrapper survives only
+ * because callers (and this file's own tests) still reach for the
+ * `err: unknown` shape; it adds nothing `postPauseComment` doesn't already
+ * re-apply.
+ */
+export function sanitizeUncaughtErrorForPublicPause(err: unknown): string {
+  return sanitizePublicPauseDetail(err instanceof Error ? err.message : String(err))
+}
+
+/**
  * The gate poll budget is otherwise a fixed production constant (120 ×
  * 15s) — this env var pair exists only so a real subprocess test (never an
  * in-process call — see this file's test's own `GLOBAL_VINAYA_HOME`
@@ -610,6 +627,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   }
   writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString() })
 
+  // True only for the two pause reasons that are
+  // themselves an infrastructure/re-exec hiccup, never a human decision
+  // point ('infrastructure', 'stale_driver') — set at the single shared
+  // pause-return branch and at the outer crash catch below, both of which
+  // this variable is declared ahead of so either closure can set it. Every
+  // OTHER pause reason (escalation, max_rounds, confidence, reappearance,
+  // no_push, objectives_changed, ruling_posted, brief_superseded,
+  // policy_changed) is a genuine decision point a Principal must act on —
+  // those clear the lock exactly as before, unchanged.
+  let keepLockAlive = false
+
   try {
     return await runDevReviewLoopBody()
   } finally {
@@ -625,7 +653,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // call unconditionally here, including while a real error is already
     // propagating out of the `try`.
     await d.flushOutbox(task)
-    clearDriverLock(root, task)
+    // An infrastructure/stale_driver pause deliberately leaves the lock
+    // in place — this run is not "done," it is a live process that hit a
+    // recoverable hiccup, and a cleared lock here would misrepresent that
+    // as a settled, resume-able-by-hand pause identical to a genuine
+    // Principal-decision one. Every other exit (publish, an explicit stop,
+    // or any other pause reason) clears it exactly as before.
+    if (!keepLockAlive) clearDriverLock(root, task)
   }
 
   async function runDevReviewLoopBody(): Promise<LoopResult> {
@@ -639,23 +673,28 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // or they land under the `none` bucket instead of this task's.
     process.env.VINAYA_TASK = String(task)
 
-    // Which severities block is repository policy (task
-    // 8, `#506`, O1/O4) — resolved once, from the default branch, and reused
-    // for every round's derivation and this run's publication self-check;
-    // the gate reads the identical source (`check-review-gate.ts`).
-    const policy = reviewPolicy()
-
     // Primes `resolveRepo()`'s process-lifetime cache BEFORE this loop's own
     // `log()` calls start racing each other on it (see `waitForLoopLineCount`'s
     // doc comment) — every later call in this process, including the ones
     // inside `log()` itself, resolves the identical value instantly.
     const repo = await resolveRepo().catch(() => null)
-    const repoRoot = d.repoRoot()
-    const confidenceFilePath = join(repoRoot, '.worktrees', branch, CONFIDENCE_FILE_NAME)
-    /** O2: the same worktree-root convention as `confidenceFilePath`, above — see `DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment. */
-    const roundResponseFilePath = join(repoRoot, '.worktrees', branch, DEVELOPER_ROUND_RESPONSE_FILE_NAME)
+    // O6: `policy`/`repoRoot`/
+    // `confidenceFilePath`/`roundResponseFilePath`/`baseHeadAtStart` are
+    // DECLARED here, at the top of this function's scope, but ASSIGNED only
+    // once the widened `try` below actually runs `reviewPolicy()`/
+    // `d.repoRoot()`/`d.gitRevParseOriginMain()` — each a real forge/git
+    // read that can throw. Declaring them here (rather than at the point of
+    // assignment, inside the try) is what lets every OTHER function in this
+    // scope — `checkStaleDriver`, `dispatchDeveloper`, `runRoundLoop`, all
+    // declared throughout this function — keep closing over the SAME
+    // outer-scope bindings they always have; only when the values are
+    // actually computed moves.
+    let policy!: ReviewPolicy
+    let repoRoot!: string
+    let confidenceFilePath!: string
+    let roundResponseFilePath!: string
     /** O8: recorded once, at loop start — never re-derived. Re-read at every round entry (top of the `while(true)` below) and compared against this fixed watermark for commits touching `DRIVER_OWNED_PATHS`. */
-    const baseHeadAtStart = d.gitRevParseOriginMain()
+    let baseHeadAtStart!: string
     const loopOutboxPath = outboxPathFor({ outboxRoot: () => root }, repo, task)
     /**
      * O6: the one file this run's own role-prefixed stream tees to,
@@ -698,9 +737,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // just never lands in the outbox; found live authoring this task).
       reviewers: ['code-reviewer', 'security'],
       models: { developer: input.agent, 'code-reviewer': input.agent, security: input.agent },
-      // (`#543` O4) Repository policy, resolved once above (`reviewPolicy()`)
-      // — never a hardcoded constant here or in `assessRound`.
-      maxRounds: policy.maxRounds
+      // (`#543` O4) The repo-wide default, corrected to the REAL
+      // `reviewPolicy()` value the moment the widened `try` below reads it
+      // successfully (O6: `config` must be valid — never built from a
+      // not-yet-read `policy` — before that read even runs, so a crash
+      // reading policy itself still reports against a real `maxRounds`).
+      maxRounds: DEFAULT_REVIEW_POLICY.maxRounds
     }
     let state: LoopState = initialLoopState(config)
 
@@ -1174,6 +1216,27 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return { baseHead, head, filesChanged, insertions, deletions, wallMs: d.now() - roundStartMs }
     }
 
+    /**
+     * The dispatch gate's premise re-assertion against `prNumber`'s LIVE
+     * body — `null` on any failure to even fetch it (an ordinary forge-read
+     * hiccup, one this driver never exits over) OR when the body carries no
+     * `Premise:` block at all; both are dormant, never a reason to treat the
+     * premise itself as failed. Wrapped here, not inside
+     * `reassertPrBodyPremise` itself, because that function's own contract
+     * is pure-ish (a supplied body in, a verdict out) — the live
+     * `fetchPrBody` round-trip is this call site's own addition, and its
+     * failure mode belongs here.
+     */
+    function checkPremiseAtHead(pr: number): PremiseReassertResult | null {
+      let body: string
+      try {
+        body = fetchPrBody(pr)
+      } catch {
+        return null
+      }
+      return reassertPrBodyPremise(body)
+    }
+
     async function waitForGreenGate(roundStartMs: number): Promise<{
       green: boolean
       stats: RoundStats
@@ -1287,163 +1350,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       recordDriverExited('signal')
       process.exit(130)
     })
-    // O8: `resumeHeadAlreadyMoved` widens this exactly like a fresh round-1
-    // attach — the developer already pushed the fix a ruling asked for, so
-    // this run dispatches no developer at all and goes straight to the
-    // gate/reviewer path below, on the head that's already there.
+
+    // Round 2 review, BLOCKER: `firstPass`/`pendingCompletionEvents` are
+    // declared here, in this function's own scope — never inside the `try`
+    // block opened just below — because `runRoundLoop` (a sibling function
+    // declaration that closes over both as mutable state) needs them
+    // visible from OUTSIDE that block; a `let` inside `try { }` is scoped to
+    // that block alone and would be invisible to a function declared beside
+    // it, even though function declarations themselves hoist.
     let firstPass = !resumeFrom || resumeHeadAlreadyMoved
-    if (resumeFrom) {
-      // O2: resuming — the PR and branch are already known (`resumeFrom`), so
-      // there is no round-1 dispatch and no PR to poll for. `lastReviewContext`
-      // carries the Principal's ruling(s) instead of a reviewer's findings;
-      // `resumedDispatch` (below) labels the prompt accordingly, once.
-      const rulings = d.fetchRulings(prNumber)
-      lastReviewContext = rulings.map((r, i) => `${i + 1}. ${r}`).join('\n')
-    } else {
-      // O4: round-1 entry — attach to an existing open PR, resume once to open
-      // one on a remote branch that has none, or dispatch fresh. Checked in
-      // that order: an open PR on the exact branch `developerBranchFor`
-      // derives is the strongest signal (Traps: never attach to a closed or
-      // merged one — `findOpenPrForBranch`'s own `--state open` filter already
-      // guarantees that); only then does a remote-branch-with-no-PR check make
-      // sense, since a branch with an open PR obviously also exists remotely.
-      const existingPr = d.findOpenPrForBranch(branch)
-      if (existingPr) {
-        // Attach: no developer dispatch here at all — the recorded session is
-        // read now so a LATER round's resume (if one is ever needed) resumes
-        // the SAME session rather than starting fresh; round 1's own gate runs
-        // next, unmodified, straight off `firstPass` — UNLESS O4 (below)
-        // recovers a real round from held state.
-        prNumber = existingPr.number
-        const rec = d.readResumeRecord(task, input.agent, repo)
-        if (rec) devResumeId = rec.resumeId
-        seedLoopHistory()
-
-        // O4 (task 3, `#482`): a prior process may have
-        // dispatched round k's reviewers, held REQUEST-CHANGES verdicts on
-        // disk, and dispatched the developer — then crashed or was
-        // restarted before ever observing whether the developer pushed a
-        // fix. Left alone, `round` stays at its default of 1 and this
-        // attach would re-run round 1's OWN gate check on a head that may
-        // be several real rounds deep (Origin: PR #529 — every attach
-        // after a fix push re-delivered round 1's stale findings and
-        // drifted into a confidence-collapse pause). Recovered here
-        // instead, from the durable, machine-local held-verdict files.
-        const held = latestHeldRequestChanges(root, task)
-        if (held) {
-          const currentHead = d.resolveHead(branch)
-          if (currentHead !== held.head) {
-            // The developer already pushed since round k's findings were
-            // computed — never re-deliver round k's findings. `round` set
-            // to k+1 and `firstPass` left at its default `true` (attach)
-            // is exactly the existing, already-tested fallthrough: no
-            // developer dispatch here, straight to round k+1's own gate
-            // check, which itself decides `dispatch_reviewers` once green.
-            round = held.round + 1
-          } else {
-            // Head unchanged — round k's findings were never actually
-            // delivered to the developer (or the developer hasn't
-            // responded yet). Never a third consecutive attempt on the
-            // SAME head with no push in between: the second one reads as
-            // `no_progress`, not another redelivery drifting toward a
-            // confidence collapse.
-            const marker = join(root, 'dev-review-loop', String(task), `round-${held.round}-attach-redelivered`)
-            if (existsSync(marker)) {
-              const stats = computeStats(currentHead, d.now())
-              await logEvents(driverDecidedPauseEvents(config.loopId, state, held.round + 1, stats))
-              decision = {
-                type: 'pause',
-                reason: 'no_progress',
-                detail: `round ${held.round} findings delivered again on unchanged head ${currentHead}, with no developer push since the first delivery`
-              }
-            } else {
-              mkdirSync(dirname(marker), { recursive: true })
-              writeFileSync(marker, new Date().toISOString(), 'utf8')
-              round = held.round + 1
-              lastReviewContext = held.rendered
-              firstPass = false
-            }
-          }
-        }
-      } else {
-        let branchExists = true
-        try {
-          d.resolveHead(branch)
-        } catch {
-          branchExists = false
-        }
-        if (branchExists) {
-          // Crash-recovery re-entry: the branch already exists (pushed by a
-          // prior process), no dispatch here — `afterDeveloperTurnBeforePrPoll`
-          // resumes once to open the PR and polls (O2/O3).
-          prNumber = await afterDeveloperTurnBeforePrPoll(true)
-        } else {
-          // Round 1: fresh dispatch, brief read from the frozen Issue comment
-          // (O1). What happens next — check, at most one resume, poll — is
-          // O2/O3/O9's own job, never blind.
-          const brief = d.fetchFrozenBrief(task)
-          await dispatchDeveloper(brief, round, { skipResumeContext: true })
-
-          try {
-            prNumber = await afterDeveloperTurnBeforePrPoll(false)
-          } catch (err) {
-            if (!(err instanceof DeveloperStopSignal)) throw err
-            // O9: no branch ever reached the remote, and the developer
-            // posted a refusal/escalation instead — end the loop now, on the
-            // Issue (there is no PR to comment on), never entering the poll.
-            postForgeEffectOnce(root, task, `no-push-stop-${round}`, () =>
-              postMarkedComment(
-                'issue',
-                String(task),
-                pauseMarker('escalation'),
-                renderNoPushStopComment(task, err.detail)
-              )
-            )
-            await d.flushOutbox(task)
-            return { finalDecision: { type: 'pause', reason: 'escalation', detail: err.detail }, prNumber: 0, task }
-          }
-        }
-      }
-    }
-
-    // O9: an attach with no locally-held request-changes file to recover
-    // `round` from (`latestHeldRequestChanges`, above, returned null — a
-    // different machine, or local state already cleaned) must still not
-    // restart round numbering at 1 when the reconstructed history shows
-    // real, still-unfinished prior rounds (`historyApplies` — see
-    // `seedLoopHistory`'s own doc comment for why a newest-round-green
-    // history never reaches here). Never applied to `--resume`: that round
-    // is deliberately the ruling's own ordinal (O8), not the next
-    // sequential round, and `Math.max` never regresses the more-precise,
-    // locally-held recovery above when both agree or the local one is
-    // ahead.
-    if (!resumeFrom && historyApplies) round = Math.max(round, nextRoundNumber(loopHistory.rounds))
-
-    // Held back from `logEvents` until `publishRound` (below) actually
-    // succeeds — `assessRound`'s one `journal_finalized`/`merged_ready` event
-    // (`assess-round.ts`) always arrives bundled with a `publish` decision in
-    // the SAME `result.events`, and logging it immediately, before the posts
-    // it claims are done, is what let a crash mid-publish leave the durable
-    // log asserting a completion the pull request never got (code review, PR
-    // #459, MAJOR). Every other event in that same `result.events` — the
-    // round's own `stop_condition_met`/`round_ended` — is true regardless of
-    // whether publication later fails, so only this one event is deferred.
     let pendingCompletionEvents: DevReviewLoopEventInput[] = []
 
-    /**
-     * Round-number discipline: `round` increments ONLY when a genuine review
-     * round (`dispatch_reviewers` → `verdicts`) concludes `changes_requested`
-     * and hands back `dispatch_developer` for the next real round. A
-     * mechanical-gate-red retry and a confidence-collapse "extra turn" (spec
-     * §6.7: "may repeat once, for the same round") both resubmit the SAME
-     * round number — `assessGate` itself is built for exactly this (`pending`
-     * clears on both paths, and `state.extraTurnUsed` is a flat, round-
-     * independent flag, so reusing the round number changes nothing about
-     * whether the confidence rule's one-extra-turn bound is honored).
-     * Advancing `round` on every `dispatch_developer` instead would make a
-     * mechanical CI hiccup on round 1 silently start asking the round-1-never-
-     * asks confidence question — a real behavioral bug, not a style choice.
-     */
     /**
      * O8 (round 2 review, BLOCKER): re-read the base branch's head and
      * compare against the fixed watermark recorded at loop start. A base
@@ -1458,6 +1375,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * was false for exactly this transition, the common clean-round path),
      * so publish re-checks this itself rather than trusting the top-of-loop
      * check alone.
+     *
+     * Declared here, before the `try` below, for the same reason
+     * `firstPass`/`pendingCompletionEvents` are — `runRoundLoop` (a sibling
+     * function declaration) calls this, and a function declared INSIDE a
+     * `try { }` block is scoped to that block, invisible outside it.
      */
     async function checkStaleDriver(): Promise<boolean> {
       const currentBaseHead = d.gitRevParseOriginMain()
@@ -1529,29 +1451,209 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return true
     }
 
-    /**
-     * O10 (round 2 review, BLOCKER): the outer `finally`'s guaranteed flush
-     * (above) only ever posts whatever this run already logged — it never
-     * synthesizes the terminal event a genuinely uncaught error skips. Left
-     * alone, a crash mid-round left the forge log with `loop_started` and
-     * `round_started` but no `paused`/`journal_finalized` at all,
-     * permanently — exactly the shape O10 calls a test failure.
-     * Deliberately `driverCrashEvents`, never `driverDecidedPauseEvents`:
-     * the latter also fabricates a `round_ended`, wrong the moment the
-     * crash strikes AFTER a real one already logged (`publishRound`
-     * throwing post-green — see `driverCrashEvents`'s own doc comment).
-     * Best-effort on the head: a `resolveHead` failure is itself a
-     * plausible CAUSE of the crash being handled here, so this never lets
-     * a secondary failure mask the original error.
-     */
+    // The `try` below now wraps EVERY executable statement from here
+    // through the end of this function — including the driver's own SETUP
+    // (`reviewPolicy()`, `d.repoRoot()`, `d.gitRevParseOriginMain()`, each a
+    // real forge/git read that can throw) and round 1's own fresh-dispatch
+    // entry (`fetchFrozenBrief`, a real forge read that can throw), not
+    // merely the later `runRoundLoop()` call. A forge-read failure, a
+    // dispatch failure, or any other thrown exception anywhere in this span
+    // is caught by the SAME catch below and becomes a decided pause, never a
+    // re-thrown crash — a narrower wrap that leaves any part of this setup
+    // or round-1's own entry uncovered lets a `gh`/`git` failure there crash
+    // the driver instead of pausing it.
     try {
+      // Which severities block is repository policy (task 8, `#506`,
+      // O1/O4) — resolved once, from the default branch, and reused for
+      // every round's derivation and this run's publication self-check; the
+      // gate reads the identical source (`check-review-gate.ts`). `config`
+      // (built above with the repo-wide default) is corrected in place the
+      // moment this succeeds — same object, every closure already holding a
+      // reference to it sees the real value from here on.
+      policy = reviewPolicy()
+      config.maxRounds = policy.maxRounds
+      repoRoot = d.repoRoot()
+      confidenceFilePath = join(repoRoot, '.worktrees', branch, CONFIDENCE_FILE_NAME)
+      /** O2: the same worktree-root convention as `confidenceFilePath`, above — see `DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment. */
+      roundResponseFilePath = join(repoRoot, '.worktrees', branch, DEVELOPER_ROUND_RESPONSE_FILE_NAME)
+      baseHeadAtStart = d.gitRevParseOriginMain()
+
+      // O8: `resumeHeadAlreadyMoved` widens this exactly like a fresh round-1
+      // attach — the developer already pushed the fix a ruling asked for, so
+      // this run dispatches no developer at all and goes straight to the
+      // gate/reviewer path below, on the head that's already there.
+      if (resumeFrom) {
+        // O2: resuming — the PR and branch are already known (`resumeFrom`), so
+        // there is no round-1 dispatch and no PR to poll for. `lastReviewContext`
+        // carries the Principal's ruling(s) instead of a reviewer's findings;
+        // `resumedDispatch` (below) labels the prompt accordingly, once.
+        const rulings = d.fetchRulings(prNumber)
+        lastReviewContext = rulings.map((r, i) => `${i + 1}. ${r}`).join('\n')
+      } else {
+        // O4: round-1 entry — attach to an existing open PR, resume once to open
+        // one on a remote branch that has none, or dispatch fresh. Checked in
+        // that order: an open PR on the exact branch `developerBranchFor`
+        // derives is the strongest signal (Traps: never attach to a closed or
+        // merged one — `findOpenPrForBranch`'s own `--state open` filter already
+        // guarantees that); only then does a remote-branch-with-no-PR check make
+        // sense, since a branch with an open PR obviously also exists remotely.
+        const existingPr = d.findOpenPrForBranch(branch)
+        if (existingPr) {
+          // Attach: no developer dispatch here at all — the recorded session is
+          // read now so a LATER round's resume (if one is ever needed) resumes
+          // the SAME session rather than starting fresh; round 1's own gate runs
+          // next, unmodified, straight off `firstPass` — UNLESS O4 (below)
+          // recovers a real round from held state.
+          prNumber = existingPr.number
+          const rec = d.readResumeRecord(task, input.agent, repo)
+          if (rec) devResumeId = rec.resumeId
+          seedLoopHistory()
+
+          // O4 (task 3, `#482`): a prior process may have
+          // dispatched round k's reviewers, held REQUEST-CHANGES verdicts on
+          // disk, and dispatched the developer — then crashed or was
+          // restarted before ever observing whether the developer pushed a
+          // fix. Left alone, `round` stays at its default of 1 and this
+          // attach would re-run round 1's OWN gate check on a head that may
+          // be several real rounds deep (Origin: PR #529 — every attach
+          // after a fix push re-delivered round 1's stale findings and
+          // drifted into a confidence-collapse pause). Recovered here
+          // instead, from the durable, machine-local held-verdict files.
+          const held = latestHeldRequestChanges(root, task)
+          if (held) {
+            const currentHead = d.resolveHead(branch)
+            if (currentHead !== held.head) {
+              // The developer already pushed since round k's findings were
+              // computed — never re-deliver round k's findings. `round` set
+              // to k+1 and `firstPass` left at its default `true` (attach)
+              // is exactly the existing, already-tested fallthrough: no
+              // developer dispatch here, straight to round k+1's own gate
+              // check, which itself decides `dispatch_reviewers` once green.
+              round = held.round + 1
+            } else {
+              // Head unchanged — round k's findings were never actually
+              // delivered to the developer (or the developer hasn't
+              // responded yet). Never a third consecutive attempt on the
+              // SAME head with no push in between: the second one reads as
+              // `no_progress`, not another redelivery drifting toward a
+              // confidence collapse.
+              const marker = join(root, 'dev-review-loop', String(task), `round-${held.round}-attach-redelivered`)
+              if (existsSync(marker)) {
+                const stats = computeStats(currentHead, d.now())
+                await logEvents(driverDecidedPauseEvents(config.loopId, state, held.round + 1, stats))
+                decision = {
+                  type: 'pause',
+                  reason: 'no_progress',
+                  detail: `round ${held.round} findings delivered again on unchanged head ${currentHead}, with no developer push since the first delivery`
+                }
+              } else {
+                mkdirSync(dirname(marker), { recursive: true })
+                writeFileSync(marker, new Date().toISOString(), 'utf8')
+                round = held.round + 1
+                lastReviewContext = held.rendered
+                firstPass = false
+              }
+            }
+          }
+        } else {
+          let branchExists = true
+          try {
+            d.resolveHead(branch)
+          } catch {
+            branchExists = false
+          }
+          if (branchExists) {
+            // Crash-recovery re-entry: the branch already exists (pushed by a
+            // prior process), no dispatch here — `afterDeveloperTurnBeforePrPoll`
+            // resumes once to open the PR and polls (O2/O3).
+            prNumber = await afterDeveloperTurnBeforePrPoll(true)
+          } else {
+            // Round 1: fresh dispatch, brief read from the frozen Issue comment
+            // (O1). What happens next — check, at most one resume, poll — is
+            // O2/O3/O9's own job, never blind.
+            const brief = d.fetchFrozenBrief(task)
+            await dispatchDeveloper(brief, round, { skipResumeContext: true })
+
+            try {
+              prNumber = await afterDeveloperTurnBeforePrPoll(false)
+            } catch (err) {
+              if (!(err instanceof DeveloperStopSignal)) throw err
+              // O9: no branch ever reached the remote, and the developer
+              // posted a refusal/escalation instead — end the loop now, on the
+              // Issue (there is no PR to comment on), never entering the poll.
+              postIssuePauseComment(root, task, round, 'escalation', err.detail)
+              await d.flushOutbox(task)
+              return { finalDecision: { type: 'pause', reason: 'escalation', detail: err.detail }, prNumber: 0, task }
+            }
+          }
+        }
+      }
+
+      // O9: an attach with no locally-held request-changes file to recover
+      // `round` from (`latestHeldRequestChanges`, above, returned null — a
+      // different machine, or local state already cleaned) must still not
+      // restart round numbering at 1 when the reconstructed history shows
+      // real, still-unfinished prior rounds (`historyApplies` — see
+      // `seedLoopHistory`'s own doc comment for why a newest-round-green
+      // history never reaches here). Never applied to `--resume`: that round
+      // is deliberately the ruling's own ordinal (O8), not the next
+      // sequential round, and `Math.max` never regresses the more-precise,
+      // locally-held recovery above when both agree or the local one is
+      // ahead.
+      if (!resumeFrom && historyApplies) round = Math.max(round, nextRoundNumber(loopHistory.rounds))
+
+      // Held back from `logEvents` until `publishRound` (below) actually
+      // succeeds — `assessRound`'s one `journal_finalized`/`merged_ready` event
+      // (`assess-round.ts`) always arrives bundled with a `publish` decision in
+      // the SAME `result.events`, and logging it immediately, before the posts
+      // it claims are done, is what let a crash mid-publish leave the durable
+      // log asserting a completion the pull request never got (code review, PR
+      // #459, MAJOR). Every other event in that same `result.events` — the
+      // round's own `stop_condition_met`/`round_ended` — is true regardless of
+      // whether publication later fails, so only this one event is deferred.
+
+      /**
+       * Round-number discipline: `round` increments ONLY when a genuine review
+       * round (`dispatch_reviewers` → `verdicts`) concludes `changes_requested`
+       * and hands back `dispatch_developer` for the next real round. A
+       * mechanical-gate-red retry and a confidence-collapse "extra turn" (spec
+       * §6.7: "may repeat once, for the same round") both resubmit the SAME
+       * round number — `assessGate` itself is built for exactly this (`pending`
+       * clears on both paths, and `state.extraTurnUsed` is a flat, round-
+       * independent flag, so reusing the round number changes nothing about
+       * whether the confidence rule's one-extra-turn bound is honored).
+       * Advancing `round` on every `dispatch_developer` instead would make a
+       * mechanical CI hiccup on round 1 silently start asking the round-1-never-
+       * asks confidence question — a real behavioral bug, not a style choice.
+       */
+
+      /**
+       * O10 (round 2 review, BLOCKER): the outer `finally`'s guaranteed flush
+       * (above) only ever posts whatever this run already logged — it never
+       * synthesizes the terminal event a genuinely uncaught error skips. Left
+       * alone, a crash mid-round left the forge log with `loop_started` and
+       * `round_started` but no `paused`/`journal_finalized` at all,
+       * permanently — exactly the shape O10 calls a test failure.
+       * Deliberately `driverCrashEvents`, never `driverDecidedPauseEvents`:
+       * the latter also fabricates a `round_ended`, wrong the moment the
+       * crash strikes AFTER a real one already logged (`publishRound`
+       * throwing post-green — see `driverCrashEvents`'s own doc comment).
+       * Best-effort on the head: a `resolveHead` failure is itself a
+       * plausible CAUSE of the crash being handled here, so this never lets
+       * a secondary failure mask the original error.
+       */
       return await runRoundLoop()
     } catch (err) {
-      // O2 (`#548` v3): a genuinely uncaught error is the one path that
-      // reaches neither a `pause` nor a `publish` decision and still returns
-      // normally (through `throw`) — the outer `finally` DOES run here, but
-      // `decision` (whatever it last held) is only readable from inside this
-      // closure, so the trace is written here, not there.
+      // A genuinely uncaught error — a gate error, a
+      // dispatch error, a forge read error, any thrown exception on the
+      // driver's own path — is now a decided `pause{reason:'infrastructure'}`
+      // like any other infrastructure hiccup, never a re-thrown exception
+      // that ends the process. `decision` (whatever it last held) is only
+      // readable from inside this closure, so the trace is written here,
+      // not in the outer `finally`. `keepLockAlive` (declared in the
+      // enclosing `devReviewLoop`) is set here too — the same lock-stays-alive
+      // treatment as the shared pause-return branch's own
+      // 'infrastructure'/'stale_driver' cases below.
       recordDriverExited('error')
       let head = 'unknown'
       try {
@@ -1560,8 +1662,56 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // Left as 'unknown' — the schema only requires a string.
       }
       await logEvents(driverCrashEvents(config.loopId, state, round, head))
+      // `decision.detail` (below) carries the RAW error message — it lands only in this
+      // MACHINE-local outbox (`writePauseState`, never posted anywhere) and
+      // in `finalDecision`, which the CLI never prints past the bare reason.
+      // `postPauseComment` (below) sanitizes its OWN `detail` argument
+      // unconditionally now (`sanitizePublicPauseDetail`), so the raw string
+      // passed here is never posted un-redacted — this call site no longer
+      // needs its own separately-sanitized copy, and neither does any other
+      // `postPauseComment` call in this file.
+      decision = {
+        type: 'pause',
+        reason: 'infrastructure',
+        detail: `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
+      }
+      keepLockAlive = true
+      // This bookkeeping is best-effort, never a second chance for the
+      // process to crash on its way out — the ORIGINAL error is already
+      // handled (this pause IS the handling); a forge write failing here
+      // too (the exact fault that just took down the round, still live)
+      // must never re-throw and undo it. `d.flushOutbox`/`recordDriverExited`
+      // above already follow the identical "never throws" discipline for
+      // the same reason.
+      try {
+        writePauseState(root, {
+          task,
+          round,
+          head,
+          branch,
+          prNumber,
+          reason: decision.reason,
+          detail: decision.detail,
+          pausedAt: new Date().toISOString()
+        })
+        // A crash this early — setup, or a fresh round-1 task never getting
+        // as far as resolving one — leaves `prNumber` at its `-1` sentinel:
+        // no PR is known to exist, so a PR comment would target a number
+        // nothing was ever opened against. Recorded on the task Issue
+        // instead, the one forge location that is always addressable for a
+        // task with no open PR yet.
+        if (prNumber < 0) {
+          postIssuePauseComment(root, task, round, decision.reason, decision.detail)
+        } else {
+          postPauseComment(root, task, round, head, prNumber, decision.reason, decision.detail)
+        }
+      } catch {
+        // Swallowed deliberately — see above. The role log's own
+        // `driver_exited` trace (written above, unconditionally) is what a
+        // Principal reads when even this best-effort post never lands.
+      }
       await d.flushOutbox(task)
-      throw err
+      return { finalDecision: decision, prNumber, task }
     }
 
     // eslint-disable-next-line no-constant-condition
@@ -1748,12 +1898,30 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           pendingConflictFiles = null
 
           const gate = await waitForGreenGate(roundStartMs)
-          lastFailingChecks = gate.failingChecks
-          pendingGateRedRetry = !gate.green
+          // The dispatch gate's own premise re-assertion,
+          // re-run against the PR's live body at this exact head — a stale
+          // `Premise:` pin (a symbol the head deleted since the brief was
+          // authored) is a developer finding sent back through the SAME
+          // gate-red retry prompt below, never a reason for this driver to
+          // exit. `reassertPrBodyPremise` returns `null` for a body with no
+          // `Premise:` block at all — dormant, same as every other PR. Runs
+          // on every round's gate check, which is also the first thing a
+          // re-exec'd child evaluates once it reaches this same point — one
+          // call site covers both "on first run and on re-exec" (Traps to
+          // avoid: no separate re-exec-only path to fall out of sync with
+          // this one). Best-effort, like `runEvidenceReport`: a body-fetch
+          // failure here is its own infrastructure hiccup, never grounds to
+          // treat the premise itself as failed.
+          const premiseResult: PremiseReassertResult | null = checkPremiseAtHead(prNumber)
+          const premiseFailed = premiseResult !== null && !premiseResult.pass
+          const premiseFailureLines = premiseResult !== null ? premiseResult.errors.map((e) => e.message) : []
+          const gateGreen = gate.green && !premiseFailed
+          lastFailingChecks = [...gate.failingChecks, ...premiseFailureLines]
+          pendingGateRedRetry = !gateGreen
           gateStalledStreak = 0
           unpushedResumeAttempted = false
-          const confidence = round >= 2 && gate.green ? readAndClearConfidence() : undefined
-          const obs: Observations = { kind: 'gate', round, green: gate.green, confidence, stats: gate.stats }
+          const confidence = round >= 2 && gateGreen ? readAndClearConfidence() : undefined
+          const obs: Observations = { kind: 'gate', round, green: gateGreen, confidence, stats: gate.stats }
           const result = assessRound(state, obs)
           state = result.state
           decision = result.decision
@@ -2040,6 +2208,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         }
 
         if (decision.type === 'pause') {
+          // 'infrastructure' and 'stale_driver' are the
+          // loop's own two "the mechanics stalled, not a review verdict"
+          // reasons (the gate-red bound, a missing-artifact reviewer retry
+          // bound, a re-exec that could not proceed) — recoverable hiccups,
+          // never a human decision point. Every other reason here IS a
+          // decision only a Principal can make (escalation, max_rounds,
+          // confidence, reappearance, no_push, objectives_changed,
+          // ruling_posted, brief_superseded, policy_changed) and clears the
+          // lock exactly as before.
+          if (decision.reason === 'infrastructure' || decision.reason === 'stale_driver') {
+            keepLockAlive = true
+          }
           const pauseHead = d.resolveHead(branch)
           writePauseState(root, {
             task,

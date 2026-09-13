@@ -53,7 +53,7 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -69,6 +69,7 @@ import {
   NO_SOURCE_REVISION,
   type ObjectivesEditSource,
   parseObjectivesEditComment,
+  sanitizeUncaughtErrorForPublicPause,
   parseRoundResponseFindingIds,
   renderDeveloperRoundComment,
   renderReviewerPrompt,
@@ -406,6 +407,49 @@ if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
   exit 1
 fi
 echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+/**
+ * Same as `writeFakeGh`, except `gh issue comment` actually succeeds and
+ * writes to the shared posted-comments dir — for a fixture whose own pause
+ * is legitimately posted on the Issue (no PR exists yet to carry it) rather
+ * than the log flush's best-effort, allowed-to-fail write `writeFakeGh`
+ * otherwise models.
+ */
+function writeFakeGhWithWorkingIssueComment(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  echo '[]'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/issues/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+echo "unhandled fake gh call in working-issue-comment scenario: $*" >&2
 exit 1
 `
   )
@@ -769,6 +813,101 @@ describe('devReviewLoop — the mechanical gate excludes the review gate’s own
  * #459: a crash mid-publish must not leave the durable log claiming
  * `merged_ready` for a run that never actually finished publishing).
  */
+/**
+ * O6: identical to `writeFakeGhCrashOnSecondPost`'s own crash
+ * trigger (`publishRound`'s second comment post fails), except the failure
+ * fires exactly ONCE — a marker file (`$HOME/.gh-crash-used`) flips it back
+ * to healthy immediately after — so the driver's own best-effort pause
+ * comment, posted moments later from inside the NEW catch this fixes,
+ * lands normally. Isolates "the crash itself is now a clean pause" from
+ * the pre-existing, separate fact that `postMarkedComment`/`refuse` hard-
+ * exits the process on ITS OWN posting failure (`forge-write.ts`) — a real
+ * gap, but a different one than this task's own Surface names.
+ */
+function writeFakeGhCrashOnceThenHealthy(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$N" = "1" ] && [ ! -f "$HOME/.gh-crash-used" ]; then
+    touch "$HOME/.gh-crash-used"
+    echo "fake gh: simulated crash on the second publish post" >&2
+    exit 1
+  fi
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+function setUpCrashMidPublishThenHealthy(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaude(binDir)
+  writeFakeGhCrashOnceThenHealthy(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
 function writeFakeGhCrashOnSecondPost(dir: string): void {
   writeFakeBinary(
     dir,
@@ -1003,6 +1142,206 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
 
     const roleLog = readFileSync(join(home, '.vinaya', 'loops', 'unresolved', `${TASK}.log`), 'utf8')
     expect(roleLog).toMatch(/^\[dev-review-loop\] driver_exited: reason=error last_decision=\S+$/m)
+  }, 20000)
+
+  // O6: the SAME uncaught-error scenario, now proven to be a
+  // clean, decided pause — never a raw crash the process merely survives by
+  // accident. The driver lock is deliberately left in place (never cleared)
+  // for this reason: `task status` (O2) reads a live lock as `running`
+  // before it ever consults the pause-state file, so a cleared lock here
+  // would make the process's own death indistinguishable from a genuine,
+  // settled pause a Principal decided — exactly the ambiguity O5's
+  // dead-lock takeover exists to resolve for whichever of the two actually
+  // happened. Uses the "crashes once, then recovers" gh fixture rather than
+  // the persistent one above — the driver's OWN pause-comment post, moments
+  // later, must land on a healthy `gh`, not re-trigger the same fault a
+  // second time (that second fault is real too, but it is `forge-write.ts`'s
+  // own `refuse`-hard-exits-the-process design, a separate gap outside this
+  // task's Surface).
+  it('O6: the SAME crash is a decided pause(infrastructure) — the lock stays in place, a real pause-state and PR comment exist, nothing is thrown', () => {
+    const { home, cwd, path } = setUpCrashMidPublishThenHealthy()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // The lock is NEVER cleared for this reason — still on disk, still
+    // naming a real pid, proving this run's own `finally` deliberately
+    // skipped `clearDriverLock` rather than the process merely not having
+    // reached it yet (this run already returned, `spawnSync` already
+    // exited).
+    const lock = JSON.parse(readFileSync(driverLockPath(home), 'utf8')) as { pid: number; startedAt: string }
+    expect(typeof lock.pid).toBe('number')
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+
+    const posted = postedCommentFiles(home).map((f) => readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8'))
+    expect(posted.some((body) => /^<!-- aeg:loop:paused:infrastructure -->$/m.test(body))).toBe(true)
+  }, 20000)
+})
+
+/**
+ * O6 — a static enumeration, not a behavioral one: every
+ * `return { finalDecision` (a real exit from `devReviewLoop`) and every
+ * `d.exitProcess(` call in the source names its own decision kind, so the
+ * loop's own exit sites are countable by inspection. Only two kinds may
+ * ever be the reason the FUNCTION resolves without a lock left behind:
+ * `publish`, and the re-exec hand-off (`exitProcess`, the literal process
+ * boundary — a real hand-off to a child process, not a decision this
+ * process makes about its own work). Every `pause`-shaped return is
+ * legitimate (see the two classes above) but is never counted as one of
+ * the "the process really ends" sites the fixture names — a pause return
+ * still ends THIS invocation's own async call (there is no infinite
+ * retry loop in this codebase), but the two sanctioned reasons the loop
+ * itself decides to stop being the source of new work are publish and an
+ * explicit stop (`d.exitProcess` on a clean re-exec hand-off, or the
+ * DeveloperStopSignal path posting an explicit refusal/escalation).
+ */
+describe('devReviewLoop — the loop’s exit sites (O6)', () => {
+  it('exactly one exitProcess call site exists — the re-exec hand-off — never a bare process.exit sprinkled elsewhere', () => {
+    const source = readFileSync(join(import.meta.dir, '..', '..', 'src', 'lib', 'dev-review-loop.ts'), 'utf8')
+    const exitProcessCalls = source.match(/\bd\.exitProcess\(/g) ?? []
+    expect(exitProcessCalls).toHaveLength(1)
+  })
+
+  it('the outer round-loop catch no longer re-throws — it is a `return`, same as every other decided exit', () => {
+    const source = readFileSync(join(import.meta.dir, '..', '..', 'src', 'lib', 'dev-review-loop.ts'), 'utf8')
+    const catchBlock =
+      /catch \(err\) \{[\s\S]*?\n {4}\}\n\n {4}\/\/ eslint-disable-next-line no-constant-condition/.exec(source)
+    expect(catchBlock).not.toBeNull()
+    const body = catchBlock?.[0] ?? ''
+    expect(body).not.toMatch(/^\s*throw err\s*$/m)
+    expect(body).toMatch(/return \{ finalDecision: decision, prNumber, task \}/)
+  })
+
+  // Round 2 review, BLOCKER: the outer catch used to wrap only the
+  // `runRoundLoop()` call — round 1's own fresh-dispatch entry (a real forge
+  // read, `fetchFrozenBrief`, sitting BEFORE that call) still crashed
+  // uncaught on failure. Proves the widened `try` now covers it too: no
+  // frozen brief on the Issue is exactly the failure `fetchFrozenBrief`
+  // itself throws for, and it must now become a decided pause, never an
+  // uncaught exit, with the driver never even reaching `dispatchDeveloper`.
+  function writeFakeGhNoFrozenBrief(dir: string): void {
+    writeFakeBinary(
+      dir,
+      'gh',
+      `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  echo '{"comments":[]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  echo '[]'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  echo "https://github.com/example/repo/pull/-1#issuecomment-1"
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/issues/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+    )
+  }
+
+  function setUpNoFrozenBrief(): { home: string; cwd: string; path: string } {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaude(binDir)
+    writeFakeGhNoFrozenBrief(binDir)
+    writeFakeGit(binDir)
+    return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+  }
+
+  it("a forge-read failure in round 1's own fresh-dispatch entry (fetchFrozenBrief, before runRoundLoop even starts) is a decided pause too — never an uncaught crash, and no developer is ever dispatched", () => {
+    const { home, cwd, path } = setUpNoFrozenBrief()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+    expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(false)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+    expect(String(pauseState.detail)).toMatch(/carries no principal-authored, frozen/)
+
+    // O6: the lock is deliberately left in place for this reason — the same
+    // "process stays alive" discipline every other infrastructure/
+    // stale_driver pause now gets.
+    const lock = JSON.parse(readFileSync(driverLockPath(home), 'utf8')) as { pid: number }
+    expect(typeof lock.pid).toBe('number')
+  }, 20000)
+
+  // A `git` failure on `rev-parse origin/main` is the driver's own SETUP,
+  // run before round 1's fresh-dispatch entry even starts (this file's own
+  // `baseHeadAtStart` read) — it must reach the same widened `try` any other
+  // setup-phase failure does, never propagate straight out of
+  // `devReviewLoop` uncaught with no pause/lock left behind.
+  function writeFakeGitFailingRevParseOriginMain(dir: string): void {
+    writeFakeBinary(
+      dir,
+      'git',
+      `#!/bin/sh
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "fatal: ambiguous argument 'origin/main': unknown revision or path not in the working tree." >&2
+  exit 128
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+exit 1
+`
+    )
+  }
+
+  function setUpFailingGitSetupRead(): { home: string; cwd: string; path: string } {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaude(binDir)
+    writeFakeGhNoFrozenBrief(binDir)
+    writeFakeGitFailingRevParseOriginMain(binDir)
+    return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+  }
+
+  it("a git read failure in the driver's own SETUP (git rev-parse origin/main, before round 1's fresh-dispatch entry) is a decided pause — never an uncaught crash, and no developer is ever dispatched", () => {
+    const { home, cwd, path } = setUpFailingGitSetupRead()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+    expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(false)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+
+    // O6: the lock stays in place — the process is alive, holding it,
+    // exactly as it does for every other infrastructure pause.
+    const lock = JSON.parse(readFileSync(driverLockPath(home), 'utf8')) as { pid: number }
+    expect(typeof lock.pid).toBe('number')
   }, 20000)
 })
 
@@ -2186,7 +2525,7 @@ case "$VINAYA_ROLE" in
       WD="$WORKROOT/round-$VINAYA_ROUND-security-work-retry1"
     fi
     mkdir -p "$WD"
-    printf 'this is not a valid finding line at all\\n' > "$WD/findings.txt"
+    printf 'this is not a valid finding line at all, token=ghp_abcdefghijklmnopqrstuvwxyz012345\\n' > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
     printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
     echo "invocation" >> "$HOME/.security-invocations"
@@ -2238,6 +2577,15 @@ describe('devReviewLoop — a findings.txt line that still does not parse is an 
     expect(pauseComment).toMatch(/line 1/)
     expect(pauseComment).toMatch(/sec-session-garbage/)
     expect(pauseComment).not.toMatch(/^VERDICT:/m)
+
+    // This pause reaches `postPauseComment` from `ReviewerReportParseFailure`'s
+    // own message, never from the outer crash catch — a distinct call site
+    // that must sanitize too. The garbage line above embeds a
+    // credential-shaped token; it must never reach the PUBLIC pause comment
+    // un-redacted, even though it DOES reach the reviewer's own retry prompt
+    // and the machine-local pause-state.json.
+    expect(pauseComment).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz012345')
+    expect(pauseComment).toContain('<redacted>')
   }, 20000)
 })
 
@@ -2571,6 +2919,123 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     expect(gateRedPrompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
     expect(gateRedPrompt).toMatch(/CI is red on the last head/)
     expect(gateRedPrompt).toMatch(/`git push`/)
+  }, 20000)
+})
+
+/**
+ * O4: CI itself reads green (`conclusion: success`) — the ONLY
+ * reason the gate reads red here is the PR body's own `Premise:` pin, which
+ * names a symbol `pinned.ts` no longer contains (the fixture's stand-in for
+ * "the head deleted it"). Isolates the premise path from the plain
+ * CI-red path the test above already covers.
+ */
+function writeFakeGhStalePremiseGreenCi(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  printf '%s\\n' '{"body":"**Premise:**\\n- pinned.ts contains: OLD_SYMBOL\\n\\nCloses #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+function setUpStalePremise(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeNeverPushes(binDir)
+  writeFakeGhStalePremiseGreenCi(binDir)
+  writeFakeGit(binDir)
+  // The premise's own pin target — `reassertPrBodyPremise`'s default file
+  // reader resolves paths relative to `process.cwd()` (the driver's real
+  // cwd, `cwd` here), no git needed (this dir is deliberately non-git, same
+  // as `setUp`'s own). Never contains `OLD_SYMBOL` — the fixture's stand-in
+  // for "the head deleted it since the brief was authored."
+  writeFileSync(join(cwd, 'pinned.ts'), 'export const CURRENT_SYMBOL = 1\n')
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a stale Premise pin pauses like a red gate, never a driver exit (O4)', () => {
+  it('produces one developer resume naming the failing premise line, then the SAME bounded infrastructure pause — never an uncaught exit', () => {
+    const { home, cwd, path } = setUpStalePremise()
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
+    })
+    // A clean, decided pause — never an uncaught crash. `not.toBe(0)` is the
+    // SAME non-zero a clean pause always exits with (a pause is not success),
+    // distinguished from a genuine crash by everything below: a real
+    // `paused (infrastructure)` decision, a real pause-state file, a real
+    // marked PR comment — none of which a raw uncaught exception leaves
+    // behind coherently.
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // The developer's SECOND turn (the first resume — round 1's own fresh
+    // push-and-open dispatch is `.dev-prompt-1.txt`) is where the premise
+    // failure first reaches it: one resume, naming the exact failing line,
+    // never a bare "CI is red" with nothing underneath.
+    const premisePrompt = readFileSync(join(home, '.dev-prompt-2.txt'), 'utf8')
+    expect(premisePrompt).toMatch(/CI is red on the last head/)
+    expect(premisePrompt).toMatch(/dispatch-gate premise:/)
+    expect(premisePrompt).toMatch(/pinned\.ts/)
+    expect(premisePrompt).toMatch(/OLD_SYMBOL/)
+    expect(premisePrompt).toMatch(/`git push`/)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', 'comment-1.md'), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    expect(pauseComment).toMatch(/dispatch-gate premise:/)
   }, 20000)
 })
 
@@ -3456,13 +3921,13 @@ function setUpNoPushEver(): { home: string; cwd: string; path: string } {
   const cwd = tempDir('vinaya-drl-cwd-')
   const binDir = tempDir('vinaya-drl-bin-')
   writeFakeClaudeNoPushEver(binDir)
-  writeFakeGh(binDir)
+  writeFakeGhWithWorkingIssueComment(binDir)
   writeFakeGit(binDir)
   return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
 }
 
 describe('devReviewLoop — the pull-request poll gives up naming what it waited for (O3, task-run-v1 13, #508)', () => {
-  it('names branch, local head (unknown), remote head (none), and pull-request absence, after resuming once', () => {
+  it('names branch, local head (unknown), remote head (none), and pull-request absence, after resuming once — a decided pause(infrastructure), never an uncaught crash (O6)', () => {
     const { home, cwd, path } = setUpNoPushEver()
 
     const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
@@ -3470,11 +3935,35 @@ describe('devReviewLoop — the pull-request poll gives up naming what it waited
       VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5'
     })
     expect(r.status).not.toBe(0)
-    const output = r.stdout + r.stderr
-    expect(output).toMatch(new RegExp(`branch: ${BRANCH.replace(/\//g, '\\/')}`))
-    expect(output).toMatch(/local head: \(worktree not found/)
-    expect(output).toMatch(/remote head: \(no head on origin\)/)
-    expect(output).toMatch(/pull request: none open/)
+    // O6: the round-1 poll-giveup throw now reaches the SAME
+    // outer catch every other in-loop failure does — a decided
+    // `pause(infrastructure)`, never a re-thrown crash. The rich
+    // branch/head/pull-request message this poll timeout names is no
+    // longer printed to stdout/stderr (nothing throws there to print it);
+    // it lands in full in the pause's own LOCAL `detail` (never posted
+    // anywhere — machine-local outbox only).
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+    const detail = String(pauseState.detail)
+    expect(detail).toMatch(new RegExp(`branch: ${BRANCH.replace(/\//g, '\\/')}`))
+    expect(detail).toMatch(/local head: \(worktree not found/)
+    expect(detail).toMatch(/remote head: \(no head on origin\)/)
+    expect(detail).toMatch(/pull request: none open/)
+
+    // Security review, MEDIUM: the PUBLIC PR comment gets a SEPARATELY
+    // sanitized detail — first line only. The full multi-line
+    // branch/head/pull-request breakdown above is a local-only fact; the
+    // public thread only ever sees the poll's own one-line headline.
+    const posted = postedCommentFiles(home).map((f) => readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8'))
+    const pauseComment = posted.find((body) => /^<!-- aeg:loop:paused:infrastructure -->$/m.test(body))
+    expect(pauseComment).toBeDefined()
+    expect(pauseComment).toContain('no open PR appeared within the poll budget')
+    expect(pauseComment).not.toMatch(/local head:/)
+    expect(pauseComment).not.toMatch(/pull request: none open/)
   }, 20000)
 })
 
@@ -3549,6 +4038,79 @@ describe('devReviewLoop — a refusal/escalation posted before any push ends the
     expect(body).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
     expect(body).toMatch(/brief is missing tier\/scope\/stop-conditions/)
     expect(body).toMatch(/vinaya task run/)
+  }, 20000)
+})
+
+/**
+ * Same shape as `setUpStopBeforePush`, except the developer's own stop
+ * comment embeds a credential-shaped token and a path naming a different
+ * local user — the raw text `postIssuePauseComment` receives as `detail`
+ * before this scenario asserts what actually reaches the public comment.
+ */
+function setUpStopBeforePushWithCredential(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeNoPushEver(binDir)
+  writeFakeBinary(
+    binDir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}},{"body":"<!-- aeg:developer:stop -->\\nCould not read '\\''/Users/someone-else/config.json'\\'' — token=ghp_abcdefghijklmnopqrstuvwxyz012345 rejected.","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  echo '[]'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/issues/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+echo "unhandled fake gh call in stop-before-push-with-credential scenario: $*" >&2
+exit 1
+`
+  )
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — the no-push-stop escalation comment is sanitized too (O9)', () => {
+  it('redacts the credential and the different-user path from the developer stop comment before it reaches the public Issue comment', () => {
+    const { home, cwd, path } = setUpStopBeforePushWithCredential()
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(escalation\)/)
+
+    const posted = postedCommentFiles(home)
+    const pauseFiles = posted.filter((f) =>
+      readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8').includes('aeg:loop:paused:escalation')
+    )
+    expect(pauseFiles).toHaveLength(1)
+    const body = readFileSync(join(home, '.fake-gh-posted-comments', pauseFiles[0] as string), 'utf8')
+
+    // The raw secret and the other user's path never reach the public
+    // comment — proof that `postIssuePauseComment` actually sanitizes this
+    // call site, not merely that it compiles and posts something.
+    expect(body).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz012345')
+    expect(body).not.toContain('someone-else')
+    expect(body).toContain('<redacted>')
+    expect(body).toContain('~/config.json')
   }, 20000)
 })
 
@@ -4677,6 +5239,69 @@ describe('CONFIDENCE_PROMPT_LINE (pure) — O11 (task-run-v1 21, #541, round 2 r
   it('the confidence re-ask prompt (dispatched via dispatchDeveloper, which always prepends the resume-context block on a resume) still carries this same command, since it is appended verbatim', () => {
     const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${CONFIDENCE_PROMPT_LINE}`
     expect(reaskPrompt).toMatch(/`echo '.*' > \.vinaya-confidence`/)
+  })
+})
+
+describe('sanitizeUncaughtErrorForPublicPause (pure) — security review, MEDIUM', () => {
+  it('takes only the first line — a multi-line stderr dump collapses to its own headline', () => {
+    const err = new Error('short headline\nline two with a stack frame\nline three')
+    expect(sanitizeUncaughtErrorForPublicPause(err)).toBe('short headline')
+  })
+
+  it("redacts this process's own $HOME to ~ — the common shape a leaked local path takes", () => {
+    const home = process.env.HOME
+    if (!home) return // nothing to redact on a host with no $HOME set
+    const err = new Error(`ENOENT: no such file or directory, open '${home}/secret-project/config.json'`)
+    const result = sanitizeUncaughtErrorForPublicPause(err)
+    expect(result).not.toContain(home)
+    expect(result).toContain('~/secret-project/config.json')
+  })
+
+  it('caps the length — a runaway message never balloons the public pause comment', () => {
+    const err = new Error('x'.repeat(1000))
+    const result = sanitizeUncaughtErrorForPublicPause(err)
+    expect(result.length).toBeLessThan(320)
+    expect(result.endsWith('…')).toBe(true)
+  })
+
+  it('a non-Error thrown value is stringified the same way', () => {
+    expect(sanitizeUncaughtErrorForPublicPause('a plain string throw')).toBe('a plain string throw')
+  })
+
+  // The redactions the sanitizer adds — a path naming a DIFFERENT user, a
+  // URL-embedded credential, a well-known credential shape, this machine's
+  // hostname — had no direct test coverage of their own.
+  it("redacts a filesystem path naming a DIFFERENT user than this process's own $HOME", () => {
+    const err = new Error("ENOENT: no such file or directory, open '/Users/someone-else/config.json'")
+    const result = sanitizeUncaughtErrorForPublicPause(err)
+    expect(result).not.toContain('someone-else')
+    expect(result).toContain('~/config.json')
+  })
+
+  it('redacts a credential embedded as a URL userinfo segment', () => {
+    const err = new Error(
+      "fatal: unable to access 'https://x-access-token:ghp_abcdefghijklmnopqrstuvwxyz012345@github.com/atta-labs/vinaya.git/': The requested URL returned error: 403"
+    )
+    const result = sanitizeUncaughtErrorForPublicPause(err)
+    expect(result).not.toContain('x-access-token')
+    expect(result).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz012345')
+    expect(result).toContain('://<redacted>@github.com')
+  })
+
+  it('redacts a well-known credential shape even outside a URL', () => {
+    const err = new Error('gh: request failed, token=ghp_abcdefghijklmnopqrstuvwxyz012345 rejected')
+    const result = sanitizeUncaughtErrorForPublicPause(err)
+    expect(result).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz012345')
+    expect(result).toContain('<redacted>')
+  })
+
+  it("redacts this machine's own hostname", () => {
+    const host = hostname()
+    if (!host) return // nothing to redact on a host that reports none
+    const err = new Error(`connect ECONNREFUSED ${host}:443`)
+    const result = sanitizeUncaughtErrorForPublicPause(err)
+    expect(result).not.toContain(host)
+    expect(result).toContain('<host>:443')
   })
 })
 

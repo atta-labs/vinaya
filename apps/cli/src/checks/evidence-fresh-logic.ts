@@ -42,6 +42,16 @@ const HEAD_LINE = /^Head:\s*([0-9a-f]{7,40})\s*$/m
 const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
 
 /**
+ * The `## Evidence` placeholder text `aeg-root/templates/pr-report-template.md`
+ * ships between the `AEG:EVIDENCE` anchors — verbatim, so a freshly opened
+ * PR whose driver-path report has not run yet carries this
+ * exact line, never a `Head:`/fence pair. Must stay byte-identical to the
+ * template's own line; a drift between the two would make every untouched
+ * PR fail this check instead of passing it.
+ */
+export const EVIDENCE_PLACEHOLDER_TEXT = '[run `vinaya pr report --write` to populate — do not type this block by hand]'
+
+/**
  * Compares an already-located `AEG:EVIDENCE` region against the facts a
  * checker can independently derive. Assumes the caller already handled the
  * "no block" / "no PR body" / "no PR yet" / "hidden" bypasses — `resolved`
@@ -76,9 +86,47 @@ export function compareEvidenceBlock(
   resolvedHead: string,
   actualNumstat: string,
   expectedGroupCCommandLines?: string[],
-  patchIdOf?: (sha: string) => string | null
+  patchIdOf?: (sha: string) => string | null,
+  hasPriorDeveloperRound?: boolean
 ): EvidenceCompareResult {
   const region = resolved.region
+
+  // The untouched template placeholder passes rather than failing as
+  // "malformed" — a driver-path PR opens with this exact text (the
+  // driver's own per-round report has not run for this head yet, see
+  // `roles/developer.md` § After you open the PR), and it never binds to
+  // any particular head, so there is nothing to bind to a head here yet.
+  //
+  // Security review, HIGH: the placeholder's mere presence is NOT, on its
+  // own, proof that no report has ever landed — nothing stops a PR author
+  // from hand-editing a REAL, already-posted block back to this exact
+  // literal string to defeat the byte-comparison below forever. Trusted
+  // only when the caller also confirms no developer round has ever posted
+  // for this PR (`hasPriorDeveloperRound`, the round-marker comment the
+  // driver posts at dispatch time every round, starting the first time its
+  // gate ever goes green — the SAME moment its own automatic evidence
+  // report first runs). Once a single round has happened, the block must
+  // be a real, byte-matching report from then on — a placeholder found
+  // afterward falls through to the ordinary "malformed" failure below,
+  // never a silent pass. `undefined`/`false` both still exempt — this
+  // keeps the pure placeholder-only fixtures (a caller with nothing to
+  // compute this fact from) passing unchanged; the real check-evidence-fresh
+  // bin is the one production caller, and it ALWAYS computes and passes the
+  // real value (a live PR comments read), so the exploit this closes is
+  // closed at the one place it actually matters.
+  const isPlaceholder = region.trim() === EVIDENCE_PLACEHOLDER_TEXT
+  if (isPlaceholder) {
+    if (hasPriorDeveloperRound !== true) {
+      return { status: 'pass' }
+    }
+    return {
+      status: 'fail',
+      errors: [
+        'evidence-fresh: the AEG:EVIDENCE block reads as the untouched placeholder, but this PR has already had at least one developer round — a real report should exist for this head. Re-run `vinaya pr report --write` to regenerate it; re-pasting the placeholder over a real block never passes.'
+      ]
+    }
+  }
+
   const headMatch = region.match(HEAD_LINE)
   const fences = [...region.matchAll(FENCE)].map((m) => (m[1] ?? '').trim())
 

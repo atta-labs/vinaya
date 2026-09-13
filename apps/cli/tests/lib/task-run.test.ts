@@ -46,6 +46,11 @@ function deps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
     ) as unknown as RunTaskDeps['assembleAndRenderBriefForIssue'],
     developerBranchFor: neverCalled('developerBranchFor') as unknown as RunTaskDeps['developerBranchFor'],
     findOpenPrForBranch: neverCalled('findOpenPrForBranch') as unknown as RunTaskDeps['findOpenPrForBranch'],
+    // O5: defaults to `true` — every EXISTING open-PR-refuses
+    // test in this file models a driver genuinely still running, the one
+    // case that must still refuse. The dead-lock takeover tests below
+    // override this to `false` explicitly.
+    isDriverAlive: () => true,
     devReviewLoop: neverCalled('devReviewLoop') as unknown as RunTaskDeps['devReviewLoop'],
     // Not `neverCalled`: `runTask` always calls this once `devReviewLoop`
     // resolves (to build `prUrl`), so every test that reaches that point
@@ -424,5 +429,75 @@ describe('runTask — O3: an open developer pull request refuses a second start'
       )
     ).rejects.toThrow(RunTaskError)
     expect(loopCalled).toBe(false)
+  })
+})
+
+describe('runTask — O5: a dead driver lock is taken over, never refused', () => {
+  it('a dead lock with an open PR and no pause state is taken over — devReviewLoop runs, nothing thrown', async () => {
+    let loopCalled = false
+    const result = await runTask(
+      { tranche: 'task-run-v1', n: 2, agent: 'claude' },
+      deps({
+        prepareTask: async () => ({ issue: 480, brief: '', commentUrl: '', version: 1 }),
+        developerBranchFor: () => 'task/task-run-v1/2',
+        findOpenPrForBranch: () => ({ number: 501, branch: 'task/task-run-v1/2' }),
+        // The refusal that today points at --resume is gone: an open PR
+        // alone is no longer grounds to refuse when the lock naming it is
+        // dead — `isDriverAlive` false is the ONLY fact that changes here
+        // from the still-refuses fixtures above.
+        isDriverAlive: () => false,
+        devReviewLoop: async (input) => {
+          loopCalled = true
+          expect(input).toEqual({ task: 480, agent: 'claude' })
+          return PUBLISH_RESULT
+        }
+      })
+    )
+    expect(loopCalled).toBe(true)
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+  })
+
+  it('the --issue path takes over a dead lock identically — never calling isDriverAlive before an open PR is even found', async () => {
+    let isDriverAliveCalled = false
+    let loopCalled = false
+    const result = await runTask(
+      { issue: 583, agent: 'claude' },
+      deps({
+        prepareIssueTask: async () => ({ issue: 583, brief: '', commentUrl: '', version: 1 }),
+        developerBranchFor: () => 'task/issue-583',
+        findOpenPrForBranch: () => ({ number: 701, branch: 'task/issue-583' }),
+        isDriverAlive: (task) => {
+          isDriverAliveCalled = true
+          expect(task).toBe(583)
+          return false
+        },
+        devReviewLoop: async () => {
+          loopCalled = true
+          return { finalDecision: { type: 'publish' }, prNumber: 701, task: 583 }
+        }
+      })
+    )
+    expect(isDriverAliveCalled).toBe(true)
+    expect(loopCalled).toBe(true)
+    expect(result.prNumber).toBe(701)
+  })
+
+  it('no open PR at all never even asks isDriverAlive — the dead-lock check is only meaningful once a PR exists to take over', async () => {
+    let isDriverAliveCalled = false
+    const result = await runTask(
+      { tranche: 'task-run-v1', n: 2, agent: 'claude' },
+      deps({
+        prepareTask: async () => ({ issue: 480, brief: '', commentUrl: '', version: 1 }),
+        developerBranchFor: () => 'task/task-run-v1/2',
+        findOpenPrForBranch: () => null,
+        isDriverAlive: () => {
+          isDriverAliveCalled = true
+          return true
+        },
+        devReviewLoop: async () => PUBLISH_RESULT
+      })
+    )
+    expect(isDriverAliveCalled).toBe(false)
+    expect(result.finalDecision).toEqual({ type: 'publish' })
   })
 })

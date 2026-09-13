@@ -8,11 +8,54 @@
  */
 
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { PauseReason } from '@attalabs/aeg-core'
 import { postMarkedComment } from '../forge-write.js'
 import { postForgeEffectOnce } from './publication.js'
 import { readIfExists } from './reviewer-dispatch.js'
+
+/** `sanitizePublicPauseDetail` truncates to this — long enough to stay informative, short enough that a runaway stack trace or subprocess dump never balloons a public PR comment. */
+const PUBLIC_PAUSE_DETAIL_MAX_LENGTH = 300
+
+/** Any `/Users/<name>` or `/home/<name>` prefix, this machine's own `$HOME` included — not only the exact `$HOME` string, since a leaked path can name a DIFFERENT local user (a subprocess run as another account, a path baked into a dependency's own error string). */
+const HOME_LIKE_PATH = /\/(?:Users|home)\/[^/\s]+/g
+
+/** A userinfo segment embedded in a URL (`https://<token>@host/...`, the shape a leaked git remote or API endpoint takes when it carries a credential inline). */
+const URL_CREDENTIAL = /:\/\/[^\s@/]+@/g
+
+/** A well-known credential shape (a GitHub token prefix, an AWS access key, a `Bearer` header, a `token=`/`secret=`/`password=`/`api_key=` assignment) embedded in otherwise-ordinary text — the shape a subprocess's raw stderr commonly carries. */
+const CREDENTIAL_LIKE =
+  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|Bearer\s+[A-Za-z0-9._-]+|(?:token|secret|password|api[_-]?key)\s*[:=]\s*\S+)/gi
+
+/**
+ * The single chokepoint every pause `detail` destined for a PUBLIC PR
+ * comment must pass through — applied INSIDE `postPauseComment`, below, so
+ * no call site (the
+ * outer crash catch, `stale_driver`'s failed `git pull` stderr, a reviewer
+ * infrastructure failure's echoed findings-file line, any future pause
+ * reason) can forget it. Before this, only the top-level catch's own detail
+ * was sanitized by hand; every other `decision.detail` reached the forge
+ * raw, carrying whatever a subprocess's stderr or a reviewer-authored file
+ * happened to contain. First line only (a multi-line dump collapses to its
+ * own headline), this machine's own `$HOME` and any other `/Users/`or
+ * `/home/`-rooted path redacted to `~`, a URL-embedded credential and known
+ * credential shapes redacted, this machine's hostname redacted, and capped
+ * to a bounded length.
+ */
+export function sanitizePublicPauseDetail(raw: string): string {
+  const firstLine = (raw.split('\n')[0] ?? raw).trim()
+  const home = process.env.HOME
+  let redacted = home && home.length > 0 ? firstLine.split(home).join('~') : firstLine
+  redacted = redacted.replace(HOME_LIKE_PATH, '~')
+  redacted = redacted.replace(URL_CREDENTIAL, '://<redacted>@')
+  redacted = redacted.replace(CREDENTIAL_LIKE, '<redacted>')
+  const host = hostname()
+  if (host && host.length > 0) redacted = redacted.split(host).join('<host>')
+  return redacted.length > PUBLIC_PAUSE_DETAIL_MAX_LENGTH
+    ? `${redacted.slice(0, PUBLIC_PAUSE_DETAIL_MAX_LENGTH)}…`
+    : redacted
+}
 
 // --- pause (O2) --------------------------------------------------------------
 
@@ -43,23 +86,44 @@ export function renderPauseComment(prNumber: number, reason: PauseReason, detail
 }
 
 /**
- * O9: the round-1-entry variant of the pause
- * comment — no PR exists yet to carry it (posted on the Issue instead) and
- * no PR number exists for a `--resume` command, so the resume path named is
- * `vinaya task run`, the same one command this task's own O10 makes work
- * with no `--agent` to remember.
+ * O9: the no-PR-yet variant of the pause comment — posted on the task Issue
+ * instead of a pull request, because none is known to exist: the round-1
+ * refusal/escalation before any push, or a setup failure that never got as
+ * far as resolving one. Carries no PR number for a `--resume` command, so
+ * the resume path named is `vinaya task run`, the same one command this
+ * task's own O10 makes work with no `--agent` to remember.
  */
-export function renderNoPushStopComment(task: number, detail: string): string {
+export function renderNoPushStopComment(task: number, reason: PauseReason, detail?: string): string {
   return [
-    `The dev-review-loop paused: escalation — ${detail}.`,
+    `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
     '',
-    'No branch was ever pushed for this task, so there is no pull request to resume against yet.',
+    'No pull request exists yet for this task, so the pause is recorded on this Issue instead.',
     'A Principal ruling is needed before this can continue. Once one is posted on this Issue, resume with:',
     '',
     '```',
     `vinaya task run <tranche> ${task}`,
     '```'
   ].join('\n')
+}
+
+/**
+ * The Issue-posted counterpart to `postPauseComment` — for a pause recorded
+ * before any pull request is known to exist. Sanitizes `detail` HERE,
+ * unconditionally, the same chokepoint discipline `postPauseComment` applies
+ * for the PR case, so a call site never posts a raw `detail` un-redacted
+ * either way.
+ */
+export function postIssuePauseComment(
+  root: string,
+  task: number,
+  round: number,
+  reason: PauseReason,
+  detail?: string
+): void {
+  const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
+  postForgeEffectOnce(root, task, `pause-issue-${round}-${reason}`, () =>
+    postMarkedComment('issue', String(task), pauseMarker(reason), renderNoPushStopComment(task, reason, publicDetail))
+  )
 }
 
 /**
@@ -82,8 +146,13 @@ export function postPauseComment(
   reason: PauseReason,
   detail?: string
 ): void {
+  // Sanitized HERE, unconditionally — the caller's `detail` may be the raw machine-local
+  // string a `decision.detail` field carries (a subprocess's stderr, a
+  // reviewer-authored file's own text), never pre-sanitized by convention.
+  // See `sanitizePublicPauseDetail`'s own doc comment for what this closes.
+  const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
   postForgeEffectOnce(root, task, `pause-${round}-${head}`, () =>
-    postMarkedComment('pr', String(prNumber), pauseMarker(reason), renderPauseComment(prNumber, reason, detail))
+    postMarkedComment('pr', String(prNumber), pauseMarker(reason), renderPauseComment(prNumber, reason, publicDetail))
   )
 }
 

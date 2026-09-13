@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { anchoredRegion } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
-import { compareEvidenceBlock } from '../../src/checks/evidence-fresh-logic'
+import { EVIDENCE_PLACEHOLDER_TEXT, compareEvidenceBlock } from '../../src/checks/evidence-fresh-logic'
 import { type ResolvedRegion, ScanContext, resolveAnchoredRegion } from '../../src/checks/scan-context'
 import { type GroupCCommandResult, renderGroupC } from '../../src/commands/pr-report'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../src/lib/numstat'
@@ -100,6 +100,73 @@ describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)',
     const malformed = ['<!-- AEG:EVIDENCE:START -->', '```', NUMSTAT, '```', '<!-- AEG:EVIDENCE:END -->'].join('\n')
     const result = compareEvidenceBlock(regionOf(malformed), HEAD, NUMSTAT)
     expect(result.status).toBe('fail')
+  })
+})
+
+describe('compareEvidenceBlock — the untouched placeholder (O1)', () => {
+  function placeholderBody(): string {
+    return [
+      '## Evidence',
+      '',
+      '<!-- AEG:EVIDENCE:START -->',
+      EVIDENCE_PLACEHOLDER_TEXT,
+      '<!-- AEG:EVIDENCE:END -->'
+    ].join('\n')
+  }
+
+  it('a body whose evidence block is the untouched placeholder passes on a fresh head — no driver report has run yet', () => {
+    const result = compareEvidenceBlock(regionOf(placeholderBody()), HEAD, NUMSTAT)
+    expect(result.status).toBe('pass')
+  })
+
+  it('passes regardless of the supplied Group C expectation or patchIdOf — the placeholder never binds to a head at all', () => {
+    let calls = 0
+    const countingPatchId = () => {
+      calls += 1
+      return 'irrelevant'
+    }
+    const result = compareEvidenceBlock(regionOf(placeholderBody()), HEAD, NUMSTAT, ['some command'], countingPatchId)
+    expect(result.status).toBe('pass')
+    expect(calls).toBe(0)
+  })
+
+  it('a stale FILLED block still fails — the placeholder pass never masks a real, out-of-date report', () => {
+    const staleHead = 'b'.repeat(40)
+    const body = evidenceBody(staleHead, NUMSTAT)
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT)
+    expect(result.status).toBe('fail')
+    expect(result.status === 'fail' && result.errors.join('\n')).toContain('Group B is stale')
+  })
+
+  it('a body carrying extra text alongside the placeholder line is NOT treated as the placeholder — still malformed, still fails', () => {
+    const body = [
+      '<!-- AEG:EVIDENCE:START -->',
+      EVIDENCE_PLACEHOLDER_TEXT,
+      'plus a hand-typed line',
+      '<!-- AEG:EVIDENCE:END -->'
+    ].join('\n')
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT)
+    expect(result.status).toBe('fail')
+  })
+
+  // Security review, HIGH: a real, already-posted block hand-edited back to
+  // the exact placeholder text must never re-exempt itself from the
+  // fabrication check just by reverting to that literal string — the
+  // exemption is for a genuinely fresh head, not a re-writable escape hatch.
+  it('hasPriorDeveloperRound=true refuses the placeholder — a round already happened, so a real report should exist', () => {
+    const result = compareEvidenceBlock(regionOf(placeholderBody()), HEAD, NUMSTAT, undefined, undefined, true)
+    expect(result.status).toBe('fail')
+    expect(result.status === 'fail' && result.errors.join('\n')).toMatch(/already had at least one developer round/)
+  })
+
+  it('hasPriorDeveloperRound=false still passes — explicitly confirmed no round has ever happened', () => {
+    const result = compareEvidenceBlock(regionOf(placeholderBody()), HEAD, NUMSTAT, undefined, undefined, false)
+    expect(result.status).toBe('pass')
+  })
+
+  it('hasPriorDeveloperRound omitted (a caller with nothing to compute it from) still passes — unchanged, pure-fixture behavior', () => {
+    const result = compareEvidenceBlock(regionOf(placeholderBody()), HEAD, NUMSTAT)
+    expect(result.status).toBe('pass')
   })
 })
 
@@ -279,6 +346,154 @@ describe('the check refuses when the diff cannot be recomputed', () => {
         stderr: 'pipe'
       })
       expect(await proc.exited).not.toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('the check refuses a placeholder body once a developer round has already posted (security review, HIGH)', () => {
+  const BIN = join(import.meta.dir, '../../src/checks/bin/check-evidence-fresh.ts')
+
+  function fixtureRepo(): { dir: string; head: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'ef-placeholder-'))
+    const g = (args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+    g(['init', '-q', '-b', 'main'])
+    g(['config', 'user.email', 't@example.com'])
+    g(['config', 'user.name', 'test'])
+    writeFileSync(join(dir, 'a.txt'), 'a\n')
+    g(['add', '-A'])
+    g(['commit', '-qm', 'base'])
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+    return { dir, head }
+  }
+
+  function writeGhStub(
+    dir: string,
+    head: string,
+    comments: Array<{ body: string; author?: { login: string } }>
+  ): string {
+    const ghDir = join(dir, 'fakebin')
+    mkdirSync(ghDir, { recursive: true })
+    const ghPath = join(ghDir, 'gh')
+    writeFileSync(
+      ghPath,
+      `#!/bin/sh
+if [ "$5" = "headRefOid,baseRefName" ]; then
+  echo '{"headRefOid":"${head}","baseRefName":"main"}'
+  exit 0
+fi
+if [ "$5" = "comments" ]; then
+  echo '${JSON.stringify({ comments })}'
+  exit 0
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+    )
+    chmodSync(ghPath, 0o755)
+    return ghDir
+  }
+
+  function placeholderBody(): string {
+    return ['<!-- AEG:EVIDENCE:START -->', EVIDENCE_PLACEHOLDER_TEXT, '<!-- AEG:EVIDENCE:END -->'].join('\n')
+  }
+
+  it('no developer-round comment exists yet — the placeholder passes (a genuinely fresh PR)', async () => {
+    const { dir, head } = fixtureRepo()
+    try {
+      const ghDir = writeGhStub(dir, head, [])
+      const proc = Bun.spawn(['bun', BIN], {
+        cwd: dir,
+        env: {
+          ...process.env,
+          PATH: `${ghDir}:${process.env.PATH}`,
+          BASE_SHA: 'main',
+          PR_BODY: placeholderBody(),
+          PR_NUMBER: '1'
+        },
+        stdout: 'pipe',
+        stderr: 'pipe'
+      })
+      expect(await proc.exited).toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a developer-round comment from the allowlisted principal already exists — the placeholder is refused, never a silent pass', async () => {
+    const { dir, head } = fixtureRepo()
+    try {
+      const ghDir = writeGhStub(dir, head, [
+        { body: '<!-- aeg:developer:round-1 --> Head: deadbeef', author: { login: 'daniboomerang' } }
+      ])
+      const proc = Bun.spawn(['bun', BIN], {
+        cwd: dir,
+        env: {
+          ...process.env,
+          PATH: `${ghDir}:${process.env.PATH}`,
+          BASE_SHA: 'main',
+          PR_BODY: placeholderBody(),
+          PR_NUMBER: '1'
+        },
+        stdout: 'pipe',
+        stderr: 'pipe'
+      })
+      const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()])
+      expect(exitCode).not.toBe(0)
+      expect(stderr).toMatch(/already had at least one developer round/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // The marker's mere TEXT is no longer a trustworthy signal either way —
+  // only a comment authored by an allowlisted principal counts.
+  it('a marker-shaped comment from an unlisted account is no signal — the placeholder still passes (LOW: forged-marker griefing closed)', async () => {
+    const { dir, head } = fixtureRepo()
+    try {
+      const ghDir = writeGhStub(dir, head, [
+        { body: '<!-- aeg:developer:round-1 --> Head: deadbeef', author: { login: 'random-commenter' } }
+      ])
+      const proc = Bun.spawn(['bun', BIN], {
+        cwd: dir,
+        env: {
+          ...process.env,
+          PATH: `${ghDir}:${process.env.PATH}`,
+          BASE_SHA: 'main',
+          PR_BODY: placeholderBody(),
+          PR_NUMBER: '1'
+        },
+        stdout: 'pipe',
+        stderr: 'pipe'
+      })
+      expect(await proc.exited).toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // A comment with no `author` at all (the shape a deleted-and-never-
+  // recreated marker leaves nothing to find) is exactly as much "no signal"
+  // as one from an untrusted account — never treated as if a principal had
+  // posted it.
+  it('a marker-shaped comment with no author at all is no signal — the placeholder still passes', async () => {
+    const { dir, head } = fixtureRepo()
+    try {
+      const ghDir = writeGhStub(dir, head, [{ body: '<!-- aeg:developer:round-1 --> Head: deadbeef' }])
+      const proc = Bun.spawn(['bun', BIN], {
+        cwd: dir,
+        env: {
+          ...process.env,
+          PATH: `${ghDir}:${process.env.PATH}`,
+          BASE_SHA: 'main',
+          PR_BODY: placeholderBody(),
+          PR_NUMBER: '1'
+        },
+        stdout: 'pipe',
+        stderr: 'pipe'
+      })
+      expect(await proc.exited).toBe(0)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
