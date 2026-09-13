@@ -1644,6 +1644,13 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
 
     // The paired allowed shape: a real test file named on the command line.
     expect(decision(run('bun test apps/cli/tests/lib/dispatch.test.ts'))).toBeNull()
+
+    // Security review: neither a shell comment nor a chained statement can
+    // smuggle a real test-file path past the bare `bun test` that actually
+    // runs — the whole-suite check judges each statement on its own, not
+    // the raw command string as a whole.
+    expect(decision(run('bun test # apps/cli/tests/lib/dispatch.test.ts'))?.permissionDecision).toBe('deny')
+    expect(decision(run('bun test; echo apps/cli/tests/lib/dispatch.test.ts'))?.permissionDecision).toBe('deny')
   })
 
   it('denies the subagent tool (Agent/Task) when its background flag is set, allows it in the foreground', () => {

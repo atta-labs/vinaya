@@ -1838,6 +1838,16 @@ describe('parseIssueTestPlan', () => {
       const r = parseIssueTestPlan(withPlan('bun apps/cli/src/index.ts check --all → exits 0'))
       expect(r.ok).toBe(true)
     })
+
+    it('security review: a shell comment cannot smuggle a real test-file path past a bare `bun test`', () => {
+      const r = parseIssueTestPlan(withPlan('bun test # apps/cli/tests/lib/dev-review-loop.test.ts'))
+      expect(r.ok).toBe(false)
+    })
+
+    it('security review: a chained statement cannot smuggle a real test-file path past a bare `bun test`', () => {
+      const r = parseIssueTestPlan(withPlan('bun test; echo apps/cli/tests/lib/dev-review-loop.test.ts'))
+      expect(r.ok).toBe(false)
+    })
   })
 })
 

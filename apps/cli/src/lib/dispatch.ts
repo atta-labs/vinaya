@@ -386,11 +386,41 @@ export function backgroundShapeDetectorSource(): string {
  */
 export function wholeSuiteTestCommandDetectorSource(): string {
   return [
+    'function maskQuoted(s) {',
+    "  return s.replace(/'[^']*'/g, (m) => 'x'.repeat(m.length)).replace(/\"[^\"]*\"/g, (m) => 'x'.repeat(m.length));",
+    '}',
+    // A shell comment or a chained `;`/`&&`/`||` statement can plant a real
+    // test-file path AFTER (or beside) the runner invocation it never
+    // actually reaches — `bun test # apps/cli/foo.test.ts` and
+    // `bun test; echo apps/cli/foo.test.ts` both still run a bare `bun test`
+    // as their effective first command. Judging the whole raw string let
+    // both through (security review, found live); judging one statement at
+    // a time, comments stripped, does not.
+    'function stripLineComment(s) {',
+    '  const idx = maskQuoted(s).indexOf("#");',
+    '  return idx === -1 ? s : s.slice(0, idx);',
+    '}',
+    'function commandStatements(command) {',
+    '  const masked = maskQuoted(command);',
+    '  const statements = [];',
+    '  let last = 0;',
+    '  const re = /;|&&|\\|\\|/g;',
+    '  let m;',
+    '  while ((m = re.exec(masked)) !== null) {',
+    '    statements.push(command.slice(last, m.index));',
+    '    last = m.index + m[0].length;',
+    '  }',
+    '  statements.push(command.slice(last));',
+    '  return statements;',
+    '}',
     'function commandRunsWholeSuite(command) {',
     "  if (typeof command !== 'string') return false;",
-    '  if (/\\bbunx\\s+turbo\\s+test\\b/i.test(command)) return true;',
-    '  if (/\\bbun\\s+test\\b/i.test(command) || /\\bvitest\\s+run\\b/i.test(command)) {',
-    '    return !/[^\\s\'"]+\\.(?:test|spec)\\.[jt]sx?\\b/i.test(command);',
+    '  for (const raw of commandStatements(command)) {',
+    '    const stmt = stripLineComment(raw);',
+    '    if (/\\bbunx\\s+turbo\\s+test\\b/i.test(stmt)) return true;',
+    '    if (/\\bbun\\s+test\\b/i.test(stmt) || /\\bvitest\\s+run\\b/i.test(stmt)) {',
+    '      if (!/[^\\s\'"]+\\.(?:test|spec)\\.[jt]sx?\\b/i.test(stmt)) return true;',
+    '    }',
     '  }',
     '  return false;',
     '}'

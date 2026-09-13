@@ -901,6 +901,26 @@ describe('VinayaConfigSchema.prePush / .report — additive-only', () => {
     }
   })
 
+  // The pre-push hook always runs the CLI's surface-spec export test — a
+  // shared-package export with no surface row is refused at the push, not
+  // first seen in CI. Reachability can never select this test on its own
+  // merits (it asserts against `surface.md`, which nothing imports), so the
+  // fixture proves the FORCED path: a diff touching only
+  // `packages/aeg-core/src/index.ts` still selects it, through this repo's
+  // own real `vinaya.config.json` and the real workspace package graph.
+  it('a diff touching only packages/aeg-core/src/index.ts still selects surface-spec-exports.test.ts, via alwaysRun', async () => {
+    const repoRoot = join(import.meta.dir, '..', '..', '..')
+    const raw = JSON.parse(readFileSync(join(repoRoot, 'vinaya.config.json'), 'utf-8'))
+    const parsed = VinayaConfigSchema.safeParse(raw)
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+    const { selectAffectedTestFiles } = await import('../src/lib/test-selector.js')
+    const { selected } = selectAffectedTestFiles(repoRoot, ['packages/aeg-core/src/index.ts'], {
+      alwaysRun: parsed.data.prePush?.alwaysRun ?? []
+    })
+    expect(selected).toContain(join(repoRoot, 'apps/cli/tests/surface-spec-exports.test.ts'))
+  })
+
   it('an existing config with no "prePush"/"report" key still validates', () => {
     const parsed = VinayaConfigSchema.safeParse({
       rings: { ring1_forgeWriteInterception: true, ring2_asyncAudits: true }

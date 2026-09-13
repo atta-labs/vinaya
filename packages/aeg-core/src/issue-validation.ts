@@ -416,6 +416,47 @@ const BUN_TEST_RE = /\bbun\s+test\b/i
 const VITEST_RUN_RE = /\bvitest\s+run\b/i
 const TEST_FILE_ARG_RE = /[^\s'"]+\.(?:test|spec)\.[jt]sx?\b/i
 
+/** Same length, quoted regions blanked — so an index found in the result still points at the real character in the original string. */
+function maskQuoted(s: string): string {
+  return s.replace(/'[^']*'/g, (m) => 'x'.repeat(m.length)).replace(/"[^"]*"/g, (m) => 'x'.repeat(m.length))
+}
+
+/**
+ * A shell comment (an unquoted `#` to end of line) can plant a real test-file
+ * path AFTER the runner invocation it never actually reaches — the invoked
+ * command is still the bare part before the `#`. Found live (security
+ * review): `bun test # apps/cli/tests/foo.test.ts` satisfied
+ * `TEST_FILE_ARG_RE` by matching the commented-out path, though the line it
+ * names still runs the whole suite.
+ */
+function stripLineComment(s: string): string {
+  const idx = maskQuoted(s).indexOf('#')
+  return idx === -1 ? s : s.slice(0, idx)
+}
+
+/**
+ * Splits on an unquoted `;`, `&&`, or `||` — a chained line can smuggle a
+ * real test-file path into a SECOND statement while the FIRST one, the
+ * runner invocation itself, still has no argument. Found live (security
+ * review): `bun test; echo apps/cli/tests/foo.test.ts` satisfied
+ * `TEST_FILE_ARG_RE` against the whole line, though the `bun test` statement
+ * that actually runs still has no file argument.
+ */
+function commandStatements(command: string): string[] {
+  const masked = maskQuoted(command)
+  const statements: string[] = []
+  let last = 0
+  const re = /;|&&|\|\|/g
+  let m: RegExpExecArray | null
+  // biome-ignore lint/suspicious/noAssignInExpressions: standard exec-loop idiom
+  while ((m = re.exec(masked)) !== null) {
+    statements.push(command.slice(last, m.index))
+    last = m.index + m[0].length
+  }
+  statements.push(command.slice(last))
+  return statements
+}
+
 /**
  * A Test plan line naming a test runner with no test-file argument can run
  * the whole suite once dispatched — the developer role's pre-push hook
@@ -423,11 +464,17 @@ const TEST_FILE_ARG_RE = /[^\s'"]+\.(?:test|spec)\.[jt]sx?\b/i
  * Planner's Test plan line exists to name the file(s) THIS task's own Part
  * proves, never to re-authorize the whole thing. A line that isn't a
  * recognized test-runner invocation at all (a `vinaya check` command, an
- * arbitrary CLI call) is never whole-suite by this definition.
+ * arbitrary CLI call) is never whole-suite by this definition. Judged one
+ * statement at a time (see `commandStatements`/`stripLineComment`) so a
+ * trailing chained command or comment can never smuggle in a test-file
+ * argument the runner invocation itself never receives.
  */
 function isWholeSuiteTestPlanLine(line: string): boolean {
-  if (TURBO_TEST_RE.test(line)) return true
-  if (BUN_TEST_RE.test(line) || VITEST_RUN_RE.test(line)) return !TEST_FILE_ARG_RE.test(line)
+  for (const raw of commandStatements(line)) {
+    const stmt = stripLineComment(raw)
+    if (TURBO_TEST_RE.test(stmt)) return true
+    if ((BUN_TEST_RE.test(stmt) || VITEST_RUN_RE.test(stmt)) && !TEST_FILE_ARG_RE.test(stmt)) return true
+  }
   return false
 }
 
