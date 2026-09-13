@@ -592,6 +592,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `ENVELOPE_SCHEMA_VERSION` | const | `apps/cli/src/lib/envelope.ts` |
 | `printJson` | function | `apps/cli/src/lib/envelope.ts` |
 | `toEnvelope` | function | `apps/cli/src/lib/envelope.ts` |
+| `collectTaskIssueErrors` | function | `apps/cli/src/lib/forge-write.ts` |
 | `countMarkerComments` | function | `apps/cli/src/lib/forge-write.ts` |
 | `currentGhLogin` | function | `apps/cli/src/lib/forge-write.ts` |
 | `ensureTrancheLabelExists` | function | `apps/cli/src/lib/forge-write.ts` |

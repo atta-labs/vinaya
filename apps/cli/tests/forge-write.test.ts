@@ -609,7 +609,10 @@ describe('runBodyChecks — the ONE registry-runner call every forge-write path 
 })
 
 describe('runIssueChecks — the ONE registry-runner call every Issue write path shares (O2)', () => {
-  it("resolves without refusing for a subject every registered `validates: 'issue'` check passes", async () => {
+  // O1 (task 17, this task): returns the finding list instead of refusing
+  // internally, so `collectTaskIssueErrors` can fold it into the same union
+  // every other gate group contributes to. An empty array is the pass case.
+  it("resolves an empty finding list for a subject every registered `validates: 'issue'` check passes", async () => {
     await expect(
       runIssueChecks({
         body: "## Objectives\n\nO1. Something happens.\n\n## Planner's rationale\n\nsome rationale\n",
@@ -620,7 +623,7 @@ describe('runIssueChecks — the ONE registry-runner call every Issue write path
         resolvedMilestoneTitle: null,
         retryCommand: 'vinaya issue create'
       })
-    ).resolves.toBeUndefined()
+    ).resolves.toEqual([])
   })
 })
 
