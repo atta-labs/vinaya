@@ -335,8 +335,11 @@ describe('(e) every gh invocation carries an explicit repo target (Part 1, task 
     // Fails loud if the gh calls this test targets ever get refactored away
     // from sh()/shJson() (e.g. to execFileSync directly) without updating this scan.
     // 4, not 3: `runPremiseModeFromIssue`'s `gh issue view --json comments`
-    // call (plan-brief-v1 task 2, #427) is the fourth.
-    expect(ghCommands.length).toBe(4)
+    // call (plan-brief-v1 task 2, #427) is the fourth. 5, not 4:
+    // `fetchIssueStatesBatch` — one `gh api graphql` call, still carrying an
+    // explicit `-R` target even though the query's own `$owner`/`$repo`
+    // variables make it redundant — is the fifth.
+    expect(ghCommands.length).toBe(5)
     for (const argsText of ghCommands) {
       expect(argsText).toContain("'-R'")
       expect(argsText).toMatch(/`\$\{repo\.owner\}\/\$\{repo\.repo\}`/)
