@@ -615,7 +615,7 @@ describe('renderBrief', () => {
     expect(validated.status).toBe('pass')
   })
 
-  // O4 (#579): a shared package named ONLY as a bare Surface `in:` directory
+  // A shared package named ONLY as a bare Surface `in:` directory
   // — no individual file pinned anywhere under it — must still trigger the
   // consumer-tests rule. Before this fix the trigger read `facts.surfaceFiles`'
   // per-file `packageName` alone, which stays empty here, so the renderer

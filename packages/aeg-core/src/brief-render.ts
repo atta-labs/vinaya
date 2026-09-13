@@ -457,7 +457,7 @@ function renderSection4(facts: BriefFacts): string {
   // sentinel — ONE sentinel occurrence anywhere in §4 satisfies the whole
   // section, so a single combined line covers every uncovered consumer.
   //
-  // O4 (#579): the trigger reads `packagesNamedIn` against the SAME text
+  // The trigger reads `packagesNamedIn` against the SAME text
   // `checkConsumerTests` will re-scan (Create + Modify + Out of surface +
   // Premise pins, everything but the consumer lines themselves, not yet
   // computed) — never `facts.surfaceFiles`' per-file `packageName` alone.

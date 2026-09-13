@@ -777,7 +777,7 @@ const CONSUMER_TESTS_SENTINEL_RE = /consumer-tests\s*:\s*none\s*[-—–]\s*\S/i
 
 /**
  * Every distinct `packages/<pkg>/` reference in `text` — the packages a §4
- * surface map names. Exported (#579, O4) so `brief-render.ts`'s
+ * surface map names. Exported so `brief-render.ts`'s
  * `renderSection4` can scan the same rendered text with the same regex
  * before `checkConsumerTests` ever re-scans it — one implementation of the
  * trigger, read on both sides, rather than a renderer-side heuristic that
