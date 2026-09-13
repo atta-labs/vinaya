@@ -4041,6 +4041,79 @@ describe('devReviewLoop — a refusal/escalation posted before any push ends the
   }, 20000)
 })
 
+/**
+ * Same shape as `setUpStopBeforePush`, except the developer's own stop
+ * comment embeds a credential-shaped token and a path naming a different
+ * local user — the raw text `postIssuePauseComment` receives as `detail`
+ * before this scenario asserts what actually reaches the public comment.
+ */
+function setUpStopBeforePushWithCredential(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeNoPushEver(binDir)
+  writeFakeBinary(
+    binDir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}},{"body":"<!-- aeg:developer:stop -->\\nCould not read '\\''/Users/someone-else/config.json'\\'' — token=ghp_abcdefghijklmnopqrstuvwxyz012345 rejected.","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  echo '[]'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/issues/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+echo "unhandled fake gh call in stop-before-push-with-credential scenario: $*" >&2
+exit 1
+`
+  )
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — the no-push-stop escalation comment is sanitized too (O9)', () => {
+  it('redacts the credential and the different-user path from the developer stop comment before it reaches the public Issue comment', () => {
+    const { home, cwd, path } = setUpStopBeforePushWithCredential()
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(escalation\)/)
+
+    const posted = postedCommentFiles(home)
+    const pauseFiles = posted.filter((f) =>
+      readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8').includes('aeg:loop:paused:escalation')
+    )
+    expect(pauseFiles).toHaveLength(1)
+    const body = readFileSync(join(home, '.fake-gh-posted-comments', pauseFiles[0] as string), 'utf8')
+
+    // The raw secret and the other user's path never reach the public
+    // comment — proof that `postIssuePauseComment` actually sanitizes this
+    // call site, not merely that it compiles and posts something.
+    expect(body).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz012345')
+    expect(body).not.toContain('someone-else')
+    expect(body).toContain('<redacted>')
+    expect(body).toContain('~/config.json')
+  }, 20000)
+})
+
 // --- task-run-v1 13 (#508), O4/O6: mergeability blocks reviewer dispatch ---
 
 /**
