@@ -543,7 +543,7 @@ export async function listArchivedTrancheSlugsAsync(owner: string, repo: string)
  * count is a structural fact about the Milestone, not about which of its
  * Issues remain open.
  *
- * Labels only, paginated (issue-586, O1): a Milestone's Issue count is
+ * Labels only, paginated: a Milestone's Issue count is
  * unbounded, and this predicate needs nothing off an Issue but its labels —
  * fetching the REST default (full issue, including `body`) through
  * `ghApiGetAllPagesAsync`'s own `-q` server-side filter means the buffered

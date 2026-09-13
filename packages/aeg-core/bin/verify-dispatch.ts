@@ -142,7 +142,7 @@ function shJson<T>(cmd: string, args: string[]): T | null {
 const execFileAsync = promisify(execFile)
 
 /**
- * Async, larger-buffer sibling of `sh()` (issue-586, O2 round 2 self-fix) —
+ * Async, larger-buffer sibling of `sh()` —
  * for a request whose payload is genuinely bounded (a `--limit`-capped `gh
  * pr list`, never an unbounded Milestone enumeration; that case is
  * `tranchesAttachedToMilestone`'s own field-selection-plus-pagination fix,
