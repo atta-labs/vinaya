@@ -408,15 +408,16 @@ describe('vinaya issue objectives edit', () => {
     expect(readFileSync(commentsLogPath, 'utf-8')).toBe('')
   })
 
-  // task-run-v1 task 11, review round 1, O6 — once the Objectives comment is
-  // posted, a frozen brief must be superseded in the same command. This
-  // fixture cannot exercise the real supersede (it needs a real/mocked
-  // `assembleAndRenderBrief` network round trip — covered instead by
-  // `dispatch-task.test.ts`'s bundle-integration fixture for that shared
-  // machinery); it proves the OTHER half: a frozen brief whose Issue title
-  // does not resolve to a `[<tranche>] <n> — ...` task identity is refused
-  // by name rather than silently skipping the supersede O6 promises.
-  it('refuses, naming O6, when a frozen brief exists but the title/label do not resolve to a task identity', () => {
+  // O3 (Issue #583) — a frozen brief whose title/label do not resolve to a
+  // `[<tranche>] <n> — ...` task identity is no longer refused by name: it
+  // supersedes through the backlog `--issue` path (`prepareIssueTask`)
+  // instead, the same path `task brief --issue` already uses. This fixture
+  // has no real git remote/template to render from, so that render itself
+  // fails — proving the OTHER half of O3's ordering fix: the failure
+  // surfaces BEFORE this edit's own objectives comment posts, leaving none
+  // behind (the full success case — a real render producing a v2 brief —
+  // is `issueObjectivesEdit --add supersedes a backlog brief` below).
+  it('a render failure on the backlog supersede path leaves no objectives comment behind', () => {
     const repo = tempDir('issue-objectives-repo-')
     const { path, commentsLogPath } = stubGh({
       body: issueBody(THREE_OBJECTIVES),
@@ -444,12 +445,11 @@ describe('vinaya issue objectives edit', () => {
       path
     )
     expect(r.status).toBe(1)
-    expect(r.stderr).toMatch(/already frozen/)
-    expect(r.stderr).toContain('O6')
-    // The Objectives comment was already posted before the supersede check —
-    // this refusal reports the resulting disagreement, it does not undo it.
-    const posted = readFileSync(commentsLogPath, 'utf-8')
-    expect(posted).toContain('<!-- aeg:objectives:v1 -->')
+    expect(r.stderr).toContain('brief render refused')
+    // Fixed ordering (O3): the supersede attempt runs BEFORE the objectives
+    // comment post, so a failure here leaves no objectives comment at all —
+    // not even a v1.
+    expect(readFileSync(commentsLogPath, 'utf-8')).toBe('')
   })
 })
 
@@ -737,5 +737,180 @@ exit 1
     expect(r.stderr).toContain('Stop conditions')
     expect(readFileSync(editedBodyLogPath, 'utf-8')).toBe('')
     expect(readFileSync(commentsLogPath, 'utf-8')).toBe('')
+  })
+
+  /**
+   * A stateful `gh` fake, unlike `backlogGh` above: `issue edit`/`issue
+   * comment` mutate a `state.json` on disk, and every `issue view` reads it
+   * fresh — so the SECOND render this command triggers (O3/O6's supersede
+   * call, `prepareIssueTask`, which re-fetches the Issue after
+   * `writeValidatedIssueEdit`'s own real edit landed) sees the Objectives
+   * change the first render already validated, the same round trip a real
+   * forge gives for free.
+   */
+  function statefulBacklogGh(
+    dir: string,
+    opts: { body: string; title: string; comments: Array<{ body: string; author?: { login: string } | null }> }
+  ): {
+    path: Record<string, string>
+    editedBodyLogPath: string
+    commentsLogPath: string
+    statePath: string
+  } {
+    const statePath = join(dir, 'state.json')
+    writeFileSync(statePath, JSON.stringify({ body: opts.body, title: opts.title, comments: opts.comments }))
+    const editedBodyLogPath = join(dir, 'edited-body.log')
+    const commentsLogPath = join(dir, 'posted-comments.log')
+    writeFileSync(editedBodyLogPath, '')
+    writeFileSync(commentsLogPath, '')
+    const gh = join(dir, 'gh')
+    writeFileSync(
+      gh,
+      `#!/usr/bin/env bun
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
+
+const statePath = ${JSON.stringify(statePath)}
+const editedBodyLogPath = ${JSON.stringify(editedBodyLogPath)}
+const commentsLogPath = ${JSON.stringify(commentsLogPath)}
+const args = process.argv.slice(2)
+
+function readState() {
+  return JSON.parse(readFileSync(statePath, 'utf8'))
+}
+
+if (args[0] === 'api' && args[1] === 'user') {
+  console.log('daniboomerang')
+  process.exit(0)
+}
+if (args[0] === 'issue' && args[1] === 'view') {
+  const s = readState()
+  console.log(
+    JSON.stringify({
+      number: 999,
+      body: s.body,
+      title: s.title,
+      labels: [],
+      comments: s.comments,
+      state: 'OPEN'
+    })
+  )
+  process.exit(0)
+}
+if (args[0] === 'issue' && args[1] === 'edit') {
+  const bodyFile = args[args.indexOf('--body-file') + 1]
+  const newBody = readFileSync(bodyFile, 'utf8')
+  appendFileSync(editedBodyLogPath, newBody)
+  const s = readState()
+  s.body = newBody
+  writeFileSync(statePath, JSON.stringify(s))
+  console.log('https://github.com/acme/widget/issues/999')
+  process.exit(0)
+}
+if (args[0] === 'issue' && args[1] === 'comment') {
+  const bodyFile = args[args.indexOf('--body-file') + 1]
+  const body = readFileSync(bodyFile, 'utf8')
+  appendFileSync(commentsLogPath, 'ISSUE:' + args[2] + '\\n' + body + '\\n---\\n')
+  const s = readState()
+  s.comments.push({ body, author: { login: 'daniboomerang' } })
+  writeFileSync(statePath, JSON.stringify(s))
+  console.log('https://github.com/acme/widget/issues/999#issuecomment-' + s.comments.length)
+  process.exit(0)
+}
+process.stderr.write('gh stub: unhandled invocation: ' + args.join(' ') + '\\n')
+process.exit(1)
+`
+    )
+    chmodSync(gh, 0o755)
+    return { path: { PATH: `${dir}:${process.env.PATH ?? ''}` }, editedBodyLogPath, commentsLogPath, statePath }
+  }
+
+  it('issueObjectivesEdit --add supersedes a backlog brief: one added objective, one v2 brief, one command', () => {
+    const tmp = tempDir('issue-objectives-backlog-supersede-')
+    const remoteDir = join(tmp, 'remote')
+    const localDir = join(tmp, 'local')
+    mkdirSync(join(remoteDir, 'aeg-root', 'templates'), { recursive: true })
+    gitCmd(tmp, ['init', '-q', '-b', 'main', remoteDir])
+    gitCmd(remoteDir, ['config', 'user.email', 'a@example.com'])
+    gitCmd(remoteDir, ['config', 'user.name', 'A'])
+    cpSync(
+      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
+      join(remoteDir, 'aeg-root', 'templates', 'brief-template.md')
+    )
+    gitCmd(remoteDir, ['add', '.'])
+    gitCmd(remoteDir, ['commit', '-q', '-m', 'seed'])
+    gitCmd(tmp, ['clone', '-q', remoteDir, localDir])
+    gitCmd(localDir, ['config', 'user.email', 'a@example.com'])
+    gitCmd(localDir, ['config', 'user.name', 'A'])
+
+    // Carries `## Stop conditions` this time (unlike the O4 fixture above) —
+    // a fully renderable backlog brief, so the supersede call below actually
+    // produces a v2 rather than refusing.
+    const body = [
+      '**Project:** cli',
+      '',
+      '## Objectives',
+      '',
+      'O1. The fixture exercises the backlog supersede path.',
+      '',
+      '## Surface',
+      '',
+      'in: aeg-root',
+      'out: —',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — the only part, citing the only objective.',
+      '',
+      '## Test plan',
+      '',
+      'Test Plan: unit-tests-only',
+      '',
+      '## Stop conditions',
+      '',
+      '- Nothing unexpected.',
+      '',
+      RATIONALE
+    ].join('\n')
+
+    const { path, editedBodyLogPath, commentsLogPath } = statefulBacklogGh(tmp, {
+      body,
+      title: '[fixture] backlog issue',
+      comments: [
+        { body: '<!-- aeg:brief:v1 -->\nBrief hash: x\nfrozen brief text', author: { login: 'daniboomerang' } }
+      ]
+    })
+
+    const r = runCli(
+      [
+        'issue',
+        'objectives',
+        'edit',
+        '999',
+        '--add',
+        'A second objective the supersede must cover.',
+        '--part',
+        'Part 2 (O2) — the second part.',
+        '--reason',
+        'scope grew on a backlog issue'
+      ],
+      localDir,
+      { ...path, AEG_REPO: 'test-owner/test-repo' }
+    )
+
+    expect(r.status).toBe(0)
+    const editedBody = readFileSync(editedBodyLogPath, 'utf-8')
+    expect(editedBody).toContain('O2. A second objective the supersede must cover.')
+    expect(editedBody).toContain('Part 2 (O2) — the second part.')
+
+    const posted = readFileSync(commentsLogPath, 'utf-8')
+    // Both comments landed: the objectives audit comment...
+    expect(posted).toContain('<!-- aeg:objectives:v1 -->')
+    expect(posted).toContain('Reason: scope grew on a backlog issue')
+    // ...and the superseding v2 brief, naming the v1 predecessor.
+    expect(posted).toContain('<!-- aeg:brief:v2 -->')
+    expect(posted).toMatch(/Supersedes: .*scope grew on a backlog issue/)
+    // Two separate URLs on stdout — the objectives comment, then the brief.
+    const lines = r.stdout.trim().split('\n')
+    expect(lines.some((l) => l.includes('issuecomment-'))).toBe(true)
   })
 })

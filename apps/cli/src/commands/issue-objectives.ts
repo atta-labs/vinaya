@@ -13,7 +13,7 @@ import {
 } from '@attalabs/aeg-core'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config.js'
-import { prepareTask } from '../lib/dispatch-task.js'
+import { prepareIssueTask, prepareTask } from '../lib/dispatch-task.js'
 import { printJson } from '../lib/envelope'
 import {
   countMarkerComments,
@@ -244,6 +244,7 @@ function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditO
 type IssueComment = FrozenBriefCandidate & { url: string }
 
 function fetchIssueBodyAndComments(issueRef: string): {
+  number: number
   body: string
   title: string
   labels: string[]
@@ -251,7 +252,7 @@ function fetchIssueBodyAndComments(issueRef: string): {
 } {
   let out: string
   try {
-    out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'body,title,labels,comments'], {
+    out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'number,body,title,labels,comments'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     })
@@ -266,12 +267,14 @@ function fetchIssueBodyAndComments(issueRef: string): {
   }
   try {
     const parsed = JSON.parse(out) as {
+      number?: number
       body?: string
       title?: string
       labels?: Array<{ name: string }>
       comments?: Array<{ body: string; url: string; author: { login: string } | null }>
     }
     return {
+      number: parsed.number ?? Number.NaN,
       body: parsed.body ?? '',
       title: parsed.title ?? '',
       labels: (parsed.labels ?? []).map((l) => l.name),
@@ -281,7 +284,7 @@ function fetchIssueBodyAndComments(issueRef: string): {
     refuse([
       makeCheckError(
         'forge-fetch',
-        `Could not parse \`gh issue view ${issueRef} --json body,title,labels,comments\` output.`,
+        `Could not parse \`gh issue view ${issueRef} --json number,body,title,labels,comments\` output.`,
         `Re-run \`${RETRY}\`.`
       )
     ])
@@ -350,7 +353,7 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
   const { json, issueRef, op, reason, part } = parseArgs(args)
   refuseUnlessPrincipal(RETRY)
 
-  const { body, title, labels, comments } = fetchIssueBodyAndComments(issueRef)
+  const { number, body, title, labels, comments } = fetchIssueBodyAndComments(issueRef)
   const parsed = objectivesOf(body)
   if (!parsed.ok) {
     refuse([
@@ -423,6 +426,35 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
   }
 
   const newVersion = objectivesVersion(updated)
+
+  // O3/O6 — if this task's brief is already frozen, the Objectives edit
+  // above just moved the Issue and the frozen brief out of agreement (the
+  // frozen comment still shows the OLD list). Resolve and post the
+  // superseding brief BEFORE this edit's own audit comment below — never
+  // after — so a failure here (this task's brief-render path, not merely a
+  // missing tranche identity) leaves no objectives comment behind at all.
+  // A tranche-labeled Issue supersedes through `prepareTask`; a backlog
+  // Issue (no tranche identity at all — `resolveTaskIssueRef` returns
+  // `null`) supersedes through the same `--issue` path `task brief --issue`
+  // already uses (`prepareIssueTask`), never refused for lack of a tranche
+  // label. Dormant when the brief was never frozen — nothing to supersede
+  // yet.
+  let supersedeUrl: string | null = null
+  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  const frozen = resolveNewestFrozenBrief(comments, allowlist)
+  if (frozen !== null) {
+    const taskRef = resolveTaskIssueRef(title, labels)
+    const result =
+      taskRef !== null
+        ? await prepareTask({
+            tranche: taskRef.trancheSlug,
+            n: Number.parseInt(taskRef.taskId, 10),
+            supersede: { reason }
+          })
+        : await prepareIssueTask({ issue: number, supersede: { reason } })
+    supersedeUrl = result.commentUrl
+  }
+
   const k =
     countMarkerComments(
       comments.map((c) => c.body),
@@ -440,32 +472,6 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
     `Version: ${newVersion}`
   ].join('\n')
   const url = postMarkedComment('issue', issueRef, marker, commentBody)
-
-  // O6 — if this task's brief is already frozen, the Objectives edit above
-  // just moved the Issue and the frozen brief out of agreement (the frozen
-  // comment still shows the OLD list). Post the superseding brief in this
-  // same command, naming this edit's own `--reason`, so the two can never
-  // disagree after `issue objectives edit` returns and `pr create`'s
-  // `brief-shape` gate never fails on a Planner-authored Objectives change.
-  // Dormant when the brief was never frozen — nothing to supersede yet.
-  let supersedeUrl: string | null = null
-  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
-  const frozen = resolveNewestFrozenBrief(comments, allowlist)
-  if (frozen !== null) {
-    const taskRef = resolveTaskIssueRef(title, labels)
-    const taskId = taskRef ? Number.parseInt(taskRef.taskId, 10) : Number.NaN
-    if (!taskRef || !Number.isInteger(taskId)) {
-      refuse([
-        makeCheckError(
-          'objectives-supersede',
-          `Issue ${issueRef}'s brief is already frozen (${frozen.url}), but its title/\`vinaya/tranche:*\` label do not resolve to a \`[<tranche>] <n> — ...\` task identity — cannot post the superseding brief this Objectives edit requires (O6). The Objectives comment above was posted; the frozen brief now disagrees with it.`,
-          'Fix the Issue title to the `[<tranche>] <n> — <title>` form and its `vinaya/tranche:<slug>` label, then supersede by hand: `vinaya task brief <tranche> <n> --supersede --reason <text>`.'
-        )
-      ])
-    }
-    const result = await prepareTask({ tranche: taskRef.trancheSlug, n: taskId, supersede: { reason } })
-    supersedeUrl = result.commentUrl
-  }
 
   if (json) printJson({ written: true, version: newVersion, url, supersedeUrl })
   else {
