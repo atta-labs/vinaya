@@ -103,7 +103,7 @@ describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)',
   })
 })
 
-describe('compareEvidenceBlock — the untouched placeholder (O1, Issue #583)', () => {
+describe('compareEvidenceBlock — the untouched placeholder (O1)', () => {
   function placeholderBody(): string {
     return [
       '## Evidence',
@@ -447,9 +447,8 @@ exit 1
     }
   })
 
-  // Security review, HIGH and LOW (Issue #583, round 2): the marker's mere
-  // TEXT is no longer a trustworthy signal either way — only a comment
-  // authored by an allowlisted principal counts.
+  // The marker's mere TEXT is no longer a trustworthy signal either way —
+  // only a comment authored by an allowlisted principal counts.
   it('a marker-shaped comment from an unlisted account is no signal — the placeholder still passes (LOW: forged-marker griefing closed)', async () => {
     const { dir, head } = fixtureRepo()
     try {
@@ -474,10 +473,10 @@ exit 1
     }
   })
 
-  // Security review, HIGH (Issue #583, round 2): a comment with no `author`
-  // at all (the shape a deleted-and-never-recreated marker leaves nothing
-  // to find) is exactly as much "no signal" as one from an untrusted
-  // account — never treated as if a principal had posted it.
+  // A comment with no `author` at all (the shape a deleted-and-never-
+  // recreated marker leaves nothing to find) is exactly as much "no signal"
+  // as one from an untrusted account — never treated as if a principal had
+  // posted it.
   it('a marker-shaped comment with no author at all is no signal — the placeholder still passes', async () => {
     const { dir, head } = fixtureRepo()
     try {

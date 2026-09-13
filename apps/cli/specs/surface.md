@@ -534,6 +534,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `clearDriverLock` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `isDriverPidAlive` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `pauseMarker` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
+| `postIssuePauseComment` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `postPauseComment` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `printDriverLockLine` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `readDriverLock` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |

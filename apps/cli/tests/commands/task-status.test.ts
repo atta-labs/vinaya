@@ -72,7 +72,7 @@ const ISSUES = [
   { number: 601, title: '[demo] 1 — Running task', labels: [{ name: 'vinaya/tranche:demo' }] },
   { number: 602, title: '[demo] 2 — Paused task', labels: [{ name: 'vinaya/tranche:demo' }] },
   { number: 603, title: '[demo] 3 — Published task', labels: [{ name: 'vinaya/tranche:demo' }] },
-  // O2 (Issue #583): a backlog Issue — no `vinaya/tranche:*` label at all.
+  // O2: a backlog Issue — no `vinaya/tranche:*` label at all.
   // 604 carries an outbox dir (a real dispatched task) and is expected to
   // list; 605 carries none and must be pre-filtered before ever costing an
   // `issue view` call (the stub below fails loudly if 605 is ever fetched).
@@ -195,7 +195,7 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
     expect(r.status).toBe(0)
   })
 
-  // O2 (Issue #583): a backlog Issue with a frozen brief and a driver lock
+  // O2: a backlog Issue with a frozen brief and a driver lock
   // renders one row, right alongside the tranche-labeled ones — same shape,
   // `[backlog]` in place of a tranche slug and the Issue number as its id.
   // Issue 605 (no outbox dir at all) never appears — the pre-filter never

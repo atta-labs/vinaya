@@ -80,10 +80,10 @@ export function principalAllowlist(): string[] {
  * a change cannot lower its own threshold. `resolveReviewPolicy` refuses
  * (throws) on a present-but-unknown severity value; this loop has no
  * sanctioned way to run with an unresolvable policy, so that throw
- * propagates to `dev-review-loop.ts`'s own widened setup-phase `try` (O6,
- * Issue #583), which turns it into a decided `pause(infrastructure)` — never
- * an uncaught exit — the same as any other unrecoverable config defect this
- * loop cannot itself repair.
+ * propagates to `dev-review-loop.ts`'s own widened setup-phase `try` (O6),
+ * which turns it into a decided `pause(infrastructure)` — never an uncaught
+ * exit — the same as any other unrecoverable config defect this loop cannot
+ * itself repair.
  */
 export function reviewPolicy(): ReviewPolicy {
   return resolveReviewPolicy(loadTrustAnchorConfig())

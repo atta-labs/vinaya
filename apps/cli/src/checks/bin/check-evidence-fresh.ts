@@ -65,9 +65,9 @@ import { ScanContext, resolveAnchoredRegion } from '../scan-context'
 const DEVELOPER_ROUND_MARKER = /<!--\s*aeg:developer:round-\d+\s*-->/i
 
 /**
- * Security review, HIGH and LOW (Issue #583, round 2): a mutable PR comment
- * is not by itself a trustworthy "a round already happened" signal — matching
- * the marker text alone, regardless of who posted it, let EITHER attack
+ * A mutable PR comment is not by itself a trustworthy "a round already
+ * happened" signal — matching the marker text alone, regardless of who
+ * posted it, let EITHER attack
  * through. HIGH: an actor with branch-push access deletes or edits the
  * driver's own round-marker comment, then hand-edits `AEG:EVIDENCE` back to
  * the literal placeholder — with no marker left to find, this function said

@@ -46,7 +46,7 @@ function deps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
     ) as unknown as RunTaskDeps['assembleAndRenderBriefForIssue'],
     developerBranchFor: neverCalled('developerBranchFor') as unknown as RunTaskDeps['developerBranchFor'],
     findOpenPrForBranch: neverCalled('findOpenPrForBranch') as unknown as RunTaskDeps['findOpenPrForBranch'],
-    // O5 (Issue #583): defaults to `true` — every EXISTING open-PR-refuses
+    // O5: defaults to `true` — every EXISTING open-PR-refuses
     // test in this file models a driver genuinely still running, the one
     // case that must still refuse. The dead-lock takeover tests below
     // override this to `false` explicitly.
@@ -432,7 +432,7 @@ describe('runTask — O3: an open developer pull request refuses a second start'
   })
 })
 
-describe('runTask — O5 (Issue #583): a dead driver lock is taken over, never refused', () => {
+describe('runTask — O5: a dead driver lock is taken over, never refused', () => {
   it('a dead lock with an open PR and no pause state is taken over — devReviewLoop runs, nothing thrown', async () => {
     let loopCalled = false
     const result = await runTask(

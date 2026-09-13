@@ -408,7 +408,7 @@ describe('vinaya issue objectives edit', () => {
     expect(readFileSync(commentsLogPath, 'utf-8')).toBe('')
   })
 
-  // O3 (Issue #583) — a frozen brief whose title/label do not resolve to a
+  // O3 — a frozen brief whose title/label do not resolve to a
   // `[<tranche>] <n> — ...` task identity is no longer refused by name: it
   // supersedes through the backlog `--issue` path (`prepareIssueTask`)
   // instead, the same path `task brief --issue` already uses. This fixture

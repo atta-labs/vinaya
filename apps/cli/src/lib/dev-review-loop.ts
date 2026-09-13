@@ -147,13 +147,12 @@ import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
 import {
   clearDriverLock,
   isDriverPidAlive,
-  pauseMarker,
   type PauseState,
+  postIssuePauseComment,
   postPauseComment,
   printDriverLockLine,
   readDriverLock,
   readPauseState,
-  renderNoPushStopComment,
   sanitizePublicPauseDetail,
   writeDriverLock,
   writePauseState
@@ -389,13 +388,13 @@ function defaultSleep(ms: number): Promise<void> {
 }
 
 /**
- * Security review, HIGH/MEDIUM (Issue #583, round 3): the redaction itself
- * now lives in `sanitizePublicPauseDetail` (`dev-review-loop/pause-resume.js`),
- * applied unconditionally INSIDE `postPauseComment` — every pause reason's
- * `detail` is sanitized there, not only this file's own uncaught-error path.
- * This wrapper survives only because callers (and this file's own tests)
- * still reach for the `err: unknown` shape; it adds nothing `postPauseComment`
- * doesn't already re-apply.
+ * The redaction itself lives in `sanitizePublicPauseDetail`
+ * (`dev-review-loop/pause-resume.js`), applied unconditionally INSIDE
+ * `postPauseComment` — every pause reason's `detail` is sanitized there, not
+ * only this file's own uncaught-error path. This wrapper survives only
+ * because callers (and this file's own tests) still reach for the
+ * `err: unknown` shape; it adds nothing `postPauseComment` doesn't already
+ * re-apply.
  */
 export function sanitizeUncaughtErrorForPublicPause(err: unknown): string {
   return sanitizePublicPauseDetail(err instanceof Error ? err.message : String(err))
@@ -679,7 +678,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // doc comment) — every later call in this process, including the ones
     // inside `log()` itself, resolves the identical value instantly.
     const repo = await resolveRepo().catch(() => null)
-    // O6 (Issue #583, round 2 review BLOCKER): `policy`/`repoRoot`/
+    // O6: `policy`/`repoRoot`/
     // `confidenceFilePath`/`roundResponseFilePath`/`baseHeadAtStart` are
     // DECLARED here, at the top of this function's scope, but ASSIGNED only
     // once the widened `try` below actually runs `reviewPolicy()`/
@@ -1455,17 +1454,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // The `try` below now wraps EVERY executable statement from here
     // through the end of this function — including the driver's own SETUP
     // (`reviewPolicy()`, `d.repoRoot()`, `d.gitRevParseOriginMain()`, each a
-    // real forge/git read that can throw, round 2 review BLOCKER on Issue
-    // #583: these three ran BEFORE this try in the prior fix, so a failure
-    // reading any of them crashed the driver instead of pausing it) and
-    // round 1's own fresh-dispatch entry (`fetchFrozenBrief`, a real forge
-    // read that can throw), not merely the later `runRoundLoop()` call. A
-    // forge-read failure, a dispatch failure, or any other thrown exception
-    // anywhere in this span is caught by the SAME catch below and becomes a
-    // decided pause, never a re-thrown crash (round 2 review, BLOCKER: an
-    // earlier, narrower wrap left round-1's own entry uncovered — a `gh`
-    // failure fetching the frozen brief crashed the driver instead of
-    // pausing it).
+    // real forge/git read that can throw) and round 1's own fresh-dispatch
+    // entry (`fetchFrozenBrief`, a real forge read that can throw), not
+    // merely the later `runRoundLoop()` call. A forge-read failure, a
+    // dispatch failure, or any other thrown exception anywhere in this span
+    // is caught by the SAME catch below and becomes a decided pause, never a
+    // re-thrown crash — a narrower wrap that leaves any part of this setup
+    // or round-1's own entry uncovered lets a `gh`/`git` failure there crash
+    // the driver instead of pausing it.
     try {
       // Which severities block is repository policy (task 8, `#506`,
       // O1/O4) — resolved once, from the default branch, and reused for
@@ -1585,14 +1581,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // O9: no branch ever reached the remote, and the developer
               // posted a refusal/escalation instead — end the loop now, on the
               // Issue (there is no PR to comment on), never entering the poll.
-              postForgeEffectOnce(root, task, `no-push-stop-${round}`, () =>
-                postMarkedComment(
-                  'issue',
-                  String(task),
-                  pauseMarker('escalation'),
-                  renderNoPushStopComment(task, err.detail)
-                )
-              )
+              postIssuePauseComment(root, task, round, 'escalation', err.detail)
               await d.flushOutbox(task)
               return { finalDecision: { type: 'pause', reason: 'escalation', detail: err.detail }, prNumber: 0, task }
             }
@@ -1673,8 +1662,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // Left as 'unknown' — the schema only requires a string.
       }
       await logEvents(driverCrashEvents(config.loopId, state, round, head))
-      // Security review, HIGH/MEDIUM (Issue #583, round 3): `decision.detail`
-      // (below) carries the RAW error message — it lands only in this
+      // `decision.detail` (below) carries the RAW error message — it lands only in this
       // MACHINE-local outbox (`writePauseState`, never posted anywhere) and
       // in `finalDecision`, which the CLI never prints past the bare reason.
       // `postPauseComment` (below) sanitizes its OWN `detail` argument
@@ -1706,7 +1694,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           detail: decision.detail,
           pausedAt: new Date().toISOString()
         })
-        postPauseComment(root, task, round, head, prNumber, decision.reason, decision.detail)
+        // A crash this early — setup, or a fresh round-1 task never getting
+        // as far as resolving one — leaves `prNumber` at its `-1` sentinel:
+        // no PR is known to exist, so a PR comment would target a number
+        // nothing was ever opened against. Recorded on the task Issue
+        // instead, the one forge location that is always addressable for a
+        // task with no open PR yet.
+        if (prNumber < 0) {
+          postIssuePauseComment(root, task, round, decision.reason, decision.detail)
+        } else {
+          postPauseComment(root, task, round, head, prNumber, decision.reason, decision.detail)
+        }
       } catch {
         // Swallowed deliberately — see above. The role log's own
         // `driver_exited` trace (written above, unconditionally) is what a

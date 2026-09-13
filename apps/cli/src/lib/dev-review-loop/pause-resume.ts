@@ -29,9 +29,9 @@ const CREDENTIAL_LIKE =
   /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|Bearer\s+[A-Za-z0-9._-]+|(?:token|secret|password|api[_-]?key)\s*[:=]\s*\S+)/gi
 
 /**
- * Security review, HIGH and MEDIUM (Issue #583, round 3): the single
- * chokepoint every pause `detail` destined for a PUBLIC PR comment must pass
- * through — applied INSIDE `postPauseComment`, below, so no call site (the
+ * The single chokepoint every pause `detail` destined for a PUBLIC PR
+ * comment must pass through — applied INSIDE `postPauseComment`, below, so
+ * no call site (the
  * outer crash catch, `stale_driver`'s failed `git pull` stderr, a reviewer
  * infrastructure failure's echoed findings-file line, any future pause
  * reason) can forget it. Before this, only the top-level catch's own detail
@@ -86,23 +86,44 @@ export function renderPauseComment(prNumber: number, reason: PauseReason, detail
 }
 
 /**
- * O9: the round-1-entry variant of the pause
- * comment — no PR exists yet to carry it (posted on the Issue instead) and
- * no PR number exists for a `--resume` command, so the resume path named is
- * `vinaya task run`, the same one command this task's own O10 makes work
- * with no `--agent` to remember.
+ * O9: the no-PR-yet variant of the pause comment — posted on the task Issue
+ * instead of a pull request, because none is known to exist: the round-1
+ * refusal/escalation before any push, or a setup failure that never got as
+ * far as resolving one. Carries no PR number for a `--resume` command, so
+ * the resume path named is `vinaya task run`, the same one command this
+ * task's own O10 makes work with no `--agent` to remember.
  */
-export function renderNoPushStopComment(task: number, detail: string): string {
+export function renderNoPushStopComment(task: number, reason: PauseReason, detail?: string): string {
   return [
-    `The dev-review-loop paused: escalation — ${detail}.`,
+    `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
     '',
-    'No branch was ever pushed for this task, so there is no pull request to resume against yet.',
+    'No pull request exists yet for this task, so the pause is recorded on this Issue instead.',
     'A Principal ruling is needed before this can continue. Once one is posted on this Issue, resume with:',
     '',
     '```',
     `vinaya task run <tranche> ${task}`,
     '```'
   ].join('\n')
+}
+
+/**
+ * The Issue-posted counterpart to `postPauseComment` — for a pause recorded
+ * before any pull request is known to exist. Sanitizes `detail` HERE,
+ * unconditionally, the same chokepoint discipline `postPauseComment` applies
+ * for the PR case, so a call site never posts a raw `detail` un-redacted
+ * either way.
+ */
+export function postIssuePauseComment(
+  root: string,
+  task: number,
+  round: number,
+  reason: PauseReason,
+  detail?: string
+): void {
+  const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
+  postForgeEffectOnce(root, task, `pause-issue-${round}-${reason}`, () =>
+    postMarkedComment('issue', String(task), pauseMarker(reason), renderNoPushStopComment(task, reason, publicDetail))
+  )
 }
 
 /**
@@ -125,8 +146,7 @@ export function postPauseComment(
   reason: PauseReason,
   detail?: string
 ): void {
-  // Security review, HIGH/MEDIUM (Issue #583, round 3): sanitized HERE,
-  // unconditionally — the caller's `detail` may be the raw machine-local
+  // Sanitized HERE, unconditionally — the caller's `detail` may be the raw machine-local
   // string a `decision.detail` field carries (a subprocess's stderr, a
   // reviewer-authored file's own text), never pre-sanitized by convention.
   // See `sanitizePublicPauseDetail`'s own doc comment for what this closes.
