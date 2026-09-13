@@ -167,7 +167,7 @@ exit 0
   )
 }
 
-/** Same as `writeFakeClaude`, plus one line under `$HOME/.dev-invocations` per developer-role invocation — issue-577, O1's own "no developer resume for the evidence report" fixture needs a real count, not just the boolean `.fake-dev-invoked` touch every other fixture already uses. */
+/** Same as `writeFakeClaude`, plus one line under `$HOME/.dev-invocations` per developer-role invocation — a fixture asserting the evidence report never triggers a resumed developer turn needs a real per-round count, not just the boolean `.fake-dev-invoked` touch every other fixture already uses. */
 function writeFakeClaudeCountingDevInvocations(dir: string): void {
   writeFakeBinary(
     dir,
@@ -199,6 +199,134 @@ case "$VINAYA_ROLE" in
     ;;
 esac
 exit 0
+`
+  )
+}
+
+/** Same as `writeFakeClaude`, plus touching `$HOME/.reviewer-dispatch-started` the instant a reviewer/security role starts, before doing any of its own work — the concurrency fixture's rendezvous signal that reviewer dispatch has genuinely begun. */
+function writeFakeClaudeMarkingReviewerDispatchStart(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+cat > /dev/null
+WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    touch "$HOME/.reviewer-dispatch-started"
+    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    touch "$HOME/.reviewer-dispatch-started"
+    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+/**
+ * Same as `writeFakeGh`, except the evidence report's own
+ * `pr view <n> --json body -q .body` call (distinguished from the plain
+ * `--json body` call other loop paths make, by checking `-q .body` too)
+ * blocks — polling every `0.05`s, up to `2`s — until
+ * `$HOME/.reviewer-dispatch-started` exists, writing
+ * `$HOME/.evidence-report-gh-timed-out` if it never does. See the fixture's
+ * own doc comment for why this proves concurrency rather than racing on a
+ * bare sleep.
+ */
+function writeFakeGhRendezvousOnEvidenceBodyFetch(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ] && [ "$6" = "-q" ] && [ "$7" = ".body" ]; then
+  i=0
+  while [ ! -f "$HOME/.reviewer-dispatch-started" ] && [ "$i" -lt 40 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  if [ ! -f "$HOME/.reviewer-dispatch-started" ]; then
+    touch "$HOME/.evidence-report-gh-timed-out"
+  fi
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
 `
   )
 }
@@ -283,7 +411,7 @@ exit 1
   )
 }
 
-/** Same as `writeFakeGh`, plus every call's own arguments appended to `$HOME/.fake-gh-call-log` before any handling — issue-577, O1's own "the driver's report actually fetches the live body" fixture needs a real, positive trace of that `gh pr view … -q .body` call, not merely a passing run. */
+/** Same as `writeFakeGh`, plus every call's own arguments appended to `$HOME/.fake-gh-call-log` before any handling — a fixture asserting the driver's own evidence report actually fetches the live body needs a real, positive trace of that `gh pr view … -q .body` call, not merely a passing run. */
 function writeFakeGhWithCallLog(dir: string): void {
   writeFakeBinary(
     dir,
@@ -1307,7 +1435,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     expect(r1.stdout).toMatch(/publish/)
 
     const firstRunFiles = postedCommentFiles(home)
-    // (issue-577, O2) One more than before: the driver now posts the round
+    // One more than before: the driver now posts the round
     // marker comment itself, ahead of both reviewer verdicts — the
     // Developer's turn never posts one any more (O1).
     expect(firstRunFiles).toHaveLength(4)
@@ -1338,7 +1466,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     expect(postedCommentFiles(home)).toEqual(firstRunFiles)
   }, 20000)
 
-  it('runs the evidence report in-process, from the driver, with no developer resume for it (issue-577, O1)', () => {
+  it('runs the evidence report in-process, from the driver, with no developer resume for it', () => {
     // Every `gh` call this run makes is appended to `.fake-gh-call-log`
     // before `writeFakeGh`'s own handling — proves `runEvidenceReport`
     // actually fetches the PR's live body (the first half of the same
@@ -1368,6 +1496,36 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     // report itself from there, never waiting on or resuming the Developer.
     const devInvocations = readFileSync(join(home, '.dev-invocations'), 'utf8').trim().split('\n').filter(Boolean)
     expect(devInvocations).toHaveLength(1)
+  }, 20000)
+
+  it('runs the evidence report concurrently with reviewer dispatch, never serialized ahead of it', () => {
+    // Rendezvous, not a sleep-and-hope timing race: the evidence report's
+    // OWN `gh pr view … -q .body` fetch (`defaultRunEvidenceReport`'s first
+    // step) blocks in the fake `gh` below until a marker file the fake
+    // `claude` writes the instant a reviewer/security role starts exists —
+    // proving that call was still in flight when reviewer dispatch began,
+    // the two genuinely overlapping rather than one completing before the
+    // other starts. A regression that serializes the report AHEAD of
+    // reviewer dispatch (the shape this task's own Boundary names: sessions
+    // idling twice waiting on the report before reviewers ever saw a green
+    // head) reproduces as a real deadlock here — reviewer dispatch can never
+    // start until the blocked `gh` call returns, and the blocked call can
+    // never return until reviewer dispatch starts — bounded below so the
+    // test fails fast (`.evidence-report-gh-timed-out`) instead of hanging.
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaudeMarkingReviewerDispatchStart(binDir)
+    writeFakeGhRendezvousOnEvidenceBodyFetch(binDir)
+    writeFakeGit(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    expect(existsSync(join(home, '.reviewer-dispatch-started'))).toBe(true)
+    expect(existsSync(join(home, '.evidence-report-gh-timed-out'))).toBe(false)
   }, 20000)
 })
 
@@ -1496,7 +1654,7 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     expect(paused.stdout).toMatch(/paused \(escalation\)/)
 
     const pausedFiles = postedCommentFiles(home)
-    // (issue-577, O2) One more than before: the driver posts the round
+    // One more than before: the driver posts the round
     // marker comment itself before the escalation is even discovered — see
     // `devReviewLoop — round 1 clean, ends on publish`'s own O2 fixture.
     expect(pausedFiles).toHaveLength(2)
@@ -1845,7 +2003,7 @@ describe('devReviewLoop — a paused loop for reason no_progress still logs its 
     expect(r.status).not.toBe(0)
     expect(r.stdout).toMatch(/paused \(no_progress\)/)
 
-    // (issue-577, O2) The driver now also posts a round marker comment for
+    // The driver now also posts a round marker comment for
     // each of the two rounds before their findings are even compared — the
     // pause comment is the LAST one posted, not necessarily `comment-1.md`.
     const postedFiles = postedCommentFiles(home)
@@ -1953,7 +2111,7 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
     expect(pauseState.round).toBe(1)
     expect(pauseState.reason).toBe('infrastructure')
 
-    // Two comments: the round marker (issue-577, O2 — posted before either
+    // Two comments: the round marker (posted before either
     // reviewer even dispatches) and the pause. Never a verdict.
     const pausedFiles = postedCommentFiles(home)
     expect(pausedFiles).toHaveLength(2)
@@ -2069,7 +2227,7 @@ describe('devReviewLoop — a findings.txt line that still does not parse is an 
     expect(pauseState.round).toBe(1)
     expect(pauseState.reason).toBe('infrastructure')
 
-    // Two comments: the round marker (issue-577, O2) and the pause.
+    // Two comments: the round marker and the pause.
     const pausedFiles = postedCommentFiles(home)
     expect(pausedFiles).toHaveLength(2)
     const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[1] as string), 'utf8')
@@ -2155,7 +2313,7 @@ describe('devReviewLoop — a report.txt missing SECRETS is an infrastructure pa
     const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
     expect(invocations).toHaveLength(2)
 
-    // Two comments: the round marker (issue-577, O2) and the pause.
+    // Two comments: the round marker and the pause.
     const pausedFiles = postedCommentFiles(home)
     expect(pausedFiles).toHaveLength(2)
     const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[1] as string), 'utf8')
@@ -2259,7 +2417,7 @@ describe('devReviewLoop — the reviewer prompt names the objectives file, and o
     const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
     expect(invocations).toHaveLength(2)
 
-    // (issue-577, O2) index 1: index 0 is the round marker comment the
+    // index 1: index 0 is the round marker comment the
     // driver now posts before either reviewer dispatches.
     const pausedFiles = postedCommentFiles(home)
     const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[1] as string), 'utf8')
@@ -3047,6 +3205,52 @@ describe('devReviewLoop — a second attach on the same unchanged head reads as 
   }, 20000)
 })
 
+describe('devReviewLoop — the driver composes the round comment from a citation the developer left in its outbox, never posted itself', () => {
+  it('reads FINDING_IDS from .vinaya-round-response, cites them in the round-2 marker comment, and clears the file', () => {
+    const { home, cwd, path } = setUpAttachRecoversHeldRound()
+
+    // Round 1's held findings, same shape the sibling fixture above seeds —
+    // this attach resumes straight to round 2 without dispatching a fresh
+    // developer turn of its own.
+    const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    mkdirSync(heldDir, { recursive: true })
+    writeFileSync(join(heldDir, 'round-1-reviewer.md'), heldVerdictText('VERDICT: REQUEST CHANGES'))
+    writeFileSync(join(heldDir, 'round-1-security.md'), heldVerdictText('VERDICT: FAIL'))
+
+    // The Developer's own last turn (the one that pushed the fix, ending at
+    // the push per O1) is what would realistically leave both of these
+    // behind: a confidence answer for round 2's gate, and — the outbox
+    // record this objective is about — a citation of which findings it
+    // addressed, for the driver to read and compose the round comment from
+    // instead of the Developer posting one itself.
+    const worktreeDir = join(cwd, '.worktrees', BRANCH)
+    mkdirSync(worktreeDir, { recursive: true })
+    writeFileSync(join(worktreeDir, '.vinaya-confidence'), 'CONFIDENCE: 90 — fixed round 1s blocker\n')
+    writeFileSync(join(worktreeDir, '.vinaya-round-response'), 'FINDING_IDS: F1,F2\n')
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    // No developer dispatch at all — the citation came from the outbox
+    // file, never from a comment the Developer itself posted or a turn the
+    // driver had to resume for it.
+    expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
+
+    // The FIRST posted comment is the driver's own round-2 marker, carrying
+    // the citation it read from the outbox file — composed and posted by
+    // the driver, ahead of either reviewer verdict.
+    const files = postedCommentFiles(home)
+    const roundCommentPosted = readFileSync(join(home, '.fake-gh-posted-comments', files[0] as string), 'utf8')
+    expect(roundCommentPosted).toMatch(/^<!-- aeg:developer:round-2 -->$/m)
+    expect(roundCommentPosted).toMatch(/^FINDING_IDS: F1,F2$/m)
+
+    // Read once, then cleared — a second attach on the same round must
+    // never redeliver a stale citation from a prior round.
+    expect(existsSync(join(worktreeDir, '.vinaya-round-response'))).toBe(false)
+  }, 20000)
+})
+
 /** A schema-valid `dev_review_loop` NDJSON line — the shape `journal-reconstruction.ts` (`@attalabs/aeg-core`) requires to accept it. */
 function loopEventLine(fields: Record<string, unknown>, seq: number): string {
   return JSON.stringify({
@@ -3681,7 +3885,7 @@ describe('devReviewLoop — a base that moves past this driver’s own code WHIL
     // never posted a verdict comment or a publish summary.
     expect(r.stdout).not.toMatch(/publish/)
 
-    // (issue-577, O2) `comment-1.md` is now the round marker comment, posted
+    // `comment-1.md` is now the round marker comment, posted
     // before either reviewer dispatches; the pause is `comment-2.md`.
     const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', 'comment-2.md'), 'utf8')
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:stale_driver -->$/m)
@@ -4235,7 +4439,7 @@ describe('devReviewLoop — an objectives edit lands between reviewer dispatch a
       /vinaya issue objectives edit 9001 --add "Also do this\." --reason "mid-round change"/
     )
 
-    // Two posted comments — the round marker (issue-577, O2, posted before
+    // Two posted comments — the round marker (posted before
     // the mismatch is even detected) and the pause — never a reviewer or
     // security verdict: `verdicts` (in-memory only at the mismatch check) is
     // never written to disk, so nothing was ever held for round 1 to publish.
@@ -4278,7 +4482,7 @@ describe('devReviewLoop — a ruling lands between reviewer dispatch and assessm
     expect(pauseState.detail).toMatch(/ruling ordinal moved from 0 to 1/)
     expect(pauseState.detail).toMatch(/ruling 123-1/)
 
-    // Two posted comments — the round marker (issue-577, O2, posted before
+    // Two posted comments — the round marker (posted before
     // the mismatch is even detected) and the pause — never a reviewer or
     // security verdict: `verdicts` (in-memory only at the mismatch check) is
     // never written to disk, so nothing was ever held for round 1 to publish.
@@ -4421,7 +4625,7 @@ describe('devReviewLoop — a frozen-brief supersede lands between reviewer disp
     expect(pauseState.reason).toBe('brief_superseded')
     expect(pauseState.detail).toMatch(/brief hash moved from [0-9a-f]+ to [0-9a-f]+/)
 
-    // Two posted comments — the round marker (issue-577, O2, posted before
+    // Two posted comments — the round marker (posted before
     // the mismatch is even detected) and the pause — never a reviewer or
     // security verdict: `verdicts` (in-memory only at the mismatch check) is
     // never written to disk, so nothing was ever held for round 1 to publish.
@@ -4476,9 +4680,9 @@ describe('CONFIDENCE_PROMPT_LINE (pure) — O11 (task-run-v1 21, #541, round 2 r
   })
 })
 
-// --- the developer's round-response outbox file (issue-577, O1/O2) --------
+// --- the developer's round-response outbox file ---------------------------
 
-describe('parseRoundResponseFindingIds / renderDeveloperRoundComment / developerRoundMarker (pure) — issue-577, O2', () => {
+describe('parseRoundResponseFindingIds / renderDeveloperRoundComment / developerRoundMarker (pure)', () => {
   it('parses a FINDING_IDS: line into its comma-separated ids', () => {
     expect(parseRoundResponseFindingIds('FINDING_IDS: F1,F2,F3\n')).toEqual(['F1', 'F2', 'F3'])
   })

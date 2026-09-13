@@ -427,6 +427,19 @@ function defaultReexecSelf(args: string[]): number | null {
  * initial `gh pr view` fetch, `buildReport` itself, or the push) collapses to
  * `{ ok: false, reason }` so the caller can log-and-continue rather than
  * treat the loop's own evidence bookkeeping as a stop condition.
+ *
+ * Builds a local `envOverlay` object for `buildReport`'s Group B gate child
+ * and passes `branch` straight into `runReportForOpenPr`, rather than
+ * mutating this process's own `process.env.PR_BODY`/`PR_NUMBER`/`BRANCH` the
+ * way a one-shot `vinaya pr report --push` CLI invocation safely does. This
+ * function runs inside the driver's own long-lived process, concurrently
+ * (via `Promise.all`) with `dispatchReviewer` calls that spawn their own
+ * subprocesses reading this same process's `process.env` at spawn time — a
+ * global mutation here would race those spawns and leak this PR's body/
+ * number into a reviewer or security agent's environment, or have a check
+ * that agent spawns grade the wrong body. Never touching the shared
+ * `process.env` closes both hazards at once: nothing to race, and nothing
+ * left over to restore afterward.
  */
 async function defaultRunEvidenceReport(
   prNumber: number,
@@ -443,12 +456,10 @@ async function defaultRunEvidenceReport(
       reason: `could not fetch PR ${pushPr}'s live body: ${err instanceof Error ? err.message : String(err)}`
     }
   }
-  process.env.PR_BODY = preEditBody
-  process.env.PR_NUMBER = pushPr
-  process.env.BRANCH = branch
+  const envOverlay: NodeJS.ProcessEnv = { ...process.env, PR_BODY: preEditBody, PR_NUMBER: pushPr, BRANCH: branch }
   try {
-    const result = await buildReport({ body: preEditBody, gradedBodySource: 'push', cwd })
-    const outcome = await runReportForOpenPr(pushPr, preEditBody, result, { includeTokens: false })
+    const result = await buildReport({ body: preEditBody, gradedBodySource: 'push', cwd, envOverlay })
+    const outcome = await runReportForOpenPr(pushPr, preEditBody, result, { includeTokens: false, branch })
     return outcome.kind === 'ok'
       ? { ok: true, gatesFailed: outcome.gatesFailed }
       : { ok: false, reason: outcome.message }

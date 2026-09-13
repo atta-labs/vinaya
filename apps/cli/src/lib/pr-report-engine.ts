@@ -338,8 +338,19 @@ export function anyGateFailed(outcomes: GateOutcome[]): boolean {
   return outcomes.some((o) => FAILING_STATUSES.has(o.status))
 }
 
-/** The real gate runner: shells to this CLI's own `check --all --diff-only --json`, from `cwd` (default `process.cwd()` — see this module's doc comment, "`cwd`"). */
-export function runRealGates(cwd?: string): GateRunResult {
+/**
+ * The real gate runner: shells to this CLI's own `check --all --diff-only
+ * --json`, from `cwd` (default `process.cwd()` — see this module's doc
+ * comment, "`cwd`"). `env` (default `process.env`, read at call time — see
+ * the comment on the spawn call below) is the base the child's own
+ * `PR_BODY`/`PR_NUMBER`/`BRANCH` are read from; a caller running inside a
+ * long-lived, concurrent process (the loop's driver — never a one-shot CLI
+ * invocation, which safely mutates its own `process.env` before calling
+ * this) passes an explicit overlay object here instead of mutating the
+ * shared `process.env` binding, so a reviewer/security dispatch running at
+ * the same time in that same process never observes this call's PR context.
+ */
+export function runRealGates(cwd?: string, env?: NodeJS.ProcessEnv): GateRunResult {
   const entry = resolveSelfEntry()
   // `node:child_process`, not `Bun.spawnSync`: this package ships a
   // `#!/usr/bin/env node` bin with `engines.node >= 20`, so a `Bun.*` call
@@ -350,16 +361,19 @@ export function runRealGates(cwd?: string): GateRunResult {
   const proc = spawnSync(process.execPath, [entry, 'check', '--all', '--diff-only', '--json'], {
     cwd: cwd ?? process.cwd(),
     // Explicit, and load-bearing under Bun — not merely clearer than omitting
-    // the key. `--push` sets `PR_BODY`/`PR_NUMBER`/`BRANCH` by MUTATING
-    // `process.env` just before this call. Node propagates a runtime
-    // `process.env` mutation into a `spawnSync` child that inherits the
-    // parent environment; Bun does not — its child sees the environment the
-    // process started with, so under Bun the omitted-key form would hand the
-    // gate child a `PR_BODY` that is stale or absent, and every body-reading
-    // gate in Group B would grade the wrong text (or skip). Spreading
-    // `process.env` here reads the mutated values at call time and passes
-    // them explicitly, which is correct on both runtimes.
-    env: { ...process.env },
+    // the key. A one-shot CLI invocation (`--push`) sets `PR_BODY`/
+    // `PR_NUMBER`/`BRANCH` by mutating its OWN `process.env` just before this
+    // call, safely, since that process does nothing else concurrently. Node
+    // propagates a runtime `process.env` mutation into a `spawnSync` child
+    // that inherits the parent environment; Bun does not — its child sees
+    // the environment the process started with, so under Bun the
+    // omitted-key form would hand the gate child a `PR_BODY` that is stale
+    // or absent, and every body-reading gate in Group B would grade the
+    // wrong text (or skip). Spreading `env ?? process.env` here reads the
+    // caller's intended values at call time and passes them explicitly,
+    // which is correct on both runtimes, and never touches the caller's own
+    // `process.env` when an explicit overlay is given.
+    env: { ...(env ?? process.env) },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
     maxBuffer: 32 * 1024 * 1024
@@ -1030,6 +1044,12 @@ export type ReportResult = {
  * `--push` fetch) and passes it explicitly rather than relying on this
  * default. `opts.cwd` (default `process.cwd()`) is threaded into every git/
  * check/Test-Plan-command read — see this module's doc comment, "`cwd`".
+ * `opts.envOverlay`, when given, is passed straight through to
+ * `runRealGates` instead of that function's own `process.env` default — the
+ * loop's driver (a long-lived, concurrent process, never a one-shot CLI
+ * invocation) uses it so Group B's gate child sees this call's PR context
+ * without the driver ever mutating its own `process.env` (see
+ * `runRealGates`'s doc comment).
  */
 export async function buildReport(
   opts: {
@@ -1039,10 +1059,11 @@ export async function buildReport(
     groupC?: GroupC
     gradedBodySource?: GradedBodySource
     cwd?: string
+    envOverlay?: NodeJS.ProcessEnv
   } = {}
 ): Promise<ReportResult> {
   const groupA = opts.groupA ?? computeGroupA(opts.cwd)
-  const gateRunner = opts.gateRunner ?? (() => runRealGates(opts.cwd))
+  const gateRunner = opts.gateRunner ?? (() => runRealGates(opts.cwd, opts.envOverlay))
   const gateResult = await gateRunner()
   const gradedBody = opts.body ?? process.env.PR_BODY ?? ''
   const gradedBodySource = opts.gradedBodySource ?? 'ambient'
@@ -1128,6 +1149,12 @@ export type EvidenceReportOutcome =
  * `!tokens.collected` as "skip the token splice entirely" — no new branch
  * needed, and `tokensCollected` on the returned `'ok'` outcome is `false`
  * with no refusal message attached (never printed as a real refusal).
+ * `opts.branch`, when given, is what the `runBodyChecks` call below grades
+ * against instead of that call's own `process.env.BRANCH` default — the
+ * loop's driver passes it explicitly so this function never reads the
+ * shared `process.env` of the long-lived, concurrent process it runs in
+ * (see `runRealGates`'s doc comment for the same reasoning applied to
+ * Group B).
  */
 export async function runReportForOpenPr(
   pushPr: string,
@@ -1139,6 +1166,7 @@ export async function runReportForOpenPr(
     phaseOverride?: string
     roleOverride?: string
     modelOverride?: string
+    branch?: string
   } = {}
 ): Promise<EvidenceReportOutcome> {
   const includeTokens = opts.includeTokens ?? true
@@ -1163,7 +1191,12 @@ export async function runReportForOpenPr(
   // runner `pr create`/`pr edit` do before `gh pr edit` ever sees them —
   // refuses (never returns) on a finding, so a body this function sends is a
   // body CI's own `vinaya-checks.yml`/`vinaya-body-checks.yml` also accepts.
-  await runBodyChecks(spliced.body, process.env.BRANCH ?? '', Number(pushPr), `vinaya pr report --push ${pushPr}`)
+  await runBodyChecks(
+    spliced.body,
+    opts.branch ?? process.env.BRANCH ?? '',
+    Number(pushPr),
+    `vinaya pr report --push ${pushPr}`
+  )
 
   try {
     ghEditBody(pushPr, spliced.body)

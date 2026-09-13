@@ -150,7 +150,7 @@ describe('buildVerdictFromReport — objective-id coverage, the same rule `revie
     expect(result.observation.verdict).toBe('ESCALATE')
   })
 
-  // --- prose never decides a round (issue-577, O3) ---------------------------
+  // --- prose never decides a round --------------------------------------------
 
   it('a NOT MET citing only "PR body:Decisions" is reclassified MET (prose note) — the round publishes', () => {
     writeArtifacts('O1|NOT MET|PR body:Decisions\nO2|MET|done')
