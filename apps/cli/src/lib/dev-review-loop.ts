@@ -44,7 +44,6 @@
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
-import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   assessRound,
@@ -155,6 +154,7 @@ import {
   readDriverLock,
   readPauseState,
   renderNoPushStopComment,
+  sanitizePublicPauseDetail,
   writeDriverLock,
   writePauseState
 } from './dev-review-loop/pause-resume.js'
@@ -388,41 +388,17 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/** The bound `sanitizeUncaughtErrorForPublicPause` truncates to — long enough to stay informative, short enough that a runaway stack trace or subprocess dump never balloons a public PR comment. */
-const PUBLIC_PAUSE_DETAIL_MAX_LENGTH = 300
-
-/** Any `/Users/<name>` or `/home/<name>` prefix, this machine's own `$HOME` included — not only the exact `$HOME` string, since a leaked path can name a DIFFERENT local user (a subprocess run as another account, a path baked into a dependency's own error string). */
-const HOME_LIKE_PATH = /\/(?:Users|home)\/[^/\s]+/g
-
-/** A userinfo segment embedded in a URL (`https://<token>@host/...`, the shape a leaked git remote or API endpoint takes when it carries a credential inline). */
-const URL_CREDENTIAL = /:\/\/[^\s@/]+@/g
-
 /**
- * Security review, MEDIUM (Issue #583, round 2): first-line/`$HOME`/length
- * alone let three more shapes of local environment detail reach a PUBLIC PR
- * comment — a filesystem path naming a DIFFERENT user than this process's
- * own `$HOME`, a credential embedded in a subprocess's raw stderr (a `gh`/
- * `git` failure commonly carries one — a token in a URL, an `Authorization`
- * header, a well-known provider token prefix), and this machine's own
- * hostname. Each is scrubbed in addition to, never instead of, the existing
- * first-line/`$HOME`/length-cap treatment below.
+ * Security review, HIGH/MEDIUM (Issue #583, round 3): the redaction itself
+ * now lives in `sanitizePublicPauseDetail` (`dev-review-loop/pause-resume.js`),
+ * applied unconditionally INSIDE `postPauseComment` — every pause reason's
+ * `detail` is sanitized there, not only this file's own uncaught-error path.
+ * This wrapper survives only because callers (and this file's own tests)
+ * still reach for the `err: unknown` shape; it adds nothing `postPauseComment`
+ * doesn't already re-apply.
  */
-const CREDENTIAL_LIKE =
-  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|Bearer\s+[A-Za-z0-9._-]+|(?:token|secret|password|api[_-]?key)\s*[:=]\s*\S+)/gi
-
 export function sanitizeUncaughtErrorForPublicPause(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err)
-  const firstLine = (raw.split('\n')[0] ?? raw).trim()
-  const home = process.env.HOME
-  let redacted = home && home.length > 0 ? firstLine.split(home).join('~') : firstLine
-  redacted = redacted.replace(HOME_LIKE_PATH, '~')
-  redacted = redacted.replace(URL_CREDENTIAL, '://<redacted>@')
-  redacted = redacted.replace(CREDENTIAL_LIKE, '<redacted>')
-  const host = hostname()
-  if (host && host.length > 0) redacted = redacted.split(host).join('<host>')
-  return redacted.length > PUBLIC_PAUSE_DETAIL_MAX_LENGTH
-    ? `${redacted.slice(0, PUBLIC_PAUSE_DETAIL_MAX_LENGTH)}…`
-    : redacted
+  return sanitizePublicPauseDetail(err instanceof Error ? err.message : String(err))
 }
 
 /**
@@ -1697,15 +1673,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // Left as 'unknown' — the schema only requires a string.
       }
       await logEvents(driverCrashEvents(config.loopId, state, round, head))
-      // Security review, MEDIUM: `decision.detail` (below) carries the RAW
-      // error message — it lands only in this MACHINE-local outbox
-      // (`writePauseState`, never posted anywhere) and in `finalDecision`,
-      // which the CLI never prints past the bare reason. The PUBLIC PR
-      // comment (`postPauseComment`) gets a SEPARATELY sanitized string
-      // instead — first line only, this machine's own `$HOME` redacted,
-      // length-capped — so a message that happens to carry a local path or
-      // a raw subprocess dump is never disclosed on the forge.
-      const publicDetail = `an uncaught error ended round ${round}'s own processing: ${sanitizeUncaughtErrorForPublicPause(err)}`
+      // Security review, HIGH/MEDIUM (Issue #583, round 3): `decision.detail`
+      // (below) carries the RAW error message — it lands only in this
+      // MACHINE-local outbox (`writePauseState`, never posted anywhere) and
+      // in `finalDecision`, which the CLI never prints past the bare reason.
+      // `postPauseComment` (below) sanitizes its OWN `detail` argument
+      // unconditionally now (`sanitizePublicPauseDetail`), so the raw string
+      // passed here is never posted un-redacted — this call site no longer
+      // needs its own separately-sanitized copy, and neither does any other
+      // `postPauseComment` call in this file.
       decision = {
         type: 'pause',
         reason: 'infrastructure',
@@ -1730,7 +1706,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           detail: decision.detail,
           pausedAt: new Date().toISOString()
         })
-        postPauseComment(root, task, round, head, prNumber, decision.reason, publicDetail)
+        postPauseComment(root, task, round, head, prNumber, decision.reason, decision.detail)
       } catch {
         // Swallowed deliberately — see above. The role log's own
         // `driver_exited` trace (written above, unconditionally) is what a

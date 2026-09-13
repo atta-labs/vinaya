@@ -8,11 +8,54 @@
  */
 
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { PauseReason } from '@attalabs/aeg-core'
 import { postMarkedComment } from '../forge-write.js'
 import { postForgeEffectOnce } from './publication.js'
 import { readIfExists } from './reviewer-dispatch.js'
+
+/** `sanitizePublicPauseDetail` truncates to this — long enough to stay informative, short enough that a runaway stack trace or subprocess dump never balloons a public PR comment. */
+const PUBLIC_PAUSE_DETAIL_MAX_LENGTH = 300
+
+/** Any `/Users/<name>` or `/home/<name>` prefix, this machine's own `$HOME` included — not only the exact `$HOME` string, since a leaked path can name a DIFFERENT local user (a subprocess run as another account, a path baked into a dependency's own error string). */
+const HOME_LIKE_PATH = /\/(?:Users|home)\/[^/\s]+/g
+
+/** A userinfo segment embedded in a URL (`https://<token>@host/...`, the shape a leaked git remote or API endpoint takes when it carries a credential inline). */
+const URL_CREDENTIAL = /:\/\/[^\s@/]+@/g
+
+/** A well-known credential shape (a GitHub token prefix, an AWS access key, a `Bearer` header, a `token=`/`secret=`/`password=`/`api_key=` assignment) embedded in otherwise-ordinary text — the shape a subprocess's raw stderr commonly carries. */
+const CREDENTIAL_LIKE =
+  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|Bearer\s+[A-Za-z0-9._-]+|(?:token|secret|password|api[_-]?key)\s*[:=]\s*\S+)/gi
+
+/**
+ * Security review, HIGH and MEDIUM (Issue #583, round 3): the single
+ * chokepoint every pause `detail` destined for a PUBLIC PR comment must pass
+ * through — applied INSIDE `postPauseComment`, below, so no call site (the
+ * outer crash catch, `stale_driver`'s failed `git pull` stderr, a reviewer
+ * infrastructure failure's echoed findings-file line, any future pause
+ * reason) can forget it. Before this, only the top-level catch's own detail
+ * was sanitized by hand; every other `decision.detail` reached the forge
+ * raw, carrying whatever a subprocess's stderr or a reviewer-authored file
+ * happened to contain. First line only (a multi-line dump collapses to its
+ * own headline), this machine's own `$HOME` and any other `/Users/`or
+ * `/home/`-rooted path redacted to `~`, a URL-embedded credential and known
+ * credential shapes redacted, this machine's hostname redacted, and capped
+ * to a bounded length.
+ */
+export function sanitizePublicPauseDetail(raw: string): string {
+  const firstLine = (raw.split('\n')[0] ?? raw).trim()
+  const home = process.env.HOME
+  let redacted = home && home.length > 0 ? firstLine.split(home).join('~') : firstLine
+  redacted = redacted.replace(HOME_LIKE_PATH, '~')
+  redacted = redacted.replace(URL_CREDENTIAL, '://<redacted>@')
+  redacted = redacted.replace(CREDENTIAL_LIKE, '<redacted>')
+  const host = hostname()
+  if (host && host.length > 0) redacted = redacted.split(host).join('<host>')
+  return redacted.length > PUBLIC_PAUSE_DETAIL_MAX_LENGTH
+    ? `${redacted.slice(0, PUBLIC_PAUSE_DETAIL_MAX_LENGTH)}…`
+    : redacted
+}
 
 // --- pause (O2) --------------------------------------------------------------
 
@@ -82,8 +125,14 @@ export function postPauseComment(
   reason: PauseReason,
   detail?: string
 ): void {
+  // Security review, HIGH/MEDIUM (Issue #583, round 3): sanitized HERE,
+  // unconditionally — the caller's `detail` may be the raw machine-local
+  // string a `decision.detail` field carries (a subprocess's stderr, a
+  // reviewer-authored file's own text), never pre-sanitized by convention.
+  // See `sanitizePublicPauseDetail`'s own doc comment for what this closes.
+  const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
   postForgeEffectOnce(root, task, `pause-${round}-${head}`, () =>
-    postMarkedComment('pr', String(prNumber), pauseMarker(reason), renderPauseComment(prNumber, reason, detail))
+    postMarkedComment('pr', String(prNumber), pauseMarker(reason), renderPauseComment(prNumber, reason, publicDetail))
   )
 }
 

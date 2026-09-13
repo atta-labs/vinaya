@@ -540,6 +540,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `readPauseState` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `renderNoPushStopComment` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `renderPauseComment` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
+| `sanitizePublicPauseDetail` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `writeDriverLock` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `writePauseState` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `changedLineRanges` | function | `apps/cli/src/lib/diff-evidence.ts` |

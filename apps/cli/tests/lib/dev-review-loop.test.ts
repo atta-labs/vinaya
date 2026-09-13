@@ -53,7 +53,7 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -2480,7 +2480,7 @@ case "$VINAYA_ROLE" in
       WD="$WORKROOT/round-$VINAYA_ROUND-security-work-retry1"
     fi
     mkdir -p "$WD"
-    printf 'this is not a valid finding line at all\\n' > "$WD/findings.txt"
+    printf 'this is not a valid finding line at all, token=ghp_abcdefghijklmnopqrstuvwxyz012345\\n' > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
     printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
     echo "invocation" >> "$HOME/.security-invocations"
@@ -2532,6 +2532,16 @@ describe('devReviewLoop — a findings.txt line that still does not parse is an 
     expect(pauseComment).toMatch(/line 1/)
     expect(pauseComment).toMatch(/sec-session-garbage/)
     expect(pauseComment).not.toMatch(/^VERDICT:/m)
+
+    // Security review, HIGH/MEDIUM (Issue #583, round 3): this pause reaches
+    // `postPauseComment` from `ReviewerReportParseFailure`'s own message
+    // (line ~2076 in dev-review-loop.ts), never from the outer crash catch —
+    // exactly the path the finding named as unsanitized. The garbage line
+    // above embeds a credential-shaped token; it must never reach the
+    // PUBLIC pause comment un-redacted, even though it DOES reach the
+    // reviewer's own retry prompt and the machine-local pause-state.json.
+    expect(pauseComment).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz012345')
+    expect(pauseComment).toContain('<redacted>')
   }, 20000)
 })
 
@@ -5139,6 +5149,43 @@ describe('sanitizeUncaughtErrorForPublicPause (pure) — security review, MEDIUM
 
   it('a non-Error thrown value is stringified the same way', () => {
     expect(sanitizeUncaughtErrorForPublicPause('a plain string throw')).toBe('a plain string throw')
+  })
+
+  // Round 2 review, MINOR (Issue #583, round 3): the redactions the MEDIUM
+  // fix added — a path naming a DIFFERENT user, a URL-embedded credential, a
+  // well-known credential shape, this machine's hostname — had no direct
+  // test coverage of their own.
+  it("redacts a filesystem path naming a DIFFERENT user than this process's own $HOME", () => {
+    const err = new Error("ENOENT: no such file or directory, open '/Users/someone-else/config.json'")
+    const result = sanitizeUncaughtErrorForPublicPause(err)
+    expect(result).not.toContain('someone-else')
+    expect(result).toContain('~/config.json')
+  })
+
+  it('redacts a credential embedded as a URL userinfo segment', () => {
+    const err = new Error(
+      "fatal: unable to access 'https://x-access-token:ghp_abcdefghijklmnopqrstuvwxyz012345@github.com/atta-labs/vinaya.git/': The requested URL returned error: 403"
+    )
+    const result = sanitizeUncaughtErrorForPublicPause(err)
+    expect(result).not.toContain('x-access-token')
+    expect(result).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz012345')
+    expect(result).toContain('://<redacted>@github.com')
+  })
+
+  it('redacts a well-known credential shape even outside a URL', () => {
+    const err = new Error('gh: request failed, token=ghp_abcdefghijklmnopqrstuvwxyz012345 rejected')
+    const result = sanitizeUncaughtErrorForPublicPause(err)
+    expect(result).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz012345')
+    expect(result).toContain('<redacted>')
+  })
+
+  it("redacts this machine's own hostname", () => {
+    const host = hostname()
+    if (!host) return // nothing to redact on a host that reports none
+    const err = new Error(`connect ECONNREFUSED ${host}:443`)
+    const result = sanitizeUncaughtErrorForPublicPause(err)
+    expect(result).not.toContain(host)
+    expect(result).toContain('<host>:443')
   })
 })
 
