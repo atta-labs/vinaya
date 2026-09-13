@@ -40,6 +40,70 @@ export function parseConfidenceReply(replyText: string): Confidence {
 
 export const CONFIDENCE_FILE_NAME = '.vinaya-confidence'
 
+// --- round response -----------------------------------------------------
+
+/**
+ * The Developer's own side channel for citing which finding ids it addressed
+ * this round — same worktree-root convention as `CONFIDENCE_FILE_NAME`
+ * (`aeg-root/roles/developer.md`'s `.worktrees/task/<tranche>/<n>/`), read
+ * and cleared by the driver instead of the Developer posting a PR comment.
+ * The driver now ends the Developer's turn at the push — it
+ * composes and posts the round marker comment itself, from this file's
+ * content (`renderDeveloperRoundComment`), so a Developer session that
+ * crashes, skips, or forgets to write this file never blocks the round: it
+ * is read best-effort, and an absent or empty file yields no citation, never
+ * a resume or a pause. "No round is judged no_progress because a comment was
+ * not posted" (this task's Objective O2) — the round's own no-progress
+ * derivation (`assessRound`'s id-comparison across rounds, `@attalabs/aeg-core`)
+ * never reads this file at all; it exists purely so the driver's own posted
+ * comment can carry the same finding-id citation a Developer used to type by
+ * hand.
+ */
+export const DEVELOPER_ROUND_RESPONSE_FILE_NAME = '.vinaya-round-response'
+
+/**
+ * Fixed text appended to the developer's resume prompt whenever this round
+ * carries findings to address — the response-file counterpart to
+ * `CONFIDENCE_PROMPT_LINE`. Best-effort by design (see
+ * `DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment): omitted, the round
+ * comment the driver posts simply carries no `FINDING_IDS:` citation.
+ */
+export const ROUND_RESPONSE_PROMPT_LINE = `Before ending this turn, write a \`FINDING_IDS:\` line to a file named \`${DEVELOPER_ROUND_RESPONSE_FILE_NAME}\` at the root of your worktree, citing the ids (comma-separated, e.g. \`F1,F2\`) of the findings above you addressed this round — the driver reads this to compose the round's own comment; you do not post one yourself.`
+
+const ROUND_RESPONSE_FINDING_IDS_LINE = /^FINDING_IDS:\s*(.*)$/im
+
+/** The comma-separated ids off a `FINDING_IDS:` line in the Developer's round-response file content — `[]` for missing/malformed/empty content, never a throw: see `DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment on why this stays best-effort. */
+export function parseRoundResponseFindingIds(raw: string | null): string[] {
+  if (!raw) return []
+  const m = ROUND_RESPONSE_FINDING_IDS_LINE.exec(raw)
+  if (!m) return []
+  return (m[1] ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0)
+}
+
+/** The round marker itself, `<!-- aeg:developer:round-<n> -->` — `@attalabs/aeg-core`'s `parseDeveloperRoundMarker` matches it anywhere in a comment body; posted first by `postMarkedComment` (`dev-review-loop.ts`'s `postDeveloperRoundComment`), the same convention every other driver-posted marked comment in this file already uses. */
+export function developerRoundMarker(roundNum: number): string {
+  return `<!-- aeg:developer:round-${roundNum} -->`
+}
+
+/**
+ * The BODY half of the round marker comment the driver now posts in the
+ * Developer's place — `postMarkedComment` prepends
+ * `developerRoundMarker(roundNum)` ahead of this, so the full posted comment
+ * reads marker, then `Head: <sha>`, then (only when there is something to
+ * cite) a `FINDING_IDS:` line. An empty `findingIds` list — round 1's first
+ * review, or a Developer that wrote no response file — omits the
+ * `FINDING_IDS:` line entirely, the same "nothing to cite" convention the
+ * reviewer's own `FINDING_IDS:` grammar uses for an empty findings list.
+ */
+export function renderDeveloperRoundComment(head: string, findingIds: readonly string[]): string {
+  const lines = [`Head: ${head}`]
+  if (findingIds.length > 0) lines.push(`FINDING_IDS: ${findingIds.join(',')}`)
+  return lines.join('\n')
+}
+
 export function parseShortstat(stat: string): { filesChanged: number; insertions: number; deletions: number } {
   const m = /(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/.exec(stat)
   if (!m) return { filesChanged: 0, insertions: 0, deletions: 0 }

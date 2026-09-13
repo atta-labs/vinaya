@@ -70,6 +70,7 @@ export {
   evaluateReviewFindings,
   evaluateSecurityReview,
   isKnownSeverity,
+  isProseLocation,
   SECURITY_SEVERITY_ORDER,
   securityBlockingSeverities
 } from './review-policy'

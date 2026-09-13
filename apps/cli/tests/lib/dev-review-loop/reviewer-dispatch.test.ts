@@ -149,4 +149,74 @@ describe('buildVerdictFromReport — objective-id coverage, the same rule `revie
     )
     expect(result.observation.verdict).toBe('ESCALATE')
   })
+
+  // --- prose never decides a round --------------------------------------------
+
+  it('a NOT MET citing only "PR body:Decisions" is reclassified MET (prose note) — the round publishes', () => {
+    writeArtifacts('O1|NOT MET|PR body:Decisions\nO2|MET|done')
+    const result = buildVerdictFromReport(
+      'reviewer',
+      workDir,
+      'claude',
+      478,
+      HANDLE,
+      MANIFEST,
+      DEFAULT_REVIEW_POLICY,
+      RESOLVED_OBJECTIVES
+    )
+    // Reclassified MET — the round-level observation `assessRound` reads
+    // shows no NOT MET at all, so this round is never `changes_requested`
+    // for it.
+    expect(result.observation.objectives).toEqual([
+      { id: 'O1', met: true },
+      { id: 'O2', met: true }
+    ])
+    expect(result.observation.verdict).toBe('APPROVE')
+    // The rendered verdict comment carries the annotation, so a reader still
+    // sees that this was a reclassification, not a Developer/reviewer claim.
+    expect(result.rendered).toMatch(/O1: MET — PR body:Decisions \(prose note\)/)
+  })
+
+  it('a NOT MET citing a role file (aeg-root/roles/…) is reclassified MET (prose note) too', () => {
+    writeArtifacts('O1|NOT MET|aeg-root/roles/developer.md\nO2|MET|done')
+    const result = buildVerdictFromReport(
+      'reviewer',
+      workDir,
+      'claude',
+      478,
+      HANDLE,
+      MANIFEST,
+      DEFAULT_REVIEW_POLICY,
+      RESOLVED_OBJECTIVES
+    )
+    expect(result.observation.objectives).toEqual([
+      { id: 'O1', met: true },
+      { id: 'O2', met: true }
+    ])
+    expect(result.observation.verdict).toBe('APPROVE')
+  })
+
+  it('a NOT MET citing a real source file (Traps to avoid: never downgrade a real location) is left NOT MET — never reclassified', () => {
+    writeArtifacts('O1|NOT MET|apps/cli/src/commands/pr-report.ts:42 never calls the new function\nO2|MET|done')
+    const result = buildVerdictFromReport(
+      'reviewer',
+      workDir,
+      'claude',
+      478,
+      HANDLE,
+      MANIFEST,
+      DEFAULT_REVIEW_POLICY,
+      RESOLVED_OBJECTIVES
+    )
+    // `assessRound` (`@attalabs/aeg-core`) is what actually turns this
+    // `met: false` into a `changes_requested` round outcome — out of this
+    // function's own scope. What THIS function must never do is erase the
+    // fact that O1 is unmet just because it cites a real file.
+    expect(result.observation.objectives).toEqual([
+      { id: 'O1', met: false },
+      { id: 'O2', met: true }
+    ])
+    expect(result.rendered).toMatch(/O1: NOT MET/)
+    expect(result.rendered).not.toMatch(/prose note/)
+  })
 })

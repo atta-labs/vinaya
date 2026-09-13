@@ -122,16 +122,22 @@ import {
   assertDispatchOrEscalate,
   CONFIDENCE_FILE_NAME,
   CONFIDENCE_PROMPT_LINE,
+  developerRoundMarker,
+  DEVELOPER_ROUND_RESPONSE_FILE_NAME,
   driverCrashEvents,
   driverDecidedPauseEvents,
   MAX_GATE_STALLED_TURNS,
   parseConfidenceReply,
+  parseRoundResponseFindingIds,
   parseShortstat,
   pollUntil,
+  renderDeveloperRoundComment,
+  ROUND_RESPONSE_PROMPT_LINE,
   routeCompletionEvents,
   sizeOfSafe,
   waitForOwnLoopLine
 } from './dev-review-loop/round-assess.js'
+import { buildReport, gh, runReportForOpenPr } from './pr-report-engine.js'
 import { postForgeEffectOnce, publishRound } from './dev-review-loop/publication.js'
 import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
 import {
@@ -192,6 +198,7 @@ export type {
 export {
   lintReviewerPrompt,
   outboxRoot,
+  reclassifyProseOnlyNotMet,
   renderReviewerPrompt,
   ReviewerInfrastructureFailure,
   ReviewerReportParseFailure,
@@ -203,8 +210,13 @@ export type { PublishInput } from './dev-review-loop/publication.js'
 export { renderNoPushStopComment, renderPauseComment } from './dev-review-loop/pause-resume.js'
 export {
   CONFIDENCE_PROMPT_LINE,
+  DEVELOPER_ROUND_RESPONSE_FILE_NAME,
+  developerRoundMarker,
   DevReviewLoopResumeError,
   parseConfidenceReply,
+  parseRoundResponseFindingIds,
+  renderDeveloperRoundComment,
+  ROUND_RESPONSE_PROMPT_LINE,
   routeCompletionEvents
 } from './dev-review-loop/round-assess.js'
 
@@ -270,6 +282,24 @@ export type LoopDeps = {
   reexecSelf: (args: string[]) => number | null
   /** O7: the driver's actual process-exit call, injected so a test can observe "the driver would hand off here" without killing the test process. Production default is the real `process.exit`. */
   exitProcess: (code: number) => never
+  /**
+   * Runs the `AEG:EVIDENCE` report in-process and pushes it
+   * onto `prNumber`'s live body, from `cwd` (the task's own worktree — see
+   * `pr-report-engine.ts`'s module doc, "`cwd`"). The SAME engine function
+   * `vinaya pr report --push` itself calls (`runReportForOpenPr`) — never a
+   * `vinaya pr report --push` subprocess (Traps to avoid). Never collects a
+   * token row (`includeTokens: false` — see `runReportForOpenPr`'s own doc
+   * comment for why: the driver's own session is not the Developer's, so its
+   * metering probe would misattribute usage). `{ ok: false, reason }` on any
+   * refusal — the caller treats this as a non-fatal, logged condition (O1:
+   * this task's whole point is that the loop's own paperwork must never cost
+   * a round), never a pause.
+   */
+  runEvidenceReport: (
+    prNumber: number,
+    cwd: string,
+    branch: string
+  ) => Promise<{ ok: true; gatesFailed: boolean } | { ok: false; reason: string }>
 }
 
 function defaultRepoRoot(): string {
@@ -387,6 +417,57 @@ function defaultReexecSelf(args: string[]): number | null {
   return result.status ?? 1
 }
 
+/**
+ * The real `runEvidenceReport`: fetches `prNumber`'s live
+ * body, builds the report from `cwd` (the task worktree, never
+ * `process.cwd()` — see `pr-report-engine.ts`'s module doc, "`cwd`"), then
+ * pushes it via `runReportForOpenPr` — the exact engine function `vinaya pr
+ * report --push` itself calls. `includeTokens: false`: see `runEvidenceReport`'s
+ * own doc comment on `LoopDeps`. Never throws — every failure mode (the
+ * initial `gh pr view` fetch, `buildReport` itself, or the push) collapses to
+ * `{ ok: false, reason }` so the caller can log-and-continue rather than
+ * treat the loop's own evidence bookkeeping as a stop condition.
+ *
+ * Builds a local `envOverlay` object for `buildReport`'s Group B gate child
+ * and passes `branch` straight into `runReportForOpenPr`, rather than
+ * mutating this process's own `process.env.PR_BODY`/`PR_NUMBER`/`BRANCH` the
+ * way a one-shot `vinaya pr report --push` CLI invocation safely does. This
+ * function runs inside the driver's own long-lived process, concurrently
+ * (via `Promise.all`) with `dispatchReviewer` calls that spawn their own
+ * subprocesses reading this same process's `process.env` at spawn time — a
+ * global mutation here would race those spawns and leak this PR's body/
+ * number into a reviewer or security agent's environment, or have a check
+ * that agent spawns grade the wrong body. Never touching the shared
+ * `process.env` closes both hazards at once: nothing to race, and nothing
+ * left over to restore afterward.
+ */
+async function defaultRunEvidenceReport(
+  prNumber: number,
+  cwd: string,
+  branch: string
+): Promise<{ ok: true; gatesFailed: boolean } | { ok: false; reason: string }> {
+  const pushPr = String(prNumber)
+  let preEditBody: string
+  try {
+    preEditBody = gh(['pr', 'view', pushPr, '--json', 'body', '-q', '.body'])
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `could not fetch PR ${pushPr}'s live body: ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+  const envOverlay: NodeJS.ProcessEnv = { ...process.env, PR_BODY: preEditBody, PR_NUMBER: pushPr, BRANCH: branch }
+  try {
+    const result = await buildReport({ body: preEditBody, gradedBodySource: 'push', cwd, envOverlay })
+    const outcome = await runReportForOpenPr(pushPr, preEditBody, result, { includeTokens: false, branch })
+    return outcome.kind === 'ok'
+      ? { ok: true, gatesFailed: outcome.gatesFailed }
+      : { ok: false, reason: outcome.message }
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 function defaultDeps(): LoopDeps {
   return {
     dispatchRole: realDispatchRole,
@@ -427,7 +508,8 @@ function defaultDeps(): LoopDeps {
     gitCommitsTouchingDriverPaths,
     pullDefaultBranch: defaultPullDefaultBranch,
     reexecSelf: defaultReexecSelf,
-    exitProcess: (code) => process.exit(code)
+    exitProcess: (code) => process.exit(code),
+    runEvidenceReport: defaultRunEvidenceReport
   }
 }
 
@@ -570,6 +652,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     const repo = await resolveRepo().catch(() => null)
     const repoRoot = d.repoRoot()
     const confidenceFilePath = join(repoRoot, '.worktrees', branch, CONFIDENCE_FILE_NAME)
+    /** O2: the same worktree-root convention as `confidenceFilePath`, above — see `DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment. */
+    const roundResponseFilePath = join(repoRoot, '.worktrees', branch, DEVELOPER_ROUND_RESPONSE_FILE_NAME)
     /** O8: recorded once, at loop start — never re-derived. Re-read at every round entry (top of the `while(true)` below) and compared against this fixed watermark for commits touching `DRIVER_OWNED_PATHS`. */
     const baseHeadAtStart = d.gitRevParseOriginMain()
     const loopOutboxPath = outboxPathFor({ outboxRoot: () => root }, repo, task)
@@ -1141,6 +1225,29 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return content ? parseConfidenceReply(content) : 'absent'
     }
 
+    /** O2: best-effort, mirroring `readAndClearConfidence` — a missing or malformed file yields no citation, never a stall (`DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment). */
+    function readAndClearRoundResponse(): string[] {
+      const content = readIfExists(roundResponseFilePath)
+      try {
+        unlinkSync(roundResponseFilePath)
+      } catch {
+        // Never written, or already gone — nothing to clean up.
+      }
+      return parseRoundResponseFindingIds(content)
+    }
+
+    /** O2: the round marker comment the driver now posts in the Developer's place (`renderDeveloperRoundComment`) — idempotent per round+head, the same `postForgeEffectOnce` discipline every other driver-posted comment in this file already uses. */
+    function postDeveloperRoundComment(roundNum: number, head: string, findingIds: readonly string[]): void {
+      postForgeEffectOnce(root, task, `developer-round-comment-${roundNum}-${head}`, () =>
+        postMarkedComment(
+          'pr',
+          String(prNumber),
+          developerRoundMarker(roundNum),
+          renderDeveloperRoundComment(head, findingIds)
+        )
+      )
+    }
+
     let roundStartMs = d.now()
     let decision: Decision = { type: 'dispatch_developer' }
 
@@ -1493,6 +1600,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // `dispatch_reviewers`/`publish` sites, below.
           const conflictFiles = pendingConflictFiles
           if (!firstPass) {
+            // O2: findings citation only makes sense on the genuine
+            // review-findings path — not a conflict retry, a ruling resume,
+            // or a CI-red retry, none of which ever sent the developer a
+            // findings list to cite ids against.
+            const isReviewFindingsRetry = conflictFiles === null && !resumedDispatch && !isGateRedRetry
             const prompt = [
               conflictFiles !== null
                 ? renderConflictPrompt(conflictFiles)
@@ -1509,7 +1621,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                       // the prior 'CI was red...' fallback below this was unreachable).
                       `Round ${round} review findings:\n\n${lastReviewContext}\n`,
               'Address the findings above per aeg-root/roles/developer.md. Commit the fix, then run `git push` from this worktree to push it as a new commit on the SAME branch; do not open a new PR.',
-              round >= 2 ? CONFIDENCE_PROMPT_LINE : ''
+              round >= 2 ? CONFIDENCE_PROMPT_LINE : '',
+              isReviewFindingsRetry ? ROUND_RESPONSE_PROMPT_LINE : ''
             ]
               .filter(Boolean)
               .join('\n\n')
@@ -1703,6 +1816,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             manifest
           }
 
+          // O1/O2: the head's required CI is already green (this branch is
+          // only ever entered off a `gate` observation reading `green: true`
+          // — `assessRound`'s own policy) and mergeability is already
+          // confirmed above — this is the earliest point the round's own
+          // Developer-turn artifacts (the outbox response file) are safe to
+          // read and clear, and the earliest point the evidence report can
+          // run against a head that will not move again this round. Posted
+          // BEFORE the reviewer dispatch below, never after: a reviewer
+          // reading the PR mid-round sees the round marker comment already
+          // there, exactly as it would have if the Developer had posted it.
+          const findingIdsAddressed = readAndClearRoundResponse()
+          postDeveloperRoundComment(round, head, findingIdsAddressed)
+
           // O5: an infrastructure outcome from either role (after its own
           // one-retry inside `dispatchReviewer`) is a driver-decided pause —
           // there is no `Observations` kind for it (adding one would edit
@@ -1720,10 +1846,34 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               ]
             | null = null
           try {
-            verdicts = await Promise.all([
+            // O1/O2: the evidence report runs IN PARALLEL with both reviewer
+            // dispatches, never before or after them — reviewers dispatch on
+            // the green head without waiting on the report, and the report
+            // never waits on reviewers either. A report failure is logged,
+            // never a pause: this task exists precisely so the loop's own
+            // paperwork can never cost a round (O1's origin — a report that
+            // took over ten minutes idled the session twice). The merge
+            // gate's own `evidence-fresh` check is the real backstop for a
+            // report that never lands.
+            const [reviewerResult, securityResult, evidenceOutcome] = await Promise.all([
               dispatchReviewer('reviewer', round, facts),
-              dispatchReviewer('security', round, facts)
+              dispatchReviewer('security', round, facts),
+              d.runEvidenceReport(prNumber, worktreePathForBranch(), branch)
             ])
+            verdicts = [reviewerResult, securityResult]
+            if (!evidenceOutcome.ok) {
+              // Logged to the driver's own role log, never a PR comment: a
+              // report failure is never counted toward `no_progress` or a
+              // pause (O1's whole point), and the `evidence-fresh` merge-gate
+              // check is the real backstop for a block that never lands —
+              // this line exists purely so a Principal reading
+              // `vinaya task status --follow` can see why.
+              appendRoleLine(
+                loopLogPath,
+                'dev-review-loop',
+                `evidence_report_failed: round=${round} head=${head} reason=${evidenceOutcome.reason}`
+              )
+            }
           } catch (err) {
             if (!(err instanceof ReviewerInfrastructureFailure) && !(err instanceof ReviewerReportParseFailure))
               throw err
