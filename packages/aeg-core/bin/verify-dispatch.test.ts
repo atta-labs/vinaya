@@ -15,18 +15,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  */
 
 const spawnSyncMock = vi.fn()
+// issue-545, O3 — `checkBareEdgeQualification` (and the `tranchesAttachedToMilestone`
+// it calls, in `@attalabs/aeg-forge-state`) shell out via `execFileSync`, not
+// `spawnSync` — stubbed here alongside it so those tests never touch a real
+// `gh` invocation. Unmocked by default (each test below sets its own
+// `mockImplementation`); a call this suite's own currentFindingCounts/
+// resolvePremiseBriefText tests never make.
+const execFileSyncMock = vi.fn()
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
-  return { ...actual, spawnSync: (...args: unknown[]) => spawnSyncMock(...args) }
+  return {
+    ...actual,
+    spawnSync: (...args: unknown[]) => spawnSyncMock(...args),
+    execFileSync: (...args: unknown[]) => execFileSyncMock(...args)
+  }
 })
 
-const { currentFindingCounts, resolvePremiseBriefText, checkMilestoneEdgeQualification } = await import(
-  './verify-dispatch'
-)
+const { checkBareEdgeQualification, currentFindingCounts, resolvePremiseBriefText } = await import('./verify-dispatch')
 
 beforeEach(() => {
   spawnSyncMock.mockReset()
+  execFileSyncMock.mockReset()
 })
 
 function successResult(stdout: string, status = 0): { stdout: string; stderr: string; status: number } {
@@ -590,39 +600,122 @@ describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', 
   })
 })
 
-/**
- * O5 (Issue #542) \u2014 the dispatch gate refuses a bare edge id once the
- * subject Issue's own Milestone holds more than one tranche. Pure over an
- * already-resolved tranche list (`resolveMilestoneTranches`'s own live
- * `tranchesAttachedToMilestone` fetch is exercised by that function's own
- * tests in `fetch-milestone.test.ts`; `requireTrancheQualifiedEdges`'s own
- * rule is exercised in `parse-rationale-deps.test.ts`) \u2014 this only proves
- * the one wiring point: the thrown `AmbiguousBareEdgeError` becomes a
- * string-or-null result, never an uncaught throw.
- */
-describe('checkMilestoneEdgeQualification (O5)', () => {
-  it('a one-tranche Milestone accepts a bare edge id', () => {
-    expect(checkMilestoneEdgeQualification(['1', '#372'], ['solo-tranche'])).toBeNull()
+// issue-545, O3 — real end-to-end wiring: `verify-dispatch`'s gate now
+// refuses a bare edge id once its Issue's Milestone holds two or more
+// tranches (review round 2, BLOCKER 2 — `requireTrancheQualifiedEdges` was
+// implemented and unit-tested but never called from a real gate).
+describe('checkBareEdgeQualification', () => {
+  const REPO = { owner: 'atta-labs', repo: 'vinaya' }
+
+  it('is a no-op with no Milestone at all — never calls the forge', () => {
+    expect(checkBareEdgeQualification(['1'], [], null, REPO)).toBeNull()
+    expect(execFileSyncMock).not.toHaveBeenCalled()
   })
 
-  it('no Milestone (empty tranche list) accepts a bare edge id too', () => {
-    expect(checkMilestoneEdgeQualification(['1'], [])).toBeNull()
+  it('is a no-op when the Milestone holds only one tranche — the ordinary case', () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (
+        cmd === 'gh' &&
+        args[0] === 'api' &&
+        args[1] === 'repos/atta-labs/vinaya/issues?milestone=9&state=all&per_page=100'
+      ) {
+        return JSON.stringify([{ labels: [{ name: 'vinaya/tranche:solo-tranche' }] }])
+      }
+      throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
+    })
+    expect(checkBareEdgeQualification(['1'], [], { number: 9, title: 'solo' }, REPO)).toBeNull()
   })
 
-  it('a two-tranche Milestone refuses a bare edge id, quoting the token and both tranches', () => {
-    const result = checkMilestoneEdgeQualification(['1'], ['tranche-a', 'tranche-b'])
+  it('refuses a bare id once the Milestone holds two or more tranches, naming the token and both tranches', () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (
+        cmd === 'gh' &&
+        args[0] === 'api' &&
+        args[1] === 'repos/atta-labs/vinaya/issues?milestone=9&state=all&per_page=100'
+      ) {
+        return JSON.stringify([
+          { labels: [{ name: 'vinaya/tranche:tranche-a' }] },
+          { labels: [{ name: 'vinaya/tranche:tranche-b' }] }
+        ])
+      }
+      throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
+    })
+    const result = checkBareEdgeQualification(['1'], [], { number: 9, title: 'shared' }, REPO)
     expect(result).not.toBeNull()
     expect(result).toContain('`1`')
     expect(result).toContain('tranche-a')
     expect(result).toContain('tranche-b')
   })
 
-  it('a two-tranche Milestone accepts a slug-qualified edge id', () => {
-    expect(checkMilestoneEdgeQualification(['tranche-a 1'], ['tranche-a', 'tranche-b'])).toBeNull()
+  it('a slug-qualified edge in the same multi-tranche Milestone is never flagged', () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (
+        cmd === 'gh' &&
+        args[0] === 'api' &&
+        args[1] === 'repos/atta-labs/vinaya/issues?milestone=9&state=all&per_page=100'
+      ) {
+        return JSON.stringify([
+          { labels: [{ name: 'vinaya/tranche:tranche-a' }] },
+          { labels: [{ name: 'vinaya/tranche:tranche-b' }] }
+        ])
+      }
+      throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
+    })
+    expect(
+      checkBareEdgeQualification(['tranche-a 1'], ['tranche-b 2'], { number: 9, title: 'shared' }, REPO)
+    ).toBeNull()
   })
 
-  it('reports only the first bare id among several edges', () => {
-    const result = checkMilestoneEdgeQualification(['tranche-a 1', '9'], ['tranche-a', 'tranche-b'])
-    expect(result).toContain('`9`')
+  it('checks conflictsWith ids too, not only dependsOn', () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (
+        cmd === 'gh' &&
+        args[0] === 'api' &&
+        args[1] === 'repos/atta-labs/vinaya/issues?milestone=9&state=all&per_page=100'
+      ) {
+        return JSON.stringify([
+          { labels: [{ name: 'vinaya/tranche:tranche-a' }] },
+          { labels: [{ name: 'vinaya/tranche:tranche-b' }] }
+        ])
+      }
+      throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
+    })
+    const result = checkBareEdgeQualification([], ['#372'], { number: 9, title: 'shared' }, REPO)
+    expect(result).toContain('`#372`')
+  })
+})
+
+// Source-scan (this file's own established convention for pinning
+// verify-dispatch.ts's control flow — see "(d) sh()/shJson() other call
+// sites are untouched" above): both gate modes fold the O3 check into their
+// printed blockers and their exit-code readiness, not just call it and
+// discard the result.
+describe('O3 wiring reaches both gate modes, not just checkBareEdgeQualification itself', () => {
+  const src = readFileSync(join(import.meta.dirname, 'verify-dispatch.ts'), 'utf8')
+
+  it('runGateMode computes ambiguousEdge from task.dependsOn/conflictsWith and the Issue Milestone', () => {
+    // Substrings, not one exact-formatted literal: a formatter is free to
+    // wrap this call's argument list across lines, and the test must not
+    // pin whichever wrapping happened to be current when it was written.
+    expect(src).toContain('const ambiguousEdge = checkBareEdgeQualification(')
+    expect(src).toContain('task.dependsOn')
+    expect(src).toContain('task.conflictsWith')
+    expect(src).toContain('issueJson?.milestone ?? null')
+  })
+
+  it('runGateModeForIssue computes ambiguousEdge the same way, off the parsed raw ids', () => {
+    expect(src).toContain(
+      'const ambiguousEdge = checkBareEdgeQualification(dependsOnIds, conflictsWithIds, issueJson.milestone, repo)'
+    )
+  })
+
+  it('both gate modes fold ambiguousEdge into overallReady — a found ambiguity is never printed but ignored', () => {
+    const occurrences = src.split("leftover.verdict !== 'stop' && !ambiguousEdge").length - 1
+    expect(occurrences).toBe(2)
+  })
+
+  it('both gate modes print the ambiguousEdge message as a blocker line when present', () => {
+    const occurrences = src.split('if (ambiguousEdge) console.log(').length - 1
+    expect(occurrences).toBe(2)
   })
 })
