@@ -1,15 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
+  assembleAndRenderBriefForIssue,
+  canRenderBriefFromHere,
   checkDirtyPinnedFiles,
   checkStaleAgainstRemote,
+  DRAFT_ISSUE_SENTINEL,
   resolveBoundaryPaths,
   resolveRemoteDefaultBranch,
+  resolveTrancheTaskId,
   taskNotFoundMessage
 } from '../../src/lib/brief-assembly.js'
+
+const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const REPO_ROOT = join(CLI_ROOT, '..', '..')
 
 /**
  * O2 (task-run-v1 task 11) — a dispatch not-found message names the title
@@ -159,5 +167,212 @@ describe('checkStaleAgainstRemote / checkDirtyPinnedFiles — fixture repo, both
   it('checkDirtyPinnedFiles never blocks on a dirty file it was not asked to pin (Traps to avoid: no unrelated dirty file blocks)', () => {
     writeFileSync(join(localDir, 'scratch.md'), 'an operator scratch file\n')
     expect(checkDirtyPinnedFiles(['pinned.md'], localDir)).toEqual([])
+  })
+})
+
+/**
+ * `assembleAndRenderBriefForIssue`'s pre-write `override`
+ * escape hatch and `canRenderBriefFromHere`'s infra-readiness gate. Reuses
+ * this file's own real-fixture-repo pattern (no mocked git) rather than a
+ * live network call — `assembleAndRenderBriefForIssue` shells out to real
+ * `git`, so a fixture repo with a local `origin` remote is the same
+ * network-free discipline `checkStaleAgainstRemote`'s own tests above already
+ * use. `AEG_REPO` substitutes for a real GitHub remote (this fixture's origin
+ * is a local file path, which `resolveRepo`'s GitHub-URL patterns don't
+ * match) — the same env-var escape hatch production code already reads.
+ */
+describe('assembleAndRenderBriefForIssue — pre-write override', () => {
+  let tmpDir: string
+  let remoteDir: string
+  let localDir: string
+  let originalCwd: string
+  let originalAegRepo: string | undefined
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'vinaya-brief-override-'))
+    remoteDir = join(tmpDir, 'remote')
+    localDir = join(tmpDir, 'local')
+    mkdirSync(remoteDir, { recursive: true })
+    git(remoteDir, ['init', '-q', '-b', 'main'])
+    git(remoteDir, ['config', 'user.email', 'a@example.com'])
+    git(remoteDir, ['config', 'user.name', 'A'])
+    mkdirSync(join(remoteDir, 'aeg-root', 'templates'), { recursive: true })
+    cpSync(
+      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
+      join(remoteDir, 'aeg-root', 'templates', 'brief-template.md')
+    )
+    git(remoteDir, ['add', '.'])
+    git(remoteDir, ['commit', '-q', '-m', 'seed'])
+    git(tmpDir, ['clone', '-q', remoteDir, localDir])
+    git(localDir, ['config', 'user.email', 'a@example.com'])
+    git(localDir, ['config', 'user.name', 'A'])
+
+    originalCwd = process.cwd()
+    originalAegRepo = process.env.AEG_REPO
+    process.chdir(localDir)
+    process.env.AEG_REPO = 'test-owner/test-repo'
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    if (originalAegRepo === undefined) delete process.env.AEG_REPO
+    else process.env.AEG_REPO = originalAegRepo
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('canRenderBriefFromHere is true once the template exists and the repo resolves', () => {
+    expect(canRenderBriefFromHere()).toBe(true)
+  })
+
+  it('canRenderBriefFromHere is false with no resolvable repo, even with the template present', () => {
+    delete process.env.AEG_REPO
+    expect(canRenderBriefFromHere()).toBe(false)
+  })
+
+  const RATIONALE = [
+    "## Task Issue — Planner's rationale",
+    '',
+    '**Boundary** — In: nothing real. Out: nothing.',
+    '',
+    '**Sizing** — n/a, test fixture.',
+    '',
+    '**Project(s) + blast radius** — `Project: cli`. No shared-primitive fan-out.',
+    '',
+    '**Dependency rationale** — `Depends-on: —`; `Conflicts-with: —`.',
+    '',
+    '**Traps to avoid** — n/a.',
+    '',
+    '**Suggested agent-class** — fast — test fixture.',
+    '',
+    '**Stop-and-escalate** — n/a.',
+    '',
+    '**Docs to keep coherent** — no-doc-surface.'
+  ].join('\n')
+
+  it('renders from the SUPPLIED override body, never fetching the (nonexistent) live Issue', () => {
+    const body = [
+      '**Project:** cli',
+      '',
+      '## Objectives',
+      '',
+      'O1. The fixture renders without a live forge fetch.',
+      '',
+      '## Surface',
+      '',
+      'in: aeg-root',
+      'out: —',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — proves the override path never calls `gh`.',
+      '',
+      '## Test plan',
+      '',
+      'Test Plan: unit-tests-only',
+      '',
+      '## Stop conditions',
+      '',
+      '- None.',
+      '',
+      RATIONALE
+    ].join('\n')
+
+    const result = assembleAndRenderBriefForIssue(DRAFT_ISSUE_SENTINEL, {
+      title: '[fixture] draft issue',
+      body,
+      labels: []
+    })
+    return result.then((r) => {
+      expect(r.ok).toBe(true)
+      if (r.ok) {
+        expect(r.brief).toContain('O1. The fixture renders without a live forge fetch.')
+        expect(r.brief).toContain('Part 1 (O1)')
+      }
+    })
+  })
+
+  it('refuses, naming the missing section, when the override body has no `## Test plan`', () => {
+    const body = [
+      '## Objectives',
+      '',
+      'O1. The fixture is missing its Test plan section.',
+      '',
+      '## Surface',
+      '',
+      'in: aeg-root',
+      'out: —',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — proves a missing section refuses the render.',
+      '',
+      '## Stop conditions',
+      '',
+      '- None.',
+      '',
+      RATIONALE
+    ].join('\n')
+
+    const result = assembleAndRenderBriefForIssue(DRAFT_ISSUE_SENTINEL, {
+      title: '[fixture] draft issue',
+      body,
+      labels: []
+    })
+    return result.then((r) => {
+      expect(r.ok).toBe(false)
+      if (!r.ok) {
+        expect(r.missing.some((m) => /Test plan/i.test(m))).toBe(true)
+      }
+    })
+  })
+
+  it('refuses (never rendering) when the override body carries a `vinaya/tranche:*` label — that shape belongs to the tranche path', () => {
+    const result = assembleAndRenderBriefForIssue(DRAFT_ISSUE_SENTINEL, {
+      title: '[fixture] draft issue',
+      body: '## Objectives\n\nO1. Anything.\n',
+      labels: ['vinaya/tranche:demo']
+    })
+    return result.then((r) => {
+      expect(r.ok).toBe(false)
+      if (!r.ok) {
+        expect(r.missing[0]).toMatch(/vinaya\/tranche:\*/)
+      }
+    })
+  })
+})
+
+/**
+ * A tranche-labeled EDIT is not circular the way a tranche-labeled CREATE
+ * is: the task already exists in its tranche's forge-derived task list, with
+ * a real Issue number to look up. `resolveTrancheTaskId` is the lookup that
+ * lets `forge-write.ts` route such an edit through `assembleAndRenderBrief`
+ * instead of leaving the whole-brief render dormant.
+ *
+ * The lookup itself (`createForgeSource(...).getTranche(slug)`) goes through
+ * `@attalabs/aeg-forge-state`'s `gh` module, whose `execFileSync('gh', ...)`
+ * calls run against a `PATH` snapshotted into a module-level constant at
+ * import time — a PATH-boundary fake bin placed after that snapshot is
+ * silently ignored, so only the local, network-free guard (no resolvable
+ * repo at all) is unit-testable here; the same live-network gap
+ * `apps/cli/tests/commands/brief-render.test.ts` documents for
+ * `assembleAndRenderBrief`'s own forge reads.
+ */
+describe('resolveTrancheTaskId', () => {
+  it('returns null when the repo cannot be resolved at all', () => {
+    const originalAegRepo = process.env.AEG_REPO
+    delete process.env.AEG_REPO
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-no-repo-'))
+    const originalCwd = process.cwd()
+    process.chdir(dir)
+    return resolveTrancheTaskId('fixture-tranche', 501)
+      .then((id) => {
+        expect(id).toBeNull()
+      })
+      .finally(() => {
+        process.chdir(originalCwd)
+        rmSync(dir, { recursive: true, force: true })
+        if (originalAegRepo === undefined) delete process.env.AEG_REPO
+        else process.env.AEG_REPO = originalAegRepo
+      })
   })
 })
