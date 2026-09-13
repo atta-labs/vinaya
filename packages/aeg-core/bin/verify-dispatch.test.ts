@@ -352,8 +352,10 @@ describe('(e) every gh invocation carries an explicit repo target (Part 1, task 
     // call (plan-brief-v1 task 2, #427) is the fourth. 5, not 4:
     // `fetchIssueStatesBatch` — one `gh api graphql` call, still carrying an
     // explicit `-R` target even though the query's own `$owner`/`$repo`
-    // variables make it redundant — is the fifth.
-    expect(ghCommands.length).toBe(5)
+    // variables make it redundant — is the fifth. 6, not 5:
+    // `fetchBacklogIssuePrsBatch`'s own `gh pr list` call (issue-586, O2) is
+    // the sixth.
+    expect(ghCommands.length).toBe(6)
     for (const argsText of ghCommands) {
       expect(argsText).toContain("'-R'")
       expect(argsText).toMatch(/`\$\{repo\.owner\}\/\$\{repo\.repo\}`/)

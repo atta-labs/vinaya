@@ -101,6 +101,8 @@ import {
   deriveSection7,
   classifyDocOwnersManifest,
   DOC_OWNERS_PATH,
+  extractClosesReferences,
+  issueBranchName,
   parsePremiseBlock,
   PRINCIPAL_ALLOWLIST,
   resolveNewestFrozenBrief
@@ -198,7 +200,14 @@ export async function checkBareEdgeQualification(
   }
 }
 
-type PrListEntry = { number: number; headRefName: string; state: 'OPEN' | 'CLOSED' | 'MERGED'; mergedAt: string | null }
+type PrListEntry = {
+  number: number
+  headRefName: string
+  state: 'OPEN' | 'CLOSED' | 'MERGED'
+  mergedAt: string | null
+  /** Only requested by `fetchBacklogIssuePrsBatch` — undefined from every other reader of this type. */
+  body?: string
+}
 
 /** One batched fetch of every PR (any state) whose head branch belongs to this tranche. */
 function fetchTrancheBranchPrs(trancheSlug: string, repo: RepoRef): Map<string, PrListEntry> {
@@ -223,6 +232,61 @@ function fetchTrancheBranchPrs(trancheSlug: string, repo: RepoRef): Map<string, 
     map.set(taskId, pr)
   }
   return map
+}
+
+/**
+ * Injectable so tests can fake the forge without a real `gh pr list` call —
+ * the same seam `IssueStateFetcher`/`SiblingTrancheResolver` already give
+ * this file.
+ */
+export type BacklogPrFetcher = (numbers: number[], repo: RepoRef) => Map<number, PrListEntry>
+
+/**
+ * One batched fetch resolving each bare backlog Issue number (issue-586, O2)
+ * to its OWN pull request, by the `task/issue-<n>` branch convention
+ * (`issueBranchName`, `@attalabs/aeg-core`) and, when no branch matches, by a
+ * `Closes #<n>` reference in a PR body (`extractClosesReferences`, same
+ * package — one grammar, not a second copy). A number with neither match
+ * returns no entry at all: `resolveDependsOn` falls back to the Issue's own
+ * closed/open state for it, exactly as before this task.
+ *
+ * Never treats a closed-without-merge Issue as satisfied: when a PR IS found
+ * this way, `merged` is read off ITS OWN `state === 'MERGED'`, not off the
+ * Issue's `CLOSED` state — an Issue closed as "not planned" with a real,
+ * unmerged `task/issue-<n>` PR (or a PR that references it via `Closes #<n>`
+ * without merging) correctly reports unmerged.
+ */
+export function fetchBacklogIssuePrsBatch(numbers: number[], repo: RepoRef): Map<number, PrListEntry> {
+  const result = new Map<number, PrListEntry>()
+  const unique = [...new Set(numbers)]
+  if (unique.length === 0) return result
+
+  const all =
+    shJson<PrListEntry[]>('gh', [
+      'pr',
+      'list',
+      '-R',
+      `${repo.owner}/${repo.repo}`,
+      '--state',
+      'all',
+      '--json',
+      'number,headRefName,state,mergedAt,body',
+      '--limit',
+      '300'
+    ]) ?? []
+  const byBranch = new Map<string, PrListEntry>()
+  for (const pr of all) byBranch.set(pr.headRefName, pr)
+
+  for (const n of unique) {
+    const branchMatch = byBranch.get(issueBranchName(n))
+    if (branchMatch) {
+      result.set(n, branchMatch)
+      continue
+    }
+    const bodyMatch = all.find((pr) => extractClosesReferences(pr.body ?? '').has(n))
+    if (bodyMatch) result.set(n, bodyMatch)
+  }
+  return result
 }
 
 // ---- tranche / task resolution ---------------------------------------------
@@ -336,7 +400,8 @@ export async function resolveDependsOn(
   branchPrs: Map<string, PrListEntry>,
   repo: RepoRef,
   resolveSibling: SiblingTrancheResolver = defaultResolveSiblingTranche,
-  fetchIssueStates: IssueStateFetcher = fetchIssueStatesBatch
+  fetchIssueStates: IssueStateFetcher = fetchIssueStatesBatch,
+  fetchBacklogPrs: BacklogPrFetcher = fetchBacklogIssuePrsBatch
 ): Promise<DispatchDependsOnFact[]> {
   const siblingCache = new Map<string, SiblingTranche | null>()
 
@@ -346,9 +411,12 @@ export async function resolveDependsOn(
   // `fetchIssueStates` call instead of one `gh` process per edge — this is
   // the resolver that actually made one forge process per edge;
   // `resolveConflictsWith` below never called `gh` for these cases at all,
-  // see the PR body's Decisions.
+  // see the PR body's Decisions. `neededBacklog` is the direct-`#NNN`
+  // subset only (issue-586, O2) — a same-tranche/sibling edge already has
+  // its own branch-PR map and never needs this second fetch.
   const siblingByEdge = new Map<string, SiblingTranche | null>()
   const needed = new Set<number>()
+  const neededBacklog = new Set<number>()
   for (const edge of edges) {
     const sameTask = resolveSameTrancheTask(edge, tranche)
     if (sameTask) {
@@ -358,6 +426,7 @@ export async function resolveDependsOn(
     const directIssue = directIssueNumFromEdge(edge)
     if (directIssue !== null) {
       needed.add(directIssue)
+      neededBacklog.add(directIssue)
       continue
     }
     const qualified = splitSlugQualifiedEdge(edge)
@@ -375,6 +444,7 @@ export async function resolveDependsOn(
     }
   }
   const issueStates = fetchIssueStates([...needed], repo)
+  const backlogPrs = fetchBacklogPrs([...neededBacklog], repo)
 
   const facts: DispatchDependsOnFact[] = []
   for (const edge of edges) {
@@ -392,7 +462,14 @@ export async function resolveDependsOn(
     }
     const directIssue = directIssueNumFromEdge(edge)
     if (directIssue !== null) {
-      facts.push({ id: edge, issue: directIssue, merged: issueStates.get(directIssue) === 'CLOSED' })
+      // A bare Issue number's own pull request (branch or `Closes #<n>`
+      // body) is the authority when one exists (issue-586, O2, trap: never
+      // treat a closed-without-merge Issue as a merged dependency) — the
+      // Issue's own closed/open state is only the fallback for a number
+      // with no known PR at all, unchanged from before this task.
+      const backlogPr = backlogPrs.get(directIssue)
+      const merged = backlogPr ? backlogPr.state === 'MERGED' : issueStates.get(directIssue) === 'CLOSED'
+      facts.push({ id: edge, issue: directIssue, merged })
       continue
     }
     const qualified = splitSlugQualifiedEdge(edge)

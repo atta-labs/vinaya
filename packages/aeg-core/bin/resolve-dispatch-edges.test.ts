@@ -17,7 +17,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   return { ...actual, execFileSync: (...args: unknown[]) => execFileSyncMock(...args) }
 })
 
-const { resolveConflictsWith, resolveDependsOn } = await import('./verify-dispatch')
+const { fetchBacklogIssuePrsBatch, resolveConflictsWith, resolveDependsOn } = await import('./verify-dispatch')
 
 const REPO = { owner: 'atta-labs', repo: 'vinaya' }
 
@@ -41,6 +41,14 @@ beforeEach(() => {
     // resolves through this, not a per-edge `gh issue view`.
     if (cmd === 'gh' && args[0] === 'api' && args[1] === 'graphql') {
       return JSON.stringify({ data: { repository: { i_192: { state: 'CLOSED' } } } })
+    }
+    // `resolveDependsOn`'s OTHER batched fetcher (`fetchBacklogIssuePrsBatch`,
+    // issue-586 O2) — every direct-edge row also probes for the Issue's own
+    // `task/issue-<n>` pull request. No PR by default, so every row above
+    // that never opts into a fixture below falls back to the Issue-state
+    // check exactly as before this task.
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list') {
+      return JSON.stringify([])
     }
     throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
   })
@@ -110,6 +118,124 @@ describe('resolveDependsOn — #196 regression table', () => {
     ])
     const [fact] = await resolveDependsOn(['2'], homeTranche, branchPrs, REPO)
     expect(fact).toEqual({ id: '2', issue: 111, merged: false })
+  })
+})
+
+describe('resolveDependsOn — O2: a backlog Issue resolves through its own pull request', () => {
+  const homeTranche = makeTranche('home-tranche', [])
+
+  it('a merged `task/issue-<n>` pull request makes the dependency dispatchable, regardless of the fetched Issue state', async () => {
+    const fetchIssueStates = () => new Map<number, 'OPEN' | 'CLOSED'>([[586, 'CLOSED']])
+    const fetchBacklogPrs = vi.fn(
+      (numbers: number[]) =>
+        new Map(
+          numbers.map((n) => [
+            n,
+            { number: 900, headRefName: 'task/issue-586', state: 'MERGED' as const, mergedAt: '2026-09-14' }
+          ])
+        )
+    )
+    const [fact] = await resolveDependsOn(
+      ['#586'],
+      homeTranche,
+      new Map(),
+      REPO,
+      async () => null,
+      fetchIssueStates,
+      fetchBacklogPrs
+    )
+    expect(fact).toEqual({ id: '#586', issue: 586, merged: true })
+    expect(fetchBacklogPrs).toHaveBeenCalledTimes(1)
+    expect(fetchBacklogPrs.mock.calls[0]?.[0]).toEqual([586])
+  })
+
+  it('an open `task/issue-<n>` pull request refuses the dependency, naming it, even though the Issue itself is not closed', async () => {
+    const fetchIssueStates = () => new Map<number, 'OPEN' | 'CLOSED'>([[586, 'OPEN']])
+    const fetchBacklogPrs = () =>
+      new Map([[586, { number: 900, headRefName: 'task/issue-586', state: 'OPEN' as const, mergedAt: null }]])
+    const [fact] = await resolveDependsOn(
+      ['#586'],
+      homeTranche,
+      new Map(),
+      REPO,
+      async () => null,
+      fetchIssueStates,
+      fetchBacklogPrs
+    )
+    expect(fact).toEqual({ id: '#586', issue: 586, merged: false })
+  })
+
+  it('trap: an Issue closed WITHOUT a merge (its PR is open) never reads as merged', async () => {
+    const fetchIssueStates = () => new Map<number, 'OPEN' | 'CLOSED'>([[586, 'CLOSED']])
+    const fetchBacklogPrs = () =>
+      new Map([[586, { number: 900, headRefName: 'task/issue-586', state: 'OPEN' as const, mergedAt: null }]])
+    const [fact] = await resolveDependsOn(
+      ['#586'],
+      homeTranche,
+      new Map(),
+      REPO,
+      async () => null,
+      fetchIssueStates,
+      fetchBacklogPrs
+    )
+    expect(fact).toEqual({ id: '#586', issue: 586, merged: false })
+  })
+
+  it('no PR resolves by branch or body: falls back to the Issue closed/open state, unchanged from before this task', async () => {
+    const fetchIssueStates = () => new Map<number, 'OPEN' | 'CLOSED'>([[586, 'CLOSED']])
+    const fetchBacklogPrs = () => new Map()
+    const [fact] = await resolveDependsOn(
+      ['#586'],
+      homeTranche,
+      new Map(),
+      REPO,
+      async () => null,
+      fetchIssueStates,
+      fetchBacklogPrs
+    )
+    expect(fact).toEqual({ id: '#586', issue: 586, merged: true })
+  })
+})
+
+describe('fetchBacklogIssuePrsBatch', () => {
+  it('matches by the task/issue-<n> branch first', () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list') {
+        return JSON.stringify([
+          { number: 900, headRefName: 'task/issue-586', state: 'MERGED', mergedAt: '2026-09-14', body: '' }
+        ])
+      }
+      throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
+    })
+    const result = fetchBacklogIssuePrsBatch([586], REPO)
+    expect(result.get(586)?.number).toBe(900)
+  })
+
+  it('falls back to a `Closes #<n>` body match when no branch matches', () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list') {
+        return JSON.stringify([
+          {
+            number: 901,
+            headRefName: 'fix/control-store-fast-path',
+            state: 'MERGED',
+            mergedAt: '2026-09-14',
+            body: 'Summary\n\nCloses #586\n'
+          }
+        ])
+      }
+      throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
+    })
+    const result = fetchBacklogIssuePrsBatch([586], REPO)
+    expect(result.get(586)?.number).toBe(901)
+  })
+
+  it('returns no entry for a number matching neither a branch nor a Closes body', () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list') return JSON.stringify([])
+      throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
+    })
+    expect(fetchBacklogIssuePrsBatch([586], REPO).has(586)).toBe(false)
   })
 })
 
