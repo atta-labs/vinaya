@@ -17,6 +17,7 @@ import {
   CODE_REVIEW_SEVERITY_ORDER,
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
+  isProseLocation,
   type Objective,
   type ReviewInputManifest,
   SECURITY_SEVERITY_ORDER,
@@ -298,6 +299,30 @@ export function readIfExists(path: string): string | null {
   }
 }
 
+/**
+ * Prose never decides a round: a `NOT MET` whose evidence
+ * names only a PR body section, a comment, or a role file — reused from
+ * `@attalabs/aeg-core`'s `isProseLocation`, the SAME predicate
+ * `evaluateReviewFindings`'s body-located `MINOR` cap already applies to a
+ * finding's `location` field (that cap is untouched by this task; this is a
+ * separate use of the same predicate, over an objective's `evidence` field
+ * instead) — is reclassified `MET`, evidence annotated `(prose note)`,
+ * before either the rendered verdict comment or `assessRound`'s own
+ * `objectives` observation ever sees it. `aeg-root/roles/reviewer.md` and
+ * `aeg-root/roles/security.md` tell the reviewer why: `NOT MET` requires a
+ * code or test location now. A `NOT MET` naming a real source or test file
+ * is untouched (`isProseLocation`'s own `FILE_SHAPED_LOCATION` gate) — this
+ * never downgrades a real objective failure, only a prose-only citation of
+ * one.
+ */
+export function reclassifyProseOnlyNotMet(results: readonly ObjectiveResult[]): ObjectiveResult[] {
+  return results.map((r) =>
+    r.status === 'NOT MET' && isProseLocation(r.evidence)
+      ? { ...r, status: 'MET' as const, evidence: `${r.evidence} (prose note)` }
+      : r
+  )
+}
+
 export type RoundVerdictParse = { observation: VerdictObservation; rendered: string }
 
 export function buildVerdictFromReport(
@@ -390,6 +415,12 @@ export function buildVerdictFromReport(
       )
     }
   }
+  // After coverage is checked against the reviewer's own
+  // reported ids — reclassification only ever changes a result's `status`/
+  // `evidence`, never drops or adds an id, so it cannot affect coverage
+  // either way; checking coverage first just keeps that fact obviously true
+  // by construction rather than by reasoning about ordering.
+  objectiveResults = reclassifyProseOnlyNotMet(objectiveResults)
   const objectives = objectiveResults.map((o) => ({ id: o.id, met: o.status === 'MET' }))
   // O2: a version renders alongside its `OBJECTIVES:` block, or neither
   // renders — `review-post.ts`'s `CodeReviewInput`/`SecurityInput` contract
