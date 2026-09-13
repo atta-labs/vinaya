@@ -769,6 +769,101 @@ describe('devReviewLoop — the mechanical gate excludes the review gate’s own
  * #459: a crash mid-publish must not leave the durable log claiming
  * `merged_ready` for a run that never actually finished publishing).
  */
+/**
+ * O6 (Issue #583): identical to `writeFakeGhCrashOnSecondPost`'s own crash
+ * trigger (`publishRound`'s second comment post fails), except the failure
+ * fires exactly ONCE — a marker file (`$HOME/.gh-crash-used`) flips it back
+ * to healthy immediately after — so the driver's own best-effort pause
+ * comment, posted moments later from inside the NEW catch this fixes,
+ * lands normally. Isolates "the crash itself is now a clean pause" from
+ * the pre-existing, separate fact that `postMarkedComment`/`refuse` hard-
+ * exits the process on ITS OWN posting failure (`forge-write.ts`) — a real
+ * gap, but a different one than this task's own Surface names.
+ */
+function writeFakeGhCrashOnceThenHealthy(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$N" = "1" ] && [ ! -f "$HOME/.gh-crash-used" ]; then
+    touch "$HOME/.gh-crash-used"
+    echo "fake gh: simulated crash on the second publish post" >&2
+    exit 1
+  fi
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+function setUpCrashMidPublishThenHealthy(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaude(binDir)
+  writeFakeGhCrashOnceThenHealthy(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
 function writeFakeGhCrashOnSecondPost(dir: string): void {
   writeFakeBinary(
     dir,
@@ -1004,6 +1099,78 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
     const roleLog = readFileSync(join(home, '.vinaya', 'loops', 'unresolved', `${TASK}.log`), 'utf8')
     expect(roleLog).toMatch(/^\[dev-review-loop\] driver_exited: reason=error last_decision=\S+$/m)
   }, 20000)
+
+  // O6 (Issue #583): the SAME uncaught-error scenario, now proven to be a
+  // clean, decided pause — never a raw crash the process merely survives by
+  // accident. The driver lock is deliberately left in place (never cleared)
+  // for this reason: `task status` (O2) reads a live lock as `running`
+  // before it ever consults the pause-state file, so a cleared lock here
+  // would make the process's own death indistinguishable from a genuine,
+  // settled pause a Principal decided — exactly the ambiguity O5's
+  // dead-lock takeover exists to resolve for whichever of the two actually
+  // happened. Uses the "crashes once, then recovers" gh fixture rather than
+  // the persistent one above — the driver's OWN pause-comment post, moments
+  // later, must land on a healthy `gh`, not re-trigger the same fault a
+  // second time (that second fault is real too, but it is `forge-write.ts`'s
+  // own `refuse`-hard-exits-the-process design, a separate gap outside this
+  // task's Surface).
+  it('O6: the SAME crash is a decided pause(infrastructure) — the lock stays in place, a real pause-state and PR comment exist, nothing is thrown', () => {
+    const { home, cwd, path } = setUpCrashMidPublishThenHealthy()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // The lock is NEVER cleared for this reason — still on disk, still
+    // naming a real pid, proving this run's own `finally` deliberately
+    // skipped `clearDriverLock` rather than the process merely not having
+    // reached it yet (this run already returned, `spawnSync` already
+    // exited).
+    const lock = JSON.parse(readFileSync(driverLockPath(home), 'utf8')) as { pid: number; startedAt: string }
+    expect(typeof lock.pid).toBe('number')
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+
+    const posted = postedCommentFiles(home).map((f) => readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8'))
+    expect(posted.some((body) => /^<!-- aeg:loop:paused:infrastructure -->$/m.test(body))).toBe(true)
+  }, 20000)
+})
+
+/**
+ * O6 (Issue #583) — a static enumeration, not a behavioral one: every
+ * `return { finalDecision` (a real exit from `devReviewLoop`) and every
+ * `d.exitProcess(` call in the source names its own decision kind, so the
+ * loop's own exit sites are countable by inspection. Only two kinds may
+ * ever be the reason the FUNCTION resolves without a lock left behind:
+ * `publish`, and the re-exec hand-off (`exitProcess`, the literal process
+ * boundary — a real hand-off to a child process, not a decision this
+ * process makes about its own work). Every `pause`-shaped return is
+ * legitimate (see the two classes above) but is never counted as one of
+ * the "the process really ends" sites the fixture names — a pause return
+ * still ends THIS invocation's own async call (there is no infinite
+ * retry loop in this codebase), but the two sanctioned reasons the loop
+ * itself decides to stop being the source of new work are publish and an
+ * explicit stop (`d.exitProcess` on a clean re-exec hand-off, or the
+ * DeveloperStopSignal path posting an explicit refusal/escalation).
+ */
+describe('devReviewLoop — the loop’s exit sites (O6, Issue #583)', () => {
+  it('exactly one exitProcess call site exists — the re-exec hand-off — never a bare process.exit sprinkled elsewhere', () => {
+    const source = readFileSync(join(import.meta.dir, '..', '..', 'src', 'lib', 'dev-review-loop.ts'), 'utf8')
+    const exitProcessCalls = source.match(/\bd\.exitProcess\(/g) ?? []
+    expect(exitProcessCalls).toHaveLength(1)
+  })
+
+  it('the outer round-loop catch no longer re-throws — it is a `return`, same as every other decided exit', () => {
+    const source = readFileSync(join(import.meta.dir, '..', '..', 'src', 'lib', 'dev-review-loop.ts'), 'utf8')
+    const catchBlock =
+      /catch \(err\) \{[\s\S]*?\n {4}\}\n\n {4}\/\/ eslint-disable-next-line no-constant-condition/.exec(source)
+    expect(catchBlock).not.toBeNull()
+    const body = catchBlock?.[0] ?? ''
+    expect(body).not.toMatch(/^\s*throw err\s*$/m)
+    expect(body).toMatch(/return \{ finalDecision: decision, prNumber, task \}/)
+  })
 })
 
 /**

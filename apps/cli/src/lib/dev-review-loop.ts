@@ -612,6 +612,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   }
   writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString() })
 
+  // O6 (Issue #583): true only for the two pause reasons that are
+  // themselves an infrastructure/re-exec hiccup, never a human decision
+  // point ('infrastructure', 'stale_driver') — set at the single shared
+  // pause-return branch and at the outer crash catch below, both of which
+  // this variable is declared ahead of so either closure can set it. Every
+  // OTHER pause reason (escalation, max_rounds, confidence, reappearance,
+  // no_push, objectives_changed, ruling_posted, brief_superseded,
+  // policy_changed) is a genuine decision point a Principal must act on —
+  // those clear the lock exactly as before, unchanged.
+  let keepLockAlive = false
+
   try {
     return await runDevReviewLoopBody()
   } finally {
@@ -627,7 +638,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // call unconditionally here, including while a real error is already
     // propagating out of the `try`.
     await d.flushOutbox(task)
-    clearDriverLock(root, task)
+    // O6: an infrastructure/stale_driver pause deliberately leaves the lock
+    // in place — this run is not "done," it is a live process that hit a
+    // recoverable hiccup, and a cleared lock here would misrepresent that
+    // as a settled, resume-able-by-hand pause identical to a genuine
+    // Principal-decision one. Every other exit (publish, an explicit stop,
+    // or any other pause reason) clears it exactly as before.
+    if (!keepLockAlive) clearDriverLock(root, task)
   }
 
   async function runDevReviewLoopBody(): Promise<LoopResult> {
@@ -1569,11 +1586,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     try {
       return await runRoundLoop()
     } catch (err) {
-      // O2 (`#548` v3): a genuinely uncaught error is the one path that
-      // reaches neither a `pause` nor a `publish` decision and still returns
-      // normally (through `throw`) — the outer `finally` DOES run here, but
-      // `decision` (whatever it last held) is only readable from inside this
-      // closure, so the trace is written here, not there.
+      // O6 (Issue #583): a genuinely uncaught error — a gate error, a
+      // dispatch error, a forge read error, any thrown exception on the
+      // driver's own path — is now a decided `pause{reason:'infrastructure'}`
+      // like any other infrastructure hiccup, never a re-thrown exception
+      // that ends the process. `decision` (whatever it last held) is only
+      // readable from inside this closure, so the trace is written here,
+      // not in the outer `finally`. `keepLockAlive` (declared in the
+      // enclosing `devReviewLoop`) is set here too — this pause is exactly
+      // the class O6 names, the same as the shared pause-return branch's
+      // own 'infrastructure'/'stale_driver' cases below.
       recordDriverExited('error')
       let head = 'unknown'
       try {
@@ -1582,8 +1604,38 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // Left as 'unknown' — the schema only requires a string.
       }
       await logEvents(driverCrashEvents(config.loopId, state, round, head))
+      decision = {
+        type: 'pause',
+        reason: 'infrastructure',
+        detail: `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
+      }
+      keepLockAlive = true
+      // O6: this bookkeeping is best-effort, never a second chance for the
+      // process to crash on its way out — the ORIGINAL error is already
+      // handled (this pause IS the handling); a forge write failing here
+      // too (the exact fault that just took down the round, still live)
+      // must never re-throw and undo it. `d.flushOutbox`/`recordDriverExited`
+      // above already follow the identical "never throws" discipline for
+      // the same reason.
+      try {
+        writePauseState(root, {
+          task,
+          round,
+          head,
+          branch,
+          prNumber,
+          reason: decision.reason,
+          detail: decision.detail,
+          pausedAt: new Date().toISOString()
+        })
+        postPauseComment(root, task, round, head, prNumber, decision.reason, decision.detail)
+      } catch {
+        // Swallowed deliberately — see above. The role log's own
+        // `driver_exited` trace (written above, unconditionally) is what a
+        // Principal reads when even this best-effort post never lands.
+      }
       await d.flushOutbox(task)
-      throw err
+      return { finalDecision: decision, prNumber, task }
     }
 
     // eslint-disable-next-line no-constant-condition
@@ -2080,6 +2132,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         }
 
         if (decision.type === 'pause') {
+          // O6 (Issue #583): 'infrastructure' and 'stale_driver' are the
+          // loop's own two "the mechanics stalled, not a review verdict"
+          // reasons (the gate-red bound, a missing-artifact reviewer retry
+          // bound, a re-exec that could not proceed) — recoverable hiccups,
+          // never a human decision point. Every other reason here IS a
+          // decision only a Principal can make (escalation, max_rounds,
+          // confidence, reappearance, no_push, objectives_changed,
+          // ruling_posted, brief_superseded, policy_changed) and clears the
+          // lock exactly as before.
+          if (decision.reason === 'infrastructure' || decision.reason === 'stale_driver') {
+            keepLockAlive = true
+          }
           const pauseHead = d.resolveHead(branch)
           writePauseState(root, {
             task,
