@@ -380,8 +380,11 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `TRACKED_HOOK_DIR` | const | `apps/cli/src/lib/artifacts.ts` |
 | `assembleAndRenderBrief` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `assembleAndRenderBriefForIssue` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `buildWorkspaceConsumersOf` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `canRenderBriefFromHere` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `checkDirtyPinnedFiles` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `checkStaleAgainstRemote` | function | `apps/cli/src/lib/brief-assembly.ts` |
+| `DRAFT_ISSUE_SENTINEL` | const | `apps/cli/src/lib/brief-assembly.ts` |
 | `expandGlob` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `packageNameForPath` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `resolveBoundaryPaths` | function | `apps/cli/src/lib/brief-assembly.ts` |

@@ -30,6 +30,7 @@ import {
   checkAutonomyClause,
   checkBlastRadiusScope,
   checkBriefClosesN,
+  checkBriefSections,
   checkDocsWithinSurface,
   checkDocUpdateList,
   checkForField,
@@ -39,7 +40,10 @@ import {
   checkIssueRationale,
   checkMilestoneShape,
   checkNoBriefContent,
+  checkNoForeignTaskOwnership,
+  checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
+  checkPartsCoverageAndSequence,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
   checkProjectField,
@@ -75,7 +79,13 @@ import {
   type TaskSurfaceFacts,
   trancheLabel
 } from '@attalabs/aeg-core'
-import { expandGlob } from './brief-assembly'
+import {
+  assembleAndRenderBriefForIssue,
+  buildWorkspaceConsumersOf,
+  canRenderBriefFromHere,
+  DRAFT_ISSUE_SENTINEL,
+  expandGlob
+} from './brief-assembly'
 import {
   findMilestoneAttachTargetForSlug,
   hasExplicitMilestoneFlag,
@@ -865,7 +875,13 @@ const ISSUE_CONTENT_RECOVERY = {
   rationaleSurfaceCoverage:
     'Widen the named `## Surface` `in:` glob to cover the Boundary path (nearest entry named above), or correct the path if it was mistyped, then re-run `{cmd}`.',
   surfaceOverlap:
-    'Narrow the named `## Surface` `in:` glob so it no longer overlaps the other task, or declare a `Conflicts-with` entry naming one task in the other (either direction is enough), then re-run `{cmd}`.'
+    'Narrow the named `## Surface` `in:` glob so it no longer overlaps the other task, or declare a `Conflicts-with` entry naming one task in the other (either direction is enough), then re-run `{cmd}`.',
+  objectivesRespectBoundary:
+    "Drop or rewrite the named Objective/Part/Test plan line so it no longer names a path the Boundary's `Out:` clause or the Surface's `out:` list excludes — this task cannot both exclude and require that path. Then re-run `{cmd}`.",
+  noForeignTaskOwnership:
+    "Rewrite the named sentence so it does not assign ownership of this task's own objective to another task — depend on the other task instead (`Dependency rationale`), or fold the work back into this task's own Objectives/Parts. Then re-run `{cmd}`.",
+  partsCoverageAndSequence:
+    'Fix the named `## Parts` defect — cite every declared objective from at least one Part, and number Parts contiguously from 1 — then re-run `{cmd}`.'
 } as const
 
 export type IssueContentInput = {
@@ -923,7 +939,10 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [
       input.milestoneSiblings !== null ? checkSurfaceOverlap(subject, input.milestoneSiblings).errors : [],
       'surfaceOverlap'
-    ]
+    ],
+    [checkObjectivesRespectBoundary(input.body).errors, 'objectivesRespectBoundary'],
+    [checkNoForeignTaskOwnership(input.body).errors, 'noForeignTaskOwnership'],
+    [checkPartsCoverageAndSequence(input.body).errors, 'partsCoverageAndSequence']
   ]
   const errors: CheckError[] = []
   for (const [messages, kind] of findings) {
@@ -1297,6 +1316,106 @@ function fetchOpenTaskSurfaceSiblings(
     })
 }
 
+/**
+ * Best-effort read of an Issue's CURRENT title from the forge — used only to
+ * fill `validateRenderedBriefForIssue`'s render input when an `issue edit`
+ * carries no `--title` of its own (the common case: nobody re-passes
+ * `--title` to change only a body). A failed fetch degrades to an empty
+ * title, same dormant-on-failure posture `fetchForgeMilestoneBestEffort`
+ * already takes here — the title is decorative in the rendered brief
+ * (`brief-render.ts` never grades it), so a miss here costs cosmetics, never
+ * a false gate result.
+ */
+function fetchForgeTitleBestEffort(issueRef: string): string {
+  try {
+    return execFileSync('gh', ['issue', 'view', issueRef, '--json', 'title', '--jq', '.title'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  } catch {
+    return ''
+  }
+}
+
+const CHECK_BRIEF_RENDER = 'brief-render'
+const CHECK_BRIEF_SHAPE_PREWRITE = 'brief-shape'
+
+/**
+ * **O1 (Issue #542) — the write gate becomes the brief gate.** Renders the
+ * SAME twelve-section brief `task brief`/`vinaya task brief` would produce
+ * from this draft — never a second renderer, `assembleAndRenderBriefForIssue`
+ * is the one `apps/cli` already has, driven by its `override` escape hatch
+ * (Issue #542) so it grades the bytes this write is ABOUT to send rather
+ * than what is on the forge before it lands — then runs the SAME
+ * `brief-shape` gate `pr create` applies (`checkBriefSections`,
+ * `@attalabs/aeg-core`) over the rendered text — never a second validator. A
+ * body that would freeze into a brief `pr create` refuses is refused here
+ * instead: `checkBriefSections`'s own error strings already name both the
+ * section (`brief-validation <Section>: …`) and the rule that failed.
+ *
+ * **Dormant for a tranche-labeled task Issue.** Rendering that shape needs
+ * the task to already exist in its tranche's forge-derived task list
+ * (`getTranche`), which is circular before the Issue itself is created —
+ * `assembleAndRenderBriefForIssue` only ever renders the tranche-less
+ * backlog-Issue shape (`task-run-v1` task 21's now-standard path). A
+ * tranche-labeled write keeps today's behaviour: the issue-content/schema
+ * gates above still run, only this whole-brief render is skipped.
+ *
+ * Also dormant when `canRenderBriefFromHere()` is false — no brief template
+ * on disk, or no resolvable owner/repo. A real `vinaya` invocation always has
+ * both; a fixture/test environment or an Issue write attempted outside any
+ * real checkout does not, and this gate must not turn "cannot render" into a
+ * false refusal of an otherwise-valid Issue.
+ *
+ * No partition-by-rollout (`partitionBriefErrorsByRollout`): a pre-write
+ * gate has no PR number to grandfather against, and `partitionBriefErrorsByRollout`'s
+ * own contract treats `prNumber === null` as NOT grandfathered — every
+ * finding here is blocking, the same fail-closed posture that contract
+ * documents.
+ */
+async function validateRenderedBriefForIssue(input: {
+  issueNumber: number | null
+  title: string
+  body: string
+  labels: string[]
+  retryCommand: string
+}): Promise<void> {
+  if (isTaskIssueLabelSet(input.labels)) return
+  if (!canRenderBriefFromHere()) return
+
+  const rendered = await assembleAndRenderBriefForIssue(input.issueNumber ?? DRAFT_ISSUE_SENTINEL, {
+    title: input.title,
+    body: input.body,
+    labels: input.labels
+  })
+  if (!rendered.ok) {
+    refuse(
+      rendered.missing.map((m) =>
+        makeCheckError(
+          CHECK_BRIEF_RENDER,
+          `brief-render: ${m}`,
+          `Fix the named gap so this Issue renders a valid brief, then re-run \`${input.retryCommand}\`.`
+        )
+      )
+    )
+  }
+
+  const briefErrors = checkBriefSections(rendered.brief, readTierFromPrBody, {
+    consumersOf: buildWorkspaceConsumersOf()
+  }).errors
+  if (briefErrors.length > 0) {
+    refuse(
+      briefErrors.map((e) =>
+        makeCheckError(
+          CHECK_BRIEF_SHAPE_PREWRITE,
+          e,
+          `Fix the named section in the Issue body — as written it would freeze into a brief \`pr create\` refuses — then re-run \`${input.retryCommand}\`.`
+        )
+      )
+    )
+  }
+}
+
 export async function validateTaskIssue(
   body: string | null,
   title: string | null,
@@ -1352,6 +1471,14 @@ export async function validateTaskIssue(
     subjectRef: issueNumber !== null ? String(issueNumber) : ''
   })
   if (contentErrors.length > 0) refuse(contentErrors)
+
+  // O1 (Issue #542) — render the brief this write would freeze and grade it
+  // with the same brief-shape gate `pr create` applies, before the write.
+  // `title` is null on a plain `issue edit`/`issue objectives edit` that
+  // doesn't re-pass `--title`; the Issue's own live title fills the gap.
+  const effectiveTitle =
+    title ?? (milestoneSource?.kind === 'edit' ? fetchForgeTitleBestEffort(milestoneSource.issueRef) : '')
+  await validateRenderedBriefForIssue({ issueNumber, title: effectiveTitle, body, labels, retryCommand })
 
   // O2 (task 17) — the six write-only rules, through the SAME registry
   // runner `runBodyChecks` uses. `checkMilestoneAttach` stays dormant on
