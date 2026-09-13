@@ -69,9 +69,10 @@
  * CWD-independent by design: chdir's to the repo root immediately below.
  */
 
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFile, execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import {
   AmbiguousBareEdgeError,
   deriveTrancheFromForge,
@@ -133,6 +134,32 @@ function shJson<T>(cmd: string, args: string[]): T | null {
   if (!out) return null
   try {
     return JSON.parse(out) as T
+  } catch {
+    return null
+  }
+}
+
+const execFileAsync = promisify(execFile)
+
+/**
+ * Async, larger-buffer sibling of `sh()` (issue-586, O2 round 2 self-fix) —
+ * for a request whose payload is genuinely bounded (a `--limit`-capped `gh
+ * pr list`, never an unbounded Milestone enumeration; that case is
+ * `tranchesAttachedToMilestone`'s own field-selection-plus-pagination fix,
+ * not this one) but can still exceed `execFileSync`'s 1 MB default once
+ * `body` is requested across many PRs — found live against this repo's own
+ * `gh pr list --json …,body --limit 300` (5.8 MB), the exact ENOBUFS shape
+ * `fetchBacklogIssuePrsBatch` first shipped with, silently returning zero
+ * PRs rather than throwing. 16 MB matches `@attalabs/aeg-forge-state`'s own
+ * `gh.ts` precedent for the identical shape (a bounded list whose full
+ * bodies must reach this process, because `Closes #<n>` matching happens in
+ * TS via the shared `extractClosesReferences`, not a duplicate filter
+ * server-side).
+ */
+async function shJsonAsync<T>(cmd: string, args: string[]): Promise<T | null> {
+  try {
+    const { stdout } = await execFileAsync(cmd, args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+    return JSON.parse(stdout) as T
   } catch {
     return null
   }
@@ -239,7 +266,7 @@ function fetchTrancheBranchPrs(trancheSlug: string, repo: RepoRef): Map<string, 
  * the same seam `IssueStateFetcher`/`SiblingTrancheResolver` already give
  * this file.
  */
-export type BacklogPrFetcher = (numbers: number[], repo: RepoRef) => Map<number, PrListEntry>
+export type BacklogPrFetcher = (numbers: number[], repo: RepoRef) => Promise<Map<number, PrListEntry>>
 
 /**
  * One batched fetch resolving each bare backlog Issue number (issue-586, O2)
@@ -256,13 +283,13 @@ export type BacklogPrFetcher = (numbers: number[], repo: RepoRef) => Map<number,
  * unmerged `task/issue-<n>` PR (or a PR that references it via `Closes #<n>`
  * without merging) correctly reports unmerged.
  */
-export function fetchBacklogIssuePrsBatch(numbers: number[], repo: RepoRef): Map<number, PrListEntry> {
+export async function fetchBacklogIssuePrsBatch(numbers: number[], repo: RepoRef): Promise<Map<number, PrListEntry>> {
   const result = new Map<number, PrListEntry>()
   const unique = [...new Set(numbers)]
   if (unique.length === 0) return result
 
   const all =
-    shJson<PrListEntry[]>('gh', [
+    (await shJsonAsync<PrListEntry[]>('gh', [
       'pr',
       'list',
       '-R',
@@ -273,7 +300,7 @@ export function fetchBacklogIssuePrsBatch(numbers: number[], repo: RepoRef): Map
       'number,headRefName,state,mergedAt,body',
       '--limit',
       '300'
-    ]) ?? []
+    ])) ?? []
   const byBranch = new Map<string, PrListEntry>()
   for (const pr of all) byBranch.set(pr.headRefName, pr)
 
@@ -444,7 +471,7 @@ export async function resolveDependsOn(
     }
   }
   const issueStates = fetchIssueStates([...needed], repo)
-  const backlogPrs = fetchBacklogPrs([...neededBacklog], repo)
+  const backlogPrs = await fetchBacklogPrs([...neededBacklog], repo)
 
   const facts: DispatchDependsOnFact[] = []
   for (const edge of edges) {
