@@ -1598,7 +1598,7 @@ case "$VINAYA_ROLE" in
     mkdir -p "$WD"
     printf 'BLOCKER|smoke.ts:1|persistent blocker, never resolved\\n' > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\nFINDING_IDS: F1\\n' > "$WD/report.txt"
     echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
@@ -2186,6 +2186,198 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     expect(gateRedPrompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
     expect(gateRedPrompt).toMatch(/CI is red on the last head/)
     expect(gateRedPrompt).toMatch(/`git push`/)
+  }, 20000)
+})
+
+// --- O2 (#543): unpushed-work resume, then no_push, distinct from a genuinely idle stall ---
+
+/**
+ * Same as `writeFakeGit`, except `-C <worktree> status --porcelain` reports
+ * one dirty file and `-C <worktree> rev-list --count @{u}..HEAD` reports one
+ * commit ahead — a developer turn that did REAL, uncommitted-or-unpushed
+ * work, never the "did nothing at all" case `writeFakeGit`'s own bare
+ * `exit 1` fallback already covers.
+ */
+function writeFakeGitDirtyWorktree(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "status" ]; then
+  echo " M smoke.ts"
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "rev-list" ]; then
+  echo "1"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+function setUpNeverPushesDirty(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeNeverPushes(binDir)
+  writeFakeGhAlwaysRedCi(binDir)
+  writeFakeGitDirtyWorktree(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then no_push — never folded into the generic infrastructure stall', () => {
+  it('resumes once with a commit-and-push instruction, records the resume comment, then pauses (no_push) naming the branch and the dirty file', () => {
+    const { home, cwd, path } = setUpNeverPushesDirty()
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
+    })
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(no_push\)/)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('no_push')
+    expect(pauseState.detail).toMatch(new RegExp(`branch ${BRANCH}`))
+    expect(pauseState.detail).toMatch(/smoke\.ts/)
+
+    // Exactly one resume for this: round 1's own fresh dispatch is
+    // `.dev-prompt-1.txt`, the gate-red retry that discovers the dirty
+    // worktree is `.dev-prompt-2.txt`, and the ONE commit-and-push resume
+    // this triggers is `.dev-prompt-3.txt` — never a fourth.
+    expect(existsSync(join(home, '.dev-prompt-3.txt'))).toBe(true)
+    expect(existsSync(join(home, '.dev-prompt-4.txt'))).toBe(false)
+    const commitAndPushPrompt = readFileSync(join(home, '.dev-prompt-3.txt'), 'utf8')
+    expect(commitAndPushPrompt).toMatch(/uncommitted changes.*local commits ahead/)
+    expect(commitAndPushPrompt).toMatch(/`git push`/)
+
+    // The resume itself is recorded, once, as a marked PR comment.
+    const posted = readdirSync(join(home, '.fake-gh-posted-comments')).map((f) =>
+      readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8')
+    )
+    const resumeComment = posted.find((c) => c.startsWith('<!-- aeg:loop:unpushed-work-resume -->'))
+    expect(resumeComment).toBeDefined()
+    expect(resumeComment as string).toMatch(/unpushed_work_resume/)
+    expect(resumeComment as string).toMatch(/smoke\.ts/)
+
+    // Round 2 review, MAJOR: the resume must ALSO land in the real
+    // `dev_review_loop` journal, not only the marked PR comment above — a
+    // real `unpushed_work_resume` event, readable the same way every other
+    // driver-logged event in this suite is (`outboxLines`).
+    const resumeEvent = outboxLines(home).find((l) => l.event === 'unpushed_work_resume') as
+      | Record<string, unknown>
+      | undefined
+    expect(resumeEvent).toBeDefined()
+    expect(resumeEvent?.kind).toBe('dev_review_loop')
+    expect(resumeEvent?.branch).toBe(BRANCH)
+    expect(resumeEvent?.detail as string).toMatch(/smoke\.ts/)
+  }, 20000)
+})
+
+// --- O3 (#543): a reviewer report missing finding ids is sent back once, never no_progress ---
+
+/**
+ * The code-reviewer writes one BLOCKER finding on EVERY dispatch this
+ * round, but never a `FINDING_IDS:` line — persistently uncitable, so the
+ * driver's own one resend (into a fresh work directory, its path read back
+ * out of the prompt it receives, exactly as a real dispatched reviewer
+ * would) still doesn't produce one. Counts its own dispatches to
+ * `$HOME/.reviewer-dispatch-count` so the test can assert there were
+ * exactly two (the original attempt plus the one resend — never a third).
+ * Security stays clean throughout (empty findings.txt — trivially cited).
+ */
+function writeFakeClaudeUncitableScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+PROMPT="$(cat)"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    N=$(cat "$HOME/.reviewer-dispatch-count" 2>/dev/null || echo 0)
+    echo $((N + 1)) > "$HOME/.reviewer-dispatch-count"
+    WD=$(printf '%s\\n' "$PROMPT" | grep -o '[^ ]*reviewer-work[^ ]*/findings.txt' | head -1 | sed 's|/findings.txt$||')
+    mkdir -p "$WD"
+    printf '%s\\n' 'BLOCKER|smoke.ts:1|deliberate, never cited' > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-'"$N"'","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+function setUpUncitable(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeUncitableScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — O3 (#543): a reviewer report missing finding ids is resent once, then report_uncitable — never no_progress', () => {
+  it("resends once into a fresh work directory, records report_uncitable, and still dispatches the developer on this round's real BLOCKER — never stalls", () => {
+    const { home, cwd, path } = setUpUncitable()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    // A real, un-cited BLOCKER still drives changes_requested → dispatch the
+    // developer — this pauses only because this fixture's fake developer
+    // never actually pushes a round-2 fix, the SAME `infrastructure`/
+    // gate-stall bound every other single-round fixture in this file hits,
+    // never `no_progress` (there is no PRIOR round to compare zero-resolved
+    // against yet, and this round's own citation gap must never manufacture
+    // one).
+    expect(r.stdout).not.toMatch(/paused \(no_progress\)/)
+
+    // Exactly two code-reviewer dispatches this round: the original, then
+    // the one resend — never a third.
+    expect(readFileSync(join(home, '.reviewer-dispatch-count'), 'utf8').trim()).toBe('2')
+
+    const posted = readdirSync(join(home, '.fake-gh-posted-comments')).map((f) =>
+      readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8')
+    )
+    const uncitableComment = posted.find((c) => c.startsWith('<!-- aeg:loop:report-uncitable -->'))
+    expect(uncitableComment).toBeDefined()
+    expect(uncitableComment as string).toMatch(/report_uncitable: reviewer/)
   }, 20000)
 })
 
@@ -4354,7 +4546,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
 describe('a loop-published verdict agrees with the merge gate under policy (review-validity-v1 task 8, #506, O2/O4)', () => {
   const HEAD = 'e'.repeat(40)
   const TOKENS = { taskId: '506', model: 'claude', tokensIn: '8', tokensOut: '4', cost: '—', sessionId: 's1' }
-  const THIS_REPO_POLICY = { codeReviewThreshold: 'MAJOR' as const, securityThreshold: 'HIGH' as const }
+  const THIS_REPO_POLICY = { codeReviewThreshold: 'MAJOR' as const, securityThreshold: 'HIGH' as const, maxRounds: 3 }
 
   it("a MAJOR finding drives REQUEST_CHANGES at the loop (never reaches a clean round to publish) under this repo's MAJOR/HIGH policy", () => {
     const findings = [{ severity: 'MAJOR', location: 'a.ts:1', description: 'off-by-one' }]
@@ -4419,9 +4611,9 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
 
   it('the identical MAJOR-carrying comment passes under the DEFAULT (BLOCKER) policy — the gate and the default-policy derivation agree too', () => {
     const findings = [{ severity: 'MAJOR', location: 'a.ts:1', description: 'off-by-one' }]
-    expect(deriveCodeReviewVerdict(findings, { codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH' })).toBe(
-      'APPROVE'
-    )
+    expect(
+      deriveCodeReviewVerdict(findings, { codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3 })
+    ).toBe('APPROVE')
 
     const reviewerComment = renderCodeReviewComment({
       ...TOKENS,

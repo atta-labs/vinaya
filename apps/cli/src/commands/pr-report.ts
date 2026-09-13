@@ -109,9 +109,15 @@ const EVIDENCE_START = '<!-- AEG:EVIDENCE:START -->'
 const EVIDENCE_END = '<!-- AEG:EVIDENCE:END -->'
 
 // Array-form execFileSync — no shell, so no injection surface.
+// `env: { ...process.env }` explicit on every call below — the same reason
+// `runRealGates`'s own spawnSync already carries it (see that function's doc
+// comment): Bun resolves the child EXECUTABLE's own PATH lookup from a
+// cached environment when `env` is omitted, not from `process.env` read at
+// call time, so a runtime `process.env.PATH` mutation (a test's fake `gh`/
+// `git` on a prepended directory) is silently ignored without this.
 function git(args: string[]): string {
   try {
-    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: process.env }).trim()
   } catch {
     return ''
   }
@@ -120,7 +126,7 @@ function git(args: string[]): string {
 /** Array-form execFileSync against `gh` — same no-shell discipline as `git()`, but throws (rather than collapsing to `''`) since a `--push` run must never mistake a failed forge call for an empty answer. Mirrors `review-post.ts`'s `gh()`. */
 function gh(args: string[]): string {
   try {
-    return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: process.env }).trim()
   } catch (err) {
     const stderr = (err as { stderr?: Buffer | string }).stderr
     throw new Error(String(stderr ?? (err as Error).message).trim() || 'gh command failed')
@@ -159,7 +165,7 @@ export class GitCommandError extends Error {
  */
 function gitStrict(args: string[]): string {
   try {
-    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: process.env }).trim()
   } catch (err) {
     const stderr = (err as { stderr?: Buffer | string }).stderr
     throw new GitCommandError(args, String(stderr ?? (err as Error).message).trim() || 'non-zero exit')
@@ -246,7 +252,7 @@ export type GateRunResult = { outcomes: GateOutcome[]; failed: boolean }
 export type GateRunner = () => GateRunResult | Promise<GateRunResult>
 
 /** Which body Group B's checks actually graded — named in the rendered block (O2) so a reader can never mistake a check that never ran against real text for one that passed against it. */
-export type GradedBodySource = 'write' | 'push' | 'ambient'
+export type GradedBodySource = 'write' | 'push' | 'push-from-file' | 'ambient'
 
 function describeGradedBodySource(source: GradedBodySource): string {
   switch (source) {
@@ -254,6 +260,8 @@ function describeGradedBodySource(source: GradedBodySource): string {
       return 'the drafted body file (`--write`)'
     case 'push':
       return 'the live pull-request body (`--push`)'
+    case 'push-from-file':
+      return 'the local body file, whole, about to replace the live body (`--push --body-file`)'
     case 'ambient':
       return 'the ambient `PR_BODY` environment (no `--write`/`--push`)'
   }
@@ -1034,8 +1042,8 @@ export async function buildReport(
 }
 
 const USAGE =
-  'Usage: vinaya pr report [--write <body-file> | --push <pr>] [--phase <phase>] [--role <role>] ' +
-  '[--model <id>] [--transcript <path>]'
+  'Usage: vinaya pr report [--write <body-file> | --push <pr> [--body-file <path>]] [--phase <phase>] ' +
+  '[--role <role>] [--model <id>] [--transcript <path>]'
 
 /** `gh pr edit <pr> --body-file <path>` via a scratch file — no shell, no long argv body. `mkdtempSync`, matching `forge-write.ts`'s own scratch-file discipline, rather than a pid/timestamp name in the shared tmp root. */
 function ghEditBody(pr: string, body: string): void {
@@ -1062,6 +1070,14 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
   const writePath = writeIdx !== -1 ? args[writeIdx + 1] : undefined
   const pushIdx = args.indexOf('--push')
   const pushPr = pushIdx !== -1 ? args[pushIdx + 1] : undefined
+  // (`#543`, O6) `--body-file <path>` names the
+  // local file that IS the whole body source for this push — every byte of
+  // it, not only the freshly regenerated AEG:EVIDENCE/AEG:TOKENS blocks,
+  // reaches the forge (`composeWrittenBody`, the SAME whole-body composer
+  // `--write` alone already uses). Valid only alongside `--push`: it names
+  // what to push, and `--write` alone has no forge target for it to reach.
+  const bodyFileIdx = args.indexOf('--body-file')
+  const bodyFilePath = bodyFileIdx !== -1 ? args[bodyFileIdx + 1] : undefined
   const transcriptIdx = args.indexOf('--transcript')
   const transcriptPath = transcriptIdx !== -1 ? args[transcriptIdx + 1] : undefined
   const phaseIdx = args.indexOf('--phase')
@@ -1091,6 +1107,18 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
     console.error(`vinaya pr report: refused — --write and --push are mutually exclusive.\n${USAGE}`)
     process.exit(2)
   }
+  if (bodyFileIdx !== -1 && !bodyFilePath) {
+    console.error(USAGE)
+    process.exit(2)
+  }
+  if (bodyFilePath && !pushPr) {
+    console.error(`vinaya pr report: refused — --body-file only applies alongside --push.\n${USAGE}`)
+    process.exit(2)
+  }
+  if (bodyFilePath && !existsSync(bodyFilePath)) {
+    console.error(`vinaya pr report: refused — --body-file ${bodyFilePath} does not exist.\n${USAGE}`)
+    process.exit(2)
+  }
 
   // `--push` fetches the LIVE body up front — it is the input the splice
   // targets, never a local file — and exports it (with PR_NUMBER and BRANCH)
@@ -1113,6 +1141,15 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
     process.env.BRANCH = git(['rev-parse', '--abbrev-ref', 'HEAD'])
   }
 
+  // (`#543` O6) `--body-file` names the actual source this push grades and
+  // sends — never the stale live body fetched just above, which exists
+  // here only so the live-splice branch (no `--body-file`) has something to
+  // splice into.
+  const bodyFileSource = bodyFilePath !== undefined ? readFileSync(bodyFilePath, 'utf8') : undefined
+  if (bodyFileSource !== undefined) {
+    process.env.PR_BODY = bodyFileSource
+  }
+
   // Read BEFORE `buildReport()`, not after: Group C extracts its command
   // list from the body it is given, and the `--write` local draft is the
   // one body this command can read for that purpose before its own write
@@ -1132,12 +1169,13 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
     process.env.BRANCH = git(['rev-parse', '--abbrev-ref', 'HEAD'])
   }
 
-  const gradedBodySource: GradedBodySource = pushPr ? 'push' : writePath !== undefined ? 'write' : 'ambient'
+  const gradedBodySource: GradedBodySource =
+    bodyFileSource !== undefined ? 'push-from-file' : pushPr ? 'push' : writePath !== undefined ? 'write' : 'ambient'
 
   let result: ReportResult
   try {
     result = await buildReport({
-      body: preEditBody ?? existingForWrite,
+      body: bodyFileSource ?? preEditBody ?? existingForWrite,
       gradedBodySource,
       gateRunner: testOverrides?.gateRunner
     })
@@ -1160,7 +1198,58 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
   // the row and exiting non-zero, never aborting before the write. Aborting
   // would leave every unwired host unable to populate Evidence at all.
   let tokensRefused = false
-  if (pushPr) {
+  if (pushPr && bodyFileSource !== undefined) {
+    // (`#543` O6) The whole local body — every byte of it, never only the
+    // regenerated blocks — replaces the live body outright. `composeWrittenBody`
+    // is the SAME whole-body composer `--write` alone already uses (source +
+    // freshly regenerated Evidence/Tokens); the only difference here is the
+    // destination (the forge, via `gh pr edit`) rather than a local file.
+    const tokens = collectTokensAddition({
+      phase: phaseOverride ?? derivePhase(),
+      role: roleOverride ?? 'Developer',
+      date: isoToday(),
+      transcriptPath,
+      modelOverride
+    })
+    const composed = composeWrittenBody(bodyFileSource, result.blockInner, tokens)
+
+    await runBodyChecks(
+      composed,
+      process.env.BRANCH ?? '',
+      Number(pushPr),
+      `vinaya pr report --push ${pushPr} --body-file ${bodyFilePath}`
+    )
+
+    try {
+      ghEditBody(pushPr, composed)
+    } catch (err) {
+      console.error(
+        `vinaya pr report: refused — \`gh pr edit ${pushPr}\` failed: ${err instanceof Error ? err.message : String(err)}. Nothing was pushed.`
+      )
+      process.exit(1)
+    }
+
+    let postEditBody: string
+    try {
+      postEditBody = gh(['pr', 'view', pushPr, '--json', 'body', '-q', '.body'])
+    } catch (err) {
+      console.error(
+        `vinaya pr report: pushed to PR ${pushPr} but could not re-read its live body to self-verify: ${err instanceof Error ? err.message : String(err)}. Inspect PR ${pushPr} by hand — this command could not confirm the push landed cleanly.`
+      )
+      process.exit(1)
+    }
+    if (postEditBody !== composed) {
+      console.error(
+        `vinaya pr report: PR ${pushPr}'s live body, re-read after the push, does not byte-match what was sent — inspect it by hand (a forge-side normalisation, or a concurrent edit, may be the cause).`
+      )
+    }
+
+    if (!tokens.collected) tokensRefused = true
+    process.stdout.write(`Pushed the whole body from ${bodyFilePath} to PR ${pushPr}\n`)
+    if (!tokens.collected) {
+      console.error(`${tokens.refusal}\n\nThe AEG:EVIDENCE block was still pushed to PR ${pushPr}.`)
+    }
+  } else if (pushPr) {
     const tokens = collectTokensAddition({
       phase: phaseOverride ?? derivePhase(),
       role: roleOverride ?? 'Developer',

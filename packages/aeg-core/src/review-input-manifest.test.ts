@@ -31,12 +31,12 @@ describe('briefHash / policyDigest', () => {
   })
 
   it('policyDigest differs when either threshold differs', () => {
-    const a = policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH' })
-    const b = policyDigest({ codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' })
-    const c = policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'LOW' })
+    const a = policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3 })
+    const b = policyDigest({ codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 })
+    const c = policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'LOW', maxRounds: 3 })
     expect(a).not.toBe(b)
     expect(a).not.toBe(c)
-    expect(a).toBe(policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH' }))
+    expect(a).toBe(policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3 }))
   })
 })
 
@@ -122,7 +122,9 @@ describe('compareManifest', () => {
 
   it('policyDigest: a null echo (pre-cutover legacy comment) is NEVER grandfathered — unlike every other field, a policy is always resolvable so there is no genuine "nothing to bind against" case (#478 round 4, security MEDIUM)', () => {
     const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), policyDigest: null }
-    const current = manifest({ policyDigest: policyDigest({ codeReviewThreshold: 'MAJOR', securityThreshold: 'LOW' }) })
+    const current = manifest({
+      policyDigest: policyDigest({ codeReviewThreshold: 'MAJOR', securityThreshold: 'LOW', maxRounds: 3 })
+    })
     expect(compareManifest(echoed, current).policyDigest).toBe(false)
   })
 
@@ -131,7 +133,9 @@ describe('compareManifest', () => {
       ...manifestAsEchoed(manifest()),
       policyDigest: policyDigest(DEFAULT_REVIEW_POLICY)
     }
-    const current = manifest({ policyDigest: policyDigest({ codeReviewThreshold: 'MAJOR', securityThreshold: 'LOW' }) })
+    const current = manifest({
+      policyDigest: policyDigest({ codeReviewThreshold: 'MAJOR', securityThreshold: 'LOW', maxRounds: 3 })
+    })
     expect(compareManifest(echoed, current).policyDigest).toBe(false)
   })
 })

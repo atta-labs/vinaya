@@ -313,6 +313,121 @@ export function openOutputTee(effectId: string): {
   }
 }
 
+/**
+ * O1 (#543): the one shell surface a dispatched agent must never use — a
+ * backgrounded command — refused before the tool call executes, not asked
+ * nicely in a prompt. Confirmed live against this machine's own
+ * `~/.claude/settings.json` and the installed `claude` binary itself (not
+ * guessed): `permissions.deny` rules match only a Bash call's COMMAND TEXT
+ * (`Bash(<pattern>)`) — there is no bare permission-rule syntax for a
+ * structured field like `tool_input.run_in_background`. A `PreToolUse` hook
+ * is the one mechanism that receives the tool's full structured input and
+ * can decide on that field: its output contract
+ * (`hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision:
+ * 'allow'|'deny'|'ask', permissionDecisionReason }`) and the
+ * `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":…}]}]}`
+ * wiring shape are both read straight out of the installed binary's own
+ * strings (it ships an equivalent example hook, `matcher: 'Bash'` running a
+ * read-only-`gh` script) — not assumed.
+ *
+ * This is generated fresh per `dispatchRole` call (this function's own
+ * "per-dispatch" — every dispatch, every role, always the same content) and
+ * wired in only for `claude`: Codex's `exec --help` exposes no
+ * settings-injection or hook flag at all, and Gemini's own `hooks`/`--policy`
+ * subsystem needs its own live confirmation this task's boundary doesn't
+ * reach, so neither is silently claimed as covered.
+ */
+export const BACKGROUND_DENY_REASON =
+  'Dispatched sessions cannot run shell commands in the background — run this command in the foreground instead.'
+
+/**
+ * Round-2 HIGH (`#547`, O1): `run_in_background === true` is the SDK's own
+ * flag for a backgrounded tool call, but a dispatched agent can background a
+ * process by shell shape alone, with `run_in_background` left `false` — a
+ * trailing `&` (never `&&`, a legitimate chain operator), or a command that
+ * launches its process through `nohup`, `disown`, or `setsid`. This is the
+ * shared detector the hook script below embeds verbatim (as a string — it
+ * runs inside a generated `.mjs` file, not this module), so the fixtures in
+ * `dispatch.test.ts` exercise the exact same source the shipped hook runs,
+ * never a parallel reimplementation that could silently drift from it.
+ *
+ * Quote-stripping is naive (no escape handling) — good enough to keep a
+ * quoted `&` inside an `echo` argument, e.g. `echo "job &"`, from a false
+ * deny, without attempting a full shell parse.
+ */
+export function backgroundShapeDetectorSource(): string {
+  return [
+    'function stripQuoted(s) {',
+    "  return s.replace(/'[^']*'/g, '').replace(/\"[^\"]*\"/g, '');",
+    '}',
+    'function commandBackgrounds(command) {',
+    "  if (typeof command !== 'string') return false;",
+    '  const bare = stripQuoted(command).trimEnd();',
+    '  if (/(^|[^&])&$/.test(bare)) return true;',
+    '  if (/(^|[;&|]|\\s)nohup\\s/.test(bare)) return true;',
+    '  if (/\\bdisown\\b/.test(bare)) return true;',
+    '  if (/(^|[;&|]|\\s)setsid\\s/.test(bare)) return true;',
+    '  return false;',
+    '}'
+  ].join('\n')
+}
+
+function backgroundDenyHookScript(): string {
+  return [
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    const e = JSON.parse(d);',
+    backgroundShapeDetectorSource(),
+    '    const input = e.tool_input || {};',
+    "    if (e.tool_name === 'Bash' && (input.run_in_background === true || commandBackgrounds(input.command))) {",
+    '      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: ' +
+      "'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: " +
+      JSON.stringify(BACKGROUND_DENY_REASON) +
+      ' } }));',
+    '    }',
+    '  } catch {',
+    '    // not a JSON line — never block on a shape this hook does not understand',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+/**
+ * Writes this dispatch's settings file and the hook script it references,
+ * owner-only inside an owner-only directory (same hardening posture as
+ * `openOutputTee`'s tee file). Never throws: an unwritable home degrades to
+ * `null` — no `--settings` flag added, matching this module's "never throws"
+ * posture — rather than failing the dispatch over a missing deny rule.
+ */
+export function writeDispatchSettings(): string | null {
+  try {
+    const dir = join(GLOBAL_VINAYA_HOME, 'dispatch-settings')
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    chmodSync(dir, 0o700)
+    const scriptPath = join(dir, 'deny-background-bash.mjs')
+    writeFileSync(scriptPath, backgroundDenyHookScript(), { mode: 0o600 })
+    const settingsPath = join(dir, 'settings.json')
+    const settings = {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: 'Bash',
+            hooks: [{ type: 'command', command: `bun "${scriptPath}"` }]
+          }
+        ]
+      }
+    }
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { mode: 0o600 })
+    return settingsPath
+  } catch {
+    return null
+  }
+}
+
 type UsageParser = (stdout: string) => { input: number; output: number } | null
 
 /** A vendor's own genuine receipt of which model executed (O2), or `null` when this vendor's stdout carries no such field — never guessed from the requested `--model` value. */
@@ -1042,20 +1157,21 @@ export async function dispatchRole(
   const killGraceMs = loadConfig()?.dispatch?.killGraceMs ?? SIGKILL_GRACE_MS
 
   return new Promise<DispatchHandle>((resolve) => {
-    const child = spawn(
-      binaryPath,
-      opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model),
-      {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          VINAYA_RUN_ID: runId,
-          VINAYA_ROLE: role,
-          VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
-          VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined
-        }
+    const baseArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
+    // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
+    // Codex/Gemini are not silently included.
+    const dispatchSettingsPath = agent === 'claude' ? writeDispatchSettings() : null
+    const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
+    const child = spawn(binaryPath, spawnArgs, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        VINAYA_RUN_ID: runId,
+        VINAYA_ROLE: role,
+        VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
+        VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined
       }
-    )
+    })
 
     let settled = false
     let timedOut = false

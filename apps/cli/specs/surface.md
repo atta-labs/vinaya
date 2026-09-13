@@ -543,6 +543,8 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `resolveModelFromRationale` | function | `apps/cli/src/lib/dispatch-task.ts` |
 | `AGENT_CLASS_VALUES` | const | `apps/cli/src/lib/dispatch.ts` |
 | `AGENT_VENDOR_NAMES` | const | `apps/cli/src/lib/dispatch.ts` |
+| `BACKGROUND_DENY_REASON` | const | `apps/cli/src/lib/dispatch.ts` |
+| `backgroundShapeDetectorSource` | function | `apps/cli/src/lib/dispatch.ts` |
 | `colourAgentLine` | function | `apps/cli/src/lib/dispatch.ts` |
 | `colourEnabled` | function | `apps/cli/src/lib/dispatch.ts` |
 | `colourLoopLine` | function | `apps/cli/src/lib/dispatch.ts` |
@@ -565,6 +567,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `renderGeminiEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `resolveClassModel` | function | `apps/cli/src/lib/dispatch.ts` |
 | `timeoutWarningLeadMs` | function | `apps/cli/src/lib/dispatch.ts` |
+| `writeDispatchSettings` | function | `apps/cli/src/lib/dispatch.ts` |
 | `appendDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `applyDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `freshDocOwners` | function | `apps/cli/src/lib/doc-owners-write.ts` |
@@ -725,7 +728,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `milestone edit` | `milestone.ts` | `milestoneEditCommand` | 7 | exempt — see below | forgeWrite (target) |
 | `milestone close` | `milestone.ts` | `milestoneCloseCommand` | 4 | exempt — see below | forgeWrite (target) |
 | `milestone status` | `milestone.ts` | `milestoneStatusCommand` | 4 | exempt — see below | forgeWrite (target) |
-| `review status` | `review-status.ts` | `reviewStatusCommand` | 2 | exempt — see below | devReviewLoop (target) |
+| `review status` | `review-status.ts` | `reviewStatusCommand` | 3 | exempt — see below | devReviewLoop (target) |
 | `review post` | `review-post.ts` | `reviewPostCommand` | 6 | exempt — see below | devReviewLoop (target) |
 | `doctor` | `doctor.ts` | `doctorCommand` | 17 | exempt — see below | sharedCommandShell (target) |
 | `tokens` | `tokens.ts` | `tokensCommand` | 1 | compliant | `parseTokensCollectDeclaration` |
@@ -770,7 +773,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `milestone edit` | 2026-09-05 | 7 — lib (7): `refuse`, `makeCheckError`, `locateBody`, `resolveSections`, `validateForgeWrite`, `printJson`, `detectGitRepo` | `forgeWrite` |
 | `milestone close` | 2026-09-05 | 4 — lib (4): `refuse`, `makeCheckError`, `detectGitRepo`, `printJson` | `forgeWrite` |
 | `milestone status` | 2026-09-10 | 4 — lib (4): `detectGitRepo`, `refuse`, `makeCheckError`, `printJson` | `forgeWrite` |
-| `review status` | 2026-09-05 | 2 — lib: `resolvePrincipalAllowlist`, `loadTrustAnchorConfig` | `devReviewLoop` |
+| `review status` | 2026-09-13 | 3 — lib: `resolvePrincipalAllowlist`, `loadTrustAnchorConfig`, `reviewPolicy` (round-2 review, MEDIUM, `#547`, O4 — the round cap is repository policy, read through the same `reviewPolicy()` resolver `dev-review-loop.ts` already calls, never a hardcoded constant) | `devReviewLoop` |
 | `review post` | 2026-09-11 | 6 — lib: `refuse`, `makeCheckError`, `printJson`, `resolvePrincipalAllowlist`, `loadTrustAnchorConfig`, `resolveReviewPolicy` (which severities block is repository policy, `review-validity-v1` task 8, `#506`, O1 — the derivation and its contradiction check now resolve `policy` once via `resolveReviewPolicy` before deriving or cross-checking a verdict) | `devReviewLoop` |
 | `doctor` | 2026-09-05 | 17 — lib (16): `hookDirFromManifest`, `detectVendoredVinaya`, `readRepoCiSetup`, `resolveAgentVendors`, `buildInitOps`, `isDefaultedAgentVendorPath`, `resolveManagedBlockPath`, `markerLines`, `renderBlock`, `foreignRawHooks`, `starterConfig`, `checksMissingEnvDeclaration`, `envDeclarationWarning`, `lintEnvDeclarations`, `globalChecksIgnoredWarning`, `printJson`; commands/\*.ts (refused outright): `resolveDoctrineRootInfo` (`doctrine.ts`) | `sharedCommandShell` |
 | `doctrine` | 2026-09-05 | 2 — lib: `packageRoot`, `printJson` | `sharedCommandShell` |

@@ -15,7 +15,8 @@ const CONFIG: LoopConfig = {
   loopId: 'loop-1',
   task: 414,
   reviewers: ['code-reviewer', 'security'],
-  models: { 'code-reviewer': 'sonnet', security: 'sonnet' }
+  models: { 'code-reviewer': 'sonnet', security: 'sonnet' },
+  maxRounds: 3
 }
 
 function freshState() {
@@ -303,11 +304,68 @@ describe('assessRound — Part 3 (O2): the four exits', () => {
       { type: 'dispatch_reviewers' },
       { type: 'dispatch_developer' }
     ])
-    // Round 4 stops.
-    expect(decisions.at(-1)).toEqual({ type: 'pause', reason: 'max_rounds' })
+    // Round 4 stops. (#543 O4) The pause names the configured cap.
+    expect(decisions.at(-1)).toEqual({ type: 'pause', reason: 'max_rounds', detail: 'max rounds: 3' })
     const round4Stop = events.find((e) => e.event === 'stop_condition_met' && 'round' in e && e.round === 4)
     expect(round4Stop).toMatchObject({ condition: 'max_rounds' })
     expect(events.some((e) => e.event === 'journal_finalized' && 'result' in e && e.result === 'stopped')).toBe(true)
+  })
+
+  it('(#543 O4) the round cap is configured, not hardcoded: maxRounds:5 lets round 4 run, and stops at round 5', () => {
+    const configuredState = initialLoopState({ ...CONFIG, maxRounds: 5 })
+    const { decisions } = runScenario(configuredState, [
+      fakeGate(1, true),
+      fakeVerdicts(1, [
+        blockingVerdict('reviewer', [{ id: 'F1', severity: 'major', state: 'open' }]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(2, true, { confidence: { value: 80 } }),
+      fakeVerdicts(2, [
+        blockingVerdict('reviewer', [
+          { id: 'F1', severity: 'major', state: 'resolved' },
+          { id: 'F2', severity: 'major', state: 'open' }
+        ]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(3, true, { confidence: { value: 80 } }),
+      fakeVerdicts(3, [
+        blockingVerdict('reviewer', [
+          { id: 'F2', severity: 'major', state: 'resolved' },
+          { id: 'F3', severity: 'major', state: 'open' }
+        ]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(4, true, { confidence: { value: 80 } }),
+      fakeVerdicts(4, [
+        blockingVerdict('reviewer', [
+          { id: 'F3', severity: 'major', state: 'resolved' },
+          { id: 'F4', severity: 'major', state: 'open' }
+        ]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(5, true, { confidence: { value: 80 } }),
+      fakeVerdicts(5, [
+        blockingVerdict('reviewer', [
+          { id: 'F4', severity: 'major', state: 'resolved' },
+          { id: 'F5', severity: 'major', state: 'open' }
+        ]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(6, true, { confidence: { value: 80 } }),
+      fakeVerdicts(6, [
+        blockingVerdict('reviewer', [
+          { id: 'F5', severity: 'major', state: 'resolved' },
+          { id: 'F6', severity: 'major', state: 'open' }
+        ]),
+        cleanVerdict('security')
+      ])
+    ])
+    // Round 4 continues under maxRounds:5 — the default (3) cap's own test
+    // above pauses there instead.
+    expect(decisions[6]).toEqual({ type: 'dispatch_reviewers' })
+    expect(decisions[7]).toEqual({ type: 'dispatch_developer' })
+    // Round 6 stops, naming the configured cap.
+    expect(decisions.at(-1)).toEqual({ type: 'pause', reason: 'max_rounds', detail: 'max rounds: 5' })
   })
 
   it('an id resolved in round n reported again in round n+1 → pause(reappearance), id in findings_compared.recurring', () => {

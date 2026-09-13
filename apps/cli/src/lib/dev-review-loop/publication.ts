@@ -154,10 +154,7 @@ export function publishRound(root: string, input: PublishInput): void {
   // before treating this round as publishable, mirroring the merge gate's
   // identical check (`checkReviewGate`) rather than trusting construction
   // alone.
-  const postedReviewerPolicy = evaluateCodeReview(
-    postedReviewer.findingSeverities.map((severity) => ({ severity })),
-    policy
-  )
+  const postedReviewerPolicy = evaluateCodeReview(postedReviewer.findingSeverities, policy)
   if (postedReviewer.value === 'APPROVE' && postedReviewerPolicy.outcome === 'blocked') {
     throw new Error(
       `publishRound: posted reviewer verdict says APPROVE but carries a finding (${postedReviewerPolicy.blockingFindings.map((f) => f.severity).join(', ')}) at or above this repository's code-review policy threshold (${policy.codeReviewThreshold}) — refusing to publish.`
@@ -171,10 +168,7 @@ export function publishRound(root: string, input: PublishInput): void {
       `publishRound: posted security verdict does not re-parse clean through extractSecurityReviewVerdict bound to ${expectedHead}: ${postedSecurity.danglingNote ?? `headSha read back as ${String(postedSecurity.headSha)}`}`
     )
   }
-  const postedSecurityPolicy = evaluateSecurityReview(
-    postedSecurity.findingSeverities.map((severity) => ({ severity })),
-    policy
-  )
+  const postedSecurityPolicy = evaluateSecurityReview(postedSecurity.findingSeverities, policy)
   if (postedSecurity.value === 'PASS' && postedSecurityPolicy.outcome === 'blocked') {
     throw new Error(
       `publishRound: posted security verdict says PASS but carries a finding (${postedSecurityPolicy.blockingFindings.map((f) => f.severity).join(', ')}) at or above this repository's security policy threshold (${policy.securityThreshold}) — refusing to publish.`

@@ -125,7 +125,7 @@ describe('extractCodeReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
-      findingSeverities: ['MINOR'],
+      findingSeverities: [{ severity: 'MINOR', location: 'src/foo.ts:12' }],
       danglingNote: null
     })
   })
@@ -313,7 +313,7 @@ describe('extractSecurityReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
-      findingSeverities: ['LOW'],
+      findingSeverities: [{ severity: 'LOW', location: 'src/foo.ts:12' }],
       danglingNote: null
     })
   })
@@ -731,7 +731,7 @@ describe('candidate selection stays whole-body — a later unclear candidate sha
 describe('findingSeverities — the FINDINGS block, read whole-body', () => {
   it('extracts every severity from a real rendered FINDINGS block', () => {
     const result = extractCodeReviewVerdict([REAL_CODE_REVIEWER_REPORT])
-    expect(result.findingSeverities).toEqual(['MINOR'])
+    expect(result.findingSeverities).toEqual([{ severity: 'MINOR', location: 'src/foo.ts:12' }])
   })
 
   it('extracts a mixed-severity FINDINGS block in rendered order', () => {
@@ -746,7 +746,11 @@ describe('findingSeverities — the FINDINGS block, read whole-body', () => {
       '3. [MINOR] c.ts:3 — naming nit'
     ].join('\n')
     const result = extractCodeReviewVerdict([comment])
-    expect(result.findingSeverities).toEqual(['BLOCKER', 'MAJOR', 'MINOR'])
+    expect(result.findingSeverities).toEqual([
+      { severity: 'BLOCKER', location: 'a.ts:1' },
+      { severity: 'MAJOR', location: 'b.ts:2' },
+      { severity: 'MINOR', location: 'c.ts:3' }
+    ])
   })
 
   it('"None." (the empty-findings render) yields no severities', () => {
@@ -772,7 +776,7 @@ describe('findingSeverities — the FINDINGS block, read whole-body', () => {
 
   it('security-review findings extract identically via extractSecurityReviewVerdict', () => {
     const result = extractSecurityReviewVerdict([REAL_SECURITY_REVIEWER_REPORT])
-    expect(result.findingSeverities).toEqual(['LOW'])
+    expect(result.findingSeverities).toEqual([{ severity: 'LOW', location: 'src/foo.ts:12' }])
   })
 })
 

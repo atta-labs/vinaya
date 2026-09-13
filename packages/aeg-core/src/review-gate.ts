@@ -328,14 +328,8 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   let codeReviewPolicyEvaluation: ReturnType<typeof evaluateCodeReview>
   let securityPolicyEvaluation: ReturnType<typeof evaluateSecurityReview>
   try {
-    codeReviewPolicyEvaluation = evaluateCodeReview(
-      codeReview.findingSeverities.map((severity) => ({ severity })),
-      policy
-    )
-    securityPolicyEvaluation = evaluateSecurityReview(
-      security.findingSeverities.map((severity) => ({ severity })),
-      policy
-    )
+    codeReviewPolicyEvaluation = evaluateCodeReview(codeReview.findingSeverities, policy)
+    securityPolicyEvaluation = evaluateSecurityReview(security.findingSeverities, policy)
   } catch (err) {
     return {
       verdict: 'fail',

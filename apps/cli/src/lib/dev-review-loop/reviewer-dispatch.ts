@@ -500,6 +500,10 @@ export function renderReviewerDispatchPrompt(
       ? '(severities: BLOCKER, MAJOR, MINOR — leave the file empty if there are none).'
       : '(severities: CRITICAL, HIGH, MEDIUM, LOW — leave the file empty if there are none).',
     '`|` never appears in a description — write the finding without one, even inside a quoted or piped example.',
+    // (#543 O5) Named so a reviewer never under-reports a body/comment/
+    // role-file finding's real severity to pre-empt this — the cap is
+    // applied by the policy evaluator, not something to guess around.
+    'A finding whose own location is the PR body, a comment, or a role file is capped to MINOR before it counts toward the threshold, regardless of the severity you assign it — write its real severity anyway.',
     ...(hasObjectivesFacts(facts)
       ? [
           `Write one line per objective listed above to ${join(workDir, 'objectives.txt')}: O<n>|MET|<evidence> or O<n>|NOT MET|<evidence> — the status is read by its bare leading word (MET or NOT MET); write nothing else before it on that field.`
@@ -507,6 +511,10 @@ export function renderReviewerDispatchPrompt(
       : []),
     `Write a short report to ${join(workDir, 'report.txt')} as one \`KEY: value\` line per field:`,
     role === 'reviewer' ? '  BRIEF_CONFORMANCE, SPEC_CONFORMANCE, SCOPE, TESTS, DOCS' : '  CONFIG_SCAN, SECRETS',
+    // (#543 O3) A round's own findings are compared to the NEXT round's by
+    // id — never by writing order, which is not stable across two separate
+    // dispatches. Skipped only when findings.txt is empty (nothing to cite).
+    '  If findings.txt is non-empty, also write `FINDING_IDS: <id>,<id>,...` — one id per findings.txt line, in the SAME order, e.g. `F1,F2,F3`. A report with findings but no matching `FINDING_IDS:` line is sent back once for this alone.',
     ...(role === 'security'
       ? [
           '`SECRETS:` is required — never leave it blank or omit it, even when you found nothing: write `SECRETS: none found` only after you actually checked.'

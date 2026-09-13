@@ -295,6 +295,10 @@ describe('vinaya dispatch --resume', () => {
     // `stream-json` with the `--verbose` the CLI requires alongside `-p`
     // (Issue #447, O5): the resume path streams for the same reason the
     // first turn does — the operator watches the work either way.
-    expect(argv).toEqual(['-p', '-r', 'resume-id-123', '--verbose', '--output-format', 'stream-json'])
+    // O1 (#543): claude alone gets a trailing `--settings <path>` pair
+    // (dedicated coverage in `apps/cli/tests/lib/dispatch.test.ts`) —
+    // stripped here so this test keeps asserting only the resume shape.
+    expect(argv.slice(-2, -1)).toEqual(['--settings'])
+    expect(argv.slice(0, -2)).toEqual(['-p', '-r', 'resume-id-123', '--verbose', '--output-format', 'stream-json'])
   })
 })

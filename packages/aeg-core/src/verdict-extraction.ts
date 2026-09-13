@@ -285,11 +285,22 @@ function extractPolicyDigest(comment: string): string | null {
  * `[]`. A hand-typed comment that never went through that renderer simply
  * contributes no severities, the same fail-safe direction `extractVerdict`
  * already takes for anything outside its own known shapes.
+ *
+ * Location is captured too (`doctrine-fixes-v1` task 1, `#543`, O5) — non-
+ * greedy up to the ` — ` separator, so a location containing its own space
+ * (`PR body`) is still captured whole rather than truncated at the first
+ * space — this is what lets `evaluateReviewFindings`'s prose cap apply to a
+ * re-parsed, hand-posted comment exactly as it does to a freshly-derived
+ * finding, so the gate and the loop never disagree about a body/comment/
+ * role-file finding either.
  */
-const FINDING_SEVERITY_LINE = /^\d+\.\s+\[([A-Z][A-Z]*)\]/gm
+const FINDING_SEVERITY_LINE = /^\d+\.\s+\[([A-Z][A-Z]*)\]\s+(.+?)\s+—/gm
 
-function extractFindingSeverities(comment: string): string[] {
-  return [...comment.matchAll(FINDING_SEVERITY_LINE)].map((m) => m[1] as string)
+function extractFindingSeverities(comment: string): { severity: string; location: string }[] {
+  return [...comment.matchAll(FINDING_SEVERITY_LINE)].map((m) => ({
+    severity: m[1] as string,
+    location: m[2] as string
+  }))
 }
 
 /**
@@ -314,8 +325,8 @@ export type VerdictExtraction = {
   briefHash: string | null
   /** `null` when no `Policy digest:` line was found (`review-validity-v1` task 4, `#478`, O5) — legacy stock only; every comment rendered from this task forward carries it unconditionally. */
   policyDigest: string | null
-  /** The winning comment's own FINDINGS block severities, whole-body read (`review-validity-v1` task 8, `#506`, O2/O3) — `[]` on a DANGLING extraction (`danglingNote` set) or a comment with no findings at all. */
-  findingSeverities: string[]
+  /** The winning comment's own FINDINGS block severities and locations, whole-body read (`review-validity-v1` task 8, `#506`, O2/O3; location added `#543` O5) — `[]` on a DANGLING extraction (`danglingNote` set) or a comment with no findings at all. */
+  findingSeverities: { severity: string; location: string }[]
   danglingNote: string | null
 }
 

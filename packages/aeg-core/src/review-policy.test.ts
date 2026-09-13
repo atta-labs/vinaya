@@ -8,12 +8,13 @@ import {
   evaluateReviewFindings,
   evaluateSecurityReview,
   isKnownSeverity,
+  isProseLocation,
   type ReviewPolicy,
   SECURITY_SEVERITY_ORDER,
   securityBlockingSeverities
 } from './review-policy'
 
-const THIS_REPO_POLICY: ReviewPolicy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' }
+const THIS_REPO_POLICY: ReviewPolicy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 }
 
 describe('blockingSeverities', () => {
   test('is the scale prefix ending at threshold, inclusive', () => {
@@ -111,6 +112,75 @@ describe('isKnownSeverity', () => {
   test('true for a scale member, false otherwise', () => {
     expect(isKnownSeverity(CODE_REVIEW_SEVERITY_ORDER, 'MAJOR')).toBe(true)
     expect(isKnownSeverity(CODE_REVIEW_SEVERITY_ORDER, 'CRITICAL')).toBe(false)
+  })
+})
+
+describe('isProseLocation (#543 O5)', () => {
+  test('matches the PR body, a comment, or a role file', () => {
+    expect(isProseLocation('PR body')).toBe(true)
+    expect(isProseLocation('pr body')).toBe(true)
+    expect(isProseLocation('a PR comment')).toBe(true)
+    expect(isProseLocation('review comment')).toBe(true)
+    expect(isProseLocation('aeg-root/roles/developer.md:12')).toBe(true)
+  })
+
+  test('never matches a source or test file', () => {
+    expect(isProseLocation('src/foo.ts:12')).toBe(false)
+    expect(isProseLocation('apps/cli/tests/foo.test.ts:1')).toBe(false)
+    expect(isProseLocation('aeg-root/contracts/planner-developer.md:5')).toBe(false)
+  })
+
+  test('a test file whose NAME contains the word "comment" is never prose-capped (round 2 review, BLOCKER)', () => {
+    expect(isProseLocation('apps/cli/tests/commands/pr-create-brief-comment.test.ts')).toBe(false)
+    expect(isProseLocation('apps/cli/tests/commands/pr-create-brief-comment.test.ts:42')).toBe(false)
+  })
+
+  test('the file-shape exemption applies to every prose pattern, not only "comment" (round 2 review, LOW, #547)', () => {
+    // Real fixture files this repo already ships, each containing the literal
+    // substring `pr-body` in its own name — a source/test-file location, not
+    // the PR body itself, so the `\bpr\s*body\b` pattern must never cap it
+    // either, the same guarantee the "comment" pattern already had.
+    expect(isProseLocation('packages/aeg-core/tests/fixtures/pr-body-394-as-opened.md')).toBe(false)
+    expect(isProseLocation('apps/cli/tests/fixtures/pr-body-473.md:1')).toBe(false)
+  })
+})
+
+describe('evaluateReviewFindings — prose cap (#543 O5)', () => {
+  test('a BLOCKER finding located in the PR body is capped to MINOR — never blocks under this repo’s MAJOR threshold', () => {
+    const result = evaluateReviewFindings(
+      [{ severity: 'BLOCKER', location: 'PR body' }],
+      CODE_REVIEW_SEVERITY_ORDER,
+      'MAJOR'
+    )
+    expect(result.outcome).toBe('clean')
+  })
+
+  test('the identical BLOCKER at a real source location still blocks — the cap never reaches source/test files', () => {
+    const result = evaluateReviewFindings(
+      [{ severity: 'BLOCKER', location: 'src/foo.ts:12' }],
+      CODE_REVIEW_SEVERITY_ORDER,
+      'MAJOR'
+    )
+    expect(result.outcome).toBe('blocked')
+  })
+
+  test('a CRITICAL security finding located in a role file never blocks — MINOR is not on the security scale at all', () => {
+    const result = evaluateReviewFindings(
+      [{ severity: 'CRITICAL', location: 'aeg-root/roles/security.md:3' }],
+      SECURITY_SEVERITY_ORDER,
+      'CRITICAL'
+    )
+    expect(result.outcome).toBe('clean')
+  })
+
+  test('a round with clean code/test/security findings stays green regardless of a body finding (O5 sizing story)', () => {
+    const codeReview = evaluateCodeReview([{ severity: 'BLOCKER', location: 'PR body' }], THIS_REPO_POLICY)
+    expect(codeReview.outcome).toBe('clean')
+  })
+
+  test('a finding with no location at all is never capped — treated exactly as before this task', () => {
+    const result = evaluateReviewFindings([{ severity: 'BLOCKER' }], CODE_REVIEW_SEVERITY_ORDER, 'MAJOR')
+    expect(result.outcome).toBe('blocked')
   })
 })
 

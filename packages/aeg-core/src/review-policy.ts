@@ -23,19 +23,78 @@ export type CodeReviewSeverity = (typeof CODE_REVIEW_SEVERITY_ORDER)[number]
 export const SECURITY_SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const
 export type SecuritySeverity = (typeof SECURITY_SEVERITY_ORDER)[number]
 
-/** An omitted policy means today's behaviour (O1): code review at `BLOCKER`, security at `HIGH`. */
+/** (`doctrine-fixes-v1` task 1, `#543`, O4) The dev-review-loop's own round cap, default — replaces the `assess-round.ts` constant this once was; overridable via `reviewPolicy.maxRounds` in `vinaya.config.json`. */
+export const DEFAULT_MAX_ROUNDS = 3
+
+/** An omitted policy means today's behaviour (O1): code review at `BLOCKER`, security at `HIGH`, `DEFAULT_MAX_ROUNDS` rounds. */
 export const DEFAULT_REVIEW_POLICY: ReviewPolicy = {
   codeReviewThreshold: 'BLOCKER',
-  securityThreshold: 'HIGH'
+  securityThreshold: 'HIGH',
+  maxRounds: DEFAULT_MAX_ROUNDS
 }
 
 export type ReviewPolicy = {
   codeReviewThreshold: CodeReviewSeverity
   securityThreshold: SecuritySeverity
+  /** (`#543` O4) The dev-review-loop's own round cap — repository policy, not a hardcoded constant. Resolved once per loop run, same trust class as the two thresholds above. */
+  maxRounds: number
 }
 
-/** The minimal shape the evaluator needs — every real finding type (review-post.ts's `Finding`, a gate-side severity-only extraction) satisfies it. */
-export type PolicyFinding = { severity: string }
+/** The minimal shape the evaluator needs — every real finding type (review-post.ts's `Finding`, a gate-side severity-only extraction) satisfies it. `location` is optional so a caller with no location to report (an older extraction shape) still type-checks; such a finding is simply never prose-capped (O5, below). */
+export type PolicyFinding = { severity: string; location?: string }
+
+/**
+ * A location shaped like a real file reference — a path ending in a
+ * `.<ext>` segment, optionally followed by `:<line>` — the shape every
+ * `findings.txt` location actually takes (`SEVERITY|file:line|description`).
+ * Round 2 review, BLOCKER: `/\bcomment\b/i` alone matched `comment` as a
+ * plain substring, so a real test file whose NAME happens to contain the
+ * word (`apps/cli/tests/commands/pr-create-brief-comment.test.ts`) was
+ * wrongly treated as "the finding's location is a comment" and capped to
+ * `MINOR` — exactly the trap O5's own brief forbids (never cap a source or
+ * test file). Gating the comment pattern on "does NOT also look like a real
+ * file" closes this: a genuine PR/review-comment location the reviewer
+ * writes (`PR comment`, `a review comment`, bare `comment`) never carries a
+ * file extension, so it is unaffected.
+ */
+const FILE_SHAPED_LOCATION = /\.[a-zA-Z0-9]{1,10}(:\d+)?\s*$/
+
+/**
+ * (`doctrine-fixes-v1` task 1, `#543`, O5) `true` when `location` names the
+ * PR body or a PR/review comment — prose surfaces this evaluator caps at
+ * `MINOR` before counting a finding toward the blocking threshold, regardless
+ * of the severity the reviewer actually reported. Each of these, gated on
+ * `FILE_SHAPED_LOCATION` below (round-2 review, LOW, `#547`): a real file
+ * whose own name happens to contain one of these words or phrases —
+ * `apps/cli/tests/commands/pr-create-brief-comment.test.ts`, or any of the
+ * repo's own `pr-body-*.md` fixtures — is a source or test file, never
+ * prose, no matter which of these patterns its path text also matches. The
+ * `aeg-root/roles/` pattern is deliberately NOT in this group and is checked
+ * separately, ungated: it IS a real file, and is still prose by this task's
+ * own design (see `isProseLocation` below).
+ */
+const PROSE_LOCATION_PATTERNS = [/\bpr\s*body\b/i, /\bcomment\b/i] as const
+
+/** A role doc IS a file, yet still counts as prose — the one deliberate exception the file-shape gate never applies to. */
+const ROLE_FILE_LOCATION = /(^|\/)aeg-root\/roles\//i
+
+export function isProseLocation(location: string): boolean {
+  if (ROLE_FILE_LOCATION.test(location)) return true
+  if (FILE_SHAPED_LOCATION.test(location)) return false
+  return PROSE_LOCATION_PATTERNS.some((pattern) => pattern.test(location))
+}
+
+/**
+ * The severity every prose-located finding is evaluated at, regardless of
+ * scale (O5) — literally `'MINOR'`, not "the bottom rung of whichever scale
+ * applies": on the code-review scale this is the least severe rank; on the
+ * security scale `'MINOR'` is not a member at all, so `blockingSeverities`'s
+ * `Set` never contains it and a prose-located security finding never blocks
+ * under any configured threshold. Exported so callers rendering a capped
+ * finding's effective severity (never its own reported one) share this one
+ * literal rather than a second copy of it.
+ */
+export const PROSE_CAP_SEVERITY = 'MINOR'
 
 export type PolicyEvaluation<F extends PolicyFinding> = {
   outcome: 'clean' | 'blocked'
@@ -77,7 +136,13 @@ export function evaluateReviewFindings<F extends PolicyFinding>(
     if (!scale.includes(f.severity)) {
       throw new Error(`evaluateReviewFindings: severity "${f.severity}" is not one of ${scale.join(' > ')}`)
     }
-    return blocking.has(f.severity)
+    // (`#543` O5) Prose never blocks: a finding whose own location is the PR
+    // body, a comment, or a role file is evaluated at `PROSE_CAP_SEVERITY`,
+    // never its own reported severity — a source or test file location is
+    // never capped, and the finding's own reported severity is unchanged
+    // (only how it counts toward THIS threshold check is affected).
+    const effectiveSeverity = f.location !== undefined && isProseLocation(f.location) ? PROSE_CAP_SEVERITY : f.severity
+    return blocking.has(effectiveSeverity)
   })
   return { outcome: blockingFindings.length > 0 ? 'blocked' : 'clean', blockingFindings }
 }
