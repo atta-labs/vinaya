@@ -423,28 +423,30 @@ const ISSUE_TITLE_SHAPE = /^\[([^\]]+)\]\s+(\d+)\s+[—-]/
 
 /**
  * `task/<tranche>/<n>`, derived from the Issue's own `[<tranche>] <n> — …`
- * title — never guessed or configured separately. A backlog Issue (O1/O3: no
- * `vinaya/tranche:*` label, so no such title either)
- * derives `task/issue-<n>` instead — the branch is keyed to the Issue itself,
- * not a tranche+task-id pair. An Issue whose title merely fails to match the
- * shape while still carrying the tranche label is a real defect (a malformed
- * tranche-task title), not a backlog Issue, and still throws.
+ * title — never guessed or configured separately. The LABEL decides which
+ * shape applies, never the title (`#548` v3, O3): an Issue with no
+ * `vinaya/tranche:*` label is a backlog Issue and derives `task/issue-<n>`
+ * regardless of what its title happens to look like — a backlog Issue
+ * titled coincidentally (or by copy-paste) like a tranche task's must never
+ * be mistaken for one and polled on the wrong branch (found live: exactly
+ * this shape of title on an unlabeled Issue). Only once the label is present
+ * does the title's own shape matter: it must match, or this is a real defect
+ * (a malformed tranche-task title on a labeled Issue), not a backlog Issue,
+ * and still throws.
  */
 export function developerBranchFor(
   issueNumber: number,
   fetchTitle: (n: number) => string = fetchIssueTitle,
   fetchLabels: (n: number) => string[] = fetchIssueLabels
 ): string {
+  const labels = fetchLabels(issueNumber)
+  if (!hasLabel('tranche', labels)) return issueBranchName(issueNumber)
   const title = fetchTitle(issueNumber)
   const m = ISSUE_TITLE_SHAPE.exec(title)
   if (m) return `task/${m[1]}/${m[2]}`
-  const labels = fetchLabels(issueNumber)
-  if (hasLabel('tranche', labels)) {
-    throw new Error(
-      `developerBranchFor: Issue #${issueNumber}'s title \`${title}\` does not match the \`[<tranche>] <n> — …\` shape, but it carries a vinaya/tranche:* label — cannot derive the developer's branch.`
-    )
-  }
-  return issueBranchName(issueNumber)
+  throw new Error(
+    `developerBranchFor: Issue #${issueNumber}'s title \`${title}\` does not match the \`[<tranche>] <n> — …\` shape, but it carries a vinaya/tranche:* label — cannot derive the developer's branch.`
+  )
 }
 
 type PrRef = { number: number; branch: string }
