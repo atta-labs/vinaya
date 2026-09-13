@@ -1,11 +1,12 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'bun:test'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const REPO_ROOT = join(CLI_ROOT, '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
 
 const tempDirs: string[] = []
@@ -562,6 +563,177 @@ describe('vinaya issue objectives edit --part (task-run-v1 task 15, O5)', () => 
     const r = runCli(['issue', 'objectives', 'edit', '413', '--drop', 'O3', '--reason', 'descoped'], repo, path)
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('Part 2 cites O3')
+    expect(readFileSync(editedBodyLogPath, 'utf-8')).toBe('')
+    expect(readFileSync(commentsLogPath, 'utf-8')).toBe('')
+  })
+})
+
+/**
+ * Issue #542, O4 — `issue objectives edit` re-renders and re-validates the
+ * WHOLE brief in the same command (Part 1's `validateRenderedBriefForIssue`,
+ * reached via `writeValidatedIssueEdit` \u2192 `validateTaskIssue`, the same
+ * validated-write path every edit in this file already goes through) and
+ * posts only when it validates. Needs a real git+template fixture (this
+ * file's other tests never reach that gate: their bodies always carry a
+ * `vinaya/tranche:*` label, which stays dormant for the whole-brief render —
+ * see `validateRenderedBriefForIssue`'s own doc comment). A BACKLOG
+ * (unlabeled) Issue is required to actually exercise it.
+ */
+describe('vinaya issue objectives edit \u2014 re-renders and re-validates the brief (Issue #542, O4)', () => {
+  function backlogGh(
+    dir: string,
+    opts: { body: string; issueUrl: string; commentUrl: string }
+  ): {
+    path: Record<string, string>
+    editedBodyLogPath: string
+    commentsLogPath: string
+  } {
+    const bodyCommentsJsonPath = join(dir, 'body-comments.json')
+    const fullContextJsonPath = join(dir, 'full-context.json')
+    const labelsJsonPath = join(dir, 'labels.json')
+    const editedBodyLogPath = join(dir, 'edited-body.log')
+    const commentsLogPath = join(dir, 'posted-comments.log')
+    writeFileSync(bodyCommentsJsonPath, JSON.stringify({ body: opts.body, comments: [] }))
+    writeFileSync(
+      fullContextJsonPath,
+      JSON.stringify({ body: opts.body, title: '[fixture] backlog issue', labels: [], comments: [] })
+    )
+    writeFileSync(labelsJsonPath, JSON.stringify({ labels: [] }))
+    writeFileSync(editedBodyLogPath, '')
+    writeFileSync(commentsLogPath, '')
+    const gh = join(dir, 'gh')
+    writeFileSync(
+      gh,
+      `#!/bin/sh
+if [ "$1" = "api" ] && [ "$2" = "user" ]; then
+  echo "daniboomerang"
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  case "$*" in
+    *title*) cat "${fullContextJsonPath}" ;;
+    *comments*) cat "${bodyCommentsJsonPath}" ;;
+    *labels*) cat "${labelsJsonPath}" ;;
+    *) echo "unhandled issue view: $*" >&2; exit 1 ;;
+  esac
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "edit" ]; then
+  bodyFile="$5"
+  cat "$bodyFile" > "${editedBodyLogPath}"
+  echo "${opts.issueUrl}"
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  bodyFile="$5"
+  echo "ISSUE:$3" >> "${commentsLogPath}"
+  cat "$bodyFile" >> "${commentsLogPath}"
+  echo "---" >> "${commentsLogPath}"
+  echo "${opts.commentUrl}"
+  exit 0
+fi
+exit 1
+`
+    )
+    chmodSync(gh, 0o755)
+    return { path: { PATH: `${dir}:${process.env.PATH ?? ''}` }, editedBodyLogPath, commentsLogPath }
+  }
+
+  function gitCmd(cwd: string, args: string[]): string {
+    return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+  }
+
+  const RATIONALE = [
+    "## Task Issue \u2014 Planner's rationale",
+    '',
+    '**Boundary** \u2014 In: nothing real. Out: nothing.',
+    '',
+    '**Sizing** \u2014 n/a, test fixture.',
+    '',
+    '**Project(s) + blast radius** \u2014 `Project: cli`. No shared-primitive fan-out.',
+    '',
+    '**Dependency rationale** \u2014 `Depends-on: \u2014`; `Conflicts-with: \u2014`.',
+    '',
+    '**Traps to avoid** \u2014 n/a.',
+    '',
+    '**Suggested agent-class** \u2014 fast \u2014 test fixture.',
+    '',
+    '**Stop-and-escalate** \u2014 n/a.',
+    '',
+    '**Docs to keep coherent** \u2014 no-doc-surface.'
+  ].join('\n')
+
+  it('refuses the whole write when re-rendering the edited body cannot produce a valid brief \u2014 nothing written, nothing posted', () => {
+    const tmp = tempDir('issue-objectives-backlog-')
+    const remoteDir = join(tmp, 'remote')
+    const localDir = join(tmp, 'local')
+    mkdirSync(join(remoteDir, 'aeg-root', 'templates'), { recursive: true })
+    gitCmd(tmp, ['init', '-q', '-b', 'main', remoteDir])
+    gitCmd(remoteDir, ['config', 'user.email', 'a@example.com'])
+    gitCmd(remoteDir, ['config', 'user.name', 'A'])
+    cpSync(
+      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
+      join(remoteDir, 'aeg-root', 'templates', 'brief-template.md')
+    )
+    gitCmd(remoteDir, ['add', '.'])
+    gitCmd(remoteDir, ['commit', '-q', '-m', 'seed'])
+    gitCmd(tmp, ['clone', '-q', remoteDir, localDir])
+    gitCmd(localDir, ['config', 'user.email', 'a@example.com'])
+    gitCmd(localDir, ['config', 'user.name', 'A'])
+
+    // Deliberately missing `## Stop conditions` — a section the brief
+    // renderer requires past its own cutover. Adding an objective/Part
+    // (otherwise well-formed) never touches this section, so the edit
+    // itself is valid, but re-rendering the RESULT still can't produce a
+    // brief \u2014 exactly the "leaves the brief invalid" case O4 refuses.
+    const body = [
+      '**Project:** cli',
+      '',
+      '## Objectives',
+      '',
+      'O1. The fixture exercises objectives re-validation.',
+      '',
+      '## Surface',
+      '',
+      'in: aeg-root',
+      'out: \u2014',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) \u2014 the only part, citing the only objective.',
+      '',
+      '## Test plan',
+      '',
+      'Test Plan: unit-tests-only',
+      '',
+      RATIONALE
+    ].join('\n')
+
+    const { path, editedBodyLogPath, commentsLogPath } = backlogGh(tmp, {
+      body,
+      issueUrl: 'https://github.com/acme/widget/issues/999',
+      commentUrl: 'https://github.com/acme/widget/issues/999#issuecomment-1'
+    })
+
+    const r = runCli(
+      [
+        'issue',
+        'objectives',
+        'edit',
+        '999',
+        '--add',
+        'A second, valid-looking objective.',
+        '--part',
+        'Part 2 (O2) \u2014 the second part.',
+        '--reason',
+        'exercising O4'
+      ],
+      localDir,
+      { ...path, AEG_REPO: 'test-owner/test-repo' }
+    )
+
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('Stop conditions')
     expect(readFileSync(editedBodyLogPath, 'utf-8')).toBe('')
     expect(readFileSync(commentsLogPath, 'utf-8')).toBe('')
   })
