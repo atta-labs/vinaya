@@ -299,14 +299,32 @@ export async function archiveCommand(args: string[]): Promise<void> {
 // --force) if any Issue carrying `vinaya/tranche:<slug>` is still open —
 // closing a tranche with unresolved work is never silently allowed, matching
 // this product's refuse-by-default posture everywhere else. When the
-// tranche is complete AND a legacy Milestone titled exactly the slug exists,
-// closes that Milestone (the archival mechanism this repo has today). --yes
-// skips the confirm prompt, same convention as init/eject/upgrade.
+// tranche is complete and its own task Issues are attached to a Milestone
+// (O7, Issue #542 — never a Milestone titled exactly the slug, the retired
+// legacy assumption), writes the retrospective into that Milestone's
+// description and closes it only when no other task in it is still open.
+// --yes skips the confirm prompt, same convention as init/eject/upgrade.
 // ---------------------------------------------------------------------------
 
 type Milestone = { number: number; title: string; description: string | null }
-type LabeledIssueRef = { number: number; title: string; state: 'OPEN' | 'CLOSED' }
+type TaskMilestoneRef = { number: number; title: string }
+type LabeledIssueRef = { number: number; title: string; state: 'OPEN' | 'CLOSED'; milestone: TaskMilestoneRef | null }
 type TaskPrForRetrospective = { number: number; comments: { body: string }[] }
+
+/**
+ * The Milestone this tranche's own task Issues are actually attached to —
+ * never a Milestone titled exactly the slug (O7, Issue #542). Several
+ * tranches can legitimately share one Milestone whose title names neither
+ * (`vinaya-milestone-model-v1`) — reading it off the Issues themselves is
+ * the only way to find the right one. `null` when no Issue in the tranche
+ * carries a Milestone at all — nothing to write a retrospective into.
+ */
+export function resolveTaskMilestone(issues: readonly LabeledIssueRef[]): TaskMilestoneRef | null {
+  for (const issue of issues) {
+    if (issue.milestone) return issue.milestone
+  }
+  return null
+}
 
 /**
  * The highest Developer round marker (`<!-- aeg:developer:round-<n> -->`,
@@ -400,13 +418,14 @@ export function trancheArchivalStatus(
  * tranche done" is answered from its OWN Issues, before anything asks
  * whether a Milestone exists to close.
  *
- * Closing a Milestone is still this command's mechanism for legacy
- * (title-equals-slug) tranches — the only kind that exist today, since the
- * write side that can create a shared or label-only tranche is task 2's
- * scope, not this one's. A complete tranche with no matching Milestone
- * (unreachable today, reachable once task 2 ships) reports done with
- * nothing to close, rather than erroring — there is no archival mechanism
- * for it yet to invoke.
+ * The target Milestone (O7, Issue #542) is whatever the tranche's own task
+ * Issues are attached to — `resolveTaskMilestone`, never a Milestone titled
+ * exactly the slug, since `vinaya-milestone-model-v1` lets several tranches
+ * share one Milestone whose title names neither. A complete tranche with no
+ * Issue attached to any Milestone reports done with nothing to write into,
+ * rather than erroring. The Milestone closes only once nothing else inside
+ * it is still open — a shared Milestone stays open for its other tenants,
+ * carrying this tranche's retrospective already recorded.
  */
 export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Promise<number> {
   const { slug, yes } = parseTrancheArgs(args)
@@ -437,7 +456,7 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
     '--state',
     'all',
     '--json',
-    'number,title,state',
+    'number,title,state,milestone',
     '--limit',
     '200'
   ])
@@ -454,17 +473,39 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
     return 1
   }
 
-  const milestones = shJson<Milestone[]>(['gh', 'api', `repos/${repoFlag}/milestones?state=open&per_page=100`])
-  const milestone = milestones.find((m) => m.title === slug)
-  if (!milestone) {
+  // O7 (Issue #542): the target Milestone is whatever the tranche's own task
+  // Issues are attached to — never a Milestone titled exactly the slug
+  // (the legacy, now-superseded assumption). No Issue in the tranche
+  // carrying a Milestone at all means there is nothing to write a
+  // retrospective into yet.
+  const taskMilestone = resolveTaskMilestone(issues)
+  if (!taskMilestone) {
     process.stdout.write(
-      `Tranche '${slug}' is complete (${issues.length} task(s), all closed) — no open Milestone to close.\n`
+      `Tranche '${slug}' is complete (${issues.length} task(s), all closed) — no Milestone attached to write a retrospective into.\n`
     )
     return 0
   }
+  const milestone = shJson<Milestone>(['gh', 'api', `repos/${repoFlag}/milestones/${taskMilestone.number}`])
+
+  // O7: the Milestone can hold other tranches or backlog tasks
+  // (`vinaya-milestone-model-v1`) — closing it the moment THIS tranche
+  // finishes would close out work that is still open. Same
+  // `?milestone=<n>&state=all` REST shape `tranchesAttachedToMilestone`
+  // (`@attalabs/aeg-forge-state`) already uses for the identical "what else
+  // lives in this Milestone" question, `state=all` because a per-Issue
+  // `state` filter would just be re-derived client-side either way.
+  const milestoneIssues = shJson<Array<{ state: 'open' | 'closed' }>>([
+    'gh',
+    'api',
+    `repos/${repoFlag}/issues?milestone=${milestone.number}&state=all&per_page=100`
+  ])
+  const otherWorkOpen = milestoneIssues.some((i) => i.state === 'open')
 
   if (!yes) {
-    const ok = await promptYesNo(`Close tranche '${slug}' (Milestone #${milestone.number}, all tasks closed)?`, false)
+    const prompt = otherWorkOpen
+      ? `Record tranche '${slug}''s retrospective in Milestone #${milestone.number} (other tasks still open — leaving it open)?`
+      : `Close tranche '${slug}''s Milestone (#${milestone.number}, all tasks closed)?`
+    const ok = await promptYesNo(prompt, false)
     closeStdin()
     if (!ok) {
       process.stdout.write('Aborted. Nothing was changed.\n')
@@ -494,11 +535,17 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
   ])
   const section = renderRetrospectiveSection(slug, taskPrs)
   const newDescription = appendRetrospectiveSection(milestone.description ?? '', slug, section)
+  const patch: { description: string; state?: 'closed' } = { description: newDescription }
+  if (!otherWorkOpen) patch.state = 'closed'
   sh(
     ['gh', 'api', '-X', 'PATCH', `repos/${repoFlag}/milestones/${milestone.number}`, '--input', '-'],
-    JSON.stringify({ description: newDescription, state: 'closed' })
+    JSON.stringify(patch)
   )
-  process.stdout.write(`Tranche '${slug}' closed (Milestone #${milestone.number}), retrospective recorded.\n`)
+  process.stdout.write(
+    otherWorkOpen
+      ? `Tranche '${slug}' retrospective recorded in Milestone #${milestone.number} (left open — other tasks remain).\n`
+      : `Tranche '${slug}' closed (Milestone #${milestone.number}), retrospective recorded.\n`
+  )
   return 0
 }
 
