@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHECK_SCHEMA_VERSION, type CheckError } from '../../src/checks/contract'
@@ -11,6 +11,9 @@ import {
   validateForgeWrite,
   validateIssueContent
 } from '../../src/lib/forge-write'
+
+const CLI_ROOT = join(import.meta.dir, '..', '..')
+const REPO_ROOT = join(CLI_ROOT, '..', '..')
 
 // ---------------------------------------------------------------------------
 // O1 — the write gate runs every group over one body and refuses once with
@@ -140,6 +143,186 @@ describe('collectTaskIssueErrors — one gate sequence, every group, one refusal
     )
 
     expect(errors).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Round-3 review finding (MEDIUM) — a `gh` fetch failure inside the O5
+// sibling-overlap lookup used to call `refuse()` directly, discarding every
+// finding `collectTaskIssueErrors` had already pushed into its union (the
+// schema group's own findings, computed just before this lookup runs) —
+// recreating the exact stop-at-first-group cost O1 exists to remove, one
+// layer down inside the content group. The fetch failure must fold into the
+// SAME union instead.
+// ---------------------------------------------------------------------------
+
+describe('a gh fetch failure inside the content group folds into the union instead of discarding prior findings', () => {
+  let cwd: string
+  let originalCwd: string
+  let originalPath: string | undefined
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-sibling-fetch-failure-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ briefSchema: { issue: { sections: [] } } }), 'utf8')
+
+    // A fake `gh` that fails `issue list` (the O5 sibling-overlap query) but
+    // answers nothing else — the point is this ONE lookup failing, not a
+    // general forge outage.
+    const gh = join(cwd, 'gh')
+    writeFileSync(
+      gh,
+      `#!/bin/sh
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  echo "gh: network unreachable" >&2
+  exit 1
+fi
+exit 1
+`
+    )
+    execFileSync('chmod', ['+x', gh])
+
+    originalPath = process.env.PATH
+    process.env.PATH = `${cwd}:${process.env.PATH ?? ''}`
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    process.env.PATH = originalPath
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it("keeps the schema group's own findings when the sibling-overlap fetch fails, refusing once with both", async () => {
+    const deps: TaskIssueValidationDeps = {
+      computeRenderedBriefErrors: async () => [],
+      runIssueChecks: async () => []
+    }
+
+    const errors = await collectTaskIssueErrors(
+      // `no-doc-surface` sentinel keeps `checkRationaleNamesDocs` quiet — this
+      // fixture means to name exactly one content-group defect via the
+      // fetch failure itself, not a second, unrelated one.
+      '**Docs to keep coherent** — no-doc-surface.',
+      'not a valid title', // trips the schema group's title-grammar check
+      [],
+      'vinaya issue create --validate-only …',
+      null,
+      // `--milestone` given explicitly short-circuits milestone RESOLUTION
+      // (no `gh` call needed to resolve one) straight to the sibling-overlap
+      // fetch, which the fake `gh` above fails.
+      { kind: 'create', ghArgs: ['--milestone', 'v1'] },
+      deps
+    )
+
+    expect(errors.length).toBe(2)
+    const checks = errors.map((e) => e.check).sort()
+    expect(checks).toEqual(['forge-fetch', 'forge-title'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Round-3 review finding (MINOR) — the O2 audit below exercises
+// `validateForgeWrite`'s and `validateIssueContent`'s real output, but the
+// rendered-brief-shape group's real (non-injected) output was only ever
+// proven compliant by a hand-built fixture. This drives the REAL render
+// path (`collectTaskIssueErrors`'s default deps, no injection) against a
+// body missing `## Stop conditions` — a genuine render gap — so the
+// `brief-render` finding this produces carries `nameTheFix`'s ACTUAL
+// wrapping, not a stand-in.
+// ---------------------------------------------------------------------------
+
+describe('the real (non-injected) rendered-brief-shape group also names its own fix', () => {
+  let cwd: string
+  let originalCwd: string
+  let originalAegRepo: string | undefined
+
+  const RATIONALE = [
+    "## Task Issue — Planner's rationale",
+    '',
+    '**Boundary** — In: nothing real. Out: nothing.',
+    '',
+    '**Sizing** — n/a, test fixture.',
+    '',
+    '**Project(s) + blast radius** — `Project: cli`. No shared-primitive fan-out.',
+    '',
+    '**Dependency rationale** — `Depends-on: —`; `Conflicts-with: —`.',
+    '',
+    '**Traps to avoid** — n/a.',
+    '',
+    '**Suggested agent-class** — fast — test fixture.',
+    '',
+    '**Stop-and-escalate** — n/a.',
+    '',
+    '**Docs to keep coherent** — no-doc-surface.'
+  ].join('\n')
+
+  // Deliberately missing `## Stop conditions` — a section the brief renderer
+  // requires past its own cutover — so rendering this body genuinely fails
+  // (`rendered.ok === false`), producing a real `brief-render` finding.
+  const bodyMissingStopConditions = [
+    '**Project:** cli',
+    '',
+    '## Objectives',
+    '',
+    'O1. The fixture exercises the real render path.',
+    '',
+    '## Surface',
+    '',
+    'in: aeg-root',
+    'out: —',
+    '',
+    '## Parts',
+    '',
+    'Part 1 (O1) — the only part, citing the only objective.',
+    '',
+    '## Test plan',
+    '',
+    'Test Plan: unit-tests-only',
+    '',
+    RATIONALE
+  ].join('\n')
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-real-render-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ briefSchema: { issue: { sections: [] } } }), 'utf8')
+    execFileSync('git', ['init', '-q'], { cwd })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
+    mkdirSync(join(cwd, 'aeg-root', 'templates'), { recursive: true })
+    cpSync(
+      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
+      join(cwd, 'aeg-root', 'templates', 'brief-template.md')
+    )
+    execFileSync('git', ['add', '.'], { cwd })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
+
+    originalAegRepo = process.env.AEG_REPO
+    process.env.AEG_REPO = 'test-owner/test-repo'
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    process.env.AEG_REPO = originalAegRepo
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it('a real render-gap finding quotes the gap and states the fix, not just the rule', async () => {
+    // No `deps` override — `computeRenderedBriefErrors` runs the REAL
+    // `validateRenderedBriefForIssue`, exercising its own `nameTheFix` calls.
+    const errors = await collectTaskIssueErrors(
+      bodyMissingStopConditions,
+      'Feat: a well-formed title',
+      [],
+      'vinaya issue create --validate-only …',
+      null
+    )
+
+    const renderFindings = errors.filter((e) => e.check === 'brief-render' || e.check === 'brief-shape')
+    expect(renderFindings.length).toBeGreaterThan(0)
+    for (const e of renderFindings) expect(recoveryNamesItsFix(e)).toBe(true)
   })
 })
 

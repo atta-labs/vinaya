@@ -1269,17 +1269,30 @@ function resolveMilestoneTitleForCreate(ghArgs: string[], labels: string[]): str
  * `gh` itself pages through the API internally to satisfy a `--limit` this
  * large in one invocation — no separate cursor loop is needed here.
  *
- * Unlike the Milestone read above, a failure HERE is a hard refusal: by this
- * point a real Milestone is known, so degrading silently to "no siblings
- * found" would let a real collision through rather than merely skip a
- * cosmetic lookup — the same fail-closed posture `fetchForgeLabels` already
- * takes for the rationale gate's own applicability fetch.
+ * Unlike the Milestone read above, a failure HERE is still a hard refusal —
+ * by this point a real Milestone is known, so degrading silently to "no
+ * siblings found" would let a real collision through rather than merely skip
+ * a cosmetic lookup, the same fail-closed posture `fetchForgeLabels` already
+ * takes for the rationale gate's own applicability fetch — but O1 (this
+ * task): the refusal is now a RETURNED finding, not a direct `refuse()`
+ * call. This function used to call `refuse()` itself on a fetch/parse
+ * failure, which — called from inside `collectTaskIssueErrors`, AFTER that
+ * function had already pushed the schema group's own findings into its
+ * union — discarded every finding already collected: a `gh` hiccup
+ * coinciding with a real title-grammar or content defect reported only the
+ * fetch error, hiding the real defect until a later run, exactly the
+ * stop-at-first-group cost this task exists to remove. The caller folds a
+ * returned error into the SAME union every other group contributes to; the
+ * write still refuses (a `forge-fetch` finding is never dropped), it just no
+ * longer erases what came before it.
  */
+type FetchSiblingsResult = { ok: true; siblings: TaskSurfaceFacts[] } | { ok: false; error: CheckError }
+
 function fetchOpenTaskSurfaceSiblings(
   milestoneTitle: string,
   excludeIssueNumber: number | null,
   retryCommand: string
-): TaskSurfaceFacts[] {
+): FetchSiblingsResult {
   let out: string
   try {
     out = execFileSync(
@@ -1299,13 +1312,14 @@ function fetchOpenTaskSurfaceSiblings(
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
     )
   } catch (err) {
-    refuse([
-      makeCheckError(
+    return {
+      ok: false,
+      error: makeCheckError(
         'forge-fetch',
         `Could not list open Issues (\`gh issue list\`) to check \`## Surface\` overlap against Milestone "${milestoneTitle}": ${(err as Error).message}`,
         `Check \`gh auth status\` and network, then re-run \`${retryCommand}\`. The write is refused rather than passed through unvalidated.`
       )
-    ])
+    }
   }
   let issues: Array<{
     number: number
@@ -1316,26 +1330,30 @@ function fetchOpenTaskSurfaceSiblings(
   try {
     issues = JSON.parse(out)
   } catch {
-    refuse([
-      makeCheckError(
+    return {
+      ok: false,
+      error: makeCheckError(
         'forge-fetch',
         'Could not parse `gh issue list --json number,body,labels,milestone` output.',
         `Re-run \`${retryCommand}\`; the write is refused rather than passed through unvalidated.`
       )
-    ])
+    }
   }
-  return issues
-    .filter((i) => i.number !== excludeIssueNumber)
-    .filter((i) => i.milestone?.title === milestoneTitle)
-    .filter((i) => isTaskIssueLabelSet(i.labels.map((l) => l.name)))
-    .map((i) => {
-      const surface = parseIssueSurface(i.body)
-      return {
-        ref: String(i.number),
-        surfaceIn: surface.ok ? surface.value.in : [],
-        conflictsWith: parseRationaleDeps(i.body).conflictsWith
-      }
-    })
+  return {
+    ok: true,
+    siblings: issues
+      .filter((i) => i.number !== excludeIssueNumber)
+      .filter((i) => i.milestone?.title === milestoneTitle)
+      .filter((i) => isTaskIssueLabelSet(i.labels.map((l) => l.name)))
+      .map((i) => {
+        const surface = parseIssueSurface(i.body)
+        return {
+          ref: String(i.number),
+          surfaceIn: surface.ok ? surface.value.in : [],
+          conflictsWith: parseRationaleDeps(i.body).conflictsWith
+        }
+      })
+  }
 }
 
 /**
@@ -1521,8 +1539,18 @@ export async function collectTaskIssueErrors(
       : milestoneSource.kind === 'edit'
         ? fetchForgeMilestoneBestEffort(milestoneSource.issueRef)
         : resolveMilestoneTitleForCreate(milestoneSource.ghArgs, labels)
-  const milestoneSiblings =
-    milestoneTitle !== null ? fetchOpenTaskSurfaceSiblings(milestoneTitle, issueNumber, retryCommand) : null
+  // O1 — a fetch failure here folds into the SAME union every other group
+  // contributes to, rather than refusing immediately and discarding the
+  // schema group's findings already pushed above.
+  let milestoneSiblings: TaskSurfaceFacts[] | null = null
+  if (milestoneTitle !== null) {
+    const siblingsResult = fetchOpenTaskSurfaceSiblings(milestoneTitle, issueNumber, retryCommand)
+    if (siblingsResult.ok) {
+      milestoneSiblings = siblingsResult.siblings
+    } else {
+      errors.push(siblingsResult.error)
+    }
+  }
 
   errors.push(
     ...validateIssueContent({
