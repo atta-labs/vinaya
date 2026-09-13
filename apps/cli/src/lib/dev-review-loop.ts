@@ -1147,9 +1147,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // O2 (`#548` v3): a driver that exits without ever recording a real
     // `paused`/`publish` decision still leaves ONE trace — inside this
     // task's Surface, so this is the role log `task status --follow`
-    // already tails, never a second journal family (Traps to avoid; the
-    // forge journal event needs a `packages/aeg-core` schema change and
-    // belongs to task-log-v1, per the Principal's ruling on this Issue).
+    // already tails, never a second journal family (Traps to avoid). A
+    // forge journal event for the same exit needs a `packages/aeg-core`
+    // schema change, out of this task's declared Surface, and is left for a
+    // later task with that Surface.
     // `exitTraceWritten` guards the three call sites below (reexec success,
     // an uncaught error, a process signal) from ever firing twice for the
     // same exit.
