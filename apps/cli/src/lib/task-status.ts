@@ -21,6 +21,7 @@ import { resolveNewestFrozenBrief, type PauseReason } from '@attalabs/aeg-core'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { findOpenPrForBranch, outboxRoot } from './dev-review-loop.js'
+import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
 
 function sh(cmd: string, args: string[]): string {
   return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -125,6 +126,78 @@ function isDriverPidAlive(pid: number): boolean {
   }
 }
 
+// --- O2 (`#548` v3): the role log's own `driver_exited` trace ------------
+
+/**
+ * The `{owner,repo}` `loopLogPathFor` needs, resolved synchronously and
+ * locally rather than via `@attalabs/aeg-forge-state`'s own `resolveRepo`
+ * (which this file's `sh()`-based, synchronous read style deliberately
+ * mirrors instead of importing — `resolveRepo` is `async`, and this file's
+ * two command-facing entry points are called synchronously today by
+ * `commands/task-status.ts`, out of this task's Surface; making them
+ * `async` would force an edit there too). Same resolution order and same
+ * URL shapes `resolve-repo.ts` parses — `AEG_REPO` first, then `git remote
+ * get-url origin` — duplicated in miniature rather than shared, since the
+ * shared version is the one thing here that can't be reused without an
+ * out-of-surface ripple.
+ */
+function resolveRepoSync(): LoopLogRepo {
+  const fromEnv = process.env.AEG_REPO
+  if (fromEnv) {
+    const m = /^([^/]+)\/(.+)$/.exec(fromEnv)
+    if (m?.[1] && m[2]) return { owner: m[1], repo: m[2] }
+  }
+  let url: string
+  try {
+    url = sh('git', ['remote', 'get-url', 'origin'])
+  } catch {
+    return null
+  }
+  const ssh = /^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/.exec(url)
+  if (ssh?.[1] && ssh[2]) return { owner: ssh[1], repo: ssh[2] }
+  const https = /^https?:\/\/(?:[^@]+@)?github\.com\/([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(url)
+  if (https?.[1] && https[2]) return { owner: https[1], repo: https[2] }
+  return null
+}
+
+/**
+ * `deriveLoopState`'s own doc comment says it "take[s] an explicit `root`"
+ * so tests never touch the real `~/.vinaya` tree — the role log lives under
+ * a DIFFERENT root (`loopsRoot()`, a sibling of `outboxRoot()`) and is keyed
+ * by repo, not by the outbox's own `root`, so it needs its own explicit
+ * lookup rather than being derived from `root` alone. Threaded as one
+ * parameter (never resolved internally by `deriveLoopState`/
+ * `readLastDriverExited` themselves) so a caller — production
+ * (`buildRow`, resolving the real repo once per invocation) or a test
+ * (pointing straight at a temp dir, `repo: null`) — decides once, explicitly,
+ * instead of a hidden default silently shelling out to real `git` on every
+ * call a test never asked for.
+ */
+export type LoopLogLookup = { repo: LoopLogRepo; loopsRoot: string }
+
+export type DriverExitReason = 'reexec' | 'error' | 'signal'
+export type DriverExitTrace = { reason: DriverExitReason; lastDecision: string }
+
+const DRIVER_EXITED_LINE = /^\[dev-review-loop\] driver_exited: reason=(reexec|error|signal) last_decision=(.*)$/
+
+/**
+ * The LAST `driver_exited` line in the task's role log — `dev-review-
+ * loop.ts`'s own `recordDriverExited` appends one per unrecorded exit, never
+ * more than one per run, so the last line in the file is always the most
+ * recent run's own trace, whether or not a later run has since taken over
+ * the (dead) lock. `null` when the log doesn't exist or never carries one.
+ */
+function readLastDriverExited(issue: number, loopLog: LoopLogLookup): DriverExitTrace | null {
+  const raw = readIfExists(loopLogPathFor(loopLog.repo, issue, loopLog.loopsRoot))
+  if (!raw) return null
+  let found: DriverExitTrace | null = null
+  for (const line of raw.split('\n')) {
+    const m = DRIVER_EXITED_LINE.exec(line)
+    if (m) found = { reason: m[1] as DriverExitReason, lastDecision: m[2] as string }
+  }
+  return found
+}
+
 type PauseState = {
   task: number
   round: number
@@ -192,6 +265,7 @@ export type TaskLoopState =
   | { kind: 'running'; pid: number; startedAt: string }
   | { kind: 'paused'; reason: PauseReason; detail?: string; round: number }
   | { kind: 'published'; round: number }
+  | { kind: 'exited'; reason: DriverExitReason; lastDecision: string }
   | { kind: 'no_driver' }
 
 /**
@@ -202,10 +276,26 @@ export type TaskLoopState =
  * round at or past the paused round means that pause was resumed past;
  * `published` (derived from the effect markers alone) wins over a stale
  * `paused` reading in that case.
+ *
+ * O2 (`#548` v3): a DEAD driver lock is itself the signal that the last run
+ * exited abnormally — every normal exit path (a decided `pause`, a
+ * `publish`, or a clean `no_driver`-since-never-run) either clears the lock
+ * (the outer `finally`) or never wrote one crediting the current run. So a
+ * lock naming a dead pid, checked BEFORE the published/paused reading below,
+ * means the last run's own `driver_exited` role-log trace — if one exists —
+ * is more informative than a possibly much older pause/publish record.
  */
-export function deriveLoopState(root: string, task: number): TaskLoopState {
+export function deriveLoopState(
+  root: string,
+  task: number,
+  loopLog: LoopLogLookup = { repo: resolveRepoSync(), loopsRoot: loopsRoot() }
+): TaskLoopState {
   const lock = readDriverLock(root, task)
   if (lock && isDriverPidAlive(lock.pid)) return { kind: 'running', pid: lock.pid, startedAt: lock.startedAt }
+  if (lock) {
+    const trace = readLastDriverExited(task, loopLog)
+    if (trace) return { kind: 'exited', reason: trace.reason, lastDecision: trace.lastDecision }
+  }
 
   const published = newestPublishedRound(root, task)
   const pause = readPauseState(root, task)
@@ -280,6 +370,8 @@ function renderStateText(state: TaskLoopState): string {
       return `paused (${state.reason})`
     case 'published':
       return 'published'
+    case 'exited':
+      return `exited (${state.reason}) — last decision: ${state.lastDecision}`
     case 'no_driver':
       return 'no driver'
   }
