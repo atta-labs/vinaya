@@ -415,6 +415,18 @@ const CHECK_BRIEF_SCHEMA = 'brief-schema'
 const CHECK_FORGE_TITLE = 'forge-title'
 
 /**
+ * O2 — every recovery prompt this file emits quotes the specific finding it
+ * refuses (the underlying check's own message already names the offending
+ * line/field, e.g. `checkForgeTitle`'s `"<bad title>" matches neither…`),
+ * THEN states the edit that clears it. A prompt built only from a per-check
+ * static template restates the rule; prefixing the quoted message makes every
+ * prompt name its own fix rather than its rule, per-instance, not per-check-kind.
+ */
+function nameTheFix(message: string, fixInstruction: string): string {
+  return `Refused for: \`${message}\` — ${fixInstruction}`
+}
+
+/**
  * Maps each built-in section name to the `@attalabs/aeg-core` validator that backs
  * it. The `Record<BriefBuiltin, …>` type makes this exhaustive — adding a name
  * to `BRIEF_BUILTINS` without wiring it here is a compile error.
@@ -534,7 +546,10 @@ export function validateForgeWrite(input: ForgeValidationInput): CheckError[] {
           makeCheckError(
             CHECK_FORGE_TITLE,
             message,
-            `Rewrite the \`--title\` to match the forge-title grammar (\`Type: description\` / \`Type(scope): description\`, or \`[tranche] id — description\`), then re-run \`${input.retryCommand}\`.`
+            nameTheFix(
+              message,
+              `Rewrite \`--title\` (currently \`${input.title}\`) to match the forge-title grammar (\`Type: description\` / \`Type(scope): description\`, or \`[tranche] id — description\`), then re-run \`${input.retryCommand}\`.`
+            )
           )
         )
       }
@@ -575,14 +590,16 @@ export function validateForgeWrite(input: ForgeValidationInput): CheckError[] {
       continue
     }
     if ('builtin' in section) {
-      const recovery = BUILTIN_RECOVERY[section.builtin].replace('{cmd}', input.retryCommand)
+      const instruction = BUILTIN_RECOVERY[section.builtin].replace('{cmd}', input.retryCommand)
       for (const message of runBuiltin(section.builtin, input)) {
-        errors.push(makeCheckError(CHECK_BRIEF_SCHEMA, message, recovery))
+        errors.push(makeCheckError(CHECK_BRIEF_SCHEMA, message, nameTheFix(message, instruction)))
       }
     } else {
       const message = runCustomSection(section, input.body)
       if (message !== null) {
-        errors.push(makeCheckError(CHECK_BRIEF_SCHEMA, message, customRecovery(section, input.retryCommand)))
+        errors.push(
+          makeCheckError(CHECK_BRIEF_SCHEMA, message, nameTheFix(message, customRecovery(section, input.retryCommand)))
+        )
       }
     }
   }
@@ -949,8 +966,10 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
   ]
   const errors: CheckError[] = []
   for (const [messages, kind] of findings) {
-    const recovery = ISSUE_CONTENT_RECOVERY[kind].replace('{cmd}', input.retryCommand)
-    for (const message of messages) errors.push(makeCheckError(CHECK_ISSUE_CONTENT, message, recovery))
+    const instruction = ISSUE_CONTENT_RECOVERY[kind].replace('{cmd}', input.retryCommand)
+    for (const message of messages) {
+      errors.push(makeCheckError(CHECK_ISSUE_CONTENT, message, nameTheFix(message, instruction)))
+    }
   }
   return errors
 }
@@ -1416,7 +1435,10 @@ async function validateRenderedBriefForIssue(input: {
       makeCheckError(
         CHECK_BRIEF_RENDER,
         `brief-render: ${m}`,
-        `Fix the named gap so this Issue renders a valid brief, then re-run \`${input.retryCommand}\`.`
+        nameTheFix(
+          `brief-render: ${m}`,
+          `Fix the named gap so this Issue renders a valid brief, then re-run \`${input.retryCommand}\`.`
+        )
       )
     )
   }
@@ -1428,7 +1450,10 @@ async function validateRenderedBriefForIssue(input: {
     makeCheckError(
       CHECK_BRIEF_SHAPE_PREWRITE,
       e,
-      `Fix the named section in the Issue body — as written it would freeze into a brief \`pr create\` refuses — then re-run \`${input.retryCommand}\`.`
+      nameTheFix(
+        e,
+        `Fix the named section in the Issue body — as written it would freeze into a brief \`pr create\` refuses — then re-run \`${input.retryCommand}\`.`
+      )
     )
   )
 }
