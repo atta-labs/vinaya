@@ -43,7 +43,7 @@ Part 4 (O2, O3) — docs and the surface index rows.
 ## Test plan
 
 ```
-bunx turbo test --affected --force → summary line ends "0 fail"
+bun test packages/aeg-core/src/issue-validation.test.ts packages/aeg-core/src/brief-render.test.ts → 0 fail
 bun apps/cli/src/index.ts brief render plan-brief-v1 1 --surfaces 'packages/aeg-core/src/issue-validation.ts' → exits 0, no bracketed placeholder in the output
 ```
 

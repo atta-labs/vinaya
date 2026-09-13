@@ -405,6 +405,80 @@ const ISSUE_PRINCIPAL_LINE_RE = /^-\s*\[[ xX]\]\s*\*{2}\[principal\]\*{2}(.*)$/g
 const UNIT_TESTS_ONLY_SENTINEL_RE = /(?:\*\*)?Test plan(?:\*\*)?\s*:\s*(?:\*\*)?\s*unit-tests-only/i
 
 /**
+ * `bunx turbo test` never takes a single-file argument at
+ * all (it runs a whole package's suite by construction), so any form of it
+ * is whole-suite. `bun test` and `vitest run` are whole-suite only when no
+ * argument in the line names an actual test file — a bare invocation or a
+ * directory argument still runs everything under it.
+ */
+const TURBO_TEST_RE = /\bbunx\s+turbo\s+test\b/i
+const BUN_TEST_RE = /\bbun\s+test\b/i
+const VITEST_RUN_RE = /\bvitest\s+run\b/i
+const TEST_FILE_ARG_RE = /[^\s'"]+\.(?:test|spec)\.[jt]sx?\b/i
+
+/** Same length, quoted regions blanked — so an index found in the result still points at the real character in the original string. */
+function maskQuoted(s: string): string {
+  return s.replace(/'[^']*'/g, (m) => 'x'.repeat(m.length)).replace(/"[^"]*"/g, (m) => 'x'.repeat(m.length))
+}
+
+/**
+ * A shell comment (an unquoted `#` to end of line) can plant a real test-file
+ * path AFTER the runner invocation it never actually reaches — the invoked
+ * command is still the bare part before the `#`. Found live (security
+ * review): `bun test # apps/cli/tests/foo.test.ts` satisfied
+ * `TEST_FILE_ARG_RE` by matching the commented-out path, though the line it
+ * names still runs the whole suite.
+ */
+function stripLineComment(s: string): string {
+  const idx = maskQuoted(s).indexOf('#')
+  return idx === -1 ? s : s.slice(0, idx)
+}
+
+/**
+ * Splits on an unquoted `;`, `&&`, or `||` — a chained line can smuggle a
+ * real test-file path into a SECOND statement while the FIRST one, the
+ * runner invocation itself, still has no argument. Found live (security
+ * review): `bun test; echo apps/cli/tests/foo.test.ts` satisfied
+ * `TEST_FILE_ARG_RE` against the whole line, though the `bun test` statement
+ * that actually runs still has no file argument.
+ */
+function commandStatements(command: string): string[] {
+  const masked = maskQuoted(command)
+  const statements: string[] = []
+  let last = 0
+  const re = /;|&&|\|\|/g
+  let m: RegExpExecArray | null
+  // biome-ignore lint/suspicious/noAssignInExpressions: standard exec-loop idiom
+  while ((m = re.exec(masked)) !== null) {
+    statements.push(command.slice(last, m.index))
+    last = m.index + m[0].length
+  }
+  statements.push(command.slice(last))
+  return statements
+}
+
+/**
+ * A Test plan line naming a test runner with no test-file argument can run
+ * the whole suite once dispatched — the developer role's pre-push hook
+ * already runs the affected suite on its own (`roles/developer.md`), so a
+ * Planner's Test plan line exists to name the file(s) THIS task's own Part
+ * proves, never to re-authorize the whole thing. A line that isn't a
+ * recognized test-runner invocation at all (a `vinaya check` command, an
+ * arbitrary CLI call) is never whole-suite by this definition. Judged one
+ * statement at a time (see `commandStatements`/`stripLineComment`) so a
+ * trailing chained command or comment can never smuggle in a test-file
+ * argument the runner invocation itself never receives.
+ */
+function isWholeSuiteTestPlanLine(line: string): boolean {
+  for (const raw of commandStatements(line)) {
+    const stmt = stripLineComment(raw)
+    if (TURBO_TEST_RE.test(stmt)) return true
+    if ((BUN_TEST_RE.test(stmt) || VITEST_RUN_RE.test(stmt)) && !TEST_FILE_ARG_RE.test(stmt)) return true
+  }
+  return false
+}
+
+/**
  * `## Test plan` — reuses `checkTestPlan`/`extractFencedBlocks`
  * (`brief-validation.ts`) rather than a second parser: the `unit-tests-only`
  * sentinel, or a fenced command list plus optional `**[principal]**` items.
@@ -438,6 +512,18 @@ export function parseIssueTestPlan(body: string): ParsedIssueSection<IssueTestPl
       .map((l) => l.trim())
       .filter((l) => l.length > 0)
   )
+
+  const wholeSuiteLines = lines.filter(isWholeSuiteTestPlanLine)
+  if (wholeSuiteLines.length > 0) {
+    return {
+      ok: false,
+      errors: wholeSuiteLines.map(
+        (line) =>
+          `\`${line}\` runs a test runner with no test-file argument — a \`## Test plan\` line must name one or more \`*.test.*\`/\`*.spec.*\` files (e.g. \`bun test apps/cli/tests/lib/dev-review-loop.test.ts\`) or a \`vinaya check\` command; a bare \`bun test\`, \`bun test\` on a directory, any \`bunx turbo test\` form, or \`vitest run\` on a package can run the whole suite, which the pre-push hook already covers on its own.`
+      )
+    }
+  }
+
   const principal = [...region.matchAll(ISSUE_PRINCIPAL_LINE_RE)].map((m) => (m[1] ?? '').trim()).filter(Boolean)
   if (lines.length === 0 && principal.length === 0) {
     return {

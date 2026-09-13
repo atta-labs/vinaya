@@ -35,6 +35,13 @@ beforeEach(() => {
     if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view' && args[2] === '192') {
       return JSON.stringify({ number: 192, state: 'CLOSED', labels: [] })
     }
+    // `resolveDependsOn`'s own batched fetcher (`fetchIssueStatesBatch`) —
+    // one `gh api graphql` call regardless of how many numbers the
+    // query aliases; every row below that resolves a direct `#192` edge
+    // resolves through this, not a per-edge `gh issue view`.
+    if (cmd === 'gh' && args[0] === 'api' && args[1] === 'graphql') {
+      return JSON.stringify({ data: { repository: { i_192: { state: 'CLOSED' } } } })
+    }
     throw new Error(`unmocked execFileSync: ${cmd} ${args?.join(' ')}`)
   })
 })
@@ -103,6 +110,32 @@ describe('resolveDependsOn — #196 regression table', () => {
     ])
     const [fact] = await resolveDependsOn(['2'], homeTranche, branchPrs, REPO)
     expect(fact).toEqual({ id: '2', issue: 111, merged: false })
+  })
+})
+
+describe('resolveDependsOn — one batched forge read for the whole edge list', () => {
+  const homeTranche = makeTranche('home-tranche', [])
+
+  it('twenty-six direct-issue edges resolve with exactly one fetchIssueStates call, each verdict matching a per-edge lookup', async () => {
+    const edgeCount = 26
+    const edges = Array.from({ length: edgeCount }, (_, i) => `#${i + 1}`)
+    // Odd-numbered Issues closed, even-numbered open — same per-edge verdict
+    // an unbatched `gh issue view <n>` per edge would have produced.
+    const fetchIssueStates = vi.fn((numbers: number[]) => {
+      const m = new Map<number, 'OPEN' | 'CLOSED'>()
+      for (const n of numbers) m.set(n, n % 2 === 1 ? 'CLOSED' : 'OPEN')
+      return m
+    })
+
+    const facts = await resolveDependsOn(edges, homeTranche, new Map(), REPO, async () => null, fetchIssueStates)
+
+    expect(fetchIssueStates).toHaveBeenCalledTimes(1)
+    expect(fetchIssueStates.mock.calls[0]?.[0]).toHaveLength(edgeCount)
+    expect(facts).toHaveLength(edgeCount)
+    for (let i = 0; i < edgeCount; i++) {
+      const n = i + 1
+      expect(facts[i]).toEqual({ id: `#${n}`, issue: n, merged: n % 2 === 1 })
+    }
   })
 })
 

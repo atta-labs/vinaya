@@ -482,10 +482,17 @@ export async function assembleAndRenderBrief(
   const partsResult = parseIssueParts(issueBody)
   const testPlanResult = parseIssueTestPlan(issueBody)
   const stopConditionsResult = parseIssueStopConditions(issueBody)
+
+  // A whole-suite Test plan line (a bare `bun test`, a
+  // directory argument, any `bunx turbo test` form, `vitest run` on a
+  // package) must refuse here, naming the offending line, rather than
+  // falling through to `renderBrief`'s generic absent-section message: an
+  // empty fallback discards `testPlanResult.errors`, which is where the
+  // offending line actually lives.
+  if (!testPlanResult.ok) return { ok: false, missing: testPlanResult.errors }
+
   const parts: IssuePart[] = partsResult.ok ? partsResult.value : []
-  const testPlan: IssueTestPlan = testPlanResult.ok
-    ? testPlanResult.value
-    : { kind: 'commands', lines: [], principal: [] }
+  const testPlan: IssueTestPlan = testPlanResult.value
   const stopConditions: string[] = stopConditionsResult.ok ? stopConditionsResult.value : []
 
   const facts: BriefFacts = {
@@ -734,10 +741,14 @@ export async function assembleAndRenderBriefForIssue(
   const partsResult = parseIssueParts(issueBody)
   const testPlanResult = parseIssueTestPlan(issueBody)
   const stopConditionsResult = parseIssueStopConditions(issueBody)
+
+  // See the matching comment in `assembleAndRenderBrief`
+  // above: a whole-suite refusal must name the offending line, which an
+  // empty fallback into `renderBrief`'s generic path would discard.
+  if (!testPlanResult.ok) return { ok: false, missing: testPlanResult.errors }
+
   const parts: IssuePart[] = partsResult.ok ? partsResult.value : []
-  const testPlan: IssueTestPlan = testPlanResult.ok
-    ? testPlanResult.value
-    : { kind: 'commands', lines: [], principal: [] }
+  const testPlan: IssueTestPlan = testPlanResult.value
   const stopConditions: string[] = stopConditionsResult.ok ? stopConditionsResult.value : []
 
   const facts: BriefFacts = {

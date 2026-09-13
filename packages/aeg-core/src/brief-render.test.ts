@@ -615,6 +615,35 @@ describe('renderBrief', () => {
     expect(validated.status).toBe('pass')
   })
 
+  // A shared package named ONLY as a bare Surface `in:` directory
+  // — no individual file pinned anywhere under it — must still trigger the
+  // consumer-tests rule. Before this fix the trigger read `facts.surfaceFiles`'
+  // per-file `packageName` alone, which stays empty here, so the renderer
+  // emitted no consumer-tests line at all: exactly this Issue's own live
+  // write, before its Boundary named `packages/sources/src/file-adapter.test.ts`
+  // by path. Reproduced with that path removed.
+  it('a shared package named only as a bare Surface `in:` directory still triggers consumer-tests, with a test file under only one of its two consumers', () => {
+    const result = renderBrief(
+      baseFacts({
+        surface: { in: ['packages/sources/src', 'apps/cli/tests'], out: [] },
+        consumersOf: (pkg) => (pkg === 'sources' ? ['apps/cli', 'apps/other'] : []),
+        surfaceFiles: [{ path: 'apps/cli/tests/lib/fixture.test.ts', sha256: 'c'.repeat(64), packageName: null }]
+      }),
+      ''
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const section4 = /## 4\. Technical surface map[\s\S]*?(?=\n## 5\.)/.exec(result.brief)?.[0] ?? ''
+    expect(section4).toContain('packages/sources/src')
+    expect(section4).toMatch(/consumer-tests: apps\/cli\/tests \(covers @attalabs\/sources\)/)
+    expect(section4).toMatch(
+      /consumer-tests: none — no consumer test path named yet for @attalabs\/sources \(apps\/other\)/
+    )
+
+    const validated = checkConsumerTests(result.brief, (pkg) => (pkg === 'sources' ? ['apps/cli', 'apps/other'] : []))
+    expect(validated.status).toBe('pass')
+  })
+
   it("§5 Step 0 creates the worktree branch with --no-track and configures push.autoSetupRemote, so a plain `git push` reaches the task's own ref (task 5, Issue #447, O2)", () => {
     const result = renderBrief(baseFacts(), TEMPLATE)
     expect(result.ok).toBe(true)

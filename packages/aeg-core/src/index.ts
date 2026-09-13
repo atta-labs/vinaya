@@ -117,6 +117,7 @@ export {
   checkTestPlanExclusivity,
   checkTierField,
   checkWorktreeStep0,
+  packagesNamedIn,
   AEG_BRIEF_V1_MARKER,
   AGENT_BOXES_REFUSED_SINCE_PR,
   briefMarkerFor,

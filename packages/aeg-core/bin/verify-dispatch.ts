@@ -274,21 +274,60 @@ const defaultResolveSiblingTranche: SiblingTrancheResolver = async (slug, repo) 
   }
 }
 
-/** Resolves one task the same way a same-tranche `Depends-on` edge resolves
- * — reused for both the current tranche and a sibling tranche found via a
- * slug-qualified edge. */
-function dependsOnFactForTask(
-  edge: string,
-  task: Task,
-  pr: PrListEntry | undefined,
-  repo: RepoRef
-): DispatchDependsOnFact {
-  if (pr) return { id: edge, issue: task.issue, merged: pr.state === 'MERGED' }
-  if (task.issue !== null) {
-    const issueJson = ghIssueView(task.issue, repo)
-    return { id: edge, issue: task.issue, merged: issueJson?.state === 'CLOSED' }
+/**
+ * A batched fetcher of Issue state by number — injectable so tests can fake
+ * the forge without a real `gh` call, same seam `SiblingTrancheResolver`
+ * already gives this file. Real impl: `fetchIssueStatesBatch` below, one
+ * `gh api graphql` round trip regardless of how many numbers are asked for.
+ */
+export type IssueStateFetcher = (numbers: number[], repo: RepoRef) => Map<number, 'OPEN' | 'CLOSED'>
+
+/**
+ * One batched GraphQL call resolving every requested Issue number's state —
+ * `gh api graphql` aliasing `issue(number: N)` per number (the same
+ * one-HTTP-round-trip aliasing discipline `@attalabs/aeg-forge-state`'s
+ * `fetchTaskIssueRefs` already uses), through the `gh` CLI this file already
+ * shells out to everywhere else rather than a new octokit import — that
+ * package is out of this task's surface.
+ */
+export function fetchIssueStatesBatch(numbers: number[], repo: RepoRef): Map<number, 'OPEN' | 'CLOSED'> {
+  const result = new Map<number, 'OPEN' | 'CLOSED'>()
+  const unique = [...new Set(numbers)]
+  if (unique.length === 0) return result
+  const raw = sh('gh', [
+    'api',
+    'graphql',
+    '-R',
+    `${repo.owner}/${repo.repo}`,
+    '-f',
+    `query=${buildBatchIssueStateQuery(unique)}`,
+    '-F',
+    `owner=${repo.owner}`,
+    '-F',
+    `repo=${repo.repo}`
+  ])
+  if (!raw) return result
+  const parsed = shJsonParse<{ data?: { repository?: Record<string, { state?: string } | null> } }>(raw)
+  const repository = parsed?.data?.repository
+  if (!repository) return result
+  for (const n of unique) {
+    const state = repository[`i_${n}`]?.state
+    if (state === 'OPEN' || state === 'CLOSED') result.set(n, state)
   }
-  return { id: edge, issue: null, merged: false }
+  return result
+}
+
+function buildBatchIssueStateQuery(numbers: number[]): string {
+  const perIssue = numbers.map((n) => `i_${n}: issue(number: ${n}) { state }`).join('\n    ')
+  return `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) {\n    ${perIssue}\n  } }`
+}
+
+function shJsonParse<T>(text: string): T | null {
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    return null
+  }
 }
 
 export async function resolveDependsOn(
@@ -296,20 +335,29 @@ export async function resolveDependsOn(
   tranche: Tranche,
   branchPrs: Map<string, PrListEntry>,
   repo: RepoRef,
-  resolveSibling: SiblingTrancheResolver = defaultResolveSiblingTranche
+  resolveSibling: SiblingTrancheResolver = defaultResolveSiblingTranche,
+  fetchIssueStates: IssueStateFetcher = fetchIssueStatesBatch
 ): Promise<DispatchDependsOnFact[]> {
   const siblingCache = new Map<string, SiblingTranche | null>()
-  const facts: DispatchDependsOnFact[] = []
+
+  // Pass 1 — every edge whose verdict needs a live Issue state (a
+  // same-tranche/sibling task with no branch/PR yet, or a direct `#NNN`
+  // edge) is collected first, so the whole list resolves through ONE
+  // `fetchIssueStates` call instead of one `gh` process per edge — this is
+  // the resolver that actually made one forge process per edge;
+  // `resolveConflictsWith` below never called `gh` for these cases at all,
+  // see the PR body's Decisions.
+  const siblingByEdge = new Map<string, SiblingTranche | null>()
+  const needed = new Set<number>()
   for (const edge of edges) {
     const sameTask = resolveSameTrancheTask(edge, tranche)
     if (sameTask) {
-      facts.push(dependsOnFactForTask(edge, sameTask, branchPrs.get(sameTask.id), repo))
+      if (sameTask.issue !== null && !branchPrs.has(sameTask.id)) needed.add(sameTask.issue)
       continue
     }
     const directIssue = directIssueNumFromEdge(edge)
     if (directIssue !== null) {
-      const issueJson = ghIssueView(directIssue, repo)
-      facts.push({ id: edge, issue: directIssue, merged: issueJson?.state === 'CLOSED' })
+      needed.add(directIssue)
       continue
     }
     const qualified = splitSlugQualifiedEdge(edge)
@@ -319,9 +367,47 @@ export async function resolveDependsOn(
         sibling = await resolveSibling(qualified.slug, repo)
         siblingCache.set(qualified.slug, sibling)
       }
+      siblingByEdge.set(edge, sibling)
+      const siblingTask = sibling ? resolveSameTrancheTask(qualified.bareId, sibling.tranche) : undefined
+      if (sibling && siblingTask && siblingTask.issue !== null && !sibling.branchPrs.has(siblingTask.id)) {
+        needed.add(siblingTask.issue)
+      }
+    }
+  }
+  const issueStates = fetchIssueStates([...needed], repo)
+
+  const facts: DispatchDependsOnFact[] = []
+  for (const edge of edges) {
+    const sameTask = resolveSameTrancheTask(edge, tranche)
+    if (sameTask) {
+      const pr = branchPrs.get(sameTask.id)
+      if (pr) {
+        facts.push({ id: edge, issue: sameTask.issue, merged: pr.state === 'MERGED' })
+      } else if (sameTask.issue !== null) {
+        facts.push({ id: edge, issue: sameTask.issue, merged: issueStates.get(sameTask.issue) === 'CLOSED' })
+      } else {
+        facts.push({ id: edge, issue: null, merged: false })
+      }
+      continue
+    }
+    const directIssue = directIssueNumFromEdge(edge)
+    if (directIssue !== null) {
+      facts.push({ id: edge, issue: directIssue, merged: issueStates.get(directIssue) === 'CLOSED' })
+      continue
+    }
+    const qualified = splitSlugQualifiedEdge(edge)
+    if (qualified) {
+      const sibling = siblingByEdge.get(edge)
       const siblingTask = sibling ? resolveSameTrancheTask(qualified.bareId, sibling.tranche) : undefined
       if (sibling && siblingTask) {
-        facts.push(dependsOnFactForTask(edge, siblingTask, sibling.branchPrs.get(siblingTask.id), repo))
+        const pr = sibling.branchPrs.get(siblingTask.id)
+        if (pr) {
+          facts.push({ id: edge, issue: siblingTask.issue, merged: pr.state === 'MERGED' })
+        } else if (siblingTask.issue !== null) {
+          facts.push({ id: edge, issue: siblingTask.issue, merged: issueStates.get(siblingTask.issue) === 'CLOSED' })
+        } else {
+          facts.push({ id: edge, issue: null, merged: false })
+        }
         continue
       }
     }
