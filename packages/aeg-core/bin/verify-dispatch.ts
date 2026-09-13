@@ -73,14 +73,17 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  AmbiguousBareEdgeError,
   deriveTrancheFromForge,
   fetchProvenance,
   trancheLabel,
   listActiveTrancheSlugs,
   parseRationaleDeps,
+  requireTrancheQualifiedEdges,
   resolveGithubToken,
   resolveRepo,
   splitSlugQualifiedEdge,
+  tranchesAttachedToMilestone,
   type RepoRef
 } from '@attalabs/aeg-forge-state'
 import {
@@ -133,7 +136,13 @@ function shJson<T>(cmd: string, args: string[]): T | null {
   }
 }
 
-type IssueJson = { number: number; state: 'OPEN' | 'CLOSED'; body: string; labels: Array<{ name: string }> }
+type IssueJson = {
+  number: number
+  state: 'OPEN' | 'CLOSED'
+  body: string
+  labels: Array<{ name: string }>
+  milestone: { number: number } | null
+}
 
 const issueCache = new Map<number, IssueJson | null>()
 
@@ -146,7 +155,7 @@ function ghIssueView(num: number, repo: RepoRef): IssueJson | null {
     '-R',
     `${repo.owner}/${repo.repo}`,
     '--json',
-    'number,state,body,labels'
+    'number,state,body,labels,milestone'
   ])
   issueCache.set(num, result)
   return result
@@ -916,6 +925,42 @@ function runCheckBaselineMode(baselineFile: string): void {
   process.exit(0)
 }
 
+/**
+ * **O5 (Issue #542) — a bare `Depends-on`/`Conflicts-with` edge id is
+ * refused once the subject Issue's own Milestone holds more than one
+ * tranche.** `requireTrancheQualifiedEdges` (`@attalabs/aeg-forge-state`,
+ * shipped by issue-545) already carries the rule and the refusal message
+ * (quoting the bare token and every tranche it could mean); this wraps it in
+ * the string-or-null shape both gate modes fold into their own printed
+ * blockers/exit code identically, rather than each call site re-deriving its
+ * own try/catch. Pure over `milestoneTranches` — resolving that list from a
+ * live Milestone number is the caller's job (`tranchesAttachedToMilestone`,
+ * called once per gate run, below), keeping this testable without a real
+ * forge call.
+ */
+export function checkMilestoneEdgeQualification(
+  rawEdges: readonly string[],
+  milestoneTranches: readonly string[]
+): string | null {
+  try {
+    requireTrancheQualifiedEdges(rawEdges, milestoneTranches)
+    return null
+  } catch (err) {
+    if (err instanceof AmbiguousBareEdgeError) return err.message
+    throw err
+  }
+}
+
+/**
+ * The Milestone's own tranche list for O5's qualification check —
+ * `tranchesAttachedToMilestone` when the subject Issue carries a Milestone,
+ * `[]` (dormant: `requireTrancheQualifiedEdges` no-ops under two) when it
+ * does not. One resolution point shared by both gate modes.
+ */
+function resolveMilestoneTranches(milestoneNumber: number | null, repo: RepoRef): string[] {
+  return milestoneNumber === null ? [] : tranchesAttachedToMilestone(repo.owner, repo.repo, milestoneNumber)
+}
+
 async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
   // Still needed here: computeLeftover() below compares against the local
   // origin/main ref (git rev-list origin/main..origin/<branch>) — freshness
@@ -978,6 +1023,13 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
     priorTrancheArchival
   })
 
+  const edgeQualificationBlocker = checkMilestoneEdgeQualification(
+    [...task.dependsOn, ...task.conflictsWith],
+    resolveMilestoneTranches(issueJson?.milestone?.number ?? null, repo)
+  )
+  const blockers = edgeQualificationBlocker ? [...gateResult.blockers, edgeQualificationBlocker] : gateResult.blockers
+  const ready = gateResult.ready && edgeQualificationBlocker === null
+
   const leftover = computeLeftover(trancheSlug, taskId)
 
   const rawCounts = currentFindingCounts()
@@ -988,8 +1040,8 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
   )
 
   console.log(`\nverify-dispatch: ${trancheSlug} task ${taskId}\n`)
-  console.log(`dispatch-readiness: ${gateResult.ready ? 'READY' : 'NOT READY'}`)
-  for (const b of gateResult.blockers) console.log(`  ✗ ${b}`)
+  console.log(`dispatch-readiness: ${ready ? 'READY' : 'NOT READY'}`)
+  for (const b of blockers) console.log(`  ✗ ${b}`)
 
   console.log(`\nleftover-detection: ${leftover.verdict}`)
   console.log(`  ${leftover.reason}`)
@@ -1006,7 +1058,7 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
     if (raw.diagnostic) console.log(`    ↳ ${raw.diagnostic}`)
   }
 
-  const overallReady = gateResult.ready && leftover.verdict !== 'stop'
+  const overallReady = ready && leftover.verdict !== 'stop'
   console.log(`\nverify-dispatch: ${overallReady ? 'READY TO DISPATCH' : 'NOT READY'}`)
   process.exit(overallReady ? 0 : 1)
 }
@@ -1081,6 +1133,13 @@ async function runGateModeForIssue(issueNumber: number): Promise<void> {
     priorTrancheArchival: []
   })
 
+  const edgeQualificationBlocker = checkMilestoneEdgeQualification(
+    [...dependsOnIds, ...conflictsWithIds],
+    resolveMilestoneTranches(issueJson.milestone?.number ?? null, repo)
+  )
+  const blockers = edgeQualificationBlocker ? [...gateResult.blockers, edgeQualificationBlocker] : gateResult.blockers
+  const ready = gateResult.ready && edgeQualificationBlocker === null
+
   const leftover = computeLeftoverForIssue(issueNumber)
 
   const rawCounts = currentFindingCounts()
@@ -1091,8 +1150,8 @@ async function runGateModeForIssue(issueNumber: number): Promise<void> {
   )
 
   console.log(`\nverify-dispatch: Issue #${issueNumber} (backlog, no tranche)\n`)
-  console.log(`dispatch-readiness: ${gateResult.ready ? 'READY' : 'NOT READY'}`)
-  for (const b of gateResult.blockers) console.log(`  ✗ ${b}`)
+  console.log(`dispatch-readiness: ${ready ? 'READY' : 'NOT READY'}`)
+  for (const b of blockers) console.log(`  ✗ ${b}`)
 
   console.log(`\nleftover-detection: ${leftover.verdict}`)
   console.log(`  ${leftover.reason}`)
@@ -1109,7 +1168,7 @@ async function runGateModeForIssue(issueNumber: number): Promise<void> {
     if (raw.diagnostic) console.log(`    ↳ ${raw.diagnostic}`)
   }
 
-  const overallReady = gateResult.ready && leftover.verdict !== 'stop'
+  const overallReady = ready && leftover.verdict !== 'stop'
   console.log(`\nverify-dispatch: ${overallReady ? 'READY TO DISPATCH' : 'NOT READY'}`)
   process.exit(overallReady ? 0 : 1)
 }

@@ -21,7 +21,9 @@ vi.mock('node:child_process', async (importOriginal) => {
   return { ...actual, spawnSync: (...args: unknown[]) => spawnSyncMock(...args) }
 })
 
-const { currentFindingCounts, resolvePremiseBriefText } = await import('./verify-dispatch')
+const { currentFindingCounts, resolvePremiseBriefText, checkMilestoneEdgeQualification } = await import(
+  './verify-dispatch'
+)
 
 beforeEach(() => {
   spawnSyncMock.mockReset()
@@ -261,7 +263,7 @@ describe('(d) sh()/shJson() other call sites are untouched', () => {
       "sh('git', ['fetch', 'origin', branch, '--quiet'])",
       "sh('git', ['log', '-1', '--format=%cI'])",
       "'issue',\n    'view',",
-      "'--json',\n    'number,state,body,labels'",
+      "'--json',\n    'number,state,body,labels,milestone'",
       "'--json',\n      'number,headRefName,state,mergedAt',"
     ]) {
       expect(src).toContain(needle)
@@ -585,5 +587,42 @@ describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', 
     const comments = [{ body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nBot-posted.' }]
     const result = resolvePremiseBriefText(comments, 483)
     expect(result.ok).toBe(false)
+  })
+})
+
+/**
+ * O5 (Issue #542) \u2014 the dispatch gate refuses a bare edge id once the
+ * subject Issue's own Milestone holds more than one tranche. Pure over an
+ * already-resolved tranche list (`resolveMilestoneTranches`'s own live
+ * `tranchesAttachedToMilestone` fetch is exercised by that function's own
+ * tests in `fetch-milestone.test.ts`; `requireTrancheQualifiedEdges`'s own
+ * rule is exercised in `parse-rationale-deps.test.ts`) \u2014 this only proves
+ * the one wiring point: the thrown `AmbiguousBareEdgeError` becomes a
+ * string-or-null result, never an uncaught throw.
+ */
+describe('checkMilestoneEdgeQualification (O5)', () => {
+  it('a one-tranche Milestone accepts a bare edge id', () => {
+    expect(checkMilestoneEdgeQualification(['1', '#372'], ['solo-tranche'])).toBeNull()
+  })
+
+  it('no Milestone (empty tranche list) accepts a bare edge id too', () => {
+    expect(checkMilestoneEdgeQualification(['1'], [])).toBeNull()
+  })
+
+  it('a two-tranche Milestone refuses a bare edge id, quoting the token and both tranches', () => {
+    const result = checkMilestoneEdgeQualification(['1'], ['tranche-a', 'tranche-b'])
+    expect(result).not.toBeNull()
+    expect(result).toContain('`1`')
+    expect(result).toContain('tranche-a')
+    expect(result).toContain('tranche-b')
+  })
+
+  it('a two-tranche Milestone accepts a slug-qualified edge id', () => {
+    expect(checkMilestoneEdgeQualification(['tranche-a 1'], ['tranche-a', 'tranche-b'])).toBeNull()
+  })
+
+  it('reports only the first bare id among several edges', () => {
+    const result = checkMilestoneEdgeQualification(['tranche-a 1', '9'], ['tranche-a', 'tranche-b'])
+    expect(result).toContain('`9`')
   })
 })
