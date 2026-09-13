@@ -444,7 +444,7 @@ function withFakeGhForTranche<T>(
       milestone: { number: number; title: string } | null
     }>
     milestone: { number: number; title: string; description: string | null }
-    milestoneIssueStates: Array<'open' | 'closed'>
+    milestoneIssueStates: Array<'OPEN' | 'CLOSED'>
   },
   fn: (patchedBody: () => Record<string, unknown> | null) => Promise<T>
 ): Promise<T> {
@@ -461,7 +461,7 @@ case "$*" in
   *"-X PATCH"*"/milestones/"*)
     cat > "${patchedPath}"
     ;;
-  *"/issues?milestone="*)
+  "issue list"*"--milestone"*)
     cat "${milestoneIssuesPath}"
     ;;
   *"/milestones/"*)
@@ -504,7 +504,7 @@ describe('runArchiveTranche — Milestone resolved from the tasks, not a same-ti
           { number: 2, title: 'task two', state: 'CLOSED', milestone: { number: 15, title: 'Shared Milestone' } }
         ],
         milestone: { number: 15, title: 'Shared Milestone', description: null },
-        milestoneIssueStates: ['closed', 'closed']
+        milestoneIssueStates: ['CLOSED', 'CLOSED']
       },
       async (patchedBody) => {
         const exit = await runArchiveTranche(['my-tranche', '--yes'], archiveDeps())
@@ -523,7 +523,7 @@ describe('runArchiveTranche — Milestone resolved from the tasks, not a same-ti
           { number: 1, title: 'task one', state: 'CLOSED', milestone: { number: 15, title: 'Shared Milestone' } }
         ],
         milestone: { number: 15, title: 'Shared Milestone', description: null },
-        milestoneIssueStates: ['closed', 'open']
+        milestoneIssueStates: ['CLOSED', 'OPEN']
       },
       async (patchedBody) => {
         const exit = await runArchiveTranche(['my-tranche', '--yes'], archiveDeps())
@@ -531,6 +531,42 @@ describe('runArchiveTranche — Milestone resolved from the tasks, not a same-ti
         const patched = patchedBody()
         expect(patched?.state).toBeUndefined()
         expect(String(patched?.description)).toContain('### Retrospective: my-tranche')
+      }
+    )
+  })
+
+  it('closes the Milestone with a hundred other Issues attached, all closed — the field-selecting fetch never chokes on a large Milestone', async () => {
+    await withFakeGhForTranche(
+      {
+        issues: [
+          { number: 1, title: 'task one', state: 'CLOSED', milestone: { number: 15, title: 'Shared Milestone' } }
+        ],
+        milestone: { number: 15, title: 'Shared Milestone', description: null },
+        milestoneIssueStates: Array.from({ length: 100 }, () => 'CLOSED')
+      },
+      async (patchedBody) => {
+        const exit = await runArchiveTranche(['my-tranche', '--yes'], archiveDeps())
+        expect(exit).toBe(0)
+        const patched = patchedBody()
+        expect(patched?.state).toBe('closed')
+      }
+    )
+  })
+
+  it('leaves the Milestone open with a hundred other Issues attached, one still open', async () => {
+    await withFakeGhForTranche(
+      {
+        issues: [
+          { number: 1, title: 'task one', state: 'CLOSED', milestone: { number: 15, title: 'Shared Milestone' } }
+        ],
+        milestone: { number: 15, title: 'Shared Milestone', description: null },
+        milestoneIssueStates: [...Array.from({ length: 99 }, () => 'CLOSED' as const), 'OPEN']
+      },
+      async (patchedBody) => {
+        const exit = await runArchiveTranche(['my-tranche', '--yes'], archiveDeps())
+        expect(exit).toBe(0)
+        const patched = patchedBody()
+        expect(patched?.state).toBeUndefined()
       }
     )
   })

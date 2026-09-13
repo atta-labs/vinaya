@@ -489,17 +489,31 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
 
   // O7: the Milestone can hold other tranches or backlog tasks — closing
   // it the moment THIS tranche finishes would close out work that is
-  // still open. Same
-  // `?milestone=<n>&state=all` REST shape `tranchesAttachedToMilestone`
-  // (`@attalabs/aeg-forge-state`) already uses for the identical "what else
-  // lives in this Milestone" question, `state=all` because a per-Issue
-  // `state` filter would just be re-derived client-side either way.
-  const milestoneIssues = shJson<Array<{ state: 'open' | 'closed' }>>([
+  // still open. The raw `gh api .../issues?milestone=…` REST call
+  // `tranchesAttachedToMilestone` (`@attalabs/aeg-forge-state`) used for
+  // this same question returns each Issue's FULL body/labels/etc — against
+  // this repo's own Milestone #15 (80+ Issues) that overran
+  // `execFileSync`'s default output buffer (`ENOBUFS`) before a single
+  // state could be read. `gh issue list --json state` selects only the one
+  // field this check needs, the same field-selecting shape already used a
+  // few lines up for this tranche's own labeled Issues, so the payload
+  // stays small regardless of how many Issues the Milestone holds.
+  const milestoneIssues = shJson<Array<{ state: 'OPEN' | 'CLOSED' }>>([
     'gh',
-    'api',
-    `repos/${repoFlag}/issues?milestone=${milestone.number}&state=all&per_page=100`
+    'issue',
+    'list',
+    '-R',
+    repoFlag,
+    '--milestone',
+    String(milestone.number),
+    '--state',
+    'all',
+    '--json',
+    'state',
+    '--limit',
+    '500'
   ])
-  const otherWorkOpen = milestoneIssues.some((i) => i.state === 'open')
+  const otherWorkOpen = milestoneIssues.some((i) => i.state === 'OPEN')
 
   if (!yes) {
     const prompt = otherWorkOpen
