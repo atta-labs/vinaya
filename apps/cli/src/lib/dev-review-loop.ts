@@ -44,11 +44,13 @@
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   assessRound,
   buildReviewInputManifest,
   compareManifest,
+  DEFAULT_REVIEW_POLICY,
   initialLoopState,
   manifestAsEchoed,
   nextRoundNumber,
@@ -60,6 +62,7 @@ import {
   type Observations,
   type ReconstructedJournal,
   type ReviewInputManifest,
+  type ReviewPolicy,
   type RoundStats
 } from '@attalabs/aeg-core'
 import {
@@ -388,23 +391,35 @@ function defaultSleep(ms: number): Promise<void> {
 /** The bound `sanitizeUncaughtErrorForPublicPause` truncates to — long enough to stay informative, short enough that a runaway stack trace or subprocess dump never balloons a public PR comment. */
 const PUBLIC_PAUSE_DETAIL_MAX_LENGTH = 300
 
+/** Any `/Users/<name>` or `/home/<name>` prefix, this machine's own `$HOME` included — not only the exact `$HOME` string, since a leaked path can name a DIFFERENT local user (a subprocess run as another account, a path baked into a dependency's own error string). */
+const HOME_LIKE_PATH = /\/(?:Users|home)\/[^/\s]+/g
+
+/** A userinfo segment embedded in a URL (`https://<token>@host/...`, the shape a leaked git remote or API endpoint takes when it carries a credential inline). */
+const URL_CREDENTIAL = /:\/\/[^\s@/]+@/g
+
 /**
- * Security review, MEDIUM: an uncaught error's own `.message` reaches a
- * PUBLIC PR comment (`postPauseComment`, the round loop's outer catch,
- * below) — posted where before the same error only ever reached local logs
- * and a rethrow. An exception's message can incidentally carry a local
- * filesystem path, a subprocess's raw stderr, or other data never meant for
- * a public thread. Sanitized here: first line only (a multi-line dump
- * collapses to its own headline), this process's own `$HOME` redacted to
- * `~` (the common shape a leaked local path takes), and capped to a bounded
- * length — informative enough to act on, never a verbatim dump of whatever
- * the failure happened to be carrying.
+ * Security review, MEDIUM (Issue #583, round 2): first-line/`$HOME`/length
+ * alone let three more shapes of local environment detail reach a PUBLIC PR
+ * comment — a filesystem path naming a DIFFERENT user than this process's
+ * own `$HOME`, a credential embedded in a subprocess's raw stderr (a `gh`/
+ * `git` failure commonly carries one — a token in a URL, an `Authorization`
+ * header, a well-known provider token prefix), and this machine's own
+ * hostname. Each is scrubbed in addition to, never instead of, the existing
+ * first-line/`$HOME`/length-cap treatment below.
  */
+const CREDENTIAL_LIKE =
+  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|Bearer\s+[A-Za-z0-9._-]+|(?:token|secret|password|api[_-]?key)\s*[:=]\s*\S+)/gi
+
 export function sanitizeUncaughtErrorForPublicPause(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err)
   const firstLine = (raw.split('\n')[0] ?? raw).trim()
   const home = process.env.HOME
-  const redacted = home && home.length > 0 ? firstLine.split(home).join('~') : firstLine
+  let redacted = home && home.length > 0 ? firstLine.split(home).join('~') : firstLine
+  redacted = redacted.replace(HOME_LIKE_PATH, '~')
+  redacted = redacted.replace(URL_CREDENTIAL, '://<redacted>@')
+  redacted = redacted.replace(CREDENTIAL_LIKE, '<redacted>')
+  const host = hostname()
+  if (host && host.length > 0) redacted = redacted.split(host).join('<host>')
   return redacted.length > PUBLIC_PAUSE_DETAIL_MAX_LENGTH
     ? `${redacted.slice(0, PUBLIC_PAUSE_DETAIL_MAX_LENGTH)}…`
     : redacted
@@ -683,23 +698,28 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // or they land under the `none` bucket instead of this task's.
     process.env.VINAYA_TASK = String(task)
 
-    // Which severities block is repository policy (task
-    // 8, `#506`, O1/O4) — resolved once, from the default branch, and reused
-    // for every round's derivation and this run's publication self-check;
-    // the gate reads the identical source (`check-review-gate.ts`).
-    const policy = reviewPolicy()
-
     // Primes `resolveRepo()`'s process-lifetime cache BEFORE this loop's own
     // `log()` calls start racing each other on it (see `waitForLoopLineCount`'s
     // doc comment) — every later call in this process, including the ones
     // inside `log()` itself, resolves the identical value instantly.
     const repo = await resolveRepo().catch(() => null)
-    const repoRoot = d.repoRoot()
-    const confidenceFilePath = join(repoRoot, '.worktrees', branch, CONFIDENCE_FILE_NAME)
-    /** O2: the same worktree-root convention as `confidenceFilePath`, above — see `DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment. */
-    const roundResponseFilePath = join(repoRoot, '.worktrees', branch, DEVELOPER_ROUND_RESPONSE_FILE_NAME)
+    // O6 (Issue #583, round 2 review BLOCKER): `policy`/`repoRoot`/
+    // `confidenceFilePath`/`roundResponseFilePath`/`baseHeadAtStart` are
+    // DECLARED here, at the top of this function's scope, but ASSIGNED only
+    // once the widened `try` below actually runs `reviewPolicy()`/
+    // `d.repoRoot()`/`d.gitRevParseOriginMain()` — each a real forge/git
+    // read that can throw. Declaring them here (rather than at the point of
+    // assignment, inside the try) is what lets every OTHER function in this
+    // scope — `checkStaleDriver`, `dispatchDeveloper`, `runRoundLoop`, all
+    // declared throughout this function — keep closing over the SAME
+    // outer-scope bindings they always have; only when the values are
+    // actually computed moves.
+    let policy!: ReviewPolicy
+    let repoRoot!: string
+    let confidenceFilePath!: string
+    let roundResponseFilePath!: string
     /** O8: recorded once, at loop start — never re-derived. Re-read at every round entry (top of the `while(true)` below) and compared against this fixed watermark for commits touching `DRIVER_OWNED_PATHS`. */
-    const baseHeadAtStart = d.gitRevParseOriginMain()
+    let baseHeadAtStart!: string
     const loopOutboxPath = outboxPathFor({ outboxRoot: () => root }, repo, task)
     /**
      * O6: the one file this run's own role-prefixed stream tees to,
@@ -742,9 +762,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // just never lands in the outbox; found live authoring this task).
       reviewers: ['code-reviewer', 'security'],
       models: { developer: input.agent, 'code-reviewer': input.agent, security: input.agent },
-      // (`#543` O4) Repository policy, resolved once above (`reviewPolicy()`)
-      // — never a hardcoded constant here or in `assessRound`.
-      maxRounds: policy.maxRounds
+      // (`#543` O4) The repo-wide default, corrected to the REAL
+      // `reviewPolicy()` value the moment the widened `try` below reads it
+      // successfully (O6: `config` must be valid — never built from a
+      // not-yet-read `policy` — before that read even runs, so a crash
+      // reading policy itself still reports against a real `maxRounds`).
+      maxRounds: DEFAULT_REVIEW_POLICY.maxRounds
     }
     let state: LoopState = initialLoopState(config)
 
@@ -1454,15 +1477,35 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     // The `try` below now wraps EVERY executable statement from here
-    // through the end of this function — including round 1's own
-    // fresh-dispatch entry (`fetchFrozenBrief`, a real forge read that can
-    // throw), not merely the later `runRoundLoop()` call. A forge-read
-    // failure, a dispatch failure, or any other thrown exception anywhere
-    // in this span is caught by the SAME catch below and becomes a decided
-    // pause, never a re-thrown crash (round 2 review, BLOCKER: the previous,
-    // narrower wrap left this exact round-1 entry uncovered — a `gh` failure
-    // fetching the frozen brief crashed the driver instead of pausing it).
+    // through the end of this function — including the driver's own SETUP
+    // (`reviewPolicy()`, `d.repoRoot()`, `d.gitRevParseOriginMain()`, each a
+    // real forge/git read that can throw, round 2 review BLOCKER on Issue
+    // #583: these three ran BEFORE this try in the prior fix, so a failure
+    // reading any of them crashed the driver instead of pausing it) and
+    // round 1's own fresh-dispatch entry (`fetchFrozenBrief`, a real forge
+    // read that can throw), not merely the later `runRoundLoop()` call. A
+    // forge-read failure, a dispatch failure, or any other thrown exception
+    // anywhere in this span is caught by the SAME catch below and becomes a
+    // decided pause, never a re-thrown crash (round 2 review, BLOCKER: an
+    // earlier, narrower wrap left round-1's own entry uncovered — a `gh`
+    // failure fetching the frozen brief crashed the driver instead of
+    // pausing it).
     try {
+      // Which severities block is repository policy (task 8, `#506`,
+      // O1/O4) — resolved once, from the default branch, and reused for
+      // every round's derivation and this run's publication self-check; the
+      // gate reads the identical source (`check-review-gate.ts`). `config`
+      // (built above with the repo-wide default) is corrected in place the
+      // moment this succeeds — same object, every closure already holding a
+      // reference to it sees the real value from here on.
+      policy = reviewPolicy()
+      config.maxRounds = policy.maxRounds
+      repoRoot = d.repoRoot()
+      confidenceFilePath = join(repoRoot, '.worktrees', branch, CONFIDENCE_FILE_NAME)
+      /** O2: the same worktree-root convention as `confidenceFilePath`, above — see `DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment. */
+      roundResponseFilePath = join(repoRoot, '.worktrees', branch, DEVELOPER_ROUND_RESPONSE_FILE_NAME)
+      baseHeadAtStart = d.gitRevParseOriginMain()
+
       // O8: `resumeHeadAlreadyMoved` widens this exactly like a fresh round-1
       // attach — the developer already pushed the fix a ruling asked for, so
       // this run dispatches no developer at all and goes straight to the

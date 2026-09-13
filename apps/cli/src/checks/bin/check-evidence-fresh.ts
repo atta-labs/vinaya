@@ -53,7 +53,9 @@
  */
 
 import { execFileSync } from 'node:child_process'
+import { isPrincipal } from '@attalabs/aeg-core'
 import { agentCommandText, extractAgentCommandLines } from '../../commands/pr-report'
+import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 import { patchIdAt } from '../../lib/patch-id'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { compareEvidenceBlock, EVIDENCE_PLACEHOLDER_TEXT } from '../evidence-fresh-logic'
@@ -63,15 +65,25 @@ import { ScanContext, resolveAnchoredRegion } from '../scan-context'
 const DEVELOPER_ROUND_MARKER = /<!--\s*aeg:developer:round-\d+\s*-->/i
 
 /**
- * Security review, HIGH: an untouched-placeholder body only ever exempts
- * `compareEvidenceBlock` from the fabrication check while genuinely no
- * report has landed yet — without this read, a PR author could hand-edit a
- * REAL, already-posted block back to the literal placeholder text and
- * defeat the byte-comparison forever. Read ONLY when the region actually is
- * the placeholder (never on an ordinary filled-block run, which needs no
- * extra `gh` call). A read failure fails CLOSED (`true` — "assume a round
- * may have happened") rather than silently re-opening the exact hole this
- * closes.
+ * Security review, HIGH and LOW (Issue #583, round 2): a mutable PR comment
+ * is not by itself a trustworthy "a round already happened" signal — matching
+ * the marker text alone, regardless of who posted it, let EITHER attack
+ * through. HIGH: an actor with branch-push access deletes or edits the
+ * driver's own round-marker comment, then hand-edits `AEG:EVIDENCE` back to
+ * the literal placeholder — with no marker left to find, this function said
+ * "no round happened" forever, exempting a stale block permanently. LOW: any
+ * account able to comment posts a marker-shaped comment of their own,
+ * forcing a genuinely fresh placeholder PR to fail as though a round had
+ * already run — a denial-of-merge griefing vector distinct from the first.
+ * Both close the same way: the signal is bound to WHO posted the comment,
+ * checked against the same principal allowlist `filterPrincipalRulings`/
+ * `filterDeveloperStops` (`dev-review-loop/developer-dispatch.ts`) already
+ * trust for the identical class of marker-comment forgery — read from the
+ * default branch (`loadTrustAnchorConfig`), never from this PR's own
+ * checkout, so a change on this branch cannot add itself to the list. A
+ * marker-shaped comment from anyone else is no signal at all, exactly as if
+ * it were never posted. A read failure still fails CLOSED (`true` — "assume
+ * a round may have happened").
  */
 function fetchHasPriorDeveloperRound(prNumber: number): boolean {
   try {
@@ -79,8 +91,11 @@ function fetchHasPriorDeveloperRound(prNumber: number): boolean {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     })
-    const parsed = JSON.parse(out) as { comments?: Array<{ body?: string }> }
-    return (parsed.comments ?? []).some((c) => DEVELOPER_ROUND_MARKER.test(c.body ?? ''))
+    const parsed = JSON.parse(out) as { comments?: Array<{ body?: string; author?: { login?: string } }> }
+    const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+    return (parsed.comments ?? []).some(
+      (c) => DEVELOPER_ROUND_MARKER.test(c.body ?? '') && isPrincipal(c.author?.login ?? null, allowlist)
+    )
   } catch {
     return true
   }

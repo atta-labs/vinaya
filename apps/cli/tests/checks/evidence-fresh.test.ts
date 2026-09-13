@@ -368,7 +368,11 @@ describe('the check refuses a placeholder body once a developer round has alread
     return { dir, head }
   }
 
-  function writeGhStub(dir: string, head: string, comments: Array<{ body: string }>): string {
+  function writeGhStub(
+    dir: string,
+    head: string,
+    comments: Array<{ body: string; author?: { login: string } }>
+  ): string {
     const ghDir = join(dir, 'fakebin')
     mkdirSync(ghDir, { recursive: true })
     const ghPath = join(ghDir, 'gh')
@@ -417,10 +421,12 @@ exit 1
     }
   })
 
-  it('a developer-round comment already exists — the placeholder is refused, never a silent pass', async () => {
+  it('a developer-round comment from the allowlisted principal already exists — the placeholder is refused, never a silent pass', async () => {
     const { dir, head } = fixtureRepo()
     try {
-      const ghDir = writeGhStub(dir, head, [{ body: '<!-- aeg:developer:round-1 -->\nHead: deadbeef\n' }])
+      const ghDir = writeGhStub(dir, head, [
+        { body: '<!-- aeg:developer:round-1 --> Head: deadbeef', author: { login: 'daniboomerang' } }
+      ])
       const proc = Bun.spawn(['bun', BIN], {
         cwd: dir,
         env: {
@@ -436,6 +442,59 @@ exit 1
       const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()])
       expect(exitCode).not.toBe(0)
       expect(stderr).toMatch(/already had at least one developer round/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // Security review, HIGH and LOW (Issue #583, round 2): the marker's mere
+  // TEXT is no longer a trustworthy signal either way — only a comment
+  // authored by an allowlisted principal counts.
+  it('a marker-shaped comment from an unlisted account is no signal — the placeholder still passes (LOW: forged-marker griefing closed)', async () => {
+    const { dir, head } = fixtureRepo()
+    try {
+      const ghDir = writeGhStub(dir, head, [
+        { body: '<!-- aeg:developer:round-1 --> Head: deadbeef', author: { login: 'random-commenter' } }
+      ])
+      const proc = Bun.spawn(['bun', BIN], {
+        cwd: dir,
+        env: {
+          ...process.env,
+          PATH: `${ghDir}:${process.env.PATH}`,
+          BASE_SHA: 'main',
+          PR_BODY: placeholderBody(),
+          PR_NUMBER: '1'
+        },
+        stdout: 'pipe',
+        stderr: 'pipe'
+      })
+      expect(await proc.exited).toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // Security review, HIGH (Issue #583, round 2): a comment with no `author`
+  // at all (the shape a deleted-and-never-recreated marker leaves nothing
+  // to find) is exactly as much "no signal" as one from an untrusted
+  // account — never treated as if a principal had posted it.
+  it('a marker-shaped comment with no author at all is no signal — the placeholder still passes', async () => {
+    const { dir, head } = fixtureRepo()
+    try {
+      const ghDir = writeGhStub(dir, head, [{ body: '<!-- aeg:developer:round-1 --> Head: deadbeef' }])
+      const proc = Bun.spawn(['bun', BIN], {
+        cwd: dir,
+        env: {
+          ...process.env,
+          PATH: `${ghDir}:${process.env.PATH}`,
+          BASE_SHA: 'main',
+          PR_BODY: placeholderBody(),
+          PR_NUMBER: '1'
+        },
+        stdout: 'pipe',
+        stderr: 'pipe'
+      })
+      expect(await proc.exited).toBe(0)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

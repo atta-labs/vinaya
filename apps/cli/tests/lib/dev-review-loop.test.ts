@@ -1246,6 +1246,58 @@ exit 1
     const lock = JSON.parse(readFileSync(driverLockPath(home), 'utf8')) as { pid: number }
     expect(typeof lock.pid).toBe('number')
   }, 20000)
+
+  // Round 2 review, BLOCKER (Issue #583): the exact reproduction the finding
+  // named — a `git` that fails `rev-parse origin/main` — is the driver's own
+  // SETUP, run before round 1's fresh-dispatch entry even starts (this file's
+  // own `baseHeadAtStart` read). Before this fix it sat OUTSIDE the widened
+  // try entirely: the failure propagated straight out of `devReviewLoop`,
+  // the process exited uncaught, and no pause/lock survived it.
+  function writeFakeGitFailingRevParseOriginMain(dir: string): void {
+    writeFakeBinary(
+      dir,
+      'git',
+      `#!/bin/sh
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "fatal: ambiguous argument 'origin/main': unknown revision or path not in the working tree." >&2
+  exit 128
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+exit 1
+`
+    )
+  }
+
+  function setUpFailingGitSetupRead(): { home: string; cwd: string; path: string } {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaude(binDir)
+    writeFakeGhNoFrozenBrief(binDir)
+    writeFakeGitFailingRevParseOriginMain(binDir)
+    return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+  }
+
+  it("a git read failure in the driver's own SETUP (git rev-parse origin/main, before round 1's fresh-dispatch entry) is a decided pause — never an uncaught crash, and no developer is ever dispatched", () => {
+    const { home, cwd, path } = setUpFailingGitSetupRead()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+    expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(false)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+
+    // O6: the lock stays in place — the process is alive, holding it,
+    // exactly as it does for every other infrastructure pause.
+    const lock = JSON.parse(readFileSync(driverLockPath(home), 'utf8')) as { pid: number }
+    expect(typeof lock.pid).toBe('number')
+  }, 20000)
 })
 
 /**
