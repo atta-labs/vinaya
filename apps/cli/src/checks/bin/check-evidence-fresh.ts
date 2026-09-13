@@ -56,8 +56,35 @@ import { execFileSync } from 'node:child_process'
 import { agentCommandText, extractAgentCommandLines } from '../../commands/pr-report'
 import { patchIdAt } from '../../lib/patch-id'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { compareEvidenceBlock } from '../evidence-fresh-logic'
+import { compareEvidenceBlock, EVIDENCE_PLACEHOLDER_TEXT } from '../evidence-fresh-logic'
 import { ScanContext, resolveAnchoredRegion } from '../scan-context'
+
+/** The exact marker `developerRoundMarker` (`dev-review-loop/round-assess.ts`) renders into every round's own comment — posted the first time this PR's gate ever goes green, the SAME moment the driver's automatic evidence report first runs. */
+const DEVELOPER_ROUND_MARKER = /<!--\s*aeg:developer:round-\d+\s*-->/i
+
+/**
+ * Security review, HIGH: an untouched-placeholder body only ever exempts
+ * `compareEvidenceBlock` from the fabrication check while genuinely no
+ * report has landed yet — without this read, a PR author could hand-edit a
+ * REAL, already-posted block back to the literal placeholder text and
+ * defeat the byte-comparison forever. Read ONLY when the region actually is
+ * the placeholder (never on an ordinary filled-block run, which needs no
+ * extra `gh` call). A read failure fails CLOSED (`true` — "assume a round
+ * may have happened") rather than silently re-opening the exact hole this
+ * closes.
+ */
+function fetchHasPriorDeveloperRound(prNumber: number): boolean {
+  try {
+    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'comments'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    const parsed = JSON.parse(out) as { comments?: Array<{ body?: string }> }
+    return (parsed.comments ?? []).some((c) => DEVELOPER_ROUND_MARKER.test(c.body ?? ''))
+  } catch {
+    return true
+  }
+}
 
 const CHECK_NAME = 'evidence-fresh'
 
@@ -235,7 +262,17 @@ function main(): void {
   // identical rule, computed against the PR's real base branch.
   const patchIdOf = (sha: string) => patchIdAt(prRefs.base, sha)
 
-  const result = compareEvidenceBlock(resolved, resolvedHead, actualNumstat, expectedGroupCCommandLines, patchIdOf)
+  const isPlaceholder = resolved.region.trim() === EVIDENCE_PLACEHOLDER_TEXT
+  const hasPriorDeveloperRound = isPlaceholder ? fetchHasPriorDeveloperRound(Number(prNumberStr)) : undefined
+
+  const result = compareEvidenceBlock(
+    resolved,
+    resolvedHead,
+    actualNumstat,
+    expectedGroupCCommandLines,
+    patchIdOf,
+    hasPriorDeveloperRound
+  )
   if (result.status === 'fail') {
     for (const message of result.errors) {
       emitCheckError({

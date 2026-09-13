@@ -13,7 +13,7 @@ import {
 } from '@attalabs/aeg-core'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config.js'
-import { prepareIssueTask, prepareTask } from '../lib/dispatch-task.js'
+import { prepareTaskOrIssue } from '../lib/dispatch-task.js'
 import { printJson } from '../lib/envelope'
 import {
   countMarkerComments,
@@ -427,31 +427,30 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
 
   const newVersion = objectivesVersion(updated)
 
-  // O3/O6 — if this task's brief is already frozen, the Objectives edit
+  // If this task's brief is already frozen, the Objectives edit
   // above just moved the Issue and the frozen brief out of agreement (the
   // frozen comment still shows the OLD list). Resolve and post the
   // superseding brief BEFORE this edit's own audit comment below — never
   // after — so a failure here (this task's brief-render path, not merely a
   // missing tranche identity) leaves no objectives comment behind at all.
-  // A tranche-labeled Issue supersedes through `prepareTask`; a backlog
+  // A tranche-labeled Issue supersedes through the tranche path; a backlog
   // Issue (no tranche identity at all — `resolveTaskIssueRef` returns
   // `null`) supersedes through the same `--issue` path `task brief --issue`
-  // already uses (`prepareIssueTask`), never refused for lack of a tranche
-  // label. Dormant when the brief was never frozen — nothing to supersede
-  // yet.
+  // already uses, never refused for lack of a tranche label. Routed through
+  // `prepareTaskOrIssue` — the one chokepoint that already branches between
+  // the two shapes — rather than importing both `prepareTask`/
+  // `prepareIssueTask` here and re-deriving that same branch a second time.
+  // Dormant when the brief was never frozen — nothing to supersede yet.
   let supersedeUrl: string | null = null
   const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
   const frozen = resolveNewestFrozenBrief(comments, allowlist)
   if (frozen !== null) {
     const taskRef = resolveTaskIssueRef(title, labels)
-    const result =
+    const result = await prepareTaskOrIssue(
       taskRef !== null
-        ? await prepareTask({
-            tranche: taskRef.trancheSlug,
-            n: Number.parseInt(taskRef.taskId, 10),
-            supersede: { reason }
-          })
-        : await prepareIssueTask({ issue: number, supersede: { reason } })
+        ? { tranche: taskRef.trancheSlug, n: Number.parseInt(taskRef.taskId, 10), supersede: { reason } }
+        : { issue: number, supersede: { reason } }
+    )
     supersedeUrl = result.commentUrl
   }
 

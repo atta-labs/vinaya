@@ -69,6 +69,7 @@ import {
   NO_SOURCE_REVISION,
   type ObjectivesEditSource,
   parseObjectivesEditComment,
+  sanitizeUncaughtErrorForPublicPause,
   parseRoundResponseFindingIds,
   renderDeveloperRoundComment,
   renderReviewerPrompt,
@@ -1171,6 +1172,80 @@ describe('devReviewLoop — the loop’s exit sites (O6, Issue #583)', () => {
     expect(body).not.toMatch(/^\s*throw err\s*$/m)
     expect(body).toMatch(/return \{ finalDecision: decision, prNumber, task \}/)
   })
+
+  // Round 2 review, BLOCKER: the outer catch used to wrap only the
+  // `runRoundLoop()` call — round 1's own fresh-dispatch entry (a real forge
+  // read, `fetchFrozenBrief`, sitting BEFORE that call) still crashed
+  // uncaught on failure. Proves the widened `try` now covers it too: no
+  // frozen brief on the Issue is exactly the failure `fetchFrozenBrief`
+  // itself throws for, and it must now become a decided pause, never an
+  // uncaught exit, with the driver never even reaching `dispatchDeveloper`.
+  function writeFakeGhNoFrozenBrief(dir: string): void {
+    writeFakeBinary(
+      dir,
+      'gh',
+      `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  echo '{"comments":[]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  echo '[]'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  echo "https://github.com/example/repo/pull/-1#issuecomment-1"
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+    )
+  }
+
+  function setUpNoFrozenBrief(): { home: string; cwd: string; path: string } {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaude(binDir)
+    writeFakeGhNoFrozenBrief(binDir)
+    writeFakeGit(binDir)
+    return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+  }
+
+  it("a forge-read failure in round 1's own fresh-dispatch entry (fetchFrozenBrief, before runRoundLoop even starts) is a decided pause too — never an uncaught crash, and no developer is ever dispatched", () => {
+    const { home, cwd, path } = setUpNoFrozenBrief()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+    expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(false)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+    expect(String(pauseState.detail)).toMatch(/carries no principal-authored, frozen/)
+
+    // O6: the lock is deliberately left in place for this reason — the same
+    // "process stays alive" discipline every other infrastructure/
+    // stale_driver pause now gets.
+    const lock = JSON.parse(readFileSync(driverLockPath(home), 'utf8')) as { pid: number }
+    expect(typeof lock.pid).toBe('number')
+  }, 20000)
 })
 
 /**
@@ -3746,7 +3821,7 @@ function setUpNoPushEver(): { home: string; cwd: string; path: string } {
 }
 
 describe('devReviewLoop — the pull-request poll gives up naming what it waited for (O3, task-run-v1 13, #508)', () => {
-  it('names branch, local head (unknown), remote head (none), and pull-request absence, after resuming once', () => {
+  it('names branch, local head (unknown), remote head (none), and pull-request absence, after resuming once — a decided pause(infrastructure), never an uncaught crash (O6, Issue #583)', () => {
     const { home, cwd, path } = setUpNoPushEver()
 
     const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
@@ -3754,11 +3829,35 @@ describe('devReviewLoop — the pull-request poll gives up naming what it waited
       VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5'
     })
     expect(r.status).not.toBe(0)
-    const output = r.stdout + r.stderr
-    expect(output).toMatch(new RegExp(`branch: ${BRANCH.replace(/\//g, '\\/')}`))
-    expect(output).toMatch(/local head: \(worktree not found/)
-    expect(output).toMatch(/remote head: \(no head on origin\)/)
-    expect(output).toMatch(/pull request: none open/)
+    // O6 (Issue #583): the round-1 poll-giveup throw now reaches the SAME
+    // outer catch every other in-loop failure does — a decided
+    // `pause(infrastructure)`, never a re-thrown crash. The rich
+    // branch/head/pull-request message this poll timeout names is no
+    // longer printed to stdout/stderr (nothing throws there to print it);
+    // it lands in full in the pause's own LOCAL `detail` (never posted
+    // anywhere — machine-local outbox only).
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+    const detail = String(pauseState.detail)
+    expect(detail).toMatch(new RegExp(`branch: ${BRANCH.replace(/\//g, '\\/')}`))
+    expect(detail).toMatch(/local head: \(worktree not found/)
+    expect(detail).toMatch(/remote head: \(no head on origin\)/)
+    expect(detail).toMatch(/pull request: none open/)
+
+    // Security review, MEDIUM: the PUBLIC PR comment gets a SEPARATELY
+    // sanitized detail — first line only. The full multi-line
+    // branch/head/pull-request breakdown above is a local-only fact; the
+    // public thread only ever sees the poll's own one-line headline.
+    const posted = postedCommentFiles(home).map((f) => readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8'))
+    const pauseComment = posted.find((body) => /^<!-- aeg:loop:paused:infrastructure -->$/m.test(body))
+    expect(pauseComment).toBeDefined()
+    expect(pauseComment).toContain('no open PR appeared within the poll budget')
+    expect(pauseComment).not.toMatch(/local head:/)
+    expect(pauseComment).not.toMatch(/pull request: none open/)
   }, 20000)
 })
 
@@ -4961,6 +5060,33 @@ describe('CONFIDENCE_PROMPT_LINE (pure) — O11 (task-run-v1 21, #541, round 2 r
   it('the confidence re-ask prompt (dispatched via dispatchDeveloper, which always prepends the resume-context block on a resume) still carries this same command, since it is appended verbatim', () => {
     const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${CONFIDENCE_PROMPT_LINE}`
     expect(reaskPrompt).toMatch(/`echo '.*' > \.vinaya-confidence`/)
+  })
+})
+
+describe('sanitizeUncaughtErrorForPublicPause (pure) — security review, MEDIUM', () => {
+  it('takes only the first line — a multi-line stderr dump collapses to its own headline', () => {
+    const err = new Error('short headline\nline two with a stack frame\nline three')
+    expect(sanitizeUncaughtErrorForPublicPause(err)).toBe('short headline')
+  })
+
+  it("redacts this process's own $HOME to ~ — the common shape a leaked local path takes", () => {
+    const home = process.env.HOME
+    if (!home) return // nothing to redact on a host with no $HOME set
+    const err = new Error(`ENOENT: no such file or directory, open '${home}/secret-project/config.json'`)
+    const result = sanitizeUncaughtErrorForPublicPause(err)
+    expect(result).not.toContain(home)
+    expect(result).toContain('~/secret-project/config.json')
+  })
+
+  it('caps the length — a runaway message never balloons the public pause comment', () => {
+    const err = new Error('x'.repeat(1000))
+    const result = sanitizeUncaughtErrorForPublicPause(err)
+    expect(result.length).toBeLessThan(320)
+    expect(result.endsWith('…')).toBe(true)
+  })
+
+  it('a non-Error thrown value is stringified the same way', () => {
+    expect(sanitizeUncaughtErrorForPublicPause('a plain string throw')).toBe('a plain string throw')
   })
 })
 

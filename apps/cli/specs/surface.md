@@ -458,6 +458,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `buildReexecArgs` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `DEV_REVIEW_LOOP_AGENTS` | const | `apps/cli/src/lib/dev-review-loop.ts` |
 | `devReviewLoop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
+| `sanitizeUncaughtErrorForPublicPause` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `DRIVER_OWNED_PATHS` | const | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
 | `fetchCiConclusion` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
 | `fetchConflictingFiles` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
@@ -765,7 +766,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `pr rule` | `pr-rule.ts` | `prRuleCommand` | 6 | exempt — see below | forgeWrite (target) |
 | `issue create` | `issue.ts` | `issueCreateCommand` | 11 | exempt — see below | forgeWrite (target) |
 | `issue edit` | `issue.ts` | `issueEditCommand` | 12 | exempt — see below | forgeWrite (target) |
-| `issue objectives edit` | `issue-objectives.ts` | `issueObjectivesEditCommand` | 12 | exempt — see below | forgeWrite (target) |
+| `issue objectives edit` | `issue-objectives.ts` | `issueObjectivesEditCommand` | 11 | exempt — see below | forgeWrite (target) |
 | `log flush` | `log.ts` | `logFlushCommand` | 2 | exempt — see below | sharedCommandShell (target) |
 | `milestone create` | `milestone.ts` | `milestoneCreateCommand` | 8 | exempt — see below | forgeWrite (target) |
 | `milestone adopt` | `milestone.ts` | `milestoneAdoptCommand` | 4 | exempt — see below | forgeWrite (target) |
@@ -810,7 +811,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `pr rule` | 2026-09-05 | 6 — lib (6): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `countMarkerComments`, `postMarkedComment`, `printJson` | `forgeWrite` |
 | `issue create` | 2026-09-11 | 11 — lib (11): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `extractLabels`, `refuseUnlabeledTaskShapedBody`, `validateTaskIssue`, `printJson`, `ensureTrancheLabelExists`, `runGhWrite`, `resolveMilestoneAttachArgs` | `forgeWrite` |
 | `issue edit` | 2026-09-11 | 12 — lib (12): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `fetchForgeLabels`, `extractLabels`, `refuseUnlabeledTaskShapedBody`, `refuseFrozenSectionChange`, `validateTaskIssue`, `parseIssueNumberFromRef`, `printJson`, `writeValidatedIssueEdit` | `forgeWrite` |
-| `issue objectives edit` | 2026-09-13 | 12 — lib (12): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `writeValidatedIssueEdit`, `locateBody`, `countMarkerComments`, `postMarkedComment`, `printJson`, `resolvePrincipalAllowlist`, `loadTrustAnchorConfig`, `prepareTask`, `prepareIssueTask` | `forgeWrite` |
+| `issue objectives edit` | 2026-09-14 | 11 — lib (11): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `writeValidatedIssueEdit`, `locateBody`, `countMarkerComments`, `postMarkedComment`, `printJson`, `resolvePrincipalAllowlist`, `loadTrustAnchorConfig`, `prepareTaskOrIssue` | `forgeWrite` |
 | `log flush` | 2026-09-11 | 2 — lib (2): `flushOutbox`, `printJson` | `sharedCommandShell` |
 | `milestone create` | 2026-09-05 | 8 — lib (8): `extractTitle`, `refuse`, `makeCheckError`, `locateBody`, `resolveSections`, `validateForgeWrite`, `printJson`, `detectGitRepo` | `forgeWrite` |
 | `milestone adopt` | 2026-09-05 | 4 — lib (4): `refuse`, `makeCheckError`, `detectGitRepo`, `printJson` | `forgeWrite` |

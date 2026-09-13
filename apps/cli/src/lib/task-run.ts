@@ -89,7 +89,7 @@ export type RunTaskDeps = {
   developerBranchFor: (issueNumber: number) => string
   findOpenPrForBranch: (branch: string) => OpenPrRef | null
   /**
-   * O5 (Issue #583) — true only when this task's driver lock names a
+   * True only when this task's driver lock names a
    * PID that is actually still alive. An open PR alone is no longer
    * grounds to refuse (below): a driver that crashed or was killed leaves
    * its PR behind, and this is what tells that state apart from a driver
@@ -100,7 +100,7 @@ export type RunTaskDeps = {
   resolveRepo: () => Promise<RepoRef | null>
 }
 
-/** O5: real production check — a dead or absent lock reads `false`, exactly like `devReviewLoop`'s own entry-gate takeover check (`dev-review-loop.ts`'s `existingDriverLock`/`isDriverPidAlive`), read here from the SAME on-disk shape rather than a second one. */
+/** The real production check — a dead or absent lock reads `false`, exactly like `devReviewLoop`'s own entry-gate takeover check (`dev-review-loop.ts`'s `existingDriverLock`/`isDriverPidAlive`), read here from the SAME on-disk shape rather than a second one. */
 function realIsDriverAlive(task: number): boolean {
   const lock = readDriverLock(outboxRoot(), task)
   return lock !== null && isDriverPidAlive(lock.pid)
@@ -178,13 +178,13 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   // milliseconds between this read and that one, on both sides of the race.
   const branch = deps.developerBranchFor(issue)
   const existingPr = deps.findOpenPrForBranch(branch)
-  // O5 (Issue #583): an open PR alone is no longer grounds to refuse — a
+  // An open PR alone is no longer grounds to refuse — a
   // driver that crashed or was killed leaves its PR (and, sometimes, a held
   // pause) behind, and `task run --issue <n>` is the one command that
   // revives it, in ANY state, rather than pointing at `--resume` (which
-  // needs a pause to resume FROM, and refuses when there is none — the
-  // exact gap this closes). Only a driver ACTUALLY still running this task
-  // is still refused, to avoid a genuinely concurrent second developer.
+  // needs a pause to resume FROM, and refuses when there is none). Only a
+  // driver ACTUALLY still running this task is still refused, to avoid a
+  // genuinely concurrent second developer.
   if (existingPr && deps.isDriverAlive(issue)) {
     throw new RunTaskError(
       `runTask: ${taskLabel}'s developer branch \`${branch}\` already has an open pull request (#${existingPr.number}), and a driver is already running for it — refusing to start a second developer. Resume the review loop instead: \`vinaya dev-review-loop --resume ${existingPr.number}\`.`

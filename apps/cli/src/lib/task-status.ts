@@ -38,7 +38,7 @@ function readIfExists(path: string): string | null {
 // --- task list (forge) -------------------------------------------------
 
 /**
- * O2 (Issue #583): a tranche-labeled Issue carries its identity in its own
+ * A tranche-labeled Issue carries its identity in its own
  * title/label (`resolveTaskIssueRef`); a backlog Issue (no `vinaya/tranche:*`
  * label at all) carries none — it is identified by its Issue number alone,
  * the same identity `developerBranchFor`'s own `task/issue-<n>` branch and
@@ -95,7 +95,7 @@ function branchForRef(ref: TaskRef): string {
 }
 
 /**
- * O2's own local pre-filter, cheap and network-free: a backlog Issue only
+ * A cheap, local, network-free pre-filter: a backlog Issue only
  * ever becomes a candidate row when the loop has already written it an
  * outbox directory (`<outboxRoot>/dev-review-loop/<n>/`) — the driver lock,
  * pause record, or verdict files a real dispatched run leaves behind (Traps
@@ -423,7 +423,7 @@ export function renderTaskStatusRow(row: TaskStatusRow): string {
   return `[${row.tranche}] ${row.id} — Issue #${row.issue} — ${prText} — ${renderStateText(row.state)}`
 }
 
-/** O2: a backlog ref renders through the SAME row shape as a tranche one — `tranche` reads `backlog`, `id` reads the Issue number, everything else (PR lookup, loop state) already generalizes over `TaskRef`'s two kinds via `branchForRef`. */
+/** A backlog ref renders through the SAME row shape as a tranche one — `tranche` reads `backlog`, `id` reads the Issue number, everything else (PR lookup, loop state) already generalizes over `TaskRef`'s two kinds via `branchForRef`. */
 function buildRow(ref: TaskRef, allowlist: readonly string[]): TaskStatusRow | null {
   if (!hasFrozenBrief(ref.issue, allowlist)) return null
   return {
@@ -451,10 +451,9 @@ export function gatherTaskStatusList(): TaskStatusListRow[] {
   const root = outboxRoot()
   const rows: TaskStatusListRow[] = []
   for (const ref of listOpenTaskIssues()) {
-    // O2: a backlog ref only ever becomes a candidate once the loop has
+    // A backlog ref only ever becomes a candidate once the loop has
     // already written it an outbox directory — see `hasOutboxDir`'s own doc
-    // comment. A tranche-labeled ref carries no such gate, unchanged from
-    // before this task.
+    // comment. A tranche-labeled ref carries no such gate.
     if (ref.kind === 'backlog' && !hasOutboxDir(root, ref.issue)) continue
     const row = buildRow(ref, allowlist)
     if (row) rows.push({ row, line: renderTaskStatusRow(row) })
