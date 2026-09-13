@@ -32,7 +32,7 @@ Part 1 (O1) — the validated forge-write commands.
 ## Test plan
 
 ```
-bun test → 0 fail
+bun test apps/cli/tests/commands/issue.test.ts → 0 fail
 ```
 
 ## Stop conditions
