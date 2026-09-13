@@ -117,7 +117,11 @@ function checkM1M2M3(): CheckResult[] {
   results.push({
     check: 'M1',
     status: m1Errors.length > 0 ? 'fail' : 'pass',
-    failures: m1Errors.map((reason) => ({ tranche: 'doc-owners', reason }))
+    failures: m1Errors.map((reason) => ({
+      code: 'doc-owners-dangling-pointer' as const,
+      tranche: 'doc-owners',
+      reason
+    }))
   })
   results.push({
     check: 'M2',
@@ -128,7 +132,7 @@ function checkM1M2M3(): CheckResult[] {
   results.push({
     check: 'M3',
     status: m3Errors.length > 0 ? 'fail' : 'pass',
-    failures: m3Errors.map((reason) => ({ tranche: 'doc-owners', reason }))
+    failures: m3Errors.map((reason) => ({ code: 'doc-owners-duplicate-glob' as const, tranche: 'doc-owners', reason }))
   })
 
   return results
@@ -938,6 +942,7 @@ export async function runCoherenceChecks(
         check: 'FORGE',
         status: 'fail',
         failures: l4UnavailableSlugs.map((slug) => ({
+          code: 'forge-read-unavailable' as const,
           tranche: slug,
           reason:
             "Forge read failed while collecting L4's Milestone-attachment facts — L4 did not evaluate this tranche."
@@ -983,6 +988,7 @@ export async function runCoherenceChecks(
       check: 'FORGE',
       status: 'fail',
       failures: sweep.unavailableSlugs.map((slug) => ({
+        code: 'forge-read-unavailable' as const,
         tranche: slug,
         reason: 'Forge read failed and no topology file exists — this tranche was omitted from every check in this run.'
       })),

@@ -11,6 +11,7 @@ tests/checks/issue-checks.test.ts
 tests/checks/no-privileged-api.test.ts
 tests/checks/premise-reassert-logic.test.ts
 tests/checks/prose-gates-doctrine-root.test.ts
+tests/checks/recovery-prompt-coupling.test.ts
 tests/checks/resolver.test.ts
 tests/checks/scan-context.test.ts
 tests/checks/surface-scope.test.ts

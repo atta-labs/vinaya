@@ -188,6 +188,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "t
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
   exit 0
 fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
   if [ -f "$HOME/.fake-dev-invoked" ]; then
     echo '[{"number":123,"headRefName":"${BRANCH}"}]'
@@ -275,6 +279,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "t
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
   exit 0
 fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
   if [ -f "$HOME/.fake-dev-invoked" ]; then
     echo '[{"number":123,"headRefName":"${BRANCH}"}]'
@@ -353,6 +361,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "t
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
   exit 0
 fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
   if [ -f "$HOME/.fake-dev-invoked" ]; then
     echo '[{"number":123,"headRefName":"${BRANCH}"}]'
@@ -423,6 +435,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "c
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
@@ -530,6 +546,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "t
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
   exit 0
 fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
   if [ -f "$HOME/.fake-dev-invoked" ]; then
     echo '[{"number":123,"headRefName":"${BRANCH}"}]'
@@ -619,6 +639,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "c
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
@@ -728,6 +752,20 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
     const body = readFileSync(join(issueDir, posted[0] as string), 'utf8')
     expect(body).toMatch(/^<!-- aeg:log:/)
   }, 20000)
+
+  // `#548` v3, O2: this exact scenario — a genuinely uncaught throw mid-round,
+  // never a decided `pause`/`publish` — is the fixture the brief asks for.
+  // The role log is the one trace left inside this task's Surface (the forge
+  // journal event needs an out-of-surface `packages/aeg-core` schema change
+  // and belongs to task-log-v1 instead, per the Principal's ruling on #548).
+  it('O2 (#548 v3): an uncaught error mid-loop leaves a driver_exited trace in the role log', () => {
+    const { home, cwd, path } = setUpCrashMidPublish()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+
+    const roleLog = readFileSync(join(home, '.vinaya', 'loops', 'unresolved', `${TASK}.log`), 'utf8')
+    expect(roleLog).toMatch(/^\[dev-review-loop\] driver_exited: reason=error last_decision=\S+$/m)
+  }, 20000)
 })
 
 /**
@@ -765,6 +803,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "c
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
@@ -849,6 +891,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "c
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
@@ -2099,6 +2145,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "t
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
   exit 0
 fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
   if [ -f "$HOME/.fake-dev-invoked" ]; then
     echo '[{"number":123,"headRefName":"${BRANCH}"}]'
@@ -2459,6 +2509,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "c
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
@@ -3070,6 +3124,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "t
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
   exit 0
 fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
   echo '[]'
   exit 0
@@ -3179,6 +3237,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "c
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
@@ -3535,6 +3597,81 @@ describe('devReviewLoop — O7 (task-run-v1 task 15): a moved base re-execs in p
   }, 30000)
 })
 
+/**
+ * Same as `writeFakeClaudeBaseMovesAfterFirstTurn` for the developer's own
+ * first turn (touches `.base-moved` so `checkStaleDriver` fires once the
+ * re-exec'd child re-reads `origin/main`), but — unlike that fixture, which
+ * never runs past the stale-driver pause it's used to test — a reviewer
+ * role here answers exactly like the clean-round fixture (`writeFakeClaude`)
+ * so the CHILD process (the one that actually takes over) can run a genuine
+ * round to completion and publish, proving the takeover is real rather than
+ * merely started.
+ */
+function writeFakeClaudeBaseMovesThenCleanReview(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+cat > /dev/null
+WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    touch "$HOME/.base-moved" 2>/dev/null
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+describe('devReviewLoop — O1 (#548): the re-exec hands its lock to the child instead of refusing it', () => {
+  it('clears the parent’s own live lock before spawning, so the child starts and publishes instead of dying to its own parent’s lock', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaudeBaseMovesThenCleanReview(binDir)
+    writeFakeGh(binDir)
+    writeFakeGitBaseMovesWithSuccessfulPull(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    // Found live, PR #547: without the fix, the parent's own lock (written
+    // at its own entry, still on disk and still live — the parent is
+    // blocked in `spawnSync`, not exited) refuses the child outright, and
+    // BOTH processes exit quietly with no pause, no publish, nothing posted.
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_PR_POLL_MAX_ATTEMPTS: '5',
+      VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '5',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
+    })
+
+    expect(existsSync(join(home, '.git-pull-called'))).toBe(true)
+    expect(r.stderr).not.toMatch(/refuses to start/)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+    // The child cleared its own lock on its own normal exit.
+    expect(existsSync(driverLockPath(home))).toBe(false)
+  }, 30000)
+})
+
 describe('buildReexecArgs (pure) — O7 re-exec carries the original --json intent through the restart (task-run-v1 21, #541, round 2 review MINOR)', () => {
   it('carries --json through a --task re-exec when the original invocation had it', () => {
     expect(buildReexecArgs({ task: 9001, agent: 'claude', json: true }, 9001)).toEqual([
@@ -3649,6 +3786,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "c
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
@@ -3799,6 +3940,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "c
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
@@ -4020,6 +4165,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "c
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
@@ -4825,6 +4974,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "c
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
   printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then

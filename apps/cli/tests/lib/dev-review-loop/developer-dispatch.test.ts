@@ -34,4 +34,17 @@ describe('developerBranchFor', () => {
       )
     ).toThrow(/does not match the `\[<tranche>\] <n> — …` shape, but it carries a vinaya\/tranche:\* label/)
   })
+
+  // `#548` v3, O3: the label decides, never the title. An unlabeled backlog
+  // Issue whose title happens to look tranche-shaped (copy-paste, or a
+  // coincidence) must still poll `task/issue-<n>` — the OLD code checked the
+  // title first and would have derived `task/some-slug/1` here instead.
+  it('derives task/issue-<n> for an unlabeled Issue even when its title is tranche-shaped', () => {
+    const branch = developerBranchFor(
+      602,
+      () => '[some-slug] 1 — looks like a tranche task but carries no tranche label',
+      () => []
+    )
+    expect(branch).toBe('task/issue-602')
+  })
 })

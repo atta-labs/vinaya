@@ -72,7 +72,7 @@ import {
 } from './dispatch.js'
 import { postMarkedComment } from './forge-write.js'
 import { createLogSink, outboxPathFor } from './log-sink.js'
-import { appendRunStartMarker, loopLogPathFor } from './loop-log.js'
+import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
 import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
@@ -1143,6 +1143,43 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
     let roundStartMs = d.now()
     let decision: Decision = { type: 'dispatch_developer' }
+
+    // O2 (`#548` v3): a driver that exits without ever recording a real
+    // `paused`/`publish` decision still leaves ONE trace — inside this
+    // task's Surface, so this is the role log `task status --follow`
+    // already tails, never a second journal family (Traps to avoid). A
+    // forge journal event for the same exit needs a `packages/aeg-core`
+    // schema change, out of this task's declared Surface, and is left for a
+    // later task with that Surface.
+    // `exitTraceWritten` guards the three call sites below (reexec success,
+    // an uncaught error, a process signal) from ever firing twice for the
+    // same exit.
+    let exitTraceWritten = false
+    function recordDriverExited(reason: 'reexec' | 'error' | 'signal'): void {
+      if (exitTraceWritten) return
+      exitTraceWritten = true
+      const describedDecision = decision.type === 'pause' ? `pause(${decision.reason})` : decision.type
+      appendRoleLine(
+        loopLogPath,
+        'dev-review-loop',
+        `driver_exited: reason=${reason} last_decision=${describedDecision}`
+      )
+    }
+    // Registered once `decision`/`loopLogPath` both exist, so a signal
+    // arriving mid-round can still name a real last decision rather than
+    // reading the TDZ. `process.exit` here (not `d.exitProcess`, which
+    // exists for testability, not for a real signal — no fixture drives a
+    // real OS signal) is deliberate: without it, a second delivery of the
+    // same signal would be Node's own default (immediate termination,
+    // uncatchable) rather than this line ever finishing its write.
+    process.on('SIGTERM', () => {
+      recordDriverExited('signal')
+      process.exit(143)
+    })
+    process.on('SIGINT', () => {
+      recordDriverExited('signal')
+      process.exit(130)
+    })
     // O8: `resumeHeadAlreadyMoved` widens this exactly like a fresh round-1
     // attach — the developer already pushed the fix a ruling asked for, so
     // this run dispatches no developer at all and goes straight to the
@@ -1332,9 +1369,27 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const pulled = d.pullDefaultBranch()
       let reexecFailureNote = ''
       if (pulled.ok) {
+        // O1 (`#548`): hand the lock to the child BEFORE it starts, not after
+        // this process happens to unwind. `spawnSync` blocks synchronously
+        // until the child exits, and the success path below calls
+        // `exitProcess` (real `process.exit`) — which never lets this
+        // function's own caller's `finally` (the driver-lock clear at the
+        // top-level `devReviewLoop` entry) run at all. Left cleared only
+        // there, the still-present lock refused the child outright (found
+        // live: PR #547's re-exec died to exactly this). Clearing it here,
+        // synchronously, before the spawn, means the child's own entry-gate
+        // lock check (`readDriverLock`/`isDriverPidAlive`) sees no lock and
+        // starts; the child then writes its own lock immediately, same as
+        // any fresh driver invocation.
+        clearDriverLock(root, task)
         const reexecArgs = buildReexecArgs(input, task)
         const exitCode = d.reexecSelf(reexecArgs)
         if (exitCode !== null) {
+          // O2 (`#548` v3): a clean hand-off to the child is never a
+          // `paused`/`publish` decision — nothing else traces it. `finally`
+          // never runs on this path (`d.exitProcess` below is real
+          // `process.exit`), so this is the only chance to write it.
+          recordDriverExited('reexec')
           // Round 2 review, MINOR: whatever this process already logged
           // durably to the local outbox is worth posting now, not left for
           // whenever the re-exec'd process's own next flush happens to run.
@@ -1347,6 +1402,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // successful re-exec, logging a spurious stale_driver pause.
           return true
         }
+        // O1: the spawn itself never started (`reexecSelf` returned `null`)
+        // — this process is still the one driving the task, so the lock it
+        // cleared above must come back, or a second invocation would see no
+        // lock at all and start a genuinely concurrent driver against the
+        // same outbox.
+        writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString() })
         reexecFailureNote = `re-exec of \`vinaya ${reexecArgs.join(' ')}\` could not even start after pulling the updated base`
       } else {
         reexecFailureNote = `could not pull the default branch to re-exec from: ${pulled.reason}`
@@ -1379,6 +1440,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     try {
       return await runRoundLoop()
     } catch (err) {
+      // O2 (`#548` v3): a genuinely uncaught error is the one path that
+      // reaches neither a `pause` nor a `publish` decision and still returns
+      // normally (through `throw`) — the outer `finally` DOES run here, but
+      // `decision` (whatever it last held) is only readable from inside this
+      // closure, so the trace is written here, not there.
+      recordDriverExited('error')
       let head = 'unknown'
       try {
         head = d.resolveHead(branch)

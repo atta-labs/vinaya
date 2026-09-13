@@ -44,6 +44,7 @@ import {
   R1_GRANDFATHERED_ISSUES,
   scopeT2ToPlanPr,
   type CheckResult,
+  type CoherenceFailureCode,
   type TrancheFile,
   type TaskEntry
 } from '@attalabs/aeg-core'
@@ -151,51 +152,87 @@ function taskToEntry(entries: TaskEntry[], slug: string): Map<string, TaskEntry>
 }
 
 /**
- * Tailors the instruction to the specific coherence check code that fired,
- * rather than one canned prompt for every failure class.
- *
- * `detail` is the joined failure reasons, not just the check code, because a
- * single check code can carry failures whose correct recovery is opposite.
- * D1 is the live case: an ordinary unmet dependency is fixed by closing the
- * dependency, while a self-dependency can never be closed at all and must be
- * escalated as a tool bug. Keying only on the code told an agent to close an
- * uncloseable dependency — the same "improvise around a nonsense gate"
- * failure the INTERNAL guard exists to eliminate, reproduced on the check
- * that reports it.
+ * Tailors the instruction to the specific `CoherenceFailureCode` that fired,
+ * never to `result.check` alone and never by parsing `reason` text — the
+ * switch is on the class. `D1` is the reason a check code alone can't drive
+ * this: `checkD1` produces both `dispatched-on-unmet-deps` (an ordinary
+ * unmet dependency — close it) and `d1-self-dependency` (unsatisfiable by
+ * construction — escalate as a tool bug) under the same `D1` check code.
+ * Keying only on `D1` told an agent to close an uncloseable dependency — the
+ * same "improvise around a nonsense gate" failure the self-dependency guard
+ * exists to eliminate, reproduced on the check that reports it. `default`
+ * calls `assertNeverCoherenceCode`, so a new `CoherenceFailureCode` member
+ * with no `case` here fails typecheck instead of silently falling through to
+ * a generic prompt.
  */
-export function recoveryPromptFor(checkCode: string, detail = ''): string {
-  if (detail.includes('INTERNAL:')) {
-    return 'This is an INTERNAL parser-bug report, not a real coherence failure — a task cannot depend on itself, so there is nothing here to close or resolve. Do NOT work around it. Report it upstream, and re-run once the rationale text is corrected or the parser fix ships.'
-  }
-  switch (checkCode) {
-    case 'A1':
+export function recoveryPromptFor(code: CoherenceFailureCode): string {
+  switch (code) {
+    case 'd1-self-dependency':
+      return 'This is an INTERNAL parser-bug report, not a real coherence failure — a task cannot depend on itself, so there is nothing here to close or resolve. Do NOT work around it. Report it upstream, and re-run once the rationale text is corrected or the parser fix ships.'
+    case 'closed-without-merge':
       return "The task's Issue is closed but its closing PR is not merged. Verify the PR actually merged (or reopen the Issue if it was closed in error), then re-run `vinaya check coherence`."
-    case 'A3':
+    case 'archived-without-provenance':
+      return 'The closing PR merged but carries no `### AEG provenance` comment. Ask the Archivist to post it, then re-run `vinaya check coherence`.'
+    case 'auto-close-misfire':
       return 'The closing PR merged but the Issue is still open (a GitHub auto-close misfire). Manually close the Issue, then re-run `vinaya check coherence`.'
-    case 'T1':
+    case 'phantom-issue-ref':
       return "The topology names an Issue number that doesn't resolve on the forge. Fix the Issue number in the topology, or ask the Planner to re-cut it, then re-run `vinaya check coherence`."
-    case 'T2':
+    case 'orphan-task':
       return "An open Issue under this tranche's label is missing from the topology. Add its row to the tranche's task list, then re-run `vinaya check coherence`."
-    case 'T3':
+    case 'tbd-in-active-tranche':
       return 'A task in this active tranche has no Issue (#TBD). Ask the Planner to cut the Issue, then re-run `vinaya check coherence`.'
-    case 'D1':
+    case 'dispatched-on-unmet-deps':
       return "This task has an open PR but a declared dependency isn't closed. Close the dependency first (or verify it truly is), then re-run `vinaya check coherence`."
-    case 'R1':
+    case 'missing-rationale-field':
       return 'The Issue fails the rationale gate. Ask the Planner to complete the eight-field rationale on the Issue body, then re-run `vinaya check coherence`.'
+    case 'surface-excludes-bound-doc':
+      return "The Issue's Surface `out:` list excludes a doc-owners-bound document its `in:` list otherwise covers. Fix the Surface split, or update the bound doc in the same PR, then re-run `vinaya check coherence`."
+    case 'surface-overlap':
+      return 'This Issue overlaps another open task Issue sharing the same Milestone. Resolve the overlap (split scope or serialize the tasks), then re-run `vinaya check coherence`.'
+    case 'archive-recommended':
+      return 'This active tranche has no open task-Issues left (advisory). Archive it to `completed/`, or confirm it should stay open, then re-run `vinaya check coherence`.'
+    case 'premature-archive':
+      return 'This archived tranche still has an open task-Issue (advisory). Investigate whether the archive was premature, then re-run `vinaya check coherence`.'
+    case 'milestone-drift':
+      return "This Issue's GitHub-native milestone doesn't match its `vinaya/tranche:` label (advisory, cosmetic). Re-attach the Issue to the correct Milestone, then re-run `vinaya check coherence`."
+    case 'tranche-not-archived':
+      return 'Every task Issue in this tranche is closed but it was never archived. Ask the Tranche Archivist to run, then re-run `vinaya check coherence`.'
+    case 'doc-owners-dangling-pointer':
+      return 'A `.vinaya/doc-owners` entry points at a file that no longer exists in-repo. Fix or remove the dangling entry, then re-run `vinaya check coherence`.'
+    case 'doc-owners-duplicate-glob':
+      return 'A `.vinaya/doc-owners` glob is registered more than once. Remove the duplicate entry, then re-run `vinaya check coherence`.'
+    case 'forge-read-unavailable':
+      return 'A forge read failed while assembling coherence facts (severity:infra) — this is an outage, not a drift finding. Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check coherence`.'
     default:
-      return 'Read the named coherence failure and resolve the underlying forge/topology drift it names, then re-run `vinaya check coherence`.'
+      return assertNeverCoherenceCode(code)
   }
 }
 
+function assertNeverCoherenceCode(x: never): never {
+  throw new Error(`Unhandled CoherenceFailureCode: ${JSON.stringify(x)}`)
+}
+
 function emitFailure(result: CheckResult): void {
-  const detail = result.failures.map((f) => f.reason).join(' | ') || result.note || 'see check output'
-  emitCheckError({
-    schema: CHECK_SCHEMA_VERSION,
-    check: CHECK_NAME,
-    severity: 'error',
-    message: `${result.check}: ${detail}`,
-    agent_recovery_prompt: recoveryPromptFor(result.check, detail)
-  })
+  if (result.failures.length === 0) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `${result.check}: ${result.note ?? 'see check output'}`,
+      agent_recovery_prompt:
+        'Read the named coherence failure and resolve the underlying forge/topology drift it names, then re-run `vinaya check coherence`.'
+    })
+    return
+  }
+  for (const failure of result.failures) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `${result.check}: ${failure.reason}`,
+      agent_recovery_prompt: recoveryPromptFor(failure.code)
+    })
+  }
 }
 
 async function main(): Promise<void> {

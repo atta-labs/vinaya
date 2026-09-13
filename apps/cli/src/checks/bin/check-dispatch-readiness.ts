@@ -56,6 +56,7 @@ import {
   fetchForgeFacts,
   fetchOpenIssuesByLabel,
   parseTaskBranchIdentity,
+  type DispatchBlockerClass,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
   type DispatchGateInput,
@@ -314,13 +315,13 @@ async function runIssueMode(issueNumber: number): Promise<void> {
 
   let ready = true
   if (!result.ready) {
-    for (const blocker of result.blockers) {
+    for (const detail of result.blockerDetails) {
       emitCheckError({
         schema: CHECK_SCHEMA_VERSION,
         check: CHECK_NAME,
         severity: 'error',
-        message: blocker,
-        agent_recovery_prompt: recoveryPromptFor(blocker)
+        message: detail.message,
+        agent_recovery_prompt: recoveryPromptFor(detail.class)
       })
     }
     ready = false
@@ -443,13 +444,13 @@ async function main(): Promise<void> {
 
   let ready = true
   if (!result.ready) {
-    for (const blocker of result.blockers) {
+    for (const detail of result.blockerDetails) {
       emitCheckError({
         schema: CHECK_SCHEMA_VERSION,
         check: CHECK_NAME,
         severity: 'error',
-        message: blocker,
-        agent_recovery_prompt: recoveryPromptFor(blocker)
+        message: detail.message,
+        agent_recovery_prompt: recoveryPromptFor(detail.class)
       })
     }
     ready = false
@@ -463,34 +464,37 @@ async function main(): Promise<void> {
   process.exit(ready ? 0 : 1)
 }
 
-/** Tailors the instruction to `checkDispatchReadiness`'s own `dispatch-gate <category>:` blocker prefixes, rather than one canned prompt for every failure type. */
-export function recoveryPromptFor(blocker: string): string {
-  // Checked first: an INTERNAL blocker is a tool-bug report, not a gate state,
-  // and every prompt below tells the agent to resolve something. Falling
-  // through to the generic "resolve the named dispatch blocker" would invite
-  // exactly the improvisation this blocker class exists to prevent.
-  if (blocker.startsWith('dispatch-gate INTERNAL:')) {
-    return 'This is an INTERNAL parser-bug report, not a real dispatch gate — a task cannot depend on itself, so there is nothing here to wait for or resolve. Do NOT work around it and do NOT skip the hook. Report it upstream, and re-run once the rationale text is corrected or the parser fix ships.'
+/**
+ * Never a wildcard `default: return 'generic advice'` — the trap this task
+ * (#355) exists to close. `default` calls `assertNeverBlockerClass`, so
+ * `DispatchBlockerClass` gaining a member with no `case` here fails
+ * typecheck instead of silently routing that new blocker to the wrong
+ * advice (the live #350 incident: a new self-dependency class fell through
+ * to "close the dependency," which is impossible for a self-edge).
+ */
+export function recoveryPromptFor(blockerClass: DispatchBlockerClass): string {
+  switch (blockerClass) {
+    case 'internal-self-dependency':
+      return 'This is an INTERNAL parser-bug report, not a real dispatch gate — a task cannot depend on itself, so there is nothing here to wait for or resolve. Do NOT work around it and do NOT skip the hook. Report it upstream, and re-run once the rationale text is corrected or the parser fix ships.'
+    case 'issue-existence':
+      return 'This task has no resolvable Issue yet. Wait for the Planner to cut the Issue (or fix the phantom reference in the topology), then re-run `vinaya check dispatch-readiness`.'
+    case 'rationale':
+      return "The task's Issue fails the rationale gate. Ask the Planner to complete the eight-field rationale on the Issue body, then re-run `vinaya check dispatch-readiness`."
+    case 'depends-on-unresolvable':
+      return 'A declared dependency edge could not be resolved to any tranche/task/Issue — check the tranche slug and task id in the edge text, then re-run `vinaya check dispatch-readiness`.'
+    case 'depends-on-not-merged':
+      return 'A declared dependency is not merged yet. Do not start this task — wait for the named dependency PR to merge, then re-run `vinaya check dispatch-readiness`.'
+    case 'conflicts-with':
+      return 'A declared conflicting task has an open or in-flight PR. Wait for it to merge before continuing, then re-run `vinaya check dispatch-readiness`.'
+    case 'prior-tranche-archival':
+      return "This project's previous tranche is not archived. Ask the Tranche Archivist to run first, then re-run `vinaya check dispatch-readiness`."
+    default:
+      return assertNeverBlockerClass(blockerClass)
   }
-  if (blocker.startsWith('dispatch-gate issue-existence:')) {
-    return 'This task has no resolvable Issue yet. Wait for the Planner to cut the Issue (or fix the phantom reference in the topology), then re-run `vinaya check dispatch-readiness`.'
-  }
-  if (blocker.startsWith('dispatch-gate rationale:')) {
-    return "The task's Issue fails the rationale gate. Ask the Planner to complete the eight-field rationale on the Issue body, then re-run `vinaya check dispatch-readiness`."
-  }
-  if (blocker.startsWith('dispatch-gate depends-on:') && blocker.includes('UNRESOLVABLE')) {
-    return 'A declared dependency edge could not be resolved to any tranche/task/Issue — check the tranche slug and task id in the edge text, then re-run `vinaya check dispatch-readiness`.'
-  }
-  if (blocker.startsWith('dispatch-gate depends-on:')) {
-    return 'A declared dependency is not merged yet. Do not start this task — wait for the named dependency PR to merge, then re-run `vinaya check dispatch-readiness`.'
-  }
-  if (blocker.startsWith('dispatch-gate conflicts-with:')) {
-    return 'A declared conflicting task has an open or in-flight PR. Wait for it to merge before continuing, then re-run `vinaya check dispatch-readiness`.'
-  }
-  if (blocker.startsWith('dispatch-gate prior-tranche-archival:')) {
-    return "This project's previous tranche is not archived. Ask the Tranche Archivist to run first, then re-run `vinaya check dispatch-readiness`."
-  }
-  return 'Resolve the named dispatch blocker before continuing work on this task, then re-run `vinaya check dispatch-readiness`.'
+}
+
+function assertNeverBlockerClass(x: never): never {
+  throw new Error(`Unhandled DispatchBlockerClass: ${JSON.stringify(x)}`)
 }
 
 // Guarded so this module can be imported by unit tests without executing the
