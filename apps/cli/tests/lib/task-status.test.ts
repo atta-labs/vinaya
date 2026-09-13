@@ -24,6 +24,7 @@ import {
   resumeCommandFor,
   type TaskStatusRow
 } from '../../src/lib/task-status.js'
+import { appendRoleLine, loopLogPathFor } from '../../src/lib/loop-log.js'
 
 const TASK = 515
 
@@ -58,7 +59,7 @@ function deadPid(): number {
 describe('deriveLoopState', () => {
   it('reports no_driver when the outbox carries nothing for this task', () => {
     const root = tempDir()
-    expect(deriveLoopState(root, TASK)).toEqual({ kind: 'no_driver' })
+    expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'no_driver' })
   })
 
   it('reports running with the driver pid when the lock names a live process', () => {
@@ -69,7 +70,7 @@ describe('deriveLoopState', () => {
       'driver.pid.json',
       JSON.stringify({ pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
     )
-    expect(deriveLoopState(root, TASK)).toEqual({
+    expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({
       kind: 'running',
       pid: process.pid,
       startedAt: '2026-09-10T00:00:00.000Z'
@@ -84,7 +85,7 @@ describe('deriveLoopState', () => {
       'driver.pid.json',
       JSON.stringify({ pid: deadPid(), startedAt: '2026-09-10T00:00:00.000Z' })
     )
-    expect(deriveLoopState(root, TASK)).toEqual({ kind: 'no_driver' })
+    expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'no_driver' })
   })
 
   it('reports paused with the reason from the pause record when no driver is running', () => {
@@ -103,21 +104,26 @@ describe('deriveLoopState', () => {
         pausedAt: '2026-09-10T00:00:00.000Z'
       })
     )
-    expect(deriveLoopState(root, TASK)).toEqual({ kind: 'paused', reason: 'escalation', detail: undefined, round: 2 })
+    expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({
+      kind: 'paused',
+      reason: 'escalation',
+      detail: undefined,
+      round: 2
+    })
   })
 
   it('reports published when the newest round posted both verdict effect markers', () => {
     const root = tempDir()
     writeOutboxFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
     writeOutboxFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
-    expect(deriveLoopState(root, TASK)).toEqual({ kind: 'published', round: 1 })
+    expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'published', round: 1 })
   })
 
   it("does not report published when only one of the round's two markers posted", () => {
     const root = tempDir()
     writeOutboxFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
     writeOutboxFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'started' }))
-    expect(deriveLoopState(root, TASK)).toEqual({ kind: 'no_driver' })
+    expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'no_driver' })
   })
 
   it('prefers published over a pause record superseded by a later publish', () => {
@@ -142,7 +148,7 @@ describe('deriveLoopState', () => {
     )
     writeOutboxFile(root, TASK, 'effect-3-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
     writeOutboxFile(root, TASK, 'effect-3-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
-    expect(deriveLoopState(root, TASK)).toEqual({ kind: 'published', round: 3 })
+    expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'published', round: 3 })
   })
 
   it('still reports the pause when it is newer than the latest publish', () => {
@@ -163,12 +169,50 @@ describe('deriveLoopState', () => {
         pausedAt: '2026-09-10T00:00:00.000Z'
       })
     )
-    expect(deriveLoopState(root, TASK)).toEqual({
+    expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({
       kind: 'paused',
       reason: 'max_rounds',
       detail: undefined,
       round: 2
     })
+  })
+
+  // `#548` v3, O2: a dead lock with no decided pause/publish is what an
+  // uncaught error mid-loop leaves behind — `dev-review-loop.ts`'s own
+  // `recordDriverExited` appends exactly this line shape to the role log.
+  it('reports exited, naming the reason and last decision, when the lock is dead and the role log carries a driver_exited trace', () => {
+    const root = tempDir()
+    writeOutboxFile(
+      root,
+      TASK,
+      'driver.pid.json',
+      JSON.stringify({ pid: deadPid(), startedAt: '2026-09-10T00:00:00.000Z' })
+    )
+    appendRoleLine(
+      loopLogPathFor(null, TASK, root),
+      'dev-review-loop',
+      'driver_exited: reason=error last_decision=dispatch_developer'
+    )
+    expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({
+      kind: 'exited',
+      reason: 'error',
+      lastDecision: 'dispatch_developer'
+    })
+  })
+
+  it('prefers a real published round over a stale driver_exited trace from an earlier, already-superseded crash', () => {
+    const root = tempDir()
+    // The dead lock and the trace are both from a run superseded by a LATER
+    // run that took over the lock, completed, and cleared it — no lock file
+    // remains at all, so `exited` is never even considered.
+    appendRoleLine(
+      loopLogPathFor(null, TASK, root),
+      'dev-review-loop',
+      'driver_exited: reason=error last_decision=dispatch_developer'
+    )
+    writeOutboxFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
+    writeOutboxFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
+    expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'published', round: 1 })
   })
 })
 
