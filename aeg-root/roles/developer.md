@@ -203,17 +203,11 @@ The `AEG:EVIDENCE` block is populated by running `vinaya pr report --write <body
 
 `check-evidence-fresh` (CI) refuses a body whose block doesn't match the head it's attached to — recomputing Group A exactly and checking Group B for staleness. This closes fabrication for **Group A only** (a hand-typed diff stat cannot survive a byte-compare); Group B is checked for freshness, not re-run, so a stale-but-not-fabricated Group B slips past unless the block is also out of date. Do not claim in this PR's own Evidence section, or anywhere else, that this closes fabrication generally — it closes it for the two facts a checker can cheaply recompute, never for the Decisions section's prose.
 
-**Regeneration is one command, run last, after every other change.** The Developer never hand-edits the live PR body after open — there is no local body file to keep in sync with the forge. When a push forces the Evidence block to go stale — or a re-entry turn needs its one appended Token report row — run, from the repo root, after every commit for that round is already pushed:
+**After open, regenerating `AEG:EVIDENCE` is the driver's job, not yours.** Before this fix, a push-forced-stale Evidence block was the Developer's own turn to re-close: run `vinaya pr report --push <n>` and wait for it, a re-run of the real gate suite that could take past ten minutes and stall the whole loop on the Developer's single tool call. That command still exists — the underlying engine module both `vinaya pr report --push` and the driver's own in-process call now share, a command never calling a command — but you no longer run it. Once your turn ends at the push (below), the driver runs the SAME engine function itself, in-process, the moment the head's CI turns green, and posts the round marker comment in your place too. You never see a stale Evidence block to fix, because you never reach for the command that used to fix it.
 
-`vinaya pr report --push <n>`
+**`--push <n> --body-file <path>` still exists as a narrower, separate mode** — for the one case a routine splice cannot cover: a section outside the two generated blocks (a Decisions bullet, most often) that only ever existed in a local draft, never yet posted. It does not relax "the body is authored once, at open" above — reaching for it to restate the routine splice's own job is scope creep, not a shortcut. This mode is still yours to run by hand if you ever need it; the driver's own automatic call never uses `--body-file`.
 
-**On this repo's toolchain**, substitute `bun apps/cli/src/index.ts` for `vinaya` in that command.
-
-It fetches the PR's live body itself, splices the fresh `AEG:EVIDENCE`/`AEG:TOKENS` content into it through the same anchor resolver `--write` uses, pushes the result via the forge's own PR-edit, then re-reads the live body and refuses — restoring the pre-edit body — unless the two agree outside those two anchored regions. A `[principal]` tick, if one landed since this turn started, is a live-body write only this command's own fetch-then-splice sequence carries forward correctly; it refuses rather than appending when the live body carries no real `AEG:EVIDENCE` pair at all.
-
-**`--push <n> --body-file <path>` is a narrower, separate mode, not the routine one.** Bare `--push <n>` above stays the ordinary command and its behavior is unchanged — it never reads a local file. `--body-file` names a local file that IS the whole body: `vinaya pr report` regenerates `AEG:EVIDENCE`/`AEG:TOKENS` fresh against it (never trusting stale copies the file itself carries) and writes the file's own content verbatim to the forge, replacing the live body outright — rather than fetching-and-splicing into whatever the forge currently holds. This exists for the one legitimate case a routine splice cannot cover: a section outside the two generated blocks (a Decisions bullet, most often) that only ever existed in a local draft, never yet posted. It does not relax "the body is authored once, at open" above — reaching for it to restate the routine command's own job is scope creep, not a shortcut.
-
-After open the Developer changes nothing outside the `AEG:EVIDENCE` anchor and one appended `AEG:TOKENS` row. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. Everything else a review round produces — the response to findings, re-run `[agent]` evidence, any disclosure the brief didn't anticipate — is a PR comment, never a body edit.
+After open, the Developer changes nothing in the PR body at all — the driver's own automatic call regenerates `AEG:EVIDENCE` every round; the Principal's `[principal]` ticks are the Principal's writes and must survive every edit. **`AEG:TOKENS` is deliberately untouched by the driver's automatic call:** the driver runs in its own session, not yours, so a token row it collected would misattribute the driver's own usage to your `<task-id>: develop` phase. Token reporting for a re-entry round therefore has no automatic mechanism right now — a known, accepted gap this fix does not close, not a silent one: if you need a re-entry round's tokens recorded, run `vinaya pr report --write <body-file>` yourself and hand-splice the result, or ask the Principal to record it, rather than treating the missing row as this fix's oversight. Everything else a review round produces — the response to findings, any disclosure the brief didn't anticipate — is a PR comment, never a body edit.
 
 ---
 
@@ -269,16 +263,18 @@ A spike is exploratory, not a permanent excuse to skip documentation. The pull r
 
 ---
 
-## After you open the PR — the post-open sequence
+## After you open the PR — your turn ends here
 
-Opening the PR is not the end of your turn; it is the point at which the rest of your turn becomes runnable. The `[agent]` half of your Test Plan is no longer something you run by hand and paste — it is a fenced command list in §9 that `vinaya pr report` itself executes from the PR head and writes into the `AEG:EVIDENCE` block (task 12; Principal ruling: an agent never ticks a box or edits a PR body). What remains for you to do runs now, in this order, and the order is load-bearing:
+Opening the PR is the end of your turn — for round 1, and for every later round too: after you push a fix in response to review findings, your turn ends at that push, on the same branch, no new PR. You do not run `vinaya pr report --push`, you do not post a round comment, and you do not tick anything.
 
-1. **Merge the main branch first if you are behind it.** A branch behind its base is judged against a base nobody will merge into. `vinaya review status <pr>` prints that distance as a second line reading `behind main by <n> — merge first`, and exits non-zero unless the loop is converging at a branch that is not behind. Merge, push, and only then continue — the head your evidence names must be the head your reviewer will read.
-2. **Regenerate the Evidence block** — one command, `vinaya pr report --push <n>`, never a hand edit. This runs the real gates (Group B) AND every `[agent]` command in your §9 fenced list (Group C), writing each command's actual output into `AEG:EVIDENCE`. This is the only sanctioned write into the body after open.
-3. **Post one comment, headed `Head: <sha>`, carrying the round marker `<!-- aeg:developer:round-<n> -->` and your `Tokens:` line.** One comment per round, never an edit to the one already there. No Test Plan output belongs in this comment any more — it lives in the Evidence block `pr report` just wrote. The marker is what makes the round machine-readable for the round-derivation logic that still reads it.
-4. **Tick nothing.** There is no `[agent]` checkbox left to tick — the fenced command list has no box at all. **Never tick a `[principal]` box.** You structurally cannot satisfy one, and the asymmetry is the point.
+This is a change from before. It used to take four more steps — merge main if behind, regenerate the Evidence block, post a `Head: <sha>` comment carrying the round marker, tick nothing — and the second of those, a full re-run of the real gate suite, could take past ten minutes on a real Test Plan and stall the whole loop waiting on your one tool call to finish. None of those four steps are yours any more:
 
-Step 1 is not optional and not reorderable: there is no path through this sequence that reaches a `Head:` comment while the branch is behind. The evidence in that comment is a claim about a head, and a head that is about to be superseded by a merge you have not done yet is the wrong head to make it about.
+- **The `AEG:EVIDENCE` block** is regenerated by the driver itself, in-process, the moment your head's required CI turns green — the same engine module `vinaya pr report --push` always called, now also called directly by the loop's own driver rather than shelled out to as a subprocess.
+- **The round marker comment** — `Head: <sha>`, `<!-- aeg:developer:round-<n> -->`, and (starting from round 2) the ids of the findings you addressed — is composed and posted by the driver too, from a small side-channel file you write before your turn ends: see the next paragraph.
+- **A branch behind its base** is caught by the driver's own mergeability check before it ever dispatches a reviewer or runs the report — you never need to check this yourself; a conflicting head is sent back to you with the conflicting files named, same as before.
+- **Ticking `[agent]`/`[principal]` boxes** was never yours to begin with (task 12; Principal ruling: an agent never ticks a box or edits a PR body) — nothing changes there.
+
+**Citing which findings you addressed, from round 2 on.** When your resumed turn is sent back to fix review findings, write a `FINDING_IDS:` line — the same comma-separated grammar the reviewer's own `report.txt` already uses — to `.vinaya-round-response` at the root of your worktree, naming the ids (e.g. `F1`, `F2`) you addressed this round, before your turn ends. The driver reads and clears this file itself once your push lands and the head goes green, and folds it into the round comment it composes. This file is best-effort by design: if you forget it, or your turn crashes before writing it, the driver still posts the round comment — with no citation line — and the round is never judged stalled for want of one. You are never resumed a second time just to write it.
 
 Then stop. Review is a separate invocation.
 
@@ -430,13 +426,17 @@ The checks above are **static**: they prove the change compiles, lints, types an
 
 If the brief declares `unit-tests-only` and the diff really is pure logic, the phase is satisfied by the unit-test gate; record that as the outcome.
 
-### The `[agent]` half — yours
+### The `[agent]` half — under the loop, the driver's; standalone, yours
+
+**Under the automated dev-review loop, this already ran.** The driver's own per-round evidence report (see [§ After you open the PR — your turn ends here](#after-you-open-the-pr--your-turn-ends-here)) executes the SAME §9 fenced command list, from the SAME PR head, into the SAME `AEG:EVIDENCE` block, the moment your head's CI turns green — every round, automatically. You do not separately run this phase; by the time review finishes, it has already run.
+
+**If you are working outside the loop** — dispatched by hand, with no driver watching this PR — the phase is still yours to run explicitly:
 
 1. **Boot the app(s)** named in the brief from the worktree, and wait until each is reachable, if your §9 fenced commands need one running. If it does not boot, that is the failure — the plan never gets a chance to run.
 2. **Run `vinaya pr report --push <n>`.** It executes every line in your §9 fenced command list from the PR head and writes each command plus its actual output into `AEG:EVIDENCE` — never a hand-pasted comment, never a checkbox tick. Round-tripping through prose is how falsely-passing claims slip through; a command this tool did not run is not evidence. **Accepted risk, Principal default:** `pr report --push` executes the PR's own §9 commands on the machine running it, with no check of who is running it — only the PR's author runs it; nothing enforces that today.
 3. **Stop there.** Do not execute `[principal]` items; you structurally cannot. Mark them as awaiting the Principal.
 
-A failed `[agent]` command makes the PR unmergeable (`vinaya pr report`'s own exit code reflects it, and `evidence-fresh` binds the recorded output to the PR head). Fix on the same branch and re-run `vinaya pr report --push <n>` — it overwrites the block with fresh output, never appends a second copy.
+A failed `[agent]` command makes the PR unmergeable (`vinaya pr report`'s own exit code reflects it, and `evidence-fresh` binds the recorded output to the PR head). Fix on the same branch — under the loop, the next round's own automatic report overwrites the block with fresh output; standalone, re-run `vinaya pr report --push <n>` yourself — either way it overwrites, never appends a second copy.
 
 ### The `[principal]` half — not yours
 

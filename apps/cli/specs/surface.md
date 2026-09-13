@@ -293,6 +293,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `evaluateReviewFindings` | function | `packages/aeg-core/src/review-policy.ts` |
 | `evaluateSecurityReview` | function | `packages/aeg-core/src/review-policy.ts` |
 | `isKnownSeverity` | function | `packages/aeg-core/src/review-policy.ts` |
+| `isProseLocation` | function | `packages/aeg-core/src/review-policy.ts` |
 | `SECURITY_SEVERITY_ORDER` | const | `packages/aeg-core/src/review-policy.ts` |
 | `securityBlockingSeverities` | function | `packages/aeg-core/src/review-policy.ts` |
 | `deriveReviewStatus` | function | `packages/aeg-core/src/review-status.ts` |
@@ -493,6 +494,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `missingReviewerArtifacts` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `outboxRoot` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `readIfExists` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `reclassifyProseOnlyNotMet` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `renderReviewerDispatchPrompt` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `renderReviewerPrompt` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `ReviewerInfrastructureFailure` | class | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
@@ -502,13 +504,18 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `assertDispatchOrEscalate` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `CONFIDENCE_FILE_NAME` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `CONFIDENCE_PROMPT_LINE` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `DEVELOPER_ROUND_RESPONSE_FILE_NAME` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `developerRoundMarker` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `DevReviewLoopResumeError` | class | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `driverCrashEvents` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `driverDecidedPauseEvents` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `MAX_GATE_STALLED_TURNS` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `parseConfidenceReply` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `parseRoundResponseFindingIds` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `parseShortstat` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `pollUntil` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `renderDeveloperRoundComment` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `ROUND_RESPONSE_PROMPT_LINE` | const | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `routeCompletionEvents` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `sizeOfSafe` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `waitForOwnLoopLine` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
@@ -648,6 +655,32 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `printHelp` | function | `apps/cli/src/lib/output.ts` |
 | `packageRoot` | function | `apps/cli/src/lib/package-root.ts` |
 | `patchIdAt` | function | `apps/cli/src/lib/patch-id.ts` |
+| `agentCommandText` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `anyGateFailed` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `bodiesAgreeOutsideRegions` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `buildReport` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `collectTokensAddition` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `composeWrittenBody` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `computeGroupA` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `computeGroupC` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `DEFAULT_COMMAND_TIMEOUT_MS` | const | `apps/cli/src/lib/pr-report-engine.ts` |
+| `DivergentEvidenceAnchorError` | class | `apps/cli/src/lib/pr-report-engine.ts` |
+| `extractAgentCommandLines` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `gh` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `ghEditBody` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `GitCommandError` | class | `apps/cli/src/lib/pr-report-engine.ts` |
+| `groupCFailed` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `MissingEvidenceAnchorError` | class | `apps/cli/src/lib/pr-report-engine.ts` |
+| `prReportExitCode` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `renderGroupC` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `replaceEvidenceBlock` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `resolveCommandTimeoutMs` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `runAgentCommand` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `runReportForOpenPr` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `runRealGates` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `spliceIntoLiveBody` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `UnresolvableMergeBaseError` | class | `apps/cli/src/lib/pr-report-engine.ts` |
+| `writeTokensBlock` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `__resetStdinForTest` | function | `apps/cli/src/lib/prompt.ts` |
 | `closeStdin` | function | `apps/cli/src/lib/prompt.ts` |
 | `prompt` | function | `apps/cli/src/lib/prompt.ts` |
@@ -761,8 +794,8 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `check` | 2026-09-05 | 3 — lib: `loadConfigChecked`, `configPath`, `printJson` | `runChecks` |
 | `pr create` | 2026-09-05 | 9 — lib (9): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `loadConfigChecked`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
 | `pr edit` | 2026-09-11 | 10 — lib (10): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `runBodyChecks`, `parseIssueNumberFromRef`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
-| `pr report` | 2026-09-12 | 5 — lib: `summariseNumstat`, `runBodyChecks`, `loadConfig` (issue-545, O5: `resolveCommandTimeoutMs`'s `report.commandTimeoutMs` read); commands/\*.ts (refused outright): `realDeps`, `meteringRefusalMessage` (`tokens.ts`) | `collectTokens` |
-| `pr verify-evidence` | 2026-09-05 | 3 — lib: none; commands/\*.ts (refused outright): `buildReport` (`pr-report.ts`), `compareEvidence`, `renderVerdict` (`pr-verify-evidence-logic.ts`) | `collectTokens` |
+| `pr report` | 2026-09-13 | 8 — lib (8): `gh`, `buildReport`, `collectTokensAddition`, `composeWrittenBody`, `ghEditBody`, `runReportForOpenPr`, `prReportExitCode` (`pr-report-engine.ts`), `runBodyChecks` (`forge-write.ts`) | `collectTokens` |
+| `pr verify-evidence` | 2026-09-05 | 3 — lib: `buildReport` (`pr-report-engine.ts`, issue-577); commands/\*.ts (refused outright): `compareEvidence`, `renderVerdict` (`pr-verify-evidence-logic.ts`) | `collectTokens` |
 | `pr rule` | 2026-09-05 | 6 — lib (6): `refuse`, `makeCheckError`, `refuseUnlessPrincipal`, `countMarkerComments`, `postMarkedComment`, `printJson` | `forgeWrite` |
 | `issue create` | 2026-09-11 | 11 — lib (11): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `extractLabels`, `refuseUnlabeledTaskShapedBody`, `validateTaskIssue`, `printJson`, `ensureTrancheLabelExists`, `runGhWrite`, `resolveMilestoneAttachArgs` | `forgeWrite` |
 | `issue edit` | 2026-09-11 | 12 — lib (12): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `fetchForgeLabels`, `extractLabels`, `refuseUnlabeledTaskShapedBody`, `refuseFrozenSectionChange`, `validateTaskIssue`, `parseIssueNumberFromRef`, `printJson`, `writeValidatedIssueEdit` | `forgeWrite` |
