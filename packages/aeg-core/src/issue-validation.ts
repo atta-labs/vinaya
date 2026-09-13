@@ -405,6 +405,33 @@ const ISSUE_PRINCIPAL_LINE_RE = /^-\s*\[[ xX]\]\s*\*{2}\[principal\]\*{2}(.*)$/g
 const UNIT_TESTS_ONLY_SENTINEL_RE = /(?:\*\*)?Test plan(?:\*\*)?\s*:\s*(?:\*\*)?\s*unit-tests-only/i
 
 /**
+ * `bunx turbo test` never takes a single-file argument at
+ * all (it runs a whole package's suite by construction), so any form of it
+ * is whole-suite. `bun test` and `vitest run` are whole-suite only when no
+ * argument in the line names an actual test file — a bare invocation or a
+ * directory argument still runs everything under it.
+ */
+const TURBO_TEST_RE = /\bbunx\s+turbo\s+test\b/i
+const BUN_TEST_RE = /\bbun\s+test\b/i
+const VITEST_RUN_RE = /\bvitest\s+run\b/i
+const TEST_FILE_ARG_RE = /[^\s'"]+\.(?:test|spec)\.[jt]sx?\b/i
+
+/**
+ * A Test plan line naming a test runner with no test-file argument can run
+ * the whole suite once dispatched — the developer role's pre-push hook
+ * already runs the affected suite on its own (`roles/developer.md`), so a
+ * Planner's Test plan line exists to name the file(s) THIS task's own Part
+ * proves, never to re-authorize the whole thing. A line that isn't a
+ * recognized test-runner invocation at all (a `vinaya check` command, an
+ * arbitrary CLI call) is never whole-suite by this definition.
+ */
+function isWholeSuiteTestPlanLine(line: string): boolean {
+  if (TURBO_TEST_RE.test(line)) return true
+  if (BUN_TEST_RE.test(line) || VITEST_RUN_RE.test(line)) return !TEST_FILE_ARG_RE.test(line)
+  return false
+}
+
+/**
  * `## Test plan` — reuses `checkTestPlan`/`extractFencedBlocks`
  * (`brief-validation.ts`) rather than a second parser: the `unit-tests-only`
  * sentinel, or a fenced command list plus optional `**[principal]**` items.
@@ -438,6 +465,18 @@ export function parseIssueTestPlan(body: string): ParsedIssueSection<IssueTestPl
       .map((l) => l.trim())
       .filter((l) => l.length > 0)
   )
+
+  const wholeSuiteLines = lines.filter(isWholeSuiteTestPlanLine)
+  if (wholeSuiteLines.length > 0) {
+    return {
+      ok: false,
+      errors: wholeSuiteLines.map(
+        (line) =>
+          `\`${line}\` runs a test runner with no test-file argument — a \`## Test plan\` line must name one or more \`*.test.*\`/\`*.spec.*\` files (e.g. \`bun test apps/cli/tests/lib/dev-review-loop.test.ts\`) or a \`vinaya check\` command; a bare \`bun test\`, \`bun test\` on a directory, any \`bunx turbo test\` form, or \`vitest run\` on a package can run the whole suite, which the pre-push hook already covers on its own.`
+      )
+    }
+  }
+
   const principal = [...region.matchAll(ISSUE_PRINCIPAL_LINE_RE)].map((m) => (m[1] ?? '').trim()).filter(Boolean)
   if (lines.length === 0 && principal.length === 0) {
     return {

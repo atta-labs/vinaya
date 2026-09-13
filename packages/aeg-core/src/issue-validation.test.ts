@@ -1761,7 +1761,7 @@ describe('parseIssueTestPlan', () => {
       '## Test plan',
       '',
       '```',
-      'bun test → 0 fail',
+      'bun test apps/cli/tests/lib/dev-review-loop.test.ts → 0 fail',
       '```',
       '',
       '- [ ] **[principal]** Verify in a real browser.',
@@ -1772,15 +1772,22 @@ describe('parseIssueTestPlan', () => {
     if (!r.ok) return
     expect(r.value).toEqual({
       kind: 'commands',
-      lines: ['bun test → 0 fail'],
+      lines: ['bun test apps/cli/tests/lib/dev-review-loop.test.ts → 0 fail'],
       principal: ['Verify in a real browser.']
     })
   })
 
   it('refuses both the sentinel and a fence together — same exclusivity rule as the PR body', () => {
-    const body = ['## Test plan', '', 'Test plan: unit-tests-only', '', '```', 'bun test → 0 fail', '```', ''].join(
-      '\n'
-    )
+    const body = [
+      '## Test plan',
+      '',
+      'Test plan: unit-tests-only',
+      '',
+      '```',
+      'bun test apps/cli/tests/lib/dev-review-loop.test.ts → 0 fail',
+      '```',
+      ''
+    ].join('\n')
     const r = parseIssueTestPlan(body)
     expect(r.ok).toBe(false)
     if (r.ok) return
@@ -1790,6 +1797,47 @@ describe('parseIssueTestPlan', () => {
   it('refuses when the `## Test plan` section is absent', () => {
     const r = parseIssueTestPlan('nothing test-plan-shaped here')
     expect(r.ok).toBe(false)
+  })
+
+  describe('whole-suite refusal', () => {
+    const withPlan = (line: string) => ['## Test plan', '', '```', line, '```', ''].join('\n')
+
+    it('refuses a bare `bun test`', () => {
+      const r = parseIssueTestPlan(withPlan('bun test → 0 fail'))
+      expect(r.ok).toBe(false)
+      if (r.ok) return
+      expect(r.errors[0]).toContain('bun test → 0 fail')
+      expect(r.errors[0]).toMatch(/no test-file argument/)
+    })
+
+    it('refuses `bun test` on a directory — the exact fixture from the brief', () => {
+      const r = parseIssueTestPlan(withPlan('bun test apps/cli/tests'))
+      expect(r.ok).toBe(false)
+      if (r.ok) return
+      expect(r.errors[0]).toContain('bun test apps/cli/tests')
+    })
+
+    it('renders `bun test` naming a real test file — the brief’s paired positive fixture', () => {
+      const r = parseIssueTestPlan(withPlan('bun test apps/cli/tests/lib/dev-review-loop.test.ts → 0 fail'))
+      expect(r.ok).toBe(true)
+    })
+
+    it('refuses `bunx turbo test` in any form, even with flags', () => {
+      const r = parseIssueTestPlan(withPlan('bunx turbo test --affected --force → 0 fail'))
+      expect(r.ok).toBe(false)
+      if (r.ok) return
+      expect(r.errors[0]).toContain('bunx turbo test --affected --force')
+    })
+
+    it('refuses `vitest run` on a package with no test-file argument', () => {
+      const r = parseIssueTestPlan(withPlan('vitest run packages/aeg-core → 0 fail'))
+      expect(r.ok).toBe(false)
+    })
+
+    it('passes a `vinaya check` command untouched', () => {
+      const r = parseIssueTestPlan(withPlan('bun apps/cli/src/index.ts check --all → exits 0'))
+      expect(r.ok).toBe(true)
+    })
   })
 })
 

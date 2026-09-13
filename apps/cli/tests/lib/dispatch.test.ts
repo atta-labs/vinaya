@@ -1545,11 +1545,18 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     expect(existsSync(settingsPath)).toBe(true)
 
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      env: Record<string, string>
       hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }> }
     }
+
+    // Dispatch's own execution posture rides on the settings file
+    // itself — no operator export required.
+    expect(settings.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1')
+    expect(Number(settings.env.BASH_MAX_TIMEOUT_MS)).toBeGreaterThan(600000)
+
     const preToolUse = settings.hooks.PreToolUse
     expect(preToolUse).toHaveLength(1)
-    expect(preToolUse[0]?.matcher).toBe('Bash')
+    expect(preToolUse[0]?.matcher).toBe('Bash|Agent|Task')
     expect(preToolUse[0]?.hooks[0]?.type).toBe('command')
     const hookCommand = preToolUse[0]?.hooks[0]?.command as string
     expect(hookCommand).toMatch(/^bun "/)
@@ -1582,6 +1589,112 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     })
     expect(nonBash.status).toBe(0)
     expect(nonBash.stdout.trim()).toBe('')
+  })
+
+  it('denies a Bash call running a test runner with no test-file argument, naming the selected-tests rule and CI', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+    const settingsIdx = argv.indexOf('--settings')
+    const settingsPath = argv[settingsIdx + 1] as string
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> }
+    }
+    const hookCommand = settings.hooks.PreToolUse[0]?.hooks[0]?.command as string
+    const scriptPath = hookCommand.slice('bun "'.length, -1)
+
+    const run = (command: string) => {
+      const result = spawnSync('bun', [scriptPath], {
+        input: JSON.stringify({ tool_name: 'Bash', tool_input: { command, run_in_background: false } }),
+        encoding: 'utf8'
+      })
+      expect(result.status).toBe(0)
+      return result.stdout.trim()
+    }
+    const decision = (out: string): { permissionDecision: string; permissionDecisionReason: string } | null =>
+      out === '' ? null : (JSON.parse(out).hookSpecificOutput as never)
+
+    // The four whole-suite forms O2 names, verbatim from the brief.
+    expect(decision(run('bun test'))?.permissionDecision).toBe('deny')
+    expect(decision(run('bun test apps/cli/tests'))?.permissionDecision).toBe('deny')
+    expect(decision(run('bunx turbo test --affected --force'))?.permissionDecision).toBe('deny')
+    expect(decision(run('vitest run packages/aeg-core'))?.permissionDecision).toBe('deny')
+
+    const denyReason = decision(run('bun test apps/cli/tests'))?.permissionDecisionReason
+    expect(denyReason).toMatch(/selected-tests|test-file argument/)
+    expect(denyReason).toMatch(/CI/)
+
+    // The paired allowed shape: a real test file named on the command line.
+    expect(decision(run('bun test apps/cli/tests/lib/dispatch.test.ts'))).toBeNull()
+  })
+
+  it('denies the subagent tool (Agent/Task) when its background flag is set, allows it in the foreground', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+    const settingsIdx = argv.indexOf('--settings')
+    const settingsPath = argv[settingsIdx + 1] as string
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> }
+    }
+    const hookCommand = settings.hooks.PreToolUse[0]?.hooks[0]?.command as string
+    const scriptPath = hookCommand.slice('bun "'.length, -1)
+
+    for (const toolName of ['Agent', 'Task']) {
+      const denied = spawnSync('bun', [scriptPath], {
+        input: JSON.stringify({ tool_name: toolName, tool_input: { run_in_background: true } }),
+        encoding: 'utf8'
+      })
+      expect(denied.status).toBe(0)
+      const deniedOut = JSON.parse(denied.stdout) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string }
+      }
+      expect(deniedOut.hookSpecificOutput.permissionDecision).toBe('deny')
+      expect(deniedOut.hookSpecificOutput.permissionDecisionReason).toMatch(/foreground/)
+
+      const allowed = spawnSync('bun', [scriptPath], {
+        input: JSON.stringify({ tool_name: toolName, tool_input: { run_in_background: false } }),
+        encoding: 'utf8'
+      })
+      expect(allowed.status).toBe(0)
+      expect(allowed.stdout.trim()).toBe('')
+    }
   })
 
   it('round-2 HIGH (#547, O1): denies a Bash call backgrounded by shell shape alone, not only by run_in_background:true', () => {

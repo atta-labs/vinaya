@@ -580,7 +580,10 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `renderCodexEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderGeminiEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `resolveClassModel` | function | `apps/cli/src/lib/dispatch.ts` |
+| `SUBAGENT_BACKGROUND_DENY_REASON` | const | `apps/cli/src/lib/dispatch.ts` |
+| `SUITE_RUN_DENY_REASON` | const | `apps/cli/src/lib/dispatch.ts` |
 | `timeoutWarningLeadMs` | function | `apps/cli/src/lib/dispatch.ts` |
+| `wholeSuiteTestCommandDetectorSource` | function | `apps/cli/src/lib/dispatch.ts` |
 | `writeDispatchSettings` | function | `apps/cli/src/lib/dispatch.ts` |
 | `appendDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |
 | `applyDocOwnersBinding` | function | `apps/cli/src/lib/doc-owners-write.ts` |

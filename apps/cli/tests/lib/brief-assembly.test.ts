@@ -326,6 +326,47 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
     })
   })
 
+  it('refuses, naming the offending line, when the override body’s Test plan runs a whole-suite command', () => {
+    const body = [
+      '## Objectives',
+      '',
+      'O1. The fixture names a whole-suite Test plan line.',
+      '',
+      '## Surface',
+      '',
+      'in: aeg-root',
+      'out: —',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — proves a whole-suite Test plan line refuses the render.',
+      '',
+      '## Test plan',
+      '',
+      '```',
+      'bun test apps/cli/tests',
+      '```',
+      '',
+      '## Stop conditions',
+      '',
+      '- None.',
+      '',
+      RATIONALE
+    ].join('\n')
+
+    const result = assembleAndRenderBriefForIssue(DRAFT_ISSUE_SENTINEL, {
+      title: '[fixture] draft issue',
+      body,
+      labels: []
+    })
+    return result.then((r) => {
+      expect(r.ok).toBe(false)
+      if (!r.ok) {
+        expect(r.missing.some((m) => m.includes('bun test apps/cli/tests'))).toBe(true)
+      }
+    })
+  })
+
   it('refuses (never rendering) when the override body carries a `vinaya/tranche:*` label — that shape belongs to the tranche path', () => {
     const result = assembleAndRenderBriefForIssue(DRAFT_ISSUE_SENTINEL, {
       title: '[fixture] draft issue',

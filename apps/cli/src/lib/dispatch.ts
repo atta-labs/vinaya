@@ -372,6 +372,54 @@ export function backgroundShapeDetectorSource(): string {
   ].join('\n')
 }
 
+/**
+ * The runtime twin of `isWholeSuiteTestPlanLine`
+ * (`@attalabs/aeg-core`'s `issue-validation.ts`) — same four whole-suite
+ * shapes (a bare `bun test`, `bun test` on a directory, any `bunx turbo
+ * test` form, `vitest run` on a package), reimplemented here rather than
+ * imported because this source runs embedded, as a string, inside the
+ * generated `.mjs` hook script (same posture as `backgroundShapeDetectorSource`
+ * above) — a dispatched agent's own Bash calls, never an Issue body. A
+ * dispatched developer's own Test plan already names the file(s) their own
+ * work proves; the pre-push hook and CI are the only sanctioned whole-suite
+ * runs (`roles/developer.md`).
+ */
+export function wholeSuiteTestCommandDetectorSource(): string {
+  return [
+    'function commandRunsWholeSuite(command) {',
+    "  if (typeof command !== 'string') return false;",
+    '  if (/\\bbunx\\s+turbo\\s+test\\b/i.test(command)) return true;',
+    '  if (/\\bbun\\s+test\\b/i.test(command) || /\\bvitest\\s+run\\b/i.test(command)) {',
+    '    return !/[^\\s\'"]+\\.(?:test|spec)\\.[jt]sx?\\b/i.test(command);',
+    '  }',
+    '  return false;',
+    '}'
+  ].join('\n')
+}
+
+export const SUITE_RUN_DENY_REASON =
+  'Dispatched sessions cannot run a test runner with no test-file argument — name the specific *.test.*/*.spec.* file(s) this Part proves. The pre-push hook’s selected-tests run and CI are the only sanctioned whole-suite runs.'
+
+/**
+ * The subagent tool (`Agent`/`Task` — both names are checked, as a
+ * dispatched session may see either) defaults `run_in_background` to true,
+ * so an unattended developer session that never sets it explicitly would
+ * otherwise background every subagent it spawns — the same failure mode
+ * `BACKGROUND_DENY_REASON` closes for Bash, applied to the other tool that
+ * can start background work.
+ */
+export const SUBAGENT_BACKGROUND_DENY_REASON =
+  'Dispatched sessions cannot run a subagent in the background — pass run_in_background: false (or omit it) and run it in the foreground instead.'
+
+function denyOutput(reason: string): string {
+  return (
+    '      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: ' +
+    "'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: " +
+    JSON.stringify(reason) +
+    ' } }));'
+  )
+}
+
 function backgroundDenyHookScript(): string {
   return [
     "let d = '';",
@@ -380,12 +428,14 @@ function backgroundDenyHookScript(): string {
     '  try {',
     '    const e = JSON.parse(d);',
     backgroundShapeDetectorSource(),
+    wholeSuiteTestCommandDetectorSource(),
     '    const input = e.tool_input || {};',
     "    if (e.tool_name === 'Bash' && (input.run_in_background === true || commandBackgrounds(input.command))) {",
-    '      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: ' +
-      "'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: " +
-      JSON.stringify(BACKGROUND_DENY_REASON) +
-      ' } }));',
+    denyOutput(BACKGROUND_DENY_REASON),
+    "    } else if (e.tool_name === 'Bash' && commandRunsWholeSuite(input.command)) {",
+    denyOutput(SUITE_RUN_DENY_REASON),
+    "    } else if ((e.tool_name === 'Agent' || e.tool_name === 'Task') && input.run_in_background === true) {",
+    denyOutput(SUBAGENT_BACKGROUND_DENY_REASON),
     '    }',
     '  } catch {',
     '    // not a JSON line — never block on a shape this hook does not understand',
@@ -397,11 +447,35 @@ function backgroundDenyHookScript(): string {
 }
 
 /**
+ * The ceiling this repo's own doctrine commands can genuinely need —
+ * `roles/developer.md` records the real gate suite running "past ten
+ * minutes" on a real Test Plan, above the installed binary's own default
+ * `BASH_MAX_TIMEOUT_MS` ceiling (10 minutes, confirmed live against the
+ * installed binary's strings) — and the Bash tool's own hard client-side cap
+ * (1800000ms / 30 minutes, from its tool description). Set to that same
+ * hard cap: raising it further would have no effect, and this is already
+ * above every doctrine command on record.
+ */
+const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
+
+/**
  * Writes this dispatch's settings file and the hook script it references,
  * owner-only inside an owner-only directory (same hardening posture as
  * `openOutputTee`'s tee file). Never throws: an unwritable home degrades to
  * `null` — no `--settings` flag added, matching this module's "never throws"
  * posture — rather than failing the dispatch over a missing deny rule.
+ *
+ * The `env` block and the widened `PreToolUse` matcher are dispatch's OWN
+ * execution posture, carried on the settings file every
+ * dispatched session loads — so a session started with no operator export
+ * (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`/`BASH_MAX_TIMEOUT_MS`, previously a
+ * manual pre-launch step) inherits the same posture automatically. The
+ * matcher covers every tool that can start background work: `Bash` (a
+ * backgrounded shell command) and the subagent tool, under both names a
+ * dispatched session may see it by (`Agent`, `Task` — confirmed live against
+ * the installed binary's own strings) — its own `run_in_background` flag
+ * defaults to true, so an agent that never sets it explicitly would
+ * otherwise background every subagent it spawns.
  */
 export function writeDispatchSettings(): string | null {
   try {
@@ -412,10 +486,14 @@ export function writeDispatchSettings(): string | null {
     writeFileSync(scriptPath, backgroundDenyHookScript(), { mode: 0o600 })
     const settingsPath = join(dir, 'settings.json')
     const settings = {
+      env: {
+        CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+        BASH_MAX_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS
+      },
       hooks: {
         PreToolUse: [
           {
-            matcher: 'Bash',
+            matcher: 'Bash|Agent|Task',
             hooks: [{ type: 'command', command: `bun "${scriptPath}"` }]
           }
         ]
