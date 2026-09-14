@@ -566,3 +566,10 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
 export async function archiveTrancheCommand(args: string[]): Promise<void> {
   process.exit(await runArchiveTranche(args, realDeps()))
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  archive: { date: '2026-09-05', callsToday: 2, retiresVia: 'collectTokens' },
+  'archive tranche': { date: '2026-09-05', callsToday: 3, retiresVia: 'collectTokens' }
+}

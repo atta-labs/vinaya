@@ -1,98 +1,59 @@
-import { readFileSync } from 'node:fs'
-import { dirname, join, relative } from 'node:path'
+import { readdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import ts from 'typescript'
 import { describe, expect, it } from 'bun:test'
+import type { SurfaceExemption } from '../src/lib/surface-exemption'
 
 /**
- * O16 — a change that adds, removes or renames an export
- * is refused while `apps/cli/specs/surface.md`'s Policy/Effects tables
- * still disagree with it. `surface-index.test.ts` already enforces the
- * Commands table against the real source tree ("this file is its source of
- * truth, not the reverse") but explicitly leaves Policy/Effects unchecked
- * ("Calls into `@attalabs/aeg-core` are unrestricted"); this file closes
- * that gap for the two tables surface.md itself says are exhaustive real-
- * export mirrors.
+ * O2 — the export inventory is enforced from the real export set, with no
+ * hand-written count anywhere in the repository. A markdown mirror of every
+ * `@attalabs/aeg-core` and `apps/cli/src/lib/**` export used to live in
+ * `apps/cli/specs/surface.md`, requiring a doc edit on every export added,
+ * removed, or renamed under either directory — the two busiest in the repo.
+ * That mirror provided no behavioral guarantee of its own: the layering
+ * predicate (`surface-index.test.ts`) classifies a call as 'lib' purely by
+ * the declaring file's path, never by membership in a table.
  *
- * Two independent comparisons, each via the real TypeScript checker (never
- * a regex over source text, for the same reason `surface-index.test.ts`
- * uses the checker: a renamed import or an aliased re-export must still
- * resolve correctly):
- *
- * - Policy: every non-type export of `packages/aeg-core/src/index.ts`'s
- *   own module symbol (the barrel), resolved to its real declaring file.
- * - Effects: every exported function/const/class of each file directly
- *   under `apps/cli/src/lib/` (one file, one module symbol each — there is
- *   no barrel there).
+ * What genuinely needs enforcing from the real export set, with nothing
+ * hand-maintained: every `SURFACE_EXEMPTIONS` marker's `retiresVia` target
+ * that already names a real, existing `apps/cli/src/lib/**` export must name
+ * a *function* — the chokepoint a command is meant to eventually call alone,
+ * never a const or a class. A target that does not exist yet (the
+ * consolidated set named in `apps/cli/specs/surface.md`'s Effects intro —
+ * `sharedCommandShell`, `runChecks`, `forgeWrite`, `collectTokens`,
+ * `taskStatus` — is mostly still aspirational) is skipped: this test asserts
+ * nothing about a name that isn't real yet, only that a real one stays a
+ * real function. The set of target names comes from the command files'
+ * own markers — never a list typed here or in any doc — so an unrelated
+ * task adding an ordinary lib export never touches this file's inputs.
  */
 
 const CLI_ROOT = join(import.meta.dir, '..')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
-const SURFACE_MD = join(CLI_ROOT, 'specs', 'surface.md')
-const AEG_CORE_SRC = join(REPO_ROOT, 'packages', 'aeg-core', 'src')
-const AEG_CORE_INDEX = join(AEG_CORE_SRC, 'index.ts')
+const CMD_DIR = join(CLI_ROOT, 'src', 'commands')
 const CLI_LIB_DIR = join(CLI_ROOT, 'src', 'lib')
-
-// ---------------------------------------------------------------------------
-// surface.md table parsing — same shape as surface-index.test.ts's tableRows.
-// ---------------------------------------------------------------------------
-
-const surfaceMd = readFileSync(SURFACE_MD, 'utf-8')
-
-function tableRows(heading: string): string[][] {
-  const lines = surfaceMd.split('\n')
-  const start = lines.findIndex((l) => l.trim() === heading)
-  if (start === -1) throw new Error(`surface.md: missing heading '${heading}'`)
-  const rows: string[][] = []
-  let inTable = false
-  for (let i = start + 1; i < lines.length; i++) {
-    const line = lines[i]!
-    if (line.startsWith('## ')) break
-    if (!line.startsWith('|')) continue
-    if (/^\|[\s-]*\|/.test(line) && line.includes('---')) {
-      inTable = true
-      continue
-    }
-    if (!inTable) continue
-    const cells = line
-      .split('|')
-      .slice(1, -1)
-      .map((c) => c.trim())
-    rows.push(cells)
-  }
-  return rows
-}
-
-function unbacktick(cell: string): string {
-  return cell.replace(/^`|`$/g, '')
-}
-
-type SpecRow = { name: string; kind: string; file: string }
-
-function specRows(heading: string): SpecRow[] {
-  return tableRows(heading).map(([name, kind, file]) => ({
-    name: unbacktick(name ?? ''),
-    kind: (kind ?? '').trim(),
-    file: unbacktick(file ?? '')
-  }))
-}
-
-const policyRows = specRows('## Policy — `@attalabs/aeg-core` public exports')
-const effectsRows = specRows('## Effects — `apps/cli/src/lib` public exports')
 
 // ---------------------------------------------------------------------------
 // Real exports, via the TypeScript checker.
 // ---------------------------------------------------------------------------
 
-type RealExport = { name: string; kind: 'function' | 'const' | 'class' | 'other'; file: string }
+type RealExport = { name: string; kind: 'function' | 'const' | 'class' | 'other' }
 
 function declarationKind(decl: ts.Declaration): RealExport['kind'] {
   if (ts.isFunctionDeclaration(decl)) return 'function'
   if (ts.isClassDeclaration(decl)) return 'class'
-  if (ts.isVariableDeclaration(decl)) return 'const'
+  if (ts.isVariableDeclaration(decl)) {
+    // `export const f = (...) => ...` / `export const f = async (...) => ...`
+    // is a function value even though the declaration node is a VariableDeclaration.
+    const init = decl.initializer
+    if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) return 'function'
+    return 'const'
+  }
   return 'other'
 }
 
-/** Every non-type-only export of `moduleFile`'s own module symbol, resolved through re-exports to its real declaring file — repo-relative, POSIX-separated. */
+/** Every non-type-only export of `moduleFile`'s own module symbol. */
 function moduleExports(program: ts.Program, moduleFile: string): RealExport[] {
   const checker = program.getTypeChecker()
   const sf = program.getSourceFile(moduleFile)
@@ -102,20 +63,11 @@ function moduleExports(program: ts.Program, moduleFile: string): RealExport[] {
 
   const out: RealExport[] = []
   for (const sym of checker.getExportsOfModule(moduleSymbol)) {
-    // Type-only (an interface, a type alias, or a `Symbol.Value`-less alias
-    // to one) carries no `Value` flag — Policy/Effects both explicitly
-    // index "non-type"/"function/const/class" exports only.
     const resolved = sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym
     if (!(resolved.flags & ts.SymbolFlags.Value)) continue
-
     const decl = resolved.getDeclarations()?.[0]
     if (!decl) continue
-    const declFile = decl.getSourceFile().fileName
-    out.push({
-      name: sym.getName(),
-      kind: declarationKind(decl),
-      file: relative(REPO_ROOT, declFile).split('\\').join('/')
-    })
+    out.push({ name: sym.getName(), kind: declarationKind(decl) })
   }
   return out
 }
@@ -129,62 +81,10 @@ function programFor(rootFile: string): ts.Program {
 }
 
 // ---------------------------------------------------------------------------
-// Policy — packages/aeg-core/src/index.ts's barrel
-// ---------------------------------------------------------------------------
-
-/** `name` alone collides on a genuinely-duplicated export (`isAgentVendor` is declared independently in TWO lib files, and surface.md already carries a separate row for each) — key on `name::file` instead, so two real, distinct declarations sharing a name are compared against their own, distinct rows rather than one hiding the other. */
-function compositeKey(name: string, file: string): string {
-  return `${name}::${file}`
-}
-
-function checkTableAgainstReal(rows: SpecRow[], real: RealExport[], label: string) {
-  const realByKey = new Map(real.map((e) => [compositeKey(e.name, e.file), e]))
-  const rowByKey = new Map(rows.map((r) => [compositeKey(r.name, r.file), r]))
-
-  it(`names no export ${label} does not actually export at that file`, () => {
-    const stale = rows.filter((r) => !realByKey.has(compositeKey(r.name, r.file)))
-    expect(
-      stale.map((r) => `${r.name} (${r.file})`),
-      'surface.md row(s) with no matching real export — remove or fix'
-    ).toEqual([])
-  })
-
-  it(`is missing no real ${label} export`, () => {
-    const missing = real.filter((e) => !rowByKey.has(compositeKey(e.name, e.file)))
-    expect(
-      missing.map((e) => `${e.name} (${e.file})`),
-      'real export(s) with no surface.md row — add one'
-    ).toEqual([])
-  })
-
-  it(`gets every listed export's kind right`, () => {
-    const wrong = rows
-      .filter((r) => realByKey.has(compositeKey(r.name, r.file)))
-      .filter((r) => realByKey.get(compositeKey(r.name, r.file))!.kind !== r.kind)
-      .map(
-        (r) =>
-          `${r.name} (${r.file}): surface.md says ${r.kind}, really ${realByKey.get(compositeKey(r.name, r.file))!.kind}`
-      )
-    expect(wrong).toEqual([])
-  })
-}
-
-describe('surface.md Policy table mirrors packages/aeg-core/src/index.ts exactly (O16)', () => {
-  const program = programFor(AEG_CORE_INDEX)
-  const real = moduleExports(program, AEG_CORE_INDEX)
-
-  it('has at least one real export to check (sanity)', () => {
-    expect(real.length).toBeGreaterThan(0)
-  })
-
-  checkTableAgainstReal(policyRows, real, '@attalabs/aeg-core')
-})
-
-// ---------------------------------------------------------------------------
 // Effects — apps/cli/src/lib/**, one module per file, no barrel
 // ---------------------------------------------------------------------------
 
-describe("surface.md Effects table mirrors apps/cli/src/lib/**'s real exports exactly (O16)", () => {
+describe("apps/cli/src/lib/**'s real exports are internally sane (O2)", () => {
   const configPath = ts.findConfigFile(CLI_ROOT, ts.sys.fileExists, 'tsconfig.json')
   if (!configPath) throw new Error('surface-spec-exports: could not find apps/cli/tsconfig.json')
   const configFile = ts.readConfigFile(configPath, ts.sys.readFile)
@@ -196,10 +96,34 @@ describe("surface.md Effects table mirrors apps/cli/src/lib/**'s real exports ex
   )
 
   const real = libFiles.flatMap((f) => moduleExports(program, f))
+  const realByName = new Map<string, RealExport>()
+  for (const e of real) realByName.set(e.name, e)
 
   it('has at least one real export to check (sanity)', () => {
     expect(real.length).toBeGreaterThan(0)
   })
 
-  checkTableAgainstReal(effectsRows, real, 'apps/cli/src/lib/**')
+  it("has at least one real export to check for @attalabs/aeg-core's barrel (sanity)", () => {
+    const aegCoreProgram = programFor(join(REPO_ROOT, 'packages', 'aeg-core', 'src', 'index.ts'))
+    const aegCoreReal = moduleExports(aegCoreProgram, join(REPO_ROOT, 'packages', 'aeg-core', 'src', 'index.ts'))
+    expect(aegCoreReal.length).toBeGreaterThan(0)
+  })
+
+  it('every retiresVia target that already names a real lib export names a function', async () => {
+    const cmdFileNames = readdirSync(CMD_DIR).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
+    const targets = new Set<string>()
+    for (const f of cmdFileNames) {
+      const mod = (await import(pathToFileURL(join(CMD_DIR, f)).href)) as {
+        SURFACE_EXEMPTIONS?: Record<string, SurfaceExemption>
+      }
+      for (const exemption of Object.values(mod.SURFACE_EXEMPTIONS ?? {})) targets.add(exemption.retiresVia)
+    }
+
+    const wrong = [...targets]
+      .filter((name) => realByName.has(name))
+      .filter((name) => realByName.get(name)!.kind !== 'function')
+      .map((name) => `${name}: real export is ${realByName.get(name)!.kind}, not a function`)
+
+    expect(wrong).toEqual([])
+  })
 })

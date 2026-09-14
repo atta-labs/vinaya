@@ -19,3 +19,9 @@ import { serveTaskToolsStdio } from '../lib/task-tools/server.js'
 export async function taskToolsServeCommand(_args: string[]): Promise<void> {
   await serveTaskToolsStdio(ownVersion())
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'task-tools serve': { date: '2026-09-14', callsToday: 2, retiresVia: 'sharedCommandShell' }
+}

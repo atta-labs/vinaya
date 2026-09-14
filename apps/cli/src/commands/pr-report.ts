@@ -361,3 +361,9 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
 
   process.exit(prReportExitCode({ gatesFailed: result.gatesFailed, tokensRefused }))
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'pr report': { date: '2026-09-13', callsToday: 8, retiresVia: 'collectTokens' }
+}

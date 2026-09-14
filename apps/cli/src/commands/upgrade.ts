@@ -909,3 +909,9 @@ function renderRingsMigration(migration: RingsMigration): string {
 export async function upgradeCommand(args: string[]): Promise<void> {
   process.exit(await runUpgrade(args, realDeps()))
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  upgrade: { date: '2026-09-08', callsToday: 22, retiresVia: 'sharedCommandShell' }
+}

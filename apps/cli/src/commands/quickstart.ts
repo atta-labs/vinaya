@@ -448,3 +448,9 @@ export async function runQuickstart(args: string[], deps: QuickstartDeps): Promi
 export async function quickstartCommand(args: string[]): Promise<void> {
   process.exit(await runQuickstart(args, realDeps()))
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  quickstart: { date: '2026-09-05', callsToday: 9, retiresVia: 'sharedCommandShell' }
+}

@@ -453,11 +453,6 @@ describe('the real manifest resolves at its configured path', () => {
 describe("the ops.ts → self-hosting.md binding's actual outcomes", () => {
   const CODE = 'apps/cli/src/lib/ops.ts'
   const DOC = 'apps/cli/specs/self-hosting.md'
-  // `apps/cli/src/lib/** -> apps/cli/specs/surface.md` (task 4, #418) is a
-  // second, directory-wide binding that overlaps this file's narrower one —
-  // additive by design (developer.md's Docs-to-keep-coherent rationale), so
-  // every case below now carries both bindings' outcomes, not just ops.ts's.
-  const SURFACE_DOC = 'apps/cli/specs/surface.md'
   const MANIFEST = readFileSync(join(__dirname, '../../..', DOC_OWNERS_PATH), 'utf8')
 
   it('the installed manifest actually carries this binding', () => {
@@ -469,13 +464,12 @@ describe("the ops.ts → self-hosting.md binding's actual outcomes", () => {
 
   it('fires when the code file changes alone', () => {
     const r = evaluateC5([CODE], MANIFEST, '', exists, false)
-    expect(r.errors).toHaveLength(2)
+    expect(r.errors).toHaveLength(1)
     expect(r.errors[0]).toContain('C5 doc-coverage')
-    expect(r.errors[1]).toContain('C5 doc-coverage')
   })
 
-  it('is satisfied when both bound docs change in the same diff', () => {
-    expect(evaluateC5([CODE, DOC, SURFACE_DOC], MANIFEST, '', exists, false).errors).toEqual([])
+  it('is satisfied when the bound doc changes in the same diff', () => {
+    expect(evaluateC5([CODE, DOC], MANIFEST, '', exists, false).errors).toEqual([])
   })
 
   it('is cleared by an actor-verified waiver label, with a note', () => {
@@ -490,30 +484,22 @@ describe("the ops.ts → self-hosting.md binding's actual outcomes", () => {
   // — a caller's argument list is that caller's test to own, and naming one here
   // would make this file state a falsehood the day that caller changes.
   it('Doc-neutral clears when the caller supplies getDiff and the diff is neutral', () => {
-    const body = `Doc-neutral: ${DOC} — comment-only edit\nDoc-neutral: ${SURFACE_DOC} — comment-only edit`
+    const body = `Doc-neutral: ${DOC} — comment-only edit`
     const r = evaluateC5([CODE], MANIFEST, body, exists, false, () => '+  // a clarifying comment\n')
     expect(r.errors).toEqual([])
   })
 
   it('Doc-neutral cannot clear when the caller supplies no getDiff', () => {
-    const body = `Doc-neutral: ${DOC} — comment-only edit\nDoc-neutral: ${SURFACE_DOC} — comment-only edit`
+    const body = `Doc-neutral: ${DOC} — comment-only edit`
     const r = evaluateC5([CODE], MANIFEST, body, exists, false)
-    expect(r.errors).toHaveLength(2)
+    expect(r.errors).toHaveLength(1)
     expect(r.errors[0]).toContain('doc-neutral-unverified')
-    expect(r.errors[1]).toContain('doc-neutral-unverified')
   })
 
   it('rejects a Doc-neutral declaration when the diff is substantive', () => {
-    const body = `Doc-neutral: ${DOC} — claimed neutral\nDoc-neutral: ${SURFACE_DOC} — claimed neutral`
+    const body = `Doc-neutral: ${DOC} — claimed neutral`
     const r = evaluateC5([CODE], MANIFEST, body, exists, false, substantiveDiff)
-    expect(r.errors).toHaveLength(2)
-    expect(r.errors[0]).toContain('doc-neutral-unverified')
-    expect(r.errors[1]).toContain('doc-neutral-unverified')
-  })
-
-  it('also fires on a sibling in the same directory, via the directory-wide surface.md binding', () => {
-    const r = evaluateC5(['apps/cli/src/lib/config.ts'], MANIFEST, '', exists, false)
     expect(r.errors).toHaveLength(1)
-    expect(r.errors[0]).toContain(SURFACE_DOC)
+    expect(r.errors[0]).toContain('doc-neutral-unverified')
   })
 })

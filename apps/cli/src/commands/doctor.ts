@@ -1074,3 +1074,9 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
 export async function doctorCommand(args: string[]): Promise<void> {
   process.exit(await runDoctor(args, realDeps()))
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  doctor: { date: '2026-09-05', callsToday: 17, retiresVia: 'sharedCommandShell' }
+}

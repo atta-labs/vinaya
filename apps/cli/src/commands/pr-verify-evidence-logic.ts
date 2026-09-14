@@ -223,3 +223,12 @@ export function renderVerdict(verdict: EvidenceVerdict): string {
   }
   return lines.join('\n')
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+// Not a command — colocated lib code (see apps/cli/tests/surface-index.test.ts's
+// orphan-file check). Retires by moving to apps/cli/src/lib/ in the next task
+// touching pr-verify-evidence.
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'pr-verify-evidence-logic.ts': { date: '2026-09-05', callsToday: 0, retiresVia: 'apps/cli/src/lib/' }
+}

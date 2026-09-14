@@ -121,3 +121,10 @@ export async function issueEditCommand(args: string[]): Promise<void> {
 
   await writeValidatedIssueEdit({ issueRef, ghArgs, bodyResult, json, retryCommand: RETRY_EDIT })
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'issue create': { date: '2026-09-11', callsToday: 11, retiresVia: 'forgeWrite' },
+  'issue edit': { date: '2026-09-11', callsToday: 12, retiresVia: 'forgeWrite' }
+}

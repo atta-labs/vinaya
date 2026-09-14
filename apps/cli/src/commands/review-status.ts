@@ -99,3 +99,9 @@ export async function reviewStatusCommand(args: string[]): Promise<void> {
   const clean = status.state === 'CONTINUE' && behind === 0
   process.exit(clean ? 0 : 1)
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'review status': { date: '2026-09-13', callsToday: 3, retiresVia: 'devReviewLoop' }
+}

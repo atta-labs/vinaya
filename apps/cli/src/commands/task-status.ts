@@ -135,3 +135,9 @@ export async function taskStatusCommand(args: string[]): Promise<void> {
   const [tranche, id] = positional as [string, string]
   runSingle(tranche, id, json)
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'task status': { date: '2026-09-12', callsToday: 5, retiresVia: 'taskStatus' }
+}

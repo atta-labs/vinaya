@@ -902,10 +902,11 @@ describe('VinayaConfigSchema.prePush / .report — additive-only', () => {
   })
 
   // The pre-push hook always runs the CLI's surface-spec export test — a
-  // shared-package export with no surface row is refused at the push, not
-  // first seen in CI. Reachability can never select this test on its own
-  // merits (it asserts against `surface.md`, which nothing imports), so the
-  // fixture proves the FORCED path: a diff touching only
+  // stale `retiresVia` target on a real lib export is caught at the push,
+  // not first seen in CI. Reachability can never select this test on its
+  // own merits (it introspects `packages/aeg-core/src/index.ts` and
+  // `apps/cli/src/lib/**` via the TypeScript compiler API, not a static
+  // import), so the fixture proves the FORCED path: a diff touching only
   // `packages/aeg-core/src/index.ts` still selects it, through this repo's
   // own real `vinaya.config.json` and the real workspace package graph.
   it('a diff touching only packages/aeg-core/src/index.ts still selects surface-spec-exports.test.ts, via alwaysRun', async () => {
