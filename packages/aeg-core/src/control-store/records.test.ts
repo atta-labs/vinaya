@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  parseEffectRecord,
   parseInputRecord,
   parseOwnershipRecord,
   parseRunRecord,
@@ -148,5 +149,39 @@ describe('parseTransitionRecord', () => {
     }
     expect(parseTransitionRecord(JSON.stringify(base)).status).toBe('ok')
     expect(parseTransitionRecord(JSON.stringify({ ...base, detail: 'confidence' })).status).toBe('ok')
+  })
+})
+
+describe('parseEffectRecord', () => {
+  const base = {
+    version: 1 as const,
+    kind: 'effect' as const,
+    task: 552,
+    key: 'round-1-summary',
+    operation: 'pr-comment',
+    target: 'pr:600',
+    inputVersion: 1,
+    payloadDigest: 'deadbeef',
+    status: 'started' as const,
+    recordedAt: '2026-09-14T00:00:00.000Z'
+  }
+
+  it('accepts a started record with no url, and a verified record with one', () => {
+    expect(parseEffectRecord(JSON.stringify(base)).status).toBe('ok')
+    expect(
+      parseEffectRecord(JSON.stringify({ ...base, status: 'verified', url: 'https://example.com/c/1' })).status
+    ).toBe('ok')
+  })
+
+  it('accepts an uncertain record', () => {
+    expect(parseEffectRecord(JSON.stringify({ ...base, status: 'uncertain' })).status).toBe('ok')
+  })
+
+  it('refuses an out-of-union status as corrupt', () => {
+    expect(parseEffectRecord(JSON.stringify({ ...base, status: 'posted' })).status).toBe('corrupt')
+  })
+
+  it('reports absent when nothing was ever written', () => {
+    expect(parseEffectRecord(undefined)).toEqual({ status: 'absent' })
   })
 })

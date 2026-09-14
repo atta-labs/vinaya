@@ -109,6 +109,8 @@ import {
   resolvePrincipalAllowlist
 } from './config'
 import { printJson } from './envelope'
+import type { EffectIdentity, EffectReconcileResult } from './effects.js'
+import { sha256Hex } from './effects.js'
 
 // ---------------------------------------------------------------------------
 // Arg errors — a malformed `--body-file` is a refusal in the CheckError shape,
@@ -1784,6 +1786,11 @@ export function countMarkerComments(bodies: string[], prefix: string): number {
   return bodies.filter((b) => b.startsWith(prefix)).length
 }
 
+/** The exact bytes `postMarkedComment` posts — exported so a caller computing a payload digest for reconciliation (`EffectIdentity.payloadDigest`, `apps/cli/src/lib/effects.ts`) hashes the SAME string this function actually sends, rather than a hand-reconstructed copy that could drift from it. */
+export function markedCommentBody(marker: string, body: string): string {
+  return `${marker}\n${body}\n`
+}
+
 /**
  * Posts `body`, prefixed with `marker` on its own first line, as a comment on
  * an Issue or PR — the same buffered-temp-file shape `pr.ts`'s
@@ -1791,7 +1798,7 @@ export function countMarkerComments(bodies: string[], prefix: string): number {
  * printed. A failed post is a hard refusal: nothing durable was recorded.
  */
 export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: string, body: string): string {
-  const commentBody = `${marker}\n${body}\n`
+  const commentBody = markedCommentBody(marker, body)
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-marked-comment-'))
   const tmp = join(dir, 'comment.md')
   writeFileSync(tmp, commentBody, 'utf8')
@@ -1811,5 +1818,71 @@ export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: str
     ])
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * An `EffectReconciler` (`apps/cli/src/lib/effects.ts`) over `gh {issue,pr}
+ * view --json comments`: fetches every comment on `ref`, and reports
+ * `'confirmed'` (with that comment's own url) the instant a PRINCIPAL-
+ * AUTHORED one's `body` hashes to `identity.payloadDigest` — exact-body
+ * matching, the same assumption `commands/review-post.ts`'s own
+ * `verifyPostedEscalation` already makes (`comments.find((c) => c.body ===
+ * postedBody)`) for a re-fetched comment against what this process itself
+ * posted, but author-filtered first through the SAME `isPrincipal`/
+ * `resolvePrincipalAllowlist` machinery `principalBodies` (`review-post.ts`)
+ * already uses for exactly this trust boundary (security review, round 2,
+ * HIGH): every effect this reconciler is wired to reconciles a comment THIS
+ * process itself posted as an allowlisted principal, so a byte-identical
+ * body from anyone else is not evidence of that — without this filter, any
+ * actor able to comment on `ref` could pre-post a spoofed body and have
+ * `EffectExecutor` mark the effect `'verified'` against it, skipping the
+ * real post entirely. A `gh` failure, or JSON this shape does not parse, is
+ * reported `'ambiguous'` — never treated as "confirmed absent," since a
+ * failed read proves nothing about the remote. Only a SUCCESSFUL read with
+ * no matching principal-authored body is `'absent'`.
+ */
+export function reconcileGhComment(
+  kind: 'issue' | 'pr',
+  ref: string
+): (identity: EffectIdentity) => EffectReconcileResult {
+  return (identity) => {
+    let raw: string
+    try {
+      // `env: process.env` passed explicitly (unlike this file's other
+      // `execFileSync('gh', …)` call sites) — proven necessary for this
+      // one during review-fix testing: a bare command's own executable
+      // resolution did not consistently pick up a live-mutated
+      // `process.env.PATH` without it, on the Bun version this repo pins,
+      // making a fake `gh` on `PATH` unreliable to test against otherwise.
+      // A no-op in production, where `process.env` is never mutated.
+      raw = execFileSync('gh', [kind, 'view', ref, '--json', 'comments'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: process.env
+      })
+    } catch (err) {
+      return {
+        outcome: 'ambiguous',
+        reason: `could not fetch ${kind} ${ref}'s comments (\`gh ${kind} view --json comments\`): ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+    let parsed: { comments: { body: string; url?: string; author?: { login?: string | null } | null }[] }
+    try {
+      parsed = JSON.parse(raw) as {
+        comments: { body: string; url?: string; author?: { login?: string | null } | null }[]
+      }
+    } catch (err) {
+      return {
+        outcome: 'ambiguous',
+        reason: `could not parse ${kind} ${ref}'s comments JSON: ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+    const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+    const match = parsed.comments.find(
+      (c) => isPrincipal(c.author?.login ?? null, allowlist) && sha256Hex(c.body) === identity.payloadDigest
+    )
+    if (match) return { outcome: 'confirmed', url: match.url ?? '' }
+    return { outcome: 'absent' }
   }
 }

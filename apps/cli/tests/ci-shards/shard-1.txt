@@ -27,6 +27,7 @@ tests/detect.test.ts
 tests/diff-evidence.test.ts
 tests/doctrine-pointer.test.ts
 tests/doctrine.test.ts
+tests/lib/effects/executor.test.ts
 tests/import-boundary.test.ts
 tests/lib/dev-review-loop.test.ts
 tests/lib/dev-review-loop/reviewer-dispatch.test.ts
@@ -42,3 +43,6 @@ tests/tracked-hooks.test.ts
 tests/upgrade.test.ts
 tests/waiver.test.ts
 tests/lib/task-tools/handlers.test.ts
+tests/lib/dispatch/reconcile-launch.test.ts
+tests/lib/dispatch/outcomes.test.ts
+tests/lib/dispatch/launch-intent.test.ts
