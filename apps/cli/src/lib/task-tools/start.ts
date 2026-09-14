@@ -27,6 +27,11 @@
  *     identity (the task's tranche/id — its `task/<tranche>/<n>` branch is the
  *     addressing scheme every other tool resolves through). The run itself
  *     continues independently; its PR is discoverable through `task_status`.
+ *     A launcher that fails only asynchronously (a missing binary raising
+ *     ENOENT after `spawn` already returned) reports through a callback,
+ *     never a throw — by then the response is already on its way, so the
+ *     claim is released instead, and the failure is logged rather than
+ *     left to crash the whole server on an unhandled `error` event.
  *
  * Attended mode only, the caller's own credentials: the detached run inherits
  * this server's environment, which in attended mode is the operator's own. There
@@ -71,8 +76,20 @@ export type TaskStartDeps = {
   /** The local checkout's stable identity for the request-identity computation — never network-resolved, see this file's own header. */
   repoRoot: () => string | null
   store: RequestStore
-  /** Starts the run detached — it must not block on the run's completion, and it must survive this process exiting. */
-  launch: (target: { tranche: string; id: string }, meta: { requestId: string; caller: string }) => void
+  /**
+   * Starts the run detached — it must not block on the run's completion, and
+   * it must survive this process exiting. A failure that surfaces only
+   * asynchronously, after this call has already returned (a spawned
+   * process's own `error` event), is reported through `onAsyncFailure`
+   * instead of a throw or rejection — by the time it fires, the claim is
+   * already recorded and the caller already told the run started, so there
+   * is no request left to fail synchronously.
+   */
+  launch: (
+    target: { tranche: string; id: string },
+    meta: { requestId: string; caller: string },
+    onAsyncFailure: (err: Error) => void
+  ) => void
   now: () => string
 }
 
@@ -129,12 +146,21 @@ export const defaultRequestStore: RequestStore = {
  */
 export const TASK_RUN_COMMAND_ENV = 'VINAYA_TASK_RUN_COMMAND'
 
-export function defaultLaunch(target: { tranche: string; id: string }): void {
+export function defaultLaunch(
+  target: { tranche: string; id: string },
+  _meta: { requestId: string; caller: string },
+  onAsyncFailure: (err: Error) => void
+): void {
   const program = process.env[TASK_RUN_COMMAND_ENV]?.trim() || 'vinaya'
   const child = spawn(program, ['task', 'run', target.tranche, target.id], {
     detached: true,
     stdio: 'ignore'
   })
+  // A missing/misconfigured launcher (ENOENT) surfaces here, asynchronously,
+  // not as a throw from `spawn` itself. An `error` event with no listener is
+  // fatal to the whole process — it MUST be handled, never left to the
+  // default EventEmitter behavior.
+  child.on('error', (err) => onAsyncFailure(err instanceof Error ? err : new Error(String(err))))
   // Unref so the run outlives this server process — the whole point of a
   // detached start.
   child.unref()
@@ -192,7 +218,22 @@ export function createTaskStartHandler(
 
     if (claim.claimed) {
       try {
-        deps.launch({ tranche, id }, { requestId, caller: ctx.caller.id })
+        deps.launch({ tranche, id }, { requestId, caller: ctx.caller.id }, (err) => {
+          // The launch failed only after this call already returned "started"
+          // to the caller — there is no request left to fail synchronously.
+          // Release the claim so a retry, once the underlying problem (a
+          // missing launcher binary) is fixed, can actually start the run
+          // instead of replaying one that never began. Never throw: this runs
+          // from the child process's own `error` event, and an escaped
+          // exception here is exactly the process-crashing failure this
+          // callback exists to prevent.
+          try {
+            deps.store.release(requestId)
+          } catch {
+            // best-effort
+          }
+          console.error(`task_start: ${tranche}/${id} failed to launch: ${err.message}`)
+        })
       } catch (err) {
         // A synchronous launch failure (a missing launcher binary) must not
         // leave a claimed-but-never-started identity that blocks every retry —

@@ -269,7 +269,26 @@ export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions):
         if (typeof params.name !== 'string') {
           return rpcError(id, -32602, 'Invalid params: tools/call requires a string `name`')
         }
-        const outcome = await dispatchToolCall(handlers, params.name, params.arguments ?? {}, ctx)
+        // A handler can throw or reject for reasons that have nothing to do
+        // with the call's own validity (`task_status`'s forge read shells out
+        // to `gh`, which fails on a transient network error or missing auth).
+        // That must become one caller's refusal, never an uncaught rejection —
+        // this `await` sits inside `handle`'s own caller (`handleLine`'s
+        // "never throws" contract), and an escaped rejection here is fatal to
+        // the whole process, taking every other in-flight and future call
+        // down with it.
+        let outcome: TaskToolCallResult<unknown>
+        try {
+          outcome = await dispatchToolCall(handlers, params.name, params.arguments ?? {}, ctx)
+        } catch (err) {
+          outcome = {
+            ok: false,
+            error: taskToolError(
+              'infrastructure',
+              `${params.name} failed: ${err instanceof Error ? err.message : String(err)}`
+            )
+          }
+        }
         return rpcResult(id, toolCallResult(outcome))
       }
       default:

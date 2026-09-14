@@ -44,3 +44,4 @@ tests/serial-lock.test.ts
 tests/surface-spec-exports.test.ts
 tests/lib/task-tools/read.test.ts
 tests/lib/task-tools/protocol.test.ts
+tests/lib/task-tools/server.test.ts

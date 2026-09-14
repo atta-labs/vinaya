@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
-import { createTaskStartHandler, type RequestStore, type StartRecord } from '../../../src/lib/task-tools/start.js'
+import {
+  createTaskStartHandler,
+  defaultLaunch,
+  TASK_RUN_COMMAND_ENV,
+  type RequestStore,
+  type StartRecord
+} from '../../../src/lib/task-tools/start.js'
 
 /**
  * `task_start` (O2) driven in-process with injected deps: an in-memory
@@ -153,5 +159,52 @@ describe('task_start handler', () => {
     if (retry.ok) expect(retry.result.started).toBe(true)
     // one recorded push from the retry (the failed attempt threw before recording nothing durable)
     expect(launches).toHaveLength(1)
+  })
+
+  it('releases the claimed identity when the launch fails asynchronously, without throwing', async () => {
+    // The real launcher (`defaultLaunch`) reports a failure that surfaces only
+    // after `spawn` already returned (ENOENT for a missing binary) through the
+    // third `onAsyncFailure` callback, not a throw — this pins that the
+    // handler wires that callback to a claim release, and that invoking it
+    // never itself throws back into the caller (a spawned child's own `error`
+    // event has nowhere to propagate a throw to).
+    const { store, map } = memStore()
+    let capturedFailure: ((err: Error) => void) | undefined
+    const handler = createTaskStartHandler({
+      repoRoot: () => REPO_ROOT,
+      store,
+      launch: (_target, _meta, onAsyncFailure) => {
+        capturedFailure = onAsyncFailure
+      },
+      now: () => '2026-01-01T00:00:00.000Z'
+    })
+
+    const result = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.result.started).toBe(true)
+    expect(map.size).toBe(1) // claimed while the launch is still "in flight"
+
+    expect(capturedFailure).toBeDefined()
+    expect(() => capturedFailure?.(new Error('spawn vinaya ENOENT'))).not.toThrow()
+    expect(map.size).toBe(0) // released once the async failure is reported
+
+    const retry = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
+    expect(retry.ok).toBe(true)
+    if (retry.ok) expect(retry.result.started).toBe(true) // the identity is free to start again
+  })
+
+  it('defaultLaunch itself reports a real ENOENT through onAsyncFailure, never as an unhandled error', async () => {
+    const original = process.env[TASK_RUN_COMMAND_ENV]
+    process.env[TASK_RUN_COMMAND_ENV] = '/does/not/exist/vinaya-launcher-fixture'
+    try {
+      const failure = await new Promise<Error>((resolve) => {
+        defaultLaunch({ tranche: 'task-operator-v1', id: '2' }, { requestId: 'req_x', caller: 'operator-1' }, resolve)
+      })
+      expect(failure.message).toContain('ENOENT')
+    } finally {
+      if (original === undefined) delete process.env[TASK_RUN_COMMAND_ENV]
+      else process.env[TASK_RUN_COMMAND_ENV] = original
+    }
   })
 })
