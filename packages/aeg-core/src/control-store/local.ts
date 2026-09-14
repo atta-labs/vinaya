@@ -440,9 +440,9 @@ export function readManifest(
 export type LoopStateInput = Omit<LoopStateRecord, 'version' | 'kind' | 'task'>
 
 /**
- * Writes the dev-review-loop's authoritative recovery snapshot for `task`
- * (`control-store-v1` task 4, O1) — phase, round, budgets, held-result and
- * delivered-findings identity. Deliberately NOT epoch-fenced, the same
+ * Writes the dev-review-loop's authoritative recovery snapshot for `task` —
+ * phase, round, budgets, held-result and delivered-findings identity.
+ * Deliberately NOT epoch-fenced, the same
  * precedent `writeManifest` sets: see `LoopStateRecordSchema`'s own doc
  * comment. Overwritten in place on every transition, unlike
  * `writeRun`/`writeInput`.

@@ -271,17 +271,17 @@ export function routeCompletionEvents(
 export const MAX_GATE_STALLED_TURNS = 2
 
 /**
- * `control-store-v1` task 4, O2: the bound on this task's own cumulative
+ * O2: the bound on this task's own cumulative
  * `'infrastructure'`/`'stale_driver'` pause count — never reset by a
  * restart, unlike `MAX_GATE_STALLED_TURNS` (a per-episode, in-memory
- * counter already bounded within one process's own round loop).  Small: the
+ * counter already bounded within one process's own round loop). Small: the
  * failure mode this bounds is a task that keeps hitting the driver's own
  * recoverable-hiccup class of pause and getting `--resume`d past it forever,
  * never a genuine review round that needs many honest attempts.
  */
 export const MAX_INFRASTRUCTURE_RETRIES = 5
 
-// --- authoritative loop-state recovery (control-store-v1 task 4, O1) -------
+// --- authoritative loop-state recovery -------------------------------------
 
 /**
  * The snapshot `persistLoopState` writes and `loadLoopState`/

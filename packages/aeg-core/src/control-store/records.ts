@@ -151,16 +151,15 @@ export const LoopBudgetsSchema = z
     mechanicalRetries: z.number().int().nonnegative(),
     /** The substantive review-round count — bounded by `ReviewPolicy.maxRounds`. */
     reviewRounds: z.number().int().nonnegative(),
-    /** The cumulative count of `'infrastructure'`/`'stale_driver'` pauses this task has ever hit — never reset by a restart, unlike the in-memory counters above (`apps/cli/specs/loop.md`, `control-store-v1` task 4). */
+    /** The cumulative count of `'infrastructure'`/`'stale_driver'` pauses this task has ever hit — never reset by a restart, unlike the in-memory counters above (`apps/cli/specs/loop.md`). */
     infrastructureRetries: z.number().int().nonnegative()
   })
   .strict()
 export type LoopBudgets = z.infer<typeof LoopBudgetsSchema>
 
 /**
- * The dev-review-loop's own authoritative recovery record (`control-store-v1`
- * task 4, Issue #554, O1) — phase, round, budgets, held-result and
- * delivered-findings identity, written by the driver
+ * The dev-review-loop's own authoritative recovery record — phase, round,
+ * budgets, held-result and delivered-findings identity, written by the driver
  * (`apps/cli/src/lib/dev-review-loop/round-assess.ts`'s `persistLoopState`)
  * on every round transition and read back on start, attach and resume
  * (`pause-resume.ts`'s `recoverLoopState`), replacing the driver's prior

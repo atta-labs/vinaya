@@ -704,7 +704,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // `--resume` continues it on the bare command, no Principal ruling
     // required. Every OTHER pause reason is unchanged: a genuine decision
     // point still refuses to resume without one.
-    // (`control-store-v1` task 4, O2): bounded, and the bound is READ from
+    // Bounded, and the bound is READ from
     // the control store rather than reset by this restart — a task that
     // keeps hitting `'infrastructure'`/`'stale_driver'` and getting resumed
     // past it forever, with no genuine review round in between, exhausts
@@ -951,7 +951,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
     let round = resumeFrom ? resumeFrom.round : 1
 
-    // (`control-store-v1` task 4, O1/O3): the authoritative recovery read —
+    // The authoritative recovery read —
     // this task's control-store `loop_state` record, if one has ever been
     // persisted. `'absent'` seeds every budget at zero, exactly the prior
     // behavior for a fresh task or one that predates this mechanism.
@@ -1687,7 +1687,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const detail = `base moved from ${baseHeadAtStart} to ${currentBaseHead}, touching this driver's own code (${touching.join('; ')}) — ${reexecFailureNote}`
       await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
       decision = { type: 'pause', reason: 'stale_driver', detail }
-      // (`control-store-v1` task 4, O2): cumulative, never reset by a
+      // Cumulative, never reset by a
       // restart — see `MAX_INFRASTRUCTURE_RETRIES`'s own doc comment.
       infrastructureRetries += 1
       await d.flushOutbox(task)
@@ -1782,7 +1782,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // `no_progress`, not another redelivery drifting toward a
               // confidence collapse.
               const marker = join(root, 'dev-review-loop', String(task), `round-${held.round}-attach-redelivered`)
-              // (`control-store-v1` task 4, O3): the control-store
+              // The control-store
               // `deliveredFindings` identity backs up the SAME "already
               // delivered" fact the local marker file records — checked
               // alongside it, never instead of it, so a machine whose local
@@ -1859,7 +1859,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // ahead.
       if (!resumeFrom && historyApplies) round = Math.max(round, nextRoundNumber(loopHistory.rounds))
 
-      // (`control-store-v1` task 4, O1/O3): the control store's own
+      // The control store's own
       // recovered round is the authoritative one — `Math.max` only ever
       // advances `round` here, never regresses it, so every mechanism
       // above (the ruling ordinal on `--resume`, the locally-held
@@ -1947,7 +1947,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         detail: `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       keepLockAlive = true
-      // (`control-store-v1` task 4, O1/O2): the SAME durable snapshot every
+      // The SAME durable snapshot every
       // other pause reason gets, best-effort like the write itself already
       // is — a genuinely uncaught error is exactly the case this record
       // exists for, so the next attach/resume recovers this round's
@@ -2133,7 +2133,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 // read (the head never moved), so this feeds the DRIVER's own
                 // bounded stall counter instead of `fetchCiConclusion` again.
                 gateStalledStreak += 1
-                // (`control-store-v1` task 4, O2): persisted the moment it
+                // Persisted the moment it
                 // increments, not only once a pause eventually fires — a
                 // kill mid-episode (the process dies before ever reaching
                 // the bound below) must not hand the next attach a fresh
@@ -2440,7 +2440,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // comment, above).
               writeHeldVerdict(root, task, round, 'reviewer', reviewer.verdict.rendered)
               writeHeldVerdict(root, task, round, 'security', security.verdict.rendered)
-              // (`control-store-v1` task 4, O1): the round whose verdict is
+              // The round whose verdict is
               // now held on disk, awaiting delivery or publish — recovered
               // so a crash right after this write, before the round's own
               // outcome is even decided, is never silently forgotten.
@@ -2588,7 +2588,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             pausedAt: new Date().toISOString()
           })
           postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail)
-          // (`control-store-v1` task 4, O1): every pause, regardless of
+          // Every pause, regardless of
           // which branch above decided it, funnels through here exactly
           // once before returning — the one call site that makes every
           // pause reason's final round/budget/held-result state durable.

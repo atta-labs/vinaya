@@ -210,7 +210,7 @@ export function readPauseState(root: string, task: number): PauseState | null {
   }
 }
 
-// --- authoritative loop-state recovery (control-store-v1 task 4, O1/O3) ----
+// --- authoritative loop-state recovery --------------------------------------
 
 export type RecoveredLoopState = {
   round: number
