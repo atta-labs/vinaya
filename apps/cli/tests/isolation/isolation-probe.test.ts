@@ -117,15 +117,27 @@ describe('buildSandboxProfile', () => {
   })
 })
 
-test.skipIf(!isSandboxSupported())('confined run blocks every applicable negative', () => {
-  const results = runConfined()
-  for (const name of PROBE_CHECK_NAMES) {
-    const outcome = results[name]
-    expect(outcome === false || outcome === null, `check "${name}" was accessible while confined: ${outcome}`).toBe(
-      true
-    )
+test.skipIf(!isSandboxSupported())(
+  'confined run blocks every applicable negative, distinguishing a genuine n/a from a silently-collapsed one',
+  () => {
+    // A bare `null` means the resource genuinely doesn't exist on this host
+    // (no ssh-agent, no osxkeychain helper) — the ONLY case a confined `null`
+    // is allowed to mean the same thing. Without this pairing, a confined
+    // `null` caused by an input that never reached the child (the bun/argv
+    // defect `ProbeOverrides` exists to close) is indistinguishable from a
+    // real n/a, and the suite stays green either way.
+    const bare = runBare()
+    const confined = runConfined()
+    for (const name of PROBE_CHECK_NAMES) {
+      const outcome = confined[name]
+      const genuinelyNotApplicable = outcome === null && bare[name] === null
+      expect(
+        outcome === false || genuinelyNotApplicable,
+        `check "${name}" was accessible while confined (confined: ${outcome}, bare: ${bare[name]})`
+      ).toBe(true)
+    }
   }
-})
+)
 
 test.skipIf(!isSandboxSupported())('bare run leaves every applicable check accessible', () => {
   const results = runBare()

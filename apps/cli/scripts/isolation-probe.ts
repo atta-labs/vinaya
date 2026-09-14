@@ -50,6 +50,38 @@ const SECRET_ENV = 'VINAYA_PROBE_SECRET'
 const MARKER_BASENAME = '.vinaya-isolation-probe-marker'
 const SECURITY_BIN = '/usr/bin/security'
 
+/** Overrides for checks 2/4/5 (home, credentialHelper, socket), sourced
+ * from CLI flags rather than `process.env`. A confined bun child's own
+ * `process.env` reads back completely empty under this profile's
+ * `(deny default)` baseline — observed live: even PATH/HOME/a synthetic
+ * var, all explicitly set on the spawning `env` object, come back absent
+ * inside the sandboxed child, while the identical env survives fine for
+ * `/usr/bin/env` and for `node` under the same profile, so this is a
+ * bun-under-Seatbelt-confinement effect, not a sandbox-vs-kernel one.
+ * `process.argv` is unaffected by it, so `runConfined` passes these three
+ * values as flags instead of env vars; `runBare` (unconfined, where
+ * `process.env` is unaffected) keeps using env and this stays `{}` there,
+ * falling back to the env reads below. */
+export type ProbeOverrides = {
+  realHome?: string
+  credentialHelperPath?: string
+  sshSockPath?: string
+}
+
+/** Reads `--real-home <path>`, `--cred-helper <path>` and `--ssh-sock
+ * <path>` out of an argv array. See {@link ProbeOverrides}. */
+export function parseProbeOverrides(argv: readonly string[]): ProbeOverrides {
+  const flagValue = (flag: string): string | undefined => {
+    const index = argv.indexOf(flag)
+    return index !== -1 && index + 1 < argv.length ? argv[index + 1] : undefined
+  }
+  return {
+    realHome: flagValue('--real-home'),
+    credentialHelperPath: flagValue('--cred-helper'),
+    sshSockPath: flagValue('--ssh-sock')
+  }
+}
+
 /** Interprets a spawn's `error.code`: `'unavailable'` (the target binary
  * doesn't exist on this host — nothing to grant or deny), `'blocked'` (the
  * sandbox refused the exec), or `'ran'` (it executed, regardless of its own
@@ -94,8 +126,12 @@ function resolveSshSocketPath(): string | null {
 /** Runs the six checks in THIS process. Called both by `--report` mode
  * (re-invoked, bare or under sandbox-exec) and directly by anything that
  * wants an in-process read (a future consumer wiring this into a test
- * fixture without a subprocess round-trip). */
-export async function runProbeChecks(): Promise<ProbeResults> {
+ * fixture without a subprocess round-trip). `overrides` carries checks
+ * 2/4/5's inputs when the caller is the confined child (see
+ * {@link ProbeOverrides}); each falls back to its env-var reading when
+ * omitted, which is how `runBare`'s unconfined child (env intact there)
+ * and any direct in-process caller still work unchanged. */
+export async function runProbeChecks(overrides: ProbeOverrides = {}): Promise<ProbeResults> {
   const results = {} as ProbeResults
 
   // 1. Environment — a value the caller holds but did not explicitly
@@ -106,7 +142,7 @@ export async function runProbeChecks(): Promise<ProbeResults> {
   // 2. HOME — read a marker file the orchestrator drops in the REAL home
   // directory before dispatch; a confined child's own HOME env points
   // elsewhere, so the real path is passed explicitly for the probe only.
-  const realHome = process.env[REAL_HOME_ENV]
+  const realHome = overrides.realHome ?? process.env[REAL_HOME_ENV]
   if (realHome) {
     try {
       readFileSync(join(realHome, MARKER_BASENAME), 'utf8')
@@ -155,7 +191,8 @@ export async function runProbeChecks(): Promise<ProbeResults> {
   }
 
   // 4. Credential helper — attempt to exec the OS-level helper directly.
-  const credentialHelperPath = process.env.VINAYA_PROBE_CRED_HELPER || resolveCredentialHelperPath()
+  const credentialHelperPath =
+    overrides.credentialHelperPath || process.env.VINAYA_PROBE_CRED_HELPER || resolveCredentialHelperPath()
   if (credentialHelperPath) {
     const r = spawnSync(credentialHelperPath, ['get'], {
       input: 'protocol=https\nhost=github.com\n\n',
@@ -168,7 +205,7 @@ export async function runProbeChecks(): Promise<ProbeResults> {
   }
 
   // 5. Socket — connect to the ssh-agent (or equivalent) unix socket.
-  const sshSock = process.env.VINAYA_PROBE_SSH_SOCK || resolveSshSocketPath()
+  const sshSock = overrides.sshSockPath || process.env.VINAYA_PROBE_SSH_SOCK || resolveSshSocketPath()
   results.socket = await resolveSocketCheck(sshSock)
 
   // 6. Parent process — signal-0 liveness probe against the parent pid.
@@ -207,7 +244,7 @@ function resolveSocketCheck(sshSock: string | null): Promise<ProbeOutcome> {
 }
 
 async function runReportMode(): Promise<void> {
-  const results = await runProbeChecks()
+  const results = await runProbeChecks(parseProbeOverrides(process.argv))
   process.stdout.write(JSON.stringify(results))
 }
 
@@ -297,18 +334,36 @@ export function runConfined(): ProbeResults {
   })
 
   try {
-    const result = spawnSync('/usr/bin/sandbox-exec', ['-f', profilePath, execPath, scriptPath, '--report'], {
-      cwd: scratchDir,
-      encoding: 'utf8',
-      env: {
-        PATH: process.env.PATH,
-        HOME: fakeHome,
-        [REAL_HOME_ENV]: realHome,
-        VINAYA_PROBE_CRED_HELPER: credentialHelperPath,
-        VINAYA_PROBE_SSH_SOCK: process.env.SSH_AUTH_SOCK ?? ''
-        // Deliberately no VINAYA_PROBE_SECRET — this IS check 1's assertion.
+    // Checks 2/4/5's inputs ride as CLI flags, not env vars: a confined
+    // bun child's own `process.env` reads back completely empty under
+    // this profile (see {@link ProbeOverrides}), so an env var set here
+    // would silently never reach `runProbeChecks` at all — `process.argv`
+    // is unaffected and is what actually crosses the confinement boundary.
+    const result = spawnSync(
+      '/usr/bin/sandbox-exec',
+      [
+        '-f',
+        profilePath,
+        execPath,
+        scriptPath,
+        '--report',
+        '--real-home',
+        realHome,
+        '--cred-helper',
+        credentialHelperPath,
+        '--ssh-sock',
+        sshSockCanon
+      ],
+      {
+        cwd: scratchDir,
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH,
+          HOME: fakeHome
+          // Deliberately no VINAYA_PROBE_SECRET — this IS check 1's assertion.
+        }
       }
-    })
+    )
     if (result.status !== 0 || !result.stdout) {
       throw new Error(`confined probe process exited ${result.status} — stderr: ${result.stderr || '(empty)'}`)
     }
