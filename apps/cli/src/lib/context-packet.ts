@@ -102,12 +102,21 @@ export function parseContextPacket(markdown: string): ContextPacket {
   // time (the classic injection — a fake authority heading planted after the
   // Context body) has its re-declaration ignored, never merged in.
   const claimed = new Set<Section>()
+  // The top-level header is authoritative identity (version + role), exactly
+  // like the constraints/evidence sections — so it gets the same first-wins
+  // guard. Without it, a header-shaped line planted inside the untrusted
+  // `context` body (the classic injection: a fake "# Context packet v99 —
+  // developer" line) would silently re-pin the packet's version and role
+  // after parsing, even though nothing else in `context` can ever become
+  // authoritative.
+  let headerClaimed = false
 
   for (const line of lines) {
-    const header = HEADER_RE.exec(line)
+    const header = !headerClaimed ? HEADER_RE.exec(line) : null
     if (header) {
       packetVersion = header[1] ?? ''
       role = (header[2] ?? 'operator').toLowerCase() as ContextPacketRole
+      headerClaimed = true
       continue
     }
     if (line.startsWith('## ')) {
