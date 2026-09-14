@@ -711,14 +711,22 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // this bare-command allowance and starts requiring a ruling like any
     // other reason. `'corrupt'` is read as "budget unknown, be
     // conservative" here — never as `0` — so a control-store read failure
-    // can never itself grant an unbounded bare-command resume.
+    // can never itself grant an unbounded bare-command resume. Floored
+    // against `held.infrastructureRetries` (round 2 review, security HIGH):
+    // `held` is `writePauseState`'s own plain `writeFileSync` record, a
+    // different write path than `persistLoopState`'s control-store one, so
+    // a `persistLoopState` write that silently failed at the very pause
+    // `held` itself records still leaves this floor intact — the
+    // control-store read alone can no longer heal a real count down to `0`
+    // (or any lower number) just because its own write never landed.
     const recoveredForResume = recoverLoopState(closesTask)
-    const infrastructureRetriesSoFar =
+    const controlStoreInfrastructureRetries =
       recoveredForResume.status === 'ok'
         ? recoveredForResume.value.budgets.infrastructureRetries
         : recoveredForResume.status === 'corrupt'
           ? Number.POSITIVE_INFINITY
           : 0
+    const infrastructureRetriesSoFar = Math.max(controlStoreInfrastructureRetries, held.infrastructureRetries ?? 0)
     const bareInfrastructureResume =
       held.reason === 'infrastructure' && infrastructureRetriesSoFar < MAX_INFRASTRUCTURE_RETRIES
     const rulings = bareInfrastructureResume ? [] : d.fetchRulings(resumePr)
@@ -955,18 +963,34 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // this task's control-store `loop_state` record, if one has ever been
     // persisted. `'absent'` seeds every budget at zero, exactly the prior
     // behavior for a fresh task or one that predates this mechanism.
-    // `'corrupt'` is read as "nothing safe to seed FROM here" for every
-    // variable below (identical to `'absent'`'s own defaults) — never as
-    // license to guess a real budget. The actual refusal is thrown from
-    // INSIDE the `try` block below (round 2 review, BLOCKER): this call
-    // site sits before that `try` even starts, so a throw here would
-    // escape `devReviewLoop` uncaught instead of reaching the outer
-    // `catch` that turns it into a decided `pause{reason:'infrastructure'}`
-    // — the one thing every comment on this path already claimed it did.
+    // `'corrupt'` is read as "nothing safe to seed FROM here" for
+    // `heldResultIdentity`/`deliveredFindingsIdentity` below (identical to
+    // `'absent'`'s own defaults there) — never as license to guess a real
+    // budget. The actual refusal is thrown from INSIDE the `try` block below
+    // (round 2 review, BLOCKER): this call site sits before that `try` even
+    // starts, so a throw here would escape `devReviewLoop` uncaught instead
+    // of reaching the outer `catch` that turns it into a decided
+    // `pause{reason:'infrastructure'}` — the one thing every comment on this
+    // path already claimed it did. THAT catch persists whatever this
+    // process's own `infrastructureRetries` variable holds at the moment of
+    // the throw (`persistCurrentLoopState`) — so seeding it at `0` for
+    // `'corrupt'`, the same default `'absent'` gets, would silently WRITE
+    // BACK a healed, zeroed budget over the very record just refused as
+    // untrustworthy (round 2 review, security HIGH: "a corrupted record
+    // self-heals to a low count"). `infrastructureRetries` alone therefore
+    // seeds `'corrupt'` at `MAX_INFRASTRUCTURE_RETRIES` — already "at the
+    // bound," a real, JSON-safe number (unlike `--resume`'s own in-memory-only
+    // `Number.POSITIVE_INFINITY` comparison, this value IS persisted) that
+    // forces the next `--resume` to require a ruling rather than granting a
+    // fresh bare-command allowance off a corruption-erased count.
     const recoveredLoopState = recoverLoopState(task)
     /** O2: never reset by a restart — seeded from the control store, never hardcoded to `0` the way a fresh in-memory run otherwise would be. */
     let infrastructureRetries =
-      recoveredLoopState.status === 'ok' ? recoveredLoopState.value.budgets.infrastructureRetries : 0
+      recoveredLoopState.status === 'ok'
+        ? recoveredLoopState.value.budgets.infrastructureRetries
+        : recoveredLoopState.status === 'corrupt'
+          ? MAX_INFRASTRUCTURE_RETRIES
+          : 0
     /** O1/O3: the round whose verdict is currently held on disk, awaiting delivery or publish — recovered so a crash between holding a verdict and delivering/publishing it is never silently forgotten. */
     let heldResultIdentity: RoundHeadIdentity | null =
       recoveredLoopState.status === 'ok' ? recoveredLoopState.value.heldResult : null
@@ -1983,7 +2007,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           prNumber,
           reason: decision.reason,
           detail: decision.detail,
-          pausedAt: new Date().toISOString()
+          pausedAt: new Date().toISOString(),
+          infrastructureRetries
         })
         // A crash this early — setup, or a fresh round-1 task never getting
         // as far as resolving one — leaves `prNumber` at its `-1` sentinel:
@@ -2598,7 +2623,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             prNumber,
             reason: decision.reason,
             detail: decision.detail,
-            pausedAt: new Date().toISOString()
+            pausedAt: new Date().toISOString(),
+            infrastructureRetries
           })
           postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail)
           // Every pause, regardless of

@@ -77,6 +77,7 @@ import {
   type ReviewerPromptFacts,
   routeCompletionEvents
 } from '../../src/lib/dev-review-loop.js'
+import { MAX_INFRASTRUCTURE_RETRIES } from '../../src/lib/dev-review-loop/round-assess.js'
 import {
   deriveCodeReviewVerdict,
   renderCodeReviewComment,
@@ -3309,6 +3310,90 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, round 2 review, BLOCK
     const body = readFileSync(join(home, '.fake-gh-posted-comments', pauseFiles[0] as string), 'utf8')
     expect(body).toMatch(/control-store loop-state record is corrupt/)
   }, 20000)
+})
+
+describe('devReviewLoop — control-store-v1 task 4 (round 2 review, security HIGH): refusing a corrupt loop-state record never self-heals its infrastructure-retry count to zero', () => {
+  it('persists MAX_INFRASTRUCTURE_RETRIES, not 0, to both the control store and the pause-state file', () => {
+    const { home, cwd, path } = setUpStopBeforePush()
+
+    // Same torn-JSON fixture as the BLOCKER test above — `recoverLoopState`
+    // reads this as `'corrupt'`, and the refusal thrown inside the `try`
+    // block is caught by the outer catch, which persists whatever
+    // `infrastructureRetries` this process is holding at that moment.
+    const loopStatePath = controlStoreLoopStatePath(home)
+    mkdirSync(dirname(loopStatePath), { recursive: true })
+    writeFileSync(loopStatePath, '{"version":1,"kind":"loop_state"', 'utf8')
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // Before the fix, the fresh-start seed read `'corrupt'` as `0` — the
+    // same default `'absent'` gets — so refusing an untrustworthy record
+    // immediately overwrote it with a clean, zeroed one: a corrupted record
+    // "healed" itself to a low count on the very next attach, discarding
+    // whatever real count it carried instead of preserving the conservative
+    // treatment `--resume`'s own corrupt handling already applies. The
+    // outer catch's own `infrastructureRetries += 1` (every infrastructure
+    // pause counts itself) lands on top of the `MAX_INFRASTRUCTURE_RETRIES`
+    // seed, so the persisted value is AT LEAST the bound, never exactly `0`.
+    const persisted = JSON.parse(readFileSync(loopStatePath, 'utf8')) as {
+      budgets: { infrastructureRetries: number }
+    }
+    expect(persisted.budgets.infrastructureRetries).toBeGreaterThanOrEqual(MAX_INFRASTRUCTURE_RETRIES)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as { infrastructureRetries: number }
+    expect(pauseState.infrastructureRetries).toBeGreaterThanOrEqual(MAX_INFRASTRUCTURE_RETRIES)
+  }, 20000)
+})
+
+describe('devReviewLoop — control-store-v1 task 4 (round 2 review, security HIGH): --resume floors its infrastructure-retry bound against the pause-state file, not the control store alone', () => {
+  it('refuses a bare-command resume once the pause-state file alone already reflects the bound, even with the control-store record absent', () => {
+    const { home, cwd, path } = setUpNeverPushesResumable()
+    const paused = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
+      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
+    })
+    expect(paused.status).not.toBe(0)
+    expect(paused.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // Simulates a `persistLoopState` write that has been silently failing
+    // for this task's whole life (an unwritable control-store directory, a
+    // hand-cleaned one) while `writePauseState`'s own plain `writeFileSync`
+    // — a different write path — kept landing: the control store reads
+    // `'absent'`, but the pause-state file alone already carries a count at
+    // the bound.
+    const pauseStatePath = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json')
+    const pauseState = JSON.parse(readFileSync(pauseStatePath, 'utf8')) as Record<string, unknown>
+    pauseState.infrastructureRetries = MAX_INFRASTRUCTURE_RETRIES
+    writeFileSync(pauseStatePath, JSON.stringify(pauseState), 'utf8')
+    rmSync(controlStoreLoopStatePath(home), { force: true })
+
+    // Before the fix, `infrastructureRetriesSoFar` came from the
+    // control-store read alone: `'absent'` read as `0`, well under the
+    // bound, so this resumed on the bare command exactly like the O5 test
+    // above, with `bareInfrastructureResume` true and `d.fetchRulings`
+    // never even called — exactly the silently-reset-to-a-clean-slate hole
+    // the security finding named. With the fix, the pause-state floor pins
+    // `infrastructureRetriesSoFar` at the bound, `bareInfrastructureResume`
+    // is false, and the code takes the "fetch rulings for real" branch —
+    // this fixture (built for the never-a-real-PR bare-resume case) answers
+    // that particular `gh pr view <n> --json comments` call with nothing
+    // wired, so the resume fails fetching rulings rather than finding zero
+    // of them; either failure proves the SAME thing this test asserts: the
+    // bare-command path was refused.
+    const resumed = runDevReviewLoopArgs(home, cwd, path, ['--resume', '123', '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
+      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
+    })
+    expect(resumed.status).not.toBe(0)
+    expect(resumed.stdout).not.toMatch(/paused \(infrastructure\)/)
+    expect(resumed.stderr).toMatch(/fetchRulings/)
+  }, 30000)
 })
 
 /**

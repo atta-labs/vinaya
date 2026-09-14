@@ -188,6 +188,20 @@ export type PauseState = {
   reason: PauseReason
   detail?: string
   pausedAt: string
+  /**
+   * The in-memory `infrastructureRetries` count at the moment of this pause
+   * (round 2 review, security HIGH) — a second, independent source for
+   * `--resume`'s bound check, alongside `recoverLoopState`'s control-store
+   * read. `writePauseState` is a plain `writeFileSync`, not the control
+   * store's own effect-executor machinery `persistLoopState` swallows
+   * failures from, so a control-store write that silently fails at the SAME
+   * pause this field is written from still leaves this count recoverable —
+   * the control store reading `'absent'` (or a stale lower count) after a
+   * swallowed write can no longer, by itself, reset the bound to zero.
+   * `undefined` on a record written before this field existed; treated as
+   * `0` by the reader, same as a genuinely fresh task.
+   */
+  infrastructureRetries?: number
 }
 
 function pauseStatePath(root: string, task: number): string {
