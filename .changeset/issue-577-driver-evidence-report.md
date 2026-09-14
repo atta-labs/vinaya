@@ -1,6 +1,0 @@
----
-"@attalabs/vinaya": patch
-"@attalabs/aeg-core": patch
----
-
-The `AEG:EVIDENCE`/`AEG:TOKENS` engine behind `vinaya pr report` moved to `apps/cli/src/lib/pr-report-engine.ts`, so a command never calls a command: `pr-report.ts` is now a thin CLI wrapper over it, and `devReviewLoop` calls the same engine function in-process once a round's head is green, rather than shelling out to `vinaya pr report --push` — the Developer's own turn now ends at the push, never running that command or posting a round comment itself. The driver dispatches both reviewers and runs its own evidence report in parallel, reads and clears a small `.vinaya-round-response` file the Developer may have written citing addressed finding ids, and posts the round marker comment (`Head: <sha>`, `<!-- aeg:developer:round-<n> -->`, the cited ids) in the Developer's place; a failed report is logged, never a pause. A reviewer's `NOT MET` objective whose evidence names only the PR body, a comment, or a role file — `isProseLocation` (now exported from `@attalabs/aeg-core`), reused from the existing body-located `MINOR` finding cap — is reclassified `MET (prose note)` before either the rendered verdict or the round's outcome ever sees it; a `NOT MET` naming a real source or test file is unaffected.
