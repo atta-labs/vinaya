@@ -8,7 +8,7 @@ One command is one function, published and tested. `apps/cli/tests/surface-index
 
 A command is a function with argument parsing in front. Commands never call commands. One capability is one function.
 
-The tables below index exported functions/consts/classes only — a change that adds or removes none of those (a new field on an already-exported type, a new CLI flag on an already-listed command) needs no new row here and does not make this file stale. (`#548`: the O1 lock hand-over and O2 role-log trace are internal to `devReviewLoop`/`checkStaleDriver`, and `deriveLoopState`'s new third parameter is a new field on an already-exported function, not a new export — same rule, no new row. `DriverExitReason`/`DriverExitTrace`/`LoopLogLookup`, added to `task-status.ts`, are type-only exports; per this file's own scope line above ("functions/consts/classes only"), they get no row either — the same omission `MergeableState`/`PauseState` already have. `#588`: `AssembleAndRenderBriefResult`'s new `dispatchBlockerDetails` field and `makeCheckError`'s new fourth `severity` parameter are both new fields/parameters on already-exported symbols, not new exports — same rule, no new row.)
+The tables below index exported functions/consts/classes only — a change that adds or removes none of those (a new field on an already-exported type, a new CLI flag on an already-listed command) needs no new row here and does not make this file stale. (`#548`: the O1 lock hand-over and O2 role-log trace are internal to `devReviewLoop`/`checkStaleDriver`, and `deriveLoopState`'s new third parameter is a new field on an already-exported function, not a new export — same rule, no new row. `DriverExitReason`/`DriverExitTrace`/`LoopLogLookup`, added to `task-status.ts`, are type-only exports; per this file's own scope line above ("functions/consts/classes only"), they get no row either — the same omission `MergeableState`/`PauseState` already have. `#588`: `AssembleAndRenderBriefResult`'s new `dispatchBlockerDetails` field and `makeCheckError`'s new fourth `severity` parameter are both new fields/parameters on already-exported symbols, not new exports — same rule, no new row. `gate-reading.ts`'s `fetchMechanicalCheckRuns` now dedupes by the newest `started_at` instead of the highest run id, and its own `sh()` retries a `gh` read three times, with backoff, before a transient forge hiccup counts as a real failure — both are behavioral changes inside an already-exported function, adding no new export, so no new row.)
 
 Three layers:
 
@@ -469,6 +469,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `resolveHookDir` | function | `apps/cli/src/lib/detect.ts` |
 | `setCoreHooksPath` | function | `apps/cli/src/lib/detect.ts` |
 | `unsetCoreHooksPath` | function | `apps/cli/src/lib/detect.ts` |
+| `assertValidLoopEvent` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `buildReexecArgs` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `DEV_REVIEW_LOOP_AGENTS` | const | `apps/cli/src/lib/dev-review-loop.ts` |
 | `devReviewLoop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
@@ -693,17 +694,20 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `computeGroupA` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `computeGroupC` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `DEFAULT_COMMAND_TIMEOUT_MS` | const | `apps/cli/src/lib/pr-report-engine.ts` |
+| `derivePhase` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `DivergentEvidenceAnchorError` | class | `apps/cli/src/lib/pr-report-engine.ts` |
 | `extractAgentCommandLines` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `gh` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `ghEditBody` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `GitCommandError` | class | `apps/cli/src/lib/pr-report-engine.ts` |
 | `groupCFailed` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `isoToday` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `MissingEvidenceAnchorError` | class | `apps/cli/src/lib/pr-report-engine.ts` |
 | `prReportExitCode` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `renderGroupC` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `replaceEvidenceBlock` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `resolveCommandTimeoutMs` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `resolveTokenReportCapability` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `runAgentCommand` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `runReportForOpenPr` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `runRealGates` | function | `apps/cli/src/lib/pr-report-engine.ts` |
@@ -776,7 +780,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `task brief` | `task.ts` | `taskBriefCommand` | 1 | compliant | `prepareTaskOrIssue` |
 | `task run` | `task-run.ts` | `taskRunCommand` | 3 | exempt — see below | sharedCommandShell (target) |
 | `task status` | `task-status.ts` | `taskStatusCommand` | 5 | exempt — see below | taskStatus (target) |
-| `pr create` | `pr.ts` | `prCreateCommand` | 9 | exempt — see below | forgeWrite (target) |
+| `pr create` | `pr.ts` | `prCreateCommand` | 13 | exempt — see below | forgeWrite (target) |
 | `pr edit` | `pr.ts` | `prEditCommand` | 10 | exempt — see below | forgeWrite (target) |
 | `pr report` | `pr-report.ts` | `prReportCommand` | 5 | exempt — see below | collectTokens (target) |
 | `pr verify-evidence` | `pr-verify-evidence.ts` | `prVerifyEvidenceCommand` | 3 | exempt — see below | collectTokens (target) |
@@ -821,7 +825,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `init` | 2026-09-05 | 9 — lib (9): `isAgentVendor`, `detectVendoredVinaya`, `readRepoCiSetup`, `buildInitOps`, `planInstall`, `renderInstallDiff`, `applyInstall`, `promptYesNo`, `closeStdin` | `sharedCommandShell` |
 | `init product` | 2026-09-05 | 8 — lib (8): `planRegistryRow`, `planConfigProjectEntry`, `renderRegistryRowDiffLine`, `renderConfigProjectEntryDiffLine`, `applyRegistryRow`, `applyConfigProjectEntry`, `promptYesNo`, `closeStdin` | `sharedCommandShell` |
 | `check` | 2026-09-05 | 3 — lib: `loadConfigChecked`, `configPath`, `printJson` | `runChecks` |
-| `pr create` | 2026-09-05 | 9 — lib (9): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `loadConfigChecked`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
+| `pr create` | 2026-09-14 | 13 — lib (13): `locateBody`, `refuse`, `makeCheckError`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `loadConfigChecked`, `printJson`, `resolveShippableArgs`, `derivePhase`, `isoToday`, `resolveTokenReportCapability`, `writeTokensBlock` (the last four all `pr-report-engine.ts`, splicing the `AEG:TOKENS` row into the body at open and refusing a `Premise:` pin the base branch does not yet carry — neither is a new command call: both stay inside this same target's own effects-layer file) | `forgeWrite` |
 | `pr edit` | 2026-09-11 | 10 — lib (10): `refuse`, `makeCheckError`, `locateBody`, `extractTitle`, `resolveSections`, `validateForgeWrite`, `runBodyChecks`, `parseIssueNumberFromRef`, `printJson`, `resolveShippableArgs` | `forgeWrite` |
 | `pr report` | 2026-09-13 | 8 — lib (8): `gh`, `buildReport`, `collectTokensAddition`, `composeWrittenBody`, `ghEditBody`, `runReportForOpenPr`, `prReportExitCode` (`pr-report-engine.ts`), `runBodyChecks` (`forge-write.ts`) | `collectTokens` |
 | `pr verify-evidence` | 2026-09-05 | 3 — lib: `buildReport` (`pr-report-engine.ts`, moved out of `pr-report.ts` so a command never calls a command); commands/\*.ts (refused outright): `compareEvidence`, `renderVerdict` (`pr-verify-evidence-logic.ts`) | `collectTokens` |
