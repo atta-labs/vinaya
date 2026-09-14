@@ -64,6 +64,7 @@ import {
   type ReconstructedJournal,
   type ReviewInputManifest,
   type ReviewPolicy,
+  type RoundHeadIdentity,
   type RoundStats
 } from '@attalabs/aeg-core'
 import {
@@ -136,9 +137,11 @@ import {
   driverCrashEvents,
   driverDecidedPauseEvents,
   MAX_GATE_STALLED_TURNS,
+  MAX_INFRASTRUCTURE_RETRIES,
   parseConfidenceReply,
   parseRoundResponseFindingIds,
   parseShortstat,
+  persistLoopState,
   pollUntil,
   renderDeveloperRoundComment,
   ROUND_RESPONSE_PROMPT_LINE,
@@ -160,6 +163,7 @@ import {
   printDriverLockLine,
   readDriverLock,
   readPauseState,
+  recoverLoopState,
   sanitizePublicPauseDetail,
   writeDriverLock,
   writePauseState
@@ -700,10 +704,30 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // `--resume` continues it on the bare command, no Principal ruling
     // required. Every OTHER pause reason is unchanged: a genuine decision
     // point still refuses to resume without one.
-    const rulings = held.reason === 'infrastructure' ? [] : d.fetchRulings(resumePr)
-    if (held.reason !== 'infrastructure' && rulings.length === 0) {
+    // (`control-store-v1` task 4, O2): bounded, and the bound is READ from
+    // the control store rather than reset by this restart — a task that
+    // keeps hitting `'infrastructure'`/`'stale_driver'` and getting resumed
+    // past it forever, with no genuine review round in between, exhausts
+    // this bare-command allowance and starts requiring a ruling like any
+    // other reason. `'corrupt'` is read as "budget unknown, be
+    // conservative" here — never as `0` — so a control-store read failure
+    // can never itself grant an unbounded bare-command resume.
+    const recoveredForResume = recoverLoopState(closesTask)
+    const infrastructureRetriesSoFar =
+      recoveredForResume.status === 'ok'
+        ? recoveredForResume.value.budgets.infrastructureRetries
+        : recoveredForResume.status === 'corrupt'
+          ? Number.POSITIVE_INFINITY
+          : 0
+    const bareInfrastructureResume =
+      held.reason === 'infrastructure' && infrastructureRetriesSoFar < MAX_INFRASTRUCTURE_RETRIES
+    const rulings = bareInfrastructureResume ? [] : d.fetchRulings(resumePr)
+    if (!bareInfrastructureResume && rulings.length === 0) {
       throw new Error(
-        `devReviewLoop --resume: PR #${resumePr} carries no Principal ruling comment yet — nothing to resume from.`
+        `devReviewLoop --resume: PR #${resumePr} carries no Principal ruling comment yet — nothing to resume from.` +
+          (held.reason === 'infrastructure'
+            ? ` (task ${closesTask} has hit ${infrastructureRetriesSoFar} infrastructure/stale_driver pause(s) — at or past the bound of ${MAX_INFRASTRUCTURE_RETRIES}, a ruling is required even for this reason.)`
+            : '')
       )
     }
     const currentHead = d.resolveHead(held.branch)
@@ -926,6 +950,43 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
     }
     let round = resumeFrom ? resumeFrom.round : 1
+
+    // (`control-store-v1` task 4, O1/O3): the authoritative recovery read —
+    // this task's control-store `loop_state` record, if one has ever been
+    // persisted. `'absent'` seeds every budget at zero, exactly the prior
+    // behavior for a fresh task or one that predates this mechanism.
+    // `'corrupt'` refuses to guess past it: thrown here, it reaches the
+    // SAME outer `catch` every other setup failure on this path already
+    // does (below), which turns it into a decided `pause{reason:
+    // 'infrastructure'}` rather than silently reading a corrupt record as
+    // absent and resetting real budgets to zero (O3).
+    const recoveredLoopState = recoverLoopState(task)
+    if (recoveredLoopState.status === 'corrupt') {
+      throw new Error(
+        `devReviewLoop: task ${task}'s control-store loop-state record is corrupt: ${recoveredLoopState.reason} — refusing to recover budgets from it.`
+      )
+    }
+    /** O2: never reset by a restart — seeded from the control store, never hardcoded to `0` the way a fresh in-memory run otherwise would be. */
+    let infrastructureRetries =
+      recoveredLoopState.status === 'ok' ? recoveredLoopState.value.budgets.infrastructureRetries : 0
+    /** O1/O3: the round whose verdict is currently held on disk, awaiting delivery or publish — recovered so a crash between holding a verdict and delivering/publishing it is never silently forgotten. */
+    let heldResultIdentity: RoundHeadIdentity | null =
+      recoveredLoopState.status === 'ok' ? recoveredLoopState.value.heldResult : null
+    /** O3: the round+head whose findings have already been delivered to the developer once — recovered so a later attach never redelivers the same pair, even when the local `round-<k>-attach-redelivered` marker file this same identity backs up is itself lost. */
+    let deliveredFindingsIdentity: RoundHeadIdentity | null =
+      recoveredLoopState.status === 'ok' ? recoveredLoopState.value.deliveredFindings : null
+
+    /** O1: writes the current in-memory round/budget/held-result/delivered-findings state to the control store — called at every meaningful transition below, never only at pause, so a kill mid-round has something fresher than "the last pause" to recover from. */
+    function persistCurrentLoopState(phase: string, pauseReason?: string): void {
+      persistLoopState(task, {
+        round,
+        phase,
+        pauseReason,
+        budgets: { mechanicalRetries: gateStalledStreak, reviewRounds: round, infrastructureRetries },
+        heldResult: heldResultIdentity,
+        deliveredFindings: deliveredFindingsIdentity
+      })
+    }
     let devResumeId: string | null = null
     let devDispatchSucceededBefore = false
     let lastReviewContext: string | null = null
@@ -939,8 +1000,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let lastFailingChecks: string[] = []
     /** O2: true iff the current `dispatch_developer` decision came from a red gate (never inferred from `decision` itself — see this branch's own comment, below). Reset to `false` by every genuine `gate` observation. */
     let pendingGateRedRetry = false
-    /** O2: consecutive gate-red developer turns that produced no push on one head — reset to 0 by every genuine `gate` observation. */
-    let gateStalledStreak = 0
+    /** O2: consecutive gate-red developer turns that produced no push on one head — reset to 0 by every genuine `gate` observation. Seeded from the control store, never hardcoded to `0`, so a kill mid-stall-episode resumes the SAME count rather than a fresh budget. */
+    let gateStalledStreak = recoveredLoopState.status === 'ok' ? recoveredLoopState.value.budgets.mechanicalRetries : 0
+    /**
+     * O2: a recovered, non-zero `gateStalledStreak` must survive exactly
+     * ONE "genuine gate observation" reset — the very first one this
+     * process makes, which on an attach or a fresh `--resume` is ALSO this
+     * process's first gate check ever, indistinguishable in memory from a
+     * truly fresh situation unless this flag says otherwise. Consumed
+     * (never reset back to `true`) the first time either reset site below
+     * runs; every later genuine observation resets to `0` exactly as
+     * before. A task with no recovered budget (`gateStalledStreak` seeded
+     * at `0`) never sets this at all — resetting `0` to `0` is a no-op, so
+     * this flag changes nothing for a genuinely fresh task.
+     */
+    let mechanicalRetryRecoverySurvivesOneReset = gateStalledStreak > 0
     /** (`#543` O2) True once this stall episode has already used its one unpushed-work resume — reset alongside `gateStalledStreak`, by every genuine `gate` observation, so a LATER stall gets its own resume. */
     let unpushedResumeAttempted = false
     /** O4/O6: the conflicting file(s) from the last mergeability read, consumed by the very next `dispatch_developer` prompt, then cleared — never a CI-red retry (never sets `pendingGateRedRetry`), so the head-change-wait that follows always re-checks the gate fresh rather than replaying `lastFailingChecks`. */
@@ -1613,6 +1687,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const detail = `base moved from ${baseHeadAtStart} to ${currentBaseHead}, touching this driver's own code (${touching.join('; ')}) — ${reexecFailureNote}`
       await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
       decision = { type: 'pause', reason: 'stale_driver', detail }
+      // (`control-store-v1` task 4, O2): cumulative, never reset by a
+      // restart — see `MAX_INFRASTRUCTURE_RETRIES`'s own doc comment.
+      infrastructureRetries += 1
       await d.flushOutbox(task)
       return true
     }
@@ -1705,7 +1782,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // `no_progress`, not another redelivery drifting toward a
               // confidence collapse.
               const marker = join(root, 'dev-review-loop', String(task), `round-${held.round}-attach-redelivered`)
-              if (existsSync(marker)) {
+              // (`control-store-v1` task 4, O3): the control-store
+              // `deliveredFindings` identity backs up the SAME "already
+              // delivered" fact the local marker file records — checked
+              // alongside it, never instead of it, so a machine whose local
+              // marker was lost (a different host, an outbox that was
+              // cleaned) still refuses a second redelivery of the same
+              // (round, head) pair.
+              const alreadyDeliveredInStore =
+                deliveredFindingsIdentity !== null &&
+                deliveredFindingsIdentity.round === held.round &&
+                deliveredFindingsIdentity.head === currentHead
+              if (existsSync(marker) || alreadyDeliveredInStore) {
                 const stats = computeStats(currentHead, d.now())
                 await logEvents(driverDecidedPauseEvents(config.loopId, state, held.round + 1, stats))
                 decision = {
@@ -1719,6 +1807,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 round = held.round + 1
                 lastReviewContext = held.rendered
                 firstPass = false
+                deliveredFindingsIdentity = { round: held.round, head: currentHead }
+                persistCurrentLoopState('dispatch_developer')
               }
             }
           }
@@ -1768,6 +1858,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // locally-held recovery above when both agree or the local one is
       // ahead.
       if (!resumeFrom && historyApplies) round = Math.max(round, nextRoundNumber(loopHistory.rounds))
+
+      // (`control-store-v1` task 4, O1/O3): the control store's own
+      // recovered round is the authoritative one — `Math.max` only ever
+      // advances `round` here, never regresses it, so every mechanism
+      // above (the ruling ordinal on `--resume`, the locally-held
+      // request-changes recovery, the optional-event-history fallback
+      // just above) keeps winning whenever it already agrees or is ahead.
+      // What this closes: a task whose held-verdict files and forge-
+      // flushed journal are BOTH unavailable (a different machine, a
+      // GitHub read that fails, an outbox that was cleaned) no longer
+      // silently restarts numbering at 1 as long as this task's own
+      // control-store record survived — recovery stops depending on that
+      // optional event history alone.
+      if (recoveredLoopState.status === 'ok') round = Math.max(round, recoveredLoopState.value.round)
 
       // Held back from `logEvents` until `publishRound` (below) actually
       // succeeds — `assessRound`'s one `journal_finalized`/`merged_ready` event
@@ -1843,6 +1947,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         detail: `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       keepLockAlive = true
+      // (`control-store-v1` task 4, O1/O2): the SAME durable snapshot every
+      // other pause reason gets, best-effort like the write itself already
+      // is — a genuinely uncaught error is exactly the case this record
+      // exists for, so the next attach/resume recovers this round's
+      // budgets rather than starting a fresh in-memory count at zero.
+      infrastructureRetries += 1
+      persistCurrentLoopState('pause', decision.reason)
       // This bookkeeping is best-effort, never a second chance for the
       // process to crash on its way out — the ORIGINAL error is already
       // handled (this pause IS the handling); a forge write failing here
@@ -2022,6 +2133,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 // read (the head never moved), so this feeds the DRIVER's own
                 // bounded stall counter instead of `fetchCiConclusion` again.
                 gateStalledStreak += 1
+                // (`control-store-v1` task 4, O2): persisted the moment it
+                // increments, not only once a pause eventually fires — a
+                // kill mid-episode (the process dies before ever reaching
+                // the bound below) must not hand the next attach a fresh
+                // budget of `MAX_GATE_STALLED_TURNS` turns.
+                persistCurrentLoopState('dispatch_developer')
                 const stats = computeStats(headBeforeDispatch, roundStartMs)
                 const detail =
                   conflictFiles !== null
@@ -2037,6 +2154,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 }
                 await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
                 decision = { type: 'pause', reason: 'infrastructure', detail }
+                infrastructureRetries += 1
                 await d.flushOutbox(task)
                 continue
               }
@@ -2085,7 +2203,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const gateGreen = gate.green && !premiseFailed
           lastFailingChecks = [...gate.failingChecks, ...premiseFailureLines]
           pendingGateRedRetry = !gateGreen
-          gateStalledStreak = 0
+          if (mechanicalRetryRecoverySurvivesOneReset) {
+            mechanicalRetryRecoverySurvivesOneReset = false
+          } else {
+            gateStalledStreak = 0
+          }
           unpushedResumeAttempted = false
           const confidence = round >= 2 && gateGreen ? readAndClearConfidence() : undefined
           const obs: Observations = { kind: 'gate', round, green: gateGreen, confidence, stats: gate.stats }
@@ -2094,6 +2216,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           decision = result.decision
           await logEvents(result.events)
           await d.flushOutbox(task)
+          persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
         } else if (decision.type === 'ask_confidence') {
           const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${CONFIDENCE_PROMPT_LINE}`
           await dispatchDeveloper(reaskPrompt, round)
@@ -2105,10 +2228,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           state = result.state
           decision = result.decision
           pendingGateRedRetry = false
-          gateStalledStreak = 0
+          if (mechanicalRetryRecoverySurvivesOneReset) {
+            mechanicalRetryRecoverySurvivesOneReset = false
+          } else {
+            gateStalledStreak = 0
+          }
           unpushedResumeAttempted = false
           await logEvents(result.events)
           await d.flushOutbox(task)
+          persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
         } else if (decision.type === 'dispatch_reviewers') {
           // O4/O7: mergeability is read BEFORE any CI
           // read or reviewer dispatch — a branch in conflict with the base
@@ -2244,6 +2372,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             const stats = computeStats(head, roundStartMs)
             await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
             decision = { type: 'pause', reason: 'infrastructure', detail: err.message }
+            infrastructureRetries += 1
           }
 
           if (verdicts) {
@@ -2311,6 +2440,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // comment, above).
               writeHeldVerdict(root, task, round, 'reviewer', reviewer.verdict.rendered)
               writeHeldVerdict(root, task, round, 'security', security.verdict.rendered)
+              // (`control-store-v1` task 4, O1): the round whose verdict is
+              // now held on disk, awaiting delivery or publish — recovered
+              // so a crash right after this write, before the round's own
+              // outcome is even decided, is never silently forgotten.
+              heldResultIdentity = { round, head }
               lastReviewContext = `${reviewer.verdict.rendered}\n\n---\n\n${security.verdict.rendered}`
 
               // (`#543` O3) Recorded once per round, so a Principal reading
@@ -2349,8 +2483,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               await logEvents(routed.toLogNow)
               await d.flushOutbox(task)
               if (decision.type === 'dispatch_developer') round += 1
+              persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
             }
           } else {
+            persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
             await d.flushOutbox(task)
           }
         }
@@ -2372,6 +2508,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             pendingCompletionEvents = []
             pendingConflictFiles = d.fetchConflictingFiles('main', branch)
             decision = { type: 'dispatch_developer' }
+            // The held-verdict files this round's `heldResultIdentity` named
+            // were just discarded above — nothing is held any more.
+            heldResultIdentity = null
+            persistCurrentLoopState(decision.type)
             await d.flushOutbox(task)
             continue
           }
@@ -2416,6 +2556,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // failed, or re-parsed dirty) skips this entirely, so the log never
           // claims `merged_ready` for a run that did not actually finish.
           await logEvents(pendingCompletionEvents)
+          // Published — nothing is held any more.
+          heldResultIdentity = null
+          persistCurrentLoopState('publish')
           await d.flushOutbox(task)
           return { finalDecision: decision, prNumber, task }
         }
@@ -2445,6 +2588,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             pausedAt: new Date().toISOString()
           })
           postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail)
+          // (`control-store-v1` task 4, O1): every pause, regardless of
+          // which branch above decided it, funnels through here exactly
+          // once before returning — the one call site that makes every
+          // pause reason's final round/budget/held-result state durable.
+          persistCurrentLoopState('pause', decision.reason)
           await d.flushOutbox(task)
           return { finalDecision: decision, prNumber, task }
         }

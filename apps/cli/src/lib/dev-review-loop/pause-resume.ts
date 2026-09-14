@@ -10,9 +10,10 @@
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
-import { defaultControlStoreDeps, type PauseReason } from '@attalabs/aeg-core'
+import { defaultControlStoreDeps, type LoopBudgets, type PauseReason, type RoundHeadIdentity } from '@attalabs/aeg-core'
 import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../effects.js'
 import { markedCommentBody, postMarkedComment, reconcileGhComment } from '../forge-write.js'
+import { loadLoopState } from './round-assess.js'
 import { readIfExists } from './reviewer-dispatch.js'
 
 /** `sanitizePublicPauseDetail` truncates to this — long enough to stay informative, short enough that a runaway stack trace or subprocess dump never balloons a public PR comment. */
@@ -206,6 +207,44 @@ export function readPauseState(root: string, task: number): PauseState | null {
     return JSON.parse(raw) as PauseState
   } catch {
     return null
+  }
+}
+
+// --- authoritative loop-state recovery (control-store-v1 task 4, O1/O3) ----
+
+export type RecoveredLoopState = {
+  round: number
+  budgets: LoopBudgets
+  heldResult: RoundHeadIdentity | null
+  deliveredFindings: RoundHeadIdentity | null
+}
+
+/**
+ * The authoritative recovery read for attach and `--resume` alike — the
+ * control-store `loop_state` record `persistLoopState` (`round-assess.ts`)
+ * writes on every transition. `'absent'` is not an error and never resets
+ * anything: it means no record exists yet (a fresh task, or one that
+ * predates this mechanism), so the caller falls back to whatever recovery
+ * it already had — this is what keeps O3's "missing telemetry cannot reset
+ * budgets or authorize progression" true even here, since absence is read
+ * as "nothing to recover FROM CONTROL STORE," never as license to zero a
+ * value some other mechanism already recovered. `'corrupt'` is surfaced,
+ * never silently downgraded to `'absent'` — the caller (`dev-review-loop.ts`)
+ * refuses to guess past it rather than risk resetting real budgets.
+ */
+export function recoverLoopState(
+  task: number
+): { status: 'ok'; value: RecoveredLoopState } | { status: 'absent' } | { status: 'corrupt'; reason: string } {
+  const parsed = loadLoopState(task)
+  if (parsed.status !== 'ok') return parsed
+  return {
+    status: 'ok',
+    value: {
+      round: parsed.value.round,
+      budgets: parsed.value.budgets,
+      heldResult: parsed.value.heldResult,
+      deliveredFindings: parsed.value.deliveredFindings
+    }
   }
 }
 

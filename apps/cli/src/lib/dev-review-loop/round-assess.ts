@@ -11,8 +11,22 @@
  */
 
 import { readFileSync } from 'node:fs'
-import type { Confidence, Decision, DevReviewLoopEventInput, LoopState, RoundStats } from '@attalabs/aeg-core'
+import {
+  defaultControlStoreDeps,
+  readLoopState,
+  writeLoopState,
+  type Confidence,
+  type Decision,
+  type DevReviewLoopEventInput,
+  type LoopBudgets,
+  type LoopState,
+  type LoopStateRecord,
+  type ParsedRecord,
+  type RoundHeadIdentity,
+  type RoundStats
+} from '@attalabs/aeg-core'
 import type { AgentVendor, DispatchHandle } from '../dispatch.js'
+import { controlStoreRoot } from '../effects.js'
 
 // --- confidence -------------------------------------------------------------
 
@@ -255,6 +269,74 @@ export function routeCompletionEvents(
  * declares `packages` out of scope.
  */
 export const MAX_GATE_STALLED_TURNS = 2
+
+/**
+ * `control-store-v1` task 4, O2: the bound on this task's own cumulative
+ * `'infrastructure'`/`'stale_driver'` pause count — never reset by a
+ * restart, unlike `MAX_GATE_STALLED_TURNS` (a per-episode, in-memory
+ * counter already bounded within one process's own round loop).  Small: the
+ * failure mode this bounds is a task that keeps hitting the driver's own
+ * recoverable-hiccup class of pause and getting `--resume`d past it forever,
+ * never a genuine review round that needs many honest attempts.
+ */
+export const MAX_INFRASTRUCTURE_RETRIES = 5
+
+// --- authoritative loop-state recovery (control-store-v1 task 4, O1) -------
+
+/**
+ * The snapshot `persistLoopState` writes and `loadLoopState`/
+ * `recoverLoopState` (`pause-resume.ts`) read back — phase, round, budgets,
+ * held-result and delivered-findings identity, the exact fields
+ * `LoopStateRecordSchema` (`@attalabs/aeg-core`) carries minus its own
+ * `version`/`kind`/`task`/`recordedAt` (supplied by the write wrapper).
+ */
+export type LoopStateSnapshot = {
+  round: number
+  /** Mirrors `Decision['type']` — a plain string so this module needn't import `packages/aeg-core`'s `Decision` type just to re-narrow it. */
+  phase: string
+  pauseReason?: string
+  budgets: LoopBudgets
+  heldResult: RoundHeadIdentity | null
+  deliveredFindings: RoundHeadIdentity | null
+}
+
+/**
+ * Persists `snapshot` as this task's authoritative control-store loop-state
+ * record. Best-effort, like `persistManifestRecord` (`reviewer-dispatch.ts`):
+ * a write failure never fails a round the way the loop's own paperwork must
+ * never cost one (`loop.md`, O1) — the driver's own in-memory `round`/
+ * budget variables are what actually govern THIS process's own run; this
+ * write only makes that state recoverable by a LATER attach/resume.
+ */
+export function persistLoopState(task: number, snapshot: LoopStateSnapshot, now: () => Date = () => new Date()): void {
+  try {
+    const deps = defaultControlStoreDeps(controlStoreRoot)
+    writeLoopState(deps, task, {
+      round: snapshot.round,
+      phase: snapshot.phase,
+      pauseReason: snapshot.pauseReason ?? null,
+      budgets: snapshot.budgets,
+      heldResult: snapshot.heldResult,
+      deliveredFindings: snapshot.deliveredFindings,
+      recordedAt: now().toISOString()
+    })
+  } catch {
+    // Never thrown past this call — see this function's own doc comment.
+  }
+}
+
+/**
+ * Reads this task's control-store loop-state record — `'absent'` for a task
+ * that never persisted one (a fresh task, or one that predates this
+ * mechanism); `'corrupt'` surfaced honestly, never silently read as absent
+ * (O3: a caller must be able to tell "nothing to recover" apart from
+ * "something recorded but untrustworthy" — the latter is never license to
+ * reset budgets or authorize progression).
+ */
+export function loadLoopState(task: number): ParsedRecord<LoopStateRecord> {
+  const deps = defaultControlStoreDeps(controlStoreRoot)
+  return readLoopState(deps, task)
+}
 
 /**
  * `stop_condition_met`/`paused`/`round_ended`/`journal_finalized` for a
