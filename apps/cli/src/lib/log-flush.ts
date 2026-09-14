@@ -19,7 +19,7 @@ import { lstatSync, readFileSync, statSync, writeFileSync, rmSync } from 'node:f
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
-import { extractIssue, LogEventSchema, redact, type ForgeOp } from '@attalabs/aeg-core'
+import { classifyStoredLine, extractIssue, type ForgeOp } from '@attalabs/aeg-core'
 import { currentRunId, log, outboxPathFor as sinkOutboxPathFor, type LogEventInput } from './log-sink.js'
 import { GLOBAL_VINAYA_HOME } from './config.js'
 
@@ -180,31 +180,65 @@ class CorruptOutboxLineError extends Error {
 type ParsedLine = { postLine: string; runId: string; seq: number }
 
 /**
- * Re-validates a stored outbox line against the FULL `LogEventSchema` — not
- * merely presence of `meta.run_id`/`meta.seq` — and re-applies `redact()`
- * before this text is ever posted publicly (security review, PR #439). The
- * on-disk file is trusted for its own append-time write (`log()` already
- * validated and redacted once), but a flush is the second check-moment
- * before that content goes public, and a manually-edited line, a corrupted
- * one, or a future gap in `redact.ts`'s pattern coverage must not slip an
- * unfiltered line straight through. A line failing either check refuses the
- * whole flush (`CorruptOutboxLineError`) rather than silently skipping or
- * posting it — the same "refuse loudly, never mangle" posture as
- * `LineTooLargeError`.
+ * Re-validates a stored outbox line through the log storage contract's
+ * read-back classifier (`classifyStoredLine`, `@attalabs/aeg-core`) — the
+ * transport half of the append/read-page contract this GitHub adapter
+ * implements (`packages/aeg-core/src/log/store.ts`; `apps/cli/specs/log.md` §
+ * The storage contract). The classifier runs the FULL `LogEventSchema` (not
+ * merely presence of `meta.run_id`/`meta.seq`), validates a `schema: 2`
+ * line's provenance, and re-applies `redact()` at this second check-moment
+ * before the text is ever posted publicly (security review, PR #439): the
+ * on-disk file is trusted for its own append-time write, but a manually
+ * edited line, a corrupted one, or a future gap in `redact.ts`'s coverage
+ * must not slip through. This transport is deliberately fail-closed — a
+ * corrupt line AND an unknown-schema-version line (one this build cannot
+ * validate) both refuse the whole flush (`CorruptOutboxLineError`) rather
+ * than post data this adapter cannot vouch for. That is the opposite of the
+ * read-back reader's fail-open posture, which PRESERVES an unknown-version
+ * record for diagnosis (O3): a diagnostic read keeps what it cannot parse, a
+ * public post never emits it.
  */
 function parseOutboxLine(raw: string, index: number): ParsedLine {
-  let obj: unknown
+  const record = classifyStoredLine(raw, homedir())
+  if (record.status !== 'ok') {
+    throw new CorruptOutboxLineError(index, record.reason)
+  }
+  return { postLine: record.postLine, runId: record.runId, seq: record.seq }
+}
+
+/** Every `run_id:seq_from-seq_to` key a comment body on the target already carries — the flush's own `<!-- aeg:log:… -->` markers from a prior attempt. */
+function extractLogMarkers(body: string): string[] {
+  const re = /<!-- aeg:log:([A-Za-z0-9_.-]+):(\d+)-(\d+) -->/g
+  return [...body.matchAll(re)].map((m) => `${m[1]}:${m[2]}-${m[3]}`)
+}
+
+/**
+ * The set of chunk marker keys already posted on `targetId` — the on-forge
+ * idempotency key that closes the "flush retries can repeat remotely accepted
+ * batches" defect (O2, Issue #562's Boundary). A prior flush that posted a
+ * chunk but died before truncating (a lost acknowledgement) leaves the
+ * chunk's `<!-- aeg:log:<run_id>:<seq_from>-<seq_to> -->` marker on the
+ * forge; the retry reads it here and acknowledges that chunk without posting
+ * a second copy. Tolerant by design: a forge read failure returns the empty
+ * set, so the flush falls back to its pre-fix behavior (post everything)
+ * rather than blocking on a telemetry-side read — telemetry never blocks the
+ * governed effect (the spec's own rule).
+ */
+function existingLogMarkers(op: ForgeOp, targetId: string): Set<string> {
+  const markers = new Set<string>()
   try {
-    obj = JSON.parse(raw)
+    const raw =
+      op === 'pr.comment'
+        ? gh(['pr', 'view', targetId, '--json', 'comments'])
+        : gh(['issue', 'view', targetId, '--json', 'comments'])
+    const parsed = JSON.parse(raw) as { comments?: Array<{ body?: string }> }
+    for (const comment of parsed.comments ?? []) {
+      for (const key of extractLogMarkers(comment.body ?? '')) markers.add(key)
+    }
   } catch {
-    throw new CorruptOutboxLineError(index, 'not valid JSON')
+    // Tolerant: a forge read failure must never block a flush.
   }
-  const result = LogEventSchema.safeParse(obj)
-  if (!result.success) {
-    throw new CorruptOutboxLineError(index, result.error.issues[0]?.message ?? 'schema violation')
-  }
-  const redacted = redact(result.data, homedir()) as { meta: { run_id: string; seq: number } }
-  return { postLine: JSON.stringify(redacted), runId: redacted.meta.run_id, seq: redacted.meta.seq }
+  return markers
 }
 
 function renderChunk(runId: string, seqFrom: number, seqTo: number, postLines: readonly string[]): string {
@@ -358,6 +392,21 @@ export type LogFlushOutcome =
     }
 
 /**
+ * Options for `flushOutbox`. `skipRemotelyAccepted` (`task-log-v1` task 2,
+ * Issue #562, O2) turns on the idempotent-retry read: before posting, read the
+ * target's existing comments and acknowledge — without re-posting — any chunk
+ * whose `<!-- aeg:log:… -->` marker is already on the forge (a prior attempt
+ * that posted but died before truncating). It is OFF by default so the
+ * in-process driver callers (`dev-review-loop.ts`, `dispatch.ts`) keep their
+ * exact forge-read sequence — those drivers already read the task's comments
+ * through their own `fetchLoopHistory`, and their tests are calibrated to that
+ * exact call count; the retriable one-shot `vinaya log flush` command, the
+ * surface the Boundary names ("flush retries can repeat remotely accepted
+ * batches"), is the caller that turns it ON.
+ */
+export type FlushOptions = { skipRemotelyAccepted?: boolean }
+
+/**
  * The flush's whole body (task 3, `#482`, O1) — posts `target`'s outbox as
  * one or more comments and truncates only what the forge confirmed, exactly
  * as `apps/cli/specs/log.md` § The flush describes. Never calls
@@ -366,7 +415,7 @@ export type LogFlushOutcome =
  * every refusal — safe to call in-process from a long-running driver as
  * well as from the one-shot command (O2).
  */
-export async function flushOutbox(target: LogFlushTarget): Promise<LogFlushOutcome> {
+export async function flushOutbox(target: LogFlushTarget, options: FlushOptions = {}): Promise<LogFlushOutcome> {
   const op: ForgeOp = 'pr' in target ? 'pr.comment' : 'issue.comment'
   const issueNumber = 'pr' in target ? issueFromPr(String(target.pr)) : target.issue
   const eventTarget = 'pr' in target ? { pr: target.pr } : { issue: issueNumber }
@@ -428,11 +477,24 @@ export async function flushOutbox(target: LogFlushTarget): Promise<LogFlushOutco
     )
   }
 
+  // O2 idempotency: a prior attempt may have posted some chunks but died
+  // before truncating them (a lost acknowledgement). Their markers are still
+  // on the forge — read them once and acknowledge (truncate) an
+  // already-posted chunk without posting a second copy. Only the one-shot
+  // command opts in (see `FlushOptions`).
+  const alreadyPosted = options.skipRemotelyAccepted ? existingLogMarkers(op, forgeTargetId) : new Set<string>()
+
   const commentIds: string[] = []
   let postedLineCount = 0
   let failure: { chunk: FlushChunk; message: string } | undefined
 
   for (const chunk of chunks) {
+    const markerKey = `${chunk.runId}:${chunk.seqFrom}-${chunk.seqTo}`
+    if (alreadyPosted.has(markerKey)) {
+      // Remotely accepted on a prior attempt — acknowledge, never re-post.
+      postedLineCount += chunk.seqTo - chunk.seqFrom + 1
+      continue
+    }
     try {
       const id = postChunk(op, forgeTargetId, chunk.body, postedLineCount)
       commentIds.push(id)

@@ -94,7 +94,12 @@ function ndjsonLine(runId: string, seq: number, issue: number): string {
  * comment combined) fail while every call up to and including the Nth
  * succeeds — the "chunk 1 succeeds, chunk 2 fails" story.
  */
-function stubGh(opts: { prBody?: string; failFlagPath?: string; failAfterNComments?: number }): {
+function stubGh(opts: {
+  prBody?: string
+  failFlagPath?: string
+  failAfterNComments?: number
+  existingComments?: string[]
+}): {
   env: Record<string, string>
   bodiesLogPath: string
   callsLogPath: string
@@ -110,7 +115,12 @@ function stubGh(opts: { prBody?: string; failFlagPath?: string; failAfterNCommen
   writeFileSync(bodiesLogPath, '')
   writeFileSync(callsLogPath, '')
   writeFileSync(counterPath, '0')
-  writeFileSync(prBodyPath, JSON.stringify({ body: opts.prBody ?? '' }))
+  // Both `--json body` (issueFromPr) and `--json comments` (the idempotency
+  // read) read this same object; extra keys are harmless to either reader.
+  writeFileSync(
+    prBodyPath,
+    JSON.stringify({ body: opts.prBody ?? '', comments: (opts.existingComments ?? []).map((body) => ({ body })) })
+  )
   const gh = join(dir, 'gh')
   writeFileSync(
     gh,
@@ -126,6 +136,10 @@ if [ "$1$2" = "issuecomment" ] || [ "$1$2" = "prcomment" ]; then
     echo "simulated gh failure: rate limited" >&2
     exit 1
   fi
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  cat "${prBodyPath}"
+  exit 0
 fi
 if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
   n=$3
@@ -456,6 +470,38 @@ describe('vinaya log flush — defeat cases', () => {
     const posted = readFileSync(gh.bodiesLogPath, 'utf8')
     expect(posted).not.toContain(secret)
     expect(posted).toContain('<redacted>')
+  })
+})
+
+describe('vinaya log flush — idempotency across a lost acknowledgement (task-log-v1 task 2, #562, O2)', () => {
+  it('a chunk whose marker already exists on the forge is acknowledged (truncated), never re-posted', () => {
+    const cwd = tempDir('log-flush-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-flush-home-')
+    // A prior attempt posted this chunk, then died before truncating: its
+    // marker is already on the Issue.
+    const gh = stubGh({ existingComments: ['<!-- aeg:log:rH:0-0 -->\n\n```ndjson\n{}\n```'] })
+
+    seedOutbox(home, 444, [ndjsonLine('rH', 0, 444)])
+
+    const r = runCli(['log', 'flush', '--issue', '444'], cwd, { HOME: home, ...gh.env })
+
+    expect(r.status).toBe(0)
+    // No comment was posted — the already-accepted chunk was skipped.
+    const calls = readFileSync(gh.callsLogPath, 'utf8')
+    expect(calls).toContain('issue view 444')
+    expect(calls).not.toContain('issue comment')
+    // Nothing was posted to the bodies log either.
+    expect(readFileSync(gh.bodiesLogPath, 'utf8').trim()).toBe('')
+
+    // The already-accepted original line was truncated; only this run's own
+    // validated/written audit lines remain.
+    const remaining = readFileSync(outboxPath(home, 444), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+    expect(remaining.map((l) => l.event)).toEqual(['validated', 'written'])
+    expect(remaining[remaining.length - 1].comment_ids).toEqual([])
   })
 })
 
