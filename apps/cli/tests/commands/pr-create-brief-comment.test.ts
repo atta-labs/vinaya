@@ -82,7 +82,11 @@ exit 1
 
 function initRepo(): string {
   const repo = tempDir('pr-create-repo-')
-  execFileSync('git', ['init', '-q'], { cwd: repo })
+  // `-b main`: `derivePhase()`'s fallback names the raw branch when it isn't
+  // `task/<tranche>/<n>`-shaped — never left to `git init`'s own default
+  // (`init.defaultBranch`, environment-dependent: `main` locally, `master`
+  // on the CI runner used here — found live, CI red on exactly this).
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
   execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
   // ring1_forgeWriteInterception: false opts OUT of brief-schema validation
