@@ -676,6 +676,8 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `parseGeminiUsage` | function | `apps/cli/src/lib/dispatch.ts` |
 | `readLaunchRecord` | function | `apps/cli/src/lib/dispatch.ts` |
 | `readResumeRecord` | function | `apps/cli/src/lib/dispatch.ts` |
+| `realDispatchTeeRecoveryDeps` | function | `apps/cli/src/lib/dispatch.ts` |
+| `recoverUsageFromDispatchTee` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderClaudeEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderCodexEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderGeminiEvent` | function | `apps/cli/src/lib/dispatch.ts` |
@@ -787,10 +789,12 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `isoToday` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `MissingEvidenceAnchorError` | class | `apps/cli/src/lib/pr-report-engine.ts` |
 | `prReportExitCode` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `realTokenReportCapabilityDeps` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `renderGroupC` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `replaceEvidenceBlock` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `resolveCommandTimeoutMs` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `resolveTokenReportCapability` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `resolveTokenReportCapabilityWith` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `runAgentCommand` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `runReportForOpenPr` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `runRealGates` | function | `apps/cli/src/lib/pr-report-engine.ts` |

@@ -52,13 +52,13 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto'
-import { accessSync, constants as fsConstants, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { accessSync, constants as fsConstants, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { chmodSync, createWriteStream } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname } from 'node:os'
-import { redact } from '@attalabs/aeg-core'
-import type { Role } from '@attalabs/aeg-core'
+import { redact, summarizeTranscript } from '@attalabs/aeg-core'
+import type { Role, TranscriptSummary } from '@attalabs/aeg-core'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
@@ -998,6 +998,118 @@ function nextAttempt(
 ): number {
   const parsed = readLaunchRecord(role, agent, repo, task, pr)
   return parsed.status === 'ok' ? parsed.record.attempt + 1 : 1
+}
+
+/**
+ * `recoverUsageFromDispatchTee`'s I/O, injected the same way
+ * `MeteringCapabilityDeps` is (`claude-code-transcript.ts`) — a fixture
+ * stands in a fake env, a fake set of launch-record files, and fake tee
+ * bytes without touching this machine's real `~/.vinaya/`.
+ */
+export type DispatchTeeRecoveryDeps = {
+  env: Record<string, string | undefined>
+  /** Every launch-record JSON file path this machine currently holds, across every repo/agent/scope — `dispatch-resume`'s own two-level (repo segment, then filename) layout, already walked. */
+  listLaunchRecordPaths: () => string[]
+  readFile: (path: string) => string
+}
+
+/** Real `~/.vinaya/`-backed deps for production use — never throws; an unreadable/absent `dispatch-resume` directory degrades to an empty list, matching this module's "never throws" posture. */
+export function realDispatchTeeRecoveryDeps(): DispatchTeeRecoveryDeps {
+  return {
+    env: process.env,
+    listLaunchRecordPaths: () => {
+      const root = join(GLOBAL_VINAYA_HOME, 'dispatch-resume')
+      const out: string[] = []
+      let segments: string[]
+      try {
+        segments = readdirSync(root)
+      } catch {
+        return out
+      }
+      for (const seg of segments) {
+        const segDir = join(root, seg)
+        let files: string[]
+        try {
+          files = readdirSync(segDir)
+        } catch {
+          continue
+        }
+        for (const f of files) if (f.endsWith('.json')) out.push(join(segDir, f))
+      }
+      return out
+    },
+    readFile: (path: string) => readFileSync(path, 'utf8')
+  }
+}
+
+export type DispatchTeeRecovery = { summary: TranscriptSummary; teePath: string }
+
+/**
+ * O1 (#608): recovers a dispatched session's real usage from the
+ * coordinator's own tee'd copy of that session's stdout (`openOutputTee`),
+ * for the case its OWN transcript pointer never resolved at all — the
+ * sanctioned `no-transcript-resolved` case `resolveMeteringCapability`
+ * (`claude-code-transcript.ts`, out of this task's surface) already
+ * produces, unchanged. The tee holds the vendor's raw stream — for Claude,
+ * `--output-format stream-json`, the identical per-message
+ * `{type:"assistant", message:{id, usage}}` shape a real transcript file
+ * carries — so `summarizeTranscript` (aeg-core's already-shipped,
+ * already-tested dedup-by-message-id-then-sum reader) applies to it
+ * unchanged; this function's own job is only to find the right file.
+ *
+ * Matched by `VINAYA_RUN_ID` alone — the one identifier this process and
+ * its own dispatcher already agree on (set on the child's env at spawn,
+ * read back here) — never by guessing which repo or which vendor launched
+ * it. `null` on anything short of a full recovery: no run/role/task
+ * attribution in this process's own env, no launch record naming that
+ * exact run, no tee file, or a tee holding zero usable messages. Never
+ * estimates — a `null` here changes nothing about the caller's existing
+ * incapable verdict.
+ */
+export function recoverUsageFromDispatchTee(deps: DispatchTeeRecoveryDeps): DispatchTeeRecovery | null {
+  const runId = deps.env.VINAYA_RUN_ID
+  const role = deps.env.VINAYA_ROLE
+  const taskRaw = deps.env.VINAYA_TASK
+  if (!runId || !role || !taskRaw) return null
+  const task = Number(taskRaw)
+  if (!Number.isInteger(task)) return null
+
+  let effectId: string | null = null
+  for (const path of deps.listLaunchRecordPaths()) {
+    let raw: string
+    try {
+      raw = deps.readFile(path)
+    } catch {
+      continue
+    }
+    let json: unknown
+    try {
+      json = JSON.parse(raw)
+    } catch {
+      continue
+    }
+    const record = coerceLaunchRecord(json)
+    if (record && record.runId === runId && record.role === role && record.task === task && record.effectId) {
+      effectId = record.effectId
+      break
+    }
+  }
+  // Same shape the tee was refused for at write time (`openOutputTee`) — a
+  // launch record is this module's own, never untrusted input, but the
+  // `effectId` field still gets the same guard before it reaches a path
+  // join, on principle.
+  if (!effectId || !/^[A-Za-z0-9_-]{1,128}$/.test(effectId)) return null
+
+  const teePath = join(GLOBAL_VINAYA_HOME, 'dispatch-output', `${effectId}.log`)
+  let teeText: string
+  try {
+    teeText = deps.readFile(teePath)
+  } catch {
+    return null
+  }
+
+  const summary = summarizeTranscript(teeText)
+  return summary.messageCount > 0 ? { summary, teePath } : null
 }
 
 type VendorSpec = {

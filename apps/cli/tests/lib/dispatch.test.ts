@@ -40,7 +40,9 @@ import {
   timeoutWarningLeadMs,
   colourAgentLine,
   colourEnabled,
-  colourLoopLine
+  colourLoopLine,
+  recoverUsageFromDispatchTee,
+  type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -1832,5 +1834,127 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
       const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
       expect(argv.includes('--settings')).toBe(false)
     }
+  })
+})
+
+/**
+ * `recoverUsageFromDispatchTee` (O1, #608) — entirely deps-injected, so
+ * every case here is a fixture: a fake env, a fake set of launch-record
+ * files, and fake tee bytes, never this machine's real `~/.vinaya/`.
+ */
+describe('recoverUsageFromDispatchTee (O1, #608)', () => {
+  const LAUNCH_RECORD_PATH = '/fake/dispatch-resume/owner-repo/developer-claude-issue608.json'
+
+  function launchRecordJson(overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      runId: 'run-1',
+      role: 'developer',
+      agent: 'claude',
+      repo: { owner: 'owner', repo: 'repo' },
+      task: 608,
+      pr: null,
+      round: null,
+      attempt: 1,
+      effectId: 'effect-abc',
+      dispatcherPid: 1,
+      childPid: 2,
+      host: 'test-host',
+      startedAt: '2026-09-14T00:00:00.000Z',
+      status: 'completed',
+      resumeId: 'resume-1',
+      boundAt: '2026-09-14T00:00:00.000Z',
+      finishedAt: '2026-09-14T00:01:00.000Z',
+      failureReason: null,
+      ...overrides
+    })
+  }
+
+  function assistantLine(id: string, inputTokens: number, outputTokens: number): string {
+    return JSON.stringify({
+      type: 'assistant',
+      message: {
+        id,
+        model: 'claude-sonnet-5',
+        usage: {
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0
+        }
+      }
+    })
+  }
+
+  function fakeDeps(opts: {
+    env?: Record<string, string | undefined>
+    launchRecord?: string | null
+    teeLog?: string | null
+  }): DispatchTeeRecoveryDeps {
+    const env = opts.env ?? { VINAYA_RUN_ID: 'run-1', VINAYA_ROLE: 'developer', VINAYA_TASK: '608' }
+    return {
+      env,
+      listLaunchRecordPaths: () => [LAUNCH_RECORD_PATH],
+      readFile: (path: string) => {
+        if (path === LAUNCH_RECORD_PATH) {
+          if (opts.launchRecord === null) throw new Error('ENOENT')
+          return opts.launchRecord ?? launchRecordJson()
+        }
+        if (path.endsWith('effect-abc.log')) {
+          if (opts.teeLog === null) throw new Error('ENOENT')
+          return opts.teeLog ?? `${assistantLine('msg_1', 100, 10)}\n${assistantLine('msg_2', 50, 5)}`
+        }
+        throw new Error(`unexpected read: ${path}`)
+      }
+    }
+  }
+
+  it('sums per-message usage from the matching effect id, deduping by message id', () => {
+    const teeLog = [
+      assistantLine('msg_1', 100, 10),
+      assistantLine('msg_1', 100, 10), // duplicate id — same turn re-emitted mid-stream, must not double-count
+      assistantLine('msg_2', 50, 5)
+    ].join('\n')
+    const result = recoverUsageFromDispatchTee(fakeDeps({ teeLog }))
+    expect(result).not.toBeNull()
+    expect(result?.summary.components.inputTokens).toBe(150)
+    expect(result?.summary.components.outputTokens).toBe(15)
+    expect(result?.summary.messageCount).toBe(2)
+    expect(result?.teePath.endsWith('effect-abc.log')).toBe(true)
+  })
+
+  it('no VINAYA_RUN_ID in env: null, never guesses', () => {
+    expect(recoverUsageFromDispatchTee(fakeDeps({ env: { VINAYA_ROLE: 'developer', VINAYA_TASK: '608' } }))).toBeNull()
+  })
+
+  it('no VINAYA_TASK in env: null', () => {
+    expect(
+      recoverUsageFromDispatchTee(fakeDeps({ env: { VINAYA_RUN_ID: 'run-1', VINAYA_ROLE: 'developer' } }))
+    ).toBeNull()
+  })
+
+  it('a launch record exists but for a different runId: null — never another session’s figures', () => {
+    const result = recoverUsageFromDispatchTee(fakeDeps({ launchRecord: launchRecordJson({ runId: 'other-run' }) }))
+    expect(result).toBeNull()
+  })
+
+  it('a launch record exists but for a different task: null', () => {
+    const result = recoverUsageFromDispatchTee(fakeDeps({ launchRecord: launchRecordJson({ task: 999 }) }))
+    expect(result).toBeNull()
+  })
+
+  it('no launch record on disk at all: null, never throws', () => {
+    expect(recoverUsageFromDispatchTee(fakeDeps({ launchRecord: null }))).toBeNull()
+  })
+
+  it('launch record found but its tee log is unreadable: null, never throws', () => {
+    expect(recoverUsageFromDispatchTee(fakeDeps({ teeLog: null }))).toBeNull()
+  })
+
+  it('tee log yields zero usable assistant messages: null', () => {
+    expect(recoverUsageFromDispatchTee(fakeDeps({ teeLog: 'not json\n\n' }))).toBeNull()
+  })
+
+  it('a corrupt (non-JSON) launch record file: null, never throws', () => {
+    expect(recoverUsageFromDispatchTee(fakeDeps({ launchRecord: 'not json' }))).toBeNull()
   })
 })
