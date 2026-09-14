@@ -173,13 +173,333 @@ describe('LogEventSchema — forge_write family', () => {
   })
 })
 
+const metaV2 = {
+  ...meta,
+  schema: 2 as const,
+  event_id: 'event-1',
+  process_id: 'process-1',
+  actor_id: 'developer',
+  lineage: { run: null, attempt: null, parent: null },
+  input_versions: { objectives_version: null, brief_hash: null, ruling_ordinal: null, policy_digest: null },
+  provenance: 'env_correlated' as const
+}
+
+describe('LogEventSchema — schema: 2 envelope (O1)', () => {
+  it('parses a dispatch event with a schema: 2 header — every existing family accepts the new envelope', () => {
+    expect(LogEventSchema.safeParse({ ...validDispatched, meta: metaV2 }).success).toBe(true)
+  })
+
+  it('refuses a schema: 2 header missing a new required field', () => {
+    const { event_id: _drop, ...incomplete } = metaV2
+    expect(LogEventSchema.safeParse({ ...validDispatched, meta: incomplete }).success).toBe(false)
+  })
+
+  it('refuses lineage carrying an extra key — .strict() reaches nested objects too', () => {
+    const line = { ...validDispatched, meta: { ...metaV2, lineage: { ...metaV2.lineage, sneaky: 1 } } }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+
+  it('refuses provenance outside its enum', () => {
+    const line = { ...validDispatched, meta: { ...metaV2, provenance: 'trust-me' } }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+
+  it('accepts lineage.attempt as a number and as null', () => {
+    const withAttempt = { ...validDispatched, meta: { ...metaV2, lineage: { run: 'run-9', attempt: 3, parent: 'e0' } } }
+    expect(LogEventSchema.safeParse(withAttempt).success).toBe(true)
+  })
+})
+
+const gateEvent = {
+  meta,
+  subject,
+  kind: 'gate' as const,
+  event: 'checked' as const,
+  payload: {},
+  check: 'typecheck',
+  check_version: '1',
+  policy_version: null,
+  input_fingerprint: 'sha256:abc',
+  outcome: 'pass' as const
+}
+
+describe('LogEventSchema — gate family (O2)', () => {
+  it('parses a passing check', () => {
+    expect(LogEventSchema.safeParse(gateEvent).success).toBe(true)
+  })
+
+  it('parses a failing check with a reason', () => {
+    const line = { ...gateEvent, outcome: 'fail' as const, reason: 'typecheck: 3 errors' }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('parses unavailable_dependency and timeout outcomes', () => {
+    expect(LogEventSchema.safeParse({ ...gateEvent, outcome: 'unavailable_dependency' }).success).toBe(true)
+    expect(LogEventSchema.safeParse({ ...gateEvent, outcome: 'timeout' }).success).toBe(true)
+  })
+
+  it('refuses an outcome outside the enum — no invented pass/fail when the real value is unknown', () => {
+    expect(LogEventSchema.safeParse({ ...gateEvent, outcome: 'ok' }).success).toBe(false)
+  })
+})
+
+const operationEvent = {
+  meta,
+  subject,
+  kind: 'operation' as const,
+  event: 'completed' as const,
+  payload: {},
+  operation: 'gh pr create',
+  target: null,
+  result: 'ok' as const,
+  error_class: null
+}
+
+describe('LogEventSchema — operation family (O2)', () => {
+  it('parses a completed operation', () => {
+    expect(LogEventSchema.safeParse(operationEvent).success).toBe(true)
+  })
+
+  it('parses a refused operation with an error_class', () => {
+    const line = { ...operationEvent, result: 'refused' as const, error_class: 'validation' }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('refuses a result outside the enum', () => {
+    expect(LogEventSchema.safeParse({ ...operationEvent, result: 'success' }).success).toBe(false)
+  })
+})
+
+const usageEvent = {
+  meta,
+  subject,
+  kind: 'usage' as const,
+  event: 'observed' as const,
+  payload: {},
+  model: 'sonnet',
+  source: 'claude-code',
+  semantics: 'cumulative' as const,
+  units: { input: 100, output: 50, cache: null },
+  unknown_reason: null
+}
+
+describe('LogEventSchema — usage family (O2)', () => {
+  it('parses an observed usage line', () => {
+    expect(LogEventSchema.safeParse(usageEvent).success).toBe(true)
+  })
+
+  it('accepts every unit as null — unknown usage is never coerced to zero', () => {
+    const line = {
+      ...usageEvent,
+      units: { input: null, output: null, cache: null },
+      unknown_reason: 'host has no usage API'
+    }
+    const parsed = LogEventSchema.safeParse(line)
+    expect(parsed.success).toBe(true)
+    if (parsed.success && parsed.data.kind === 'usage') {
+      expect(parsed.data.units.input).toBeNull()
+    }
+  })
+
+  it('refuses a negative unit', () => {
+    expect(LogEventSchema.safeParse({ ...usageEvent, units: { ...usageEvent.units, input: -1 } }).success).toBe(false)
+  })
+
+  it('refuses semantics outside cumulative/delta', () => {
+    expect(LogEventSchema.safeParse({ ...usageEvent, semantics: 'total' }).success).toBe(false)
+  })
+})
+
+const roleAttemptEvent = {
+  meta,
+  subject,
+  kind: 'role_attempt' as const,
+  event: 'attempted' as const,
+  payload: {},
+  actor: 'ci-gate',
+  attempt: 1,
+  outcome: 'completed' as const,
+  usage: { input: 100, output: 50 }
+}
+
+describe('LogEventSchema — role_attempt family (O2)', () => {
+  it('parses a completed attempt', () => {
+    expect(LogEventSchema.safeParse(roleAttemptEvent).success).toBe(true)
+  })
+
+  it('accepts an opaque actor outside the closed Role union — the title this task is named for', () => {
+    expect(LogEventSchema.safeParse({ ...roleAttemptEvent, actor: 'some-future-role-nobody-registered' }).success).toBe(
+      true
+    )
+  })
+
+  it('parses every normalized outcome', () => {
+    for (const outcome of ['incomplete', 'infrastructure_failed', 'cancelled', 'timed_out', 'capability_refused']) {
+      expect(LogEventSchema.safeParse({ ...roleAttemptEvent, outcome }).success).toBe(true)
+    }
+  })
+
+  it('parses null usage — no fabricated process success, and no fabricated usage either', () => {
+    expect(LogEventSchema.safeParse({ ...roleAttemptEvent, usage: null }).success).toBe(true)
+  })
+
+  it('refuses an outcome outside the enum', () => {
+    expect(LogEventSchema.safeParse({ ...roleAttemptEvent, outcome: 'succeeded' }).success).toBe(false)
+  })
+})
+
+const handoffRaised = {
+  meta,
+  subject,
+  kind: 'handoff' as const,
+  event: 'raised' as const,
+  payload: {},
+  class: 'product' as const,
+  reason: 'a Type 1 decision surfaced mid-task',
+  requested_decision: 'confirm the migration strategy'
+}
+
+describe('LogEventSchema — handoff family (O2)', () => {
+  it('parses a raised handoff', () => {
+    expect(LogEventSchema.safeParse(handoffRaised).success).toBe(true)
+  })
+
+  it("parses a resolved handoff — its own field set, not raised's requested_decision", () => {
+    const line: Record<string, unknown> = {
+      ...handoffRaised,
+      event: 'resolved' as const,
+      resolution: 'approved',
+      resolved_by: 'principal'
+    }
+    delete line.requested_decision
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it("refuses resolved carrying raised's requested_decision field — .strict() per member of the union", () => {
+    const line = { ...handoffRaised, event: 'resolved' as const, resolution: 'approved', resolved_by: 'principal' }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+
+  it('refuses class outside authority/strategy/product', () => {
+    expect(LogEventSchema.safeParse({ ...handoffRaised, class: 'architecture' }).success).toBe(false)
+  })
+})
+
+const effectEvent = {
+  meta,
+  subject,
+  kind: 'effect' as const,
+  event: 'attempted' as const,
+  payload: {},
+  effect_id: 'e1',
+  target: { kind: 'pr.comment', ref: '412' }
+}
+
+describe('LogEventSchema — effect family (O2)', () => {
+  it('parses an attempted effect', () => {
+    expect(LogEventSchema.safeParse(effectEvent).success).toBe(true)
+  })
+
+  it('parses observed/verified effects with an outcome, including uncertain', () => {
+    expect(LogEventSchema.safeParse({ ...effectEvent, event: 'observed', outcome: 'uncertain' }).success).toBe(true)
+    expect(LogEventSchema.safeParse({ ...effectEvent, event: 'verified', outcome: 'success' }).success).toBe(true)
+  })
+
+  it('refuses attempted carrying an outcome field — that belongs to observed/verified only', () => {
+    expect(LogEventSchema.safeParse({ ...effectEvent, outcome: 'success' }).success).toBe(false)
+  })
+})
+
+describe('LogEventSchema — review finding metadata (O3)', () => {
+  const verdictLine = {
+    meta,
+    subject,
+    kind: 'dispatch' as const,
+    event: 'outcome_received' as const,
+    payload: {},
+    target_role: 'code-reviewer' as const,
+    model: 'sonnet',
+    effect_id: 'e1',
+    outcome: {
+      type: 'verdict' as const,
+      verdict: 'REQUEST CHANGES' as const,
+      head: 'sha1',
+      comment_id: 99,
+      objectives: [{ id: 'O1', met: false }],
+      findings: [{ id: 'F1', severity: 'BLOCKER' }]
+    },
+    usage: { input: 10, output: 5 }
+  }
+
+  it('parses the pre-existing minimal finding shape — id/severity/state only', () => {
+    expect(LogEventSchema.safeParse(verdictLine).success).toBe(true)
+  })
+
+  it('parses a finding carrying severity_scale, policy_treatment, and confidence with its own scale/source', () => {
+    const line = {
+      ...verdictLine,
+      outcome: {
+        ...verdictLine.outcome,
+        findings: [
+          {
+            id: 'F1',
+            severity: 'BLOCKER',
+            severity_scale: 'code-review',
+            policy_treatment: 'blocking' as const,
+            confidence: 0.8,
+            confidence_scale: '0-1',
+            confidence_source: 'code-reviewer'
+          }
+        ]
+      }
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('parses a finding declaring policy_treatment: unavailable rather than guessing blocking/non_blocking', () => {
+    const line = {
+      ...verdictLine,
+      outcome: {
+        ...verdictLine.outcome,
+        findings: [{ id: 'F1', severity: 'MINOR', policy_treatment: 'unavailable' as const }]
+      }
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('refuses confidence outside 0..1', () => {
+    const line = {
+      ...verdictLine,
+      outcome: { ...verdictLine.outcome, findings: [{ id: 'F1', severity: 'MINOR', confidence: 1.5 }] }
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+
+  it('refuses policy_treatment outside its enum', () => {
+    const line = {
+      ...verdictLine,
+      outcome: { ...verdictLine.outcome, findings: [{ id: 'F1', severity: 'MINOR', policy_treatment: 'maybe' }] }
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+
+  it('refuses an extra key on a finding — .strict() applies to the widened shape too', () => {
+    const line = {
+      ...verdictLine,
+      outcome: { ...verdictLine.outcome, findings: [{ id: 'F1', severity: 'MINOR', sneaky: 1 }] }
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+})
+
 describe('LogEventSchema — defeat cases', () => {
-  it('refuses kind: gate — out of scope for this task', () => {
+  it('refuses kind: gate spread onto a dispatch-shaped event — a real kind, but the wrong event/field set for it', () => {
     expect(LogEventSchema.safeParse({ ...validDispatched, kind: 'gate' }).success).toBe(false)
   })
 
-  it('refuses kind outside the three shipped families', () => {
+  it('refuses kind outside every shipped family — command/tokens fold into operation/usage, neither is its own kind', () => {
     expect(LogEventSchema.safeParse({ ...validForgeWrite, kind: 'command' }).success).toBe(false)
+    expect(LogEventSchema.safeParse({ ...validForgeWrite, kind: 'tokens' }).success).toBe(false)
   })
 
   it('refuses an event outside its family', () => {

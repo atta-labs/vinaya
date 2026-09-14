@@ -2,7 +2,48 @@
 
 Status: draft
 
-One `log(e)`, one sink, one outbox per task. The full design is the Linear "Tech spec — The Vinaya Log" (rev 4), §5, §8, §9, §20; this file is the durable, in-repo reference for what shipped in `vinaya-log-v1` task 1 — the schema, the header, and the append — not a restatement of the whole spec.
+One `log(e)`, one sink, one outbox per task. The full design is the Linear "Tech spec — The Vinaya Log"; this file is the durable, in-repo reference for what has shipped — the schema, the header, and the append — not a restatement of the whole spec.
+
+## The envelope: `schema: 1` and `schema: 2` (`task-log-v1` 1)
+
+`meta.schema` is a discriminated union. `1` is the original header — every field below in "The header, on every line," nothing more — and stays exactly as it was: a line already on disk, or a fixture recorded before `task-log-v1`, keeps parsing without a schema violation just because it predates the fields below. `buildHeader` (`packages/aeg-core/src/log/envelope.ts`) builds `2` for every event from this task forward; `1` is a read-side compatibility shape only, never something a caller asks `buildHeader` to produce.
+
+`schema: 2` adds:
+
+```
+event_id: string        // stable per-event identity, generated once per log() call
+process_id: string      // opaque per-process identifier — distinct from run_id, which
+                         // correlates a whole dispatch chain across processes
+actor_id: string | null // opaque, UNVALIDATED role/actor claim from the environment —
+                         // deliberately not checked against ROLE_VALUES; a doctrine role
+                         // name and a role this schema has never heard of are equally
+                         // valid here. subject.role (unchanged) keeps its own closed
+                         // Role-union-or-'unattributed' meaning — the two fields answer
+                         // different questions at different trust levels.
+lineage: {
+  run: string | null       // this task's run identity — declared, not yet a real value:
+                           // no producer sets VINAYA_RUN today (control-store-v1's job)
+  attempt: number | null   // VINAYA_ATTEMPT
+  parent: string | null    // VINAYA_PARENT_EVENT — the event_id this one continues from
+}
+input_versions: {
+  objectives_version: string | null  // mirrors review-input-manifest.ts's field set —
+  brief_hash: string | null          // independent of subject.objectives_version
+  ruling_ordinal: number | null      // (kept, unchanged); a producer may set either,
+  policy_digest: string | null       // both, or neither
+}
+provenance: 'parent_attributed' | 'env_correlated' | 'self_reported' | 'unavailable'
+                         // trust ordering the spec names: parent-generated attribution
+                         // is stronger than worker-controlled environment correlation;
+                         // self-reported text proves no authorization. buildHeader never
+                         // upgrades itself to 'parent_attributed' on its own — it derives
+                         // 'env_correlated' when VINAYA_ROLE/VINAYA_TASK are present,
+                         // else 'unavailable'; only a caller that structurally knows it
+                         // just spawned this exact child (a future dispatch.ts change,
+                         // not wired by this task) can assert a stronger value.
+```
+
+Every new field is declared here and honestly `null`/`'unavailable'` until a later task in this tranche (`control-store-v1`, `worker-isolation-v1`) starts setting it for real — "provenance fields are declared here, enforced later" (this task's own Planner rationale).
 
 `packages/aeg-core/src/log/` is the policy layer: the zod schema (`LogEventSchema`), the pure envelope builder (`buildHeader`), and `redact`. No filesystem, no network, no process (`surface.md` "The rule"). `apps/cli/src/lib/log-sink.ts` is the one write: every environment read, remote read, package read, hostname and git call lives there, and it is the only file that opens the outbox path — proved by `apps/cli/tests/lib/log-callers.test.ts`.
 
@@ -33,9 +74,9 @@ subject: {
 
 `Role` is the doctrine-facing spelling from the spec's Role union: `planner | developer | code-reviewer | security | principal | archivist | architect` — not the `roles/*.md` filenames `resolveDoctrineRootInfo` resolves those names to.
 
-## The three families shipped so far
+## The families shipped so far
 
-`kind` is a closed union of `'dispatch' | 'dev_review_loop' | 'forge_write'` — the other three families (`gate`, `command`, `tokens`) are out of scope here and refused by the schema. Every event carries `duration_ms?` and a `payload` field; every family puts its real content in named top-level fields instead, so `payload` ships as an empty, `.strict()` object (an extra key inside it is still a schema violation).
+`kind` is a closed union of `'dispatch' | 'dev_review_loop' | 'forge_write' | 'gate' | 'operation' | 'usage' | 'role_attempt' | 'handoff' | 'effect'`. `command`/`tokens` are still refused by name — `command` folds into `operation`, `tokens` into `usage`, so neither is a separate `kind`. Every event carries `duration_ms?` and a `payload` field; every family puts its real content in named top-level fields instead, so `payload` ships as an empty, `.strict()` object (an extra key inside it is still a schema violation).
 
 **`dispatch`** — `target_role`, `model`, `round?`, `effect_id` on every event:
 
@@ -56,6 +97,19 @@ subject: {
 `dispatchRole` (task 3, `vinaya-log-v1`, Issue #406) is the `dispatch` family's real caller, in `apps/cli/src/lib/dispatch.ts` — not `dispatch-role.ts`, this file's own earlier forward-looking guess at the filename. `devReviewLoop` (the `dev_review_loop` chokepoint) lands in a later task; that family still ships with zero real callers, proved by the same test that will fail on the first caller outside `apps/cli/src/lib/dispatch.ts` and `apps/cli/src/lib/dev-review-loop.ts`.
 
 **`dispatchRole`'s own `outcome_received` lines carry a placeholder `outcome`.** `DispatchOutcomeSchema`'s seven variants each require role/action-specific identifying data (a PR number, a head sha, a comment id) that a generic headless launcher cannot honestly produce from an exit code and a vendor's own usage blob alone. Until the schema gains a variant for "completed, no specific forge outcome recorded here," a successful dispatch's `outcome_received` line carries `{ type: 'plan', issues: [] }` — the one member satisfiable with no invented identifier — and this must not be read as "a plan was cut." See `apps/cli/src/lib/dispatch.ts`'s own module doc for the full reasoning.
+
+**Review finding metadata (`task-log-v1` 1)** — a `verdict` outcome's `findings` array widens additively. The pre-existing `id`/`severity`/`state?` shape stays exactly as it was (`id` is this finding's identity AS REPORTED in one round's comment — stable within that comment only; a reviewer's own positional numbering is never advertised as stable across rounds). New, all optional: `severity_scale` (a free string, not a closed enum — this doctrine already has two, code-review's and security's, and a third reviewer type should never need a schema change to name its own), `policy_treatment` (`'blocking' | 'non_blocking' | 'unavailable'` — a separate fact from `severity`: the same reported severity can bind or not bind a verdict depending on the effective review policy's threshold at review time), `confidence` (`0..1`, self-reported, never treated as calibrated correctness), `confidence_scale`, `confidence_source`. None of the four are required — an old finding missing them all still parses.
+
+## Six more families (`task-log-v1` 1)
+
+Additive to the three above — nothing about `dispatch`/`dev_review_loop`/`forge_write` changed. Every one of these six carries `meta`/`subject` (the same versioned envelope) and `.strict()` payloads, same as before.
+
+- **`gate`** — one gate runner's attempted check: `check`, `check_version`, `policy_version`, `input_fingerprint`, one event `checked` with `outcome: 'pass' | 'fail' | 'wait' | 'skip' | 'invalid_input' | 'unavailable_dependency' | 'timeout' | 'cancelled'` and an optional `reason`.
+- **`operation`** — a normalized operation/tool call (the spec's "command dispatcher"): `operation`, `target`, one event `completed` with `result: 'ok' | 'error' | 'refused' | 'timeout' | 'cancelled' | 'unavailable'` and `error_class`. Never raw secret-bearing arguments — `redact()` still runs over the full event regardless.
+- **`usage`** — the spec's "usage collector": `model`, `source`, `semantics: 'cumulative' | 'delta'`, one event `observed` with `units: { input, output, cache }` (each `nonnegative().nullable()` — unknown usage is `null`, never coerced to `0`) and `unknown_reason`.
+- **`role_attempt`** — a role ATTEMPT's own normalized outcome, distinct from `dispatch`'s parent-side view of dispatching one: `actor` (opaque, NOT `RoleSchema` — this family is not limited to the closed doctrine `Role` union), `attempt`, one event `attempted` with `outcome: 'completed' | 'incomplete' | 'infrastructure_failed' | 'cancelled' | 'timed_out' | 'capability_refused'` and the same nullable `usage` shape `dispatch_failed` already uses. Named `role_attempt`, not `role`, so it never collides with this module's own `Role`/`RoleSchema` export.
+- **`handoff`** — a human handoff/escalation, raised then resolved: `class` (`'authority' | 'strategy' | 'product'`, reusing `dispatch`'s own `escalation` outcome enum rather than inventing a second name for the identical concept), `reason`; `raised` carries `requested_decision`, `resolved` carries `resolution`/`resolved_by` — two disjoint `.strict()` shapes, not one shape with everything optional.
+- **`effect`** — the spec's "shared effect executor": a generic external effect's `attempted`/`observed`/`verified` outcome (`'success' | 'failure' | 'uncertain'` on the latter two), keyed by `effect_id` and an opaque `target: { kind, ref }`. Additive to, and does not replace, `forge_write` above, which stays exactly as it was — one specific effect this schema does not yet generalize `forge_write` into. Fail-open observation only ("telemetry never substitutes for required intent," the spec's own words) — never the fail-closed control store `control-store-v1` adds.
 
 ## The outbox
 
@@ -93,6 +147,8 @@ polling the outbox file for its own line to land (`waitForOwnLine`, bounded at 2
 ## Attribution
 
 `VINAYA_RUN_ID`, `VINAYA_ROLE`, `VINAYA_TASK`, `VINAYA_ROUND` are read from `process.env` by the sink, never passed as an argument — a caller cannot override its own attribution. Absent: `role: 'unattributed'`, `issue: null`, a `run_id` generated once per process (`crypto.randomUUID()`). `host` is `'ci'` when `GITHUB_ACTIONS` is set, else `'hook'`/`'loop'` from `VINAYA_HOST`, else `'cli'`. A session not started through `vinaya dispatch` (task 3, shipped) is `unattributed`, which is the truth about it — the same class of honesty as `role: 'unattributed'` anywhere else in this doctrine.
+
+`VINAYA_RUN`, `VINAYA_ATTEMPT`, `VINAYA_PARENT_EVENT` (`task-log-v1` 1) are read the same way, into `meta.lineage` on a `schema: 2` header. No caller sets any of these three today — they read back `null` on every current line, honestly, until `control-store-v1`/`worker-isolation-v1` start setting them.
 
 `vinaya dispatch <role> --agent claude|codex|gemini` (`apps/cli/src/lib/dispatch.ts`) is the real mechanism: it sets all four variables on the CHILD process's environment only — via `spawn`'s own `env` option, never by mutating the parent's `process.env` — and separately calls `createLogSink({ env: () => ({ ...process.env, VINAYA_ROLE, VINAYA_TASK, VINAYA_ROUND }) })` once per dispatch so its OWN `dispatched`/`outcome_received`/`dispatch_failed` lines carry the same attribution without ever touching the parent's real environment. `--task` is optional: given, the line's `issue` is that number; absent, `issue: null` and `role` still comes from the `<role>` argument — never `unattributed`, since the role is always known at the point of dispatch. The child inherits the SAME `run_id` the parent's three lines used, so every `vinaya` call the child makes in turn (its own Stop hook, a nested dispatch) joins under it.
 

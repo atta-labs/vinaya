@@ -210,6 +210,10 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
 } {
   const deps: LogSinkDeps = { ...defaultDeps(), ...overrides }
   const runId = deps.env().VINAYA_RUN_ID || randomUUID()
+  // Opaque per-process identifier (O1) — one per sink instance, same
+  // lifetime as `runId`, but a distinct concept: `runId` correlates a
+  // dispatch chain across processes, `processId` names exactly this one.
+  const processId = randomUUID()
   let seq = 0
   let warned = false
   const warnOnce = (message: string): void => {
@@ -247,7 +251,19 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
             doctrine: doctrine(),
             host,
             hostname: deps.hostname(),
-            env: { role: env.VINAYA_ROLE, task: env.VINAYA_TASK, round: env.VINAYA_ROUND }
+            env: {
+              role: env.VINAYA_ROLE,
+              task: env.VINAYA_TASK,
+              round: env.VINAYA_ROUND,
+              // Not yet set by any caller (control-store-v1, worker-isolation-v1
+              // own wiring these) — read now so the envelope carries the slot
+              // honestly `null` today, real once a later task starts setting it.
+              run: env.VINAYA_RUN,
+              attempt: env.VINAYA_ATTEMPT,
+              parent: env.VINAYA_PARENT_EVENT
+            },
+            eventId: randomUUID(),
+            processId
           })
           // `header` spreads LAST: it carries the only trusted `meta`/`subject`
           // values (environment/remote/package/tree-derived), and `e`'s type
