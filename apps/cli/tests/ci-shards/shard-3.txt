@@ -29,6 +29,8 @@ tests/doc-owners-write.test.ts
 tests/doctor.test.ts
 tests/gemini-command-emitter.test.ts
 tests/init.test.ts
+tests/isolation/isolation-contract.test.ts
+tests/isolation/isolation-probe.test.ts
 tests/lib/brief-assembly.test.ts
 tests/lib/forge-write.test.ts
 tests/lib/task-run.test.ts

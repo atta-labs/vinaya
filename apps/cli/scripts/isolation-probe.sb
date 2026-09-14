@@ -1,0 +1,50 @@
+(version 1)
+;; Fixture for apps/cli/scripts/isolation-probe.ts (worker-isolation-v1 task 1, #549).
+;; A Seatbelt profile TEMPLATE — every {{PLACEHOLDER}} is substituted by
+;; buildSandboxProfile() with a canonicalized, absolute path before this file
+;; is written to a temp location and passed to `sandbox-exec -f`. Never
+;; invoked with the placeholders still present.
+(allow default)
+
+;; HOME confinement: deny the real HOME entirely, then carve out the one
+;; directory the confined child actually needs to do its work in (a
+;; worktree, or this probe's own scratch directory, both of which may
+;; themselves live under HOME on a developer machine).
+(deny file-read* file-write*
+  (subpath "{{REAL_HOME}}"))
+(allow file-read* file-write*
+  (subpath "{{ALLOWED_DIR}}")
+  (subpath "{{FAKE_HOME}}"))
+
+;; Keychain: deny read/write on every keychain database location, layered
+;; on top of the HOME deny above (the system/root keychain paths are not
+;; under HOME at all, so they need their own rule).
+(deny file-read* file-write*
+  (subpath "{{REAL_HOME}}/Library/Keychains")
+  (subpath "/Library/Keychains")
+  (subpath "/System/Library/Keychains"))
+
+;; Credential helper: deny executing the OS-level helper binaries outright,
+;; so a `git credential fill` inside the sandbox cannot shell out to either.
+(deny process-exec
+  (literal "{{CRED_HELPER_PATH}}")
+  (literal "/usr/bin/security"))
+
+;; Socket: deny outbound connection to the ssh-agent (or equivalent
+;; ambient credential-agent) unix-domain socket. The path MUST already be
+;; canonicalized (realpath) by the caller — Seatbelt matches the resolved
+;; path, not a symlinked convenience alias like /var/run/... on macOS
+;; (which resolves to /private/var/run/...).
+(deny network-outbound
+  (remote unix-socket (path-literal "{{SSH_SOCK_CANON}}")))
+
+;; Parent process: deny signaling any process (blocks a liveness probe via
+;; kill(ppid, 0)) and deny introspecting any OTHER process via the
+;; process-info family (blocks reading the parent via libproc / `ps`).
+;; Scoped to `(target others)`, never bare `(deny process-info*)` — an
+;; unscoped deny also blocks the confined runtime's OWN self-introspection
+;; at startup (observed live: bun crashes with SIGTRAP before it can even
+;; run the probe's checks) and is not needed for this boundary anyway,
+;; since the six checks below never rely on self-introspection.
+(deny signal)
+(deny process-info* (target others))
