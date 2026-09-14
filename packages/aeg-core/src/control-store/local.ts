@@ -63,10 +63,12 @@ import { dirname, join } from 'node:path'
 import {
   type EffectRecord,
   type InputRecord,
+  type LoopStateRecord,
   type ManifestRecord,
   type OwnershipRecord,
   parseEffectRecord,
   parseInputRecord,
+  parseLoopStateRecord,
   parseManifestRecord,
   parseOwnershipRecord,
   parseRunRecord,
@@ -243,6 +245,10 @@ function inputPath(root: string, task: number, runId: string): string {
 
 function manifestPath(root: string, task: number, round: number): string {
   return join(taskRoot(root, task), 'manifest', `round-${String(round).padStart(6, '0')}.json`)
+}
+
+function loopStatePath(root: string, task: number): string {
+  return join(taskRoot(root, task), 'loop-state.json')
 }
 
 function effectPath(root: string, task: number, key: string): string {
@@ -429,6 +435,27 @@ export function readManifest(
   round: number
 ): ParsedRecord<ManifestRecord> {
   return parseManifestRecord(readIfExists(manifestPath(deps.root(), task, round)))
+}
+
+export type LoopStateInput = Omit<LoopStateRecord, 'version' | 'kind' | 'task'>
+
+/**
+ * Writes the dev-review-loop's authoritative recovery snapshot for `task`
+ * (`control-store-v1` task 4, O1) — phase, round, budgets, held-result and
+ * delivered-findings identity. Deliberately NOT epoch-fenced, the same
+ * precedent `writeManifest` sets: see `LoopStateRecordSchema`'s own doc
+ * comment. Overwritten in place on every transition, unlike
+ * `writeRun`/`writeInput`.
+ */
+export function writeLoopState(deps: ControlStoreDeps, task: number, input: LoopStateInput): LoopStateRecord {
+  const record: LoopStateRecord = { version: 1, kind: 'loop_state', task, ...input }
+  atomicWriteFile(loopStatePath(deps.root(), task), JSON.stringify(record))
+  return record
+}
+
+/** The loop-state snapshot recorded for `task`, or `'absent'`/`'corrupt'` — the same three-way read every other record uses, never a nullable read that conflates the two (O3: a caller must be able to tell "nothing recovered yet" apart from "something recorded but untrustworthy," since the latter must never be read as license to reset budgets). */
+export function readLoopState(deps: Pick<ControlStoreDeps, 'root'>, task: number): ParsedRecord<LoopStateRecord> {
+  return parseLoopStateRecord(readIfExists(loopStatePath(deps.root(), task)))
 }
 
 export type TransitionInput = Omit<TransitionRecord, 'version' | 'kind' | 'task' | 'epoch' | 'seq'>

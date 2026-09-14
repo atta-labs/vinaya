@@ -2,6 +2,7 @@ export {
   CONTROL_RECORD_VERSION,
   parseEffectRecord,
   parseInputRecord,
+  parseLoopStateRecord,
   parseManifestRecord,
   parseOwnershipRecord,
   parseRunRecord,
@@ -12,9 +13,12 @@ export type {
   EffectRecord,
   EffectStatus,
   InputRecord,
+  LoopBudgets,
+  LoopStateRecord,
   ManifestRecord,
   OwnershipRecord,
   ParsedRecord,
+  RoundHeadIdentity,
   RunRecord,
   TransitionRecord
 } from './records'
@@ -28,12 +32,14 @@ export {
   readCurrentOwnership,
   readEffect,
   readInput,
+  readLoopState,
   readManifest,
   readRun,
   readTransitions,
   StaleEpochWriteError,
   writeEffect,
   writeInput,
+  writeLoopState,
   writeManifest,
   writeRun
 } from './local'
@@ -42,6 +48,7 @@ export type {
   ControlStoreDeps,
   EffectInput,
   InputInput,
+  LoopStateInput,
   ManifestInput,
   RunInput,
   TransitionInput

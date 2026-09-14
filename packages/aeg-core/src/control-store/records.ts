@@ -141,6 +141,57 @@ export const ManifestRecordSchema = z
   .strict()
 export type ManifestRecord = z.infer<typeof ManifestRecordSchema>
 
+/** A round's identity — which round, on which head — shared by `heldResult` and `deliveredFindings` below. */
+const roundHeadIdentity = z.object({ round: z.number().int().positive(), head: z.string().min(1) }).strict()
+export type RoundHeadIdentity = z.infer<typeof roundHeadIdentity>
+
+export const LoopBudgetsSchema = z
+  .object({
+    /** The mechanical gate-red/conflict-retry stall bound (`MAX_GATE_STALLED_TURNS` in `apps/cli`) — consecutive developer turns that produced no push on one head. */
+    mechanicalRetries: z.number().int().nonnegative(),
+    /** The substantive review-round count — bounded by `ReviewPolicy.maxRounds`. */
+    reviewRounds: z.number().int().nonnegative(),
+    /** The cumulative count of `'infrastructure'`/`'stale_driver'` pauses this task has ever hit — never reset by a restart, unlike the in-memory counters above (`apps/cli/specs/loop.md`, `control-store-v1` task 4). */
+    infrastructureRetries: z.number().int().nonnegative()
+  })
+  .strict()
+export type LoopBudgets = z.infer<typeof LoopBudgetsSchema>
+
+/**
+ * The dev-review-loop's own authoritative recovery record (`control-store-v1`
+ * task 4, Issue #554, O1) — phase, round, budgets, held-result and
+ * delivered-findings identity, written by the driver
+ * (`apps/cli/src/lib/dev-review-loop/round-assess.ts`'s `persistLoopState`)
+ * on every round transition and read back on start, attach and resume
+ * (`pause-resume.ts`'s `recoverLoopState`), replacing the driver's prior
+ * reliance on the task's optional, forge-flushed event history for round-
+ * number and budget recovery. One record per task, overwritten in place —
+ * deliberately NOT epoch-fenced, the same precedent `ManifestRecordSchema`
+ * sets: the driver's own cutover to acquired-epoch ownership over this
+ * task's mutable state is separate, later adoption work (`loop.md`); this
+ * record's real concurrency guard is still the pid-lock one-driver-per-task
+ * check the driver already runs before touching anything.
+ */
+export const LoopStateRecordSchema = z
+  .object({
+    version: z.literal(1),
+    kind: z.literal('loop_state'),
+    task: taskId,
+    round: z.number().int().positive(),
+    /** Mirrors `Decision['type']` (`packages/aeg-core/src/dev-review-loop/types.ts`) — a plain string here so this record stays independent of that package's own type, the same discipline `TransitionRecord.from`/`to` already uses for state names. */
+    phase: z.string().min(1),
+    /** Set only while `phase === 'pause'`. */
+    pauseReason: z.string().min(1).nullable(),
+    budgets: LoopBudgetsSchema,
+    /** The round whose verdict is currently held on disk, awaiting delivery or publish — `null` once nothing is held. */
+    heldResult: roundHeadIdentity.nullable(),
+    /** The round+head whose findings have already been delivered to the developer once — `null` until a delivery happens; read back so a later attach never redelivers the same (round, head) pair. */
+    deliveredFindings: roundHeadIdentity.nullable(),
+    recordedAt: isoTimestamp
+  })
+  .strict()
+export type LoopStateRecord = z.infer<typeof LoopStateRecordSchema>
+
 /**
  * One external effect's identity and reconciliation state, keyed by a
  * caller-chosen `key` (one file per key, overwritten in place as the
@@ -174,7 +225,14 @@ export const EffectRecordSchema = z
 export type EffectRecord = z.infer<typeof EffectRecordSchema>
 export type EffectStatus = EffectRecord['status']
 
-export type ControlRecord = RunRecord | InputRecord | OwnershipRecord | TransitionRecord | ManifestRecord | EffectRecord
+export type ControlRecord =
+  | RunRecord
+  | InputRecord
+  | OwnershipRecord
+  | TransitionRecord
+  | ManifestRecord
+  | LoopStateRecord
+  | EffectRecord
 
 /**
  * `'absent'` — nothing was ever written at this path.
@@ -222,6 +280,10 @@ export function parseTransitionRecord(raw: string | undefined): ParsedRecord<Tra
 
 export function parseManifestRecord(raw: string | undefined): ParsedRecord<ManifestRecord> {
   return parseWith(ManifestRecordSchema, raw)
+}
+
+export function parseLoopStateRecord(raw: string | undefined): ParsedRecord<LoopStateRecord> {
+  return parseWith(LoopStateRecordSchema, raw)
 }
 
 export function parseEffectRecord(raw: string | undefined): ParsedRecord<EffectRecord> {
