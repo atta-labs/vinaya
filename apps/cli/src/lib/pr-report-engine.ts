@@ -16,6 +16,7 @@ import { coreCheckRegistry } from '../checks/registry'
 import { buildCheckEnv } from '../checks/runner'
 import { ScanContext } from '../checks/scan-context'
 import { loadConfig } from './config'
+import { realDispatchTeeRecoveryDeps, recoverUsageFromDispatchTee } from './dispatch.js'
 import { runBodyChecks } from './forge-write.js'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from './numstat'
 import { packageRoot } from './package-root.js'
@@ -861,8 +862,21 @@ export type TokensAddition = { collected: true; row: string } | { collected: fal
  * another `commands/*.ts` file outright; routing through this lib-layer
  * wrapper keeps that call inside `apps/cli/src/lib`, where it already lived.
  */
-export function resolveTokenReportCapability(): MeteringCapability {
-  return resolveMeteringCapability(realDeps())
+/**
+ * O1 (#608): tries the real probe first, exactly as before; only when it
+ * comes back `no-transcript-resolved` (this session's own wiring — no
+ * pointer at all — never a resolved-but-broken one) does it also try
+ * `recoverUsageFromDispatchTee` before giving up. Every other verdict
+ * (capable, or incapable for a different reason) passes through unchanged —
+ * this never overrides a real wiring-defect diagnosis with a recovered
+ * number.
+ */
+export function resolveTokenReportCapability(transcriptPath?: string): MeteringCapability {
+  const capability = resolveMeteringCapability(realDeps(), transcriptPath)
+  if (capability.capable || capability.reason !== 'no-transcript-resolved') return capability
+  const recovered = recoverUsageFromDispatchTee(realDispatchTeeRecoveryDeps())
+  if (!recovered) return capability
+  return { capable: true, transcriptPath: recovered.teePath, summary: recovered.summary }
 }
 
 export function collectTokensAddition(opts: {
@@ -872,7 +886,7 @@ export function collectTokensAddition(opts: {
   transcriptPath?: string
   modelOverride?: string
 }): TokensAddition {
-  const capability = resolveMeteringCapability(realDeps(), opts.transcriptPath)
+  const capability = resolveTokenReportCapability(opts.transcriptPath)
   if (!capability.capable) {
     if (capability.reason === 'no-transcript-resolved') {
       return {

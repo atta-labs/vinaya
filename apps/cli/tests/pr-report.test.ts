@@ -950,6 +950,18 @@ describe('collectTokensAddition', () => {
  * a fresh empty directory (no pointer file can exist there) and clearing
  * `CLAUDE_CODE_SESSION_ID` — `hardenedMeteringDeps` reads `process.env` live,
  * and `collectTokensAddition` builds its deps per call.
+ *
+ * `VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK` are cleared too (O1, #608):
+ * `resolveTokenReportCapability` now also tries
+ * `recoverUsageFromDispatchTee`, which reads these three live off
+ * `process.env` — and when this whole suite itself runs inside a real
+ * dispatched developer session (as it does when a Developer runs its own
+ * `bun test` from a `vinaya dispatch developer` turn), those three are
+ * genuinely set to THIS session's own real values, and a real launch record
+ * plus tee log for this exact run can genuinely exist on this machine.
+ * Left uncleared, that real, unrelated state leaks into a test asserting
+ * "no wiring, no recovery" and non-deterministically turns a refusal into a
+ * real collected row (found live: exactly this, on the authoring machine).
  */
 describe('collectTokensAddition refuses rather than claiming the host cannot meter (#365)', () => {
   function withUnwiredEnv<T>(fn: () => T): T {
@@ -957,11 +969,17 @@ describe('collectTokensAddition refuses rather than claiming the host cannot met
     const saved = {
       TMPDIR: process.env.TMPDIR,
       CLAUDE_PROJECT_DIR: process.env.CLAUDE_PROJECT_DIR,
-      CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID
+      CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID,
+      VINAYA_RUN_ID: process.env.VINAYA_RUN_ID,
+      VINAYA_ROLE: process.env.VINAYA_ROLE,
+      VINAYA_TASK: process.env.VINAYA_TASK
     }
     process.env.TMPDIR = dir
     process.env.CLAUDE_PROJECT_DIR = dir
     delete process.env.CLAUDE_CODE_SESSION_ID
+    delete process.env.VINAYA_RUN_ID
+    delete process.env.VINAYA_ROLE
+    delete process.env.VINAYA_TASK
     try {
       return fn()
     } finally {

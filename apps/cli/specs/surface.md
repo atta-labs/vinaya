@@ -663,6 +663,8 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `parseGeminiUsage` | function | `apps/cli/src/lib/dispatch.ts` |
 | `readLaunchRecord` | function | `apps/cli/src/lib/dispatch.ts` |
 | `readResumeRecord` | function | `apps/cli/src/lib/dispatch.ts` |
+| `realDispatchTeeRecoveryDeps` | function | `apps/cli/src/lib/dispatch.ts` |
+| `recoverUsageFromDispatchTee` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderClaudeEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderCodexEvent` | function | `apps/cli/src/lib/dispatch.ts` |
 | `renderGeminiEvent` | function | `apps/cli/src/lib/dispatch.ts` |
