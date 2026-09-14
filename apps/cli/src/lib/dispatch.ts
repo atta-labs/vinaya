@@ -803,10 +803,11 @@ export type LaunchStatus = 'launched' | 'completed' | 'interrupted'
  * home the tee and the outbox already use, keyed by repo+role+vendor+scope,
  * for the SAME reason this module keeps the vendor session id out of the
  * Vinaya Log's own `DispatchOutcomeSchema` (see this file's module doc): no
- * strict, versioned schema — the log's, or `control-store-v1`'s own — carries
+ * strict, versioned schema — the log's, or the control store's own
+ * (`packages/aeg-core/src/control-store/records.ts`) — carries
  * a `role`, an `attempt`, or a vendor `sessionId` field, and this record is
  * this launcher's own concern, not a control-store ownership epoch the
- * generic launcher has no business claiming (the loop's own `control-store`
+ * generic launcher has no business claiming (the loop's own control-store
  * adoption is deferred — `apps/cli/specs/loop.md`).
  */
 export type LaunchRecord = {
@@ -835,7 +836,7 @@ export type LaunchRecord = {
 }
 
 /**
- * The three-way read of a launch record, mirroring `control-store-v1`'s own
+ * The three-way read of a launch record, mirroring the control store's own
  * `ParsedRecord` discipline (`packages/aeg-core/src/control-store/records.ts`):
  * `'corrupt'` (something is written but does not parse as a launch record) is
  * never conflated with `'absent'` (nothing was ever written) — the exact
