@@ -115,7 +115,7 @@ export function renderNoPushStopComment(task: number, reason: PauseReason, detai
  * same replacement `postPauseComment` gets below.
  */
 export function postIssuePauseComment(
-  root: string,
+  _root: string,
   task: number,
   round: number,
   reason: PauseReason,
@@ -152,7 +152,7 @@ export function postIssuePauseComment(
  * requirement; only the key changed, not the once-only guarantee.
  */
 export function postPauseComment(
-  root: string,
+  _root: string,
   task: number,
   round: number,
   head: string,
