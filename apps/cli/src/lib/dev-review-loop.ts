@@ -48,6 +48,7 @@ import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import {
   assessRound,
+  briefHash as briefHashOf,
   buildReviewInputManifest,
   compareManifest,
   DEFAULT_REVIEW_POLICY,
@@ -55,9 +56,11 @@ import {
   initialLoopState,
   manifestAsEchoed,
   nextRoundNumber,
+  policyDigest as policyDigestOf,
   type Confidence,
   type Decision,
   type DevReviewLoopEventInput,
+  type EscalationRecord,
   type LoopConfig,
   type LoopState,
   type Observations,
@@ -72,6 +75,7 @@ import {
   type AgentVendor,
   dispatchRole as realDispatchRole,
   type DispatchHandle,
+  isAgentVendor,
   readResumeRecord as realReadResumeRecord,
   type ResumeRecord,
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
@@ -99,6 +103,7 @@ import {
   DeveloperStopSignal,
   fetchDeveloperStop,
   fetchFrozenBrief,
+  fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
   fetchPrBody,
   fetchRulings,
@@ -162,17 +167,26 @@ import { postForgeEffectOnce, publishRound } from './dev-review-loop/publication
 import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
 import {
   clearDriverLock,
+  escalationIdFor,
+  fenceStartedEffectsAsUncertain,
   isDriverPidAlive,
   type PauseState,
   postIssuePauseComment,
   postPauseComment,
   printDriverLockLine,
   readDriverLock,
+  readEscalationRecord,
   readPauseState,
   recoverLoopState,
+  ReplayedResolutionError,
+  resolveEscalation,
+  type ResolveEscalationResult,
   sanitizePublicPauseDetail,
+  StaleEscalationError,
   writeDriverLock,
-  writePauseState
+  writeEscalationRecord,
+  writePauseState,
+  WrongTargetResolutionError
 } from './dev-review-loop/pause-resume.js'
 
 // Re-exports — every name this file exported before the O8 split still
@@ -198,6 +212,7 @@ export {
   fetchDeveloperStop,
   fetchFrozenBrief,
   fetchIssueTitle,
+  fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
   fetchRulings,
   fetchSourceRevision,
@@ -229,7 +244,20 @@ export {
 export type { ReviewerPromptFacts } from './dev-review-loop/reviewer-dispatch.js'
 export { publishRound } from './dev-review-loop/publication.js'
 export type { PublishInput } from './dev-review-loop/publication.js'
-export { renderNoPushStopComment, renderPauseComment } from './dev-review-loop/pause-resume.js'
+export {
+  escalationIdFor,
+  fenceStartedEffectsAsUncertain,
+  readEscalationRecord,
+  readResolutionRecord,
+  renderNoPushStopComment,
+  renderPauseComment,
+  ReplayedResolutionError,
+  resolveEscalation,
+  StaleEscalationError,
+  writeEscalationRecord,
+  WrongTargetResolutionError
+} from './dev-review-loop/pause-resume.js'
+export type { EscalationFacts, ResolveEscalationResult } from './dev-review-loop/pause-resume.js'
 export {
   CONFIDENCE_PROMPT_LINE,
   DEVELOPER_ROUND_RESPONSE_FILE_NAME,
@@ -252,6 +280,8 @@ export type LoopDeps = {
   fetchFailingCheckRuns: typeof fetchFailingCheckRuns
   fetchRulings: typeof fetchRulings
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
+  /** O2: the GitHub login that authored the newest principal ruling — a resolution record's `authenticatedBy`. */
+  fetchNewestRulingAuthor: typeof fetchNewestRulingAuthor
   fetchFrozenBrief: typeof fetchFrozenBrief
   resolveIssueObjectives: typeof resolveIssueObjectives
   /** O2 (task 4, Issue #483): the frozen brief's own source revision, named to the reviewer as a fact. */
@@ -601,6 +631,15 @@ async function defaultRunEvidenceReport(
  */
 const IN_FLIGHT_SHUTDOWN_ROLES = ['developer', 'code-reviewer', 'security'] as const
 
+/** Shared by `LoopDeps.terminateInFlightLaunchesOnShutdown`'s own default AND `cancelDevReviewLoop`'s (O3) — the identical role loop, never a second copy that could drift from it. */
+function defaultTerminateInFlightLaunchesOnShutdown(
+  task: number,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null
+): void {
+  for (const role of IN_FLIGHT_SHUTDOWN_ROLES) realTerminateLaunchedChildOnShutdown(role, agent, repo, task)
+}
+
 function defaultDeps(): LoopDeps {
   return {
     dispatchRole: realDispatchRole,
@@ -609,6 +648,7 @@ function defaultDeps(): LoopDeps {
     fetchFailingCheckRuns,
     fetchRulings,
     fetchNewestRulingOrdinal,
+    fetchNewestRulingAuthor,
     fetchFrozenBrief,
     resolveIssueObjectives,
     fetchSourceRevision,
@@ -643,9 +683,7 @@ function defaultDeps(): LoopDeps {
     reexecSelf: defaultReexecSelf,
     exitProcess: (code) => process.exit(code),
     runEvidenceReport: defaultRunEvidenceReport,
-    terminateInFlightLaunchesOnShutdown: (task, agent, repo) => {
-      for (const role of IN_FLIGHT_SHUTDOWN_ROLES) realTerminateLaunchedChildOnShutdown(role, agent, repo, task)
-    }
+    terminateInFlightLaunchesOnShutdown: defaultTerminateInFlightLaunchesOnShutdown
   }
 }
 
@@ -743,6 +781,43 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             ? ` (task ${closesTask} has hit ${infrastructureRetriesSoFar} infrastructure/stale_driver pause(s) — at or past the bound of ${MAX_INFRASTRUCTURE_RETRIES}, a ruling is required even for this reason.)`
             : '')
       )
+    }
+    // O2: the authenticated resolution — consumed at most once
+    // (`resolveEscalation`), refusing a wrong-target, stale, or replayed
+    // attempt before this run ever re-enters the round loop. An
+    // `'infrastructure'`/`'stale_driver'` resume carries no ruling (above),
+    // so it authenticates as the driver's own recoverable-hiccup recovery
+    // rather than a principal decision — still consumed at most once, so a
+    // duplicate bare `--resume` against the SAME held hiccup is refused too.
+    // `held.escalationId` is the escalation's OWN real id — a disambiguating
+    // suffix when `writeEscalation` had to claim one (code review, round 2,
+    // MEDIUM); the natural key is still correct whenever no collision ever
+    // happened, and for a `PauseState` written before this field existed.
+    const resumeEscalationId = held.escalationId ?? escalationIdFor(closesTask, held.round, held.head)
+    const resumeAuthenticatedBy =
+      held.reason === 'infrastructure' ? 'driver-self' : (d.fetchNewestRulingAuthor(resumePr) ?? 'unknown-principal')
+    const resumeAuthenticatedFrom =
+      held.reason === 'infrastructure'
+        ? `${resumePr}-infrastructure-retry`
+        : `${resumePr}-${d.fetchNewestRulingOrdinal(resumePr)}`
+    try {
+      resolveEscalation(
+        closesTask,
+        resumeEscalationId,
+        resumePr,
+        'resume',
+        resumeAuthenticatedBy,
+        resumeAuthenticatedFrom
+      )
+    } catch (err) {
+      if (
+        err instanceof WrongTargetResolutionError ||
+        err instanceof StaleEscalationError ||
+        err instanceof ReplayedResolutionError
+      ) {
+        throw new Error(`devReviewLoop --resume: ${err.message}`)
+      }
+      throw err
     }
     const currentHead = d.resolveHead(held.branch)
     // O8: a moved head is accepted, never refused, once a ruling exists —
@@ -1048,6 +1123,56 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // bind the posted verdicts against it with the SAME `compareManifest` the
     // gate uses. Set the moment the manifest is built, read only at publish.
     let lastDispatchedManifest: ReviewInputManifest | undefined
+    /**
+     * O1: the input-version facts an escalation record binds to
+     * (`writeEscalationRecord`'s own `briefHash`/`objectivesVersion`/
+     * `rulingOrdinal`/`policyDigest`) — the round's own dispatched manifest
+     * when one exists (a pause after reviewers ran), else a fresh best-effort
+     * read of the same four facts (a pause before any manifest was ever
+     * built — an early gate-red stall, a round-1 infrastructure hiccup).
+     * Never throws: any individual read failing here must not turn a
+     * best-effort escalation write into a reason the pause itself fails.
+     */
+    function bestEffortInputVersions(): {
+      briefHash: string | null
+      objectivesVersion: string | null
+      rulingOrdinal: number
+      policyDigest: string
+    } {
+      if (lastDispatchedManifest) {
+        return {
+          briefHash: lastDispatchedManifest.briefHash,
+          objectivesVersion: lastDispatchedManifest.objectivesVersion,
+          rulingOrdinal: lastDispatchedManifest.rulingOrdinal,
+          policyDigest: lastDispatchedManifest.policyDigest
+        }
+      }
+      let brief: string | null = null
+      let objectives: string | null = null
+      let ordinal = 0
+      try {
+        brief = briefHashOf(d.fetchFrozenBrief(task))
+      } catch {
+        // Best-effort — no frozen brief yet, or unreadable.
+      }
+      try {
+        objectives = d.resolveIssueObjectives(task).version
+      } catch {
+        // Best-effort — objectives unresolvable this early.
+      }
+      try {
+        ordinal = prNumber > 0 ? d.fetchNewestRulingOrdinal(prNumber) : 0
+      } catch {
+        // Best-effort — no PR yet, or the forge read failed.
+      }
+      let digest = 'unknown'
+      try {
+        digest = policyDigestOf(policy)
+      } catch {
+        // Best-effort — a crash this early in setup can leave `policy` unassigned.
+      }
+      return { briefHash: brief, objectivesVersion: objectives, rulingOrdinal: ordinal, policyDigest: digest }
+    }
     let resumedDispatch = resumeFrom !== null
     /** O3: the last red gate's failing check-run names, for the next gate-red dispatch prompt and, if it stalls, the pause detail. */
     let lastFailingChecks: string[] = []
@@ -2051,6 +2176,33 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // above already follow the identical "never throws" discipline for
       // the same reason.
       try {
+        // O1: the durable escalation record — best-effort (never a second
+        // chance for the process to crash on its way out), written BEFORE
+        // `pause-state.json` so its own real `escalationId` (code review,
+        // round 2, MEDIUM: `writeEscalation` claims a disambiguating suffix
+        // rather than silently overwriting a colliding, genuinely different
+        // escalation) can be carried on `PauseState` for `--resume`/
+        // `--cancel` to find later.
+        let escalationRecord: EscalationRecord | null = null
+        try {
+          escalationRecord = writeEscalationRecord({
+            task,
+            round,
+            head,
+            branch,
+            pr: prNumber > 0 ? prNumber : null,
+            runId,
+            agent: input.agent,
+            reason: decision.reason,
+            detail: decision.detail,
+            evidence: lastReviewContext ?? undefined,
+            ...bestEffortInputVersions()
+          })
+        } catch {
+          // Best-effort — the pause state and comment below are the
+          // authoritative record; a control-store write failure here never
+          // undoes them.
+        }
         writePauseState(root, {
           task,
           round,
@@ -2060,6 +2212,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           reason: decision.reason,
           detail: decision.detail,
           pausedAt: new Date().toISOString(),
+          escalationId: escalationRecord?.escalationId,
           infrastructureRetries
         })
         // A crash this early — setup, or a fresh round-1 task never getting
@@ -2703,6 +2856,29 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             keepLockAlive = true
           }
           const pauseHead = d.resolveHead(branch)
+          // O1: best-effort, same discipline as the crash-catch pause site —
+          // written BEFORE `pause-state.json` so its own real `escalationId`
+          // (code review, round 2, MEDIUM — see `writeEscalation`'s own doc
+          // comment) can be carried on `PauseState`.
+          let escalationRecord: EscalationRecord | null = null
+          try {
+            escalationRecord = writeEscalationRecord({
+              task,
+              round,
+              head: pauseHead,
+              branch,
+              pr: prNumber > 0 ? prNumber : null,
+              runId,
+              agent: input.agent,
+              reason: decision.reason,
+              detail: decision.detail,
+              evidence: lastReviewContext ?? undefined,
+              ...bestEffortInputVersions()
+            })
+          } catch {
+            // Best-effort — the pause state and comment below are the
+            // authoritative record.
+          }
           writePauseState(root, {
             task,
             round,
@@ -2712,6 +2888,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             reason: decision.reason,
             detail: decision.detail,
             pausedAt: new Date().toISOString(),
+            escalationId: escalationRecord?.escalationId,
             infrastructureRetries
           })
           postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail)
@@ -2726,6 +2903,130 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
     }
   }
+}
+
+// --- cancel (O3, #556) -------------------------------------------------------
+
+export type CancelInput = { cancelPr: number; agent: AgentVendor }
+export type CancelResult = { task: number; escalationId: string; fencedEffectKeys: string[] }
+
+export type CancelDeps = {
+  fetchPrBody: typeof fetchPrBody
+  taskFromPrBody: typeof taskFromPrBody
+  readPauseState: typeof readPauseState
+  fetchRulings: typeof fetchRulings
+  fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
+  fetchNewestRulingAuthor: typeof fetchNewestRulingAuthor
+  outboxRoot: () => string
+  resolveRepo: () => Promise<{ owner: string; repo: string } | null>
+  terminateInFlightLaunchesOnShutdown: (
+    task: number,
+    agent: AgentVendor,
+    repo: { owner: string; repo: string } | null
+  ) => void
+  flushOutbox: (task: number) => Promise<void>
+}
+
+function defaultCancelDeps(): CancelDeps {
+  return {
+    fetchPrBody,
+    taskFromPrBody,
+    readPauseState,
+    fetchRulings,
+    fetchNewestRulingOrdinal,
+    fetchNewestRulingAuthor,
+    outboxRoot,
+    resolveRepo: () => resolveRepo().catch(() => null),
+    terminateInFlightLaunchesOnShutdown: defaultTerminateInFlightLaunchesOnShutdown,
+    flushOutbox: defaultFlushOutbox
+  }
+}
+
+/**
+ * O3: cancels a PAUSED run's own escalation — "resume or cancel only their
+ * intended run" is this function's own half of that sentence, the mirror of
+ * `devReviewLoop`'s `--resume` path above. Never re-enters the round loop
+ * (a cancelled run has nothing left to continue): it authenticates the same
+ * way `--resume` does (a principal-authored ruling comment on the PR — "the
+ * Operator cannot author a ruling," Traps to avoid), consumes the SAME
+ * `resolveEscalation` single-consumption guard (so a paused escalation
+ * cannot be BOTH resumed and cancelled, nor cancelled twice), requests
+ * termination of whichever role is genuinely in flight through task 3's own
+ * identity-checked shutdown path (a safe no-op when nothing is), and fences
+ * any effect record left `'started'` — a late-arriving reviewer result, or
+ * an in-flight forge post — as `'uncertain'` under the SAME epoch the
+ * resolution was just consumed under, so a write still trying to complete
+ * against the now-superseded epoch is refused by `StaleEpochWriteError` the
+ * instant it tries, never silently landing after cancellation.
+ */
+export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<CancelDeps> = {}): Promise<CancelResult> {
+  const d: CancelDeps = { ...defaultCancelDeps(), ...deps }
+  const task = d.taskFromPrBody(d.fetchPrBody(input.cancelPr))
+  if (task === null) {
+    throw new Error(
+      `devReviewLoop --cancel: PR #${input.cancelPr}'s body carries no \`Closes #N\` reference — cannot derive its task.`
+    )
+  }
+  const root = d.outboxRoot()
+  const held = d.readPauseState(root, task)
+  if (!held) {
+    throw new Error(
+      `devReviewLoop --cancel: no held pause state found for task ${task} (PR #${input.cancelPr}) — nothing to cancel.`
+    )
+  }
+  if (held.prNumber !== input.cancelPr) {
+    throw new Error(
+      `devReviewLoop --cancel: task ${task}'s held pause state names PR #${held.prNumber}, not PR #${input.cancelPr}.`
+    )
+  }
+  const rulings = d.fetchRulings(input.cancelPr)
+  if (rulings.length === 0) {
+    throw new Error(
+      `devReviewLoop --cancel: PR #${input.cancelPr} carries no Principal ruling comment yet — nothing authenticates this cancel.`
+    )
+  }
+  // See the identical comment on the `--resume` path above.
+  const escalationId = held.escalationId ?? escalationIdFor(task, held.round, held.head)
+  // Code review, round 2, MAJOR: the operator-typed `--agent` flag used to
+  // decide what gets terminated with nothing persisted to check it against.
+  // The escalation record now carries the agent the run was ACTUALLY
+  // dispatched under (`EscalationFacts.agent`, written at pause time) — read
+  // (peeked, never consumed) BEFORE `resolveEscalation` below so a mismatch
+  // is refused before the resolution is ever consumed, not after: a
+  // mistyped or stale `--agent` must never leave a genuine cancel decision
+  // silently recorded while still refusing to act on it. `undefined` only
+  // for an escalation record written before this field existed; that legacy
+  // case falls back to trusting the operator-supplied value, same as before
+  // this fix.
+  const peekedEscalation = readEscalationRecord(task, escalationId)
+  const dispatchedAgent = peekedEscalation?.agent
+  if (dispatchedAgent !== undefined && dispatchedAgent !== input.agent) {
+    throw new Error(
+      `devReviewLoop --cancel: task ${task}'s escalation was dispatched under agent '${dispatchedAgent}', not '${input.agent}' — refusing to terminate under the wrong agent. Retry with --agent ${dispatchedAgent}.`
+    )
+  }
+  const terminateAgent: AgentVendor =
+    dispatchedAgent !== undefined && isAgentVendor(dispatchedAgent) ? dispatchedAgent : input.agent
+  const authenticatedBy = d.fetchNewestRulingAuthor(input.cancelPr) ?? 'unknown-principal'
+  const authenticatedFrom = `${input.cancelPr}-${d.fetchNewestRulingOrdinal(input.cancelPr)}`
+  let resolved: ResolveEscalationResult
+  try {
+    resolved = resolveEscalation(task, escalationId, input.cancelPr, 'cancel', authenticatedBy, authenticatedFrom)
+  } catch (err) {
+    if (
+      err instanceof WrongTargetResolutionError ||
+      err instanceof StaleEscalationError ||
+      err instanceof ReplayedResolutionError
+    ) {
+      throw new Error(`devReviewLoop --cancel: ${err.message}`)
+    }
+    throw err
+  }
+  const repo = await d.resolveRepo()
+  d.terminateInFlightLaunchesOnShutdown(task, terminateAgent, repo)
+  const fencedEffectKeys = fenceStartedEffectsAsUncertain(task, resolved.epoch)
+  await d.flushOutbox(task)
+  return { task, escalationId, fencedEffectKeys }
 }
 
 export const DEV_REVIEW_LOOP_AGENTS = AGENT_VENDOR_NAMES

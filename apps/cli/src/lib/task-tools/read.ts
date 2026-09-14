@@ -24,9 +24,15 @@
  */
 
 import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import type { Freshness, PauseReason, RequestedAuthority, TaskEscalationPacket } from '@attalabs/aeg-core'
-import { readPauseState, type PauseState } from '../dev-review-loop/pause-resume.js'
+import { dirname, join } from 'node:path'
+import { defaultControlStoreDeps, type Freshness, type TaskEscalationPacket } from '@attalabs/aeg-core'
+import {
+  escalationIdFor,
+  PAUSE_REASON_PROFILE,
+  readEscalationRecord,
+  readPauseState,
+  type PauseState
+} from '../dev-review-loop/pause-resume.js'
 import {
   deriveLoopState,
   lastRoundVerdictLines,
@@ -150,76 +156,6 @@ export function describeTaskLoopState(state: TaskLoopState): string {
 
 // --- task_escalation_read's own observation ---------------------------------
 
-/** Per `PauseReason` — who this pause is addressed to, what the driver already tried before pausing, and the actions permitted next. A judgment call (`aeg-root/roles/*.md`'s own routing for each reason), recorded once here rather than re-derived ad hoc by every caller. */
-const PAUSE_REASON_PROFILE: Record<
-  PauseReason,
-  { requestedAuthority: RequestedAuthority; attemptedRecovery: string; nextActions: string[] }
-> = {
-  escalation: {
-    requestedAuthority: 'principal',
-    attemptedRecovery: 'none — an escalation is a decision request, not a retry condition.',
-    nextActions: ['Read `detail` for the escalating role’s own reasoning, then rule or redirect the work.']
-  },
-  max_rounds: {
-    requestedAuthority: 'principal',
-    attemptedRecovery: 'none — the round cap was reached; the loop stopped rather than looping forever.',
-    nextActions: ['Review the round history and either raise the cap, redirect the work, or accept the residual risk.']
-  },
-  no_progress: {
-    requestedAuthority: 'principal',
-    attemptedRecovery: 'none — the same findings reappeared across rounds with no forward motion.',
-    nextActions: ['Review the repeated findings and either clarify the brief or rule on the disagreement.']
-  },
-  confidence: {
-    requestedAuthority: 'principal',
-    attemptedRecovery: 'none — a reviewer asked for a confidence re-ask the loop could not resolve on its own.',
-    nextActions: ['Answer the confidence question directly, or rule on the finding it concerns.']
-  },
-  reappearance: {
-    requestedAuthority: 'principal',
-    attemptedRecovery: 'none — a previously-resolved finding reappeared, which the loop never auto-dismisses.',
-    nextActions: ['Confirm whether the reappearance is a real regression or a reviewer false positive.']
-  },
-  infrastructure: {
-    requestedAuthority: 'operator',
-    attemptedRecovery:
-      'none — a role or artifact the round needed was missing; this is an environment gap, not a content one.',
-    nextActions: ['Fix the missing role/artifact named in `detail`, then resume.']
-  },
-  no_push: {
-    requestedAuthority: 'operator',
-    attemptedRecovery:
-      'one foreground resume asking the developer to commit and push, which did not produce a new head.',
-    nextActions: ['Inspect the worktree named in `detail` for uncommitted or unpushed work, then resume.']
-  },
-  objectives_changed: {
-    requestedAuthority: 'self',
-    attemptedRecovery: 'none required — the driver detected the objectives edit itself and paused for safety.',
-    nextActions: ['Resume — the round will re-read the current objectives on its own.']
-  },
-  ruling_posted: {
-    requestedAuthority: 'self',
-    attemptedRecovery: 'none required — the driver detected a mid-round ruling itself and paused for safety.',
-    nextActions: ['Resume — the round will account for the posted ruling on its own.']
-  },
-  stale_driver: {
-    requestedAuthority: 'self',
-    attemptedRecovery:
-      'a re-exec in place was attempted first; this pause is what the driver falls back to when that fails.',
-    nextActions: ['Resume once the driver-owned code on the base branch is stable.']
-  },
-  brief_superseded: {
-    requestedAuthority: 'self',
-    attemptedRecovery: 'none required — the driver detected the brief supersession itself and paused for safety.',
-    nextActions: ['Resume — the round will re-read the current frozen brief on its own.']
-  },
-  policy_changed: {
-    requestedAuthority: 'self',
-    attemptedRecovery: 'none required — the driver detected the policy change itself and paused for safety.',
-    nextActions: ['Resume — the round will re-resolve the current review policy on its own.']
-  }
-}
-
 /**
  * Read straight from `pause-state.json` — never through `deriveLoopState`
  * (which only ever returns `paused` for the CURRENT pause and collapses a
@@ -234,6 +170,22 @@ const PAUSE_REASON_PROFILE: Record<
  * `observedAt`/`freshness` fields (`ObservedSchema`, merged into the
  * schema directly) — they are set here, once, rather than through the
  * generic `Observed<T>` wrapper above, which would double them.
+ *
+ * `runIdentity`/`inputVersions` come from the durable `EscalationRecord`
+ * (code review, round 2, MEDIUM: this was the one read path meant to serve
+ * a recipient with no chat history, and it never read the control-store
+ * record a prior round added — only `pause-state.json`'s own, narrower
+ * fields) — `null` on either when no record exists yet for this pause (a
+ * `PauseState` written before that adoption, or a best-effort escalation
+ * write that itself failed at pause time; the pause itself is still fully
+ * reported either way, just without those two extra facts). Read through a
+ * control-store root DERIVED from `root` (`root`'s own parent, `'control-
+ * store'` sibling — the SAME `GLOBAL_VINAYA_HOME` layout `outboxRoot()`/
+ * `controlStoreRoot()` already share in production) rather than the real
+ * global default — this module's own contract is a fixture-testable,
+ * explicit `root`, and a read that silently escaped past it into this
+ * machine's real `~/.vinaya/control-store/` would break that for every
+ * caller, test fixtures included.
  */
 export function readEscalationPacket(root: string, task: number): TaskEscalationPacket | null {
   const pause: PauseState | null = readPauseState(root, task)
@@ -244,6 +196,9 @@ export function readEscalationPacket(root: string, task: number): TaskEscalation
 
   const verdictLines: RoundVerdictLines | null = lastRoundVerdictLines(root, task)
   const profile = PAUSE_REASON_PROFILE[pause.reason]
+  const escalationId = pause.escalationId ?? escalationIdFor(pause.task, pause.round, pause.head)
+  const controlStoreDeps = defaultControlStoreDeps(() => join(dirname(root), 'control-store'))
+  const escalation = readEscalationRecord(pause.task, escalationId, controlStoreDeps)
 
   return {
     reason: pause.reason,
@@ -262,6 +217,15 @@ export function readEscalationPacket(root: string, task: number): TaskEscalation
     attemptedRecovery: profile.attemptedRecovery,
     requestedAuthority: profile.requestedAuthority,
     permittedNextActions: [...profile.nextActions, `Or run: ${resumeCommandFor(pause.prNumber)}`],
+    runIdentity: escalation ? { runId: escalation.runId, pid: escalation.pid, host: escalation.host } : null,
+    inputVersions: escalation
+      ? {
+          briefHash: escalation.briefHash,
+          objectivesVersion: escalation.objectivesVersion,
+          rulingOrdinal: escalation.rulingOrdinal,
+          policyDigest: escalation.policyDigest
+        }
+      : null,
     observedAt: new Date().toISOString(),
     freshness
   }

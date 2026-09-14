@@ -33,6 +33,7 @@ tests/isolation/isolation-contract.test.ts
 tests/isolation/isolation-probe.test.ts
 tests/lib/brief-assembly.test.ts
 tests/lib/dev-review-loop/gate-reading.test.ts
+tests/lib/dev-review-loop/pause-resume.test.ts
 tests/lib/forge-write.test.ts
 tests/lib/task-run.test.ts
 tests/lib/task-status.test.ts

@@ -1896,6 +1896,33 @@ export async function dispatchRole(
     let stdoutBuf = ''
     const MAX_STDOUT_BYTES = 1_000_000
 
+    // `'exit'` (below) can fire before the LAST already-in-flight `'data'`
+    // chunk from the DIRECT child is delivered — the OS process-exit
+    // notification and the pipe's own data delivery are two independent
+    // event sources, and nothing orders one ahead of the other (CI, round
+    // 3: observed live as an intermittent empty `usage`/`resumeId` on a
+    // vendor that had already flushed a complete line before exiting).
+    // `STDOUT_DRAIN_GRACE_MS` gives that last chunk a bounded chance to
+    // land before `stdoutBuf` is read for `usage`/`resumeId` — resolved
+    // immediately, with no added latency, the instant `'end'` actually
+    // fires (the overwhelmingly common case for a child that closes its
+    // own stdout); bounded rather than awaiting `'end'` outright so a
+    // vendor's own grandchild inheriting and holding the pipe open (the
+    // exact scenario `'exit'` was chosen over `'close'` to survive — see
+    // that doc comment below) still returns promptly instead of hanging.
+    let stdoutEnded = false
+    const STDOUT_DRAIN_GRACE_MS = 200
+    function waitForStdoutDrain(): Promise<void> {
+      if (stdoutEnded) return Promise.resolve()
+      return new Promise((res) => {
+        const timer = setTimeout(res, STDOUT_DRAIN_GRACE_MS)
+        child.stdout.once('end', () => {
+          clearTimeout(timer)
+          res()
+        })
+      })
+    }
+
     const outputTee = openOutputTee(effectId)
     if (outputTee.path !== null) {
       writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: output teed to ${outputTee.path}`)
@@ -1951,6 +1978,9 @@ export async function dispatchRole(
           // not a JSON line, or a renderer that refused it — never fatal
         }
       }
+    })
+    child.stdout.once('end', () => {
+      stdoutEnded = true
     })
     // Still never inspected for outcome (O2/constraints: stderr content
     // never decides success or failure, only exit code does) — but no
@@ -2037,18 +2067,12 @@ export async function dispatchRole(
       )
     })
 
-    // `exit`, never `close`: `close` waits for every stdio stream to see
-    // EOF, which never happens when the vendor's own child spawns a
-    // background helper that inherits its stdout/stderr (found live,
-    // authoring this task — a `cat > /dev/null &`-shaped grandchild in a
-    // test fixture held the pipe open forever after a SIGKILL, hanging
-    // `dispatchRole`'s returned promise permanently even though the direct
-    // child was already dead). `exit` fires the moment the process itself
-    // terminates, independent of any descendant still holding the pipe —
-    // the correct signal for a process-supervisor ceiling that must never
-    // hang regardless of what the vendor's own process tree does.
-    child.on('exit', (code) => {
-      const durationMs = Date.now() - start
+    async function handleChildExit(code: number | null, durationMs: number): Promise<void> {
+      // Bounded wait for any already-in-flight stdout chunk to land before
+      // `stdoutBuf` is read below (`waitForStdoutDrain`'s own doc comment) —
+      // `durationMs` was already captured at the real moment of exit, above,
+      // unaffected by this wait.
+      await waitForStdoutDrain()
 
       // O10 — a run's token record survives the manner of its death. The
       // parent captures usage from `stdoutBuf` HERE, at the moment it ends
@@ -2163,6 +2187,20 @@ export async function dispatchRole(
         duration_ms: durationMs
       })
       void finish({ exitCode: code, durationMs, usage, resumeId, timedOut: false }, 'outcome_received', priorSize)
+    }
+
+    // `exit`, never `close`: `close` waits for every stdio stream to see
+    // EOF, which never happens when the vendor's own child spawns a
+    // background helper that inherits its stdout/stderr (found live,
+    // authoring this task — a `cat > /dev/null &`-shaped grandchild in a
+    // test fixture held the pipe open forever after a SIGKILL, hanging
+    // `dispatchRole`'s returned promise permanently even though the direct
+    // child was already dead). `exit` fires the moment the process itself
+    // terminates, independent of any descendant still holding the pipe —
+    // the correct signal for a process-supervisor ceiling that must never
+    // hang regardless of what the vendor's own process tree does.
+    child.on('exit', (code) => {
+      void handleChildExit(code, Date.now() - start)
     })
 
     child.stdin.write(prompt)

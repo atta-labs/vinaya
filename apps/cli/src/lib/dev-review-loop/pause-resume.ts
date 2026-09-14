@@ -10,7 +10,25 @@
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
-import { defaultControlStoreDeps, type LoopBudgets, type PauseReason, type RoundHeadIdentity } from '@attalabs/aeg-core'
+import {
+  acquireOwnership,
+  appendTransition,
+  consumeResolutionOnce,
+  type ControlStoreDeps,
+  defaultControlStoreDeps,
+  type EscalationRecord,
+  listStartedEffectKeys,
+  type LoopBudgets,
+  markEffectUncertain,
+  type PauseReason,
+  readEscalation,
+  readResolution,
+  type RequestedAuthority,
+  type ResolutionRecord,
+  type RoundHeadIdentity,
+  StaleEpochWriteError,
+  writeEscalation
+} from '@attalabs/aeg-core'
 import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../effects.js'
 import { markedCommentBody, postMarkedComment, reconcileGhComment } from '../forge-write.js'
 import { loadLoopState } from './round-assess.js'
@@ -189,6 +207,20 @@ export type PauseState = {
   detail?: string
   pausedAt: string
   /**
+   * The escalation record's OWN `escalationId` — not necessarily
+   * `escalationIdFor(task, round, head)` any more (code review, round 2,
+   * MEDIUM): `writeEscalation` claims a disambiguating `-<n>` suffix when a
+   * genuinely different escalation collides on that natural key (a
+   * self-resumed pause that hits a second, different pause condition before
+   * the head moves), and this is the only place that real id is durably
+   * recorded for a later `--resume`/`--cancel` to find. Absent on a
+   * `PauseState` written before this field existed, or when the best-effort
+   * escalation write itself failed — `resolveEscalation`'s callers fall back
+   * to the natural key in either case, which is still correct whenever no
+   * collision ever happened.
+   */
+  escalationId?: string
+  /**
    * The in-memory `infrastructureRetries` count at the moment of this pause
    * (round 2 review, security HIGH) — a second, independent source for
    * `--resume`'s bound check, alongside `recoverLoopState`'s control-store
@@ -315,4 +347,372 @@ export function isDriverPidAlive(pid: number): boolean {
 /** O3: one loop-prefixed stderr line, the same `vinaya dev-review-loop: ` prefix the CLI shim's own argv-validation messages use — no new Vinaya Log event kind (`packages/aeg-core` is out of this task's Surface; Issue #498 objectives revision). */
 export function printDriverLockLine(message: string): void {
   process.stderr.write(`vinaya dev-review-loop: ${message}\n`)
+}
+
+// --- escalation and resolution (#556) ---------------------------------------
+
+/**
+ * Per `PauseReason` — who a pause is addressed to, and what the driver
+ * already tried before pausing. The single source `task-tools/read.ts`'s
+ * `readEscalationPacket` reads for its own live reconstruction of the same
+ * facts (moved here, not duplicated, since an escalation record persisted
+ * by THIS file is now the durable home for exactly this judgment call —
+ * `aeg-root/roles/*.md`'s own routing for each reason, recorded once).
+ */
+export const PAUSE_REASON_PROFILE: Record<
+  PauseReason,
+  { requestedAuthority: RequestedAuthority; attemptedRecovery: string; nextActions: string[] }
+> = {
+  escalation: {
+    requestedAuthority: 'principal',
+    attemptedRecovery: 'none — an escalation is a decision request, not a retry condition.',
+    nextActions: ['Read `detail` for the escalating role’s own reasoning, then rule or redirect the work.']
+  },
+  max_rounds: {
+    requestedAuthority: 'principal',
+    attemptedRecovery: 'none — the round cap was reached; the loop stopped rather than looping forever.',
+    nextActions: ['Review the round history and either raise the cap, redirect the work, or accept the residual risk.']
+  },
+  no_progress: {
+    requestedAuthority: 'principal',
+    attemptedRecovery: 'none — the same findings reappeared across rounds with no forward motion.',
+    nextActions: ['Review the repeated findings and either clarify the brief or rule on the disagreement.']
+  },
+  confidence: {
+    requestedAuthority: 'principal',
+    attemptedRecovery: 'none — a reviewer asked for a confidence re-ask the loop could not resolve on its own.',
+    nextActions: ['Answer the confidence question directly, or rule on the finding it concerns.']
+  },
+  reappearance: {
+    requestedAuthority: 'principal',
+    attemptedRecovery: 'none — a previously-resolved finding reappeared, which the loop never auto-dismisses.',
+    nextActions: ['Confirm whether the reappearance is a real regression or a reviewer false positive.']
+  },
+  infrastructure: {
+    requestedAuthority: 'operator',
+    attemptedRecovery:
+      'none — a role or artifact the round needed was missing; this is an environment gap, not a content one.',
+    nextActions: ['Fix the missing role/artifact named in `detail`, then resume.']
+  },
+  no_push: {
+    requestedAuthority: 'operator',
+    attemptedRecovery:
+      'one foreground resume asking the developer to commit and push, which did not produce a new head.',
+    nextActions: ['Inspect the worktree named in `detail` for uncommitted or unpushed work, then resume.']
+  },
+  objectives_changed: {
+    requestedAuthority: 'self',
+    attemptedRecovery: 'none required — the driver detected the objectives edit itself and paused for safety.',
+    nextActions: ['Resume — the round will re-read the current objectives on its own.']
+  },
+  ruling_posted: {
+    requestedAuthority: 'self',
+    attemptedRecovery: 'none required — the driver detected a mid-round ruling itself and paused for safety.',
+    nextActions: ['Resume — the round will account for the posted ruling on its own.']
+  },
+  stale_driver: {
+    requestedAuthority: 'self',
+    attemptedRecovery:
+      'a re-exec in place was attempted first; this pause is what the driver falls back to when that fails.',
+    nextActions: ['Resume once the driver-owned code on the base branch is stable.']
+  },
+  brief_superseded: {
+    requestedAuthority: 'self',
+    attemptedRecovery: 'none required — the driver detected the brief supersession itself and paused for safety.',
+    nextActions: ['Resume — the round will re-read the current frozen brief on its own.']
+  },
+  policy_changed: {
+    requestedAuthority: 'self',
+    attemptedRecovery: 'none required — the driver detected the policy change itself and paused for safety.',
+    nextActions: ['Resume — the round will re-resolve the current review policy on its own.']
+  }
+}
+
+/** `<task>-<round>-<head>` — the same round+head granularity `postPauseComment`'s own idempotency key already uses to tell two real pauses apart, reused here as the escalation/resolution storage key so a resume/cancel and the pause it targets are always addressing the identical instance. */
+export function escalationIdFor(task: number, round: number, head: string): string {
+  return `${task}-${round}-${head}`
+}
+
+export type EscalationFacts = {
+  task: number
+  round: number
+  head: string
+  branch: string
+  pr: number | null
+  runId: string
+  agent: string
+  reason: PauseReason
+  detail?: string
+  evidence?: string
+  briefHash: string | null
+  objectivesVersion: string | null
+  rulingOrdinal: number
+  policyDigest: string
+}
+
+/**
+ * Persists O1's escalation record and its `paused` transition, together,
+ * under the SAME freshly-acquired control-store epoch — "one agent holds
+ * two records and two transitions" (Issue #556's own sizing note): this is
+ * the first of the two record kinds and the first of the two transitions,
+ * the pause-time half. `attemptedRecovery`/`recipient` come from
+ * `PAUSE_REASON_PROFILE`, never re-typed per call site. Best-effort by
+ * design at the call site (every pause path already treats its own forge
+ * writes as best-effort) — this function itself still throws on a genuine
+ * failure, the caller decides whether to swallow it.
+ */
+export function writeEscalationRecord(facts: EscalationFacts): EscalationRecord {
+  const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
+  const deps = defaultControlStoreDeps(controlStoreRoot)
+  const acquired = acquireOwnership(deps, facts.task, `dev-review-loop:${facts.task}:escalation:${escalationId}`)
+  if (!acquired.acquired) {
+    throw new Error(
+      `writeEscalationRecord: could not acquire a control-store epoch for task ${facts.task} — epoch ${acquired.currentEpoch} is currently held by ${acquired.currentOwnerId ?? 'unknown'}`
+    )
+  }
+  const profile = PAUSE_REASON_PROFILE[facts.reason]
+  const now = new Date().toISOString()
+  const record = writeEscalation(deps, facts.task, acquired.epoch, {
+    escalationId,
+    round: facts.round,
+    head: facts.head,
+    branch: facts.branch,
+    pr: facts.pr,
+    runId: facts.runId,
+    pid: process.pid,
+    host: hostname(),
+    agent: facts.agent,
+    reason: facts.reason,
+    detail: facts.detail,
+    evidence: facts.evidence,
+    attemptedRecovery: profile.attemptedRecovery,
+    requestedDecision: profile.nextActions[0] ?? 'resume or cancel',
+    recipient: profile.requestedAuthority,
+    briefHash: facts.briefHash,
+    objectivesVersion: facts.objectivesVersion,
+    rulingOrdinal: facts.rulingOrdinal,
+    policyDigest: facts.policyDigest,
+    recordedAt: now
+  })
+  appendTransition(deps, facts.task, acquired.epoch, { from: 'running', to: 'paused', detail: facts.reason, at: now })
+  return record
+}
+
+/**
+ * The durable escalation record for `escalationId`, or `null` — never
+ * thrown; a caller that needs to distinguish absent from corrupt reads
+ * `readEscalation` from `@attalabs/aeg-core` directly. Takes the id itself,
+ * never `(round, head)` alone (code review, round 2, MEDIUM) — a colliding
+ * escalation can live at a disambiguating `-<n>` suffix, so a caller reads
+ * `PauseState.escalationId` (falling back to `escalationIdFor(task, round,
+ * head)` only for a `PauseState` written before that field existed).
+ *
+ * `deps` defaults to the real global control store but is overridable
+ * (code review, round 2, MEDIUM) — `task-tools/read.ts`'s own
+ * `readEscalationPacket` takes an explicit, fixture-testable outbox `root`
+ * and must never let ITS OWN reads reach past that root into this
+ * machine's real `~/.vinaya/control-store/` regardless.
+ */
+export function readEscalationRecord(
+  task: number,
+  escalationId: string,
+  deps: ControlStoreDeps = defaultControlStoreDeps(controlStoreRoot)
+): EscalationRecord | null {
+  const parsed = readEscalation(deps, task, escalationId)
+  return parsed.status === 'ok' ? parsed.value : null
+}
+
+/** O2: a resolution attempt whose escalation record cannot be trusted — never written (this pause predates escalation-record adoption), or unparseable. Refused rather than guessed at: a `--resume`/`--cancel` with no durable escalation to bind against is not distinguishable from one targeting a superseded pause. */
+export class StaleEscalationError extends Error {
+  constructor(
+    readonly task: number,
+    readonly escalationId: string,
+    readonly reason: string
+  ) {
+    super(`resolution refused — task ${task}'s escalation '${escalationId}' is stale: ${reason}`)
+    this.name = 'StaleEscalationError'
+  }
+}
+
+/** O2: a resolution naming a PR that does not match the escalation's own recorded PR. */
+export class WrongTargetResolutionError extends Error {
+  constructor(
+    readonly task: number,
+    readonly escalationId: string,
+    readonly escalationPr: number | null,
+    readonly attemptedPr: number
+  ) {
+    super(
+      `resolution refused — task ${task}'s escalation '${escalationId}' names PR ${escalationPr ?? '(none)'}, not PR ${attemptedPr}`
+    )
+    this.name = 'WrongTargetResolutionError'
+  }
+}
+
+/** O2: a resolution attempt against an escalation that already has a consumed resolution — the storage-level guarantee `consumeResolutionOnce` provides, surfaced here as a named refusal. */
+export class ReplayedResolutionError extends Error {
+  constructor(
+    readonly task: number,
+    readonly escalationId: string,
+    readonly existing: ResolutionRecord | null
+  ) {
+    super(
+      `resolution refused — task ${task}'s escalation '${escalationId}' already has a consumed resolution (decision: ${existing?.decision ?? 'unknown'}, by ${existing?.authenticatedBy ?? 'unknown'}) — replay refused`
+    )
+    this.name = 'ReplayedResolutionError'
+  }
+}
+
+export type ResolveEscalationResult = {
+  escalation: EscalationRecord
+  resolution: ResolutionRecord
+  epoch: number
+}
+
+/**
+ * O2's single entry point for consuming an authenticated resolution:
+ * validates wrong-target (the escalation's own recorded PR must match
+ * `expectedPr`) and staleness (the escalation record must actually exist)
+ * BEFORE ever attempting consumption, then claims the resolution exclusively
+ * (`consumeResolutionOnce`) and appends the SAME epoch's `paused` →
+ * `resumed`/`cancelled` transition — the second record and second
+ * transition Issue #556's sizing note names. Throws one of
+ * `StaleEscalationError`/`WrongTargetResolutionError`/
+ * `ReplayedResolutionError` on any of the three refusal conditions O2
+ * requires; a caller that wants a non-throwing form wraps this itself.
+ */
+export function resolveEscalation(
+  task: number,
+  escalationId: string,
+  expectedPr: number,
+  decision: 'resume' | 'cancel',
+  authenticatedBy: string,
+  authenticatedFrom: string
+): ResolveEscalationResult {
+  const deps = defaultControlStoreDeps(controlStoreRoot)
+  const escalation = readEscalation(deps, task, escalationId)
+  if (escalation.status !== 'ok') {
+    throw new StaleEscalationError(
+      task,
+      escalationId,
+      escalation.status === 'absent' ? 'no escalation record was ever written for it' : escalation.reason
+    )
+  }
+  if (escalation.value.pr !== expectedPr) {
+    throw new WrongTargetResolutionError(task, escalationId, escalation.value.pr, expectedPr)
+  }
+  // Code review, round 2, HIGH: a concurrent duplicate/replayed resolution
+  // attempt must never move state it was already consumed for — checked
+  // BEFORE ever acquiring ownership, so a replay of an ALREADY-consumed
+  // decision is refused without bumping the task's shared epoch at all. This
+  // does not (and cannot) close the narrower race of two genuinely
+  // concurrent FIRST attempts, both racing past this same check before
+  // either has written a resolution — that pair still both reach
+  // `acquireOwnership` below, and the loser's own epoch bump is what
+  // `fenceStartedEffectsAsUncertain`'s re-acquire loop already tolerates.
+  const alreadyResolved = readResolution(deps, task, escalationId)
+  if (alreadyResolved.status === 'ok') {
+    throw new ReplayedResolutionError(task, escalationId, alreadyResolved.value)
+  }
+  const acquired = acquireOwnership(deps, task, `dev-review-loop:${task}:resolution:${escalationId}`)
+  if (!acquired.acquired) {
+    throw new Error(
+      `resolveEscalation: could not acquire a control-store epoch for task ${task} — epoch ${acquired.currentEpoch} is currently held by ${acquired.currentOwnerId ?? 'unknown'}`
+    )
+  }
+  const now = new Date().toISOString()
+  const outcome = consumeResolutionOnce(deps, task, acquired.epoch, {
+    escalationId,
+    decision,
+    authenticatedBy,
+    authenticatedFrom,
+    consumedAt: now
+  })
+  if (outcome.outcome === 'already-consumed') {
+    throw new ReplayedResolutionError(task, escalationId, outcome.record)
+  }
+  appendTransition(deps, task, acquired.epoch, {
+    from: 'paused',
+    to: decision === 'resume' ? 'resumed' : 'cancelled',
+    detail: authenticatedFrom,
+    at: now
+  })
+  return { escalation: escalation.value, resolution: outcome.record, epoch: acquired.epoch }
+}
+
+/** The durable resolution record for `(task, escalationId)`, or `null` — never thrown. */
+export function readResolutionRecord(task: number, escalationId: string): ResolutionRecord | null {
+  const deps = defaultControlStoreDeps(controlStoreRoot)
+  const parsed = readResolution(deps, task, escalationId)
+  return parsed.status === 'ok' ? parsed.value : null
+}
+
+/** Bounds the re-acquire-and-retry loop below — a genuine collision resolves in one or two attempts; this exists so a pathological repeated race fails loudly rather than spinning forever. */
+const MAX_FENCE_REACQUIRE_ATTEMPTS = 5
+
+/**
+ * O3's "unresolved effects remain explicitly uncertain": every effect
+ * record for `task` still `'started'` — a write that was recorded as
+ * attempted but never confirmed — is advanced to `'uncertain'`, fenced by
+ * the epoch the caller names (`resolveEscalation`'s cancel path). Because
+ * that epoch is current the moment this starts, any OTHER process still
+ * trying to complete one of these writes under its own, now-stale epoch is
+ * refused by `StaleEpochWriteError` at the moment IT tries — a late result
+ * is fenced by the epoch mismatch itself, not by this function racing it.
+ * Best-effort per key otherwise: a key that no longer reads `'started'` by
+ * the time this runs is simply skipped, never an error.
+ *
+ * **This call's OWN writes can still lose a narrower race (code review,
+ * round 2, HIGH; narrowed in the same round's own fix).** `resolveEscalation`
+ * now checks the durable resolution record BEFORE ever calling
+ * `acquireOwnership`, so an ordinary replay of an ALREADY-consumed decision
+ * never bumps the epoch at all. What remains is the genuinely concurrent
+ * case — two FIRST attempts racing past that check before either has
+ * written a resolution — where a concurrent `--cancel` can still bump the
+ * task's shared epoch AFTER this (the genuinely winning) call already
+ * committed to fencing under the epoch it was handed, even though that
+ * other call is itself refused moments later at `consumeResolutionOnce`.
+ * Left unguarded, the very next `markEffectUncertain` here would throw
+ * `StaleEpochWriteError` uncaught, aborting a LEGITIMATE cancel before every
+ * started effect is fenced and before the caller's outbox flush ever runs.
+ * Since this function's own cancellation intent is already durably recorded
+ * (the resolution was consumed before this ever runs), racing in and
+ * re-claiming a fresh epoch to finish the fencing under is always safe and
+ * correct — never a reason to leave an effect ambiguously `'started'`
+ * forever.
+ */
+export function fenceStartedEffectsAsUncertain(
+  task: number,
+  epoch: number,
+  deps: ControlStoreDeps = defaultControlStoreDeps(controlStoreRoot)
+): string[] {
+  const fenced: string[] = []
+  let currentEpoch = epoch
+  for (let attempt = 0; attempt <= MAX_FENCE_REACQUIRE_ATTEMPTS; attempt++) {
+    let racedAway = false
+    for (const key of listStartedEffectKeys(deps, task)) {
+      if (fenced.includes(key)) continue
+      try {
+        if (markEffectUncertain(deps, task, currentEpoch, key)) fenced.push(key)
+      } catch (err) {
+        if (!(err instanceof StaleEpochWriteError)) throw err
+        racedAway = true
+        break
+      }
+    }
+    if (!racedAway) return fenced
+    if (attempt === MAX_FENCE_REACQUIRE_ATTEMPTS) {
+      throw new Error(
+        `fenceStartedEffectsAsUncertain: task ${task}'s control-store epoch kept moving out from under this cancel after ${MAX_FENCE_REACQUIRE_ATTEMPTS} re-acquire attempts — some effect(s) may remain ambiguously 'started'`
+      )
+    }
+    const acquired = acquireOwnership(deps, task, `dev-review-loop:${task}:cancel-fence-retry`)
+    if (!acquired.acquired) {
+      throw new Error(
+        `fenceStartedEffectsAsUncertain: could not re-acquire a control-store epoch for task ${task} after a race — epoch ${acquired.currentEpoch} is currently held by ${acquired.currentOwnerId ?? 'unknown'}`
+      )
+    }
+    currentEpoch = acquired.epoch
+  }
+  return fenced
 }

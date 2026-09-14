@@ -62,18 +62,22 @@ import { hostname as osHostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   type EffectRecord,
+  type EscalationRecord,
   type InputRecord,
   type LoopStateRecord,
   type ManifestRecord,
   type OwnershipRecord,
   parseEffectRecord,
+  parseEscalationRecord,
   parseInputRecord,
   parseLoopStateRecord,
   parseManifestRecord,
   parseOwnershipRecord,
+  parseResolutionRecord,
   parseRunRecord,
   parseTransitionRecord,
   type ParsedRecord,
+  type ResolutionRecord,
   type RunRecord,
   type TransitionRecord
 } from './records'
@@ -243,6 +247,22 @@ function assertSafeEffectKey(key: string): void {
   }
 }
 
+/** An escalation/resolution's `escalationId` reaches its path from a caller (`pause-resume.ts`'s `escalationIdFor`, `<task>-<round>-<head>`) the same way an effect's `key` does — the identical path-safety discipline, under its own error type so a caller can tell which id was rejected. */
+export class InvalidEscalationIdError extends Error {
+  constructor(readonly escalationId: string) {
+    super(
+      `control-store: refusing an unsafe escalationId (must be a single path-safe segment): ${JSON.stringify(escalationId)}`
+    )
+    this.name = 'InvalidEscalationIdError'
+  }
+}
+
+function assertSafeEscalationId(escalationId: string): void {
+  if (!SAFE_ID_SEGMENT.test(escalationId) || escalationId.includes('..')) {
+    throw new InvalidEscalationIdError(escalationId)
+  }
+}
+
 function taskRoot(root: string, task: number): string {
   return join(root, String(task))
 }
@@ -278,6 +298,20 @@ function loopStatePath(root: string, task: number): string {
 function effectPath(root: string, task: number, key: string): string {
   assertSafeEffectKey(key)
   return join(taskRoot(root, task), 'effect', `${key}.json`)
+}
+
+function effectDir(root: string, task: number): string {
+  return join(taskRoot(root, task), 'effect')
+}
+
+function escalationPath(root: string, task: number, escalationId: string): string {
+  assertSafeEscalationId(escalationId)
+  return join(taskRoot(root, task), 'escalation', `${escalationId}.json`)
+}
+
+function resolutionPath(root: string, task: number, escalationId: string): string {
+  assertSafeEscalationId(escalationId)
+  return join(taskRoot(root, task), 'resolution', `${escalationId}.json`)
 }
 
 function transitionsDir(root: string, task: number, epoch: number): string {
@@ -554,4 +588,183 @@ export function readEffect(
   key: string
 ): ParsedRecord<EffectRecord> {
   return readRecord(effectPath(deps.root(), task, key), parseEffectRecord)
+}
+
+/**
+ * Every effect key currently on disk for `task`, `'started'` records only —
+ * O3's "unresolved effects remain explicitly uncertain" starting point: a
+ * cancellation calls this, then `markEffectUncertain` on each key returned,
+ * so an in-flight-but-never-confirmed write is never left silently
+ * ambiguous. A corrupt effect record is skipped here (nothing safe to say
+ * about its status) rather than thrown — cancellation must not itself fail
+ * because one unrelated effect record is unreadable.
+ */
+export function listStartedEffectKeys(deps: Pick<ControlStoreDeps, 'root'>, task: number): string[] {
+  const dir = effectDir(deps.root(), task)
+  if (!existsSync(dir)) return []
+  const keys: string[] = []
+  for (const entry of readdirSync(dir)) {
+    if (!entry.endsWith('.json')) continue
+    const key = entry.slice(0, -'.json'.length)
+    const parsed = parseEffectRecord(readIfExists(join(dir, entry)))
+    if (parsed.status === 'ok' && parsed.value.status === 'started') keys.push(key)
+  }
+  return keys
+}
+
+/**
+ * Advances one effect record from `'started'` to `'uncertain'` — the same
+ * transition `EffectExecutor`'s own `reconcileExisting` writes when a
+ * reconciliation comes back ambiguous, applied here unconditionally rather
+ * than after a remote read: a cancellation does not attempt to reconcile a
+ * late-in-flight write against the forge, it simply refuses to let it read
+ * as either confirmed or safely retryable. Epoch-fenced like every other
+ * write here — a caller must hold the CURRENT epoch (the one cancellation
+ * itself just acquired) for this to succeed. A key that no longer parses as
+ * `'started'` (already advanced, or corrupt) is left untouched and simply
+ * omitted from the return value.
+ */
+export function markEffectUncertain(
+  deps: ControlStoreDeps,
+  task: number,
+  epoch: number,
+  key: string
+): EffectRecord | null {
+  const existing = readEffect(deps, task, key)
+  if (existing.status !== 'ok' || existing.value.status !== 'started') return null
+  return writeEffect(deps, task, epoch, key, {
+    operation: existing.value.operation,
+    target: existing.value.target,
+    inputVersion: existing.value.inputVersion,
+    payloadDigest: existing.value.payloadDigest,
+    status: 'uncertain',
+    recordedAt: deps.now().toISOString()
+  })
+}
+
+export type EscalationInput = Omit<EscalationRecord, 'version' | 'kind' | 'task'>
+
+/**
+ * True when two escalation inputs describe the SAME pause instance — every
+ * field but `recordedAt` (which always differs on a rerun) and `evidence`
+ * (best-effort, allowed to fill in on a later attempt where an earlier one
+ * had none). Used only to tell "a rerun of the identical pause" apart from
+ * "a genuinely different pause that happens to collide on the same
+ * `(task, round, head)` key" — see `writeEscalation`'s own doc comment.
+ */
+function sameEscalationInstance(a: EscalationInput, b: EscalationInput): boolean {
+  return (
+    a.round === b.round &&
+    a.head === b.head &&
+    a.branch === b.branch &&
+    a.pr === b.pr &&
+    a.reason === b.reason &&
+    (a.detail ?? null) === (b.detail ?? null)
+  )
+}
+
+/** Bounds the disambiguating-suffix probe below — real collisions never approach this; exists so a pathological repeated-collision case fails loudly rather than spinning forever. */
+const MAX_ESCALATION_COLLISION_ATTEMPTS = 8
+
+/**
+ * Refuses (`StaleEpochWriteError`) unless `epoch` is still the task's
+ * current epoch — an escalation can only be recorded by whoever currently
+ * owns the task's pause. Idempotent on a rerun of the SAME pause instance
+ * (`sameEscalationInstance` — an ordinary overwrite, like `writeManifest`).
+ *
+ * A GENUINELY DIFFERENT escalation colliding on the same `escalationId`
+ * (`<task>-<round>-<head>`) — a resumed run that hits a second, different
+ * pause condition before the head moves, most plausibly one of the
+ * self-resumed reasons (`objectives_changed`, `ruling_posted`,
+ * `stale_driver`, `brief_superseded`, `policy_changed`), which dispatch no
+ * developer and so never guarantee a new head — is never silently
+ * overwritten (code review, round 2, MEDIUM: the earlier pause's own
+ * reason/detail/evidence would otherwise become unrecoverable except
+ * through chat history, exactly what O1 exists to avoid). Instead it claims
+ * the next free `<escalationId>-<n>` suffix via the same exclusive-create
+ * discipline `attemptEpochClaim`/`appendTransition`'s own seq-slot claim
+ * uses — never `atomicWriteFile` for this branch, so two colliding writers
+ * can never both believe they won the same suffix. The record actually
+ * written (never the caller's original `input.escalationId` once a suffix
+ * was needed) is what the caller must key any later read against — see
+ * `writeEscalationRecord` (`pause-resume.ts`), which persists the real id
+ * back onto `PauseState` for exactly this reason.
+ */
+export function writeEscalation(
+  deps: ControlStoreDeps,
+  task: number,
+  epoch: number,
+  input: EscalationInput
+): EscalationRecord {
+  assertCurrentEpoch(deps, task, epoch)
+  const canonicalId = input.escalationId
+  const existing = readEscalation(deps, task, canonicalId)
+  if (existing.status !== 'ok' || sameEscalationInstance(existing.value, input)) {
+    // Absent, corrupt (healed by overwrite), or a genuine rerun of the
+    // identical instance — safe to (re)write at the canonical key.
+    const record: EscalationRecord = { version: 1, kind: 'escalation', task, ...input }
+    atomicWriteFile(escalationPath(deps.root(), task, canonicalId), JSON.stringify(record))
+    return record
+  }
+  for (let n = 2; n <= MAX_ESCALATION_COLLISION_ATTEMPTS; n++) {
+    const candidateId = `${canonicalId}-${n}`
+    const record: EscalationRecord = { version: 1, kind: 'escalation', task, ...input, escalationId: candidateId }
+    const result = exclusiveCreateFile(escalationPath(deps.root(), task, candidateId), JSON.stringify(record))
+    if (result.created) return record
+    const there = readEscalation(deps, task, candidateId)
+    if (there.status === 'ok' && sameEscalationInstance(there.value, input)) return there.value
+    // Slot taken by yet another distinct instance — try the next suffix.
+  }
+  throw new Error(
+    `control-store: could not claim a disambiguating escalation slot for task ${task}, key '${canonicalId}', after ${MAX_ESCALATION_COLLISION_ATTEMPTS} attempts`
+  )
+}
+
+export function readEscalation(
+  deps: Pick<ControlStoreDeps, 'root'>,
+  task: number,
+  escalationId: string
+): ParsedRecord<EscalationRecord> {
+  return parseEscalationRecord(readIfExists(escalationPath(deps.root(), task, escalationId)))
+}
+
+export type ResolutionInput = Omit<ResolutionRecord, 'version' | 'kind' | 'task'>
+
+export type ConsumeResolutionResult =
+  | { outcome: 'consumed'; record: ResolutionRecord }
+  | { outcome: 'already-consumed'; record: ResolutionRecord | null }
+
+/**
+ * Claims `escalationId`'s resolution EXCLUSIVELY — the same `linkSync`
+ * discipline an ownership epoch claim uses (`exclusiveCreateFile`), never an
+ * ordinary overwrite: a second call for the SAME `escalationId`, whether a
+ * genuine replay of an already-consumed decision or a second decision
+ * racing the first, collides on the identical final name and comes back
+ * `'already-consumed'` rather than silently replacing what is already
+ * there. This is what makes "a resolution is consumed once" a storage
+ * guarantee rather than an application-level check the caller could forget.
+ * Epoch-fenced like every other write here (`StaleEpochWriteError` on a
+ * stale caller), on top of — not instead of — the exclusivity above.
+ */
+export function consumeResolutionOnce(
+  deps: ControlStoreDeps,
+  task: number,
+  epoch: number,
+  input: ResolutionInput
+): ConsumeResolutionResult {
+  assertCurrentEpoch(deps, task, epoch)
+  const record: ResolutionRecord = { version: 1, kind: 'resolution', task, ...input }
+  const path = resolutionPath(deps.root(), task, input.escalationId)
+  const result = exclusiveCreateFile(path, JSON.stringify(record))
+  if (result.created) return { outcome: 'consumed', record }
+  const existing = parseResolutionRecord(readIfExists(path))
+  return { outcome: 'already-consumed', record: existing.status === 'ok' ? existing.value : null }
+}
+
+export function readResolution(
+  deps: Pick<ControlStoreDeps, 'root'>,
+  task: number,
+  escalationId: string
+): ParsedRecord<ResolutionRecord> {
+  return parseResolutionRecord(readIfExists(resolutionPath(deps.root(), task, escalationId)))
 }

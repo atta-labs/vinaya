@@ -16,6 +16,7 @@ import {
   defaultIsPidAlive,
   isPrincipal,
   issueBranchName,
+  newestPrincipalRulingAuthor,
   newestPrincipalRulingOrdinal,
   normalizeOutcome,
   type NormalizedOutcome,
@@ -183,6 +184,24 @@ export function fetchNewestRulingOrdinal(prNumber: number): number {
     )
   }
   return newestPrincipalRulingOrdinal(markerComments(out), principalAllowlist())
+}
+
+/**
+ * The GitHub login that authored PR `prNumber`'s newest principal ruling, or
+ * `null` when none exists — `#556` (O2)'s own need: a resolution record's
+ * `authenticatedBy` field names WHO authorized a `--resume`/`--cancel`,
+ * distinct from `fetchNewestRulingOrdinal`'s WHICH.
+ */
+export function fetchNewestRulingAuthor(prNumber: number): string | null {
+  let out: string
+  try {
+    out = sh('gh', ['pr', 'view', String(prNumber), '--json', 'comments'])
+  } catch (err) {
+    throw new Error(
+      `fetchNewestRulingAuthor: could not fetch PR #${prNumber}'s comments: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+  return newestPrincipalRulingAuthor(markerComments(out), principalAllowlist())
 }
 
 function fetchIssueComments(issueNumber: number, caller: string): MarkerComment[] {
