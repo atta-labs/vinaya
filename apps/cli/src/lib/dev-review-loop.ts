@@ -45,11 +45,13 @@ import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { z } from 'zod'
 import {
   assessRound,
   buildReviewInputManifest,
   compareManifest,
   DEFAULT_REVIEW_POLICY,
+  DevReviewLoopEventSchema,
   initialLoopState,
   manifestAsEchoed,
   nextRoundNumber,
@@ -330,6 +332,72 @@ function defaultGitDiffShortstat(base: string, head: string): string {
   }
 }
 
+/**
+ * O2 (`#595`): the loop's own two control files — `CONFIDENCE_FILE_NAME`
+ * and `DEVELOPER_ROUND_RESPONSE_FILE_NAME`, both written by the developer's
+ * OWN turn at this driver's own instruction and read-and-cleared by
+ * `readAndClearConfidence`/`readAndClearRoundResponse` before this check
+ * ever runs again — are never "unpushed work." A turn that writes only
+ * these two files (and pushes nothing else) is a clean turn: counting them
+ * here turned a normal confidence/citation write into a `no_push` pause
+ * (Boundary: "one looped forever on its own confidence file"). Named
+ * exactly, never a wildcard/prefix match — Traps to avoid: "never let O2
+ * ignore every untracked file."
+ */
+const UNPUSHED_WORK_IGNORED_FILES: ReadonlySet<string> = new Set([
+  CONFIDENCE_FILE_NAME,
+  DEVELOPER_ROUND_RESPONSE_FILE_NAME
+])
+
+/**
+ * O6 (`#595`): every event this loop emits, checked against its own
+ * per-discriminant shape before `meta`/`subject` exist — derived from
+ * `DevReviewLoopEventSchema` (`@attalabs/aeg-core`), the exact schema
+ * `log-sink.ts` validates the FULL envelope against, minus the two fields
+ * only `buildHeader` can fill in. Built once, from the schema the package
+ * already exports — no second, hand-maintained field list to drift from
+ * the real one.
+ */
+// `z.discriminatedUnion`'s own generic constrains every option's shape to be
+// statically known to share ONE literal-typed discriminator key — a
+// constraint TypeScript cannot verify across ten independently-omitted
+// object schemas built by a `.map`, though every one of them genuinely
+// does carry `event` as a string literal at runtime (the exact same
+// `DevReviewLoopEventSchema` already relies on this to build itself). Cast
+// through the function, not the data: a discriminated union gives a
+// PER-BRANCH parse error (the failing field, not a "no branch matched"
+// aggregate) — the entire reason this exists, so `z.union`'s looser typing
+// is not an acceptable substitute here.
+const DevReviewLoopEventInputSchema: z.ZodTypeAny = (z.discriminatedUnion as any)(
+  'event',
+  DevReviewLoopEventSchema.options.map((option) =>
+    (option as z.ZodObject<z.ZodRawShape>).omit({ meta: true, subject: true })
+  )
+)
+
+/**
+ * O6: refuses an event this loop is about to emit, naming the exact field
+ * that fails its own schema — checked HERE, at emit time, inside
+ * `logEvents` below, so a malformed event never reaches the outbox at all;
+ * `log-flush.ts`'s own `parseOutboxLine` re-validation at flush time is
+ * then a check that always passes for this loop's own lines, never the
+ * first place a violation would be caught. Thrown, not warned:
+ * `logEvents`'s every call site is inside the round loop's own top-level
+ * `catch` (below), which turns any thrown error into a graceful
+ * `pause{reason:'infrastructure'}` — the same treatment every other
+ * unexpected failure on this path already gets, never a re-thrown
+ * exception that crashes the process.
+ */
+export function assertValidLoopEvent(e: DevReviewLoopEventInput): void {
+  const parsed = DevReviewLoopEventInputSchema.safeParse(e)
+  if (parsed.success) return
+  const issue = parsed.error.issues[0]
+  const field = issue && issue.path.length > 0 ? issue.path.join('.') : '(root)'
+  throw new Error(
+    `devReviewLoop: refusing to emit a "${e.event}" event — field \`${field}\` ${issue?.message ?? 'fails its own schema'}.`
+  )
+}
+
 /** (`#543` O2) See `LoopDeps.readUnpushedWorkDetail`'s own doc comment. */
 function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: string[]; aheadCount: number } {
   let dirtyFiles: string[] = []
@@ -347,6 +415,7 @@ function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: stri
       .split('\n')
       .filter((line) => line.length > 3)
       .map((line) => line.slice(3))
+      .filter((file) => !UNPUSHED_WORK_IGNORED_FILES.has(file))
   } catch {
     // Worktree unreadable — nothing to report.
   }
@@ -585,8 +654,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         `devReviewLoop --resume: task ${closesTask}'s held pause state names PR #${held.prNumber}, not PR #${resumePr}.`
       )
     }
-    const rulings = d.fetchRulings(resumePr)
-    if (rulings.length === 0) {
+    // O5 (`#595`): an `'infrastructure'` pause is the driver's own
+    // recoverable hiccup, never a human decision point (same wording the
+    // pause-return branch below already uses for it and `stale_driver`) —
+    // `--resume` continues it on the bare command, no Principal ruling
+    // required. Every OTHER pause reason is unchanged: a genuine decision
+    // point still refuses to resume without one.
+    const rulings = held.reason === 'infrastructure' ? [] : d.fetchRulings(resumePr)
+    if (held.reason !== 'infrastructure' && rulings.length === 0) {
       throw new Error(
         `devReviewLoop --resume: PR #${resumePr} carries no Principal ruling comment yet — nothing to resume from.`
       )
@@ -599,12 +674,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // the same integer `ruling_posted` mid-round invalidation already reads)
     // rather than continuing from `held.round`, which may already sit past
     // `MAX_ROUNDS` and would otherwise re-trigger the very pause this
-    // `--resume` exists to lift.
+    // `--resume` exists to lift. An `'infrastructure'` resume carries no
+    // ruling to re-derive that override from, so a moved head there just
+    // keeps `held.round` — the same round this pause interrupted.
     resumeHeadAlreadyMoved = currentHead !== held.head
     task = held.task
     branch = held.branch
     prNumber = held.prNumber
-    resumeFrom = resumeHeadAlreadyMoved ? { ...held, round: d.fetchNewestRulingOrdinal(resumePr) } : held
+    resumeFrom =
+      resumeHeadAlreadyMoved && rulings.length > 0 ? { ...held, round: d.fetchNewestRulingOrdinal(resumePr) } : held
   } else {
     task = input.task
     branch = d.developerBranchFor(task)
@@ -719,6 +797,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      */
     async function logEvents(events: readonly DevReviewLoopEventInput[]): Promise<void> {
       for (const e of events) {
+        assertValidLoopEvent(e)
         const priorSize = sizeOfSafe(loopOutboxPath)
         log(e)
         await waitForOwnLoopLine(loopOutboxPath, priorSize, runId, e, d.sleep)
