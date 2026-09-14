@@ -517,6 +517,69 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
     expect(result.after.record.finishedAt).not.toBeNull()
   }, 10_000)
 
+  it("round 3 review, MAJOR/HIGH: terminates a REVIEWER's dispatched child too — the driver now calls this for every in-flight role, not developer only", () => {
+    // Same mechanism, same proof — `terminateLaunchedChildOnShutdown` takes
+    // `role` as a plain parameter with no developer-specific logic inside
+    // it; `dev-review-loop.ts`'s own SIGTERM/SIGINT handlers now call it for
+    // `'code-reviewer'`/`'security'` too (both dispatched concurrently via
+    // `Promise.all`, exactly as capable of being orphaned mid-round as the
+    // developer's own launch).
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    writeFakeBinary(binDir, 'claude', '#!/bin/sh\ncat > /dev/null\nexec sleep 30\n')
+
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const script = join(cwd, 'shutdown-terminate-reviewer.ts')
+    const resultPath = join(cwd, 'result-reviewer.json')
+    writeFileSync(
+      script,
+      [
+        `import { writeFileSync } from 'node:fs'`,
+        `import { execFileSync } from 'node:child_process'`,
+        `import { dispatchRole, readLaunchRecord, terminateLaunchedChildOnShutdown } from ${JSON.stringify(dispatchLib)}`,
+        `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 42 }`,
+        `void dispatchRole('code-reviewer', 'claude', 'p', opts)`,
+        'async function waitForChildPid(timeoutMs) {',
+        '  const start = Date.now()',
+        '  while (Date.now() - start < timeoutMs) {',
+        `    const parsed = readLaunchRecord('code-reviewer', 'claude', null, 42)`,
+        `    if (parsed.status === 'ok' && parsed.record.childPid !== null) return`,
+        '    await new Promise((r) => setTimeout(r, 50))',
+        '  }',
+        `  throw new Error('timed out waiting for the launch record to carry a childPid')`,
+        '}',
+        'await waitForChildPid(5000)',
+        `const before = readLaunchRecord('code-reviewer', 'claude', null, 42)`,
+        `const childPid = before.status === 'ok' ? before.record.childPid : null`,
+        `terminateLaunchedChildOnShutdown('code-reviewer', 'claude', null, 42)`,
+        `const after = readLaunchRecord('code-reviewer', 'claude', null, 42)`,
+        'let childAlive = false',
+        'if (childPid !== null) {',
+        `  try { execFileSync('ps', ['-p', String(childPid)], { stdio: ['ignore', 'ignore', 'ignore'] }); childAlive = true } catch { childAlive = false }`,
+        '}',
+        `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ before, after, childAlive }))`,
+        'process.exit(0)'
+      ].join('\n')
+    )
+
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+    delete spawnEnv.VINAYA_RUN_ID
+    execFileSync('bun', [script], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+
+    const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
+      before: { record: { status: string } }
+      after: { record: { status: string; failureReason: string | null } }
+      childAlive: boolean
+    }
+    expect(result.before.record.status).toBe('launched')
+    expect(result.childAlive).toBe(false)
+    expect(result.after.record.status).toBe('interrupted')
+    expect(result.after.record.failureReason).toBe('signal')
+  }, 10_000)
+
   it("a launch record that already read 'completed' or 'interrupted' is left untouched — nothing left to terminate", () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')

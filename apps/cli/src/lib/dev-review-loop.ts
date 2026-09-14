@@ -311,16 +311,22 @@ export type LoopDeps = {
     branch: string
   ) => Promise<{ ok: true; gatesFailed: boolean } | { ok: false; reason: string }>
   /**
-   * O1 (Issue #605): called from the driver's own `SIGTERM`/`SIGINT`
-   * handlers, before it exits. Terminates the developer's dispatched child
-   * (if a launch is genuinely in flight) and marks its launch record
-   * `interrupted` — never an orphan left running past this driver's own
-   * death, and never a stale `'launched'` record for the next start to
-   * misread as still live. Injected so a test can observe "the driver would
-   * clean up here" without touching a real process or the real
-   * `~/.vinaya/dispatch-resume/` home.
+   * O1 (Issue #605; widened round 3 review, MAJOR/HIGH): called from the
+   * driver's own `SIGTERM`/`SIGINT` handlers, before it exits. Terminates
+   * whichever of `developer`/`code-reviewer`/`security`'s launches is
+   * genuinely in flight and marks its launch record `interrupted` — never
+   * an orphan left running past this driver's own death, and never a stale
+   * `'launched'` record for the next start to misread as still live.
+   * Reviewers are dispatched via the SAME `dispatchRole`/`LaunchRecord`
+   * machinery the developer is (concurrently, via `Promise.all` — see
+   * "Reviewers" in `apps/cli/specs/loop.md`), so a signal arriving mid-round
+   * can orphan a reviewer's child exactly as it can the developer's; each
+   * role's own launch record is checked independently, and a role with
+   * nothing in flight is a safe no-op. Injected so a test can observe "the
+   * driver would clean up here" without touching a real process or the
+   * real `~/.vinaya/dispatch-resume/` home.
    */
-  terminateDeveloperLaunchOnShutdown: (
+  terminateInFlightLaunchesOnShutdown: (
     task: number,
     agent: AgentVendor,
     repo: { owner: string; repo: string } | null
@@ -573,6 +579,16 @@ async function defaultRunEvidenceReport(
   }
 }
 
+/**
+ * O1 (Issue #605, round 3 review, MAJOR/HIGH): every role this driver ever
+ * dispatches through `dispatchRole` — developer AND both reviewers, which
+ * run concurrently — is a candidate for an in-flight launch a shutdown
+ * signal could orphan. `terminateInFlightLaunchesOnShutdown`'s default
+ * implementation checks all three unconditionally; a role with nothing in
+ * flight reads its own launch record as not `'launched'` and is a no-op.
+ */
+const IN_FLIGHT_SHUTDOWN_ROLES = ['developer', 'code-reviewer', 'security'] as const
+
 function defaultDeps(): LoopDeps {
   return {
     dispatchRole: realDispatchRole,
@@ -615,8 +631,9 @@ function defaultDeps(): LoopDeps {
     reexecSelf: defaultReexecSelf,
     exitProcess: (code) => process.exit(code),
     runEvidenceReport: defaultRunEvidenceReport,
-    terminateDeveloperLaunchOnShutdown: (task, agent, repo) =>
-      realTerminateLaunchedChildOnShutdown('developer', agent, repo, task)
+    terminateInFlightLaunchesOnShutdown: (task, agent, repo) => {
+      for (const role of IN_FLIGHT_SHUTDOWN_ROLES) realTerminateLaunchedChildOnShutdown(role, agent, repo, task)
+    }
   }
 }
 
@@ -1480,18 +1497,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // real OS signal) is deliberate: without it, a second delivery of the
     // same signal would be Node's own default (immediate termination,
     // uncatchable) rather than this line ever finishing its write.
-    // O1 (Issue #605): `terminateDeveloperLaunchOnShutdown` runs FIRST,
-    // before either the exit trace or `process.exit` — it terminates the
-    // dispatched child (if a launch is genuinely in flight) and marks its
-    // launch record `interrupted`, so a killed driver leaves no orphan and
-    // no stale `'launched'` record for the next start to trip over.
+    // O1 (Issue #605; widened round 3 review, MAJOR/HIGH):
+    // `terminateInFlightLaunchesOnShutdown` runs FIRST, before either the
+    // exit trace or `process.exit` — it terminates whichever role's
+    // dispatched child is genuinely in flight (developer, or either
+    // reviewer, dispatched concurrently) and marks its launch record
+    // `interrupted`, so a killed driver leaves no orphan and no stale
+    // `'launched'` record for the next start to trip over.
     process.on('SIGTERM', () => {
-      d.terminateDeveloperLaunchOnShutdown(task, input.agent, repo)
+      d.terminateInFlightLaunchesOnShutdown(task, input.agent, repo)
       recordDriverExited('signal')
       process.exit(143)
     })
     process.on('SIGINT', () => {
-      d.terminateDeveloperLaunchOnShutdown(task, input.agent, repo)
+      d.terminateInFlightLaunchesOnShutdown(task, input.agent, repo)
       recordDriverExited('signal')
       process.exit(130)
     })

@@ -202,6 +202,37 @@ describe("reconcileLaunch (O3, Issue #605) — a recycled pid is never treated a
     expect(liveness).toBe('not-ours')
   })
 
+  it('round 3 security review, MEDIUM: a captured field the LIVE snapshot cannot read back is never trusted as a match — fail closed, not silently skipped', () => {
+    // The record captured a real start time at spawn time (`childStartedAt`
+    // non-null) — but the live re-snapshot's own `ps` read of that field
+    // came back empty (a transient failure, a permissions hiccup, a race),
+    // never itself proof this is the same process. Before the fix, a `null`
+    // on either side skipped the comparison entirely and fell through to a
+    // bare ppid+liveness match — exactly the gap a recycled pid could hide
+    // behind whenever the live read happened to come back partial.
+    const rec = record({
+      status: 'launched',
+      dispatcherPid: 1000,
+      childPid: 2000,
+      childStartedAt: 'Mon Sep 14 10:00:00 2026',
+      childCommand: null
+    })
+    const liveness = classifyChildLiveness(rec, deps(true, THIS_HOST, { ppid: 1000, startedAt: null, command: null }))
+    expect(liveness).toBe('not-ours')
+  })
+
+  it('round 3 security review, MEDIUM: same fail-closed rule for a captured command the live snapshot cannot read back', () => {
+    const rec = record({
+      status: 'launched',
+      dispatcherPid: 1000,
+      childPid: 2000,
+      childStartedAt: null,
+      childCommand: 'claude'
+    })
+    const liveness = classifyChildLiveness(rec, deps(true, THIS_HOST, { ppid: 1000, startedAt: null, command: null }))
+    expect(liveness).toBe('not-ours')
+  })
+
   it('with no identity ever recorded (a pre-this-task record), a live pid with a live parent is still trusted as live', () => {
     // Backward compatibility: `childStartedAt`/`childCommand` are `null` on
     // any launch record written before this task — there is nothing to

@@ -566,11 +566,14 @@ export type ReconcileLaunchDeps = {
  *   - `'not-ours'`   — no process answers at that pid on this host, or one
  *                       does but its own identity (start time and/or
  *                       command, snapshotted the instant `spawn` returned
- *                       it) does not match the record's: a pid the OS has
- *                       since recycled for an unrelated process is never
- *                       treated as this launch's child, and is never
- *                       touched (O3 — Traps: never rely on a pid number
- *                       alone).
+ *                       it) does not match the record's, OR a field the
+ *                       record DID capture can no longer be read back at
+ *                       all (a transient `ps` failure is never treated as
+ *                       proof of identity, round 3 security review, MEDIUM):
+ *                       a pid the OS has since recycled for an unrelated
+ *                       process is never treated as this launch's child,
+ *                       and is never touched (O3 — Traps: never rely on a
+ *                       pid number alone).
  *   - `'orphaned'`    — the SAME process, confirmed by identity, is still
  *                       alive but no longer parented to the dispatcher that
  *                       spawned it (reparented to init, or that dispatcher
@@ -591,11 +594,19 @@ export function classifyChildLiveness(
   if (record.childPid === null || record.host !== deps.hostname()) return 'not-ours'
   const snapshot = deps.getProcessSnapshot(record.childPid)
   if (snapshot === null) return 'not-ours'
-  if (record.childStartedAt !== null && snapshot.startedAt !== null && record.childStartedAt !== snapshot.startedAt) {
-    return 'not-ours'
+  // Round 3 security review, MEDIUM: a field this record DID capture at
+  // spawn time must be re-confirmed now, not silently skipped, when the
+  // live snapshot can't read it back — a transient `ps` read failure (a
+  // permissions hiccup, a race) is not proof of identity and must never be
+  // treated as one. Comparing against `null` on the record's OWN side
+  // (never captured — every record written before this task) is the one
+  // case with nothing to re-confirm, and is left to the ppid+liveness
+  // fallback below exactly as before.
+  if (record.childStartedAt !== null) {
+    if (snapshot.startedAt === null || record.childStartedAt !== snapshot.startedAt) return 'not-ours'
   }
-  if (record.childCommand !== null && snapshot.command !== null && record.childCommand !== snapshot.command) {
-    return 'not-ours'
+  if (record.childCommand !== null) {
+    if (snapshot.command === null || record.childCommand !== snapshot.command) return 'not-ours'
   }
   if (snapshot.ppid === record.dispatcherPid && deps.isPidAlive(record.dispatcherPid)) return 'live'
   return 'orphaned'
