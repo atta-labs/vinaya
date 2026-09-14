@@ -12,10 +12,21 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
+/**
+ * Returns an `outbox` PATH inside a fresh, per-test unique parent directory
+ * — never the unique `mkdtempSync` directory itself. `readEscalationPacket`
+ * derives its control-store root from `dirname(root)` (code review, round
+ * 2, MEDIUM — the same `GLOBAL_VINAYA_HOME` sibling layout production
+ * uses); a bare `mkdtempSync(join(tmpdir(), …))` result's own `dirname` is
+ * just the SHARED system tmpdir, identical across every call in this
+ * process, so two tests' escalation fixtures would collide there. Neither
+ * `outbox/` nor its `control-store` sibling need to pre-exist — every
+ * writer here creates its own subdirectory with `{ recursive: true }`.
+ */
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'vinaya-task-tools-read-'))
-  tempDirs.push(dir)
-  return dir
+  const parent = mkdtempSync(join(tmpdir(), 'vinaya-task-tools-read-'))
+  tempDirs.push(parent)
+  return join(parent, 'outbox')
 }
 
 function taskDir(root: string, task: number): string {
