@@ -638,7 +638,8 @@ export class LaunchContinuityLost extends Error {
   }
 }
 
-export function defaultReconcileLaunchDeps(): ReconcileLaunchDeps {
+/** The real pid-liveness + hostname deps `recoverDeveloperLaunch` uses by default — internal, not part of the module's public surface (a test injects its own). */
+function defaultReconcileLaunchDeps(): ReconcileLaunchDeps {
   return { isPidAlive: defaultIsPidAlive, hostname: () => osHostname() }
 }
 
