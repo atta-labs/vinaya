@@ -77,6 +77,7 @@ import {
   type ReviewerPromptFacts,
   routeCompletionEvents
 } from '../../src/lib/dev-review-loop.js'
+import { MAX_INFRASTRUCTURE_RETRIES } from '../../src/lib/dev-review-loop/round-assess.js'
 import {
   deriveCodeReviewVerdict,
   renderCodeReviewComment,
@@ -3303,6 +3304,375 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     expect(gateRedPrompt).toMatch(/CI is red on the last head/)
     expect(gateRedPrompt).toMatch(/`git push`/)
   }, 20000)
+})
+
+// --- control-store-v1 task 4 (#554): the loop recovers budgets and held
+// results from control state, not from optional event history -------------
+
+function controlStoreLoopStatePath(home: string): string {
+  return join(home, '.vinaya', 'control-store', String(TASK), 'loop-state.json')
+}
+
+function writeControlStoreLoopState(home: string, record: Record<string, unknown>): void {
+  const path = controlStoreLoopStatePath(home)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, JSON.stringify(record), 'utf8')
+}
+
+describe('devReviewLoop — control-store-v1 task 4 (#554, O2): mechanical-retry budgets survive a restart, never reset', () => {
+  it('a fresh process seeded with a prior stall count from the control store pauses after one fewer turn than a genuinely fresh one would', () => {
+    const { home, cwd, path } = setUpNeverPushes()
+
+    // Simulates a driver that stalled once, then died (a kill, a crash) —
+    // the control-store record a REAL in-flight process would already have
+    // written the instant it incremented `gateStalledStreak`
+    // (`persistCurrentLoopState`, called right there, never only once a
+    // pause eventually fires).
+    writeControlStoreLoopState(home, {
+      version: 1,
+      kind: 'loop_state',
+      task: TASK,
+      round: 1,
+      phase: 'dispatch_developer',
+      pauseReason: null,
+      budgets: { mechanicalRetries: 1, reviewRounds: 1, infrastructureRetries: 0 },
+      heldResult: null,
+      deliveredFindings: null,
+      recordedAt: new Date().toISOString()
+    })
+
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
+    })
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // A genuinely fresh process needs THREE developer turns before this
+    // bound (round 1's own entry, then two stalled retries —
+    // `MAX_GATE_STALLED_TURNS`). Seeded at 1 already, this run needed only
+    // ONE retry after its own entry turn — the seed carried over rather
+    // than resetting to 0.
+    const prompts = readdirSync(home).filter((f) => /^\.dev-prompt-\d+\.txt$/.test(f))
+    expect(prompts).toHaveLength(2)
+
+    const persisted = JSON.parse(readFileSync(controlStoreLoopStatePath(home), 'utf8')) as {
+      phase: string
+      pauseReason: string
+      budgets: { mechanicalRetries: number; infrastructureRetries: number }
+    }
+    expect(persisted.budgets.mechanicalRetries).toBe(2)
+    expect(persisted.budgets.infrastructureRetries).toBe(1)
+    expect(persisted.phase).toBe('pause')
+    expect(persisted.pauseReason).toBe('infrastructure')
+  }, 20000)
+})
+
+describe('devReviewLoop — control-store-v1 task 4 (#554, O3): a delivered-findings identity in the control store prevents a second redelivery, even with no local marker file', () => {
+  it('reads as no_progress and dispatches nobody, purely from the control-store record — the local round-<k>-attach-redelivered marker never exists in this fixture', () => {
+    const { home, cwd, path } = setUpAttachRecoversHeldRound()
+
+    const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    mkdirSync(heldDir, { recursive: true })
+    writeFileSync(
+      join(heldDir, 'round-1-reviewer.md'),
+      `VERDICT: REQUEST CHANGES\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`
+    )
+    writeFileSync(join(heldDir, 'round-1-security.md'), `VERDICT: FAIL\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`)
+
+    // No `round-1-attach-redelivered` marker on disk — this machine's local
+    // side file is exactly what a different host, or a cleaned outbox,
+    // would be missing. The control store alone carries the fact that
+    // round 1's findings were already delivered on this exact head.
+    writeControlStoreLoopState(home, {
+      version: 1,
+      kind: 'loop_state',
+      task: TASK,
+      round: 1,
+      phase: 'dispatch_developer',
+      pauseReason: null,
+      budgets: { mechanicalRetries: 0, reviewRounds: 1, infrastructureRetries: 0 },
+      heldResult: { round: 1, head: HEAD_SHA },
+      deliveredFindings: { round: 1, head: HEAD_SHA },
+      recordedAt: new Date().toISOString()
+    })
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(no_progress\)/)
+
+    expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
+    expect(existsSync(join(heldDir, 'round-2-reviewer-work'))).toBe(false)
+    expect(existsSync(join(heldDir, 'round-2-security-work'))).toBe(false)
+    expect(
+      existsSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-attach-redelivered'))
+    ).toBe(false)
+  }, 20000)
+})
+
+describe('devReviewLoop — control-store-v1 task 4 (#554, O1/O3): round numbering recovers from the control store alone when both the local held files AND the forge-flushed journal are missing', () => {
+  it('dispatches round 2 directly with neither a held-verdict file nor any outbox/forge event history to reconstruct it from', () => {
+    const { home, cwd, path } = setUpAttachRecoversHeldRound()
+
+    // Deliberately nothing else: no `round-1-reviewer.md`/`round-1-security.md`
+    // (the local held-verdict recovery this task's own O1 says recovery must
+    // stop depending on alone), and no outbox NDJSON / forge-flushed
+    // `dev_review_loop` comments either (`writeFakeGhAttach`'s own `pr view
+    // --json comments` replays only what this run itself posts, starting
+    // empty) — the task's optional event history is entirely absent. Only
+    // the control store's own round-2 record survives.
+    writeControlStoreLoopState(home, {
+      version: 1,
+      kind: 'loop_state',
+      task: TASK,
+      round: 2,
+      phase: 'dispatch_reviewers',
+      pauseReason: null,
+      budgets: { mechanicalRetries: 0, reviewRounds: 2, infrastructureRetries: 0 },
+      heldResult: null,
+      deliveredFindings: { round: 1, head: HEAD_SHA },
+      recordedAt: new Date().toISOString()
+    })
+
+    const worktreeDir = join(cwd, '.worktrees', BRANCH)
+    mkdirSync(worktreeDir, { recursive: true })
+    writeFileSync(join(worktreeDir, '.vinaya-confidence'), 'CONFIDENCE: 90 — recovered from control state\n')
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    // Reviewers ran at round 2 — never a reset to round 1 for want of the
+    // held files or the journal this task's optional telemetry would
+    // otherwise have supplied.
+    const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    expect(existsSync(join(heldDir, 'round-2-reviewer-work'))).toBe(true)
+    expect(existsSync(join(heldDir, 'round-2-security-work'))).toBe(true)
+    expect(existsSync(join(heldDir, 'round-1-reviewer-work'))).toBe(false)
+    expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
+  }, 20000)
+})
+
+describe('devReviewLoop — control-store-v1 task 4 (#554, round 2 review, BLOCKER): a corrupt loop-state record decides a pause, never an uncaught crash', () => {
+  it('exits non-zero with a decided infrastructure pause, dispatching no developer at all', () => {
+    // Reuses `setUpStopBeforePush`'s own `gh`/`git` fixture — it answers `pr
+    // list` with none open (this scenario's own `prNumber` sentinel, `-1`,
+    // never resolves before the corrupt check fires) and its `gh issue
+    // comment` actually succeeds, unlike the plain `writeFakeGh` most other
+    // fixtures use (which deliberately refuses issue comments as "log flush
+    // not under test" — `postMarkedComment`'s own hard-refusal-with-
+    // `process.exit` on that failure would otherwise mask the very
+    // assertion this test exists to make). The developer fake it wires
+    // (`writeFakeClaudeNoPushEver`) is never invoked here: the corrupt
+    // record is refused before the frozen-brief fetch or any dispatch.
+    const { home, cwd, path } = setUpStopBeforePush()
+
+    // Torn JSON — `readLoopState`/`parseLoopStateRecord` read this as
+    // `'corrupt'`, never `'absent'`. Before the fix, the resulting throw sat
+    // BEFORE `devReviewLoop`'s own `try` block even started, so it escaped
+    // as an unhandled rejection instead of reaching the outer `catch` that
+    // decides every other setup failure on this path.
+    const loopStatePath = controlStoreLoopStatePath(home)
+    mkdirSync(dirname(loopStatePath), { recursive: true })
+    writeFileSync(loopStatePath, '{"version":1,"kind":"loop_state"', 'utf8')
+
+    const r = runLoop(home, cwd, path)
+
+    // A decided pause, not a crash: a real uncaught exception would print a
+    // stack trace and/or an "unhandled" message, never this driver's own
+    // `paused (<reason>)` summary line.
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+    expect(r.stdout).not.toMatch(/unhandled|Unhandled/)
+
+    // No developer ever dispatched — the corrupt record is refused before
+    // any real work starts, and before the frozen brief is ever fetched.
+    expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
+    expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(false)
+
+    // A real pause comment landed on the task Issue (no PR exists yet) —
+    // the corrupt-record throw reached the SAME pause bookkeeping every
+    // other setup failure on this path does, not a silent, comment-less exit.
+    const posted = postedCommentFiles(home)
+    const pauseFiles = posted.filter((f) =>
+      readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8').includes('aeg:loop:paused:infrastructure')
+    )
+    expect(pauseFiles).toHaveLength(1)
+    const body = readFileSync(join(home, '.fake-gh-posted-comments', pauseFiles[0] as string), 'utf8')
+    expect(body).toMatch(/control-store loop-state record is corrupt/)
+  }, 20000)
+})
+
+describe('devReviewLoop — control-store-v1 task 4 (round 3 review, BLOCKER): a real filesystem read fault on loop-state.json decides a pause too, never an uncaught crash', () => {
+  it('exits non-zero with a decided infrastructure pause, dispatching no developer at all', () => {
+    const { home, cwd, path } = setUpStopBeforePush()
+
+    // The loop-state record's own path is itself a directory, not a file —
+    // `readFileSync` throws `EISDIR`, a real fs fault distinct from the
+    // torn-JSON case above (something readable but unparseable) and from
+    // `ENOENT` (never written). Before the fix, `readIfExists`
+    // (`packages/aeg-core/src/control-store/local.ts`) rethrew this raw, and
+    // nothing between it and `recoverLoopState` caught it — the exact
+    // "escapes uncaught instead of a decided pause" failure class the
+    // BLOCKER test above already covers for malformed JSON, reopened here
+    // through a different trigger (permission denied, an unreadable special
+    // file, an EIO would all take the same path in production).
+    const loopStatePath = controlStoreLoopStatePath(home)
+    mkdirSync(loopStatePath, { recursive: true })
+
+    const r = runLoop(home, cwd, path)
+
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+    expect(r.stdout).not.toMatch(/unhandled|Unhandled/)
+    expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
+    expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(false)
+
+    const posted = postedCommentFiles(home)
+    const pauseFiles = posted.filter((f) =>
+      readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8').includes('aeg:loop:paused:infrastructure')
+    )
+    expect(pauseFiles).toHaveLength(1)
+    const body = readFileSync(join(home, '.fake-gh-posted-comments', pauseFiles[0] as string), 'utf8')
+    expect(body).toMatch(/control-store loop-state record is corrupt/)
+  }, 20000)
+})
+
+describe('devReviewLoop — control-store-v1 task 4 (round 2 review, security HIGH): refusing a corrupt loop-state record never self-heals its infrastructure-retry count to zero', () => {
+  it('persists MAX_INFRASTRUCTURE_RETRIES, not 0, to both the control store and the pause-state file', () => {
+    const { home, cwd, path } = setUpStopBeforePush()
+
+    // Same torn-JSON fixture as the BLOCKER test above — `recoverLoopState`
+    // reads this as `'corrupt'`, and the refusal thrown inside the `try`
+    // block is caught by the outer catch, which persists whatever
+    // `infrastructureRetries` this process is holding at that moment.
+    const loopStatePath = controlStoreLoopStatePath(home)
+    mkdirSync(dirname(loopStatePath), { recursive: true })
+    writeFileSync(loopStatePath, '{"version":1,"kind":"loop_state"', 'utf8')
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // Before the fix, the fresh-start seed read `'corrupt'` as `0` — the
+    // same default `'absent'` gets — so refusing an untrustworthy record
+    // immediately overwrote it with a clean, zeroed one: a corrupted record
+    // "healed" itself to a low count on the very next attach, discarding
+    // whatever real count it carried instead of preserving the conservative
+    // treatment `--resume`'s own corrupt handling already applies. The
+    // outer catch's own `infrastructureRetries += 1` (every infrastructure
+    // pause counts itself) lands on top of the `MAX_INFRASTRUCTURE_RETRIES`
+    // seed, so the persisted value is AT LEAST the bound, never exactly `0`.
+    const persisted = JSON.parse(readFileSync(loopStatePath, 'utf8')) as {
+      budgets: { infrastructureRetries: number }
+    }
+    expect(persisted.budgets.infrastructureRetries).toBeGreaterThanOrEqual(MAX_INFRASTRUCTURE_RETRIES)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as { infrastructureRetries: number }
+    expect(pauseState.infrastructureRetries).toBeGreaterThanOrEqual(MAX_INFRASTRUCTURE_RETRIES)
+  }, 20000)
+})
+
+describe('devReviewLoop — control-store-v1 task 4 (round 2 review, security HIGH): --resume floors its infrastructure-retry bound against the pause-state file, not the control store alone', () => {
+  it('refuses a bare-command resume once the pause-state file alone already reflects the bound, even with the control-store record absent', () => {
+    const { home, cwd, path } = setUpNeverPushesResumable()
+    const paused = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
+      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
+    })
+    expect(paused.status).not.toBe(0)
+    expect(paused.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // Simulates a `persistLoopState` write that has been silently failing
+    // for this task's whole life (an unwritable control-store directory, a
+    // hand-cleaned one) while `writePauseState`'s own plain `writeFileSync`
+    // — a different write path — kept landing: the control store reads
+    // `'absent'`, but the pause-state file alone already carries a count at
+    // the bound.
+    const pauseStatePath = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json')
+    const pauseState = JSON.parse(readFileSync(pauseStatePath, 'utf8')) as Record<string, unknown>
+    pauseState.infrastructureRetries = MAX_INFRASTRUCTURE_RETRIES
+    writeFileSync(pauseStatePath, JSON.stringify(pauseState), 'utf8')
+    rmSync(controlStoreLoopStatePath(home), { force: true })
+
+    // Before the fix, `infrastructureRetriesSoFar` came from the
+    // control-store read alone: `'absent'` read as `0`, well under the
+    // bound, so this resumed on the bare command exactly like the O5 test
+    // above, with `bareInfrastructureResume` true and `d.fetchRulings`
+    // never even called — exactly the silently-reset-to-a-clean-slate hole
+    // the security finding named. With the fix, the pause-state floor pins
+    // `infrastructureRetriesSoFar` at the bound, `bareInfrastructureResume`
+    // is false, and the code takes the "fetch rulings for real" branch —
+    // this fixture (built for the never-a-real-PR bare-resume case) answers
+    // that particular `gh pr view <n> --json comments` call with nothing
+    // wired, so the resume fails fetching rulings rather than finding zero
+    // of them; either failure proves the SAME thing this test asserts: the
+    // bare-command path was refused.
+    const resumed = runDevReviewLoopArgs(home, cwd, path, ['--resume', '123', '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
+      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
+    })
+    expect(resumed.status).not.toBe(0)
+    expect(resumed.stdout).not.toMatch(/paused \(infrastructure\)/)
+    expect(resumed.stderr).toMatch(/fetchRulings/)
+  }, 30000)
+})
+
+describe('devReviewLoop — control-store-v1 task 4 (round 3 review, MAJOR): a resumed process floors its own in-memory infrastructure-retry count against pause-state.json too', () => {
+  it('never regresses the persisted count after a further pause, even with the control-store record absent going in', () => {
+    const { home, cwd, path } = setUpNeverPushesResumable()
+    const paused = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
+      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
+    })
+    expect(paused.status).not.toBe(0)
+    expect(paused.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // Simulates a `persistLoopState` write that has been silently failing
+    // since well before this resume: the control-store record is gone
+    // entirely, while `pause-state.json` — a different, simpler write path —
+    // already carries a real prior count of `3`, still comfortably under
+    // `MAX_INFRASTRUCTURE_RETRIES` (`5`), so the resume GATE check
+    // (`infrastructureRetriesSoFar`, already floored against this same file
+    // since the security-HIGH fix) grants the bare-command resume cleanly —
+    // this test is entirely about what happens to the IN-PROCESS seed once
+    // that resumed process actually starts running, not about the gate.
+    const pauseStatePath = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json')
+    const pauseState = JSON.parse(readFileSync(pauseStatePath, 'utf8')) as Record<string, unknown>
+    pauseState.infrastructureRetries = 3
+    writeFileSync(pauseStatePath, JSON.stringify(pauseState), 'utf8')
+    rmSync(controlStoreLoopStatePath(home), { force: true })
+
+    // The SAME always-red CI stalls this resumed process again — one more
+    // genuine infrastructure pause, which persists whatever the in-process
+    // `infrastructureRetries` variable was seeded at, plus one.
+    const resumed = runDevReviewLoopArgs(home, cwd, path, ['--resume', '123', '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
+      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
+    })
+    expect(resumed.status).not.toBe(0)
+    expect(resumed.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // Before the fix, the in-process seed read the (now-absent)
+    // control-store alone: `0`, incremented once by this pause, persisted as
+    // `1` — silently regressing the true count from `3` down to `1`, even
+    // though `pause-state.json` itself already said `3` going in. With the
+    // fix, the seed floors against `resumeFrom.infrastructureRetries` (`3`),
+    // so this pause can only ever advance it to `4` or more, never back down.
+    const persisted = JSON.parse(readFileSync(controlStoreLoopStatePath(home), 'utf8')) as {
+      budgets: { infrastructureRetries: number }
+    }
+    expect(persisted.budgets.infrastructureRetries).toBeGreaterThanOrEqual(4)
+
+    const newPauseState = JSON.parse(readFileSync(pauseStatePath, 'utf8')) as { infrastructureRetries: number }
+    expect(newPauseState.infrastructureRetries).toBeGreaterThanOrEqual(4)
+  }, 30000)
 })
 
 /**

@@ -11,12 +11,14 @@ import {
   readCurrentOwnership,
   readEffect,
   readInput,
+  readLoopState,
   readRun,
   readTransitions,
   readManifest,
   StaleEpochWriteError,
   writeEffect,
   writeInput,
+  writeLoopState,
   writeManifest,
   writeRun,
   type ControlStoreDeps
@@ -87,6 +89,68 @@ describe('writeManifest / readManifest (#555, O1)', () => {
     const r2 = readManifest(deps, 555, 2)
     expect(r1.status === 'ok' && r1.value.policyDigest).toBe('d'.repeat(64))
     expect(r2.status === 'ok' && r2.value.policyDigest).toBe('e'.repeat(64))
+  })
+})
+
+describe('writeLoopState / readLoopState (control-store-v1 task 4, O1)', () => {
+  const input = {
+    round: 2,
+    phase: 'dispatch_developer',
+    pauseReason: null,
+    budgets: { mechanicalRetries: 1, reviewRounds: 2, infrastructureRetries: 0 },
+    heldResult: { round: 2, head: 'a'.repeat(40) },
+    deliveredFindings: { round: 1, head: 'b'.repeat(40) },
+    recordedAt: '2026-09-14T00:00:00.000Z'
+  }
+
+  it('persists a loop-state snapshot and reads it back — no epoch fence required, the same precedent as the manifest record', () => {
+    // No `acquireOwnership` first, for the same reason `writeManifest`
+    // needs none: the driver has not adopted epoch ownership over this
+    // mutable record yet (`loop.md`, "later adoption work").
+    const written = writeLoopState(deps, 554, input)
+    expect(written).toEqual({ version: 1, kind: 'loop_state', task: 554, ...input })
+    const read = readLoopState(deps, 554)
+    expect(read).toEqual({ status: 'ok', value: written })
+  })
+
+  it('a never-written task reads as absent, never corrupt', () => {
+    expect(readLoopState(deps, 9999)).toEqual({ status: 'absent' })
+  })
+
+  it('overwrites in place on every transition — unlike run/input, one record per task, not one per round', () => {
+    writeLoopState(deps, 554, input)
+    const second = writeLoopState(deps, 554, {
+      ...input,
+      round: 3,
+      budgets: { mechanicalRetries: 0, reviewRounds: 3, infrastructureRetries: 1 },
+      heldResult: null
+    })
+    const read = readLoopState(deps, 554)
+    expect(read).toEqual({ status: 'ok', value: second })
+    expect(read.status === 'ok' && read.value.round).toBe(3)
+  })
+
+  it('a corrupt record is refused as corrupt, never silently read as absent — refusing to reset budgets past it', () => {
+    const path = join(dir, '554', 'loop-state.json')
+    mkdirSync(join(dir, '554'), { recursive: true })
+    writeFileSync(path, '{"version":1,"kind":"loop_state"')
+    expect(readLoopState(deps, 554).status).toBe('corrupt')
+  })
+
+  it('a real filesystem read fault, not merely torn JSON, is refused as corrupt too — never left to throw (round 3 review, BLOCKER)', () => {
+    // The record's own path is itself a directory, not a file — `readFileSync`
+    // throws `EISDIR`, a real fs fault distinct from `ENOENT` (never written)
+    // and from torn JSON (something readable but unparseable). Before the
+    // fix, `readIfExists` rethrew this raw and `readLoopState` had no catch
+    // of its own, so it escaped every caller — `recoverLoopState` in
+    // `dev-review-loop.ts` included, before that function's own try block
+    // even starts — reproducing round 1's "escapes uncaught instead of a
+    // decided pause" failure class through a different trigger.
+    const path = join(dir, '554', 'loop-state.json')
+    mkdirSync(path, { recursive: true })
+    const result = readLoopState(deps, 554)
+    expect(result.status).toBe('corrupt')
+    expect(result.status === 'corrupt' && result.reason).toMatch(/filesystem read failed/)
   })
 })
 
