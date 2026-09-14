@@ -826,6 +826,10 @@ export type LaunchRecord = {
   dispatcherPid: number
   /** The spawned vendor child's pid, set the moment `spawn` returns — the identity recovery probes to tell a still-live launch from a finished one (O3). `null` until the child is actually spawned (a pre-spawn refusal never sets it). */
   childPid: number | null
+  /** The child's own process start time, snapshotted (`getProcessSnapshot`) the instant `spawn` returns — O3, Issue #605. Compared back against the SAME pid's current start time at recovery time so a pid the OS has since recycled for an unrelated process is never mistaken for this launch's own child. `null` when the snapshot could not be taken (never blocks the dispatch). */
+  childStartedAt: string | null
+  /** The child's own command name, snapshotted alongside `childStartedAt` — the second identity signal O3 asks for ("start time and/or command line"). `null` when unavailable. */
+  childCommand: string | null
   host: string
   startedAt: string
   status: LaunchStatus
@@ -885,6 +889,10 @@ function coerceLaunchRecord(json: unknown): LaunchRecord | null {
     effectId: typeof o.effectId === 'string' ? o.effectId : '',
     dispatcherPid: num(o.dispatcherPid) ?? 0,
     childPid: num(o.childPid),
+    // Absent on any record written before this task — `null` is the honest
+    // "no identity captured" reading, never a fabricated match or mismatch.
+    childStartedAt: typeof o.childStartedAt === 'string' ? o.childStartedAt : null,
+    childCommand: typeof o.childCommand === 'string' ? o.childCommand : null,
     host: typeof o.host === 'string' ? o.host : '',
     startedAt: typeof o.startedAt === 'string' ? o.startedAt : typeof o.capturedAt === 'string' ? o.capturedAt : '',
     status,
@@ -990,6 +998,43 @@ export function readResumeRecord(
     effectId: r.effectId,
     capturedAt: r.boundAt ?? r.startedAt
   }
+}
+
+/** A pid's own identity facts, read fresh off the OS — never trusted from a launch record alone (O3, Issue #605): `ppid` is what tells recovery whether a still-alive child is still parented to the driver that spawned it (O2), `startedAt`/`command` are what tells it whether this pid is even the SAME process the launch record named, rather than one the OS has since recycled for something unrelated. */
+export type ProcessSnapshot = { ppid: number; startedAt: string | null; command: string | null }
+
+/** One `ps -o <format> -p <pid>` field, trimmed — `null` when `ps` refuses the pid (it doesn't exist) or prints nothing. `=` suffixes on every format string suppress the header row on both BSD (macOS) and GNU (Linux) `ps`, so a single blank/absent line unambiguously means "no such process." */
+function psField(pid: number, format: string): string | null {
+  try {
+    const out = execFileSync('ps', ['-p', String(pid), '-o', format], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    const line = out
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0)
+    return line ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * O3: a live snapshot of `pid`'s own identity — `null` when no process
+ * answers at that pid at all. `ppid`/`comm` are single-token fields, safe to
+ * read with their own `ps` call each; `lstart` carries embedded spaces (a
+ * full timestamp), so it is never combined with the others into one
+ * multi-field `-o` format that a naive whitespace split could misparse.
+ * Uses the system `ps` rather than a dependency: every supported platform
+ * (macOS, Linux) ships one.
+ */
+export function getProcessSnapshot(pid: number): ProcessSnapshot | null {
+  const ppidRaw = psField(pid, 'ppid=')
+  if (ppidRaw === null) return null
+  const ppid = Number.parseInt(ppidRaw, 10)
+  if (!Number.isFinite(ppid)) return null
+  return { ppid, startedAt: psField(pid, 'lstart='), command: psField(pid, 'comm=') }
 }
 
 /** Bounded grace between the two escalating signals `terminateChildWithGrace` sends — the same order of magnitude as `SIGKILL_GRACE_MS` (the dispatch timeout's own escalation), reused here for a driver-initiated termination rather than a child that overran its own ceiling. */
@@ -1469,6 +1514,8 @@ export async function dispatchRole(
     effectId,
     dispatcherPid: process.pid,
     childPid: null,
+    childStartedAt: null,
+    childCommand: null,
     host: osHostname(),
     startedAt: new Date(start).toISOString(),
     status: 'launched',
@@ -1576,7 +1623,19 @@ export async function dispatchRole(
     // `spawn` returns it — this is what recovery probes to tell a still-live
     // launch from a finished one, so it must be durable even if the driver
     // dies in the very next tick (a crash between spawn and session binding).
-    if (typeof child.pid === 'number') patchLaunch({ childPid: child.pid })
+    // The snapshot (O3, Issue #605) is taken in this SAME instant, the one
+    // moment this pid is certainly the child just spawned — recovery compares
+    // a LATER snapshot of the same pid back against these two fields to tell
+    // this exact process apart from whatever the OS has since recycled the
+    // pid for.
+    if (typeof child.pid === 'number') {
+      const snapshot = getProcessSnapshot(child.pid)
+      patchLaunch({
+        childPid: child.pid,
+        childStartedAt: snapshot?.startedAt ?? null,
+        childCommand: snapshot?.command ?? null
+      })
+    }
 
     let settled = false
     let timedOut = false

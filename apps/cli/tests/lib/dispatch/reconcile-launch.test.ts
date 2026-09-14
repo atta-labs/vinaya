@@ -4,7 +4,7 @@ import {
   reconcileLaunch,
   type ReconcileLaunchDeps
 } from '../../../src/lib/dev-review-loop/developer-dispatch'
-import type { LaunchRecord, ParsedLaunch } from '../../../src/lib/dispatch'
+import type { LaunchRecord, ParsedLaunch, ProcessSnapshot } from '../../../src/lib/dispatch'
 
 const THIS_HOST = 'test-host'
 
@@ -22,6 +22,8 @@ function record(overrides: Partial<LaunchRecord> = {}): LaunchRecord {
     effectId: 'eff-1',
     dispatcherPid: 1000,
     childPid: 2000,
+    childStartedAt: null,
+    childCommand: null,
     host: THIS_HOST,
     startedAt: '2026-09-14T00:00:00.000Z',
     status: 'completed',
@@ -34,18 +36,23 @@ function record(overrides: Partial<LaunchRecord> = {}): LaunchRecord {
 }
 
 /**
- * Deps whose pid-liveness answer, hostname, and ppid answer are fixed per
- * case. `isAlive` drives both `isPidAlive` (probed for the dispatcher pid by
- * `classifyChildLiveness`) and whether `getPpid` finds anything at all at the
- * queried (child) pid — `ppid` names what it finds when it does, defaulting
- * to `record()`'s own default `dispatcherPid` (1000) so every pre-existing
- * "live" case here keeps meaning what it always meant.
+ * Deps whose pid-liveness answer, hostname, and process-snapshot answer are
+ * fixed per case. `isAlive` drives BOTH `isPidAlive` (probed for the
+ * dispatcher pid by `classifyChildLiveness`) and whether `getProcessSnapshot`
+ * finds anything at all at the queried (child) pid — `snapshot` names what it
+ * finds when it does, defaulting to a child still parented to `record()`'s
+ * own default `dispatcherPid` (1000) so every pre-existing "live" case here
+ * keeps meaning what it always meant.
  */
-function deps(isAlive: boolean, host = THIS_HOST, ppid = 1000): ReconcileLaunchDeps {
+function deps(
+  isAlive: boolean,
+  host = THIS_HOST,
+  snapshot: ProcessSnapshot = { ppid: 1000, startedAt: null, command: null }
+): ReconcileLaunchDeps {
   return {
     isPidAlive: () => isAlive,
     hostname: () => host,
-    getPpid: () => (isAlive ? ppid : null)
+    getProcessSnapshot: () => (isAlive ? snapshot : null)
   }
 }
 
@@ -102,7 +109,11 @@ describe('reconcileLaunch (O3) — a live launch is found by identity', () => {
       status: 'ok',
       record: record({ status: 'launched', resumeId: null, dispatcherPid: 1000, childPid: 2000 })
     }
-    const out = reconcileLaunch(parsed, { requireContinuity: true }, deps(true, THIS_HOST, 1000))
+    const out = reconcileLaunch(
+      parsed,
+      { requireContinuity: true },
+      deps(true, THIS_HOST, { ppid: 1000, startedAt: null, command: null })
+    )
     expect(out.kind).toBe('live')
   })
 })
@@ -113,7 +124,11 @@ describe('reconcileLaunch (O2, Issue #605) — an orphaned child is a takeover, 
       status: 'ok',
       record: record({ status: 'launched', dispatcherPid: 1000, childPid: 2000, resumeId: 'sess-mid' })
     }
-    const out = reconcileLaunch(parsed, { requireContinuity: true }, deps(true, THIS_HOST, 1))
+    const out = reconcileLaunch(
+      parsed,
+      { requireContinuity: true },
+      deps(true, THIS_HOST, { ppid: 1, startedAt: null, command: null })
+    )
     expect(out.kind).not.toBe('live')
     // Continuity was required and a session was already bound before the
     // driver died — the orphan is a TAKEOVER (resume that exact session),
@@ -124,7 +139,7 @@ describe('reconcileLaunch (O2, Issue #605) — an orphaned child is a takeover, 
 
   it('`classifyChildLiveness` names the orphan case directly, for the recovery wrapper to reap', () => {
     const rec = record({ status: 'launched', dispatcherPid: 1000, childPid: 2000 })
-    const liveness = classifyChildLiveness(rec, deps(true, THIS_HOST, 1))
+    const liveness = classifyChildLiveness(rec, deps(true, THIS_HOST, { ppid: 1, startedAt: null, command: null }))
     expect(liveness).toBe('orphaned')
   })
 
@@ -142,10 +157,68 @@ describe('reconcileLaunch (O2, Issue #605) — an orphaned child is a takeover, 
       {
         isPidAlive: () => false,
         hostname: () => THIS_HOST,
-        getPpid: () => 1000
+        getProcessSnapshot: () => ({ ppid: 1000, startedAt: null, command: null })
       }
     )
     expect(out.kind).not.toBe('live')
+  })
+})
+
+describe("reconcileLaunch (O3, Issue #605) — a recycled pid is never treated as this launch's child", () => {
+  it('a live pid whose recorded start time no longer matches is a DIFFERENT process — never live, never touched', () => {
+    const parsed: ParsedLaunch = {
+      status: 'ok',
+      record: record({
+        status: 'launched',
+        dispatcherPid: 1000,
+        childPid: 2000,
+        childStartedAt: 'Mon Sep 14 10:00:00 2026',
+        childCommand: 'claude',
+        resumeId: null
+      })
+    }
+    // Same pid, same live parent — but the OS has recycled it: a different
+    // process now answers at that pid, with a different start time.
+    const out = reconcileLaunch(
+      parsed,
+      { requireContinuity: true },
+      deps(true, THIS_HOST, { ppid: 1000, startedAt: 'Tue Sep 15 09:00:00 2026', command: 'claude' })
+    )
+    expect(out.kind).not.toBe('live')
+  })
+
+  it("a live pid whose recorded command no longer matches is likewise never this launch's child", () => {
+    const rec = record({
+      status: 'launched',
+      dispatcherPid: 1000,
+      childPid: 2000,
+      childStartedAt: null,
+      childCommand: 'claude'
+    })
+    const liveness = classifyChildLiveness(
+      rec,
+      deps(true, THIS_HOST, { ppid: 1000, startedAt: null, command: 'some-unrelated-process' })
+    )
+    expect(liveness).toBe('not-ours')
+  })
+
+  it('with no identity ever recorded (a pre-this-task record), a live pid with a live parent is still trusted as live', () => {
+    // Backward compatibility: `childStartedAt`/`childCommand` are `null` on
+    // any launch record written before this task — there is nothing to
+    // compare, so identity is never the reason a genuinely live launch on a
+    // live host stops being found.
+    const rec = record({
+      status: 'launched',
+      dispatcherPid: 1000,
+      childPid: 2000,
+      childStartedAt: null,
+      childCommand: null
+    })
+    const liveness = classifyChildLiveness(
+      rec,
+      deps(true, THIS_HOST, { ppid: 1000, startedAt: 'whatever', command: 'whatever' })
+    )
+    expect(liveness).toBe('live')
   })
 })
 
