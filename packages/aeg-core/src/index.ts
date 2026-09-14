@@ -494,3 +494,33 @@ export type {
   Role,
   Subject
 } from './log'
+export {
+  acquireOwnership,
+  appendTransition,
+  CONTROL_RECORD_VERSION,
+  defaultControlStoreDeps,
+  parseInputRecord,
+  parseOwnershipRecord,
+  parseRunRecord,
+  parseTransitionRecord,
+  readCurrentOwnership,
+  readInput,
+  readRun,
+  readTransitions,
+  StaleEpochWriteError,
+  writeInput,
+  writeRun
+} from './control-store'
+export type {
+  AcquireResult,
+  ControlRecord,
+  ControlStoreDeps,
+  InputInput,
+  InputRecord,
+  OwnershipRecord,
+  ParsedRecord,
+  RunInput,
+  RunRecord,
+  TransitionInput,
+  TransitionRecord
+} from './control-store'
