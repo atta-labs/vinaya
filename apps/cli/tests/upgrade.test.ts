@@ -228,7 +228,7 @@ describe('vinaya upgrade', () => {
     expect(readFileSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH), 'utf-8')).toContain('vinaya:managed:track-transcript')
   })
 
-  it('recreates a task-tools .mcp.json a pre-feature manifest never recorded (retrofit, task-operator-v1 task 2)', async () => {
+  it('recreates a task-tools .mcp.json a pre-feature manifest never recorded', async () => {
     await runInit(['--yes'], initDeps())
     // Simulate a repo initialised before `.mcp.json` existed: drop it from the
     // manifest AND disk, so the `!owned && !exists` retrofit branch is what runs.
