@@ -112,15 +112,11 @@ export function renderNoPushStopComment(task: number, reason: PauseReason, detai
  * unconditionally, the same chokepoint discipline `postPauseComment` applies
  * for the PR case, so a call site never posts a raw `detail` un-redacted
  * either way. Posts through the shared `EffectExecutor` (Issue #552), the
- * same replacement `postPauseComment` gets below.
+ * same replacement `postPauseComment` gets below — neither writer takes a
+ * root-relative outbox path any more, since both store through the
+ * control-store's own root (`controlStoreRoot`), not a caller-supplied one.
  */
-export function postIssuePauseComment(
-  _root: string,
-  task: number,
-  round: number,
-  reason: PauseReason,
-  detail?: string
-): void {
+export function postIssuePauseComment(task: number, round: number, reason: PauseReason, detail?: string): void {
   const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
   const marker = pauseMarker(reason)
   const body = renderNoPushStopComment(task, reason, publicDetail)
@@ -152,7 +148,6 @@ export function postIssuePauseComment(
  * requirement; only the key changed, not the once-only guarantee.
  */
 export function postPauseComment(
-  _root: string,
   task: number,
   round: number,
   head: string,

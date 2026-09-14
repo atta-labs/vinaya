@@ -115,6 +115,39 @@ describe('EffectExecutor', () => {
     })
   })
 
+  it('a wrong target under the same key, operation, inputVersion and payloadDigest is treated as a new identity, not a retry of the old one (O3: wrong-target)', () => {
+    // Every OTHER field held fixed — only `target` differs — proves the
+    // executor's own `sameIdentity` compares `target` too, not only
+    // `payloadDigest`: a marker recorded against one PR/Issue must never be
+    // read as evidence for a different one (`reconcileGhComment`'s own
+    // `ref` binding depends on this never happening — see its unit tests in
+    // `forge-write.test.ts`).
+    const executor = createEffectExecutor(deps, 1, 'owner-a')
+    let posts = 0
+    const poster = () => {
+      posts++
+      return `https://example.com/comment/${posts}`
+    }
+    const first = executor.execute({
+      key: 'k1',
+      identity: { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') },
+      poster,
+      reconcile: neverReconcile
+    })
+    const second = executor.execute({
+      key: 'k1',
+      identity: { operation: 'pr-comment', target: 'pr:2', inputVersion: 1, payloadDigest: sha256Hex('body') },
+      poster,
+      reconcile: neverReconcile
+    })
+    expect(posts).toBe(2)
+    expect(second).not.toBe(first)
+    expect(readEffect(deps, 1, 'k1')).toMatchObject({
+      status: 'ok',
+      value: { status: 'verified', url: second, target: 'pr:2' }
+    })
+  })
+
   it('a lost acknowledgement whose remote read is ambiguous stays uncertain and refuses every later retry (lost ack → uncertain)', () => {
     const task = 1
     const key = 'k1'
