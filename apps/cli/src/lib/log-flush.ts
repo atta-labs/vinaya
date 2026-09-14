@@ -392,8 +392,8 @@ export type LogFlushOutcome =
     }
 
 /**
- * Options for `flushOutbox`. `skipRemotelyAccepted` (`task-log-v1` task 2,
- * Issue #562, O2) turns on the idempotent-retry read: before posting, read the
+ * Options for `flushOutbox`. `skipRemotelyAccepted` (Issue #562, O2) turns on
+ * the idempotent-retry read: before posting, read the
  * target's existing comments and acknowledge — without re-posting — any chunk
  * whose `<!-- aeg:log:… -->` marker is already on the forge (a prior attempt
  * that posted but died before truncating). It is OFF by default so the
