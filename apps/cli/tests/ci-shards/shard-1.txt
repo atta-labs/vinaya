@@ -43,6 +43,7 @@ tests/tracked-hooks.test.ts
 tests/upgrade.test.ts
 tests/waiver.test.ts
 tests/lib/task-tools/handlers.test.ts
+tests/lib/operator-grant.test.ts
 tests/lib/task-tools/adapters.test.ts
 tests/lib/dispatch/reconcile-launch.test.ts
 tests/lib/dispatch/outcomes.test.ts

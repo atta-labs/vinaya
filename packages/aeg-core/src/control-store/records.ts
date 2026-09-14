@@ -97,6 +97,51 @@ export const TransitionRecordSchema = z
 export type TransitionRecord = z.infer<typeof TransitionRecordSchema>
 
 /**
+ * The review-input manifest a round was dispatched against, persisted durably
+ * (`control-store-v1` task 5, `#555`, O1) — the record the "Deferred,
+ * deliberately" paragraph in `loop.md` named as waiting for this store: base
+ * identity and a durable policy history now have a home. One immutable
+ * snapshot per (task, round), built by the parent before it dispatches
+ * reviewers, binding the complete identity of everything a verdict is judged
+ * against: repository and work (the PR/branch this round belongs to), base and
+ * candidate (`baseSha`/`headSha`), instruction and criteria versions
+ * (`briefHash`/`objectivesVersion`), rulings (`rulingOrdinal`), and the
+ * complete effective policy identity (`policyDigest`, which folds in the
+ * round-policy field). `baseSha`/`briefHash`/`objectivesVersion` are nullable
+ * exactly where the manifest itself is (`review-input-manifest.ts`'s own
+ * `null` = "nothing resolvable to bind against"); `rulingOrdinal`/
+ * `policyDigest` are never null, the same as on the manifest.
+ */
+export const ManifestRecordSchema = z
+  .object({
+    version: z.literal(1),
+    kind: z.literal('manifest'),
+    task: taskId,
+    round: epochNumber,
+    /** Repository identity — `owner/repo`. */
+    repository: z.string().min(1),
+    /** Work identity — the PR this round's candidate lives on. */
+    pr: z.number().int().positive(),
+    /** Work identity — the branch under review. */
+    branch: z.string().min(1),
+    /** Base identity — the commit the candidate is judged against; `null` when none was resolvable. */
+    baseSha: z.string().min(1).nullable(),
+    /** Candidate identity — the round's judged head. */
+    headSha: z.string().min(1),
+    /** Instruction version — the frozen brief's hash; `null` when none was resolvable. */
+    briefHash: z.string().min(1).nullable(),
+    /** Criteria version — the objectives version; `null` pre-cutover or when none resolvable. */
+    objectivesVersion: z.string().min(1).nullable(),
+    /** Rulings — the newest principal ruling ordinal at dispatch (`0` when none). */
+    rulingOrdinal: epochNumber,
+    /** Policy identity — the complete effective review policy's digest. */
+    policyDigest: z.string().min(1),
+    recordedAt: isoTimestamp
+  })
+  .strict()
+export type ManifestRecord = z.infer<typeof ManifestRecordSchema>
+
+/**
  * One external effect's identity and reconciliation state, keyed by a
  * caller-chosen `key` (one file per key, overwritten in place as the
  * effect's status advances — unlike `run`/`input`, which are written once).
@@ -129,7 +174,7 @@ export const EffectRecordSchema = z
 export type EffectRecord = z.infer<typeof EffectRecordSchema>
 export type EffectStatus = EffectRecord['status']
 
-export type ControlRecord = RunRecord | InputRecord | OwnershipRecord | TransitionRecord | EffectRecord
+export type ControlRecord = RunRecord | InputRecord | OwnershipRecord | TransitionRecord | ManifestRecord | EffectRecord
 
 /**
  * `'absent'` — nothing was ever written at this path.
@@ -173,6 +218,10 @@ export function parseOwnershipRecord(raw: string | undefined): ParsedRecord<Owne
 
 export function parseTransitionRecord(raw: string | undefined): ParsedRecord<TransitionRecord> {
   return parseWith(TransitionRecordSchema, raw)
+}
+
+export function parseManifestRecord(raw: string | undefined): ParsedRecord<ManifestRecord> {
+  return parseWith(ManifestRecordSchema, raw)
 }
 
 export function parseEffectRecord(raw: string | undefined): ParsedRecord<EffectRecord> {

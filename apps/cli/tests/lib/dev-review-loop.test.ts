@@ -6036,6 +6036,7 @@ describe('renderReviewerPrompt (pure) — task 4, #483, O2', () => {
     revision: 'b'.repeat(40),
     manifest: {
       headSha: 'a'.repeat(40),
+      baseSha: 'e'.repeat(40),
       briefHash: 'c'.repeat(64),
       objectivesVersion: null,
       rulingOrdinal: 0,
@@ -6242,6 +6243,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       briefHash: null,
 
       policyDigest: DEFAULT_POLICY_DIGEST,
+      baseSha: null,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
     const securityComment = renderSecurityComment({
@@ -6258,6 +6260,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       briefHash: null,
 
       policyDigest: DEFAULT_POLICY_DIGEST,
+      baseSha: null,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
 
@@ -6296,6 +6299,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       briefHash: null,
 
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
     const securityComment = renderSecurityComment({
@@ -6312,6 +6316,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       briefHash: null,
 
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
 
@@ -6369,6 +6374,7 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
       briefHash: null,
 
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: null
     })
     const securityComment = renderSecurityComment({
@@ -6385,6 +6391,7 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
       briefHash: null,
 
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: null
     })
 
@@ -6430,6 +6437,7 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
       briefHash: null,
 
       policyDigest: DEFAULT_POLICY_DIGEST,
+      baseSha: null,
       objectiveResults: null
     })
     const securityComment = renderSecurityComment({
@@ -6446,6 +6454,7 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
       briefHash: null,
 
       policyDigest: DEFAULT_POLICY_DIGEST,
+      baseSha: null,
       objectiveResults: null
     })
 
@@ -6499,6 +6508,7 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
       briefHash: null,
 
       policyDigest: DEFAULT_POLICY_DIGEST,
+      baseSha: null,
       objectiveResults: null
     })
     const securityComment = renderSecurityComment({
@@ -6515,6 +6525,7 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
       briefHash: null,
 
       policyDigest: DEFAULT_POLICY_DIGEST,
+      baseSha: null,
       objectiveResults: null
     })
 
@@ -6553,6 +6564,7 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
       briefHash: null,
 
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: null
     })
     const securityComment = renderSecurityComment({
@@ -6569,6 +6581,7 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
       briefHash: null,
 
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: null
     })
 

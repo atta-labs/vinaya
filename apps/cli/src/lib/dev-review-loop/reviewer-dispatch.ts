@@ -15,14 +15,18 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFile
 import { join } from 'node:path'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
+  defaultControlStoreDeps,
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
   isProseLocation,
+  type ManifestInput,
+  type ManifestRecord,
   type Objective,
   type ReviewInputManifest,
   SECURITY_SEVERITY_ORDER,
   type ReviewPolicy,
-  type VerdictObservation
+  type VerdictObservation,
+  writeManifest
 } from '@attalabs/aeg-core'
 import {
   checkObjectiveIdCoverage,
@@ -108,6 +112,84 @@ export function renderReviewerPrompt(facts: ReviewerPromptFacts): string {
 /** `join(GLOBAL_VINAYA_HOME, 'outbox')` — the same root `log-sink.ts`'s own `outboxPathFor` resolves, never a second hardcoded path. */
 export function outboxRoot(): string {
   return join(GLOBAL_VINAYA_HOME, 'outbox')
+}
+
+// --- parent-built manifest record (task 5, `#555`, O1) ---
+
+/**
+ * The control-store root, derived from the loop's own outbox root so it is the
+ * SAME test-controlled path the driver already threads for its held verdicts
+ * and effect records (`d.outboxRoot()`), never a second global constant a test
+ * cannot redirect. A sibling namespace under that root keeps the manifest
+ * records out of the outbox's own `dev-review-loop/` subtree.
+ */
+export function controlStoreRoot(outbox: string): string {
+  return join(outbox, 'control-store')
+}
+
+/** What the parent must supply beyond the manifest itself to persist a record — the repository and work identity a manifest snapshot carries but the `ReviewInputManifest` binding type does not (`#555`, O1). */
+export type ManifestRecordIdentity = {
+  /** Repository identity — `owner/repo`. */
+  repository: string
+  /** Work identity — the PR this round's candidate lives on. */
+  pr: number
+  /** Work identity — the branch under review. */
+  branch: string
+  round: number
+  recordedAt: string
+}
+
+/**
+ * Assembles the durable manifest record the parent persists before dispatching
+ * reviewers (`#555`, O1) — the binding manifest (`baseSha`/`headSha`/
+ * `briefHash`/`objectivesVersion`/`rulingOrdinal`/`policyDigest`) plus the
+ * repository and work identity the store record keys on. Pure — no I/O, no
+ * clock; `recordedAt` is supplied by the caller (the driver's own injected
+ * `now`), never read here, so this stays testable without a real clock.
+ */
+export function buildManifestRecord(manifest: ReviewInputManifest, identity: ManifestRecordIdentity): ManifestInput {
+  return {
+    round: identity.round,
+    repository: identity.repository,
+    pr: identity.pr,
+    branch: identity.branch,
+    baseSha: manifest.baseSha,
+    headSha: manifest.headSha,
+    briefHash: manifest.briefHash,
+    objectivesVersion: manifest.objectivesVersion,
+    rulingOrdinal: manifest.rulingOrdinal,
+    policyDigest: manifest.policyDigest,
+    recordedAt: identity.recordedAt
+  }
+}
+
+/**
+ * Persists the round's manifest snapshot to the control store (`#555`, O1),
+ * built by the parent from the manifest it dispatched reviewers against.
+ * `outbox` is the driver's own `d.outboxRoot()`; the record lands under
+ * `controlStoreRoot(outbox)`. Best-effort by design: a failed write is
+ * returned as `null`, never thrown — the loop's own binding (`compareManifest`
+ * over the echoed comment) is what actually gates a verdict, and a durable
+ * snapshot that could not be written must never be able to fail a round the
+ * way the paperwork-must-not-cost-a-round rule the evidence report already
+ * follows.
+ */
+export function persistManifestRecord(
+  outbox: string,
+  task: number,
+  manifest: ReviewInputManifest,
+  identity: ManifestRecordIdentity
+): ManifestRecord | null {
+  try {
+    return writeManifest(
+      defaultControlStoreDeps(() => controlStoreRoot(outbox)),
+      task,
+      identity.round,
+      buildManifestRecord(manifest, identity)
+    )
+  } catch {
+    return null
+  }
 }
 
 export function heldVerdictPath(root: string, task: number, round: number, role: 'reviewer' | 'security'): string {
@@ -362,6 +444,7 @@ export function buildVerdictFromReport(
       rulingOrdinal: rulingOrdinalAtDispatch,
       briefHash: manifest.briefHash,
       policyDigest: manifest.policyDigest,
+      baseSha: manifest.baseSha,
       taskId: String(taskId),
       model: agent,
       tokensIn,
@@ -446,6 +529,7 @@ export function buildVerdictFromReport(
       rulingOrdinal: rulingOrdinalAtDispatch,
       briefHash: manifest.briefHash,
       policyDigest: manifest.policyDigest,
+      baseSha: manifest.baseSha,
       taskId: String(taskId),
       model: agent,
       tokensIn,
@@ -494,6 +578,7 @@ export function buildVerdictFromReport(
     rulingOrdinal: rulingOrdinalAtDispatch,
     briefHash: manifest.briefHash,
     policyDigest: manifest.policyDigest,
+    baseSha: manifest.baseSha,
     taskId: String(taskId),
     model: agent,
     tokensIn,

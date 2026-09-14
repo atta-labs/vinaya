@@ -349,6 +349,10 @@ These four are the same shape as `roles/developer.md`'s entry gate items 2, 3, a
 
 **Once dispatched, a brief is frozen.** The Developer executes what was rendered — no mid-task amendments. If scope must change after dispatch, that is an escalation (`severity: strategy` or `severity: product`), not a brief edit: stop the task, update the Issue's rationale with the revised scope, dispatch again. The original frozen comment is preserved as the audit record.
 
+### Delegation to the Operator — who runs what you cut
+
+The dispatch act makes a task **dispatchable**; running it through the controller is the **Operator's** seat, not yours. The Operator (`roles/operator.md`) is the task-scoped actor agent that starts the run, reads its grounded status, presents its persisted escalations, and requests authenticated continuation or cancellation — holding the five task tools plus the status-follow read, and nothing that could plan, edit an Issue, rule, approve, or merge. You hand it only a task whose gates already pass; it confirms them again at its own entry gate and operates from there. When a run reveals that the plan itself is wrong — a wrong boundary, a missing detail, a changed approach — the Operator does not edit the Issue: it routes the change back to you as an escalation (`severity: strategy` or `severity: execution`), and you re-plan or redispatch. The single source of truth for this seam — what you may ask the Operator to run, and what it may ask you to re-plan — is `contracts/planner-operator.md`; do not restate that boundary here beyond pointing at it.
+
 ---
 
 ## Step 0 — creating the tranche itself needs no worktree, no PR, no commit

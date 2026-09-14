@@ -163,11 +163,11 @@ describe('nodeDocRoute: against the real model', () => {
     expect(model.nodes.some((n) => n.kind === 'action' && nodeDocRoute(n)?.slug === 'commit-the-work')).toBe(true)
   })
 
-  it('all 8 roles and 7 contracts get their own anchorless page', () => {
+  it('all 9 roles and 9 contracts get their own anchorless page', () => {
     const roles = model.nodes.filter((n) => n.kind === 'role')
     const contracts = model.nodes.filter((n) => n.kind === 'contract')
-    expect(roles.length).toBe(8)
-    expect(contracts.length).toBe(7)
+    expect(roles.length).toBe(9)
+    expect(contracts.length).toBe(9)
     for (const n of [...roles, ...contracts]) {
       const r = nodeDocRoute(n)
       expect(r?.slug).toBeNull()

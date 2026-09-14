@@ -37,6 +37,7 @@ import {
 import { type Readable, Writable } from 'node:stream'
 import type { TaskToolCallResult } from './handlers.js'
 import { taskCancelHandler, taskEscalationReadHandler, taskResumeHandler, taskStatusHandler } from './handlers.js'
+import { refuseUngrantedTool } from './router.js'
 import { defaultTaskStartHandler } from './start.js'
 
 /** The MCP spec revision this server implements and both adapters were verified against. */
@@ -92,20 +93,31 @@ export const defaultTaskToolHandlers: TaskToolHandlers = {
 }
 
 /**
- * Routes one tool call to its handler — refusing any name not in the catalog
- * BEFORE a handler runs (O3: a forbidden tool name reaches no effect). Every
- * other refusal (malformed input, absent caller, unknown run) is the handler's
- * own typed `TaskToolError`, returned unchanged.
+ * Routes one tool call to its handler through two refusals, both BEFORE a
+ * handler runs so a forbidden call reaches no effect: first, a name not in
+ * the catalog at all; second, `grantCheck` (`refuseUngrantedTool` by
+ * default — the router's grant gate), a catalog name outside the Operator's
+ * grant — every caller of this server speaks for the Operator seat, so this
+ * is the one place that gate actually runs, not just where it is unit-
+ * tested. `grantCheck` is injectable, like `handlers`, so a fixture can force
+ * the refusal branch without a global module mock or a catalog tool that is
+ * actually outside the grant (there is none — `OPERATOR_TOOL_GRANT` is built
+ * from the catalog's own tool names). Every other refusal (malformed input,
+ * absent caller, unknown run) is the handler's own typed `TaskToolError`,
+ * returned unchanged.
  */
 export async function dispatchToolCall(
   handlers: TaskToolHandlers,
   name: string,
   input: unknown,
-  ctx: CallerContext
+  ctx: CallerContext,
+  grantCheck: (tool: string) => TaskToolError | null = refuseUngrantedTool
 ): Promise<TaskToolCallResult<unknown>> {
   if (!isTaskToolName(name)) {
     return { ok: false, error: taskToolError('validation', `no such task tool: ${JSON.stringify(name)}`) }
   }
+  const refusal = grantCheck(name)
+  if (refusal) return { ok: false, error: refusal }
   return handlers[name](input, ctx)
 }
 

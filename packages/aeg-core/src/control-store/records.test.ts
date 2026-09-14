@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  type ManifestRecord,
   parseEffectRecord,
   parseInputRecord,
+  parseManifestRecord,
   parseOwnershipRecord,
   parseRunRecord,
   parseTransitionRecord,
@@ -149,6 +151,54 @@ describe('parseTransitionRecord', () => {
     }
     expect(parseTransitionRecord(JSON.stringify(base)).status).toBe('ok')
     expect(parseTransitionRecord(JSON.stringify({ ...base, detail: 'confidence' })).status).toBe('ok')
+  })
+})
+
+describe('parseManifestRecord (#555, O1)', () => {
+  const validManifest: ManifestRecord = {
+    version: 1,
+    kind: 'manifest',
+    task: 555,
+    round: 1,
+    repository: 'atta-labs/vinaya',
+    pr: 601,
+    branch: 'task/control-store-v1/5',
+    baseSha: 'f'.repeat(40),
+    headSha: 'a'.repeat(40),
+    briefHash: 'b'.repeat(64),
+    objectivesVersion: 'c'.repeat(64),
+    rulingOrdinal: 0,
+    policyDigest: 'd'.repeat(64),
+    recordedAt: '2026-09-14T00:00:00.000Z'
+  }
+
+  it('round-trips a full manifest snapshot — repository, work, base, candidate, versions, rulings, policy', () => {
+    expect(parseManifestRecord(JSON.stringify(validManifest))).toEqual({ status: 'ok', value: validManifest })
+  })
+
+  it('accepts the nullable identity fields (no base, no brief, no objectives resolvable)', () => {
+    const nullable: ManifestRecord = { ...validManifest, baseSha: null, briefHash: null, objectivesVersion: null }
+    expect(parseManifestRecord(JSON.stringify(nullable))).toEqual({ status: 'ok', value: nullable })
+  })
+
+  it('an absent read is absent, never confused with a corrupt one', () => {
+    expect(parseManifestRecord(undefined)).toEqual({ status: 'absent' })
+  })
+
+  it('torn JSON is corrupt, never absent', () => {
+    expect(parseManifestRecord('{"version":1,"kind":"manifest"').status).toBe('corrupt')
+  })
+
+  it('an unknown version is corrupt (a closed literal), never silently accepted', () => {
+    expect(parseManifestRecord(JSON.stringify({ ...validManifest, version: 2 })).status).toBe('corrupt')
+  })
+
+  it('an empty policy digest is corrupt — the policy identity is never allowed blank', () => {
+    expect(parseManifestRecord(JSON.stringify({ ...validManifest, policyDigest: '' })).status).toBe('corrupt')
+  })
+
+  it('a negative round is corrupt', () => {
+    expect(parseManifestRecord(JSON.stringify({ ...validManifest, round: -1 })).status).toBe('corrupt')
   })
 })
 
