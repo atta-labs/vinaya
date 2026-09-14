@@ -17,6 +17,25 @@
   (subpath "{{ALLOWED_DIR}}")
   (subpath "{{FAKE_HOME}}"))
 
+;; Filesystem write confinement, PART 2: the deny above only closes the real
+;; HOME — every OTHER writable path the (allow default) baseline leaves open
+;; (/tmp, /var, anywhere else a bare process can write) is still reachable.
+;; Deny file-write* everywhere except the two directories the child is
+;; actually meant to write to, so "read/write inside its own worktree" is
+;; the ceiling, not merely one of several open paths.
+(deny file-write*
+  (require-all
+    (require-not (subpath "{{ALLOWED_DIR}}"))
+    (require-not (subpath "{{FAKE_HOME}}"))))
+
+;; Network: default-DENY all outbound connections (TCP/UDP and unix-domain
+;; sockets alike) — this probe never needs to reach anything over the
+;; network, and a blanket deny closes every ambient socket in one rule,
+;; including a container/docker socket, not just the ssh-agent path named
+;; below (which this blanket rule already subsumes; that rule stays as the
+;; documented, independently-named negative check 5 asserts).
+(deny network-outbound)
+
 ;; Keychain: deny read/write on every keychain database location, layered
 ;; on top of the HOME deny above (the system/root keychain paths are not
 ;; under HOME at all, so they need their own rule). File access is only

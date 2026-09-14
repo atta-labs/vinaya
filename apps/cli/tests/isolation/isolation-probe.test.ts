@@ -1,7 +1,8 @@
 import { describe, expect, it, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { createServer } from 'node:net'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   buildSandboxProfile,
   isSandboxSupported,
@@ -9,6 +10,36 @@ import {
   runBare,
   runConfined
 } from '../../scripts/isolation-probe'
+import { spawnSync } from 'node:child_process'
+
+/** A standalone script (no local imports) run BOTH bare and under
+ * sandbox-exec by the two tests below. Attempts the two operations
+ * round 3's security finding proved the profile left open: writing
+ * outside the confined child's allowed directory, and connecting out
+ * over the network to an address that is NOT the ssh-agent socket
+ * check 5 already covers. Prints `{writeBlocked, netBlocked}` as JSON. */
+const EXTRA_CHECK_SCRIPT = `
+const fs = require('node:fs')
+const net = require('node:net')
+const [, , outsidePath, portArg] = process.argv
+let writeBlocked
+try {
+  fs.writeFileSync(outsidePath, 'vinaya-isolation-probe-extra-check')
+  writeBlocked = false
+} catch {
+  writeBlocked = true
+}
+const socket = net.connect(Number(portArg), '127.0.0.1')
+const finish = (netBlocked) => {
+  socket.removeAllListeners()
+  socket.destroy()
+  console.log(JSON.stringify({ writeBlocked, netBlocked }))
+  process.exit(0)
+}
+socket.on('connect', () => finish(false))
+socket.on('error', () => finish(true))
+setTimeout(() => finish(true), 1500)
+`
 
 /**
  * Proves apps/cli/specs/isolation.md's O2: the chosen mechanism (Apple
@@ -108,5 +139,59 @@ test.skipIf(isSandboxSupported())(
   'on an unsupported host, isSandboxSupported reports false (documented scope, not a gap)',
   () => {
     expect(isSandboxSupported()).toBe(false)
+  }
+)
+
+/**
+ * Round 3 security finding: the profile's `(allow default)` baseline left
+ * file-write to any path outside the confined worktree, and general
+ * outbound network connections, both open — neither is one of the six
+ * named PROBE_CHECK_NAMES, so the six-check suite above never caught it.
+ * These two tests exercise the profile directly for exactly the two
+ * properties that finding proved missing.
+ */
+test.skipIf(!isSandboxSupported())(
+  'confined run cannot write outside its allowed directory or reach the network',
+  async () => {
+    const scratchDir = mkdtempSync(join(tmpdir(), 'isolation-probe-extra-'))
+    const fakeHome = join(scratchDir, 'fake-home')
+    const outsidePath = join(tmpdir(), `isolation-probe-outside-${process.pid}-${Date.now()}`)
+    const scriptPath = join(scratchDir, 'extra-check.js')
+    writeFileSync(scriptPath, EXTRA_CHECK_SCRIPT)
+
+    const server = createServer((socket) => socket.end())
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, '127.0.0.1', () => {
+        const address = server.address()
+        resolve(typeof address === 'object' && address !== null ? address.port : 0)
+      })
+    })
+
+    try {
+      const profilePath = buildSandboxProfile({
+        realHome: '/nonexistent/real-home-marker',
+        allowedDir: scratchDir,
+        fakeHome,
+        sshSockCanon: '/nonexistent/ssh-auth-sock',
+        runtimeExecPath: process.execPath
+      })
+      try {
+        const result = spawnSync(
+          '/usr/bin/sandbox-exec',
+          ['-f', profilePath, process.execPath, scriptPath, outsidePath, String(port)],
+          { cwd: scratchDir, encoding: 'utf8' }
+        )
+        expect(result.status, `stderr: ${result.stderr}`).toBe(0)
+        const parsed = JSON.parse(result.stdout) as { writeBlocked: boolean; netBlocked: boolean }
+        expect(parsed.writeBlocked, 'write outside the allowed directory should be blocked while confined').toBe(true)
+        expect(parsed.netBlocked, 'a general outbound connection should be blocked while confined').toBe(true)
+      } finally {
+        rmSync(dirname(profilePath), { recursive: true, force: true })
+      }
+    } finally {
+      server.close()
+      rmSync(scratchDir, { recursive: true, force: true })
+      rmSync(outsidePath, { force: true })
+    }
   }
 )
