@@ -415,8 +415,10 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `TASK_CANCEL_TOOL` | const | `packages/aeg-core/src/task-tools.ts` |
 | `TASK_TOOL_CATALOG` | const | `packages/aeg-core/src/task-tools.ts` |
 | `taskToolByName` | function | `packages/aeg-core/src/task-tools.ts` |
+| `TaskStartResultSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `taskStartRequestIdentity` | function | `packages/aeg-core/src/task-tools.ts` |
 
-(335 exports — 1 added by `control-store-v1` task 3: `normalizeOutcome` (`control-store/outcomes.ts`) — its `NormalizedOutcome`/`OutcomeSignals`/`TaskOutcomeStatus` are type-only exports of the same file and get no row, per this file's own rule. 32 added by `task-operator-v1` task 1: the task-tool catalog. `TaskToolDefinition`/`TaskToolError`/`TaskToolErrorKind`/`TaskToolHandlerBinding`/`TaskToolName`/`TaskToolRef`/`Freshness`/`PageRequest`/`RequestedAuthority`/`TaskStatusInput`/`TaskStatusResult`/`TaskEscalationReadInput`/`TaskEscalationReadResult`/`TaskEscalationPacket`/`TaskStartInput`/`TaskResumeInput`/`TaskCancelInput` are type-only exports of the same file — per this file's own rule (line 11, "functions/consts/classes only"), they get no row; the remaining 18 come from `control-store-v1` task 1, merged separately.)
+(337 exports — 1 added by `control-store-v1` task 3: `normalizeOutcome` (`control-store/outcomes.ts`) — its `NormalizedOutcome`/`OutcomeSignals`/`TaskOutcomeStatus` are type-only exports of the same file and get no row, per this file's own rule. 32 added by `task-operator-v1` task 1, and 2 by task 2 (`TaskStartResultSchema` and the pure `taskStartRequestIdentity`, both in `task-tools.ts`): the task-tool catalog. `TaskToolDefinition`/`TaskToolError`/`TaskToolErrorKind`/`TaskToolHandlerBinding`/`TaskToolName`/`TaskToolRef`/`Freshness`/`PageRequest`/`RequestedAuthority`/`TaskStatusInput`/`TaskStatusResult`/`TaskEscalationReadInput`/`TaskEscalationReadResult`/`TaskEscalationPacket`/`TaskStartInput`/`TaskResumeInput`/`TaskCancelInput` are type-only exports of the same file — per this file's own rule (line 11, "functions/consts/classes only"), they get no row; the remaining 18 come from `control-store-v1` task 1, merged separately.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
@@ -452,6 +454,8 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `SETUP_BUN_SHA` | const | `apps/cli/src/lib/artifacts.ts` |
 | `starterConfig` | function | `apps/cli/src/lib/artifacts.ts` |
 | `TRACKED_HOOK_DIR` | const | `apps/cli/src/lib/artifacts.ts` |
+| `ownVersion` | function | `apps/cli/src/lib/artifacts.ts` |
+| `MCP_JSON_PATH` | const | `apps/cli/src/lib/artifacts.ts` |
 | `assembleAndRenderBrief` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `assembleAndRenderBriefForIssue` | function | `apps/cli/src/lib/brief-assembly.ts` |
 | `buildWorkspaceConsumersOf` | function | `apps/cli/src/lib/brief-assembly.ts` |
@@ -823,10 +827,33 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `readEscalationPacket` | function | `apps/cli/src/lib/task-tools/read.ts` |
 | `taskStatusHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
 | `taskEscalationReadHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
-| `taskStartHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
 | `taskResumeHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
 | `taskCancelHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
 | `routeTaskToolIntent` | function | `apps/cli/src/lib/task-tools/router.ts` |
+| `MCP_PROTOCOL_VERSION` | const | `apps/cli/src/lib/task-tools/server.ts` |
+| `TASK_TOOLS_MCP_SERVER_NAME` | const | `apps/cli/src/lib/task-tools/server.ts` |
+| `CALLER_ENV_VAR` | const | `apps/cli/src/lib/task-tools/server.ts` |
+| `resolveCallerFromEnv` | function | `apps/cli/src/lib/task-tools/server.ts` |
+| `defaultTaskToolHandlers` | const | `apps/cli/src/lib/task-tools/server.ts` |
+| `dispatchToolCall` | function | `apps/cli/src/lib/task-tools/server.ts` |
+| `TASK_TOOL_INPUT_JSON_SCHEMAS` | const | `apps/cli/src/lib/task-tools/server.ts` |
+| `toolListEntry` | function | `apps/cli/src/lib/task-tools/server.ts` |
+| `createTaskToolsMcpServer` | function | `apps/cli/src/lib/task-tools/server.ts` |
+| `serveTaskToolsStdio` | function | `apps/cli/src/lib/task-tools/server.ts` |
+| `TASK_TOOLS_SERVE_ARGS` | const | `apps/cli/src/lib/task-tools/adapters.ts` |
+| `taskToolsServerInvocation` | function | `apps/cli/src/lib/task-tools/adapters.ts` |
+| `CLAUDE_MCP_ADAPTER` | const | `apps/cli/src/lib/task-tools/adapters.ts` |
+| `CODEX_MCP_ADAPTER` | const | `apps/cli/src/lib/task-tools/adapters.ts` |
+| `MCP_RUNTIME_ADAPTERS` | const | `apps/cli/src/lib/task-tools/adapters.ts` |
+| `claudeMcpJsonConfig` | function | `apps/cli/src/lib/task-tools/adapters.ts` |
+| `claudeMcpJsonFile` | function | `apps/cli/src/lib/task-tools/adapters.ts` |
+| `codexMcpServersToml` | function | `apps/cli/src/lib/task-tools/adapters.ts` |
+| `defaultRequestStore` | const | `apps/cli/src/lib/task-tools/start.ts` |
+| `TASK_RUN_COMMAND_ENV` | const | `apps/cli/src/lib/task-tools/start.ts` |
+| `defaultLaunch` | function | `apps/cli/src/lib/task-tools/start.ts` |
+| `defaultTaskStartDeps` | const | `apps/cli/src/lib/task-tools/start.ts` |
+| `createTaskStartHandler` | function | `apps/cli/src/lib/task-tools/start.ts` |
+| `defaultTaskStartHandler` | const | `apps/cli/src/lib/task-tools/start.ts` |
 | `discoverWorkspacePackages` | function | `apps/cli/src/lib/test-selector.ts` |
 | `extractImportSpecifiers` | function | `apps/cli/src/lib/test-selector.ts` |
 | `isTestFile` | function | `apps/cli/src/lib/test-selector.ts` |
@@ -837,9 +864,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(263 exports — 4 added by `control-store-v1` task 3: `readLaunchRecord` (`dispatch.ts`) exposes the durable launch record's full lifecycle for recovery; `reconcileLaunch`/`recoverDeveloperLaunch` (`dev-review-loop/developer-dispatch.ts`, O3) reconcile a prior launch before continuing; `LaunchContinuityLost` is the class the recovery throws when a required session is gone. Their `LaunchRecord`/`LaunchStatus`/`ParsedLaunch` (`dispatch.ts`) and `LaunchReconciliation`/`ReconcileLaunchDeps` (`developer-dispatch.ts`) are type-only exports and get no row, per this file's own rule. 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. None of the three files front a `vinaya` subcommand yet — the catalog they implement is an agent-facing tool surface, not a CLI command — so no Commands-table row exists for any of them; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule.)
+(288 exports — 4 added by `control-store-v1` task 3: `readLaunchRecord` (`dispatch.ts`) exposes the durable launch record's full lifecycle for recovery; `reconcileLaunch`/`recoverDeveloperLaunch` (`dev-review-loop/developer-dispatch.ts`, O3) reconcile a prior launch before continuing; `LaunchContinuityLost` is the class the recovery throws when a required session is gone. Their `LaunchRecord`/`LaunchStatus`/`ParsedLaunch` (`dispatch.ts`) and `LaunchReconciliation`/`ReconcileLaunchDeps` (`developer-dispatch.ts`) are type-only exports and get no row, per this file's own rule. 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule. Task 2 adds 25 more, net: the shared MCP server (`server.ts`, 10), the two runtime adapters (`adapters.ts`, 8), and the `task_start` handler (`start.ts`, 6), plus `ownVersion`/`MCP_JSON_PATH` on `artifacts.ts`; `taskStartHandler` moved off `handlers.ts` into `start.ts` as `defaultTaskStartHandler`. Task 2's read/handler files still front no `vinaya` subcommand each — but `vinaya task-tools serve` (`commands/task-tools.ts`) now fronts the server, the one Commands-table row this surface gained. Type-only exports (`CallerContext`/`ToolHandler`/`StartRecord` and the adapter/deps types) get no row, per this file's own rule.)
 
-## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
+## Commands — `apps/cli/src/commands` (45 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
 | Command | File | Entry function | In-scope calls today | Status | One lib function (compliant) / retirement target (exempt) |
 |---|---|---|---|---|---|
@@ -857,6 +884,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `task brief` | `task.ts` | `taskBriefCommand` | 1 | compliant | `prepareTaskOrIssue` |
 | `task run` | `task-run.ts` | `taskRunCommand` | 3 | exempt — see below | sharedCommandShell (target) |
 | `task status` | `task-status.ts` | `taskStatusCommand` | 5 | exempt — see below | taskStatus (target) |
+| `task-tools serve` | `task-tools.ts` | `taskToolsServeCommand` | 2 | exempt — see below | sharedCommandShell (target) |
 | `pr create` | `pr.ts` | `prCreateCommand` | 13 | exempt — see below | forgeWrite (target) |
 | `pr edit` | `pr.ts` | `prEditCommand` | 10 | exempt — see below | forgeWrite (target) |
 | `pr report` | `pr-report.ts` | `prReportCommand` | 5 | exempt — see below | collectTokens (target) |
@@ -933,6 +961,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `dev-review-loop` | 2026-09-10 | 5 — lib: `loadConfig`, `isAgentVendor`, `devReviewLoop`, `printJson`, `colourLoopLine` | `sharedCommandShell` |
 | `task run` | 2026-09-11 | 3 — lib: `runTask`, `colourLoopLine`, `loadConfig` | `sharedCommandShell` |
 | `task status` | 2026-09-12 | 5 — lib: `printJson`, `gatherTaskStatusList`, `gatherSingleTaskStatus`, `loopLogPathFor`, `followLoopLog` | `taskStatus` |
+| `task-tools serve` | 2026-09-14 | 2 — lib: `serveTaskToolsStdio`, `ownVersion` | `sharedCommandShell` |
 
 `dispatchRole` retires no row today — its own command (`dispatch`) is new, not a retirement of an existing exempt row. `devReviewLoop` (this task) likewise retires no row today — it is itself a new named chokepoint (`## Effects` intro), and `dev-review-loop`'s own command calls it alongside the same three argv-plumbing calls `dispatch` already carries (`loadConfig`/`isAgentVendor`/`printJson`) — once `sharedCommandShell` absorbs those, this command is left calling only `devReviewLoop`, becoming compliant on its own rather than needing a second named target.
 

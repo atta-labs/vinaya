@@ -25,6 +25,7 @@ import {
   CONFIG_PATH,
   DOCTRINE_POINTER_PATH,
   labelOps,
+  MCP_JSON_PATH,
   ROLES_FOLDER_PLACEHOLDER_PATH,
   REVIEW_WORKFLOW_PATH,
   REVIEW_RETRIGGER_WORKFLOW_PATH,
@@ -187,6 +188,7 @@ describe('vinaya init', () => {
       CLAUDE_COMMAND_PATH,
       CLAUDE_STOP_HOOK_SCRIPT_PATH,
       CLAUDE_SETTINGS_PATH,
+      MCP_JSON_PATH,
       GEMINI_COMMAND_PATH
     ]) {
       expect(existsSync(join(root, p))).toBe(true)
@@ -216,6 +218,7 @@ describe('vinaya init', () => {
       CLAUDE_COMMAND_PATH,
       CLAUDE_STOP_HOOK_SCRIPT_PATH,
       CLAUDE_SETTINGS_PATH,
+      MCP_JSON_PATH,
       GEMINI_COMMAND_PATH
     ])
     expect(tree).toEqual(expected)
