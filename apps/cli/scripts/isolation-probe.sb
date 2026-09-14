@@ -1,0 +1,99 @@
+(version 1)
+;; Fixture for apps/cli/scripts/isolation-probe.ts.
+;; A Seatbelt profile TEMPLATE — every {{PLACEHOLDER}} is substituted by
+;; buildSandboxProfile() with a canonicalized, absolute path (each value
+;; escaped for Scheme string-literal syntax) before this file is written to
+;; a temp location and passed to `sandbox-exec -f`. Never invoked with the
+;; placeholders still present.
+;; Default-deny baseline: only `system.sb`'s own common OS-required
+;; operations (dyld/library loading, basic mach bootstrap, sysctl reads) are
+;; allowed ambiently; everything else needs an explicit allow below. This
+;; replaces an earlier `(allow default)` baseline that left every OS surface
+;; the six named checks don't themselves exercise (other mach services,
+;; iokit, sysctl-write) reachable from a confined child.
+(deny default)
+(import "system.sb")
+
+;; The runtime interpreter reads its own binary and adjacent files (shared
+;; libraries, bundled data) beyond the bare execve the process-exec rule
+;; below grants — allow read of its own installation directory only.
+(allow file-read*
+  (subpath "{{RUNTIME_DIR}}"))
+
+;; HOME confinement: deny the real HOME entirely, then carve out the one
+;; directory the confined child actually needs to do its work in (a
+;; worktree, or this probe's own scratch directory, both of which may
+;; themselves live under HOME on a developer machine).
+(deny file-read* file-write*
+  (subpath "{{REAL_HOME}}"))
+(allow file-read* file-write*
+  (subpath "{{ALLOWED_DIR}}")
+  (subpath "{{FAKE_HOME}}"))
+
+;; Filesystem write confinement, PART 2: the deny above only closes the real
+;; HOME — every OTHER writable path the (allow default) baseline leaves open
+;; (/tmp, /var, anywhere else a bare process can write) is still reachable.
+;; Deny file-write* everywhere except the two directories the child is
+;; actually meant to write to, so "read/write inside its own worktree" is
+;; the ceiling, not merely one of several open paths.
+(deny file-write*
+  (require-all
+    (require-not (subpath "{{ALLOWED_DIR}}"))
+    (require-not (subpath "{{FAKE_HOME}}"))))
+
+;; Network: default-DENY all outbound connections (TCP/UDP and unix-domain
+;; sockets alike) — this probe never needs to reach anything over the
+;; network, and a blanket deny closes every ambient socket in one rule,
+;; including a container/docker socket, not just the ssh-agent path named
+;; below (which this blanket rule already subsumes; that rule stays as the
+;; documented, independently-named negative check 5 asserts).
+(deny network-outbound)
+
+;; Keychain: deny read/write on every keychain database location, layered
+;; on top of the HOME deny above (the system/root keychain paths are not
+;; under HOME at all, so they need their own rule). File access is only
+;; ONE route into the keychain — Keychain Services itself talks to
+;; `securityd`/`trustd` over mach IPC, not through a file descriptor on the
+;; database, so the mach services a Keychain Services call resolves through
+;; are denied too: a direct API call (bypassing any CLI entirely) cannot
+;; reach the daemon that would service it.
+(deny file-read* file-write*
+  (subpath "{{REAL_HOME}}/Library/Keychains")
+  (subpath "/Library/Keychains")
+  (subpath "/System/Library/Keychains"))
+(deny mach-lookup
+  (global-name "com.apple.securityd")
+  (global-name "com.apple.securityd.xpc")
+  (global-name "com.apple.security.agent")
+  (global-name "com.apple.trustd")
+  (global-name "com.apple.SecurityServer"))
+
+;; Process exec: default-DENY, with an explicit allow for only the runtime
+;; interpreter this probe itself needs to keep running. A literal-path deny
+;; list (naming the credential-helper binary, say) is bypassable by copying
+;; that binary to an allowed directory and executing the copy under a new
+;; path the deny list never named — default-deny plus a narrow allowlist is
+;; not, since the copy is still unnamed by (and therefore refused under)
+;; the allowlist regardless of where it sits.
+(deny process-exec)
+(allow process-exec
+  (literal "{{RUNTIME_EXEC_PATH}}"))
+
+;; Socket: deny outbound connection to the ssh-agent (or equivalent
+;; ambient credential-agent) unix-domain socket. The path MUST already be
+;; canonicalized (realpath) by the caller — Seatbelt matches the resolved
+;; path, not a symlinked convenience alias like /var/run/... on macOS
+;; (which resolves to /private/var/run/...).
+(deny network-outbound
+  (remote unix-socket (path-literal "{{SSH_SOCK_CANON}}")))
+
+;; Parent process: deny signaling any process (blocks a liveness probe via
+;; kill(ppid, 0)) and deny introspecting any OTHER process via the
+;; process-info family (blocks reading the parent via libproc / `ps`).
+;; Scoped to `(target others)`, never bare `(deny process-info*)` — an
+;; unscoped deny also blocks the confined runtime's OWN self-introspection
+;; at startup (observed live: bun crashes with SIGTRAP before it can even
+;; run the probe's checks) and is not needed for this boundary anyway,
+;; since the six checks below never rely on self-introspection.
+(deny signal)
+(deny process-info* (target others))
