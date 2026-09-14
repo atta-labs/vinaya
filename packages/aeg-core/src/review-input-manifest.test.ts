@@ -119,6 +119,24 @@ describe('compareManifest', () => {
     expect(result.bound).toBe(false)
   })
 
+  it('base: a base-only change STILL invalidates when a real patchIdOf is wired in (round 3 review, #555 F1 BLOCKER)', () => {
+    // The exact production configuration `check-review-gate.ts` always
+    // uses: patchIdOf is a real function, never undefined. Calling it with
+    // the SAME sha on both sides (an unchanged head) must never be read as
+    // "a proven rebase" — a deterministic patchIdOf trivially agrees with
+    // itself, which is not evidence the base was re-judged. Before the
+    // fix, this trivial self-agreement made `patchHead` true whenever
+    // `exactHead` already was, silently bypassing the base check on every
+    // real exact-head evaluation.
+    const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: 'd'.repeat(40) }
+    const current = manifest({ baseSha: 'e'.repeat(40) })
+    const patchIdOf = (sha: string) => `patch-for-${sha}`
+    const result = compareManifest(echoed, current, patchIdOf)
+    expect(result.head).toBe(true)
+    expect(result.base).toBe(false)
+    expect(result.bound).toBe(false)
+  })
+
   it('base: a null current base (none resolvable) skips the binding — every pre-base caller/fixture is unaffected', () => {
     const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: 'd'.repeat(40) }
     expect(compareManifest(echoed, manifest({ baseSha: null })).base).toBe(true)

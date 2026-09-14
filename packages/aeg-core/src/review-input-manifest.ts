@@ -192,6 +192,16 @@ export function isBoundToHead(echoed: { headSha: string | null }, headSha: strin
  * Fails closed on every uncertainty — `null` on either side is "git could
  * not answer", never "they match." Moved here verbatim from
  * `review-gate.ts`'s own `isBoundByPatchIdentity`.
+ *
+ * Callers that use this to decide whether a base move is TOLERATED (a
+ * genuine rebase) must only consult it when the candidate is NOT already
+ * an exact-head match (round 3 review, `#555` F1 BLOCKER) — see
+ * `compareManifest`'s own comment on `patchHead`. Called with the SAME sha
+ * on both sides (an unchanged head), `patchIdOf` trivially reports equal
+ * values for any deterministic implementation, which is never evidence of
+ * an actual rebase; this function itself has no way to tell that case
+ * apart from a real one since it only ever sees the two shas, so the
+ * exact-head short-circuit belongs at the call site, not here.
  */
 function isBoundByPatchIdentity(
   echoed: { headSha: string | null },
@@ -337,8 +347,21 @@ export function compareManifest(
   // head is the guard). `head` stays the whole "candidate covers current"
   // answer (either path), unchanged for every existing caller; `base` is the
   // separately-reported, bounded verdict on the base identity.
+  //
+  // `patchHead` is only ever consulted when `exactHead` is false (round 3
+  // review, `#555` F1 BLOCKER) — a genuine rebase is "different revision,
+  // same patch." Computing `isBoundByPatchIdentity` unconditionally and
+  // gating `base`'s bypass on its bare result was wrong: on an UNCHANGED
+  // head, `patchIdOf` is called with the identical sha on both sides,
+  // trivially reporting equal for any deterministic implementation — not
+  // evidence of a rebase, just a self-comparison. That made `patchHead`
+  // true whenever `exactHead` already was, silently tolerating a base-only
+  // change (identical candidate, moved base) on every real evaluation
+  // (`check-review-gate.ts` always wires a real `patchIdOf`), defeating the
+  // one narrowed acceptance O1 documents. Short-circuiting here means the
+  // patch-identity path only ever runs for a genuinely different candidate.
   const exactHead = isBoundToHead(echoed, current.headSha)
-  const patchHead = isBoundByPatchIdentity(echoed, current.headSha, patchIdOf)
+  const patchHead = exactHead ? false : isBoundByPatchIdentity(echoed, current.headSha, patchIdOf)
   const head = exactHead || patchHead
   const base = patchHead ? true : isBoundToBase(echoed, current.baseSha)
   const briefHashBound = isBoundToBriefHash(echoed, current.briefHash)

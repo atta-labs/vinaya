@@ -422,6 +422,29 @@ describe('checkReviewGate — base identity binding (#555, O1/O3)', () => {
     expect(result.reason).toContain('base-only change')
   })
 
+  it('a base-only change STILL invalidates when a real patchIdOf is wired in (round 3 review, #555 F1 BLOCKER)', () => {
+    // `check-review-gate.ts` always supplies a real `patchIdOf` — never
+    // `undefined` — so this is the actual production configuration, unlike
+    // every other test in this block, which omits it entirely. Before the
+    // fix, calling `patchIdOf` with the SAME sha on both sides (the head is
+    // unchanged here) trivially reported "equal," which the gate read as a
+    // proven rebase and used to bypass the base check — silently passing a
+    // base-only change on every real evaluation.
+    const result = checkReviewGate({
+      comments: [codeReviewAtBase(BASE_A), securityAtBase(BASE_A)],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      baseSha: BASE_B,
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      patchIdOf: (sha: string) => `patch-for-${sha}`
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('base-only change')
+  })
+
   it('a verdict carrying no Judged base: line refuses against a real current base (missing required input)', () => {
     // The legacy/pre-cutover shape — no base echo — is unbound the moment a
     // real base exists to bind against, the same fail-closed transition every
