@@ -1,6 +1,6 @@
 /**
- * The parent broker (Issue #557) — the one chokepoint a task-effect request
- * passes through before `effects.ts`'s `EffectExecutor` ever runs a poster.
+ * The parent broker — the one chokepoint a task-effect request passes
+ * through before `effects.ts`'s `EffectExecutor` ever runs a poster.
  * `effects.ts` already answers "has this exact write already happened"
  * (idempotent, identity-fenced); this module answers the question standing
  * in front of it — "is the caller who says it is role R, doing operation O
@@ -26,17 +26,15 @@
  * operation, a target, an input version — the exact four-field identity
  * `EffectExecutor` already binds a write to, so the broker's grant check and
  * the effect executor's own idempotency check are never two competing
- * descriptions of "what is this write" (Issue #557's own sizing note: "one
- * agent holds one broker and one grant table").
+ * descriptions of "what is this write" — one grant table, not two.
  *
- * Scope note: `isolation.md` §1's Broker row names a DIFFERENT, larger job
- * ("mint the one scoped, short-lived forge-write credential a Worker
- * needs") and records that "task-operator-v1 (#558)" would build it. #557's
- * own Issue amends that plan — this task builds the grant-checking
- * authorization gate the isolation.md text anticipated, not new credential
- * material; no minting code, no scoped-token API call, ships here either.
- * Real credential minting stays future work, tracked wherever it is next
- * planned. See this PR's Decisions for the doc update reconciling the two.
+ * Scope note: `isolation.md` §1's Broker row also names a DIFFERENT, larger
+ * job — minting the one scoped, short-lived forge-write credential a Worker
+ * needs, and resolving each dispatched child's model-runtime credential.
+ * This module builds the grant-checking authorization gate `isolation.md`'s
+ * text anticipated in front of that credential material, not the credential
+ * material itself; no minting code, no scoped-token API call, ships here.
+ * Real credential minting stays future work, not yet assigned anywhere.
  */
 
 import { acquireOwnership, type ControlStoreDeps, readEffect } from '@attalabs/aeg-core'

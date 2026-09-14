@@ -5,7 +5,11 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { authenticateOperatorInvocation, authenticateWorkerInvocation, ForgedInvocationError } from '../../../src/lib/broker'
+import {
+  authenticateOperatorInvocation,
+  authenticateWorkerInvocation,
+  ForgedInvocationError
+} from '../../../src/lib/broker'
 
 describe('authenticateWorkerInvocation', () => {
   it('maps VINAYA_ROLE=developer to the worker broker role, task parsed from VINAYA_TASK', () => {
