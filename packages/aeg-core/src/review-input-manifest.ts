@@ -13,19 +13,33 @@
  * is used the same way `objectives.ts`/`premise-check.ts`/`claude-code-transcript.ts`
  * already do in this package: a deterministic digest is not I/O.
  *
- * Deliberately excludes base identity and a durable policy history — both
- * are named in the execution contract but deferred until `control-store-v1`
- * gives them somewhere durable to live (Traps to avoid: this task
- * consolidates what tasks 2 and 3 landed, it does not widen the binding).
+ * Base identity (`control-store-v1` task 5, `#555`, O1). The manifest now
+ * carries `baseSha` — the base commit the round's candidate was judged
+ * against — the field `review-validity-v1` task 4 deliberately deferred until
+ * `control-store-v1` landed a durable home for it (that store is now built;
+ * see `packages/aeg-core/src/control-store/`). Its acceptance is BOUNDED, not
+ * a sixth always-checked equality (Traps to avoid: "same patch text on a new
+ * base is not automatically equivalent"; "preserve the existing comparison
+ * function ownership; explicitly document any narrowed acceptance"):
+ *
+ *   - When the candidate binds by an EXACT head sha, the base is required to
+ *     match too — a base-only change (identical candidate, moved base) now
+ *     INVALIDATES where it silently kept before. This is the one narrowed
+ *     acceptance this task documents: an exact-head match no longer carries a
+ *     verdict across a base move.
+ *   - When the candidate binds by PATCH IDENTITY (a genuine equivalent rebase
+ *     — the diff itself proven byte-identical), a base move is TOLERATED,
+ *     exactly as the rebase-equivalence rule already allowed (`loop.md`, "The
+ *     same-patch rebase equivalence, and its limit"). The patch is what the
+ *     reviewer judged; the base is only where it sat. CI at the new head, which
+ *     the gate already requires green, remains the guard for a semantic
+ *     conflict a moved base could hide — unchanged by this task.
  *
  * Patch identity is NOT a stored field here — it is a property of a PAIR of
  * heads (the judged one, the current one), never of one manifest alone, so
  * `compareManifest` accepts an optional `patchIdOf` and resolves it for both
  * sides at comparison time, exactly as `review-gate.ts` already did before
- * this task (Traps to avoid: do not change the meaning of the patch-identity
- * tolerance — a base that moved under an identical patch can still hide a
- * semantic conflict the earlier review could not have seen; CI at the new
- * head is the guard for that, unchanged by this task).
+ * this task.
  */
 
 import { createHash } from 'node:crypto'
@@ -47,14 +61,28 @@ export function briefHash(brief: string): string {
 
 /**
  * `sha256` of the effective review policy — one canonical field order
- * (`codeReviewThreshold` then `securityThreshold`) so two callers resolving
- * the identical `ReviewPolicy` value always agree on its digest regardless
- * of how they built the object literal.
+ * (`codeReviewThreshold`, `securityThreshold`, then `maxRounds`) so two
+ * callers resolving the identical `ReviewPolicy` value always agree on its
+ * digest regardless of how they built the object literal.
+ *
+ * `maxRounds` — the incoming round-policy field (`control-store-v1` task 5,
+ * `#555`, O1; Traps to avoid: "include the incoming round-policy field in the
+ * relevant configuration identity") — is part of the digest so the policy
+ * identity a verdict binds against is the COMPLETE effective policy, not just
+ * its two severity thresholds. A run whose round cap changed under a verdict
+ * is a policy change the gate must see, the same as a threshold change. The
+ * one-time cost is the same fail-closed transition every other field in this
+ * family already paid: a verdict cast before this field entered the digest
+ * carries the old digest and needs one fresh review round.
  */
 export function policyDigest(policy: ReviewPolicy): string {
   return createHash('sha256')
     .update(
-      JSON.stringify({ codeReviewThreshold: policy.codeReviewThreshold, securityThreshold: policy.securityThreshold })
+      JSON.stringify({
+        codeReviewThreshold: policy.codeReviewThreshold,
+        securityThreshold: policy.securityThreshold,
+        maxRounds: policy.maxRounds
+      })
     )
     .digest('hex')
 }
@@ -69,7 +97,17 @@ export function policyDigest(policy: ReviewPolicy): string {
  * either configured or defaulted.
  */
 export type ReviewInputManifest = {
+  /** The candidate identity — the round's judged head (`control-store-v1` task 5, `#555`, O1: "base and candidate identity"). */
   headSha: string
+  /**
+   * The base identity — the base commit the candidate was judged against
+   * (`control-store-v1` task 5, `#555`, O1). `null` exactly when no base is
+   * resolvable to bind against (a caller with no git/base context, or a
+   * pre-cutover verdict that echoed no `Judged base:` line) — the same
+   * "nothing to bind against" shape `briefHash`/`objectivesVersion` already
+   * carry, keyed on the CURRENT side so a real base still fails a null echo.
+   */
+  baseSha: string | null
   briefHash: string | null
   objectivesVersion: string | null
   rulingOrdinal: number
@@ -78,6 +116,8 @@ export type ReviewInputManifest = {
 
 export type ReviewInputManifestFacts = {
   headSha: string
+  /** The base commit the candidate is judged against (`#555`, O1) — `null` when the caller cannot resolve one, never a thrown refusal. */
+  baseSha: string | null
   /** The frozen brief's own text (already header-stripped, e.g. `resolveNewestFrozenBrief(...).content`), or `null` when none is resolvable for this task/PR — `briefHash` is `null` in that case, never a thrown refusal. */
   briefContent: string | null
   objectivesVersion: string | null
@@ -89,6 +129,7 @@ export type ReviewInputManifestFacts = {
 export function buildReviewInputManifest(facts: ReviewInputManifestFacts): ReviewInputManifest {
   return {
     headSha: facts.headSha,
+    baseSha: facts.baseSha,
     briefHash: facts.briefContent === null ? null : briefHash(facts.briefContent),
     objectivesVersion: facts.objectivesVersion,
     rulingOrdinal: facts.rulingOrdinal,
@@ -114,6 +155,8 @@ export function buildReviewInputManifest(facts: ReviewInputManifestFacts): Revie
  */
 export type EchoedManifest = {
   headSha: string | null
+  /** `null` when no `Judged base:` line was found (`#555`, O1) — pre-cutover legacy stock, or a stripped line. */
+  baseSha: string | null
   briefHash: string | null
   objectivesVersion: string | null
   rulingOrdinal: number | null
@@ -124,6 +167,7 @@ export type EchoedManifest = {
 export function manifestAsEchoed(manifest: ReviewInputManifest): EchoedManifest {
   return {
     headSha: manifest.headSha,
+    baseSha: manifest.baseSha,
     briefHash: manifest.briefHash,
     objectivesVersion: manifest.objectivesVersion,
     rulingOrdinal: manifest.rulingOrdinal,
@@ -148,6 +192,16 @@ export function isBoundToHead(echoed: { headSha: string | null }, headSha: strin
  * Fails closed on every uncertainty — `null` on either side is "git could
  * not answer", never "they match." Moved here verbatim from
  * `review-gate.ts`'s own `isBoundByPatchIdentity`.
+ *
+ * Callers that use this to decide whether a base move is TOLERATED (a
+ * genuine rebase) must only consult it when the candidate is NOT already
+ * an exact-head match (round 3 review, `#555` F1 BLOCKER) — see
+ * `compareManifest`'s own comment on `patchHead`. Called with the SAME sha
+ * on both sides (an unchanged head), `patchIdOf` trivially reports equal
+ * values for any deterministic implementation, which is never evidence of
+ * an actual rebase; this function itself has no way to tell that case
+ * apart from a real one since it only ever sees the two shas, so the
+ * exact-head short-circuit belongs at the call site, not here.
  */
 function isBoundByPatchIdentity(
   echoed: { headSha: string | null },
@@ -168,6 +222,30 @@ export function isBoundToPatch(
   patchIdOf?: (sha: string) => string | null
 ): boolean {
   return isBoundToHead(echoed, headSha) || isBoundByPatchIdentity(echoed, headSha, patchIdOf)
+}
+
+/**
+ * True when the echoed base identity covers the current one (`#555`, O1).
+ * `currentBase === null` skips the binding (no base resolvable to judge
+ * against — the same "nothing to bind against" shape `isBoundToObjectives`/
+ * `isBoundToBriefHash` use for their own current-side null, and what keeps
+ * every caller that predates base identity, and every fixture that never sets
+ * a base, unaffected). Against a REAL current base, a `null` echo (a verdict
+ * that carried no `Judged base:` line — pre-cutover stock) is unbound, the
+ * same fail-closed treatment `isBoundToBriefHash` gives a null echo against a
+ * resolvable current hash — a one-time cost of one fresh review round, never
+ * a permanent exemption. An abbreviated echo is tolerated the same way
+ * `isBoundToHead` already tolerates one — `extractBaseSha`'s own pattern
+ * (`verdict-extraction.ts`) accepts a 7-40 char hex `Judged base:` value, so a
+ * correctly-abbreviated echo must bind here too, never silently fail a real
+ * base it does cover. The BOUNDED part (base is required only when the head
+ * bound by an exact sha, never on a proven patch-identity rebase) lives in
+ * `compareManifest`, where both sides of the pair are in view.
+ */
+export function isBoundToBase(echoed: { baseSha: string | null }, currentBase: string | null): boolean {
+  if (currentBase === null) return true
+  if (!echoed.baseSha) return false
+  return currentBase.toLowerCase().startsWith(echoed.baseSha.toLowerCase())
 }
 
 /**
@@ -235,6 +313,15 @@ export type ManifestBindingResult = {
   /** `true` iff every field below binds. */
   bound: boolean
   head: boolean
+  /**
+   * The bounded base-identity result (`#555`, O1) — `true` when the base is
+   * satisfied under the acceptance rule, NOT a bare `isBoundTobase` equality:
+   * a proven patch-identity rebase reports `true` here even across a base move
+   * (the diff itself is what was judged), while an exact-head match across a
+   * changed base reports `false`. `false` iff a base-only change (or a missing
+   * base echo against a real current base) is what broke the binding.
+   */
+  base: boolean
   briefHash: boolean
   objectivesVersion: boolean
   rulingOrdinal: boolean
@@ -252,14 +339,39 @@ export function compareManifest(
   current: ReviewInputManifest,
   patchIdOf?: (sha: string) => string | null
 ): ManifestBindingResult {
-  const head = isBoundToPatch(echoed, current.headSha, patchIdOf)
+  // The head/base pair, bound together under the acceptance rule (`#555`,
+  // O1). An exact head sha is the same candidate — a base move under it is a
+  // base-only change and must fail. A patch-identity match is a proven
+  // equivalent rebase — the diff itself is byte-identical, so a base move is
+  // tolerated (the reviewer judged the patch, not the base; CI at the new
+  // head is the guard). `head` stays the whole "candidate covers current"
+  // answer (either path), unchanged for every existing caller; `base` is the
+  // separately-reported, bounded verdict on the base identity.
+  //
+  // `patchHead` is only ever consulted when `exactHead` is false (round 3
+  // review, `#555` F1 BLOCKER) — a genuine rebase is "different revision,
+  // same patch." Computing `isBoundByPatchIdentity` unconditionally and
+  // gating `base`'s bypass on its bare result was wrong: on an UNCHANGED
+  // head, `patchIdOf` is called with the identical sha on both sides,
+  // trivially reporting equal for any deterministic implementation — not
+  // evidence of a rebase, just a self-comparison. That made `patchHead`
+  // true whenever `exactHead` already was, silently tolerating a base-only
+  // change (identical candidate, moved base) on every real evaluation
+  // (`check-review-gate.ts` always wires a real `patchIdOf`), defeating the
+  // one narrowed acceptance O1 documents. Short-circuiting here means the
+  // patch-identity path only ever runs for a genuinely different candidate.
+  const exactHead = isBoundToHead(echoed, current.headSha)
+  const patchHead = exactHead ? false : isBoundByPatchIdentity(echoed, current.headSha, patchIdOf)
+  const head = exactHead || patchHead
+  const base = patchHead ? true : isBoundToBase(echoed, current.baseSha)
   const briefHashBound = isBoundToBriefHash(echoed, current.briefHash)
   const objectivesVersion = isBoundToObjectives(echoed, current.objectivesVersion)
   const rulingOrdinal = isBoundToRulings(echoed, current.rulingOrdinal)
   const policyDigestBound = isBoundToPolicy(echoed, current.policyDigest)
   return {
-    bound: head && briefHashBound && objectivesVersion && rulingOrdinal && policyDigestBound,
+    bound: head && base && briefHashBound && objectivesVersion && rulingOrdinal && policyDigestBound,
     head,
+    base,
     briefHash: briefHashBound,
     objectivesVersion,
     rulingOrdinal,

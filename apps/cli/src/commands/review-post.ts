@@ -411,6 +411,8 @@ export type CodeReviewInput = TokensInput & {
   briefHash: string | null
   /** The effective review policy's digest at cast time (task 4, `#478`, O5). Never null — a policy is always configured or defaulted. */
   policyDigest: string
+  /** The base commit the candidate was judged against (task 5, `#555`, O1) — `null` when none was resolvable. RENDERS UNCONDITIONALLY, as `(none)` when null — a non-hash placeholder the gate's extractor reads back as no base binding at all. */
+  baseSha: string | null
 }
 
 const CODE_REVIEW_VERDICT_TEXT: Record<CodeReviewVerdict, string> = {
@@ -472,6 +474,11 @@ export function renderCodeReviewComment(input: CodeReviewInput): string {
   lines.push(`Ruling ordinal: ${input.rulingOrdinal}`, '')
   lines.push(`Brief hash: ${input.briefHash ?? '(none)'}`, '')
   lines.push(`Policy digest: ${input.policyDigest}`, '')
+  // `Judged base:` renders LAST of the structural head lines (`#555`, O1) —
+  // appended here rather than beside `Judged head:` so it never shifts the
+  // lines above out of the exact read windows their extractors pin. Worst
+  // case (objectives present) it lands on line 13, inside `firstThirteenLines`.
+  lines.push(`Judged base: ${input.baseSha ?? '(none)'}`, '')
   if (input.scopeEvidence !== null) {
     // AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
     // Directly below the verdict block, per `reviewer.md`'s own evidence
@@ -522,6 +529,8 @@ export type SecurityInput = TokensInput & {
   briefHash: string | null
   /** The effective review policy's digest at cast time (task 4, `#478`, O5). Never null. */
   policyDigest: string
+  /** The base commit the candidate was judged against (`#555`, O1) — `null` when none resolvable. RENDERS UNCONDITIONALLY, as `(none)` when null. */
+  baseSha: string | null
 }
 
 /**
@@ -561,6 +570,9 @@ export function renderSecurityComment(input: SecurityInput): string {
   lines.push(`Ruling ordinal: ${input.rulingOrdinal}`, '')
   lines.push(`Brief hash: ${input.briefHash ?? '(none)'}`, '')
   lines.push(`Policy digest: ${input.policyDigest}`, '')
+  // `Judged base:` last of the head lines (`#555`, O1) — see the identical
+  // note in `renderCodeReviewComment`.
+  lines.push(`Judged base: ${input.baseSha ?? '(none)'}`, '')
   lines.push('FINDINGS (ordered by severity):', renderFindingsSection(sorted), '')
   if (input.objectiveResults !== null) {
     lines.push(renderObjectivesBlock(input.objectiveResults), '')
@@ -694,6 +706,8 @@ export type EscalationInput = TokensInput & {
   /** Same resolution as the verdict shapes (task 4, `#478`, O1/O5) — an escalation carries these two lines too, unconditionally. */
   briefHash: string | null
   policyDigest: string
+  /** Same resolution as the verdict shapes (`#555`, O1) — an escalation carries this line too, unconditionally. */
+  baseSha: string | null
 }
 
 /**
@@ -725,6 +739,10 @@ export function renderEscalationComment(input: EscalationInput): string {
   lines.push(`Ruling ordinal: ${input.rulingOrdinal}`, '')
   lines.push(`Brief hash: ${input.briefHash ?? '(none)'}`, '')
   lines.push(`Policy digest: ${input.policyDigest}`, '')
+  // `Judged base:` last of the head lines (`#555`, O1). It renders ahead of
+  // the free-text `summary`, so — unlike the collision `summary` itself can
+  // cause — this line is renderer-owned and never caller-controlled.
+  lines.push(`Judged base: ${input.baseSha ?? '(none)'}`, '')
   lines.push(
     input.summary,
     '',
@@ -1208,6 +1226,28 @@ function resolveHeadSha(pr: string): string {
     )
   }
   return trueSha
+}
+
+/**
+ * The base commit the candidate is judged against (task 5,
+ * `#555`, O1) — the PR's base branch (`baseRefName`) resolved to its current
+ * tip, the same `origin/<base>` the merge gate's `patchIdAt` diffs against.
+ * `null` (never a refusal) when the base branch or its sha cannot be resolved
+ * — a hand-posted verdict then renders `Judged base: (none)`, which the gate's
+ * extractor reads back as no base binding, the same nullable treatment
+ * `resolveBriefHashForPr` gives a missing brief. A base that genuinely cannot
+ * be resolved must not block a reviewer from posting; the gate's own base
+ * resolution is what enforces the binding at merge time.
+ */
+function resolveBaseShaForPr(pr: string): string | null {
+  let baseBranch: string
+  try {
+    baseBranch = gh(['pr', 'view', pr, '--json', 'baseRefName', '-q', '.baseRefName'])
+  } catch {
+    return null
+  }
+  if (!baseBranch) return null
+  return shaFromLsRemote(baseBranch) ?? shaFromGhApi(baseBranch)
 }
 
 // --- objectives resolution (`#412`, O1/O2) ------------------------------------
@@ -1766,6 +1806,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     const escalationRulingOrdinal = resolveRulingOrdinalForPr(pr)
     const escalationPrincipalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
     const escalationBriefHash = resolveBriefHashForPr(pr, escalationPrincipalAllowlist)
+    const escalationBaseSha = resolveBaseShaForPr(pr)
     const body = renderEscalationComment({
       ...tokens,
       headSha,
@@ -1776,7 +1817,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       objectivesVersion: escalationObjectivesVersion,
       rulingOrdinal: escalationRulingOrdinal,
       briefHash: escalationBriefHash,
-      policyDigest: reviewPolicyDigest(policy)
+      policyDigest: reviewPolicyDigest(policy),
+      baseSha: escalationBaseSha
     })
     checkRenderedCommentOrRefuse(body, { kind: 'escalation' })
     if (printOnly) {
@@ -1887,7 +1929,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       objectiveResults,
       rulingOrdinal: resolvedRulingOrdinal,
       briefHash: resolvedBriefHash,
-      policyDigest: reviewPolicyDigest(policy)
+      policyDigest: reviewPolicyDigest(policy),
+      baseSha: resolveBaseShaForPr(pr)
     }
     const body = renderCodeReviewComment(input)
     checkRenderedCommentOrRefuse(body, { kind: 'code-review', verdict })
@@ -2008,7 +2051,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     objectiveResults,
     rulingOrdinal: resolvedRulingOrdinal,
     briefHash: resolvedBriefHash,
-    policyDigest: reviewPolicyDigest(policy)
+    policyDigest: reviewPolicyDigest(policy),
+    baseSha: resolveBaseShaForPr(pr)
   }
   const body = renderSecurityComment(input)
   checkRenderedCommentOrRefuse(body, { kind: 'security', verdict })

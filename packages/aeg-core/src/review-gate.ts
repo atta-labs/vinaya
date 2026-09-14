@@ -220,6 +220,19 @@ export type ReviewGateInput = {
    * already carries.
    */
   briefHash?: string | null
+  /**
+   * The base commit the PR's candidate is judged against at evaluation time
+   * (`control-store-v1` task 5, `#555`, O1) — resolved by the caller (never
+   * here; this stays pure) from the PR's base branch tip, the same
+   * `origin/<baseRefName>` `patchIdOf` already diffs against. Optional,
+   * defaulting to `null` (skip the base binding) when omitted — every existing
+   * caller and every fixture that predates base identity is unaffected, the
+   * same optional-with-fallback shape `patchIdOf`/`policy`/`briefHash` already
+   * use. Bounded, not an always-checked equality: a base move under an exact
+   * head sha invalidates, while a proven patch-identity rebase tolerates it —
+   * see `compareManifest`'s own base rule.
+   */
+  baseSha?: string | null
 }
 
 /**
@@ -354,6 +367,7 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   // this module stays pure — no hashing of forge content here.
   const currentManifest: ReviewInputManifest = {
     headSha: input.headSha,
+    baseSha: input.baseSha ?? null,
     briefHash: input.briefHash ?? null,
     objectivesVersion: input.objectivesVersion,
     rulingOrdinal: input.rulingOrdinal,
@@ -361,6 +375,7 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   }
   const codeReviewEchoed: EchoedManifest = {
     headSha: codeReview.headSha,
+    baseSha: codeReview.baseSha,
     briefHash: codeReview.briefHash,
     objectivesVersion: codeReview.objectivesVersion,
     rulingOrdinal: codeReview.rulingOrdinal,
@@ -368,6 +383,7 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   }
   const securityEchoed: EchoedManifest = {
     headSha: security.headSha,
+    baseSha: security.baseSha,
     briefHash: security.briefHash,
     objectivesVersion: security.objectivesVersion,
     rulingOrdinal: security.rulingOrdinal,
@@ -401,6 +417,10 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
     problems.push(
       `the newest code-review verdict covers ${codeReview.headSha ?? 'no recorded commit'}, head is ${input.headSha}`
     )
+  } else if (!codeReviewBinding.base) {
+    problems.push(
+      `the newest code-review verdict was cast against base ${codeReview.baseSha ?? 'no recorded base'}, the PR's base is now ${currentManifest.baseSha ?? 'unresolved'} (a base-only change under an unchanged candidate — same patch text on a new base is not automatically equivalent)`
+    )
   } else if (!codeReviewObjectivesBound) {
     problems.push(
       `the newest code-review verdict was cast against objectives version ${codeReview.objectivesVersion ?? 'none'}, the Issue's list is now ${input.objectivesVersion}`
@@ -427,6 +447,10 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   } else if (!securityBound) {
     problems.push(
       `the newest security-review verdict covers ${security.headSha ?? 'no recorded commit'}, head is ${input.headSha}`
+    )
+  } else if (!securityBinding.base) {
+    problems.push(
+      `the newest security-review verdict was cast against base ${security.baseSha ?? 'no recorded base'}, the PR's base is now ${currentManifest.baseSha ?? 'unresolved'} (a base-only change under an unchanged candidate — same patch text on a new base is not automatically equivalent)`
     )
   } else if (!securityObjectivesBound) {
     problems.push(

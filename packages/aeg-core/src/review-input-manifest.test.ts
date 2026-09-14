@@ -11,11 +11,13 @@ import {
 import { DEFAULT_REVIEW_POLICY } from './review-policy'
 
 const HEAD = 'a'.repeat(40)
+const BASE = 'f'.repeat(40)
 const BRIEF = 'the frozen brief text'
 
 function manifest(overrides: Partial<ReviewInputManifest> = {}): ReviewInputManifest {
   return {
     headSha: HEAD,
+    baseSha: BASE,
     briefHash: briefHash(BRIEF),
     objectivesVersion: null,
     rulingOrdinal: 0,
@@ -38,27 +40,37 @@ describe('briefHash / policyDigest', () => {
     expect(a).not.toBe(c)
     expect(a).toBe(policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3 }))
   })
+
+  it('policyDigest folds in the round-policy field — maxRounds changes the digest (#555, O1)', () => {
+    const three = policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3 })
+    const five = policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 5 })
+    expect(three).not.toBe(five)
+  })
 })
 
 describe('buildReviewInputManifest', () => {
   it('builds briefHash from the resolved brief content, null when none is resolvable', () => {
     const withBrief = buildReviewInputManifest({
       headSha: HEAD,
+      baseSha: BASE,
       briefContent: BRIEF,
       objectivesVersion: null,
       rulingOrdinal: 0,
       policy: DEFAULT_REVIEW_POLICY
     })
     expect(withBrief.briefHash).toBe(briefHash(BRIEF))
+    expect(withBrief.baseSha).toBe(BASE)
 
     const withoutBrief = buildReviewInputManifest({
       headSha: HEAD,
+      baseSha: null,
       briefContent: null,
       objectivesVersion: null,
       rulingOrdinal: 0,
       policy: DEFAULT_REVIEW_POLICY
     })
     expect(withoutBrief.briefHash).toBeNull()
+    expect(withoutBrief.baseSha).toBeNull()
   })
 })
 
@@ -69,6 +81,7 @@ describe('compareManifest', () => {
     expect(result).toEqual({
       bound: true,
       head: true,
+      base: true,
       briefHash: true,
       objectivesVersion: true,
       rulingOrdinal: true,
@@ -81,6 +94,77 @@ describe('compareManifest', () => {
     const current = manifest({ headSha: 'c'.repeat(40) })
     const result = compareManifest(manifestAsEchoed(judged), current, () => 'same-patch')
     expect(result.head).toBe(true)
+  })
+
+  it('base: an equivalent rebase (patch identity holds) keeps the verdict even across a base move (#555, O1)', () => {
+    // A genuine rebase: the head sha changed AND the base moved, but the diff
+    // itself is proven byte-identical by patchIdOf. The base move is tolerated.
+    const judged = manifest({ headSha: 'b'.repeat(40), baseSha: 'd'.repeat(40) })
+    const current = manifest({ headSha: 'c'.repeat(40), baseSha: 'e'.repeat(40) })
+    const result = compareManifest(manifestAsEchoed(judged), current, () => 'same-patch')
+    expect(result.head).toBe(true)
+    expect(result.base).toBe(true)
+    expect(result.bound).toBe(true)
+  })
+
+  it('base: a base-only change (identical candidate, moved base) invalidates (#555, O1)', () => {
+    // Exact head match, but the base moved under it — no patchIdOf equivalence
+    // to certify the diff was re-judged against the new base. This is the one
+    // narrowed acceptance this task documents.
+    const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: 'd'.repeat(40) }
+    const current = manifest({ baseSha: 'e'.repeat(40) })
+    const result = compareManifest(echoed, current)
+    expect(result.head).toBe(true)
+    expect(result.base).toBe(false)
+    expect(result.bound).toBe(false)
+  })
+
+  it('base: a base-only change STILL invalidates when a real patchIdOf is wired in (round 3 review, #555 F1 BLOCKER)', () => {
+    // The exact production configuration `check-review-gate.ts` always
+    // uses: patchIdOf is a real function, never undefined. Calling it with
+    // the SAME sha on both sides (an unchanged head) must never be read as
+    // "a proven rebase" — a deterministic patchIdOf trivially agrees with
+    // itself, which is not evidence the base was re-judged. Before the
+    // fix, this trivial self-agreement made `patchHead` true whenever
+    // `exactHead` already was, silently bypassing the base check on every
+    // real exact-head evaluation.
+    const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: 'd'.repeat(40) }
+    const current = manifest({ baseSha: 'e'.repeat(40) })
+    const patchIdOf = (sha: string) => `patch-for-${sha}`
+    const result = compareManifest(echoed, current, patchIdOf)
+    expect(result.head).toBe(true)
+    expect(result.base).toBe(false)
+    expect(result.bound).toBe(false)
+  })
+
+  it('base: a null current base (none resolvable) skips the binding — every pre-base caller/fixture is unaffected', () => {
+    const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: 'd'.repeat(40) }
+    expect(compareManifest(echoed, manifest({ baseSha: null })).base).toBe(true)
+  })
+
+  it('base: a missing base echo against a real current base refuses (missing required input, #555, O3)', () => {
+    const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: null }
+    const current = manifest({ baseSha: 'e'.repeat(40) })
+    const result = compareManifest(echoed, current)
+    expect(result.base).toBe(false)
+    expect(result.bound).toBe(false)
+  })
+
+  it('base: a correctly-abbreviated echo binds against the real full-length current base (#603 round 2, F2) — the same tolerance isBoundToHead already gives an abbreviated head', () => {
+    const abbreviated = BASE.slice(0, 12)
+    const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: abbreviated }
+    const current = manifest({ baseSha: BASE })
+    const result = compareManifest(echoed, current)
+    expect(result.base).toBe(true)
+    expect(result.bound).toBe(true)
+  })
+
+  it('base: an abbreviated echo that does not prefix the real current base still refuses', () => {
+    const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: 'd'.repeat(7) }
+    const current = manifest({ baseSha: BASE })
+    const result = compareManifest(echoed, current)
+    expect(result.base).toBe(false)
+    expect(result.bound).toBe(false)
   })
 
   it('head: does not bind when neither sha nor patch identity match', () => {

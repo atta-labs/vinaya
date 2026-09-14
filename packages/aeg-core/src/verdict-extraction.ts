@@ -188,6 +188,24 @@ const BRIEF_HASH_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Brief hash:\s*([0-9a-f]{64
 const POLICY_DIGEST_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Policy digest:\s*([0-9a-f]{64})(?![A-Za-z0-9])/im
 
 /**
+ * `control-store-v1` task 5 (`#555`, O1): a seventh head line, `Judged base:
+ * <sha>`, renders UNCONDITIONALLY on every verdict from this task forward,
+ * right after `Policy digest:` — the base commit the candidate was judged
+ * against (the base identity `review-validity-v1` task 4 deferred). Appended
+ * LAST rather than beside `Judged head:` on purpose: inserting it earlier
+ * would shift `Objectives version:`/`Ruling ordinal:`/`Brief hash:`/`Policy
+ * digest:` down and out of the exact read windows those extractors already
+ * pin (`firstFiveLines`/`firstSevenLines`/`firstElevenLines`), silently
+ * breaking every one of them. A trailing line pushes nothing out. Same anchor
+ * discipline as `Judged head:` (line-start, optional emphasis run, no
+ * blockquote/list/heading/code-span). Accepts the abbreviated (7-char) and
+ * full (40-char) hex forms; `null` means no such line — pre-cutover stock, or
+ * the rendered `(none)` placeholder when no base was resolvable at cast time
+ * (never confused with a real hex sha).
+ */
+const BASE_SHA_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Judged base:\s*([0-9a-f]{7,40})(?![A-Za-z0-9])/im
+
+/**
  * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
@@ -270,6 +288,22 @@ function extractPolicyDigest(comment: string): string | null {
 }
 
 /**
+ * `control-store-v1` task 5 (`#555`, O1): its own 13-line window — worst
+ * case, `Objectives version:`/blank, `Ruling ordinal:`/blank, `Brief hash:`/
+ * blank, `Policy digest:`/blank all render ahead of `Judged base:`, which
+ * then lands on line 13. `null` means no `Judged base:` line within that
+ * window — pre-cutover stock, or a `(none)` placeholder.
+ */
+function firstThirteenLines(comment: string): string {
+  return comment.split('\n').slice(0, 13).join('\n')
+}
+
+function extractBaseSha(comment: string): string | null {
+  const m = firstThirteenLines(comment).match(BASE_SHA_PATTERN)
+  return m ? (m[1] as string).toLowerCase() : null
+}
+
+/**
  * `review-validity-v1` task 8 (`#506`, O2/O3): the FINDINGS block's own
  * severities, read from the WHOLE comment body — never `firstFiveLines`'s
  * window, since `renderFindingsSection` (`review-post.ts`) always renders
@@ -325,6 +359,8 @@ export type VerdictExtraction = {
   briefHash: string | null
   /** `null` when no `Policy digest:` line was found (`review-validity-v1` task 4, `#478`, O5) — legacy stock only; every comment rendered from this task forward carries it unconditionally. */
   policyDigest: string | null
+  /** `null` when no `Judged base:` line was found (`control-store-v1` task 5, `#555`, O1) — legacy stock, or no base resolvable at cast time; every comment rendered from this task forward carries it unconditionally. */
+  baseSha: string | null
   /** The winning comment's own FINDINGS block severities and locations, whole-body read (`review-validity-v1` task 8, `#506`, O2/O3; location added `#543` O5) — `[]` on a DANGLING extraction (`danglingNote` set) or a comment with no findings at all. */
   findingSeverities: { severity: string; location: string }[]
   danglingNote: string | null
@@ -357,6 +393,7 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: `no ${missingLabel} verdict comment found on this PR`
     }
@@ -373,6 +410,7 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: `the most recent ${missingLabel} verdict comment carries a VERDICT-shaped line outside the first-five-line read window`
     }
@@ -385,6 +423,7 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
     rulingOrdinal: extractRulingOrdinal(latest),
     briefHash: extractBriefHash(latest),
     policyDigest: extractPolicyDigest(latest),
+    baseSha: extractBaseSha(latest),
     findingSeverities: extractFindingSeverities(latest),
     danglingNote: null
   }

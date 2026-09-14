@@ -295,6 +295,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `buildReviewInputManifest` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `compareManifest` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToBase` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `isBoundToBriefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `isBoundToHead` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `isBoundToObjectives` | function | `packages/aeg-core/src/review-input-manifest.ts` |
@@ -365,6 +366,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `parseInputRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
 | `parseOwnershipRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
 | `parseTransitionRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `parseManifestRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
 | `parseEffectRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
 | `defaultControlStoreDeps` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `StaleEpochWriteError` | class | `packages/aeg-core/src/control-store/local.ts` |
@@ -378,6 +380,8 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `readInput` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `appendTransition` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `readTransitions` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `writeManifest` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `readManifest` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `writeEffect` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `readEffect` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `defaultIsPidAlive` | function | `packages/aeg-core/src/control-store/migration.ts` |
@@ -418,7 +422,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `TaskStartResultSchema` | const | `packages/aeg-core/src/task-tools.ts` |
 | `taskStartRequestIdentity` | function | `packages/aeg-core/src/task-tools.ts` |
 
-(337 exports — 1 added by `control-store-v1` task 3: `normalizeOutcome` (`control-store/outcomes.ts`) — its `NormalizedOutcome`/`OutcomeSignals`/`TaskOutcomeStatus` are type-only exports of the same file and get no row, per this file's own rule. 32 added by `task-operator-v1` task 1, and 2 by task 2 (`TaskStartResultSchema` and the pure `taskStartRequestIdentity`, both in `task-tools.ts`): the task-tool catalog. `TaskToolDefinition`/`TaskToolError`/`TaskToolErrorKind`/`TaskToolHandlerBinding`/`TaskToolName`/`TaskToolRef`/`Freshness`/`PageRequest`/`RequestedAuthority`/`TaskStatusInput`/`TaskStatusResult`/`TaskEscalationReadInput`/`TaskEscalationReadResult`/`TaskEscalationPacket`/`TaskStartInput`/`TaskResumeInput`/`TaskCancelInput` are type-only exports of the same file — per this file's own rule (line 11, "functions/consts/classes only"), they get no row; the remaining 18 come from `control-store-v1` task 1, merged separately.)
+(341 exports — 4 added by `control-store-v1` task 5 (`#555`): `isBoundToBase` (`review-input-manifest.ts`), `parseManifestRecord` (`control-store/records.ts`), and `writeManifest`/`readManifest` (`control-store/local.ts`) — the base-identity binding and the parent-built manifest record. `ManifestRecord`/`ManifestInput` are type-only exports and get no row, per this file's own rule. 1 added by `control-store-v1` task 3: `normalizeOutcome` (`control-store/outcomes.ts`) — its `NormalizedOutcome`/`OutcomeSignals`/`TaskOutcomeStatus` are type-only exports of the same file and get no row, per this file's own rule. 32 added by `task-operator-v1` task 1, and 2 by task 2 (`TaskStartResultSchema` and the pure `taskStartRequestIdentity`, both in `task-tools.ts`): the task-tool catalog. `TaskToolDefinition`/`TaskToolError`/`TaskToolErrorKind`/`TaskToolHandlerBinding`/`TaskToolName`/`TaskToolRef`/`Freshness`/`PageRequest`/`RequestedAuthority`/`TaskStatusInput`/`TaskStatusResult`/`TaskEscalationReadInput`/`TaskEscalationReadResult`/`TaskEscalationPacket`/`TaskStartInput`/`TaskResumeInput`/`TaskCancelInput` are type-only exports of the same file — per this file's own rule (line 11, "functions/consts/classes only"), they get no row; the remaining 18 come from `control-store-v1` task 1, merged separately.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
@@ -572,8 +576,11 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `reviewPolicy` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
 | `taskFromPrBody` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
 | `withPromptFile` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `buildManifestRecord` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `buildVerdictFromReport` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `controlStoreRoot` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `discardHeldVerdicts` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `persistManifestRecord` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `hasObjectivesFacts` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `heldVerdictPath` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `latestHeldRequestChanges` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
@@ -606,8 +613,10 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `routeCompletionEvents` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `sizeOfSafe` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `waitForOwnLoopLine` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `bindingOfPosted` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
 | `postForgeEffectOnce` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
 | `publishRound` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
+| `unboundFields` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
 | `fetchLoopHistory` | function | `apps/cli/src/lib/dev-review-loop/journal-history.ts` |
 | `clearDriverLock` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `isDriverPidAlive` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
@@ -868,7 +877,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(292 exports — 4 added by `control-store-v1` task 3: `readLaunchRecord` (`dispatch.ts`) exposes the durable launch record's full lifecycle for recovery; `reconcileLaunch`/`recoverDeveloperLaunch` (`dev-review-loop/developer-dispatch.ts`, O3) reconcile a prior launch before continuing; `LaunchContinuityLost` is the class the recovery throws when a required session is gone. Their `LaunchRecord`/`LaunchStatus`/`ParsedLaunch` (`dispatch.ts`) and `LaunchReconciliation`/`ReconcileLaunchDeps` (`developer-dispatch.ts`) are type-only exports and get no row, per this file's own rule. 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule. Task 2 adds 25 more, net: the shared MCP server (`server.ts`, 10), the two runtime adapters (`adapters.ts`, 8), and the `task_start` handler (`start.ts`, 6), plus `ownVersion`/`MCP_JSON_PATH` on `artifacts.ts`; `taskStartHandler` moved off `handlers.ts` into `start.ts` as `defaultTaskStartHandler`. Task 2's read/handler files still front no `vinaya` subcommand each — but `vinaya task-tools serve` (`commands/task-tools.ts`) now fronts the server, the one Commands-table row this surface gained. Type-only exports (`CallerContext`/`ToolHandler`/`StartRecord` and the adapter/deps types) get no row, per this file's own rule. 4 added by `driver-lifecycle-v1` task 1 (Issue #605): `getProcessSnapshot`/`terminateChildWithGrace`/`terminateLaunchedChildOnShutdown` (`dispatch.ts`) give the driver's own shutdown path (O1) and recovery's orphan-reaping (O2) a real process-identity read and a graduated-signal termination, shared by both; `classifyChildLiveness` (`developer-dispatch.ts`, O2/O3) is the pure predicate distinguishing a live child of a live driver from an abandoned or recycled-pid one. `ProcessSnapshot` (`dispatch.ts`) is a type-only export and gets no row, per this file's own rule.)
+(297 exports — 5 added by `control-store-v1` task 5 (`#555`): `buildManifestRecord`, `controlStoreRoot`, and `persistManifestRecord` (`dev-review-loop/reviewer-dispatch.ts`) — the parent that builds and persists the review manifest record — plus `bindingOfPosted`/`unboundFields` (`dev-review-loop/publication.ts`, round 2 review: exported so their base/brief/objectives/ruling/policy binding logic, previously untested, gets direct fixture coverage). `ManifestRecordIdentity` is a type-only export and gets no row. 4 added by `control-store-v1` task 3: `readLaunchRecord` (`dispatch.ts`) exposes the durable launch record's full lifecycle for recovery; `reconcileLaunch`/`recoverDeveloperLaunch` (`dev-review-loop/developer-dispatch.ts`, O3) reconcile a prior launch before continuing; `LaunchContinuityLost` is the class the recovery throws when a required session is gone. Their `LaunchRecord`/`LaunchStatus`/`ParsedLaunch` (`dispatch.ts`) and `LaunchReconciliation`/`ReconcileLaunchDeps` (`developer-dispatch.ts`) are type-only exports and get no row, per this file's own rule. 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. None of the three files front a `vinaya` subcommand yet — the catalog they implement is an agent-facing tool surface, not a CLI command — so no Commands-table row exists for any of them; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule. Task 2 adds 25 more, net: the shared MCP server (`server.ts`, 10), the two runtime adapters (`adapters.ts`, 8), and the `task_start` handler (`start.ts`, 6), plus `ownVersion`/`MCP_JSON_PATH` on `artifacts.ts`; `taskStartHandler` moved off `handlers.ts` into `start.ts` as `defaultTaskStartHandler`. Task 2's read/handler files still front no `vinaya` subcommand each — but `vinaya task-tools serve` (`commands/task-tools.ts`) now fronts the server, the one Commands-table row this surface gained. Type-only exports (`CallerContext`/`ToolHandler`/`StartRecord` and the adapter/deps types) get no row, per this file's own rule. 4 added by `driver-lifecycle-v1` task 1 (Issue #605): `getProcessSnapshot`/`terminateChildWithGrace`/`terminateLaunchedChildOnShutdown` (`dispatch.ts`) give the driver's own shutdown path (O1) and recovery's orphan-reaping (O2) a real process-identity read and a graduated-signal termination, shared by both; `classifyChildLiveness` (`developer-dispatch.ts`, O2/O3) is the pure predicate distinguishing a live child of a live driver from an abandoned or recycled-pid one. `ProcessSnapshot` (`dispatch.ts`) is a type-only export and gets no row, per this file's own rule.)
 
 ## Commands — `apps/cli/src/commands` (45 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
