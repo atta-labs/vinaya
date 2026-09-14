@@ -173,6 +173,31 @@ describe('evaluateReviewFindings — prose cap (#543 O5)', () => {
     expect(result.outcome).toBe('clean')
   })
 
+  // REGRESSION — policy mismatch surfaced by task-operator-v1 3, NOT resolved here.
+  // `aeg-root/roles/operator.md` (shipped by this task) is prose by path, so the
+  // `#543` O5 cap treats it exactly like `security.md` above: a CRITICAL finding
+  // located in it is capped to MINOR and never blocks. But this role file's own
+  // content IS a security boundary — it declares the Operator's authority grant
+  // (never merge, approve, rule, or edit an Issue). So a genuine CRITICAL flaw in
+  // that authority text — e.g. wording a session could read as permission to
+  // merge — would be silently non-blocking under the current cap. This test PINS
+  // that current (unsafe-for-authority-prose) behavior rather than papering over
+  // it: the fix is a security decision (does the prose cap carve out role files
+  // whose text is itself an authority grant?), requested in the PR body, never a
+  // threshold this Developer lowers on its own. Change this expectation only when
+  // that decision lands, in the same PR that changes `isProseLocation`.
+  test('KNOWN GAP: a CRITICAL flaw in the Operator’s own authority text is capped, so it cannot block — awaits a security ruling', () => {
+    const result = evaluateReviewFindings(
+      [{ severity: 'CRITICAL', location: 'aeg-root/roles/operator.md:38' }],
+      SECURITY_SEVERITY_ORDER,
+      'CRITICAL'
+    )
+    // Current behavior: capped to MINOR (off the security scale) → does not block.
+    // This is the mismatch, deliberately asserted so it cannot regress unnoticed.
+    expect(result.outcome).toBe('clean')
+    expect(isProseLocation('aeg-root/roles/operator.md:38')).toBe(true)
+  })
+
   test('a round with clean code/test/security findings stays green regardless of a body finding (O5 sizing story)', () => {
     const codeReview = evaluateCodeReview([{ severity: 'BLOCKER', location: 'PR body' }], THIS_REPO_POLICY)
     expect(codeReview.outcome).toBe('clean')
