@@ -224,14 +224,18 @@ export function isBoundToPatch(
  * that carried no `Judged base:` line — pre-cutover stock) is unbound, the
  * same fail-closed treatment `isBoundToBriefHash` gives a null echo against a
  * resolvable current hash — a one-time cost of one fresh review round, never
- * a permanent exemption. This is a plain equality; the BOUNDED part (base is
- * required only when the head bound by an exact sha, never on a proven patch-
- * identity rebase) lives in `compareManifest`, where both sides of the pair
- * are in view.
+ * a permanent exemption. An abbreviated echo is tolerated the same way
+ * `isBoundToHead` already tolerates one — `extractBaseSha`'s own pattern
+ * (`verdict-extraction.ts`) accepts a 7-40 char hex `Judged base:` value, so a
+ * correctly-abbreviated echo must bind here too, never silently fail a real
+ * base it does cover. The BOUNDED part (base is required only when the head
+ * bound by an exact sha, never on a proven patch-identity rebase) lives in
+ * `compareManifest`, where both sides of the pair are in view.
  */
 export function isBoundToBase(echoed: { baseSha: string | null }, currentBase: string | null): boolean {
   if (currentBase === null) return true
-  return echoed.baseSha === currentBase
+  if (!echoed.baseSha) return false
+  return currentBase.toLowerCase().startsWith(echoed.baseSha.toLowerCase())
 }
 
 /**

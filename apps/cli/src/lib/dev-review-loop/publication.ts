@@ -165,7 +165,7 @@ export type PublishInput = {
 }
 
 /** The field names `compareManifest` reports as unbound — `[]` when everything binds. */
-function unboundFields(binding: ManifestBindingResult): string[] {
+export function unboundFields(binding: ManifestBindingResult): string[] {
   const unbound: string[] = []
   if (!binding.head) unbound.push('head')
   if (!binding.base) unbound.push('base')
@@ -185,7 +185,7 @@ function unboundFields(binding: ManifestBindingResult): string[] {
  * just-posted verdict must bind by exact identity, never rely on a rebase
  * tolerance that only makes sense across a real head move at the gate).
  */
-function bindingOfPosted(posted: VerdictExtraction, manifest: ReviewInputManifest): ManifestBindingResult {
+export function bindingOfPosted(posted: VerdictExtraction, manifest: ReviewInputManifest): ManifestBindingResult {
   const echoed: EchoedManifest = {
     headSha: posted.headSha,
     baseSha: posted.baseSha,

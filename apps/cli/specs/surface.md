@@ -604,8 +604,10 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `routeCompletionEvents` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `sizeOfSafe` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
 | `waitForOwnLoopLine` | function | `apps/cli/src/lib/dev-review-loop/round-assess.ts` |
+| `bindingOfPosted` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
 | `postForgeEffectOnce` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
 | `publishRound` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
+| `unboundFields` | function | `apps/cli/src/lib/dev-review-loop/publication.ts` |
 | `fetchLoopHistory` | function | `apps/cli/src/lib/dev-review-loop/journal-history.ts` |
 | `clearDriverLock` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `isDriverPidAlive` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
@@ -839,7 +841,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(262 exports — 3 added by `control-store-v1` task 5 (`#555`): `buildManifestRecord`, `controlStoreRoot`, and `persistManifestRecord` (`dev-review-loop/reviewer-dispatch.ts`) — the parent that builds and persists the review manifest record. `ManifestRecordIdentity` is a type-only export and gets no row. 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. None of the three files front a `vinaya` subcommand yet — the catalog they implement is an agent-facing tool surface, not a CLI command — so no Commands-table row exists for any of them; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule.)
+(264 exports — 5 added by `control-store-v1` task 5 (`#555`): `buildManifestRecord`, `controlStoreRoot`, and `persistManifestRecord` (`dev-review-loop/reviewer-dispatch.ts`) — the parent that builds and persists the review manifest record — plus `bindingOfPosted`/`unboundFields` (`dev-review-loop/publication.ts`, round 2 review: exported so their base/brief/objectives/ruling/policy binding logic, previously untested, gets direct fixture coverage). `ManifestRecordIdentity` is a type-only export and gets no row. 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. None of the three files front a `vinaya` subcommand yet — the catalog they implement is an agent-facing tool surface, not a CLI command — so no Commands-table row exists for any of them; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule.)
 
 ## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 

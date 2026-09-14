@@ -132,6 +132,23 @@ describe('compareManifest', () => {
     expect(result.bound).toBe(false)
   })
 
+  it('base: a correctly-abbreviated echo binds against the real full-length current base (#603 round 2, F2) — the same tolerance isBoundToHead already gives an abbreviated head', () => {
+    const abbreviated = BASE.slice(0, 12)
+    const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: abbreviated }
+    const current = manifest({ baseSha: BASE })
+    const result = compareManifest(echoed, current)
+    expect(result.base).toBe(true)
+    expect(result.bound).toBe(true)
+  })
+
+  it('base: an abbreviated echo that does not prefix the real current base still refuses', () => {
+    const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: 'd'.repeat(7) }
+    const current = manifest({ baseSha: BASE })
+    const result = compareManifest(echoed, current)
+    expect(result.base).toBe(false)
+    expect(result.bound).toBe(false)
+  })
+
   it('head: does not bind when neither sha nor patch identity match', () => {
     const judged = manifest({ headSha: 'b'.repeat(40) })
     const current = manifest({ headSha: 'c'.repeat(40) })
