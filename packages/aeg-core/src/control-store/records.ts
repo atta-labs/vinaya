@@ -1,5 +1,5 @@
 /**
- * Versioned control-store record schemas (Issue #551, O1). Four record
+ * Versioned control-store record schemas. Four record
  * kinds — run, input, ownership, transition — each `.strict()` and
  * carrying its own `version` literal, the same discipline
  * `packages/aeg-core/src/log/schema.ts` already uses for the Vinaya Log.

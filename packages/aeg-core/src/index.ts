@@ -500,6 +500,7 @@ export {
   CONTROL_RECORD_VERSION,
   defaultControlStoreDeps,
   defaultIsPidAlive,
+  InvalidRunIdError,
   migrateLegacyTask,
   parseInputRecord,
   parseOwnershipRecord,

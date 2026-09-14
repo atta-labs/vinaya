@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -6,6 +6,7 @@ import {
   acquireOwnership,
   appendTransition,
   attemptEpochClaim,
+  InvalidRunIdError,
   readCurrentOwnership,
   readInput,
   readRun,
@@ -57,8 +58,8 @@ describe('acquireOwnership', () => {
     // see epoch 0 (neither has written yet), and both go on to compute the
     // same next epoch — which reduces to two calls of `attemptEpochClaim`
     // with the identical epoch argument, deterministically reproducible
-    // here without needing true concurrency (Issue #551 sizing: "two
-    // controllers race for one run, one wins the epoch").
+    // here without needing true concurrency: two controllers racing for
+    // one run, exactly one winning the epoch.
     const first = attemptEpochClaim(deps, 551, 1, 'run-a')
     const second = attemptEpochClaim(deps, 551, 1, 'run-b')
 
@@ -177,5 +178,50 @@ describe('stale writes are refused inside the store', () => {
     expect(transitions.map((t) => (t.status === 'ok' ? t.value : t))).toEqual([t1, t2])
     expect(t1.seq).toBe(0)
     expect(t2.seq).toBe(1)
+  })
+})
+
+describe('a runId cannot escape the task directory', () => {
+  it('writeRun refuses a runId shaped like a path traversal, and writes nothing outside the task directory', () => {
+    const acquired = acquireOwnership(deps, 551, 'run-a')
+    expect(acquired.acquired).toBe(true)
+    const epoch = acquired.acquired ? acquired.epoch : -1
+    const escapeAttempt = '../../../../../../tmp/control-store-escape'
+
+    expect(() =>
+      writeRun(deps, 551, epoch, { runId: escapeAttempt, pid: 1, host: 'box', startedAt: clock.toISOString() })
+    ).toThrow(InvalidRunIdError)
+    expect(existsSync(join(dir, 'tmp', 'control-store-escape.json'))).toBe(false)
+    expect(existsSync('/tmp/control-store-escape.json')).toBe(false)
+  })
+
+  it('writeInput and the readRun/readInput counterparts refuse the same shape', () => {
+    const acquired = acquireOwnership(deps, 551, 'run-a')
+    const epoch = acquired.acquired ? acquired.epoch : -1
+    const escapeAttempt = '../escaped'
+
+    expect(() =>
+      writeInput(deps, 551, epoch, {
+        runId: escapeAttempt,
+        source: 'fresh',
+        pr: null,
+        round: 0,
+        recordedAt: clock.toISOString()
+      })
+    ).toThrow(InvalidRunIdError)
+    expect(() => readRun(deps, 551, escapeAttempt)).toThrow(InvalidRunIdError)
+    expect(() => readInput(deps, 551, escapeAttempt)).toThrow(InvalidRunIdError)
+  })
+
+  it('an absolute path as runId is refused the same way', () => {
+    expect(() => readRun(deps, 551, '/etc/passwd')).toThrow(InvalidRunIdError)
+  })
+
+  it('an ordinary runId (letters, digits, dot, underscore, hyphen) is unaffected', () => {
+    const acquired = acquireOwnership(deps, 551, 'run-a')
+    const epoch = acquired.acquired ? acquired.epoch : -1
+    expect(() =>
+      writeRun(deps, 551, epoch, { runId: 'run-a.1_ok', pid: 1, host: 'box', startedAt: clock.toISOString() })
+    ).not.toThrow()
   })
 })

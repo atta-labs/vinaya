@@ -18,6 +18,7 @@ export {
   appendTransition,
   attemptEpochClaim,
   defaultControlStoreDeps,
+  InvalidRunIdError,
   readCurrentOwnership,
   readInput,
   readRun,

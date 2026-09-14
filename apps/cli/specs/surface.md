@@ -353,6 +353,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `parseTransitionRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
 | `defaultControlStoreDeps` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `StaleEpochWriteError` | class | `packages/aeg-core/src/control-store/local.ts` |
+| `InvalidRunIdError` | class | `packages/aeg-core/src/control-store/local.ts` |
 | `readCurrentOwnership` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `acquireOwnership` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `writeRun` | function | `packages/aeg-core/src/control-store/local.ts` |
@@ -364,7 +365,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `defaultIsPidAlive` | function | `packages/aeg-core/src/control-store/migration.ts` |
 | `migrateLegacyTask` | function | `packages/aeg-core/src/control-store/migration.ts` |
 
-(301 exports.)
+(302 exports.)
 
 ## Effects — `apps/cli/src/lib` public exports
 

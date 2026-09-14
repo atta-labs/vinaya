@@ -2,8 +2,7 @@
  * One-time migration from the dev-review-loop's pre-control-store side
  * files (`apps/cli/src/lib/dev-review-loop/pause-resume.ts`'s
  * `driver.pid.json`/`pause-state.json`, `publication.ts`'s
- * `effect-<key>.json`) into a task's first control-store epoch (Issue
- * #551, O3).
+ * `effect-<key>.json`) into a task's first control-store epoch.
  *
  * This module reads the legacy layout directly rather than importing
  * `apps/cli` — the dependency runs the other way (the CLI depends on

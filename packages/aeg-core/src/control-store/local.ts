@@ -1,17 +1,20 @@
 /**
- * The one supported local storage implementation for the control-store
- * (Issue #551, O2). Two properties, demonstrated by the fault fixtures in
- * `local.test.ts` rather than asserted in prose:
+ * The one supported local storage implementation for the control-store. Two
+ * properties, demonstrated by the fault fixtures in `local.test.ts` rather
+ * than asserted in prose:
  *
- * **Atomic, durable transitions.** Every write lands via a temp file in the
- * same directory, `fsync`ed, then `renameSync`'d into place — POSIX
- * guarantees the rename is atomic on a shared filesystem, so a reader never
- * observes a partial file, and a crash between the temp write and the
- * rename simply leaves the prior state (or none) untouched. This is the
+ * **Atomic, durable transitions.** Every write — an ordinary overwrite via
+ * `atomicWriteFile`, or an exclusive claim via `exclusiveCreateFile` — lands
+ * fully-formed content on a private temp file in the same directory,
+ * `fsync`ed, before that content is ever published under its real name via
+ * `renameSync` (an overwrite) or `linkSync` (an exclusive claim). POSIX
+ * guarantees both publish operations are atomic on a shared filesystem, so
+ * a reader never observes a partial file, and a crash before the publish
+ * step simply leaves the prior state (or none) untouched. This is the
  * "atomic files" half of the traps-to-avoid decision, recorded in
  * `apps/cli/specs/loop.md` — a transactional database was rejected because
  * this store's own concurrency need (one exclusive owner at a time, on one
- * machine) is fully met by a filesystem's own `O_EXCL` and `rename(2)`
+ * machine) is fully met by a filesystem's own `link(2)`/`rename(2)`
  * guarantees, and pulling in a DB engine would be the "distributed
  * coordination" the brief says not to introduce for a single-machine guard.
  *
@@ -19,11 +22,22 @@
  * is not "the recorded pid answers a liveness probe" (`isDriverPidAlive`'s
  * old role, the trap this task exists to retire: liveness alone never
  * proved ownership, only that some process with that pid still runs).
- * Instead each attempted epoch is its own immutable file, created with
- * `O_EXCL`: two racing callers computing the same next epoch from the same
- * observed current epoch contend for the same filename, and the filesystem
- * — not a timestamp, not a liveness probe — decides the single winner. A
- * caller that already lost synchronously discovers it (the loser's `open`
+ * Instead each attempted epoch is its own immutable file, published with
+ * `linkSync` from a private, fully-written temp file: two racing callers
+ * computing the same next epoch from the same observed current epoch
+ * contend for the same final name, and the filesystem — not a timestamp,
+ * not a liveness probe — decides the single winner, with no window in
+ * which either can observe the other's claim as an empty or torn file.
+ * Creating the final name directly with `O_CREAT|O_EXCL` and writing its
+ * content in a separate step would reopen exactly that window: a second
+ * claimant could open the name mid-write, read it as corrupt, and reclaim
+ * it out from under the first writer, whose own call would go on to finish
+ * successfully against its now-orphaned inode and report itself the winner
+ * regardless — two processes each believing they held the same epoch.
+ * Publishing via `linkSync` from an already-complete, already-`fsync`ed
+ * temp file closes that window: the final name transitions directly from
+ * absent to fully-formed, never through a visible partial state. A caller
+ * that already lost synchronously discovers it (the loser's `linkSync`
  * throws `EEXIST`); every later write against a stale epoch is refused
  * inside `assertCurrentEpoch`, never left to the caller to remember to
  * check.
@@ -35,6 +49,7 @@ import {
   constants as fsConstants,
   existsSync,
   fsyncSync,
+  linkSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -118,27 +133,66 @@ function atomicWriteFile(path: string, contents: string): void {
 }
 
 /**
- * Creates `path` with `contents` exclusively — `O_EXCL` refuses (`EEXIST`)
- * if anything is already there, atomically, no separate exists-check. Used
- * for every "only one writer may ever occupy this exact name" file: an
- * ownership epoch, a transition sequence slot.
+ * Creates `path` with `contents` exclusively and atomically — `contents` is
+ * fully written and `fsync`ed to a private temp file first, then published
+ * with a single `linkSync`, which either fully succeeds (`path` now holds
+ * complete content) or fails `EEXIST` (someone else published first) with
+ * no intermediate state in which a reader can observe `path` partially
+ * written. Used for every "only one writer may ever occupy this exact
+ * name" file: an ownership epoch, a transition sequence slot. See this
+ * file's own module doc for why `O_CREAT|O_EXCL` directly at `path` is not
+ * used here.
  */
 function exclusiveCreateFile(path: string, contents: string): { created: true } | { created: false } {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-  let fd: number
-  try {
-    fd = openSync(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600)
-  } catch (err) {
-    if (isErrnoException(err, 'EEXIST')) return { created: false }
-    throw err
-  }
+  const tmp = `${path}.claim-${process.pid}-${randomUUID()}`
+  const fd = openSync(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600)
   try {
     writeSync(fd, contents, null, 'utf8')
     fsyncSync(fd)
   } finally {
     closeSync(fd)
   }
-  return { created: true }
+  let outcome: { created: true } | { created: false }
+  try {
+    linkSync(tmp, path)
+    outcome = { created: true }
+  } catch (err) {
+    if (!isErrnoException(err, 'EEXIST')) throw err
+    outcome = { created: false }
+  }
+  // Best-effort cleanup: the temp file already did its job (its content is
+  // durably published at `path`, or it wasn't needed because someone else
+  // published first) — a failure removing it is not this call's concern to
+  // surface, and must never override the real `outcome` decided above.
+  try {
+    unlinkSync(tmp)
+  } catch {
+    // leftover temp file, harmless — never thrown from here
+  }
+  return outcome
+}
+
+// `runId` reaches `runPath`/`inputPath` from a caller-supplied value
+// (`RunInput.runId`/`InputInput.runId`) rather than a store-generated one —
+// unlike an epoch or a transition seq, which this module always derives
+// itself. A `runId` carrying a path segment (`../../etc/passwd`, an
+// absolute path) must not be spliced unchecked into a filesystem path; the
+// same discipline `log-sink.ts`'s `isSafeRepoSegment` applies to an
+// environment-sourced repo name, applied here to a run identifier instead.
+const SAFE_ID_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
+
+export class InvalidRunIdError extends Error {
+  constructor(readonly runId: string) {
+    super(`control-store: refusing an unsafe runId (must be a single path-safe segment): ${JSON.stringify(runId)}`)
+    this.name = 'InvalidRunIdError'
+  }
+}
+
+function assertSafeRunId(runId: string): void {
+  if (!SAFE_ID_SEGMENT.test(runId) || runId.includes('..')) {
+    throw new InvalidRunIdError(runId)
+  }
 }
 
 function taskRoot(root: string, task: number): string {
@@ -156,10 +210,12 @@ function ownershipEpochPath(root: string, task: number, epoch: number): string {
 }
 
 function runPath(root: string, task: number, runId: string): string {
+  assertSafeRunId(runId)
   return join(taskRoot(root, task), 'run', `${runId}.json`)
 }
 
 function inputPath(root: string, task: number, runId: string): string {
+  assertSafeRunId(runId)
   return join(taskRoot(root, task), 'input', `${runId}.json`)
 }
 
