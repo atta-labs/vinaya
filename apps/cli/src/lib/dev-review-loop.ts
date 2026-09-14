@@ -128,8 +128,8 @@ import {
   writeHeldVerdict
 } from './dev-review-loop/reviewer-dispatch.js'
 import {
-  buildReviewerCandidate,
   buildReviewerScratch,
+  buildVerifiedReviewerCandidate,
   cleanupAllReviewerIsolationArtifacts,
   cleanupReviewerIsolationForRound
 } from './dev-review-loop/reviewer-isolation.js'
@@ -2256,20 +2256,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // then omits `cwd` entirely, the same as every round before this
           // task.
           const candidateSourceDir = worktreePathForBranch()
-          let candidateDir =
-            d.readWorktreeHead(candidateSourceDir) === head
-              ? buildReviewerCandidate(root, task, round, candidateSourceDir)
-              : null
-          // The check above and the copy inside `buildReviewerCandidate` are
-          // not one atomic step (round 2 review, MINOR): the local worktree
-          // can advance between them. Re-read the head once the copy has
-          // finished and discard a candidate the copy raced against, rather
-          // than hand both reviewers bytes the manifest's own `headSha`
-          // never actually pinned.
-          if (candidateDir && d.readWorktreeHead(candidateSourceDir) !== head) {
-            cleanupReviewerIsolationForRound(root, task, round)
-            candidateDir = null
-          }
+          // `buildVerifiedReviewerCandidate` (reviewer-isolation.ts) checks
+          // the worktree's head both before AND after the copy — the local
+          // worktree can advance mid-copy (round 2 review, MINOR), and a
+          // candidate caught that way is discarded rather than handed to
+          // both reviewers as bytes the manifest's own `headSha` never
+          // actually pinned.
+          const candidateDir = buildVerifiedReviewerCandidate(
+            root,
+            task,
+            round,
+            candidateSourceDir,
+            head,
+            d.readWorktreeHead
+          )
           try {
             // O1/O2: the evidence report runs IN PARALLEL with both reviewer
             // dispatches, never before or after them — reviewers dispatch on

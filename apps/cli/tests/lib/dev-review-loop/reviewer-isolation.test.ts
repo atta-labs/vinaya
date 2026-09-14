@@ -29,6 +29,7 @@ import { join } from 'node:path'
 import {
   buildReviewerCandidate,
   buildReviewerScratch,
+  buildVerifiedReviewerCandidate,
   cleanupAllReviewerIsolationArtifacts,
   cleanupReviewerIsolationForRound,
   reviewerCandidateDir,
@@ -379,5 +380,48 @@ describe('cleanupAllReviewerIsolationArtifacts — O3, restart and cancellation 
   it('is a safe no-op when the task has no `dev-review-loop` directory at all (a fresh task, or nothing ever dispatched)', () => {
     const root = tempDir('vinaya-riso-root-')
     expect(() => cleanupAllReviewerIsolationArtifacts(root, 9001)).not.toThrow()
+  })
+})
+
+describe('buildVerifiedReviewerCandidate — closing the gap between the head check and the copy (round 2 review, MINOR; round 3 review, MAJOR)', () => {
+  it('discards a candidate the worktree outran mid-copy, cleaning it up, rather than returning torn content', () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    let calls = 0
+    const readHead = () => {
+      calls += 1
+      // Agrees with the expected head on the pre-copy read, then reports a
+      // moved head on the post-copy read — the exact race this function
+      // exists to catch.
+      return calls === 1 ? 'sha-a' : 'sha-b'
+    }
+
+    const dest = buildVerifiedReviewerCandidate(root, 9003, 1, src, 'sha-a', readHead)
+
+    expect(dest).toBeNull()
+    expect(calls).toBe(2)
+    expect(existsSync(reviewerCandidateDir(root, 9003, 1))).toBe(false)
+  })
+
+  it('never attempts the copy at all when the worktree has already moved before the first read', () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    const readHead = () => 'sha-different'
+
+    const dest = buildVerifiedReviewerCandidate(root, 9003, 1, src, 'sha-a', readHead)
+
+    expect(dest).toBeNull()
+    expect(existsSync(reviewerCandidateDir(root, 9003, 1))).toBe(false)
+  })
+
+  it('returns the built candidate when the head agrees on both reads', () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    const readHead = () => 'sha-a'
+
+    const dest = buildVerifiedReviewerCandidate(root, 9003, 1, src, 'sha-a', readHead)
+
+    expect(dest).toBe(reviewerCandidateDir(root, 9003, 1))
+    expect(existsSync(dest as string)).toBe(true)
   })
 })

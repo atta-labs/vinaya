@@ -160,8 +160,11 @@ const NO_IGNORED_PATHS: ReadonlySet<string> = new Set()
  * `SECRET_FILENAME_RE` matches.
  */
 function copyTree(src: string, dest: string, ignored: ReadonlySet<string> = NO_IGNORED_PATHS): void {
-  mkdirSync(dest, { recursive: true })
-  chmodSync(dest, 0o700)
+  // `mode` here, not a separate `chmodSync` after (round 3 review, MEDIUM):
+  // a create-then-narrow pair leaves `dest` briefly sitting at whatever the
+  // process umask produces — commonly world-enterable — on this directory's
+  // fully predictable, forge-derived path. One syscall closes the window.
+  mkdirSync(dest, { recursive: true, mode: 0o700 })
   cpSync(src, dest, {
     recursive: true,
     filter: (source) => {
@@ -261,10 +264,10 @@ function removeIfPresent(dir: string): void {
  * local worktree that has moved on between push and dispatch would
  * otherwise be copied silently, handing both reviewers content that
  * disagrees with the manifest's own `headSha` with nothing to catch the
- * mismatch). The caller (`dev-review-loop.ts`) is the one that knows the
- * round's resolved head and already reads the worktree's actual head for
- * other purposes (`readWorktreeHead`) — it compares the two BEFORE calling
- * this function, and passes a `sourceDir` at all only when they agree.
+ * mismatch). This function alone only guards the BEFORE side of that check;
+ * `buildVerifiedReviewerCandidate`, below, is the caller-facing wrapper that
+ * also re-checks AFTER the copy, closing the gap where the worktree moves
+ * WHILE the copy runs.
  */
 export function buildReviewerCandidate(root: string, task: number, round: number, sourceDir: string): string | null {
   if (!existsSync(sourceDir)) return null
@@ -278,6 +281,40 @@ export function buildReviewerCandidate(root: string, task: number, round: number
     removeIfPresent(dest)
     return null
   }
+}
+
+/**
+ * O1, the non-atomic-gap close (round 2 review, MINOR; round 3 review,
+ * MAJOR: needed its own direct test). The pre-copy head check
+ * `buildReviewerCandidate`'s own doc comment describes, plus a second read
+ * of the SAME `sourceDir` once the copy returns: a worktree that advances
+ * between those two reads (a commit landing mid-copy) means the bytes just
+ * copied no longer agree with `head`, and `buildReviewerCandidate` itself
+ * has no way to notice — it only ever reads `sourceDir` once, via `cpSync`.
+ * A candidate caught this way is discarded via `cleanupReviewerIsolationForRound`
+ * (nothing else has been built for this round yet at this point in the
+ * caller's own flow) rather than left on disk for a later round to trip
+ * over. `readHead` is a parameter, not this module's own import of
+ * `readWorktreeHead`, so `dev-review-loop.ts` keeps threading its own
+ * already-tested `d.readWorktreeHead` injection point through here, and
+ * this function is directly unit-testable with a fake that answers
+ * differently across its two calls.
+ */
+export function buildVerifiedReviewerCandidate(
+  root: string,
+  task: number,
+  round: number,
+  sourceDir: string,
+  head: string,
+  readHead: (worktreePath: string) => string | null
+): string | null {
+  if (readHead(sourceDir) !== head) return null
+  const dir = buildReviewerCandidate(root, task, round, sourceDir)
+  if (dir && readHead(sourceDir) !== head) {
+    cleanupReviewerIsolationForRound(root, task, round)
+    return null
+  }
+  return dir
 }
 
 /**
