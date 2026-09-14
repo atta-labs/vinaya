@@ -170,6 +170,18 @@ export type DispatchOpts = {
    * `loop-log.ts` names.
    */
   roleLogPath?: string
+  /**
+   * (`#561`, O1/O2) The child's own working
+   * directory — never set before this task, which meant every dispatched
+   * role's shell ran from wherever THIS process's own `cwd` happened to be,
+   * not from any content this task actually names. `dev-review-loop.ts`'s
+   * reviewer dispatch is the first caller to pass one (a per-reviewer
+   * scratch copy of the round's shared, read-only candidate — see
+   * `dev-review-loop/reviewer-isolation.ts`); every other caller omits it,
+   * which keeps `spawn`'s own default (inherit this process's `cwd`)
+   * unchanged for the developer role and every pre-existing dispatch site.
+   */
+  cwd?: string
 }
 
 /** `'signal'` (O1, Issue #605): the driver's own shutdown path terminated this launch's child on `SIGTERM`/`SIGINT` — distinct from `'crash'` (the child died on its own) so recovery can read it as a cancelled attempt, never an infrastructure failure of the child's own making. */
@@ -1804,6 +1816,7 @@ export async function dispatchRole(
     const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
     const child = spawn(binaryPath, spawnArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
       env: {
         ...process.env,
         VINAYA_RUN_ID: runId,
