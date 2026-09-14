@@ -56,7 +56,7 @@ import { accessSync, constants as fsConstants, mkdirSync, readFileSync, writeFil
 import { chmodSync, createWriteStream } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
-import { homedir } from 'node:os'
+import { homedir, hostname as osHostname } from 'node:os'
 import { redact } from '@attalabs/aeg-core'
 import type { Role } from '@attalabs/aeg-core'
 import { createLogSink, outboxPathFor } from './log-sink.js'
@@ -781,14 +781,123 @@ export type ResumeRecord = {
 }
 
 /**
- * Overwrites the one record for this repo+role+vendor+scope with the latest
- * resume id — only the most recently produced session is ever the one worth
- * resuming, so there is nothing to append to. Never throws, matching this
- * module's "never throws" posture: an unwritable home degrades to no durable
- * record, the same failure mode `openOutputTee` already accepts for its own
- * file.
+ * A launch's lifecycle status (O1). `'launched'` is written to the durable
+ * record BEFORE the child is spawned, so a launch has a durable identity the
+ * instant it begins — even the attempt that a crash interrupts before the
+ * vendor ever reports a session. `'completed'` once the child exits cleanly;
+ * `'interrupted'` when a timeout, a crash, or a capability refusal ended it.
+ * The vendor session id binds onto the SAME record the moment the stream
+ * first reports it, WITHOUT changing status (a still-`'launched'` record can
+ * already carry a bound `resumeId`). An interrupted launch is never deleted —
+ * it keeps its intent record, and any session id already bound, so recovery
+ * (`dev-review-loop/developer-dispatch.ts`) can reconcile it rather than
+ * losing session identity to the interruption.
  */
-function recordResumeState(record: ResumeRecord): string | null {
+export type LaunchStatus = 'launched' | 'completed' | 'interrupted'
+
+/**
+ * The durable launch record `dispatchRole` writes for one attempt (O1) — the
+ * "run, attempt, role" launch intent, plus the vendor session id bound onto
+ * it as soon as it is observable, plus the child identity recovery probes to
+ * find a still-live launch (O3). Machine-local, in the same `~/.vinaya/`
+ * home the tee and the outbox already use, keyed by repo+role+vendor+scope,
+ * for the SAME reason this module keeps the vendor session id out of the
+ * Vinaya Log's own `DispatchOutcomeSchema` (see this file's module doc): no
+ * strict, versioned schema — the log's, or `control-store-v1`'s own — carries
+ * a `role`, an `attempt`, or a vendor `sessionId` field, and this record is
+ * this launcher's own concern, not a control-store ownership epoch the
+ * generic launcher has no business claiming (the loop's own `control-store`
+ * adoption is deferred — `apps/cli/specs/loop.md`).
+ */
+export type LaunchRecord = {
+  runId: string
+  role: Role
+  agent: AgentVendor
+  repo: { owner: string; repo: string } | null
+  task: number | null
+  pr: number | null
+  round: number | null
+  /** The "attempt" half of "run, attempt, role" — a monotonic per-scope counter, incremented from the prior launch record for this same repo+role+vendor+scope, so a resumed or re-dispatched attempt is distinguishable from the one it followed. */
+  attempt: number
+  effectId: string
+  /** The dispatcher's own pid — this process, the one that launched. */
+  dispatcherPid: number
+  /** The spawned vendor child's pid, set the moment `spawn` returns — the identity recovery probes to tell a still-live launch from a finished one (O3). `null` until the child is actually spawned (a pre-spawn refusal never sets it). */
+  childPid: number | null
+  host: string
+  startedAt: string
+  status: LaunchStatus
+  /** The vendor session id, bound the moment the stream first reports it (O1) — `null` until then, and left `null` on an attempt interrupted before its session was ever observable (the honest "no session to resume" case recovery pauses on). */
+  resumeId: string | null
+  boundAt: string | null
+  finishedAt: string | null
+  failureReason: DispatchFailureReason | null
+}
+
+/**
+ * The three-way read of a launch record, mirroring `control-store-v1`'s own
+ * `ParsedRecord` discipline (`packages/aeg-core/src/control-store/records.ts`):
+ * `'corrupt'` (something is written but does not parse as a launch record) is
+ * never conflated with `'absent'` (nothing was ever written) — the exact
+ * distinction recovery needs to tell "no launch to reconcile" apart from "a
+ * launch happened but its record is unreadable."
+ */
+export type ParsedLaunch =
+  | { status: 'ok'; record: LaunchRecord }
+  | { status: 'absent' }
+  | { status: 'corrupt'; reason: string }
+
+function coerceLaunchRecord(json: unknown): LaunchRecord | null {
+  if (typeof json !== 'object' || json === null) return null
+  const o = json as Record<string, unknown>
+  // A launch record — or a pre-this-task `ResumeRecord` on disk, tolerated so
+  // an in-flight resume survives this task landing — is identified by its
+  // `role`/`agent` strings; every lifecycle field missing from an old record
+  // is filled with the honest default (`resumeId` present → `'completed'`,
+  // since only a successful dispatch ever wrote the old shape).
+  if (typeof o.role !== 'string' || typeof o.agent !== 'string') return null
+  const resumeId = typeof o.resumeId === 'string' && o.resumeId.length > 0 ? o.resumeId : null
+  const status: LaunchStatus =
+    o.status === 'launched' || o.status === 'completed' || o.status === 'interrupted'
+      ? o.status
+      : resumeId
+        ? 'completed'
+        : 'launched'
+  const num = (v: unknown): number | null => (typeof v === 'number' ? v : null)
+  const failureReason =
+    o.failureReason === 'timeout' || o.failureReason === 'crash' || o.failureReason === 'refused'
+      ? o.failureReason
+      : null
+  return {
+    runId: typeof o.runId === 'string' ? o.runId : '',
+    role: o.role as Role,
+    agent: o.agent as AgentVendor,
+    repo: typeof o.repo === 'object' && o.repo !== null ? (o.repo as { owner: string; repo: string }) : null,
+    task: num(o.task),
+    pr: num(o.pr),
+    round: num(o.round),
+    attempt: typeof o.attempt === 'number' ? o.attempt : 1,
+    effectId: typeof o.effectId === 'string' ? o.effectId : '',
+    dispatcherPid: num(o.dispatcherPid) ?? 0,
+    childPid: num(o.childPid),
+    host: typeof o.host === 'string' ? o.host : '',
+    startedAt: typeof o.startedAt === 'string' ? o.startedAt : typeof o.capturedAt === 'string' ? o.capturedAt : '',
+    status,
+    resumeId,
+    boundAt: typeof o.boundAt === 'string' ? o.boundAt : typeof o.capturedAt === 'string' ? o.capturedAt : null,
+    finishedAt: typeof o.finishedAt === 'string' ? o.finishedAt : null,
+    failureReason
+  }
+}
+
+/**
+ * Overwrites the one launch record for this repo+role+vendor+scope. Never
+ * throws, matching this module's "never throws" posture: an unwritable home
+ * degrades to no durable record, the same failure mode `openOutputTee`
+ * already accepts for its own file. Only the most recent launch for a scope
+ * is ever the one worth reconciling, so there is nothing to append to.
+ */
+function writeLaunchRecord(record: LaunchRecord): string | null {
   try {
     const path = resumeRecordPathFor(
       record.role,
@@ -807,13 +916,52 @@ function recordResumeState(record: ResumeRecord): string | null {
 }
 
 /**
- * Reads back the one durable record `recordResumeState` last wrote for this
- * exact repo+role+vendor+scope, or `null` when none exists, is unreadable,
- * or fails to parse — never throws (same posture as `recordResumeState`).
- * Task `#488`, O4: the loop's round-1 entry reads
- * this to resume the SAME developer session on an attach (an already-open
- * PR) or a remote-branch-no-PR case, rather than starting fresh — the exact
- * path scheme `resumeRecordPathFor` already owns, never a second copy of it.
+ * Reads back the launch record last written for this exact
+ * repo+role+vendor+scope — `'absent'` when none exists, `'corrupt'` when one
+ * exists but does not parse (never conflated, per `ParsedLaunch`). Never
+ * throws (same posture as `writeLaunchRecord`). Recovery
+ * (`dev-review-loop/developer-dispatch.ts`, O3) reads this to reconcile a
+ * prior launch before continuing.
+ */
+export function readLaunchRecord(
+  role: Role,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null,
+  task?: number,
+  pr?: number
+): ParsedLaunch {
+  let raw: string
+  try {
+    raw = readFileSync(resumeRecordPathFor(role, agent, repo, task, pr), 'utf8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'absent' }
+    return {
+      status: 'corrupt',
+      reason: `unreadable launch record: ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+  let json: unknown
+  try {
+    json = JSON.parse(raw)
+  } catch (err) {
+    return {
+      status: 'corrupt',
+      reason: `invalid JSON (torn write?): ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+  const record = coerceLaunchRecord(json)
+  if (!record) return { status: 'corrupt', reason: 'not a launch record (missing role/agent)' }
+  return { status: 'ok', record }
+}
+
+/**
+ * The bound-session view of the launch record, for the callers that only need
+ * a resumable vendor session id (the loop's own round-1 attach/resume seams,
+ * `#488` O4) — `null` when no launch exists, its record is corrupt, or the
+ * launch was interrupted before its session was ever bound (no session to
+ * resume). An interrupted-but-bound launch now yields its session id here,
+ * where before this task only a cleanly-completed one did — the session
+ * identity a mid-turn crash used to lose (O1).
  */
 export function readResumeRecord(
   role: Role,
@@ -822,12 +970,33 @@ export function readResumeRecord(
   task?: number,
   pr?: number
 ): ResumeRecord | null {
-  try {
-    const path = resumeRecordPathFor(role, agent, repo, task, pr)
-    return JSON.parse(readFileSync(path, 'utf8')) as ResumeRecord
-  } catch {
-    return null
+  const parsed = readLaunchRecord(role, agent, repo, task, pr)
+  if (parsed.status !== 'ok') return null
+  const r = parsed.record
+  if (!r.resumeId) return null
+  return {
+    resumeId: r.resumeId,
+    role: r.role,
+    agent: r.agent,
+    repo: r.repo,
+    task: r.task,
+    pr: r.pr,
+    round: r.round,
+    effectId: r.effectId,
+    capturedAt: r.boundAt ?? r.startedAt
   }
+}
+
+/** The next per-scope attempt number — one past the prior launch record for this scope, or `1` when none exists or it is corrupt (a corrupt prior never blocks a fresh attempt from starting). */
+function nextAttempt(
+  role: Role,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null,
+  task?: number,
+  pr?: number
+): number {
+  const parsed = readLaunchRecord(role, agent, repo, task, pr)
+  return parsed.status === 'ok' ? parsed.record.attempt + 1 : 1
 }
 
 type VendorSpec = {
@@ -1195,6 +1364,40 @@ export async function dispatchRole(
   // always; Claude/Gemini, on an unparseable payload).
   const resolvedModel = opts.model !== undefined ? `requested:${opts.model}` : 'default'
 
+  // O1: persist the launch intent — run, attempt, role — BEFORE anything
+  // else can spawn, refuse, or fail. From here on every exit path patches
+  // this ONE record rather than writing a fresh one, so an interrupted
+  // attempt keeps its intent (and any session id later bound onto it) instead
+  // of losing session identity to the interruption. `dispatcherPid`/`host`
+  // are the identity a pre-spawn attempt still has; `childPid`/`resumeId`
+  // fill in only once the child is spawned and the stream reports its session.
+  let launch: LaunchRecord = {
+    runId,
+    role,
+    agent,
+    repo,
+    task: opts.task ?? null,
+    pr: opts.pr ?? null,
+    round: opts.round ?? null,
+    attempt: nextAttempt(role, agent, repo, opts.task, opts.pr),
+    effectId,
+    dispatcherPid: process.pid,
+    childPid: null,
+    host: osHostname(),
+    startedAt: new Date(start).toISOString(),
+    status: 'launched',
+    resumeId: null,
+    boundAt: null,
+    finishedAt: null,
+    failureReason: null
+  }
+  /** Merge `patch` into the launch record and rewrite it durably — never throws (see `writeLaunchRecord`); a lost write degrades to a staler record, never a failed dispatch. */
+  const patchLaunch = (patch: Partial<LaunchRecord>): void => {
+    launch = { ...launch, ...patch }
+    writeLaunchRecord(launch)
+  }
+  writeLaunchRecord(launch)
+
   // O4: refused before any spawn, by name, naming the vendor that rejected
   // it and what it accepts — never a bare rejection. Checked before the
   // binary-on-PATH check below so a wrongly-shaped model is refused even
@@ -1221,6 +1424,7 @@ export async function dispatchRole(
           `${agent} does not accept it. ${agent} accepts its own model names (never a ${foreignVendor} alias or a ` +
           `'${foreignVendor}-'/'gemma-' full name).`
       )
+      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
       await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
       return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
     }
@@ -1242,6 +1446,7 @@ export async function dispatchRole(
       usage: null,
       duration_ms: durationMs
     })
+    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
   }
@@ -1281,6 +1486,12 @@ export async function dispatchRole(
       }
     })
 
+    // O1/O3: bind the child's own identity onto the launch record the instant
+    // `spawn` returns it — this is what recovery probes to tell a still-live
+    // launch from a finished one, so it must be durable even if the driver
+    // dies in the very next tick (a crash between spawn and session binding).
+    if (typeof child.pid === 'number') patchLaunch({ childPid: child.pid })
+
     let settled = false
     let timedOut = false
     let killTimer: ReturnType<typeof setTimeout> | undefined
@@ -1310,6 +1521,21 @@ export async function dispatchRole(
       renderCarry = lines.pop() ?? ''
       for (const line of lines) {
         if (line.trim().length === 0) continue
+        // O1: bind the vendor session id onto the launch record the MOMENT the
+        // stream first reports it — not only at exit — so an attempt the
+        // driver's own death interrupts mid-turn still carries a resumable
+        // session for recovery, instead of losing it to the interruption.
+        // Bound once (`launch.resumeId === null` guards it); parsed per line
+        // through the SAME vendor reader the exit path uses, never a second
+        // shape. Wrapped so a binding failure can never end the run it observes.
+        if (launch.resumeId === null) {
+          try {
+            const id = vendor.parseResumeId(line)
+            if (id !== null) patchLaunch({ resumeId: id, boundAt: new Date().toISOString() })
+          } catch {
+            // not a session-bearing line — keep reading, never fatal
+          }
+        }
         try {
           const rendered = vendor.renderEvent(JSON.parse(line) as Record<string, unknown>)
           if (rendered) {
@@ -1402,6 +1628,10 @@ export async function dispatchRole(
         usage: null,
         duration_ms: durationMs
       })
+      // O1: an interrupted attempt keeps its intent record — patched, never
+      // deleted; any session id already bound mid-stream is preserved by the
+      // merge, so recovery can still resume it.
+      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'crash' })
       void finish(
         { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'crash' },
         'dispatch_failed',
@@ -1449,6 +1679,15 @@ export async function dispatchRole(
           usage,
           duration_ms: durationMs
         })
+        // O1: keep the intent record, and bind whatever session the child did
+        // report before the ceiling killed it (mid-stream, or a final line in
+        // `stdoutBuf`) — an interrupted attempt no longer loses its session.
+        patchLaunch({
+          status: 'interrupted',
+          finishedAt: new Date().toISOString(),
+          failureReason: 'timeout',
+          resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
+        })
         void finish(
           { exitCode: code, durationMs, usage, resumeId: null, timedOut: true, failureReason: 'timeout' },
           'dispatch_failed',
@@ -1471,6 +1710,14 @@ export async function dispatchRole(
           usage,
           duration_ms: durationMs
         })
+        // O1: same as the timeout path — interrupted, intent kept, session
+        // bound from whatever the child managed to report before it crashed.
+        patchLaunch({
+          status: 'interrupted',
+          finishedAt: new Date().toISOString(),
+          failureReason: 'crash',
+          resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
+        })
         void finish(
           { exitCode: code, durationMs, usage, resumeId: null, timedOut: false, failureReason: 'crash' },
           'dispatch_failed',
@@ -1479,24 +1726,20 @@ export async function dispatchRole(
         return
       }
 
-      const resumeId = vendor.parseResumeId(stdoutBuf)
+      // O1: the session id, bound onto the launch record already if the stream
+      // reported it mid-run, or read now from the completed buffer as the
+      // fallback. The SAME record the launch intent was written to is marked
+      // `completed`, never a fresh success-only record.
+      const resumeId = launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
+      patchLaunch({
+        status: 'completed',
+        finishedAt: new Date().toISOString(),
+        resumeId
+      })
       if (resumeId !== null) {
-        const resumeRecordPath = recordResumeState({
-          resumeId,
-          role,
-          agent,
-          repo,
-          task: opts.task ?? null,
-          pr: opts.pr ?? null,
-          round: opts.round ?? null,
-          effectId,
-          capturedAt: new Date().toISOString()
-        })
-        if (resumeRecordPath !== null) {
-          writeLifecycle(
-            `[vinaya dispatch ${effectId}] ${role} via ${agent}: resumable — session recorded at ${resumeRecordPath}`
-          )
-        }
+        writeLifecycle(
+          `[vinaya dispatch ${effectId}] ${role} via ${agent}: resumable — session recorded (attempt ${launch.attempt})`
+        )
       }
       // O2: the vendor's own genuine receipt of what ran, read only now that
       // the child has actually produced output — never guessed from the
