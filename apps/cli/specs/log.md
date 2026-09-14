@@ -135,6 +135,10 @@ One file per task Issue under the machine-local home `~/.vinaya/` already used b
 
 `<issue-or-none>` is `subject.issue` when it resolved to a number, else the literal `none`. The append is hardened the same way the Stop hook's own scratch-then-rename write is, adapted for an append rather than a full-file replace (a rename would drop every earlier line): `mkdirSync(dir, { recursive: true, mode: 0o700 })`; `lstatSync` the target and refuse — write nothing — when it exists and is not a regular file or is a symlink; `openSync(path, 'a', 0o600)` and one `writeSync` ending in `\n`; close. The file rotates to `<name>.1.ndjson` (overwriting an older one) once it crosses 8 MiB, before the append that would have exceeded it — one rotation slot, not a numbered series.
 
+Before that overwrite, `reportRotationOverflow` reads whatever the existing `<name>.1.ndjson` backup holds and reports the loss (O2): each line's identity via the storage contract's own `recordIdentity`, folded into an `OverflowDiagnostic` (`{ reason: 'capacity', dropped, droppedIdentities }`), emitted through the sink's one-per-process `warn`. No prior backup (the first-ever rotation) reports nothing.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/log-sink.ts contains:function reportRotationOverflow( -->
+
 `log()` never throws. Every failure path — an invalid payload, an unwritable directory, a symlinked target — returns without writing, and at most one line reaches `process.stderr` per process, guarded by a module-level flag: a broken outbox must never spam a gate or redden a check.
 
 ## The flush

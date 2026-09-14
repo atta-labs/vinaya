@@ -19,9 +19,9 @@ import { lstatSync, readFileSync, statSync, writeFileSync, rmSync } from 'node:f
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
-import { classifyStoredLine, extractIssue, type ForgeOp } from '@attalabs/aeg-core'
+import { classifyStoredLine, extractIssue, isPrincipal, type ForgeOp } from '@attalabs/aeg-core'
 import { currentRunId, log, outboxPathFor as sinkOutboxPathFor, type LogEventInput } from './log-sink.js'
-import { GLOBAL_VINAYA_HOME } from './config.js'
+import { GLOBAL_VINAYA_HOME, loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 
 /** A comment is closed before adding the next line would push it past this (`apps/cli/specs/log.md`). */
 const FORGE_COMMENT_MAX_CHARS = 65536
@@ -154,7 +154,20 @@ function isSafeRepoSegment(segment: string): boolean {
   return SAFE_PATH_SEGMENT.test(segment) && !segment.includes('..')
 }
 
-type FlushChunk = { runId: string; seqFrom: number; seqTo: number; body: string }
+/**
+ * `lineCount` is the number of PHYSICAL raw lines this chunk actually
+ * consumes — `groupLines.length` at the point the chunk is pushed, never
+ * derived from `seqTo - seqFrom + 1`. The two diverge whenever `seq` has a
+ * gap: `log-sink.ts` assigns `mySeq` synchronously (`seq++`) before its own
+ * async validate-and-write chain, so a seq can be consumed with no line ever
+ * landing (an invalid payload, a rejected `resolveRepo()`). Counting by the
+ * seq span would then overstate how many raw lines this chunk actually
+ * covers, and the caller's running `postedLineCount` — a POSITIONAL index
+ * into `rawLines` — would drift ahead of the real count, silently truncating
+ * an unposted line off the front of the next, unrelated chunk (review
+ * finding, round 2, Issue #562).
+ */
+type FlushChunk = { runId: string; seqFrom: number; seqTo: number; lineCount: number; body: string }
 
 /** Thrown internally by `planFlush` when a single outbox line cannot fit in one comment even alone — never split across two. Caught and re-thrown as a `LogFlushError` before ever reaching a caller. */
 class LineTooLargeError extends Error {
@@ -223,16 +236,29 @@ function extractLogMarkers(body: string): string[] {
  * set, so the flush falls back to its pre-fix behavior (post everything)
  * rather than blocking on a telemetry-side read — telemetry never blocks the
  * governed effect (the spec's own rule).
+ *
+ * Only a marker found in a PRINCIPAL-AUTHORED comment is trusted (security
+ * review, round 2): a genuinely posted chunk exposes its own `run_id` in
+ * plaintext in the ndjson body, so anyone who can comment on the target could
+ * otherwise forge the next unposted seq range's marker and have this flush
+ * truncate — never post — it, a silent, unrecoverable loss. This is the same
+ * `principals`-anchored trust boundary `resolveNewestFrozenBrief` and the
+ * review/waiver-label gates already use for every other fact this codebase
+ * reads off a forge comment.
  */
 function existingLogMarkers(op: ForgeOp, targetId: string): Set<string> {
   const markers = new Set<string>()
   try {
+    const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
     const raw =
       op === 'pr.comment'
         ? gh(['pr', 'view', targetId, '--json', 'comments'])
         : gh(['issue', 'view', targetId, '--json', 'comments'])
-    const parsed = JSON.parse(raw) as { comments?: Array<{ body?: string }> }
+    const parsed = JSON.parse(raw) as {
+      comments?: Array<{ body?: string; author?: { login?: string } | null }>
+    }
     for (const comment of parsed.comments ?? []) {
+      if (!isPrincipal(comment.author?.login ?? null, allowlist)) continue
       for (const key of extractLogMarkers(comment.body ?? '')) markers.add(key)
     }
   } catch {
@@ -283,7 +309,13 @@ function planFlush(lines: readonly string[], maxChars: number): FlushChunk[] {
         groupLines = candidateLines
         seqTo = line.seq
       } else {
-        chunks.push({ runId, seqFrom, seqTo, body: renderChunk(runId, seqFrom, seqTo, groupLines) })
+        chunks.push({
+          runId,
+          seqFrom,
+          seqTo,
+          lineCount: groupLines.length,
+          body: renderChunk(runId, seqFrom, seqTo, groupLines)
+        })
         groupLines = [line.postLine]
         seqFrom = line.seq
         seqTo = line.seq
@@ -291,7 +323,13 @@ function planFlush(lines: readonly string[], maxChars: number): FlushChunk[] {
       }
     }
     if (groupLines.length > 0)
-      chunks.push({ runId, seqFrom, seqTo, body: renderChunk(runId, seqFrom, seqTo, groupLines) })
+      chunks.push({
+        runId,
+        seqFrom,
+        seqTo,
+        lineCount: groupLines.length,
+        body: renderChunk(runId, seqFrom, seqTo, groupLines)
+      })
     i = j
   }
   return chunks
@@ -492,13 +530,13 @@ export async function flushOutbox(target: LogFlushTarget, options: FlushOptions 
     const markerKey = `${chunk.runId}:${chunk.seqFrom}-${chunk.seqTo}`
     if (alreadyPosted.has(markerKey)) {
       // Remotely accepted on a prior attempt — acknowledge, never re-post.
-      postedLineCount += chunk.seqTo - chunk.seqFrom + 1
+      postedLineCount += chunk.lineCount
       continue
     }
     try {
       const id = postChunk(op, forgeTargetId, chunk.body, postedLineCount)
       commentIds.push(id)
-      postedLineCount += chunk.seqTo - chunk.seqFrom + 1
+      postedLineCount += chunk.lineCount
     } catch (err) {
       failure = { chunk, message: err instanceof Error ? err.message : String(err) }
       break

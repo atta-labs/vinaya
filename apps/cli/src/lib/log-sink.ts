@@ -24,7 +24,15 @@ import {
 import { hostname as osHostname, homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { resolveRepo as resolveRepoDefault } from '@attalabs/aeg-forge-state'
-import { buildHeader, type Host, type LogEvent, LogEventSchema, redact } from '@attalabs/aeg-core'
+import {
+  buildHeader,
+  type Host,
+  type LogEvent,
+  LogEventSchema,
+  type OverflowDiagnostic,
+  recordIdentity,
+  redact
+} from '@attalabs/aeg-core'
 import { GLOBAL_VINAYA_HOME } from './config.js'
 import { packageRoot } from './package-root.js'
 
@@ -158,14 +166,52 @@ function guardedAppendOpen(path: string): number | undefined {
 }
 
 /**
+ * Before a rotation overwrites `<name>.1.ndjson`, reads whatever that backup
+ * currently holds and reports the identities about to be permanently
+ * destroyed — an `OverflowDiagnostic` (the typed storage contract's own
+ * shape, `packages/aeg-core/src/log/store.ts`) computed via that module's
+ * `recordIdentity()`, the same identity function the fixture backend and the
+ * flush's read-back share (O1). This is what O2's "retention and overflow
+ * expose observable loss diagnostics" closes: the prior rotation overwrote
+ * this slot with no record of what it held. No existing backup (the first
+ * rotation ever, or one already reported and since re-rotated with nothing
+ * new in between) reports nothing — there is nothing to lose. Identities are
+ * capped in the printed message to keep one `warn` call bounded; `dropped`
+ * itself is always the true, uncapped count.
+ */
+function reportRotationOverflow(backupPath: string, warn: (message: string) => void): void {
+  let raw: string
+  try {
+    raw = readFileSync(backupPath, 'utf8')
+  } catch {
+    return
+  }
+  const lines = raw.split('\n').filter((l) => l.length > 0)
+  if (lines.length === 0) return
+  const droppedIdentities: string[] = lines.map((line, i) => {
+    try {
+      return recordIdentity(JSON.parse(line)) ?? `unreadable:${i}`
+    } catch {
+      return `unreadable:${i}`
+    }
+  })
+  const diagnostic: OverflowDiagnostic = { reason: 'capacity', dropped: droppedIdentities.length, droppedIdentities }
+  const shown = diagnostic.droppedIdentities.slice(0, 20)
+  const more = diagnostic.dropped > shown.length ? `, +${diagnostic.dropped - shown.length} more` : ''
+  warn(
+    `vinaya: log outbox rotation is overwriting ${backupPath} — ${diagnostic.dropped} record(s) permanently lost: ${shown.join(', ')}${more}\n`
+  )
+}
+
+/**
  * Appends `line` to `path`, hardened: `mkdirSync(dir, { recursive: true,
  * mode: 0o700 })`; opens with `O_NOFOLLOW` (refuses a symlink target
  * atomically, no separate stat-then-open race) and `fstat`s the already-open
  * descriptor — never re-resolves the path — to confirm a regular file and
  * read its live size for rotation. Rotates to `<name>.1.ndjson` (overwriting
- * an older one) when the live file is already at the cap, then reopens
- * fresh, still `O_NOFOLLOW`-guarded. One `writeSync` + close. Never throws —
- * every failure funnels into `warn`.
+ * an older one, reported first via `reportRotationOverflow`) when the live
+ * file is already at the cap, then reopens fresh, still `O_NOFOLLOW`-guarded.
+ * One `writeSync` + close. Never throws — every failure funnels into `warn`.
  */
 function appendLine(path: string, line: string, warn: (message: string) => void): void {
   try {
@@ -185,7 +231,9 @@ function appendLine(path: string, line: string, warn: (message: string) => void)
       if (stat.size > OUTBOX_MAX_BYTES) {
         closeSync(fd)
         closed = true
-        renameSync(path, path.replace(/\.ndjson$/, '.1.ndjson'))
+        const backupPath = path.replace(/\.ndjson$/, '.1.ndjson')
+        reportRotationOverflow(backupPath, warn)
+        renameSync(path, backupPath)
         const rotated = guardedAppendOpen(path)
         if (rotated === undefined) {
           warn(`vinaya: log outbox target could not be reopened after rotation — refusing: ${path}\n`)
