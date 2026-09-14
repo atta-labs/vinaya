@@ -703,6 +703,22 @@ const TOKENS_START = '<!-- AEG:TOKENS:START -->'
 const TOKENS_END = '<!-- AEG:TOKENS:END -->'
 const TOKEN_REPORT_HEADING = /^#{1,6}\s*token report\s*$/i
 const HEADING_LINE = /^#{1,6}\s/
+/**
+ * A boundary OTHER than a markdown heading that also ends the `## Token
+ * report` section. The canonical PR-body template's own reference material
+ * — the dispatched brief, pasted inside a collapsed `<details>` block —
+ * routinely sits directly after Token report and is itself full of
+ * `##`-numbered headings from the brief's own section structure. Bounding
+ * the "fresh block" scan on `HEADING_LINE` alone can walk PAST the section
+ * it is meant to stop at and INTO that pasted material, splicing at the
+ * pasted brief's own first heading and silently deleting everything
+ * between the Token report heading and that heading — the `<details>`/
+ * `<summary>` wrapper included. A bare `---` (a horizontal rule, the
+ * template's own separator before the pasted brief) or a `<details` tag is
+ * exactly as valid a "this section is over" signal as a heading — check it
+ * first.
+ */
+const NON_HEADING_SECTION_BOUNDARY = /^(---+|<details\b)/i
 const TOKEN_TABLE_HEADER = '| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |'
 const TOKEN_TABLE_SEPARATOR = '|---|---|---|---|---|---|---|'
 
@@ -758,7 +774,8 @@ export function writeTokensBlock(body: string, addition: string): string {
   if (headingIdx !== -1) {
     let sectionEnd = rawLines.length
     for (let i = headingIdx + 1; i < rawLines.length; i++) {
-      if (HEADING_LINE.test(rawLines[i] as string)) {
+      const line = rawLines[i] as string
+      if (HEADING_LINE.test(line) || NON_HEADING_SECTION_BOUNDARY.test(line.trim())) {
         sectionEnd = i
         break
       }

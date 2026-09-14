@@ -812,6 +812,62 @@ describe('writeTokensBlock', () => {
     expect(rows[0]).toMatchObject({ phase: '3: develop', role: 'Developer', tokensIn: 100, tokensOut: 50 })
     expect(rows[1]).toMatchObject({ phase: '3: develop', role: 'Developer', tokensIn: 200, tokensOut: 75 })
   })
+
+  it('a bare `---` after an anchor-less Token report heading ends the section there, never swallowing the `<details>` block past it', () => {
+    const body = [
+      '## Token report',
+      '',
+      'unavailable — see below.',
+      '',
+      '---',
+      '<details>',
+      '<summary>Reference material</summary>',
+      '',
+      '## 2. Context',
+      '',
+      'some brief content with its own numbered heading.',
+      '',
+      '</details>'
+    ].join('\n')
+    const updated = writeTokensBlock(body, ROW_1)
+    // The anchor-less section's own placeholder/prose content is replaced by
+    // the fresh block — same contract as the "replacing its placeholder
+    // content" case above. What must NOT happen is the replacement reaching
+    // past the `---` boundary into the pasted reference material.
+    expect(updated).toContain('---')
+    expect(updated).toContain('<details>')
+    expect(updated).toContain('<summary>Reference material</summary>')
+    expect(updated).toContain('## 2. Context')
+    expect(updated).toContain('some brief content with its own numbered heading.')
+    expect(updated).toContain('</details>')
+    expect(updated).toContain(ROW_1)
+    // Exactly one `<details>` opening tag — the fresh block never duplicates
+    // or displaces the wrapper it must leave untouched.
+    expect(updated.match(/<details>/g)).toHaveLength(1)
+    // The fresh block sits before the standalone `---` divider — never past
+    // it. (`indexOf('\n---\n')`, not `indexOf('---')`: the freshly-written
+    // table separator row is itself `|---|---|...|`, which also contains the
+    // substring `---` and would otherwise match first.)
+    expect(updated.indexOf(ROW_1)).toBeLessThan(updated.indexOf('\n---\n'))
+  })
+
+  it('a `<details>` tag directly after an anchor-less Token report heading ends the section there too, with no `---` present', () => {
+    const body = [
+      '## Token report',
+      '',
+      '<details>',
+      '<summary>Reference material</summary>',
+      '',
+      '## 2. Context',
+      '',
+      '</details>'
+    ].join('\n')
+    const updated = writeTokensBlock(body, ROW_1)
+    expect(updated).toContain('<details>')
+    expect(updated).toContain('## 2. Context')
+    expect(updated).toContain(ROW_1)
+    expect(updated.indexOf(ROW_1)).toBeLessThan(updated.indexOf('<details>'))
+  })
 })
 
 // Task 7 (#274): the block already appends any given row without collapsing
