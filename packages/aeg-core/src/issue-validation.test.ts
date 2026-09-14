@@ -813,6 +813,19 @@ describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
     expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
   })
 
+  it('a slug-qualified ref (`<slug> #n`) in Conflicts-with names the bare Issue it qualifies', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], ['task-log-v1 #550'])
+    const sibling = mk('550', ['packages/aeg-core/src/issue-validation.ts'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('the same slug-qualified pair with no edge declared is still refused', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'])
+    const sibling = mk('550', ['packages/aeg-core/src/issue-validation.ts'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+  })
+
   // task 17, O4 — shared-by-construction exemptions.
   it('passes an overlap under a shared `tests` directory — no Conflicts-with edge needed', () => {
     const subject = mk('42', ['apps/cli/tests/**'])

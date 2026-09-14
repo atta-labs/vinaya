@@ -1,5 +1,13 @@
 # @atta/aeg-forge-state
 
+## 0.27.1
+
+### Patch Changes
+
+- 75e2d46: Five doctrine defects fixed: the pre-push selector always runs test files named under a new `prePush.alwaysRun` config key plus every test file added or renamed in the diff; `rings.ring1_forgeWriteInterception`/`ring2_asyncAudits` now mean what they say (`true` runs the ring, `false` opts out — inverted from before, with a version-gated `vinaya upgrade` migration for a stale config, now bidirectional in either direction); `@attalabs/aeg-forge-state` ships two tested primitives for a bare `Depends-on`/`Conflicts-with` edge id — `requireTrancheQualifiedEdges`, which throws once a bare id could belong to more than one tranche, and `tranchesAttachedToMilestone`, which lists the distinct tranches attached to a Milestone via the forge — with the actual dispatch-gate refusal wired in by a separate task (`packages/aeg-core/bin/verify-dispatch.ts` is out of this task's Surface); the post-merge Archivist self-chains into `archive tranche`, which now appends a `### Retrospective: <slug>` section (task count, rounds per task, merged PRs) to the Milestone description once a tranche is complete; the evidence runner's per-command budget is now `report.commandTimeoutMs` (default 15 minutes, capped at 1 hour) instead of a hardcoded 30 seconds; and a closed Issue's status rules now run before `branch-exists`, so a closed NOT_PLANNED Issue with a lingering task branch reads `dropped`, never `in-flight`.
+- 201fd4e: `tranchesAttachedToMilestone` now fetches Issue labels only, server-side filtered and paginated through the buffered `gh` client, instead of a single unpaginated fetch of full Issue bodies — a Milestone holding many Issues with large bodies no longer overruns the process output buffer. The `Depends-on` resolver now resolves a bare backlog Issue number through that Issue's own pull request — by its `task/issue-<n>` branch, or by a `Closes #<n>` reference in a PR body — before falling back to the Issue's own closed/open state, so a merged backlog dependency is recognized as merged and a closed-but-unmerged one is not mistaken for it.
+- @attalabs/aeg-types@0.27.1
+
 ## 0.27.0
 
 ### Minor Changes

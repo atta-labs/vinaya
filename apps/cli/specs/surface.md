@@ -360,6 +360,24 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `trancheSlugOf` | function | `packages/aeg-forge-state/src/labels.ts` |
 | `projectsFromBody` | function | `packages/aeg-forge-state/src/list-tasks.ts` |
 | `mapForgeFacts` | function | `packages/aeg-forge-state/src/map-forge-facts.ts` |
+| `CONTROL_RECORD_VERSION` | const | `packages/aeg-core/src/control-store/records.ts` |
+| `parseRunRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `parseInputRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `parseOwnershipRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `parseTransitionRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `defaultControlStoreDeps` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `StaleEpochWriteError` | class | `packages/aeg-core/src/control-store/local.ts` |
+| `InvalidRunIdError` | class | `packages/aeg-core/src/control-store/local.ts` |
+| `readCurrentOwnership` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `acquireOwnership` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `writeRun` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `readRun` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `writeInput` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `readInput` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `appendTransition` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `readTransitions` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `defaultIsPidAlive` | function | `packages/aeg-core/src/control-store/migration.ts` |
+| `migrateLegacyTask` | function | `packages/aeg-core/src/control-store/migration.ts` |
 | `TASK_TOOL_ERROR_KINDS` | const | `packages/aeg-core/src/task-tools.ts` |
 | `TaskToolErrorSchema` | const | `packages/aeg-core/src/task-tools.ts` |
 | `taskToolError` | function | `packages/aeg-core/src/task-tools.ts` |
@@ -393,7 +411,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `TASK_TOOL_CATALOG` | const | `packages/aeg-core/src/task-tools.ts` |
 | `taskToolByName` | function | `packages/aeg-core/src/task-tools.ts` |
 
-(316 exports — 32 added by `task-operator-v1` task 1: the task-tool catalog. `TaskToolDefinition`/`TaskToolError`/`TaskToolErrorKind`/`TaskToolHandlerBinding`/`TaskToolName`/`TaskToolRef`/`Freshness`/`PageRequest`/`RequestedAuthority`/`TaskStatusInput`/`TaskStatusResult`/`TaskEscalationReadInput`/`TaskEscalationReadResult`/`TaskEscalationPacket`/`TaskStartInput`/`TaskResumeInput`/`TaskCancelInput` are type-only exports of the same file — per this file's own rule (line 11, "functions/consts/classes only"), they get no row.)
+(334 exports — 32 added by `task-operator-v1` task 1: the task-tool catalog. `TaskToolDefinition`/`TaskToolError`/`TaskToolErrorKind`/`TaskToolHandlerBinding`/`TaskToolName`/`TaskToolRef`/`Freshness`/`PageRequest`/`RequestedAuthority`/`TaskStatusInput`/`TaskStatusResult`/`TaskEscalationReadInput`/`TaskEscalationReadResult`/`TaskEscalationPacket`/`TaskStartInput`/`TaskResumeInput`/`TaskCancelInput` are type-only exports of the same file — per this file's own rule (line 11, "functions/consts/classes only"), they get no row; the remaining 18 come from `control-store-v1` task 1, merged separately.)
 
 ## Effects — `apps/cli/src/lib` public exports
 

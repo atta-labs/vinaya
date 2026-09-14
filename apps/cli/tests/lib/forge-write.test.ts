@@ -327,6 +327,155 @@ describe('the real (non-injected) rendered-brief-shape group also names its own 
 })
 
 // ---------------------------------------------------------------------------
+// O2 (Issue #588) — an unmerged `Depends-on` or an open `Conflicts-with` PR
+// is a fact about the forge right now, not a defect in the Issue being
+// edited: the write gate's rendered-brief validation folds it in as
+// `severity: 'warning'` and does not refuse the edit for it alone.
+// `task run`/`dispatchTask` (`dispatch-task.test.ts`) is untouched by this —
+// it never reads the new classification field and keeps refusing on the
+// same render gap exactly as before.
+// ---------------------------------------------------------------------------
+
+describe('an unmerged Depends-on folds into the write gate as informational, never a refusal (O2, Issue #588)', () => {
+  let tmpDir: string
+  let localDir: string
+  let originalCwd: string
+  let originalAegRepo: string | undefined
+  let originalPath: string | undefined
+
+  const RATIONALE_WITH_OPEN_DEPENDENCY = [
+    "## Task Issue — Planner's rationale",
+    '',
+    '**Boundary** — In: nothing real. Out: nothing.',
+    '',
+    '**Sizing** — n/a, test fixture.',
+    '',
+    '**Project(s) + blast radius** — `Project: cli`. No shared-primitive fan-out.',
+    '',
+    '**Dependency rationale** — `Depends-on: #999`; `Conflicts-with: —`.',
+    '',
+    '**Traps to avoid** — n/a.',
+    '',
+    '**Suggested agent-class** — fast — test fixture.',
+    '',
+    '**Stop-and-escalate** — n/a.',
+    '',
+    '**Docs to keep coherent** — no-doc-surface.'
+  ].join('\n')
+
+  // A COMPLETE body (every section `renderBrief` requires, unlike
+  // `bodyMissingStopConditions` above) — the fixture means to isolate the ONE
+  // dependency-not-merged blocker as the render's only gap, not conflate it
+  // with a genuine shape defect.
+  const bodyWithOpenDependency = [
+    '**Project:** cli',
+    '',
+    '## Objectives',
+    '',
+    'O1. The fixture exercises the real render path against a real, open (not-merged) dependency edge.',
+    '',
+    '## Surface',
+    '',
+    'in: aeg-root',
+    'out: —',
+    '',
+    '## Parts',
+    '',
+    'Part 1 (O1) — the only part, citing the only objective.',
+    '',
+    '## Test plan',
+    '',
+    'Test Plan: unit-tests-only',
+    '',
+    '## Stop conditions',
+    '',
+    '- n/a.',
+    '',
+    RATIONALE_WITH_OPEN_DEPENDENCY
+  ].join('\n')
+
+  beforeEach(() => {
+    // A clone, not a bare `git init` — `assembleAndRenderBriefForIssue` first
+    // asserts HEAD equals the remote default branch tip
+    // (`checkStaleAgainstRemote`), which needs a resolvable `origin`; the
+    // clone's local file-path remote resolves it with no live network call,
+    // same fixture shape `brief-assembly.test.ts`'s own
+    // `assembleAndRenderBriefForIssue` describe block already uses.
+    tmpDir = mkdtempSync(join(tmpdir(), 'vinaya-open-dependency-'))
+    const remoteDir = join(tmpDir, 'remote')
+    localDir = join(tmpDir, 'local')
+    mkdirSync(remoteDir, { recursive: true })
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: remoteDir })
+    execFileSync('git', ['config', 'user.email', 'a@example.com'], { cwd: remoteDir })
+    execFileSync('git', ['config', 'user.name', 'A'], { cwd: remoteDir })
+    mkdirSync(join(remoteDir, 'aeg-root', 'templates'), { recursive: true })
+    cpSync(
+      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
+      join(remoteDir, 'aeg-root', 'templates', 'brief-template.md')
+    )
+    writeFileSync(
+      join(remoteDir, 'vinaya.config.json'),
+      JSON.stringify({ briefSchema: { issue: { sections: [] } } }),
+      'utf8'
+    )
+    execFileSync('git', ['add', '.'], { cwd: remoteDir })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd: remoteDir })
+    execFileSync('git', ['clone', '-q', remoteDir, localDir], { cwd: tmpDir })
+    execFileSync('git', ['config', 'user.email', 'a@example.com'], { cwd: localDir })
+    execFileSync('git', ['config', 'user.name', 'A'], { cwd: localDir })
+
+    // A fake `gh` answering Issue #999's own state — open, closed by no
+    // merged pull request — the live "not merged yet" fact this fixture
+    // means to exercise for real, never a stand-in string.
+    const gh = join(localDir, 'gh')
+    writeFileSync(
+      gh,
+      `#!/bin/sh
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  echo '{"state":"OPEN","stateReason":null,"closedByPullRequestsReferences":[]}'
+  exit 0
+fi
+exit 1
+`
+    )
+    execFileSync('chmod', ['+x', gh])
+
+    originalAegRepo = process.env.AEG_REPO
+    process.env.AEG_REPO = 'test-owner/test-repo'
+    originalPath = process.env.PATH
+    process.env.PATH = `${localDir}:${process.env.PATH ?? ''}`
+    originalCwd = process.cwd()
+    process.chdir(localDir)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    process.env.AEG_REPO = originalAegRepo
+    process.env.PATH = originalPath
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('is reported with `severity: "warning"`, naming the dependency, and blocks nothing', async () => {
+    const errors = await collectTaskIssueErrors(
+      bodyWithOpenDependency,
+      'Feat: a well-formed title',
+      [],
+      'vinaya issue edit …',
+      null
+    )
+
+    const dependencyFinding = errors.find((e) => e.message.includes('depends on') && e.message.includes('#999'))
+    expect(dependencyFinding).toBeDefined()
+    expect(dependencyFinding?.severity).toBe('warning')
+
+    // The fixture names exactly one live fact (the open dependency) — every
+    // finding this run produces must be that same warning, never a refusal.
+    const blocking = errors.filter((e) => e.severity !== 'warning')
+    expect(blocking).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // O2 — every recovery prompt names its own fix, not its rule: it quotes the
 // specific finding it refuses (never merely the check's static rule text)
 // and states the edit that clears it.

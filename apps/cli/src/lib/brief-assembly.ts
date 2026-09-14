@@ -32,6 +32,7 @@ import {
   renderBrief,
   trancheLabel,
   type BriefFacts,
+  type DispatchBlocker,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
   type DispatchGateInput,
@@ -292,8 +293,23 @@ export function buildWorkspaceConsumersOf(): (pkg: string) => string[] {
  * instead of reusing the task id as if it were an Issue number (task 5,
  * Issue #447, O1) — live evidence: dispatching task 3 with this field
  * discarded posted its brief on Issue #3, an unrelated merged Issue.
+ *
+ * `dispatchBlockerDetails`, on the `ok: false` branch, is the dispatch
+ * gate's own classified verdict (`checkDispatchReadiness`'s
+ * `blockerDetails`) at the moment `renderBrief` ran — `undefined` when the
+ * render never reached that point (an earlier refusal: unresolved repo,
+ * stale checkout, task not found, …), `[]` when it ran and found nothing to
+ * block on. Additive: `dispatchTask`/`prepareTask` (`dispatch-task.ts`)
+ * never read it and keep refusing on a plain `ok: false` exactly as before
+ * (dispatch's own posture is unchanged). It exists so a caller that DOES
+ * need to tell a dependency/conflict finding apart from every other render
+ * gap (the Issue write gate, `forge-write.ts`'s
+ * `validateRenderedBriefForIssue`) can, without re-deriving the dispatch
+ * gate's own classification a second time.
  */
-export type AssembleAndRenderBriefResult = { ok: true; brief: string; issue: number } | { ok: false; missing: string[] }
+export type AssembleAndRenderBriefResult =
+  | { ok: true; brief: string; issue: number }
+  | { ok: false; missing: string[]; dispatchBlockerDetails?: DispatchBlocker[] }
 
 /**
  * **O2 (Issue #502) — names what dispatch looked for.** A bare "not
@@ -522,7 +538,9 @@ export async function assembleAndRenderBrief(
 
   const template = readFileSync(TEMPLATE_PATH, 'utf8')
   const result = renderBrief(facts, template)
-  return result.ok ? { ok: true, brief: result.brief, issue: task.issue } : { ok: false, missing: result.missing }
+  return result.ok
+    ? { ok: true, brief: result.brief, issue: task.issue }
+    : { ok: false, missing: result.missing, dispatchBlockerDetails: gate.blockerDetails }
 }
 
 /**
@@ -778,5 +796,7 @@ export async function assembleAndRenderBriefForIssue(
 
   const template = readFileSync(TEMPLATE_PATH, 'utf8')
   const result = renderBrief(facts, template)
-  return result.ok ? { ok: true, brief: result.brief, issue: issueNumber } : { ok: false, missing: result.missing }
+  return result.ok
+    ? { ok: true, brief: result.brief, issue: issueNumber }
+    : { ok: false, missing: result.missing, dispatchBlockerDetails: gate.blockerDetails }
 }
