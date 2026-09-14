@@ -301,15 +301,20 @@ export class ProtectedPathError extends Error {
 }
 
 /**
- * Resolves `.`/`..` segments and strips a leading `./` or `/` before the
- * prefix check below runs, so `foo/../.github/workflows/ci.yml`,
- * `./.github/x` and an absolute `/aeg-root/x` all normalize to the same
- * string a plain `.github/x` or `aeg-root/x` would — a raw `startsWith`
- * compare on the untouched path lets each of those three forms walk past
- * the check a normalized compare catches.
+ * Resolves the path as if rooted at a virtual `/` — via `posixPath.resolve`,
+ * never `posixPath.normalize` — so `foo/../.github/workflows/ci.yml`,
+ * `./.github/x`, an absolute `/aeg-root/x`, and a path that OPENS with an
+ * unresolved `..` (`../.github/x`, `../../aeg-root/x`) all normalize to the
+ * same string a plain `.github/x` or `aeg-root/x` would. `resolve` against a
+ * root has nowhere to go past that root, so a leading `..` collapses to the
+ * root itself instead of surviving in the output — `normalize` alone has no
+ * such floor and leaves an unresolvable leading `..` untouched, which is
+ * exactly the disguise that got past an earlier version of this check
+ * (`../.github/workflows/ci.yml` normalized to itself, never matching the
+ * `.github/` prefix below). The leading `/resolve` adds is stripped after.
  */
 function normalizeTouchedPath(path: string): string {
-  return posixPath.normalize(path.replace(/\\/g, '/')).replace(/^\/+/, '')
+  return posixPath.resolve('/', path.replace(/\\/g, '/')).replace(/^\/+/, '')
 }
 
 function isProtectedAdminPath(path: string): boolean {

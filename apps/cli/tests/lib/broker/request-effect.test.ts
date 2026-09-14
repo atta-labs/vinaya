@@ -156,7 +156,9 @@ describe('requestEffect', () => {
   it.each([
     ['foo/../.github/workflows/ci.yml', 'a `..` segment that resolves back onto a protected prefix'],
     ['./.github/x', 'a leading `./` that defeats a raw `startsWith` compare'],
-    ['/aeg-root/x', 'a leading `/` that makes the path look absolute']
+    ['/aeg-root/x', 'a leading `/` that makes the path look absolute'],
+    ['../.github/workflows/ci.yml', 'a leading, unresolved `..` with nothing preceding it to cancel against'],
+    ['../../aeg-root/x', 'two leading unresolved `..` segments']
   ])('refuses a protected path disguised by %s (%s)', (path) => {
     expect(() =>
       requestEffect(deps, worker, {
