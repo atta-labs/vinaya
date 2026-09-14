@@ -1,5 +1,31 @@
 # @atta/vinaya-sources
 
+## 0.27.1
+
+### Patch Changes
+
+- 5ffaba8: `vinaya dispatch` wires a `PreToolUse` deny rule into every claude dispatch's generated settings, refusing a Bash call with `run_in_background: true` and naming the foreground alternative. `devReviewLoop` resumes a developer that stopped without pushing (a dirty worktree or local commits ahead of the remote) once, in the foreground, before folding a still-unpushed turn into `pause{reason:'no_push'}`; a reviewer report with findings but no cited `FINDING_IDS` is sent back once before `report_uncitable` proceeds on its severities, never `no_progress`. The round cap is `reviewPolicy.maxRounds` (default 3), replacing a hardcoded constant. `evaluateReviewFindings` caps a finding located in the PR body, a comment, or a role file at `MINOR` before counting it — prose alone never blocks a merge — and `verdict-extraction`'s finding-severity read now carries each finding's location too, so the merge gate applies the identical cap. `vinaya pr report --push --body-file <path>` composes the whole body from a local source (regenerating Evidence/Tokens fresh) and writes it to the forge outright; bare `--push <n>` is unchanged.
+- 16c37b4: `CheckSpec` gains `validates: 'body' | 'issue'`. `vinaya pr create`/`pr edit`/`pr report --push` and `issue create`/`issue edit` now enforce every registered check whose `validates` is `'body'`/`'issue'` through the same runner CI uses — a new check registered later needs no further wiring. Six new core checks (`issue-title-grammar`, `issue-objectives-numbering`, `issue-parts-coverage`, `issue-surface-globs`, `issue-tranche-label`, `issue-milestone-attach`) validate a task Issue's own content at write time and in the coherence sweep. `checkClosesN` is split into `checkClosesNPresence` and `checkClosesNTopology` (two functions, two names, no more collision). The generated `vinaya-checks.yml`/`vinaya-body-checks.yml` re-read a pull request's body with a bounded backoff instead of trusting a single read that can race a `pr report --push`/`pr edit` still landing. The Surface-overlap refusal exempts a shared `tests`/`specs` directory and a glob every open task in a real multi-task Milestone cohort declares. A directory-only §4 (`boundaryNarrowsSurface`) now names its covered consumers' test directories explicitly, and `checkConsumerTests` accepts a bare `tests`/`specs` directory as coverage.
+- c812058: `vinaya task status` — every open task Issue carrying a frozen brief, its pull request, and whether its dev-review-loop is `running` (naming the driver pid), `paused` (naming the reason from the pause record), `published`, or has `no driver`, read from the outbox and the forge rather than a `ps` scan. `vinaya task status <tranche> <n>` narrows to one task and adds the last round's held or published verdict lines plus the exact resume command when paused. `--json` for the enveloped machine form.
+- Updated dependencies [5ffaba8]
+- Updated dependencies [63547a5]
+- Updated dependencies [7d5f119]
+- Updated dependencies [75e2d46]
+- Updated dependencies [38f5efc]
+- Updated dependencies [54c43fe]
+- Updated dependencies [201fd4e]
+- Updated dependencies [16c37b4]
+- Updated dependencies [2e4be63]
+- Updated dependencies [12420d0]
+- Updated dependencies [275b05f]
+- Updated dependencies [d257b83]
+- Updated dependencies [5ef94c1]
+- Updated dependencies [f7b3a5d]
+- Updated dependencies [47604c6]
+  - @attalabs/aeg-core@0.27.1
+  - @attalabs/aeg-forge-state@0.27.1
+  - @attalabs/aeg-types@0.27.1
+
 ## 0.27.0
 
 ### Minor Changes
