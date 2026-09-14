@@ -1,5 +1,16 @@
 # @atta/aeg-core
 
+## 0.27.2
+
+### Patch Changes
+
+- 5859c91: Adds `@attalabs/aeg-core`'s control-store: versioned run/input/ownership/transition records with a strict parser that refuses an unknown version or torn content as corrupt (never as absent), one local storage implementation with atomic durable writes and epoch-fenced ownership (a stale-epoch write is refused inside the store, not left to the caller to check), and a one-time migration from the dev-review-loop's legacy `driver.pid.json`/`pause-state.json`/`effect-*.json` side files. Not yet wired into the live driver — this is the new store and its migration path; adoption is a later task.
+- 83e0ffc: `@attalabs/aeg-core`'s `edgesNameEachOther` (backing the cross-task `## Surface` overlap check) now recognises a slug-qualified `Conflicts-with` edge (`<slug> #n` or `<slug> n`) as naming Issue `n`, the same qualification the dispatch gate's own bare-edge rule already requires — a `Conflicts-with` edge written in that form now satisfies both gates without being written twice.
+  
+  `vinaya issue create`/`edit`'s rendered-brief validation now folds an unmerged `Depends-on` or an open `Conflicts-with` PR into the write gate as an informational (`severity: 'warning'`) finding rather than a refusal of the edit — those facts describe the forge's current state, not a defect in the Issue being edited. `vinaya task run`/`task dispatch` is unaffected and continues refusing on either exactly as before.
+- @attalabs/aeg-forge-state@0.27.2
+  - @attalabs/aeg-types@0.27.2
+
 ## 0.27.1
 
 ### Patch Changes
