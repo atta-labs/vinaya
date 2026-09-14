@@ -64,7 +64,7 @@ describe('refuseUngrantedTool — the router refuses any tool outside the grant 
       const err = refuseUngrantedTool(u)
       expect(err).not.toBeNull()
       expect(err?.kind).toBe('authority')
-      expect(err?.message).toContain(u.trim() === u ? u : u) // names the offending tool
+      expect(err?.message).toContain(u) // names the offending tool
       // The refusal names the whole grant so the caller sees what it MAY reach.
       expect(err?.detail).toContain('task_status')
     }
