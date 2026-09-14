@@ -128,6 +128,12 @@ import {
   writeHeldVerdict
 } from './dev-review-loop/reviewer-dispatch.js'
 import {
+  buildReviewerScratch,
+  buildVerifiedReviewerCandidate,
+  cleanupAllReviewerIsolationArtifacts,
+  cleanupReviewerIsolationForRound
+} from './dev-review-loop/reviewer-isolation.js'
+import {
   assertDispatchOrEscalate,
   CONFIDENCE_FILE_NAME,
   CONFIDENCE_PROMPT_LINE,
@@ -744,6 +750,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     )
   }
   writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString() })
+  // O3 (`#561`): restart cleanliness — a crashed or killed prior run's own
+  // reviewer candidate/scratch directories never leak into this run. Safe
+  // on a fresh task (nothing to remove) and mid-recovery from a stale lock
+  // (above): this run builds its own artifacts for whichever round it
+  // reaches first and never reads a prior run's leftovers.
+  cleanupAllReviewerIsolationArtifacts(root, task)
 
   // True only for the two pause reasons that are
   // themselves an infrastructure/re-exec hiccup, never a human decision
@@ -1272,19 +1284,27 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       role: 'reviewer' | 'security',
       roundNum: number,
       facts: ReviewerPromptFacts,
-      firstVerdict: RoundVerdictParse
+      firstVerdict: RoundVerdictParse,
+      candidateDir: string | null
     ): Promise<{ verdict: RoundVerdictParse; findingsUncitable: boolean }> {
       const hasObjectives = hasObjectivesFacts(facts)
       const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
       const workDir = reviewerWorkDir(root, task, roundNum, role, 3)
       mkdirSync(workDir, { recursive: true })
       const prompt = citeFindingIdsPrompt(workDir)
+      // O2/O3 (`#561`): a fresh scratch copy for this resend attempt — never
+      // the first attempt's own, matching this function's own fresh-dispatch
+      // invariant. `null` when no candidate was built this round (a fresh
+      // attach with no local worktree yet) — `d.dispatchRole` then gets no
+      // `cwd` override, exactly as before this task.
+      const scratchDir = candidateDir ? buildReviewerScratch(root, task, roundNum, role, 3, candidateDir) : null
       const handle = await withPromptFile(prompt, (promptFile) =>
         d.dispatchRole(dispatchRoleName, input.agent, prompt, {
           task: task,
           round: roundNum,
           promptFile,
-          roleLogPath: loopLogPath
+          roleLogPath: loopLogPath,
+          ...(scratchDir ? { cwd: scratchDir } : {})
         })
       )
       await assertDispatchOrEscalate(handle, input.agent, false, false)
@@ -1312,7 +1332,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     async function dispatchReviewer(
       role: 'reviewer' | 'security',
       roundNum: number,
-      facts: ReviewerPromptFacts
+      facts: ReviewerPromptFacts,
+      candidateDir: string | null
     ): Promise<{ verdict: RoundVerdictParse; findingsUncitable: boolean }> {
       const hasObjectives = hasObjectivesFacts(facts)
       const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
@@ -1322,12 +1343,22 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const workDir = reviewerWorkDir(root, task, roundNum, role, attempt)
         mkdirSync(workDir, { recursive: true })
         const prompt = renderReviewerDispatchPrompt(role, facts, workDir)
+        // O1/O2 (`#561`): a fresh, writable copy of this round's shared,
+        // read-only candidate (built once, below, before both roles
+        // dispatch) — never the candidate itself, never the sibling role's
+        // own copy, and never a prior attempt's own (fresh per attempt,
+        // same invariant `reviewerWorkDir`'s own `attempt` suffix already
+        // holds for `findings.txt`/`report.txt`). `null` when no candidate
+        // was built this round — `cwd` is then omitted, exactly as every
+        // dispatch before this task.
+        const scratchDir = candidateDir ? buildReviewerScratch(root, task, roundNum, role, attempt, candidateDir) : null
         const handle = await withPromptFile(prompt, (promptFile) =>
           d.dispatchRole(dispatchRoleName, input.agent, prompt, {
             task: task,
             round: roundNum,
             promptFile,
-            roleLogPath: loopLogPath
+            roleLogPath: loopLogPath,
+            ...(scratchDir ? { cwd: scratchDir } : {})
           })
         )
         await assertDispatchOrEscalate(handle, input.agent, false, false)
@@ -1355,7 +1386,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           if (findingIdsCited(workDir, verdict.observation.findings.length)) {
             return { verdict, findingsUncitable: false }
           }
-          return await resendForFindingIds(role, roundNum, facts, verdict)
+          return await resendForFindingIds(role, roundNum, facts, verdict, candidateDir)
         } catch (err) {
           if (!(err instanceof ReviewerReportParseFailure)) throw err
           lastParseFailure = err
@@ -1508,11 +1539,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // `'launched'` record for the next start to trip over.
     process.on('SIGTERM', () => {
       d.terminateInFlightLaunchesOnShutdown(task, input.agent, repo)
+      cleanupAllReviewerIsolationArtifacts(root, task)
       recordDriverExited('signal')
       process.exit(143)
     })
     process.on('SIGINT', () => {
       d.terminateInFlightLaunchesOnShutdown(task, input.agent, repo)
+      cleanupAllReviewerIsolationArtifacts(root, task)
       recordDriverExited('signal')
       process.exit(130)
     })
@@ -2209,6 +2242,34 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 { verdict: RoundVerdictParse; findingsUncitable: boolean }
               ]
             | null = null
+          // O1 (`#561`): ONE shared, read-only candidate for this round,
+          // built once here — before either reviewer dispatches — from the
+          // developer's own local worktree, so both roles judge byte-
+          // identical content regardless of what that worktree does after
+          // this copy is taken. `null` when no local worktree exists on
+          // this machine (a fresh attach with nothing dispatched here yet)
+          // OR the local worktree's own head no longer matches the round's
+          // resolved candidate sha (round 2 review, MAJOR: a diverged local
+          // worktree copied blind would hand both reviewers content the
+          // manifest's `headSha` never actually pinned, with nothing else
+          // in this mechanism positioned to catch it) — `dispatchReviewer`
+          // then omits `cwd` entirely, the same as every round before this
+          // task.
+          const candidateSourceDir = worktreePathForBranch()
+          // `buildVerifiedReviewerCandidate` (reviewer-isolation.ts) checks
+          // the worktree's head both before AND after the copy — the local
+          // worktree can advance mid-copy (round 2 review, MINOR), and a
+          // candidate caught that way is discarded rather than handed to
+          // both reviewers as bytes the manifest's own `headSha` never
+          // actually pinned.
+          const candidateDir = buildVerifiedReviewerCandidate(
+            root,
+            task,
+            round,
+            candidateSourceDir,
+            head,
+            d.readWorktreeHead
+          )
           try {
             // O1/O2: the evidence report runs IN PARALLEL with both reviewer
             // dispatches, never before or after them — reviewers dispatch on
@@ -2220,8 +2281,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // gate's own `evidence-fresh` check is the real backstop for a
             // report that never lands.
             const [reviewerResult, securityResult, evidenceOutcome] = await Promise.all([
-              dispatchReviewer('reviewer', round, facts),
-              dispatchReviewer('security', round, facts),
+              dispatchReviewer('reviewer', round, facts, candidateDir),
+              dispatchReviewer('security', round, facts, candidateDir),
               d.runEvidenceReport(prNumber, worktreePathForBranch(), branch)
             ])
             verdicts = [reviewerResult, securityResult]
@@ -2244,6 +2305,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             const stats = computeStats(head, roundStartMs)
             await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
             decision = { type: 'pause', reason: 'infrastructure', detail: err.message }
+          } finally {
+            // O3: this round's candidate and every scratch copy any attempt
+            // created — removed the moment the round's reviewer dispatches
+            // are done with it, whether the round published, paused, or is
+            // about to hand another round back to the developer. Never
+            // conditioned on `verdicts` being set: an infrastructure failure
+            // above still built a candidate/scratch worth cleaning up.
+            cleanupReviewerIsolationForRound(root, task, round)
           }
 
           if (verdicts) {
