@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "vinaya-task-tools": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["apps/cli/dist/index.js", "task-tools", "serve"]
+    }
+  }
+}

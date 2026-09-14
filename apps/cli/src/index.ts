@@ -41,6 +41,7 @@ import { runStudio } from './commands/studio.js'
 import { taskBriefCommand, taskDispatchCommand } from './commands/task.js'
 import { taskRunCommand } from './commands/task-run.js'
 import { taskStatusCommand } from './commands/task-status.js'
+import { taskToolsServeCommand } from './commands/task-tools.js'
 import { tokensCommand } from './commands/tokens.js'
 import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
@@ -251,6 +252,16 @@ try {
         console.error(
           `Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch', 'brief', 'run', or 'status')`
         )
+        process.exit(2)
+      }
+      break
+    }
+    case 'task-tools': {
+      const [subcommand, ...rest] = args
+      if (subcommand === 'serve') {
+        await taskToolsServeCommand(rest)
+      } else {
+        console.error(`Unknown 'task-tools' subcommand: ${subcommand ?? '(none)'} (expected 'serve')`)
         process.exit(2)
       }
       break

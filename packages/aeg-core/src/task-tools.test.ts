@@ -6,6 +6,7 @@ import {
   TASK_TOOL_NAMES,
   taskToolByName,
   taskToolError,
+  taskStartRequestIdentity,
   capabilityUnavailable
 } from './task-tools'
 
@@ -38,8 +39,8 @@ describe('TASK_TOOL_CATALOG', () => {
     }
   })
 
-  it('the three mutating tools are stub-bound, the two read tools are bound', () => {
-    expect(taskToolByName('task_start').handlerBinding.kind).toBe('stub')
+  it('task_start and the two read tools are bound; task_resume/task_cancel are still stubs', () => {
+    expect(taskToolByName('task_start').handlerBinding.kind).toBe('bound')
     expect(taskToolByName('task_resume').handlerBinding.kind).toBe('stub')
     expect(taskToolByName('task_cancel').handlerBinding.kind).toBe('stub')
     expect(taskToolByName('task_status').handlerBinding.kind).toBe('bound')
@@ -48,6 +49,28 @@ describe('TASK_TOOL_CATALOG', () => {
 
   it('taskToolByName throws for an unknown name', () => {
     expect(() => taskToolByName('task_bogus' as never)).toThrow()
+  })
+})
+
+describe('taskStartRequestIdentity', () => {
+  const base = { caller: 'op1', repo: 'o/r', tranche: 'task-operator-v1', id: '2', payloadDigest: 'd1' }
+
+  it('is deterministic — the same input always yields the same id', () => {
+    expect(taskStartRequestIdentity(base)).toBe(taskStartRequestIdentity({ ...base }))
+  })
+
+  it('differs when any scoping field differs (caller, repo, target, payload)', () => {
+    const id = taskStartRequestIdentity(base)
+    expect(taskStartRequestIdentity({ ...base, caller: 'op2' })).not.toBe(id)
+    expect(taskStartRequestIdentity({ ...base, repo: 'o/other' })).not.toBe(id)
+    expect(taskStartRequestIdentity({ ...base, repo: null })).not.toBe(id)
+    expect(taskStartRequestIdentity({ ...base, tranche: 'other' })).not.toBe(id)
+    expect(taskStartRequestIdentity({ ...base, id: '3' })).not.toBe(id)
+    expect(taskStartRequestIdentity({ ...base, payloadDigest: 'd2' })).not.toBe(id)
+  })
+
+  it('is a stable, opaque token shape', () => {
+    expect(taskStartRequestIdentity(base)).toMatch(/^req_[0-9a-f]{32}$/)
   })
 })
 

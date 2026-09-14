@@ -21,6 +21,7 @@
  * a value that transport lets the caller set.
  */
 
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 
 // --- error taxonomy ---------------------------------------------------------
@@ -83,8 +84,8 @@ export function capabilityUnavailable(tool: TaskToolName, becauseOf: string): Ta
  * `apps/cli`).
  */
 export const TaskToolRefSchema = z.union([
-  z.object({ tranche: z.string().min(1), id: z.string().min(1) }),
-  z.object({ issue: z.number().int().positive() })
+  z.object({ tranche: z.string().min(1), id: z.string().min(1) }).strict(),
+  z.object({ issue: z.number().int().positive() }).strict()
 ])
 
 export type TaskToolRef = z.infer<typeof TaskToolRefSchema>
@@ -124,6 +125,7 @@ export const TaskStatusInputSchema = z
     task: TaskToolRefSchema.optional()
   })
   .merge(PageRequestSchema)
+  .strict()
 
 export type TaskStatusInput = z.infer<typeof TaskStatusInputSchema>
 
@@ -168,6 +170,7 @@ export const TaskEscalationReadInputSchema = z
     task: TaskToolRefSchema
   })
   .merge(PageRequestSchema)
+  .strict()
 
 export type TaskEscalationReadInput = z.infer<typeof TaskEscalationReadInputSchema>
 
@@ -196,21 +199,76 @@ export type TaskEscalationReadResult = z.infer<typeof TaskEscalationReadResultSc
 
 // --- task_start / task_resume / task_cancel (stubs — O3) ------------------
 
-export const TaskStartInputSchema = z.object({
-  tranche: z.string().min(1),
-  id: z.string().min(1)
-})
+export const TaskStartInputSchema = z
+  .object({
+    tranche: z.string().min(1),
+    id: z.string().min(1)
+  })
+  .strict()
 export type TaskStartInput = z.infer<typeof TaskStartInputSchema>
 
-export const TaskResumeInputSchema = z.object({
-  task: TaskToolRefSchema
+/**
+ * `task_start`'s durable result (O2): the request identity this start was
+ * scoped to, the durable run identity a caller can address it by (the task's
+ * tranche/id — its `task/<tranche>/<n>` branch is the addressing scheme every
+ * other tool and role already resolves through), whether THIS call started the
+ * run or replayed an already-started one (`started`), when it was first
+ * started, and the mode it ran in. `mode` is a literal `'attended'`: there is
+ * no unattended start until the worker-isolation boundary and a capability flag
+ * exist, so the field never carries any other value today.
+ */
+export const TaskStartResultSchema = z.object({
+  requestId: z.string().min(1),
+  run: z.object({ tranche: z.string().min(1), id: z.string().min(1) }),
+  started: z.boolean(),
+  startedAt: z.string(),
+  mode: z.literal('attended')
 })
+export type TaskStartResult = z.infer<typeof TaskStartResultSchema>
+
+/**
+ * The stable request identity a `task_start` call is idempotent on (O2) —
+ * scoped to the caller, the repo, the target task, and a digest of the call's
+ * own payload, so the same caller asking to start the same task twice collapses
+ * to one run, while a different caller, repo, target, or payload is a distinct
+ * request. Pure and deterministic: the same input always yields the same id,
+ * across processes and machines, which is what lets a durable store recognise a
+ * duplicate start after a disconnect. It authenticates nothing on its own — the
+ * `caller` value must come from the transport's invocation context, never a
+ * tool argument (this module's own header).
+ */
+export type TaskStartRequestInput = {
+  caller: string
+  repo: string | null
+  tranche: string
+  id: string
+  payloadDigest: string
+}
+
+export function taskStartRequestIdentity(input: TaskStartRequestInput): string {
+  const canonical = JSON.stringify({
+    caller: input.caller,
+    repo: input.repo,
+    tranche: input.tranche,
+    id: input.id,
+    payloadDigest: input.payloadDigest
+  })
+  return `req_${createHash('sha256').update(canonical).digest('hex').slice(0, 32)}`
+}
+
+export const TaskResumeInputSchema = z
+  .object({
+    task: TaskToolRefSchema
+  })
+  .strict()
 export type TaskResumeInput = z.infer<typeof TaskResumeInputSchema>
 
-export const TaskCancelInputSchema = z.object({
-  task: TaskToolRefSchema,
-  reason: z.string().min(1)
-})
+export const TaskCancelInputSchema = z
+  .object({
+    task: TaskToolRefSchema,
+    reason: z.string().min(1)
+  })
+  .strict()
 export type TaskCancelInput = z.infer<typeof TaskCancelInputSchema>
 
 /** No mutating tool below has a result shape yet — each one always refuses (O3) — so its schema is `z.never()`: a handler that ever resolves rather than refuses is a type error at the call site, not a silent success. */
@@ -281,16 +339,17 @@ export const TASK_ESCALATION_READ_TOOL: TaskToolDefinition<TaskEscalationReadInp
   }
 }
 
-export const TASK_START_TOOL: TaskToolDefinition<TaskStartInput, never> = {
+export const TASK_START_TOOL: TaskToolDefinition<TaskStartInput, TaskStartResult> = {
   name: 'task_start',
-  purpose: 'Start a fresh dev-review-loop run for a task that has never been dispatched.',
+  purpose:
+    'Start the dev-review-loop for an explicitly selected, already-frozen task, in attended mode, under the caller’s own credentials — wrapping the existing `runTask` composition and returning the durable run identity.',
   boundaries:
-    'Distinct from `task_resume`: this tool is only ever sensible for a task with no prior run at all. It refuses every call today (`capability_unavailable`) — no control manifest exists yet for it to write a run into (Traps to avoid: no new control manifest, no process start).',
+    'Distinct from `task_resume`: this tool starts a run, it does not continue a paused one. It refuses (`authority`) unless the invocation context carries an authenticated caller — MCP is a transport, not authorization, so the caller is never taken from an argument. It is idempotent per request identity (caller + repo + target + payload digest): asking twice returns the same run and starts nothing twice. ATTENDED MODE ONLY — the run it starts inherits the caller’s own environment and credentials; there is no unattended start and no attended bypass. An unattended start waits on the worker-isolation boundary and a capability flag a later tranche adds.',
   inputSchema: TaskStartInputSchema,
-  resultSchema: NoResultSchema,
+  resultSchema: TaskStartResultSchema,
   errorSchema: TaskToolErrorSchema,
   examples: [{ tranche: 'task-operator-v1', id: '1' }],
-  handlerBinding: { kind: 'stub', module: 'apps/cli/src/lib/task-tools/handlers.ts', export: 'taskStartHandler' }
+  handlerBinding: { kind: 'bound', module: 'apps/cli/src/lib/task-tools/start.ts', export: 'defaultTaskStartHandler' }
 }
 
 export const TASK_RESUME_TOOL: TaskToolDefinition<TaskResumeInput, never> = {

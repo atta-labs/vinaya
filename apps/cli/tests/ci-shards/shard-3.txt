@@ -46,3 +46,4 @@ tests/surface-index.test.ts
 tests/tokens.test.ts
 tests/lib/task-tools/router.test.ts
 tests/commands/operator-role.test.ts
+tests/lib/task-tools/start.test.ts

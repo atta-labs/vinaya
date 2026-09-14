@@ -19,7 +19,6 @@ import {
   TaskCancelInputSchema,
   TaskEscalationReadInputSchema,
   TaskResumeInputSchema,
-  TaskStartInputSchema,
   TaskStatusInputSchema,
   taskToolError,
   type TaskEscalationReadResult,
@@ -111,13 +110,10 @@ export function taskEscalationReadHandler(input: unknown): TaskToolCallResult<Ta
   })
 }
 
-// --- task_start / task_resume / task_cancel (O3 — refusing stubs) ---------
-
-export function taskStartHandler(input: unknown): TaskToolCallResult<never> {
-  const parsed = TaskStartInputSchema.safeParse(input)
-  if (!parsed.success) return fail(taskToolError('validation', parsed.error.issues[0]?.message ?? 'invalid input'))
-  return fail(capabilityUnavailable('task_start', 'no control store exists yet for it to start a run into'))
-}
+// --- task_resume / task_cancel (O3 — refusing stubs) ----------------------
+// `task_start` is no longer here — it is a real, caller-context-aware handler
+// in `start.ts` (O2). Resume and cancel remain refusing stubs — no process
+// start, no forge write — until a later tranche gives them a real handler.
 
 export function taskResumeHandler(input: unknown): TaskToolCallResult<never> {
   const parsed = TaskResumeInputSchema.safeParse(input)
