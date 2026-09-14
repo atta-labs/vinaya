@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { cpus } from 'node:os'
-import { globToRegex } from '@attalabs/aeg-core'
+import { globToRegex, type GateOutcome } from '@attalabs/aeg-core'
+import { log as defaultLog, type LogEventInput } from '../lib/log-sink.js'
 import { CHECK_SCHEMA_VERSION, type CheckError, type CheckOutcome, type CheckSpec, type CheckStatus } from './contract'
 
 export type RunOptions = {
@@ -38,6 +40,14 @@ export type RunOptions = {
    * pre-push/CI" from every other caller.
    */
   skipFull?: boolean
+  /**
+   * Injectable for tests — defaults to the process-wide Vinaya Log sink
+   * (`../lib/log-sink.js`'s `log`), the same singleton every check attempt
+   * in a real `vinaya check`/hook/CI invocation shares one `run_id` through
+   * (task-log-v1 3, O3: one process, one correlated run). A test passes its
+   * own capturing function instead of exercising the real outbox on disk.
+   */
+  log?: (e: LogEventInput) => void
 }
 
 /** A sane cpu-derived default — callers may override via `--parallel`. */
@@ -55,6 +65,71 @@ function isCheckError(value: unknown): value is CheckError {
     typeof v.message === 'string' &&
     typeof v.agent_recovery_prompt === 'string'
   )
+}
+
+/**
+ * `Vinaya Log`'s `gate` family chokepoint (`apps/cli/specs/log.md` "Six more
+ * families") — the ONE place this runner records an attempted check's
+ * observable outcome, for every terminal state `runOne`/`runChecks` can
+ * reach (pass, fail-as-rejected, fail-as-waiting, skip, timeout, and the two
+ * flavors of `error` this file distinguishes below), plus `cancelled` from
+ * the SIGINT/SIGTERM path. Called exactly once per (spec, attempt) — there is
+ * no retry inside this file, so there is nothing here that could double-emit
+ * for one check.
+ *
+ * `check_version` is this contract's own schema version (`CHECK_SCHEMA_VERSION`
+ * — every `CheckError` a check emits is validated against it); `policy_version`
+ * is honestly `null` — no per-check policy-version concept exists in the
+ * registry today (`CheckSpec` carries no version field, and a resolved
+ * check's `core`/`overridden`/`additive` state never reaches this file) —
+ * left for a later task to set for real, the same "declared, not yet real"
+ * pattern `apps/cli/specs/log.md` already documents for `input_versions`/
+ * `lineage`. `input_fingerprint` hashes the check's own real, constructed
+ * input (its allowlisted env plus, for a diff-scoped check, its sorted
+ * changed-file list) rather than transmitting it — a fingerprint identifies
+ * the input without leaking a forwarded secret value. `reason` is always a
+ * short structured code, never a check's own free-text message — the
+ * message may itself echo PR/Issue body content the check was validating,
+ * and a structured code is enough to distinguish one rejection shape from
+ * another without repeating that content into the log.
+ */
+function logGateChecked(params: {
+  spec: CheckSpec
+  outcome: GateOutcome
+  reason?: string
+  durationMs: number
+  fingerprint: string
+  logFn: (e: LogEventInput) => void
+}): void {
+  params.logFn({
+    kind: 'gate',
+    event: 'checked',
+    check: params.spec.name,
+    check_version: String(CHECK_SCHEMA_VERSION),
+    policy_version: null,
+    input_fingerprint: params.fingerprint,
+    outcome: params.outcome,
+    ...(params.reason !== undefined ? { reason: params.reason } : {}),
+    duration_ms: params.durationMs,
+    payload: {}
+  })
+}
+
+/**
+ * Hashes exactly what `buildCheckEnv` actually constructs for this check's
+ * child process, plus (for a `scope: 'diff'` check genuinely narrowed by
+ * `--diff-only`) its sorted changed-file list — the two things that vary the
+ * check's real input from one attempt to the next. A `sha256` digest, never
+ * the values themselves: `env` may carry a forwarded token
+ * (`{ anyOf: [...] }`/`true` declarations pull real caller secrets), and O2
+ * forbids leaking one into the log.
+ */
+function inputFingerprintFor(spec: CheckSpec, opts: RunOptions, callerEnv: NodeJS.ProcessEnv): string {
+  const env = buildCheckEnv(spec.env, callerEnv)
+  const diffScope =
+    spec.scope === 'diff' && opts.diffOnly && opts.changedFiles !== null ? [...opts.changedFiles].sort() : null
+  const canonical = JSON.stringify({ env, diffScope })
+  return createHash('sha256').update(canonical).digest('hex')
 }
 
 /**
@@ -88,33 +163,49 @@ function shouldSkip(spec: CheckSpec, opts: RunOptions): { skip: boolean; reason?
 const KILL_GRACE_MS = 2000
 
 /**
- * Every `killTree` currently in flight. `detached: true` below (needed so
- * the TIMEOUT path can reach a check's whole process tree) has a side
- * effect: it also removes each check from the terminal's own foreground
- * process group, so a terminal Ctrl+C (SIGINT) no longer reaches them at
- * all — without this registry, the CLI parent would die immediately
- * (Node's default SIGINT disposition, no handler installed) and orphan
- * every in-flight check exactly like the bug this whole file exists to
- * close, just reachable via interrupt instead of timeout.
+ * One entry per check currently spawned (registered right after `spawn`,
+ * removed right before `runOne` returns) — the SIGINT/SIGTERM handler below
+ * reads this to both kill every in-flight check's whole process tree AND
+ * (task-log-v1 3, O1) emit its `gate` observation as `cancelled` before this
+ * process exits, since a check killed this way never reaches one of
+ * `runOne`'s own `return` statements to log itself.
  */
-const activeKillers = new Set<(signal: NodeJS.Signals) => void>()
+type ActiveCheck = {
+  spec: CheckSpec
+  start: number
+  fingerprint: string
+  logFn: (e: LogEventInput) => void
+  kill: (signal: NodeJS.Signals) => void
+}
+const activeChecks = new Map<number, ActiveCheck>()
+let activeCheckSeq = 0
 let signalForwardingInstalled = false
 
 /**
  * Installed once per process (guarded, so repeated `runChecks` calls in a
  * long-lived host — or in this file's own test suite — never pile up
- * duplicate listeners). On SIGINT/SIGTERM: SIGTERM every active check's
- * group, grace period, SIGKILL whatever's still alive, then exit with the
- * conventional 128+signal code — mirroring the per-check escalation below
- * at the whole-CLI level.
+ * duplicate listeners). On SIGINT/SIGTERM: log every in-flight check as
+ * `cancelled`, SIGTERM every active check's group, grace period, SIGKILL
+ * whatever's still alive, then exit with the conventional 128+signal code —
+ * mirroring the per-check escalation below at the whole-CLI level.
  */
 function installSignalForwarding(): void {
   if (signalForwardingInstalled) return
   signalForwardingInstalled = true
-  const forward = (_signal: NodeJS.Signals, exitCode: number): void => {
-    for (const kill of activeKillers) kill('SIGTERM')
+  const forward = (signal: NodeJS.Signals, exitCode: number): void => {
+    for (const entry of activeChecks.values()) {
+      logGateChecked({
+        spec: entry.spec,
+        outcome: 'cancelled',
+        reason: `signal:${signal}`,
+        durationMs: performance.now() - entry.start,
+        fingerprint: entry.fingerprint,
+        logFn: entry.logFn
+      })
+    }
+    for (const entry of activeChecks.values()) entry.kill('SIGTERM')
     setTimeout(() => {
-      for (const kill of activeKillers) kill('SIGKILL')
+      for (const entry of activeChecks.values()) entry.kill('SIGKILL')
       process.exit(exitCode)
     }, KILL_GRACE_MS)
   }
@@ -186,13 +277,20 @@ export function buildCheckEnv(
  * at all" outcomes. `{ optional: true }` and a literal string never
  * synthesize: optional-by-declaration means absence is tolerated by
  * contract, and a literal never depends on the caller's environment.
+ *
+ * `keys` names every offending declared key or `anyOf` group (joined with
+ * `|`) alongside the synthesized errors — never a value, only the
+ * declaration's own key name(s) — so the gate observation below can name
+ * `unavailable_dependency`'s reason without re-deriving it from `errors[].message`.
  */
-function missingEnvErrors(spec: CheckSpec, callerEnv: NodeJS.ProcessEnv): CheckError[] {
-  if (!spec.env) return []
+function missingEnvErrors(spec: CheckSpec, callerEnv: NodeJS.ProcessEnv): { errors: CheckError[]; keys: string[] } {
+  if (!spec.env) return { errors: [], keys: [] }
   const errors: CheckError[] = []
+  const keys: string[] = []
   for (const [key, decl] of Object.entries(spec.env)) {
     if (decl === true) {
       if (callerEnv[key] === undefined) {
+        keys.push(key)
         errors.push({
           schema: CHECK_SCHEMA_VERSION,
           check: spec.name,
@@ -204,6 +302,7 @@ function missingEnvErrors(spec: CheckSpec, callerEnv: NodeJS.ProcessEnv): CheckE
     } else if (typeof decl === 'object' && decl !== null && 'anyOf' in decl) {
       const satisfied = decl.anyOf.some((member) => callerEnv[member] !== undefined)
       if (!satisfied) {
+        keys.push(decl.anyOf.join('|'))
         errors.push({
           schema: CHECK_SCHEMA_VERSION,
           check: spec.name,
@@ -214,20 +313,35 @@ function missingEnvErrors(spec: CheckSpec, callerEnv: NodeJS.ProcessEnv): CheckE
       }
     }
   }
-  return errors
+  return { errors, keys }
 }
 
-async function runOne(spec: CheckSpec, timeoutMs: number, callerEnv: NodeJS.ProcessEnv): Promise<CheckOutcome> {
+async function runOne(
+  spec: CheckSpec,
+  timeoutMs: number,
+  callerEnv: NodeJS.ProcessEnv,
+  fingerprint: string,
+  logFn: (e: LogEventInput) => void
+): Promise<CheckOutcome> {
   const start = performance.now()
 
-  const envErrors = missingEnvErrors(spec, callerEnv)
+  const { errors: envErrors, keys: missingKeys } = missingEnvErrors(spec, callerEnv)
   if (envErrors.length > 0) {
+    const durationMs = performance.now() - start
+    logGateChecked({
+      spec,
+      outcome: 'unavailable_dependency',
+      reason: `missing_env:${missingKeys.join(',')}`,
+      durationMs,
+      fingerprint,
+      logFn
+    })
     return {
       name: spec.name,
       status: 'error',
       exitCode: null,
       errors: envErrors,
-      durationMs: performance.now() - start
+      durationMs
     }
   }
 
@@ -265,7 +379,8 @@ async function runOne(spec: CheckSpec, timeoutMs: number, callerEnv: NodeJS.Proc
   }
 
   installSignalForwarding()
-  activeKillers.add(killTree)
+  const activeKey = activeCheckSeq++
+  activeChecks.set(activeKey, { spec, start, fingerprint, logFn, kill: killTree })
 
   /**
    * True once the child's own PID is confirmed gone — but a process GROUP
@@ -371,10 +486,11 @@ async function runOne(spec: CheckSpec, timeoutMs: number, callerEnv: NodeJS.Proc
     // scheduled — see the comment on `escalationDone` above.
     await escalationDone
   }
-  activeKillers.delete(killTree)
+  activeChecks.delete(activeKey)
   const durationMs = performance.now() - start
 
   if (timedOut) {
+    logGateChecked({ spec, outcome: 'timeout', reason: `timeout_ms:${timeoutMs}`, durationMs, fingerprint, logFn })
     return { name: spec.name, status: 'timeout', exitCode: null, errors: [], durationMs }
   }
 
@@ -383,6 +499,14 @@ async function runOne(spec: CheckSpec, timeoutMs: number, callerEnv: NodeJS.Proc
   // a bare `error` status and nothing to act on.
   if (spawnError) {
     const code = (spawnError as NodeJS.ErrnoException).code
+    logGateChecked({
+      spec,
+      outcome: 'unavailable_dependency',
+      reason: `spawn_failed:${code ?? 'unknown'}`,
+      durationMs,
+      fingerprint,
+      logFn
+    })
     return {
       name: spec.name,
       status: 'error',
@@ -439,6 +563,33 @@ async function runOne(spec: CheckSpec, timeoutMs: number, callerEnv: NodeJS.Proc
     status = 'error'
   }
 
+  if (status === 'error') {
+    logGateChecked({
+      spec,
+      outcome: 'invalid_input',
+      reason: malformed ? 'malformed_output' : `unexpected_exit_code:${exitCode}`,
+      durationMs,
+      fingerprint,
+      logFn
+    })
+  } else if (status === 'pass') {
+    logGateChecked({ spec, outcome: 'pass', durationMs, fingerprint, logFn })
+  } else {
+    // `status === 'fail'` — a `pending: true` error is "has not happened
+    // YET" (contract.ts), never "is wrong": every reported error pending
+    // means this attempt is waiting on a step outside the diff (the
+    // Principal ticking a Test Plan box, most often), not a rejection of it.
+    const waiting = errors.length > 0 && errors.every((e) => e.pending === true)
+    logGateChecked({
+      spec,
+      outcome: waiting ? 'wait' : 'fail',
+      reason: waiting ? 'pending_principal_action' : `errors:${errors.length}`,
+      durationMs,
+      fingerprint,
+      logFn
+    })
+  }
+
   return { name: spec.name, status, exitCode, errors, durationMs }
 }
 
@@ -462,8 +613,9 @@ async function runOne(spec: CheckSpec, timeoutMs: number, callerEnv: NodeJS.Proc
  * ever got to fire. `detached: true`'s other side effect — removing every
  * check from the terminal's foreground process group, so Ctrl+C no longer
  * reaches them — is closed by `installSignalForwarding`: every in-flight
- * check's `killTree` is registered in `activeKillers`, and a SIGINT/SIGTERM
- * to the CLI itself forwards to all of them before the CLI exits.
+ * check is registered in `activeChecks`, and a SIGINT/SIGTERM to the CLI
+ * itself logs each as a `gate` `cancelled` observation and forwards the
+ * signal to all of them before the CLI exits.
  *
  * Env allowlist, live since the flip (task 3, #776): a spawned check's
  * child process sees only the fixed baseline plus its own declared `env`
@@ -475,16 +627,32 @@ async function runOne(spec: CheckSpec, timeoutMs: number, callerEnv: NodeJS.Proc
  * The skip decision above (`shouldSkip`) runs before any of this: a
  * `scope: 'diff'` check skipped by `--diff-only` never reaches `runOne`, so
  * it can never fail over an env var it was never going to read.
+ *
+ * Every outcome this function or `runOne` reaches — skip, pass, fail
+ * (rejected or waiting), timeout, and the two `error` flavors
+ * (`unavailable_dependency`/`invalid_input`) — is recorded as one `gate`
+ * `checked` observation (`logGateChecked`, task-log-v1 3, O1) at the exact
+ * point the outcome is decided, so the recorded reason always matches real
+ * local context rather than being re-derived from the returned
+ * `CheckOutcome` after the fact. This never changes what `runChecks`
+ * returns or what `isRunFailed` reads from it (task-log-v1 3 Traps: "do not
+ * modify gate decisions while adding observations") — the log call is
+ * strictly additional to every existing return statement.
  */
 export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<CheckOutcome[]> {
   const callerEnv = opts.callerEnv ?? process.env
+  const logFn = opts.log ?? defaultLog
   const results: CheckOutcome[] = new Array(specs.length)
+  const fingerprints: string[] = new Array(specs.length)
   const toRun: number[] = []
 
   for (let i = 0; i < specs.length; i++) {
     const spec = specs[i] as CheckSpec
+    const fingerprint = inputFingerprintFor(spec, opts, callerEnv)
+    fingerprints[i] = fingerprint
     const skip = shouldSkip(spec, opts)
     if (skip.skip) {
+      logGateChecked({ spec, outcome: 'skip', reason: skip.reason, durationMs: 0, fingerprint, logFn })
       results[i] = {
         name: spec.name,
         status: 'skipped',
@@ -504,7 +672,13 @@ export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<C
       const idx = toRun[cursor] as number
       cursor += 1
       const spec = specs[idx] as CheckSpec
-      results[idx] = await runOne(spec, spec.timeoutMs ?? opts.defaultTimeoutMs, callerEnv)
+      results[idx] = await runOne(
+        spec,
+        spec.timeoutMs ?? opts.defaultTimeoutMs,
+        callerEnv,
+        fingerprints[idx] as string,
+        logFn
+      )
     }
   }
 
