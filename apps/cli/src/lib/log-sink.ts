@@ -255,9 +255,9 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
               role: env.VINAYA_ROLE,
               task: env.VINAYA_TASK,
               round: env.VINAYA_ROUND,
-              // Not yet set by any caller (control-store-v1, worker-isolation-v1
-              // own wiring these) — read now so the envelope carries the slot
-              // honestly `null` today, real once a later task starts setting it.
+              // Not yet set by any caller — read now so the envelope carries
+              // the slot honestly `null` today, real once a future producer
+              // starts setting it.
               run: env.VINAYA_RUN,
               attempt: env.VINAYA_ATTEMPT,
               parent: env.VINAYA_PARENT_EVENT

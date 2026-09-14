@@ -1,7 +1,7 @@
 /**
- * The Vinaya Log's typed event schema (Linear "Tech spec — The Vinaya Log",
- * rev 4 originally; this task, `task-log-v1` 1, `#550`, versions the
- * envelope to `schema: 2` and widens `kind` past the first three families).
+ * The Vinaya Log's typed event schema (Linear "Tech spec — The Vinaya Log").
+ * This module versions the envelope to `schema: 2` and widens `kind` past
+ * the first three families it originally shipped with.
  *
  * Three families shipped first — `dispatch`, `dev_review_loop`, and
  * `forge_write`. This task adds six more — `gate`, `operation`,
@@ -21,9 +21,9 @@
  * (or a fixture recorded before this task) keeps parsing, never a schema
  * violation just because it predates these fields (O1's "compatible").
  * Absent per-field data on a `2` header is `null`, never invented — the
- * lineage/input-version identities this task declares are real producers'
- * job to fill in (worker-isolation-v1, control-store-v1); this task ships
- * the typed slot, honestly empty until then.
+ * lineage/input-version identities declared here are a real producer's job
+ * to fill in later; this module ships the typed slot, honestly empty until
+ * then.
  *
  * `subject.role` keeps its EXISTING closed-`Role`-or-`'unattributed'`
  * meaning unchanged — it is relied on outside this module (`dispatch.ts`,
@@ -92,7 +92,7 @@ const HeaderMetaV1Schema = z
   })
   .strict()
 
-/** Task/run/attempt/parent lineage (O1). Each identity is `null` until a real producer fills it in — declared here, enforced by later tasks in this tranche (control-store-v1, worker-isolation-v1). `task` is not repeated here — `subject.issue` already carries it. */
+/** Task/run/attempt/parent lineage (O1). Each identity is `null` until a real producer fills it in — declared here, enforced by a later producer. `task` is not repeated here — `subject.issue` already carries it. */
 const LineageSchema = z
   .object({
     run: z.string().nullable(),
@@ -655,8 +655,8 @@ export type HandoffEvent = z.infer<typeof HandoffEventSchema>
 // `forge_write` family, which stays exactly as it was — a forge write is
 // one specific effect this schema does not yet generalize `forge_write`
 // into; "telemetry never substitutes for required intent" (the spec's own
-// words) is why this is fail-open observation, not the fail-closed control
-// store control-store-v1 will add.
+// words) is why this is fail-open observation, not a fail-closed control
+// store.
 
 const EffectTargetSchema = z
   .object({
