@@ -109,6 +109,8 @@ import {
   resolvePrincipalAllowlist
 } from './config'
 import { printJson } from './envelope'
+import type { EffectIdentity, EffectReconcileResult } from './effects.js'
+import { sha256Hex } from './effects.js'
 
 // ---------------------------------------------------------------------------
 // Arg errors — a malformed `--body-file` is a refusal in the CheckError shape,
@@ -1784,6 +1786,11 @@ export function countMarkerComments(bodies: string[], prefix: string): number {
   return bodies.filter((b) => b.startsWith(prefix)).length
 }
 
+/** The exact bytes `postMarkedComment` posts — exported so a caller computing a payload digest for reconciliation (`EffectIdentity.payloadDigest`, `apps/cli/src/lib/effects.ts`) hashes the SAME string this function actually sends, rather than a hand-reconstructed copy that could drift from it. */
+export function markedCommentBody(marker: string, body: string): string {
+  return `${marker}\n${body}\n`
+}
+
 /**
  * Posts `body`, prefixed with `marker` on its own first line, as a comment on
  * an Issue or PR — the same buffered-temp-file shape `pr.ts`'s
@@ -1791,7 +1798,7 @@ export function countMarkerComments(bodies: string[], prefix: string): number {
  * printed. A failed post is a hard refusal: nothing durable was recorded.
  */
 export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: string, body: string): string {
-  const commentBody = `${marker}\n${body}\n`
+  const commentBody = markedCommentBody(marker, body)
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-marked-comment-'))
   const tmp = join(dir, 'comment.md')
   writeFileSync(tmp, commentBody, 'utf8')
@@ -1811,5 +1818,49 @@ export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: str
     ])
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * An `EffectReconciler` (`apps/cli/src/lib/effects.ts`) over `gh {issue,pr}
+ * view --json comments`: fetches every comment on `ref`, and reports
+ * `'confirmed'` (with that comment's own url) the instant one's `body` hashes
+ * to `identity.payloadDigest` — exact-body matching, the same assumption
+ * `commands/review-post.ts`'s own `verifyPostedEscalation` already makes
+ * (`comments.find((c) => c.body === postedBody)`) for a re-fetched comment
+ * against what this process itself posted. A `gh` failure, or JSON this
+ * shape does not parse, is reported `'ambiguous'` — never treated as
+ * "confirmed absent," since a failed read proves nothing about the remote.
+ * Only a SUCCESSFUL read with no matching body is `'absent'`.
+ */
+export function reconcileGhComment(
+  kind: 'issue' | 'pr',
+  ref: string
+): (identity: EffectIdentity) => EffectReconcileResult {
+  return (identity) => {
+    let raw: string
+    try {
+      raw = execFileSync('gh', [kind, 'view', ref, '--json', 'comments'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+    } catch (err) {
+      return {
+        outcome: 'ambiguous',
+        reason: `could not fetch ${kind} ${ref}'s comments (\`gh ${kind} view --json comments\`): ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+    let parsed: { comments: { body: string; url?: string }[] }
+    try {
+      parsed = JSON.parse(raw) as { comments: { body: string; url?: string }[] }
+    } catch (err) {
+      return {
+        outcome: 'ambiguous',
+        reason: `could not parse ${kind} ${ref}'s comments JSON: ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+    const match = parsed.comments.find((c) => sha256Hex(c.body) === identity.payloadDigest)
+    if (match) return { outcome: 'confirmed', url: match.url ?? '' }
+    return { outcome: 'absent' }
   }
 }
