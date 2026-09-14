@@ -656,8 +656,17 @@ function resolvedRegistry(): CheckSpec[] {
  * unconditionally underneath it would silently reintroduce exactly the
  * validation the opt-out was set to remove.
  *
- * Refuses (never returns) on any finding — same contract as `refuse()`
- * itself, which this calls.
+ * A `principalOwed` check whose every reported error is `pending: true` is
+ * excluded from the refusal decision, matching `isRunFailed`'s (`commands/
+ * check.ts`) own rule exactly: `test-plan`'s unticked-`[principal]` wait
+ * state is enforcement `review-gate` already owns at merge, not a reason to
+ * stop a body write mid-round. A structural failure on the same check — no
+ * `## Test Plan` section (no `pending` errors at all), or a mix of pending
+ * and non-pending errors — still refuses, because that half the Developer
+ * can actually fix.
+ *
+ * Refuses (never returns) on any other finding — same contract as
+ * `refuse()` itself, which this calls.
  */
 export async function runBodyChecks(
   body: string,
@@ -684,7 +693,13 @@ export async function runBodyChecks(
     localOnly: prNumber === undefined
   })
 
-  const errors = outcomes.filter((o) => o.status === 'fail' || o.status === 'error').flatMap((o) => o.errors)
+  const errors = outcomes
+    .filter((o) => o.status === 'fail' || o.status === 'error')
+    .flatMap((o) => {
+      const spec = specs.find((s) => s.name === o.name)
+      if (spec?.principalOwed && o.errors.length > 0 && o.errors.every((e) => e.pending === true)) return []
+      return o.errors
+    })
   if (errors.length === 0) return
   refuse(
     errors.map((e) =>
