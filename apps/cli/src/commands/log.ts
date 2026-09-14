@@ -79,7 +79,7 @@ export async function logFlushCommand(args: string[]): Promise<void> {
 
   const target: LogFlushTarget = parsed.pr !== undefined ? { pr: parsed.pr } : { issue: parsed.issue as number }
 
-  const outcome = await flushOutbox(target).catch((err: unknown) => {
+  const outcome = await flushOutbox(target, { skipRemotelyAccepted: true }).catch((err: unknown) => {
     if (err instanceof LogFlushError) {
       if (err.warning) emitAuditLineWarning(err.warning)
       refuse2(makeCheckError(err.code, err.message, RECOVERY_PROMPTS[err.code]))
