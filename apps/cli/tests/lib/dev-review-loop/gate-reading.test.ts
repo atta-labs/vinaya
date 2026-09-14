@@ -7,6 +7,12 @@
  *     backoff, before it counts as a real failure; a persistent one still
  *     throws after the bound.
  *
+ *   - O1/O3 (`driver-lifecycle-v1` task 2, `#607`): `fetchFailingCheckRuns`
+ *     carries each failing run's own id and `started_at` alongside its
+ *     name — the identity a pause built from it can be audited against —
+ *     and, because it reads the same already-deduped list, a failure a
+ *     later same-named run has superseded with a pass never appears in it.
+ *
  * Faked at the `$PATH` boundary (a real, tiny, executable `gh` stand-in) and
  * run in a genuinely FRESH `bun` subprocess with that `$PATH` baked into its
  * own spawn-time `env` — never a runtime `process.env.PATH` mutation of
@@ -58,7 +64,7 @@ function writeFakeGh(dir: string, script: string): void {
 
 /**
  * Runs `snippet` (a bare expression statement using `fetchCiConclusion` /
- * `fetchFailingCheckNames` / `fetchMergeableState`, already in scope) as a
+ * `fetchFailingCheckRuns` / `fetchMergeableState`, already in scope) as a
  * fresh `bun -e` subprocess, with `binDir` prepended to that subprocess's
  * OWN spawn-time `PATH` — never this test process's `process.env.PATH`.
  */
@@ -68,7 +74,7 @@ function runGateReading(
   extraEnv: Record<string, string> = {}
 ): { status: number; stdout: string; stderr: string } {
   const script = `
-    import { fetchCiConclusion, fetchFailingCheckNames, fetchMergeableState } from ${JSON.stringify(GATE_READING)}
+    import { fetchCiConclusion, fetchFailingCheckRuns, fetchMergeableState } from ${JSON.stringify(GATE_READING)}
     ${snippet}
   `
   const r = spawnSync('bun', ['-e', script], {
@@ -94,12 +100,12 @@ exit 1
     )
     const r = runGateReading(
       dir,
-      `console.log(fetchCiConclusion(${JSON.stringify(HEAD)})); console.log(JSON.stringify(fetchFailingCheckNames(${JSON.stringify(HEAD)})))`
+      `console.log(fetchCiConclusion(${JSON.stringify(HEAD)})); console.log(JSON.stringify(fetchFailingCheckRuns(${JSON.stringify(HEAD)})))`
     )
     expect(r.stderr).toBe('')
-    const [conclusion, names] = r.stdout.trim().split('\n')
+    const [conclusion, runs] = r.stdout.trim().split('\n')
     expect(conclusion).toBe('green')
-    expect(JSON.parse(names as string)).toEqual([])
+    expect(JSON.parse(runs as string)).toEqual([])
   })
 
   it('the reverse order (the NEWER started_at is the failure, but carries the LOWER id) reads red', () => {
@@ -117,12 +123,14 @@ exit 1
     )
     const r = runGateReading(
       dir,
-      `console.log(fetchCiConclusion(${JSON.stringify(HEAD)})); console.log(JSON.stringify(fetchFailingCheckNames(${JSON.stringify(HEAD)})))`
+      `console.log(fetchCiConclusion(${JSON.stringify(HEAD)})); console.log(JSON.stringify(fetchFailingCheckRuns(${JSON.stringify(HEAD)})))`
     )
     expect(r.stderr).toBe('')
-    const [conclusion, names] = r.stdout.trim().split('\n')
+    const [conclusion, runs] = r.stdout.trim().split('\n')
     expect(conclusion).toBe('red')
-    expect(JSON.parse(names as string)).toEqual(['token-report'])
+    // O3 (`#607`): the surviving run is named by id and started_at, not just
+    // by check name — the audit trail a pause detail is later built from.
+    expect(JSON.parse(runs as string)).toEqual([{ name: 'token-report', id: 1, startedAt: '2026-09-14T10:05:00Z' }])
   })
 })
 
