@@ -81,9 +81,10 @@ import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log
 import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
+  describeFailingCheckRun,
   fetchCiConclusion,
   fetchConflictingFiles,
-  fetchFailingCheckNames,
+  fetchFailingCheckRuns,
   fetchMergeableState,
   gitCommitsTouchingDriverPaths,
   type MergeableState,
@@ -168,9 +169,10 @@ import {
 // resolves from this exact path, either defined below or re-exported from
 // the module that now owns it (task 8, `#506`).
 export {
+  describeFailingCheckRun,
   fetchCiConclusion,
   fetchConflictingFiles,
-  fetchFailingCheckNames,
+  fetchFailingCheckRuns,
   fetchMergeableState,
   gitCommitsTouchingDriverPaths,
   readWorktreeHead,
@@ -237,7 +239,7 @@ export type LoopDeps = {
   resolveHead: typeof resolveHead
   fetchCiConclusion: typeof fetchCiConclusion
   /** O3: named check-runs, never the review gate's own (excluded upstream). */
-  fetchFailingCheckNames: typeof fetchFailingCheckNames
+  fetchFailingCheckRuns: typeof fetchFailingCheckRuns
   fetchRulings: typeof fetchRulings
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   fetchFrozenBrief: typeof fetchFrozenBrief
@@ -594,7 +596,7 @@ function defaultDeps(): LoopDeps {
     dispatchRole: realDispatchRole,
     resolveHead,
     fetchCiConclusion,
-    fetchFailingCheckNames,
+    fetchFailingCheckRuns,
     fetchRulings,
     fetchNewestRulingOrdinal,
     fetchFrozenBrief,
@@ -1396,7 +1398,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       green: boolean
       stats: RoundStats
       ciConclusion: 'green' | 'red' | 'pending'
-      /** O3: the mechanical check-runs that actually failed, never the review gate's own — empty unless `ciConclusion === 'red'`. */
+      /** O3 (`#607`): the mechanical check-runs that actually failed, named by check name AND run — never the review gate's own, never a superseded run (`fetchFailingCheckRuns` is already deduped to the newest per name) — empty unless `ciConclusion === 'red'`. */
       failingChecks: string[]
     }> {
       const head = d.resolveHead(branch)
@@ -1410,7 +1412,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         d.sleep,
         `devReviewLoop: CI never resolved off 'pending' for head ${head} within the poll budget.`
       ).catch(() => 'red' as const)
-      const failingChecks = conclusion === 'red' ? d.fetchFailingCheckNames(head) : []
+      const failingChecks = conclusion === 'red' ? d.fetchFailingCheckRuns(head).map(describeFailingCheckRun) : []
       return {
         green: conclusion === 'green',
         stats: computeStats(head, roundStartMs),

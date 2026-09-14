@@ -136,21 +136,32 @@ export function fetchCiConclusion(headSha: string): 'green' | 'red' | 'pending' 
   return 'red'
 }
 
+/** One completed, non-passing mechanical check-run — the identity a pause built from it can be audited against (`#607`, O3). */
+export type FailingCheckRun = { name: string; id: number; startedAt: string | null }
+
 /**
- * The names of every completed, non-passing mechanical check-run for
- * `headSha` — never the review gate's own (same exclusion as
- * `fetchCiConclusion`). Used to tell the developer exactly what to fix (O3)
- * instead of a bare "CI is red." Empty when the fetch fails or nothing has
- * failed yet (a still-`pending` run names nothing — there is nothing to fix
- * until it resolves).
+ * Every completed, non-passing mechanical check-run for `headSha` — never
+ * the review gate's own (same exclusion as `fetchCiConclusion`). Already
+ * deduped to the newest run per check name (`fetchMechanicalCheckRuns`'s own
+ * O3, `#595`), so a failure a later same-named run has superseded with a
+ * pass is never in this list (`#607`, O1). Used to tell the developer
+ * exactly what to fix, and to name the run a pause was built from, instead
+ * of a bare "CI is red." Empty when the fetch fails or nothing has failed
+ * yet (a still-`pending` run names nothing — there is nothing to fix until
+ * it resolves).
  */
-export function fetchFailingCheckNames(headSha: string): string[] {
+export function fetchFailingCheckRuns(headSha: string): FailingCheckRun[] {
   const latest = fetchMechanicalCheckRuns(headSha)
   if (latest === null) return []
   return latest
     .filter((r) => r.status === 'completed')
     .filter((r) => r.conclusion !== 'success' && r.conclusion !== 'neutral' && r.conclusion !== 'skipped')
-    .map((r) => r.name)
+    .map((r) => ({ name: r.name, id: r.id, startedAt: r.started_at ?? null }))
+}
+
+/** `#607` O3: the display form a pause detail (or a gate-red retry prompt) names a failing run by — the check name plus its run id, so the SAME name appearing again in a later, superseded run is never mistaken for the one a pause was actually built from. */
+export function describeFailingCheckRun(run: FailingCheckRun): string {
+  return run.startedAt ? `${run.name} (run ${run.id}, started ${run.startedAt})` : `${run.name} (run ${run.id})`
 }
 // --- mergeability (O4/O5/O7) ------------------------------------------------
 
