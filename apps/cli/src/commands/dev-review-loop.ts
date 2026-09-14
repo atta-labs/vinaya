@@ -1,27 +1,39 @@
 /**
  * `vinaya dev-review-loop --task <n> --agent claude|codex|gemini`, or
- * `vinaya dev-review-loop --resume <pr> --agent …` (`#415`, `#416` O2). A
- * thin argv-parsing shim over `devReviewLoop` (`../lib/dev-review-loop.js`)
- * — the real driver logic, including `--resume`'s held-state/ruling/head
- * checks, lives there; both flags build the SAME `LoopInput` union and make
- * the SAME one lib call, so this stays a one-lib-call command regardless of
- * which flag was given. Four lib calls (`loadConfig`, `isAgentVendor`,
- * `devReviewLoop`, `printJson`), the same argv-plumbing shape `dispatch`'s
- * own command takes (`apps/cli/specs/surface.md`) — exempt under the same
- * `sharedCommandShell` retirement target, not a fifth compliant
+ * `vinaya dev-review-loop --resume <pr> --agent …`, or `vinaya
+ * dev-review-loop --cancel <pr> --agent …` (`#415`, `#416` O2;
+ * `--cancel` added `control-store-v1` task 6, `#556`, O3). A thin
+ * argv-parsing shim over `devReviewLoop`/`cancelDevReviewLoop`
+ * (`../lib/dev-review-loop.js`) — the real logic, including `--resume`'s and
+ * `--cancel`'s held-state/ruling/escalation checks, lives there; `--task`
+ * and `--resume` build the SAME `LoopInput` union into the SAME one
+ * `devReviewLoop` call, and `--cancel` makes the SAME one
+ * `cancelDevReviewLoop` call, so every invocation of this command still
+ * makes exactly one lib call regardless of which flag was given. Five lib
+ * calls in total (`loadConfig`, `isAgentVendor`, `devReviewLoop`,
+ * `cancelDevReviewLoop`, `printJson`), the same argv-plumbing shape
+ * `dispatch`'s own command takes (`apps/cli/specs/surface.md`) — exempt
+ * under the same `sharedCommandShell` retirement target, not a compliant
  * one-lib-call command.
  */
 
 import { colourLoopLine, isAgentVendor, type AgentVendor } from '../lib/dispatch.js'
 import { loadConfig } from '../lib/config.js'
 import { printJson } from '../lib/envelope.js'
-import { devReviewLoop, type LoopInput } from '../lib/dev-review-loop.js'
+import { cancelDevReviewLoop, devReviewLoop, type LoopInput } from '../lib/dev-review-loop.js'
 
-type ParsedArgs = { task: number | undefined; resumePr: number | undefined; agent: string | undefined; json: boolean }
+type ParsedArgs = {
+  task: number | undefined
+  resumePr: number | undefined
+  cancelPr: number | undefined
+  agent: string | undefined
+  json: boolean
+}
 
 function parseArgs(args: string[]): ParsedArgs {
   let task: number | undefined
   let resumePr: number | undefined
+  let cancelPr: number | undefined
   let agent: string | undefined
   let json = false
   for (let i = 0; i < args.length; i++) {
@@ -32,10 +44,14 @@ function parseArgs(args: string[]): ParsedArgs {
     // matches `task run --issue <n>` / `task brief --issue <n>`.
     if (a === '--task' || a === '--issue') task = Number(args[++i])
     else if (a === '--resume') resumePr = Number(args[++i])
+    // O3 (`#556`): the mirror of `--resume <pr>` — cancels the SAME held
+    // pause a `--resume` would otherwise continue, rather than dispatching
+    // anything.
+    else if (a === '--cancel') cancelPr = Number(args[++i])
     else if (a === '--agent') agent = args[++i]
     else if (a === '--json') json = true
   }
-  return { task, resumePr, agent, json }
+  return { task, resumePr, cancelPr, agent, json }
 }
 
 export async function devReviewLoopCommand(args: string[]): Promise<void> {
@@ -53,6 +69,26 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
   const agent: AgentVendor = agentRaw
+
+  // O3: `--cancel <pr>` is its own path, never a `LoopInput` variant — a
+  // cancelled run never re-enters the round loop, it only authenticates,
+  // consumes, terminates, and fences (`cancelDevReviewLoop`'s own doc
+  // comment).
+  if (parsed.cancelPr !== undefined) {
+    if (!Number.isInteger(parsed.cancelPr) || parsed.cancelPr <= 0) {
+      process.stderr.write('vinaya dev-review-loop: --cancel <pr> requires a positive integer PR number\n')
+      process.exit(1)
+    }
+    const result = await cancelDevReviewLoop({ cancelPr: parsed.cancelPr, agent })
+    if (parsed.json) {
+      printJson(result)
+    } else {
+      process.stdout.write(
+        `${colourLoopLine(`vinaya dev-review-loop: task ${result.task}, PR #${parsed.cancelPr} — cancelled`, process.stdout)}\n`
+      )
+    }
+    return
+  }
 
   let input: LoopInput
   if (parsed.resumePr !== undefined) {
@@ -97,5 +133,5 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'dev-review-loop': { date: '2026-09-10', callsToday: 5, retiresVia: 'sharedCommandShell' }
+  'dev-review-loop': { date: '2026-09-15', callsToday: 6, retiresVia: 'sharedCommandShell' }
 }
