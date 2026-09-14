@@ -223,6 +223,11 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `RoleAttemptOutcomeSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `RoleSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `UsageEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `classifyStoredLine` | function | `packages/aeg-core/src/log/store.ts` |
+| `createFixtureStore` | function | `packages/aeg-core/src/log/store.ts` |
+| `KNOWN_SCHEMA_VERSIONS` | const | `packages/aeg-core/src/log/store.ts` |
+| `readPageFrom` | function | `packages/aeg-core/src/log/store.ts` |
+| `recordIdentity` | function | `packages/aeg-core/src/log/store.ts` |
 | `checkMainBranchRefusal` | function | `packages/aeg-core/src/main-branch-refusal.ts` |
 | `checkManifestValidity` | function | `packages/aeg-core/src/manifest-validity.ts` |
 | `parseNoDocRules` | function | `packages/aeg-core/src/manifest-validity.ts` |
@@ -411,7 +416,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `TASK_TOOL_CATALOG` | const | `packages/aeg-core/src/task-tools.ts` |
 | `taskToolByName` | function | `packages/aeg-core/src/task-tools.ts` |
 
-(334 exports — 32 added by `task-operator-v1` task 1: the task-tool catalog. `TaskToolDefinition`/`TaskToolError`/`TaskToolErrorKind`/`TaskToolHandlerBinding`/`TaskToolName`/`TaskToolRef`/`Freshness`/`PageRequest`/`RequestedAuthority`/`TaskStatusInput`/`TaskStatusResult`/`TaskEscalationReadInput`/`TaskEscalationReadResult`/`TaskEscalationPacket`/`TaskStartInput`/`TaskResumeInput`/`TaskCancelInput` are type-only exports of the same file — per this file's own rule (line 11, "functions/consts/classes only"), they get no row; the remaining 18 come from `control-store-v1` task 1, merged separately.)
+(339 exports — 5 added by `task-log-v1` task 2: the typed log storage contract (`classifyStoredLine`, `createFixtureStore`, `KNOWN_SCHEMA_VERSIONS`, `readPageFrom`, `recordIdentity`, all in `packages/aeg-core/src/log/store.ts`; its `LogStore`/`ReadRecord`/`ReadPage`/`AppendOutcome`/`OverflowDiagnostic`/`ReadDiagnostics`/`RecordIdentity`/`FixtureStoreOptions` are type-only exports, no row). 32 added by `task-operator-v1` task 1: the task-tool catalog. `TaskToolDefinition`/`TaskToolError`/`TaskToolErrorKind`/`TaskToolHandlerBinding`/`TaskToolName`/`TaskToolRef`/`Freshness`/`PageRequest`/`RequestedAuthority`/`TaskStatusInput`/`TaskStatusResult`/`TaskEscalationReadInput`/`TaskEscalationReadResult`/`TaskEscalationPacket`/`TaskStartInput`/`TaskResumeInput`/`TaskCancelInput` are type-only exports of the same file — per this file's own rule (line 11, "functions/consts/classes only"), they get no row; the remaining 18 come from `control-store-v1` task 1, merged separately.)
 
 ## Effects — `apps/cli/src/lib` public exports
 

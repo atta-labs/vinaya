@@ -2,6 +2,23 @@ export { buildHeader } from './envelope'
 export type { HeaderInput } from './envelope'
 export { redact } from './redact'
 export {
+  classifyStoredLine,
+  createFixtureStore,
+  KNOWN_SCHEMA_VERSIONS,
+  readPageFrom,
+  recordIdentity
+} from './store'
+export type {
+  AppendOutcome,
+  FixtureStoreOptions,
+  LogStore,
+  OverflowDiagnostic,
+  ReadDiagnostics,
+  ReadPage,
+  ReadRecord,
+  RecordIdentity
+} from './store'
+export {
   DispatchEventSchema,
   DevReviewLoopEventSchema,
   EffectEventSchema,
