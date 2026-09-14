@@ -278,7 +278,7 @@ export function printDriverLockLine(message: string): void {
   process.stderr.write(`vinaya dev-review-loop: ${message}\n`)
 }
 
-// --- escalation and resolution (control-store-v1 task 6, #556) -------------
+// --- escalation and resolution (#556) ---------------------------------------
 
 /**
  * Per `PauseReason` — who a pause is addressed to, and what the driver

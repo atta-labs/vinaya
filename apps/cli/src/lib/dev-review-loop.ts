@@ -2610,7 +2610,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   }
 }
 
-// --- cancel (O3, control-store-v1 task 6, #556) -----------------------------
+// --- cancel (O3, #556) -------------------------------------------------------
 
 export type CancelInput = { cancelPr: number; agent: AgentVendor }
 export type CancelResult = { task: number; escalationId: string; fencedEffectKeys: string[] }

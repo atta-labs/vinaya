@@ -2,7 +2,7 @@
  * `vinaya dev-review-loop --task <n> --agent claude|codex|gemini`, or
  * `vinaya dev-review-loop --resume <pr> --agent …`, or `vinaya
  * dev-review-loop --cancel <pr> --agent …` (`#415`, `#416` O2;
- * `--cancel` added `control-store-v1` task 6, `#556`, O3). A thin
+ * `--cancel` added by `#556`, O3). A thin
  * argv-parsing shim over `devReviewLoop`/`cancelDevReviewLoop`
  * (`../lib/dev-review-loop.js`) — the real logic, including `--resume`'s and
  * `--cancel`'s held-state/ruling/escalation checks, lives there; `--task`
