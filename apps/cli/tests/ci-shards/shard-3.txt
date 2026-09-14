@@ -41,3 +41,4 @@ tests/roles/contract.test.ts
 tests/studio.test.ts
 tests/surface-index.test.ts
 tests/tokens.test.ts
+tests/lib/task-tools/router.test.ts

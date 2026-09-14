@@ -41,3 +41,4 @@ tests/roles/resolver.test.ts
 tests/tracked-hooks.test.ts
 tests/upgrade.test.ts
 tests/waiver.test.ts
+tests/lib/task-tools/handlers.test.ts
