@@ -3114,6 +3114,153 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
   }, 20000)
 })
 
+// --- control-store-v1 task 4 (#554): the loop recovers budgets and held
+// results from control state, not from optional event history -------------
+
+function controlStoreLoopStatePath(home: string): string {
+  return join(home, '.vinaya', 'control-store', String(TASK), 'loop-state.json')
+}
+
+function writeControlStoreLoopState(home: string, record: Record<string, unknown>): void {
+  const path = controlStoreLoopStatePath(home)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, JSON.stringify(record), 'utf8')
+}
+
+describe('devReviewLoop — control-store-v1 task 4 (#554, O2): mechanical-retry budgets survive a restart, never reset', () => {
+  it('a fresh process seeded with a prior stall count from the control store pauses after one fewer turn than a genuinely fresh one would', () => {
+    const { home, cwd, path } = setUpNeverPushes()
+
+    // Simulates a driver that stalled once, then died (a kill, a crash) —
+    // the control-store record a REAL in-flight process would already have
+    // written the instant it incremented `gateStalledStreak`
+    // (`persistCurrentLoopState`, called right there, never only once a
+    // pause eventually fires).
+    writeControlStoreLoopState(home, {
+      version: 1,
+      kind: 'loop_state',
+      task: TASK,
+      round: 1,
+      phase: 'dispatch_developer',
+      pauseReason: null,
+      budgets: { mechanicalRetries: 1, reviewRounds: 1, infrastructureRetries: 0 },
+      heldResult: null,
+      deliveredFindings: null,
+      recordedAt: new Date().toISOString()
+    })
+
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
+    })
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // A genuinely fresh process needs THREE developer turns before this
+    // bound (round 1's own entry, then two stalled retries —
+    // `MAX_GATE_STALLED_TURNS`). Seeded at 1 already, this run needed only
+    // ONE retry after its own entry turn — the seed carried over rather
+    // than resetting to 0.
+    const prompts = readdirSync(home).filter((f) => /^\.dev-prompt-\d+\.txt$/.test(f))
+    expect(prompts).toHaveLength(2)
+
+    const persisted = JSON.parse(readFileSync(controlStoreLoopStatePath(home), 'utf8')) as {
+      phase: string
+      pauseReason: string
+      budgets: { mechanicalRetries: number; infrastructureRetries: number }
+    }
+    expect(persisted.budgets.mechanicalRetries).toBe(2)
+    expect(persisted.budgets.infrastructureRetries).toBe(1)
+    expect(persisted.phase).toBe('pause')
+    expect(persisted.pauseReason).toBe('infrastructure')
+  }, 20000)
+})
+
+describe('devReviewLoop — control-store-v1 task 4 (#554, O3): a delivered-findings identity in the control store prevents a second redelivery, even with no local marker file', () => {
+  it('reads as no_progress and dispatches nobody, purely from the control-store record — the local round-<k>-attach-redelivered marker never exists in this fixture', () => {
+    const { home, cwd, path } = setUpAttachRecoversHeldRound()
+
+    const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    mkdirSync(heldDir, { recursive: true })
+    writeFileSync(
+      join(heldDir, 'round-1-reviewer.md'),
+      `VERDICT: REQUEST CHANGES\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`
+    )
+    writeFileSync(join(heldDir, 'round-1-security.md'), `VERDICT: FAIL\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`)
+
+    // No `round-1-attach-redelivered` marker on disk — this machine's local
+    // side file is exactly what a different host, or a cleaned outbox,
+    // would be missing. The control store alone carries the fact that
+    // round 1's findings were already delivered on this exact head.
+    writeControlStoreLoopState(home, {
+      version: 1,
+      kind: 'loop_state',
+      task: TASK,
+      round: 1,
+      phase: 'dispatch_developer',
+      pauseReason: null,
+      budgets: { mechanicalRetries: 0, reviewRounds: 1, infrastructureRetries: 0 },
+      heldResult: { round: 1, head: HEAD_SHA },
+      deliveredFindings: { round: 1, head: HEAD_SHA },
+      recordedAt: new Date().toISOString()
+    })
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(no_progress\)/)
+
+    expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
+    expect(existsSync(join(heldDir, 'round-2-reviewer-work'))).toBe(false)
+    expect(existsSync(join(heldDir, 'round-2-security-work'))).toBe(false)
+    expect(
+      existsSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-attach-redelivered'))
+    ).toBe(false)
+  }, 20000)
+})
+
+describe('devReviewLoop — control-store-v1 task 4 (#554, O1/O3): round numbering recovers from the control store alone when both the local held files AND the forge-flushed journal are missing', () => {
+  it('dispatches round 2 directly with neither a held-verdict file nor any outbox/forge event history to reconstruct it from', () => {
+    const { home, cwd, path } = setUpAttachRecoversHeldRound()
+
+    // Deliberately nothing else: no `round-1-reviewer.md`/`round-1-security.md`
+    // (the local held-verdict recovery this task's own O1 says recovery must
+    // stop depending on alone), and no outbox NDJSON / forge-flushed
+    // `dev_review_loop` comments either (`writeFakeGhAttach`'s own `pr view
+    // --json comments` replays only what this run itself posts, starting
+    // empty) — the task's optional event history is entirely absent. Only
+    // the control store's own round-2 record survives.
+    writeControlStoreLoopState(home, {
+      version: 1,
+      kind: 'loop_state',
+      task: TASK,
+      round: 2,
+      phase: 'dispatch_reviewers',
+      pauseReason: null,
+      budgets: { mechanicalRetries: 0, reviewRounds: 2, infrastructureRetries: 0 },
+      heldResult: null,
+      deliveredFindings: { round: 1, head: HEAD_SHA },
+      recordedAt: new Date().toISOString()
+    })
+
+    const worktreeDir = join(cwd, '.worktrees', BRANCH)
+    mkdirSync(worktreeDir, { recursive: true })
+    writeFileSync(join(worktreeDir, '.vinaya-confidence'), 'CONFIDENCE: 90 — recovered from control state\n')
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    // Reviewers ran at round 2 — never a reset to round 1 for want of the
+    // held files or the journal this task's optional telemetry would
+    // otherwise have supplied.
+    const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    expect(existsSync(join(heldDir, 'round-2-reviewer-work'))).toBe(true)
+    expect(existsSync(join(heldDir, 'round-2-security-work'))).toBe(true)
+    expect(existsSync(join(heldDir, 'round-1-reviewer-work'))).toBe(false)
+    expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
+  }, 20000)
+})
+
 /**
  * Same as `writeFakeGhAlwaysRedCi`, except the mechanical check-run named
  * `Vinaya CI` answers with TWO runs: an older `success`, superseded by a
