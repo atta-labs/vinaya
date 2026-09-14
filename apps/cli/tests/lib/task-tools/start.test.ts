@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'bun:test'
-import type { RepoRef } from '@attalabs/aeg-forge-state'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import { createTaskStartHandler, type RequestStore, type StartRecord } from '../../../src/lib/task-tools/start.js'
 
@@ -12,7 +11,7 @@ import { createTaskStartHandler, type RequestStore, type StartRecord } from '../
  * leaves one run) is `protocol.test.ts`.
  */
 
-const REPO: RepoRef = { owner: 'attalabs', repo: 'vinaya' } as RepoRef
+const REPO_ROOT = '/repo/checkout-a'
 const CALLER: CallerContext = { caller: { id: 'operator-1' } }
 const NO_CALLER: CallerContext = { caller: null }
 
@@ -34,11 +33,11 @@ function memStore(): { store: RequestStore; map: Map<string, StartRecord> } {
   }
 }
 
-function harness(overrides: { launch?: () => void } = {}) {
+function harness(overrides: { launch?: () => void; repoRoot?: string | null } = {}) {
   const launches: Array<{ tranche: string; id: string }> = []
   const { store, map } = memStore()
   const handler = createTaskStartHandler({
-    resolveRepo: async () => REPO,
+    repoRoot: () => overrides.repoRoot ?? REPO_ROOT,
     store,
     launch: (target) => {
       // Override first: a throwing launcher records nothing, mirroring a real
@@ -100,6 +99,40 @@ describe('task_start handler', () => {
     if (!a.ok || !b.ok) return
     expect(a.result.requestId).not.toBe(b.result.requestId)
     expect(launches).toHaveLength(2)
+  })
+
+  it('scopes the request identity to the local checkout — two repos sharing the durable store never collide', async () => {
+    const launches: Array<{ tranche: string; id: string }> = []
+    const { store: sharedStore } = memStore()
+    const handlerFor = (root: string) =>
+      createTaskStartHandler({
+        repoRoot: () => root,
+        store: sharedStore,
+        launch: (target) => launches.push(target),
+        now: () => '2026-01-01T00:00:00.000Z'
+      })
+    const a = await handlerFor('/repo/checkout-a')({ tranche: 'task-operator-v1', id: '2' }, CALLER)
+    const b = await handlerFor('/repo/checkout-b')({ tranche: 'task-operator-v1', id: '2' }, CALLER)
+    expect(a.ok && b.ok).toBe(true)
+    if (!a.ok || !b.ok) return
+    expect(a.result.requestId).not.toBe(b.result.requestId)
+    expect(a.result.started).toBe(true)
+    expect(b.result.started).toBe(true)
+    expect(launches).toHaveLength(2)
+  })
+
+  it('is unaffected by a flaky repo lookup — the same underlying checkout always computes the same identity', async () => {
+    // A network-resolved repo (the old identity input) can return successfully
+    // on one call and fail transiently on the next for the same checkout;
+    // `repoRoot` never does, since it is local and synchronous — this pins that
+    // the identity computation itself has no such input to begin with.
+    const { handler: first } = harness({ repoRoot: REPO_ROOT })
+    const a = await first({ tranche: 'task-operator-v1', id: '2' }, CALLER)
+    const { handler: second } = harness({ repoRoot: REPO_ROOT })
+    const b = await second({ tranche: 'task-operator-v1', id: '2' }, CALLER)
+    expect(a.ok && b.ok).toBe(true)
+    if (!a.ok || !b.ok) return
+    expect(a.result.requestId).toBe(b.result.requestId)
   })
 
   it('releases the claimed identity when the launch fails synchronously, so a retry can start it', async () => {

@@ -9,7 +9,14 @@
  *     transport, not authorization, so the caller is never read from an
  *     argument (`server.ts`, `packages/aeg-core/src/task-tools.ts`).
  *   - is idempotent per REQUEST IDENTITY — caller + repo + target + payload
- *     digest (`taskStartRequestIdentity`, `@attalabs/aeg-core`). The first call
+ *     digest (`taskStartRequestIdentity`, `@attalabs/aeg-core`). The repo
+ *     component is the local checkout's git toplevel path (`repoRoot`,
+ *     `../diff-evidence.js`), never a network-resolved GitHub owner/repo: a
+ *     remote lookup can fail transiently and succeed on retry, which would
+ *     silently change the identity between two calls meant to collapse into
+ *     one run — the local path is synchronous and deterministic for the
+ *     lifetime of this server process, so it can never do that, and it still
+ *     tells two different checkouts on the same machine apart. The first call
  *     claims the identity in a durable store and starts the run detached; a
  *     second call with the same identity finds the claim and returns the same
  *     durable run identity WITHOUT starting a second run. Because the claim is
@@ -33,9 +40,9 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { resolveRepo as realResolveRepo, type RepoRef } from '@attalabs/aeg-forge-state'
 import { TaskStartInputSchema, type TaskStartResult, taskStartRequestIdentity, taskToolError } from '@attalabs/aeg-core'
 import { GLOBAL_VINAYA_HOME } from '../config.js'
+import { repoRoot as gitRepoRoot } from '../diff-evidence.js'
 import type { TaskToolCallResult } from './handlers.js'
 import type { CallerContext } from './server.js'
 
@@ -61,7 +68,8 @@ export type RequestStore = {
 }
 
 export type TaskStartDeps = {
-  resolveRepo: () => Promise<RepoRef | null>
+  /** The local checkout's stable identity for the request-identity computation — never network-resolved, see this file's own header. */
+  repoRoot: () => string | null
   store: RequestStore
   /** Starts the run detached — it must not block on the run's completion, and it must survive this process exiting. */
   launch: (target: { tranche: string; id: string }, meta: { requestId: string; caller: string }) => void
@@ -133,7 +141,10 @@ export function defaultLaunch(target: { tranche: string; id: string }): void {
 }
 
 export const defaultTaskStartDeps: TaskStartDeps = {
-  resolveRepo: () => realResolveRepo().catch(() => null),
+  // Never null in practice: falls back to the server's own cwd (constant for
+  // the process lifetime) when the git lookup itself fails, so the identity
+  // is always deterministic even outside a git checkout.
+  repoRoot: () => gitRepoRoot() ?? process.cwd(),
   store: defaultRequestStore,
   launch: defaultLaunch,
   now: () => new Date().toISOString()
@@ -168,10 +179,9 @@ export function createTaskStartHandler(
     }
 
     const { tranche, id } = parsed.data
-    const repo = await deps.resolveRepo()
     const requestId = taskStartRequestIdentity({
       caller: ctx.caller.id,
-      repo: repo ? `${repo.owner}/${repo.repo}` : null,
+      repo: deps.repoRoot(),
       tranche,
       id,
       payloadDigest: payloadDigestOf({ tranche, id })
