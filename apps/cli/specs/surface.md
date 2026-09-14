@@ -774,6 +774,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `taskStartHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
 | `taskResumeHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
 | `taskCancelHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
+| `routeTaskToolIntent` | function | `apps/cli/src/lib/task-tools/router.ts` |
 | `discoverWorkspacePackages` | function | `apps/cli/src/lib/test-selector.ts` |
 | `extractImportSpecifiers` | function | `apps/cli/src/lib/test-selector.ts` |
 | `isTestFile` | function | `apps/cli/src/lib/test-selector.ts` |
@@ -784,7 +785,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(258 exports — 10 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads. Neither file fronts a `vinaya` subcommand yet — the catalog they implement is an agent-facing tool surface, not a CLI command — so no Commands-table row exists for either; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule.)
+(259 exports — 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. None of the three files front a `vinaya` subcommand yet — the catalog they implement is an agent-facing tool surface, not a CLI command — so no Commands-table row exists for any of them; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule.)
 
 ## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
