@@ -209,3 +209,9 @@ export function doctrineCommand(args: string[]): void {
   // `cat "$(vinaya doctrine)"` opens the front door directly.
   process.stdout.write(`${entry}\n`)
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  doctrine: { date: '2026-09-05', callsToday: 2, retiresVia: 'sharedCommandShell' }
+}

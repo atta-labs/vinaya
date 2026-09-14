@@ -212,3 +212,9 @@ export async function prVerifyEvidenceCommand(args: string[]): Promise<void> {
   process.stdout.write(`  compared at head ${localHead}\n`)
   process.exit(verdict.status === 'match' ? 0 : 1)
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'pr verify-evidence': { date: '2026-09-05', callsToday: 3, retiresVia: 'collectTokens' }
+}

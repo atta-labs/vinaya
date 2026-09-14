@@ -432,3 +432,9 @@ export function isRunFailed(outcomes: CheckOutcome[], specs: CheckSpec[]): boole
     return true
   })
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  check: { date: '2026-09-05', callsToday: 3, retiresVia: 'runChecks' }
+}

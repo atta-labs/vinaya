@@ -148,3 +148,9 @@ export function prRuleCommand(args: string[]): void {
   if (json) printJson({ posted: true, url })
   else process.stdout.write(`${url}\n`)
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'pr rule': { date: '2026-09-05', callsToday: 6, retiresVia: 'forgeWrite' }
+}

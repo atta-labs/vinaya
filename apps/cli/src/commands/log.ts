@@ -100,3 +100,9 @@ export async function logFlushCommand(args: string[]): Promise<void> {
     process.stdout.write(`log flush: posted ${outcome.chunkCount} comment(s), ${outcome.commentIds.length} confirmed\n`)
   }
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'log flush': { date: '2026-09-11', callsToday: 2, retiresVia: 'sharedCommandShell' }
+}

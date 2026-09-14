@@ -146,3 +146,9 @@ export async function waiverCommand(args: string[]): Promise<void> {
   execFileSync('gh', commentArgs, { stdio: 'inherit', env: process.env })
   process.stdout.write('\n✓ Label applied and reason posted as a PR comment.\n')
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  waiver: { date: '2026-09-05', callsToday: 2, retiresVia: 'sharedCommandShell' }
+}

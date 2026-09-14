@@ -478,3 +478,9 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
     if (supersedeUrl) process.stdout.write(`${supersedeUrl}\n`)
   }
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'issue objectives edit': { date: '2026-09-14', callsToday: 11, retiresVia: 'forgeWrite' }
+}

@@ -1,26 +1,31 @@
 import { describe, expect, it } from 'bun:test'
-import { readdirSync, readFileSync } from 'node:fs'
+import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import ts from 'typescript'
 import { COMMANDS } from '@attalabs/vinaya-sources'
+import type { SurfaceExemption } from '../src/lib/surface-exemption'
 
 /**
- * Enforces apps/cli/specs/surface.md against the real source tree.
+ * Enforces the layering rule against the real source tree — no hand-maintained
+ * table as input.
  *
  * Predicate (Principal ruling, Issue #418): for a command's entry function,
  * collect every call expression — transitively through same-file helpers —
  * whose callee resolves to an export of apps/cli/src/lib/** or of another
  * apps/cli/src/commands/*.ts file. Calls into @attalabs/aeg-core (policy)
- * are unrestricted. The resulting set must be exactly the index's one named
- * function, or the command must carry a dated exemption row in surface.md
- * naming the chokepoint that retires it. No regex over source text is used
- * to resolve calls — only the TypeScript compiler's type checker, so a
- * renamed import or a re-export barrel is still followed correctly.
+ * are unrestricted. The resulting set must be exactly the command's one
+ * lib call, or the command's own file must export a `SURFACE_EXEMPTIONS` entry
+ * (`apps/cli/src/lib/surface-exemption.ts`) naming the chokepoint that retires
+ * it — a source-visible marker living in the file the exemption is about,
+ * never a shared spec every unrelated task also has to edit. No regex over
+ * source text is used to resolve calls — only the TypeScript compiler's type
+ * checker, so a renamed import or a re-export barrel is still followed
+ * correctly.
  */
 
 const CLI_ROOT = join(import.meta.dir, '..')
 const CMD_DIR = join(CLI_ROOT, 'src/commands')
-const SURFACE_MD = join(CLI_ROOT, 'specs/surface.md')
 const ROUTER_FILE = join(CLI_ROOT, 'src/index.ts')
 
 const cmdFileNames = readdirSync(CMD_DIR).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
@@ -110,7 +115,7 @@ function boundaryCallsFor(entryName: string, file: string): BoundaryCall[] {
 
 // ---------------------------------------------------------------------------
 // Router: derive command-name -> entry-function-name from apps/cli/src/index.ts's
-// switch(command) statement, rather than trusting the spec's own claim of it.
+// switch(command) statement, rather than trusting any doc's claim of it.
 // ---------------------------------------------------------------------------
 
 function findCalledIdentifier(node: ts.Node): string | undefined {
@@ -201,66 +206,30 @@ function fileExportingEntry(entryName: string): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// surface.md parsing
+// Source-visible exemption markers — each command file's own `SURFACE_EXEMPTIONS`
+// export, read via dynamic import (a runtime value, not an AST parse: the
+// marker is a plain object literal, and the exact value it holds today is
+// what the ratchet below checks).
 // ---------------------------------------------------------------------------
 
-const surfaceMd = readFileSync(SURFACE_MD, 'utf-8')
+type ExemptionsExport = Record<string, SurfaceExemption> | undefined
 
-function tableRows(heading: string): string[][] {
-  const lines = surfaceMd.split('\n')
-  const start = lines.findIndex((l) => l.trim() === heading)
-  if (start === -1) throw new Error(`surface.md: missing heading '${heading}'`)
-  const rows: string[][] = []
-  let inTable = false
-  for (let i = start + 1; i < lines.length; i++) {
-    const line = lines[i]!
-    if (line.startsWith('## ')) break
-    if (!line.startsWith('|')) continue
-    if (/^\|[\s-]*\|/.test(line) && line.includes('---')) {
-      inTable = true
-      continue
-    }
-    if (!inTable) continue
-    const cells = line
-      .split('|')
-      .slice(1, -1)
-      .map((c) => c.trim())
-    rows.push(cells)
+const exemptionModules = new Map<string, Promise<ExemptionsExport>>()
+
+async function exemptionsIn(file: string): Promise<ExemptionsExport> {
+  let pending = exemptionModules.get(file)
+  if (!pending) {
+    pending = import(pathToFileURL(file).href).then((mod) => mod.SURFACE_EXEMPTIONS as ExemptionsExport)
+    exemptionModules.set(file, pending)
   }
-  return rows
-}
-
-function unbacktick(cell: string): string {
-  return cell.replace(/^`|`$/g, '')
-}
-
-const commandsTable = tableRows(
-  "## Commands — `apps/cli/src/commands` (45 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)"
-).map(([name, file, entry, calls, status, oneFn]) => ({
-  name: unbacktick(name ?? ''),
-  file: unbacktick(file ?? ''),
-  entry: unbacktick(entry ?? ''),
-  calls: Number(calls),
-  status: (status ?? '').startsWith('compliant') ? ('compliant' as const) : ('exempt' as const),
-  oneFn: oneFn ?? ''
-}))
-
-const exemptionsTable = tableRows('## Exemptions').map(([subject, date, callsToday, retiresVia]) => ({
-  subject: unbacktick(subject ?? ''),
-  date: date ?? '',
-  callsToday: Number((callsToday ?? '').match(/^\d+/)?.[0]),
-  retiresVia: unbacktick((retiresVia ?? '').trim())
-}))
-
-function exemptionFor(commandName: string) {
-  return exemptionsTable.find((e) => e.subject === commandName)
+  return pending
 }
 
 // ---------------------------------------------------------------------------
-// O2 / O3 assertions
+// Enforcement
 // ---------------------------------------------------------------------------
 
-describe('surface index: every shipped command is indexed', () => {
+describe('surface index: every shipped command respects the layering rule', () => {
   const shipped = COMMANDS.filter((c) => c.status === 'shipped')
 
   it('has at least one shipped command to check (sanity)', () => {
@@ -268,19 +237,9 @@ describe('surface index: every shipped command is indexed', () => {
   })
 
   for (const command of shipped) {
-    it(`'${command.name}' has a surface.md Commands row`, () => {
-      const row = commandsTable.find((r) => r.name === command.name)
-      expect(
-        row,
-        `packages/sources/src/commands.ts row '${command.name}' has no matching apps/cli/specs/surface.md Commands row`
-      ).toBeDefined()
-    })
-  }
-
-  for (const command of shipped) {
     if (command.name === 'help' || command.name === 'version') continue
 
-    it(`'${command.name}' calls exactly its one named function, or carries a valid exemption`, () => {
+    it(`'${command.name}' calls exactly one lib chokepoint, or carries a source-visible exemption`, async () => {
       const entryName = routerMap.get(command.name)
       expect(
         entryName,
@@ -294,57 +253,43 @@ describe('surface index: every shipped command is indexed', () => {
       const cmdCalls = calls.filter((c) => c.kind === 'cmd')
       const libCalls = calls.filter((c) => c.kind === 'lib')
 
-      const row = commandsTable.find((r) => r.name === command.name)
-      expect(row).toBeDefined()
+      const exemptions = await exemptionsIn(file as string)
+      const exemption = exemptions?.[command.name]
 
-      if (row!.status === 'compliant') {
+      if (!exemption) {
         expect(
           cmdCalls,
           `'${command.name}' calls another commands/*.ts file — commands never call commands: ${cmdCalls.map((c) => c.name).join(', ')}`
         ).toEqual([])
         expect(
           libCalls.length,
-          `'${command.name}' is marked compliant but calls ${libCalls.length} lib functions: ${libCalls.map((c) => c.name).join(', ')}`
+          `'${command.name}' calls ${libCalls.length} lib functions but has no SURFACE_EXEMPTIONS entry: ${libCalls.map((c) => c.name).join(', ')}`
         ).toBeLessThanOrEqual(1)
-        if (libCalls.length === 1) {
-          const named = unbacktick(row!.oneFn)
-          expect(
-            libCalls[0]!.name,
-            `'${command.name}' calls '${libCalls[0]!.name}' but the index names '${named}'`
-          ).toBe(named)
-        }
       } else {
-        const exemption = exemptionFor(command.name)
-        expect(
-          exemption,
-          `'${command.name}' is not compliant (${calls.length} in-scope calls) and has no Exemptions row`
-        ).toBeDefined()
-        expect(exemption!.date.length, `'${command.name}' exemption row has no date`).toBeGreaterThan(0)
-        expect(
-          exemption!.retiresVia.length,
-          `'${command.name}' exemption row has no retirement target`
-        ).toBeGreaterThan(0)
+        expect(exemption.date.length, `'${command.name}' exemption has no date`).toBeGreaterThan(0)
+        expect(exemption.retiresVia.length, `'${command.name}' exemption has no retirement target`).toBeGreaterThan(0)
         expect(
           calls.length,
-          `'${command.name}' makes ${calls.length} in-scope calls today; the exemption row claims ${exemption!.callsToday} — update surface.md`
-        ).toBe(exemption!.callsToday)
+          `'${command.name}' makes ${calls.length} in-scope calls today; its SURFACE_EXEMPTIONS entry claims ${exemption.callsToday} — update the marker in ${file}`
+        ).toBe(exemption.callsToday)
       }
     })
   }
 
-  it('every non-test file under apps/cli/src/commands/ is either a routed command or a named exemption', () => {
+  it('every non-test file under apps/cli/src/commands/ is either a routed command or a named exemption', async () => {
     const routedFiles = new Set(
       [...routerMap.values()].map((entry) => fileExportingEntry(entry)).filter(Boolean) as string[]
     )
     const orphans = cmdFiles.filter((f) => !routedFiles.has(f))
     for (const orphan of orphans) {
       const base = orphan.split('/').pop()!
-      const exemption = exemptionsTable.find((e) => e.subject.includes(base))
+      const exemptions = await exemptionsIn(orphan)
+      const exemption = exemptions?.[base]
       expect(
         exemption,
-        `${base} is not wired into apps/cli/src/index.ts's router and has no Exemptions row explaining why`
+        `${base} is not wired into apps/cli/src/index.ts's router and has no SURFACE_EXEMPTIONS entry explaining why`
       ).toBeDefined()
-      expect(exemption!.retiresVia.length, `${base}'s exemption row has no retirement target`).toBeGreaterThan(0)
+      expect(exemption!.retiresVia.length, `${base}'s exemption has no retirement target`).toBeGreaterThan(0)
     }
   })
 })

@@ -335,3 +335,9 @@ export async function demoBreakCommand(args: string[]): Promise<void> {
   const code = await runDemoBreak(repo.repoRoot, args)
   process.exit(code)
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'demo break': { date: '2026-09-05', callsToday: 3, retiresVia: 'sharedCommandShell' }
+}

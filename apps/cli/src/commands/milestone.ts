@@ -873,3 +873,13 @@ export async function milestoneStatusCommand(args: string[]): Promise<void> {
     }
   }
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'milestone create': { date: '2026-09-05', callsToday: 8, retiresVia: 'forgeWrite' },
+  'milestone adopt': { date: '2026-09-05', callsToday: 4, retiresVia: 'forgeWrite' },
+  'milestone edit': { date: '2026-09-05', callsToday: 7, retiresVia: 'forgeWrite' },
+  'milestone close': { date: '2026-09-05', callsToday: 4, retiresVia: 'forgeWrite' },
+  'milestone status': { date: '2026-09-10', callsToday: 4, retiresVia: 'forgeWrite' }
+}

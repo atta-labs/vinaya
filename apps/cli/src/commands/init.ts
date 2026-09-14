@@ -351,3 +351,10 @@ export async function initCommand(args: string[]): Promise<void> {
 export async function initProductCommand(args: string[]): Promise<void> {
   process.exit(await runInitProduct(args, realDeps()))
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  init: { date: '2026-09-05', callsToday: 9, retiresVia: 'sharedCommandShell' },
+  'init product': { date: '2026-09-05', callsToday: 8, retiresVia: 'sharedCommandShell' }
+}

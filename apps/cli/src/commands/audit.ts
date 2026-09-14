@@ -446,3 +446,9 @@ export async function runAudit(args: string[], deps: AuditDeps): Promise<number>
 export async function auditCommand(args: string[]): Promise<void> {
   process.exit(await runAudit(args, realDeps()))
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  audit: { date: '2026-09-05', callsToday: 2, retiresVia: 'runChecks' }
+}

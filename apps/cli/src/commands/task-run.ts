@@ -200,3 +200,9 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   if (!agent) process.exit(2)
   await runAndReport({ tranche: trancheSlug, n, agent })
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'task run': { date: '2026-09-11', callsToday: 3, retiresVia: 'sharedCommandShell' }
+}

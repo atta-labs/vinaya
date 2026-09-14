@@ -93,3 +93,9 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
   // process-level signal an unattended dispatcher watches for.
   if (result.finalDecision.type === 'pause') process.exit(1)
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'dev-review-loop': { date: '2026-09-10', callsToday: 5, retiresVia: 'sharedCommandShell' }
+}

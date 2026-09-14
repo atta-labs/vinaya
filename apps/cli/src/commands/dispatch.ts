@@ -183,3 +183,9 @@ export async function dispatchCommand(args: string[]): Promise<void> {
 
   if (handle.failureReason) process.exit(1)
 }
+
+import type { SurfaceExemption } from '../lib/surface-exemption'
+
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  dispatch: { date: '2026-09-11', callsToday: 5, retiresVia: 'sharedCommandShell' }
+}
