@@ -585,6 +585,7 @@ export {
   defaultIsPidAlive,
   InvalidRunIdError,
   migrateLegacyTask,
+  normalizeOutcome,
   parseInputRecord,
   parseOwnershipRecord,
   parseRunRecord,
@@ -604,10 +605,13 @@ export type {
   InputInput,
   InputRecord,
   MigrationResult,
+  NormalizedOutcome,
+  OutcomeSignals,
   OwnershipRecord,
   ParsedRecord,
   RunInput,
   RunRecord,
+  TaskOutcomeStatus,
   TransitionInput,
   TransitionRecord
 } from './control-store'
