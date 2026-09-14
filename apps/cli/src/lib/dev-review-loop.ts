@@ -1696,7 +1696,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // O9: no branch ever reached the remote, and the developer
               // posted a refusal/escalation instead — end the loop now, on the
               // Issue (there is no PR to comment on), never entering the poll.
-              postIssuePauseComment(root, task, round, 'escalation', err.detail)
+              postIssuePauseComment(task, round, 'escalation', err.detail)
               await d.flushOutbox(task)
               return { finalDecision: { type: 'pause', reason: 'escalation', detail: err.detail }, prNumber: 0, task }
             }
@@ -1816,9 +1816,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // instead, the one forge location that is always addressable for a
         // task with no open PR yet.
         if (prNumber < 0) {
-          postIssuePauseComment(root, task, round, decision.reason, decision.detail)
+          postIssuePauseComment(task, round, decision.reason, decision.detail)
         } else {
-          postPauseComment(root, task, round, head, prNumber, decision.reason, decision.detail)
+          postPauseComment(task, round, head, prNumber, decision.reason, decision.detail)
         }
       } catch {
         // Swallowed deliberately — see above. The role log's own
@@ -2346,7 +2346,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             detail: decision.detail,
             pausedAt: new Date().toISOString()
           })
-          postPauseComment(root, task, round, pauseHead, prNumber, decision.reason, decision.detail)
+          postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail)
           await d.flushOutbox(task)
           return { finalDecision: decision, prNumber, task }
         }

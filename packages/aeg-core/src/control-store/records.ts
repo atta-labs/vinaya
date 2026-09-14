@@ -96,7 +96,40 @@ export const TransitionRecordSchema = z
   .strict()
 export type TransitionRecord = z.infer<typeof TransitionRecordSchema>
 
-export type ControlRecord = RunRecord | InputRecord | OwnershipRecord | TransitionRecord
+/**
+ * One external effect's identity and reconciliation state, keyed by a
+ * caller-chosen `key` (one file per key, overwritten in place as the
+ * effect's status advances — unlike `run`/`input`, which are written once).
+ * `operation`/`target`/`inputVersion`/`payloadDigest` together are the
+ * identity `apps/cli/src/lib/effects.ts`'s `EffectExecutor` binds a write
+ * to before ever attempting it: a later read finding a DIFFERENT identity
+ * under the same `key` is a changed intent, not a retry of this one.
+ * `'started'` — intent persisted, the external write has not yet been
+ * confirmed. `'verified'` — either the write's own return value was
+ * recorded (`url` present), or a recovery reconciled this identity against
+ * the remote and found it already landed. `'uncertain'` — a recovery could
+ * not reconcile (the remote read itself failed) — refused rather than
+ * blindly retried, until a later recovery attempt resolves it.
+ */
+export const EffectRecordSchema = z
+  .object({
+    version: z.literal(1),
+    kind: z.literal('effect'),
+    task: taskId,
+    key: z.string().min(1),
+    operation: z.string().min(1),
+    target: z.string().min(1),
+    inputVersion: z.number().int().nonnegative(),
+    payloadDigest: z.string().min(1),
+    status: z.union([z.literal('started'), z.literal('verified'), z.literal('uncertain')]),
+    url: z.string().optional(),
+    recordedAt: isoTimestamp
+  })
+  .strict()
+export type EffectRecord = z.infer<typeof EffectRecordSchema>
+export type EffectStatus = EffectRecord['status']
+
+export type ControlRecord = RunRecord | InputRecord | OwnershipRecord | TransitionRecord | EffectRecord
 
 /**
  * `'absent'` — nothing was ever written at this path.
@@ -140,4 +173,8 @@ export function parseOwnershipRecord(raw: string | undefined): ParsedRecord<Owne
 
 export function parseTransitionRecord(raw: string | undefined): ParsedRecord<TransitionRecord> {
   return parseWith(TransitionRecordSchema, raw)
+}
+
+export function parseEffectRecord(raw: string | undefined): ParsedRecord<EffectRecord> {
+  return parseWith(EffectRecordSchema, raw)
 }
