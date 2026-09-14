@@ -295,6 +295,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `buildReviewInputManifest` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `compareManifest` | function | `packages/aeg-core/src/review-input-manifest.ts` |
+| `isBoundToBase` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `isBoundToBriefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `isBoundToHead` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `isBoundToObjectives` | function | `packages/aeg-core/src/review-input-manifest.ts` |
@@ -365,6 +366,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `parseInputRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
 | `parseOwnershipRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
 | `parseTransitionRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `parseManifestRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
 | `defaultControlStoreDeps` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `StaleEpochWriteError` | class | `packages/aeg-core/src/control-store/local.ts` |
 | `InvalidRunIdError` | class | `packages/aeg-core/src/control-store/local.ts` |
@@ -376,6 +378,8 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `readInput` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `appendTransition` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `readTransitions` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `writeManifest` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `readManifest` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `defaultIsPidAlive` | function | `packages/aeg-core/src/control-store/migration.ts` |
 | `migrateLegacyTask` | function | `packages/aeg-core/src/control-store/migration.ts` |
 | `TASK_TOOL_ERROR_KINDS` | const | `packages/aeg-core/src/task-tools.ts` |
@@ -411,7 +415,7 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `TASK_TOOL_CATALOG` | const | `packages/aeg-core/src/task-tools.ts` |
 | `taskToolByName` | function | `packages/aeg-core/src/task-tools.ts` |
 
-(334 exports — 32 added by `task-operator-v1` task 1: the task-tool catalog. `TaskToolDefinition`/`TaskToolError`/`TaskToolErrorKind`/`TaskToolHandlerBinding`/`TaskToolName`/`TaskToolRef`/`Freshness`/`PageRequest`/`RequestedAuthority`/`TaskStatusInput`/`TaskStatusResult`/`TaskEscalationReadInput`/`TaskEscalationReadResult`/`TaskEscalationPacket`/`TaskStartInput`/`TaskResumeInput`/`TaskCancelInput` are type-only exports of the same file — per this file's own rule (line 11, "functions/consts/classes only"), they get no row; the remaining 18 come from `control-store-v1` task 1, merged separately.)
+(338 exports — 4 added by `control-store-v1` task 5 (`#555`): `isBoundToBase` (`review-input-manifest.ts`), `parseManifestRecord` (`control-store/records.ts`), and `writeManifest`/`readManifest` (`control-store/local.ts`) — the base-identity binding and the parent-built manifest record. `ManifestRecord`/`ManifestInput` are type-only exports and get no row, per this file's own rule. 32 added by `task-operator-v1` task 1: the task-tool catalog. `TaskToolDefinition`/`TaskToolError`/`TaskToolErrorKind`/`TaskToolHandlerBinding`/`TaskToolName`/`TaskToolRef`/`Freshness`/`PageRequest`/`RequestedAuthority`/`TaskStatusInput`/`TaskStatusResult`/`TaskEscalationReadInput`/`TaskEscalationReadResult`/`TaskEscalationPacket`/`TaskStartInput`/`TaskResumeInput`/`TaskCancelInput` are type-only exports of the same file — per this file's own rule (line 11, "functions/consts/classes only"), they get no row; the remaining 18 come from `control-store-v1` task 1, merged separately.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
@@ -559,8 +563,11 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `reviewPolicy` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
 | `taskFromPrBody` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
 | `withPromptFile` | function | `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts` |
+| `buildManifestRecord` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `buildVerdictFromReport` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `controlStoreRoot` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `discardHeldVerdicts` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
+| `persistManifestRecord` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `hasObjectivesFacts` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `heldVerdictPath` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
 | `latestHeldRequestChanges` | function | `apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts` |
@@ -821,7 +828,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(259 exports — 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. None of the three files front a `vinaya` subcommand yet — the catalog they implement is an agent-facing tool surface, not a CLI command — so no Commands-table row exists for any of them; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule.)
+(262 exports — 3 added by `control-store-v1` task 5 (`#555`): `buildManifestRecord`, `controlStoreRoot`, and `persistManifestRecord` (`dev-review-loop/reviewer-dispatch.ts`) — the parent that builds and persists the review manifest record. `ManifestRecordIdentity` is a type-only export and gets no row. 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. None of the three files front a `vinaya` subcommand yet — the catalog they implement is an agent-facing tool surface, not a CLI command — so no Commands-table row exists for any of them; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule.)
 
 ## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 

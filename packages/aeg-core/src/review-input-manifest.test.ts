@@ -11,11 +11,13 @@ import {
 import { DEFAULT_REVIEW_POLICY } from './review-policy'
 
 const HEAD = 'a'.repeat(40)
+const BASE = 'f'.repeat(40)
 const BRIEF = 'the frozen brief text'
 
 function manifest(overrides: Partial<ReviewInputManifest> = {}): ReviewInputManifest {
   return {
     headSha: HEAD,
+    baseSha: BASE,
     briefHash: briefHash(BRIEF),
     objectivesVersion: null,
     rulingOrdinal: 0,
@@ -38,27 +40,37 @@ describe('briefHash / policyDigest', () => {
     expect(a).not.toBe(c)
     expect(a).toBe(policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3 }))
   })
+
+  it('policyDigest folds in the round-policy field — maxRounds changes the digest (#555, O1)', () => {
+    const three = policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3 })
+    const five = policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 5 })
+    expect(three).not.toBe(five)
+  })
 })
 
 describe('buildReviewInputManifest', () => {
   it('builds briefHash from the resolved brief content, null when none is resolvable', () => {
     const withBrief = buildReviewInputManifest({
       headSha: HEAD,
+      baseSha: BASE,
       briefContent: BRIEF,
       objectivesVersion: null,
       rulingOrdinal: 0,
       policy: DEFAULT_REVIEW_POLICY
     })
     expect(withBrief.briefHash).toBe(briefHash(BRIEF))
+    expect(withBrief.baseSha).toBe(BASE)
 
     const withoutBrief = buildReviewInputManifest({
       headSha: HEAD,
+      baseSha: null,
       briefContent: null,
       objectivesVersion: null,
       rulingOrdinal: 0,
       policy: DEFAULT_REVIEW_POLICY
     })
     expect(withoutBrief.briefHash).toBeNull()
+    expect(withoutBrief.baseSha).toBeNull()
   })
 })
 
@@ -69,6 +81,7 @@ describe('compareManifest', () => {
     expect(result).toEqual({
       bound: true,
       head: true,
+      base: true,
       briefHash: true,
       objectivesVersion: true,
       rulingOrdinal: true,
@@ -81,6 +94,42 @@ describe('compareManifest', () => {
     const current = manifest({ headSha: 'c'.repeat(40) })
     const result = compareManifest(manifestAsEchoed(judged), current, () => 'same-patch')
     expect(result.head).toBe(true)
+  })
+
+  it('base: an equivalent rebase (patch identity holds) keeps the verdict even across a base move (#555, O1)', () => {
+    // A genuine rebase: the head sha changed AND the base moved, but the diff
+    // itself is proven byte-identical by patchIdOf. The base move is tolerated.
+    const judged = manifest({ headSha: 'b'.repeat(40), baseSha: 'd'.repeat(40) })
+    const current = manifest({ headSha: 'c'.repeat(40), baseSha: 'e'.repeat(40) })
+    const result = compareManifest(manifestAsEchoed(judged), current, () => 'same-patch')
+    expect(result.head).toBe(true)
+    expect(result.base).toBe(true)
+    expect(result.bound).toBe(true)
+  })
+
+  it('base: a base-only change (identical candidate, moved base) invalidates (#555, O1)', () => {
+    // Exact head match, but the base moved under it — no patchIdOf equivalence
+    // to certify the diff was re-judged against the new base. This is the one
+    // narrowed acceptance this task documents.
+    const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: 'd'.repeat(40) }
+    const current = manifest({ baseSha: 'e'.repeat(40) })
+    const result = compareManifest(echoed, current)
+    expect(result.head).toBe(true)
+    expect(result.base).toBe(false)
+    expect(result.bound).toBe(false)
+  })
+
+  it('base: a null current base (none resolvable) skips the binding — every pre-base caller/fixture is unaffected', () => {
+    const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: 'd'.repeat(40) }
+    expect(compareManifest(echoed, manifest({ baseSha: null })).base).toBe(true)
+  })
+
+  it('base: a missing base echo against a real current base refuses (missing required input, #555, O3)', () => {
+    const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: null }
+    const current = manifest({ baseSha: 'e'.repeat(40) })
+    const result = compareManifest(echoed, current)
+    expect(result.base).toBe(false)
+    expect(result.bound).toBe(false)
   })
 
   it('head: does not bind when neither sha nor patch identity match', () => {

@@ -62,8 +62,10 @@ import { hostname as osHostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   type InputRecord,
+  type ManifestRecord,
   type OwnershipRecord,
   parseInputRecord,
+  parseManifestRecord,
   parseOwnershipRecord,
   parseRunRecord,
   parseTransitionRecord,
@@ -223,6 +225,10 @@ function inputPath(root: string, task: number, runId: string): string {
   return join(taskRoot(root, task), 'input', `${runId}.json`)
 }
 
+function manifestPath(root: string, task: number, round: number): string {
+  return join(taskRoot(root, task), 'manifest', `round-${String(round).padStart(6, '0')}.json`)
+}
+
 function transitionsDir(root: string, task: number, epoch: number): string {
   return join(taskRoot(root, task), 'transitions', `epoch-${String(epoch).padStart(6, '0')}`)
 }
@@ -368,6 +374,40 @@ export function readInput(
   runId: string
 ): ParsedRecord<InputRecord> {
   return parseInputRecord(readIfExists(inputPath(deps.root(), task, runId)))
+}
+
+export type ManifestInput = Omit<ManifestRecord, 'version' | 'kind' | 'task'>
+
+/**
+ * Writes the review-input manifest snapshot for `(task, round)` (`#555`, O1).
+ * Deliberately NOT epoch-fenced, unlike `writeRun`/`writeInput`: this record
+ * is an IMMUTABLE per-round snapshot the parent stamps once before dispatching
+ * reviewers, not a mutable state transition two owners could race on, and the
+ * driver's own cutover to acquired-epoch ownership is separate, later adoption
+ * work (`loop.md`, "The control store … built, not yet adopted"). The atomic
+ * temp-then-rename write below still gives it the same torn-write-free
+ * durability every other record here has; what it does not require is that the
+ * caller already hold the task's current epoch, which the parent does not yet
+ * acquire. A rerun of the same round overwrites with identical content.
+ */
+export function writeManifest(
+  deps: ControlStoreDeps,
+  task: number,
+  round: number,
+  input: ManifestInput
+): ManifestRecord {
+  const record: ManifestRecord = { version: 1, kind: 'manifest', task, ...input }
+  atomicWriteFile(manifestPath(deps.root(), task, round), JSON.stringify(record))
+  return record
+}
+
+/** The manifest snapshot recorded for `(task, round)`, or `'absent'`/`'corrupt'` — the same three-way read every other record uses, never a nullable read that conflates the two. */
+export function readManifest(
+  deps: Pick<ControlStoreDeps, 'root'>,
+  task: number,
+  round: number
+): ParsedRecord<ManifestRecord> {
+  return parseManifestRecord(readIfExists(manifestPath(deps.root(), task, round)))
 }
 
 export type TransitionInput = Omit<TransitionRecord, 'version' | 'kind' | 'task' | 'epoch' | 'seq'>
