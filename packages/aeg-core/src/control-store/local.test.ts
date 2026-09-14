@@ -6,12 +6,15 @@ import {
   acquireOwnership,
   appendTransition,
   attemptEpochClaim,
+  InvalidEffectKeyError,
   InvalidRunIdError,
   readCurrentOwnership,
+  readEffect,
   readInput,
   readRun,
   readTransitions,
   StaleEpochWriteError,
+  writeEffect,
   writeInput,
   writeRun,
   type ControlStoreDeps
@@ -223,5 +226,61 @@ describe('a runId cannot escape the task directory', () => {
     expect(() =>
       writeRun(deps, 551, epoch, { runId: 'run-a.1_ok', pid: 1, host: 'box', startedAt: clock.toISOString() })
     ).not.toThrow()
+  })
+})
+
+describe('writeEffect / readEffect', () => {
+  it('writes at the current epoch and reads back the same record', () => {
+    const acquired = acquireOwnership(deps, 552, 'run-a')
+    const epoch = acquired.acquired ? acquired.epoch : -1
+
+    const record = writeEffect(deps, 552, epoch, 'round-1-summary', {
+      operation: 'pr-comment',
+      target: 'pr:600',
+      inputVersion: 1,
+      payloadDigest: 'deadbeef',
+      status: 'started',
+      recordedAt: clock.toISOString()
+    })
+
+    expect(readEffect(deps, 552, 'round-1-summary')).toEqual({ status: 'ok', value: record })
+  })
+
+  it('is refused (StaleEpochWriteError) once the caller no longer holds the current epoch', () => {
+    const first = acquireOwnership(deps, 552, 'run-a')
+    expect(first.acquired).toBe(true)
+    acquireOwnership(deps, 552, 'run-b') // takes over
+
+    expect(() =>
+      writeEffect(deps, 552, 1, 'round-1-summary', {
+        operation: 'pr-comment',
+        target: 'pr:600',
+        inputVersion: 1,
+        payloadDigest: 'deadbeef',
+        status: 'started',
+        recordedAt: clock.toISOString()
+      })
+    ).toThrow(StaleEpochWriteError)
+  })
+
+  it('reports absent when nothing was ever written for a key', () => {
+    expect(readEffect(deps, 552, 'never-written')).toEqual({ status: 'absent' })
+  })
+
+  it('refuses an unsafe key the same way an unsafe runId is refused', () => {
+    const acquired = acquireOwnership(deps, 552, 'run-a')
+    const epoch = acquired.acquired ? acquired.epoch : -1
+
+    expect(() =>
+      writeEffect(deps, 552, epoch, '../escaped', {
+        operation: 'pr-comment',
+        target: 'pr:600',
+        inputVersion: 1,
+        payloadDigest: 'deadbeef',
+        status: 'started',
+        recordedAt: clock.toISOString()
+      })
+    ).toThrow(InvalidEffectKeyError)
+    expect(() => readEffect(deps, 552, '../escaped')).toThrow(InvalidEffectKeyError)
   })
 })
