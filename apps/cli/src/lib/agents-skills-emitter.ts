@@ -121,7 +121,7 @@ export function roleAllowedTools(doctrineRoot: string, roleName: string): string
  * Render the pointer content for an agent skill. A role that declares an
  * `allowed-tools` grant gets that grant carried into the generated skill's
  * frontmatter, so the generated view exposes the SAME grant the role doc and
- * the router enforce (O2); a role with no grant renders the unchanged 3-line
+ * the router enforce; a role with no grant renders the unchanged 3-line
  * pointer.
  */
 export function renderAgentSkill(

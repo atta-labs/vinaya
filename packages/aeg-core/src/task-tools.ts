@@ -391,7 +391,7 @@ export function taskToolByName(name: TaskToolName): TaskToolDefinition {
   return found as TaskToolDefinition
 }
 
-// --- the Operator's tool grant (O2) -----------------------------------------
+// --- the Operator's tool grant, the boundary the router enforces -----------
 
 /**
  * The one grant the task Operator holds beyond the five catalog tools: the
@@ -405,7 +405,7 @@ export function taskToolByName(name: TaskToolName): TaskToolDefinition {
 export const OPERATOR_STATUS_FOLLOW = 'task_status_follow' as const
 
 /**
- * The complete, closed set of tools the task Operator is granted (O2) — the
+ * The complete, closed set of tools the task Operator is granted — the
  * five catalog tools plus the status-follow read, and nothing else. This is
  * the machine-readable twin of `aeg-root/roles/operator.md`'s `allowed-tools`
  * frontmatter and of the generated skill's `allowed-tools`; a test binds all

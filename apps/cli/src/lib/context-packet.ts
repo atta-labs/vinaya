@@ -1,5 +1,5 @@
 /**
- * Bounded context packets (O3) — the shape the Operator, the Developer, and
+ * Bounded context packets — the shape the Operator, the Developer, and
  * the reviewers all carry their task context in, so the two facts that must
  * never be lost survive compaction and continuation: the **authoritative
  * constraints** (what the seat may and may not do) and the **version-pinned
@@ -50,7 +50,7 @@ export type PacketIssueKind = 'missing-constraints' | 'missing-evidence' | 'unpi
 export type PacketIssue = { kind: PacketIssueKind; message: string }
 
 /**
- * A caller's request, classified against the Operator's grant (O3): a granted
+ * A caller's request, classified against the Operator's grant: a granted
  * task-tool intent, an ungranted action (scope creep or a prompt-injection
  * attempt to make the Operator merge/approve/edit/plan), or a genuinely
  * ambiguous request that names no clear action. Ungranted and ambiguous are
