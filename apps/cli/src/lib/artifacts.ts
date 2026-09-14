@@ -1273,15 +1273,21 @@ const HOOK_PREAMBLE = '#!/usr/bin/env sh\n'
  * run. Deliberately not auto-building: a hook that silently spends a build on
  * someone's commit is worse than one that tells them what to run.
  */
+// `VINAYA_HOST=hook` (task-log-v1 3, O2/O3) marks every gate observation
+// emitted from THIS invocation as `meta.host: 'hook'` — never inferred after
+// the fact, since a bare `vinaya check` run outside a hook is otherwise
+// indistinguishable from one run BY a hook (both would read `host: 'cli'`,
+// `log-sink.ts`'s own fallback). CI needs no equivalent: `GITHUB_ACTIONS` is
+// already set by the platform, and `hostFromEnv` reads it first.
 function hookRun(selfHost: VendoredVinaya | null, args: string): string {
-  if (!selfHost) return `npx --yes @attalabs/vinaya@${ownVersion()} ${args} || exit 1`
+  if (!selfHost) return `VINAYA_HOST=hook npx --yes @attalabs/vinaya@${ownVersion()} ${args} || exit 1`
   return `# This repo vendors the CLI, so \`npx @attalabs/vinaya\` resolves to its own
 # unbuilt workspace member. Run the built file instead.
 if [ ! -f ${selfHost.bin} ]; then
   echo "vinaya: ${selfHost.bin} is missing — run \\\`bun run --cwd ${selfHost.dir} build\\\`" >&2
   exit 1
 fi
-node ${selfHost.bin} ${args} || exit 1`
+VINAYA_HOST=hook node ${selfHost.bin} ${args} || exit 1`
 }
 
 // `--local` skips every `requiresOpenPr` check (closes-n, test-plan): neither

@@ -176,6 +176,10 @@ type ActiveCheck = {
   fingerprint: string
   logFn: (e: LogEventInput) => void
   kill: (signal: NodeJS.Signals) => void
+  /** Set by the signal handler right before it logs `cancelled` for this
+   * entry — `runOne` reads it back to suppress its OWN normal-completion
+   * log call for the same attempt (see `installSignalForwarding`). */
+  cancelled: boolean
 }
 const activeChecks = new Map<number, ActiveCheck>()
 let activeCheckSeq = 0
@@ -194,6 +198,14 @@ function installSignalForwarding(): void {
   signalForwardingInstalled = true
   const forward = (signal: NodeJS.Signals, exitCode: number): void => {
     for (const entry of activeChecks.values()) {
+      // Marked BEFORE the kill below: `killTree('SIGTERM')` can make the
+      // child's own `proc.on('close', …)` in `runOne` resolve before this
+      // process actually exits, and `runOne` would otherwise carry on to
+      // its own normal-completion `logGateChecked` call for the SAME
+      // attempt — a real double-emission this flag exists to prevent
+      // (task-log-v1 3, O3). `runOne` checks it right before every one of
+      // its own remaining log calls and skips when it's already set.
+      entry.cancelled = true
       logGateChecked({
         spec: entry.spec,
         outcome: 'cancelled',
@@ -380,7 +392,7 @@ async function runOne(
 
   installSignalForwarding()
   const activeKey = activeCheckSeq++
-  activeChecks.set(activeKey, { spec, start, fingerprint, logFn, kill: killTree })
+  activeChecks.set(activeKey, { spec, start, fingerprint, logFn, kill: killTree, cancelled: false })
 
   /**
    * True once the child's own PID is confirmed gone — but a process GROUP
@@ -486,11 +498,22 @@ async function runOne(
     // scheduled — see the comment on `escalationDone` above.
     await escalationDone
   }
+  // Read BEFORE deleting — set by the SIGINT/SIGTERM handler
+  // (`installSignalForwarding`) when it already logged this exact attempt as
+  // `cancelled`. `runOne` reaching this point after that is expected (the
+  // handler's kill can make `proc`'s own `close` resolve before the process
+  // actually exits) — `maybeLog` below is what stops that race from
+  // double-emitting the same check under two different outcomes.
+  const wasCancelled = activeChecks.get(activeKey)?.cancelled === true
   activeChecks.delete(activeKey)
   const durationMs = performance.now() - start
+  const maybeLog = (params: { outcome: GateOutcome; reason?: string }): void => {
+    if (wasCancelled) return
+    logGateChecked({ spec, durationMs, fingerprint, logFn, ...params })
+  }
 
   if (timedOut) {
-    logGateChecked({ spec, outcome: 'timeout', reason: `timeout_ms:${timeoutMs}`, durationMs, fingerprint, logFn })
+    maybeLog({ outcome: 'timeout', reason: `timeout_ms:${timeoutMs}` })
     return { name: spec.name, status: 'timeout', exitCode: null, errors: [], durationMs }
   }
 
@@ -499,14 +522,7 @@ async function runOne(
   // a bare `error` status and nothing to act on.
   if (spawnError) {
     const code = (spawnError as NodeJS.ErrnoException).code
-    logGateChecked({
-      spec,
-      outcome: 'unavailable_dependency',
-      reason: `spawn_failed:${code ?? 'unknown'}`,
-      durationMs,
-      fingerprint,
-      logFn
-    })
+    maybeLog({ outcome: 'unavailable_dependency', reason: `spawn_failed:${code ?? 'unknown'}` })
     return {
       name: spec.name,
       status: 'error',
@@ -564,29 +580,18 @@ async function runOne(
   }
 
   if (status === 'error') {
-    logGateChecked({
-      spec,
-      outcome: 'invalid_input',
-      reason: malformed ? 'malformed_output' : `unexpected_exit_code:${exitCode}`,
-      durationMs,
-      fingerprint,
-      logFn
-    })
+    maybeLog({ outcome: 'invalid_input', reason: malformed ? 'malformed_output' : `unexpected_exit_code:${exitCode}` })
   } else if (status === 'pass') {
-    logGateChecked({ spec, outcome: 'pass', durationMs, fingerprint, logFn })
+    maybeLog({ outcome: 'pass' })
   } else {
     // `status === 'fail'` — a `pending: true` error is "has not happened
     // YET" (contract.ts), never "is wrong": every reported error pending
     // means this attempt is waiting on a step outside the diff (the
     // Principal ticking a Test Plan box, most often), not a rejection of it.
     const waiting = errors.length > 0 && errors.every((e) => e.pending === true)
-    logGateChecked({
-      spec,
+    maybeLog({
       outcome: waiting ? 'wait' : 'fail',
-      reason: waiting ? 'pending_principal_action' : `errors:${errors.length}`,
-      durationMs,
-      fingerprint,
-      logFn
+      reason: waiting ? 'pending_principal_action' : `errors:${errors.length}`
     })
   }
 
