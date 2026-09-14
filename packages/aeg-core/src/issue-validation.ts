@@ -16,7 +16,14 @@
  * applicability from the labels; this module only checks the body.
  */
 
-import { hasLabel, LABELS, projectFieldFromBody, projectsFromBody, SECTION_HEADER } from '@attalabs/aeg-forge-state'
+import {
+  hasLabel,
+  LABELS,
+  projectFieldFromBody,
+  projectsFromBody,
+  SECTION_HEADER,
+  splitSlugQualifiedEdge
+} from '@attalabs/aeg-forge-state'
 import { stripCode } from './anchored-region'
 import { checkTestPlan, extractFencedBlocks } from './brief-validation'
 import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from './doc-owners'
@@ -1492,12 +1499,23 @@ export type TaskIssueFacts = {
   conflictsWith: string[]
 }
 
-/** True when either side's declared edges name the other — `#621`, `621` and `8` all count. Structural on `{ ref, conflictsWith }` so both `TaskIssueFacts` and `TaskSurfaceFacts` satisfy it without a cast. */
+/**
+ * True when either side's declared edges name the other — `#621`, `621` and
+ * `8` all count, and so does a slug-qualified edge (`<slug> #621`,
+ * `<slug> 621`): `splitSlugQualifiedEdge` (`@attalabs/aeg-forge-state`, the
+ * same split the dispatch gate's own edge resolver uses) reduces it to its
+ * bare id first, one direction only — a bare id is never treated as
+ * naming a qualified one back. Structural on `{ ref, conflictsWith }` so
+ * both `TaskIssueFacts` and `TaskSurfaceFacts` satisfy it without a cast.
+ */
 export function edgesNameEachOther(
   a: { ref: string; conflictsWith: string[] },
   b: { ref: string; conflictsWith: string[] }
 ): boolean {
-  const norm = (s: string) => s.replace(/^#/, '').trim()
+  const norm = (s: string) => {
+    const qualified = splitSlugQualifiedEdge(s)
+    return (qualified ? qualified.bareId : s).replace(/^#/, '').trim()
+  }
   return a.conflictsWith.map(norm).includes(norm(b.ref)) || b.conflictsWith.map(norm).includes(norm(a.ref))
 }
 
