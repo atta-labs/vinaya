@@ -3109,6 +3109,102 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
 })
 
 /**
+ * Same as `writeFakeGhAlwaysRedCi`, except the mechanical check-run named
+ * `Vinaya CI` answers with TWO runs: an older `success`, superseded by a
+ * newer `failure` (driver-lifecycle-v1 task 2, `#607`, O2 — the reverse of
+ * the O1 fixture above). A genuinely failing CURRENT check must still pause
+ * the loop exactly as a single failing run does — supersession only ever
+ * suppresses a stale failure, never a live one.
+ */
+function writeFakeGhSupersededSuccessThenCurrentFailure(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  printf '%s\\n' '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"success","started_at":"2026-09-14T10:00:00Z"}'
+  printf '%s\\n' '{"id":2,"name":"Vinaya CI","status":"completed","conclusion":"failure","started_at":"2026-09-14T10:05:00Z"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+function setUpNeverPushesSupersededSuccessThenCurrentFailure(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeNeverPushes(binDir)
+  writeFakeGhSupersededSuccessThenCurrentFailure(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a genuinely failing current check-run still pauses, even beside a superseded success (driver-lifecycle-v1 task 2, #607, O2)', () => {
+  it('pauses with the same reason and detail shape as a single failing run, naming the CURRENT failing check', () => {
+    const { home, cwd, path } = setUpNeverPushesSupersededSuccessThenCurrentFailure()
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
+    })
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+    expect(pauseState.detail).toMatch(/head .* unchanged/)
+    // Same shape as the single-failing-run case above: the CURRENT failing
+    // check name is present — the superseded success never contributes.
+    expect(pauseState.detail).toMatch(/Vinaya CI/)
+
+    const gateRedPrompt = readFileSync(join(home, '.dev-prompt-2.txt'), 'utf8')
+    expect(gateRedPrompt).toMatch(/CI is red on the last head/)
+    expect(gateRedPrompt).toMatch(/Vinaya CI/)
+  }, 20000)
+})
+
+/**
  * O1 (`#595`): `token-report` is just one more mechanical check-run name —
  * the driver never special-cases it. A blank/dash-only token row fails it
  * exactly like any other red check, and the SAME gate-red-retry machinery
