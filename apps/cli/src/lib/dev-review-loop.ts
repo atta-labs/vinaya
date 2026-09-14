@@ -955,17 +955,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // this task's control-store `loop_state` record, if one has ever been
     // persisted. `'absent'` seeds every budget at zero, exactly the prior
     // behavior for a fresh task or one that predates this mechanism.
-    // `'corrupt'` refuses to guess past it: thrown here, it reaches the
-    // SAME outer `catch` every other setup failure on this path already
-    // does (below), which turns it into a decided `pause{reason:
-    // 'infrastructure'}` rather than silently reading a corrupt record as
-    // absent and resetting real budgets to zero (O3).
+    // `'corrupt'` is read as "nothing safe to seed FROM here" for every
+    // variable below (identical to `'absent'`'s own defaults) — never as
+    // license to guess a real budget. The actual refusal is thrown from
+    // INSIDE the `try` block below (round 2 review, BLOCKER): this call
+    // site sits before that `try` even starts, so a throw here would
+    // escape `devReviewLoop` uncaught instead of reaching the outer
+    // `catch` that turns it into a decided `pause{reason:'infrastructure'}`
+    // — the one thing every comment on this path already claimed it did.
     const recoveredLoopState = recoverLoopState(task)
-    if (recoveredLoopState.status === 'corrupt') {
-      throw new Error(
-        `devReviewLoop: task ${task}'s control-store loop-state record is corrupt: ${recoveredLoopState.reason} — refusing to recover budgets from it.`
-      )
-    }
     /** O2: never reset by a restart — seeded from the control store, never hardcoded to `0` the way a fresh in-memory run otherwise would be. */
     let infrastructureRetries =
       recoveredLoopState.status === 'ok' ? recoveredLoopState.value.budgets.infrastructureRetries : 0
@@ -1706,6 +1704,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // or round-1's own entry uncovered lets a `gh`/`git` failure there crash
     // the driver instead of pausing it.
     try {
+      // A corrupt control-store loop-state record is refused HERE, first
+      // thing inside the `try` (round 2 review, BLOCKER) — never at the
+      // earlier `recoverLoopState` call site, which sits before this `try`
+      // even starts and would let the throw escape uncaught. Thrown here,
+      // it reaches the SAME outer `catch` below as every other setup
+      // failure on this path, which decides `pause{reason:'infrastructure'}`,
+      // writes the pause state, posts the pause comment, and keeps the
+      // driver lock alive — never a silent crash with no forge-visible
+      // trace at all.
+      if (recoveredLoopState.status === 'corrupt') {
+        throw new Error(
+          `devReviewLoop: task ${task}'s control-store loop-state record is corrupt: ${recoveredLoopState.reason} — refusing to recover budgets from it.`
+        )
+      }
+
       // Which severities block is repository policy (task 8, `#506`,
       // O1/O4) — resolved once, from the default branch, and reused for
       // every round's derivation and this run's publication self-check; the

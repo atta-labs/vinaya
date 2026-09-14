@@ -3261,6 +3261,56 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, O1/O3): round numberi
   }, 20000)
 })
 
+describe('devReviewLoop — control-store-v1 task 4 (#554, round 2 review, BLOCKER): a corrupt loop-state record decides a pause, never an uncaught crash', () => {
+  it('exits non-zero with a decided infrastructure pause, dispatching no developer at all', () => {
+    // Reuses `setUpStopBeforePush`'s own `gh`/`git` fixture — it answers `pr
+    // list` with none open (this scenario's own `prNumber` sentinel, `-1`,
+    // never resolves before the corrupt check fires) and its `gh issue
+    // comment` actually succeeds, unlike the plain `writeFakeGh` most other
+    // fixtures use (which deliberately refuses issue comments as "log flush
+    // not under test" — `postMarkedComment`'s own hard-refusal-with-
+    // `process.exit` on that failure would otherwise mask the very
+    // assertion this test exists to make). The developer fake it wires
+    // (`writeFakeClaudeNoPushEver`) is never invoked here: the corrupt
+    // record is refused before the frozen-brief fetch or any dispatch.
+    const { home, cwd, path } = setUpStopBeforePush()
+
+    // Torn JSON — `readLoopState`/`parseLoopStateRecord` read this as
+    // `'corrupt'`, never `'absent'`. Before the fix, the resulting throw sat
+    // BEFORE `devReviewLoop`'s own `try` block even started, so it escaped
+    // as an unhandled rejection instead of reaching the outer `catch` that
+    // decides every other setup failure on this path.
+    const loopStatePath = controlStoreLoopStatePath(home)
+    mkdirSync(dirname(loopStatePath), { recursive: true })
+    writeFileSync(loopStatePath, '{"version":1,"kind":"loop_state"', 'utf8')
+
+    const r = runLoop(home, cwd, path)
+
+    // A decided pause, not a crash: a real uncaught exception would print a
+    // stack trace and/or an "unhandled" message, never this driver's own
+    // `paused (<reason>)` summary line.
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+    expect(r.stdout).not.toMatch(/unhandled|Unhandled/)
+
+    // No developer ever dispatched — the corrupt record is refused before
+    // any real work starts, and before the frozen brief is ever fetched.
+    expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
+    expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(false)
+
+    // A real pause comment landed on the task Issue (no PR exists yet) —
+    // the corrupt-record throw reached the SAME pause bookkeeping every
+    // other setup failure on this path does, not a silent, comment-less exit.
+    const posted = postedCommentFiles(home)
+    const pauseFiles = posted.filter((f) =>
+      readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8').includes('aeg:loop:paused:infrastructure')
+    )
+    expect(pauseFiles).toHaveLength(1)
+    const body = readFileSync(join(home, '.fake-gh-posted-comments', pauseFiles[0] as string), 'utf8')
+    expect(body).toMatch(/control-store loop-state record is corrupt/)
+  }, 20000)
+})
+
 /**
  * Same as `writeFakeGhAlwaysRedCi`, except the mechanical check-run named
  * `Vinaya CI` answers with TWO runs: an older `success`, superseded by a
