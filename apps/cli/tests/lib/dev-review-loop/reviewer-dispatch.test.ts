@@ -2,9 +2,20 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DEFAULT_REVIEW_POLICY, type ReviewInputManifest } from '@attalabs/aeg-core'
+import {
+  DEFAULT_REVIEW_POLICY,
+  defaultControlStoreDeps,
+  readManifest,
+  type ReviewInputManifest
+} from '@attalabs/aeg-core'
 import type { DispatchHandle } from '../../../src/lib/dispatch'
-import { buildVerdictFromReport, ReviewerReportParseFailure } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
+import {
+  buildManifestRecord,
+  buildVerdictFromReport,
+  controlStoreRoot,
+  persistManifestRecord,
+  ReviewerReportParseFailure
+} from '../../../src/lib/dev-review-loop/reviewer-dispatch'
 
 // --- objective-id coverage at the driver (review-validity-v1 task 4, #478, O4) ---
 
@@ -20,6 +31,7 @@ describe('buildVerdictFromReport — objective-id coverage, the same rule `revie
 
   const MANIFEST: ReviewInputManifest = {
     headSha: 'a'.repeat(40),
+    baseSha: 'e'.repeat(40),
     briefHash: 'b'.repeat(64),
     objectivesVersion: 'c'.repeat(64),
     rulingOrdinal: 0,
@@ -218,5 +230,55 @@ describe('buildVerdictFromReport — objective-id coverage, the same rule `revie
     ])
     expect(result.rendered).toMatch(/O1: NOT MET/)
     expect(result.rendered).not.toMatch(/prose note/)
+  })
+})
+
+describe('buildManifestRecord / persistManifestRecord — the parent-built store record (#555, O1)', () => {
+  const manifest: ReviewInputManifest = {
+    headSha: 'a'.repeat(40),
+    baseSha: 'f'.repeat(40),
+    briefHash: 'b'.repeat(64),
+    objectivesVersion: 'c'.repeat(64),
+    rulingOrdinal: 2,
+    policyDigest: 'd'.repeat(64)
+  }
+  const identity = {
+    repository: 'atta-labs/vinaya',
+    pr: 601,
+    branch: 'task/control-store-v1/5',
+    round: 3,
+    recordedAt: '2026-09-14T00:00:00.000Z'
+  }
+
+  it('assembles the record from the binding manifest plus repository and work identity', () => {
+    expect(buildManifestRecord(manifest, identity)).toEqual({
+      round: 3,
+      repository: 'atta-labs/vinaya',
+      pr: 601,
+      branch: 'task/control-store-v1/5',
+      baseSha: 'f'.repeat(40),
+      headSha: 'a'.repeat(40),
+      briefHash: 'b'.repeat(64),
+      objectivesVersion: 'c'.repeat(64),
+      rulingOrdinal: 2,
+      policyDigest: 'd'.repeat(64),
+      recordedAt: '2026-09-14T00:00:00.000Z'
+    })
+  })
+
+  it('persists to the control store under the outbox root and reads back byte-for-byte', () => {
+    const outbox = mkdtempSync(join(tmpdir(), 'vinaya-manifest-persist-'))
+    try {
+      const written = persistManifestRecord(outbox, 555, manifest, identity)
+      expect(written).not.toBeNull()
+      const read = readManifest(
+        defaultControlStoreDeps(() => controlStoreRoot(outbox)),
+        555,
+        3
+      )
+      expect(read).toEqual({ status: 'ok', value: written })
+    } finally {
+      rmSync(outbox, { recursive: true, force: true })
+    }
   })
 })

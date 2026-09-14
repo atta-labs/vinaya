@@ -43,6 +43,7 @@ describe('extractCodeReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -57,6 +58,7 @@ describe('extractCodeReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -71,6 +73,7 @@ describe('extractCodeReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -95,6 +98,7 @@ describe('extractCodeReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -125,6 +129,7 @@ describe('extractCodeReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [{ severity: 'MINOR', location: 'src/foo.ts:12' }],
       danglingNote: null
     })
@@ -143,6 +148,7 @@ describe('extractCodeReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -159,6 +165,7 @@ describe('extractCodeReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -173,6 +180,7 @@ describe('extractCodeReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -188,6 +196,7 @@ describe('extractCodeReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -198,6 +207,7 @@ describe('extractCodeReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -247,6 +257,7 @@ describe('extractCodeReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -263,6 +274,7 @@ describe('extractSecurityReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -277,6 +289,7 @@ describe('extractSecurityReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -313,6 +326,7 @@ describe('extractSecurityReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [{ severity: 'LOW', location: 'src/foo.ts:12' }],
       danglingNote: null
     })
@@ -331,6 +345,7 @@ describe('extractSecurityReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -347,6 +362,7 @@ describe('extractSecurityReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -360,6 +376,7 @@ describe('extractSecurityReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -393,6 +410,7 @@ describe('extractSecurityReviewVerdict', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -418,6 +436,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -432,6 +451,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -453,6 +473,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -483,6 +504,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -507,6 +529,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -521,6 +544,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -574,6 +598,7 @@ describe('the VERDICT:/Judged head:/Objectives version: markers are read from th
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -590,6 +615,7 @@ describe('the VERDICT:/Judged head:/Objectives version: markers are read from th
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -615,6 +641,7 @@ describe('the VERDICT:/Judged head:/Objectives version: markers are read from th
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -711,6 +738,7 @@ describe('candidate selection stays whole-body — a later unclear candidate sha
       rulingOrdinal: null,
       briefHash: null,
       policyDigest: null,
+      baseSha: null,
       findingSeverities: [],
       danglingNote: null
     })
@@ -886,5 +914,48 @@ describe('Brief hash: / Policy digest: extraction', () => {
     ].join('\n')
     const result = extractCodeReviewVerdict([comment])
     expect(result.briefHash).toBeNull()
+  })
+})
+
+describe('Judged base: extraction (#555, O1)', () => {
+  const fullHead = 'a'.repeat(40)
+  const base = 'f'.repeat(40)
+
+  it('reads the base sha from a Judged base: line rendered last of the head lines', () => {
+    const comment = [
+      'VERDICT: APPROVE',
+      '',
+      `Judged head: ${fullHead}`,
+      '',
+      'Ruling ordinal: 0',
+      '',
+      `Brief hash: ${'b'.repeat(64)}`,
+      '',
+      `Policy digest: ${'d'.repeat(64)}`,
+      '',
+      `Judged base: ${base}`
+    ].join('\n')
+    expect(extractCodeReviewVerdict([comment]).baseSha).toBe(base)
+  })
+
+  it('reads null when no Judged base: line is present (legacy stock)', () => {
+    expect(extractCodeReviewVerdict([`VERDICT: APPROVE\n\nJudged head: ${fullHead}`]).baseSha).toBeNull()
+  })
+
+  it('reads null for the (none) placeholder — a non-hex value never parses as a real base', () => {
+    const comment = [
+      'VERDICT: PASS',
+      '',
+      `Judged head: ${fullHead}`,
+      '',
+      'Ruling ordinal: 0',
+      '',
+      'Brief hash: (none)',
+      '',
+      `Policy digest: ${'d'.repeat(64)}`,
+      '',
+      'Judged base: (none)'
+    ].join('\n')
+    expect(extractSecurityReviewVerdict([comment]).baseSha).toBeNull()
   })
 })

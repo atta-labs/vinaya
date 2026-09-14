@@ -13,9 +13,11 @@ import {
   readInput,
   readRun,
   readTransitions,
+  readManifest,
   StaleEpochWriteError,
   writeEffect,
   writeInput,
+  writeManifest,
   writeRun,
   type ControlStoreDeps
 } from './local'
@@ -47,6 +49,45 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
+})
+
+describe('writeManifest / readManifest (#555, O1)', () => {
+  const input = {
+    round: 1,
+    repository: 'atta-labs/vinaya',
+    pr: 601,
+    branch: 'task/control-store-v1/5',
+    baseSha: 'f'.repeat(40),
+    headSha: 'a'.repeat(40),
+    briefHash: 'b'.repeat(64),
+    objectivesVersion: 'c'.repeat(64),
+    rulingOrdinal: 0,
+    policyDigest: 'd'.repeat(64),
+    recordedAt: '2026-09-14T00:00:00.000Z'
+  }
+
+  it('persists a manifest snapshot and reads it back byte-for-byte — no epoch fence required (immutable per-round snapshot)', () => {
+    // No `acquireOwnership` first: unlike `writeRun`/`writeInput`, the
+    // manifest snapshot is not epoch-gated (the driver has not adopted
+    // ownership yet), so this write succeeds on a task with no owner at all.
+    const written = writeManifest(deps, 555, 1, input)
+    expect(written).toEqual({ version: 1, kind: 'manifest', task: 555, ...input })
+    const read = readManifest(deps, 555, 1)
+    expect(read).toEqual({ status: 'ok', value: written })
+  })
+
+  it('a never-written round reads as absent, never corrupt', () => {
+    expect(readManifest(deps, 555, 7)).toEqual({ status: 'absent' })
+  })
+
+  it('keys by round — two rounds are independent snapshots, a durable policy history', () => {
+    writeManifest(deps, 555, 1, input)
+    writeManifest(deps, 555, 2, { ...input, round: 2, policyDigest: 'e'.repeat(64) })
+    const r1 = readManifest(deps, 555, 1)
+    const r2 = readManifest(deps, 555, 2)
+    expect(r1.status === 'ok' && r1.value.policyDigest).toBe('d'.repeat(64))
+    expect(r2.status === 'ok' && r2.value.policyDigest).toBe('e'.repeat(64))
+  })
 })
 
 describe('acquireOwnership', () => {

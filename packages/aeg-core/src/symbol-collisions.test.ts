@@ -197,6 +197,18 @@ describe('symbol-collision detection', () => {
  *                        mergedAt, comments }` vs `verify-review-gate.ts`'s
  *                        `{ number, comments (different shape), labels,
  *                        headRefOid }`. Unfixed.
+ *   - `readManifest`   — two unrelated functions: `bin/verify-brief.ts`'s
+ *                        private `readManifest(dir): PackageManifest | null`
+ *                        reads a workspace `package.json`, while
+ *                        `src/control-store/local.ts`'s exported
+ *                        `readManifest(deps, task, round)` reads a control-store
+ *                        `manifest` record (`#555`). Same `read<Kind>` verb, no
+ *                        shared code. Not renamed: `read<Kind>` is the control
+ *                        store's own API convention (`readRun`/`readInput`/
+ *                        `readTransitions`), so the src/ export is correctly
+ *                        named among its siblings; `bin/` is I/O-shim code that
+ *                        imports `src/`, never the reverse, so the two never
+ *                        resolve to one another.
  *   - `REPO_ROOT`      — seventeen files; twelve use `import.meta.dirname`,
  *                        five (`archive-task.ts`, `check-no-disk-state.ts`,
  *                        `verify-brief.ts`, `verify-docs.ts`, `verify-task.ts`)
@@ -266,6 +278,7 @@ const KNOWN_COLLISIONS = [
   'ParsedArgs',
   'PrListEntry',
   'PrView',
+  'readManifest',
   'REPO_ROOT',
   'resolvePrBody',
   'resolveShippableArgs',
