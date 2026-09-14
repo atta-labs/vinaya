@@ -74,6 +74,7 @@ import {
   type AgentVendor,
   dispatchRole as realDispatchRole,
   type DispatchHandle,
+  isAgentVendor,
   readResumeRecord as realReadResumeRecord,
   type ResumeRecord,
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
@@ -165,6 +166,7 @@ import {
   postPauseComment,
   printDriverLockLine,
   readDriverLock,
+  readEscalationRecord,
   readPauseState,
   ReplayedResolutionError,
   resolveEscalation,
@@ -1990,6 +1992,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             branch,
             pr: prNumber > 0 ? prNumber : null,
             runId,
+            agent: input.agent,
             reason: decision.reason,
             detail: decision.detail,
             evidence: lastReviewContext ?? undefined,
@@ -2597,6 +2600,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               branch,
               pr: prNumber > 0 ? prNumber : null,
               runId,
+              agent: input.agent,
               reason: decision.reason,
               detail: decision.detail,
               evidence: lastReviewContext ?? undefined,
@@ -2708,6 +2712,26 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   }
   // See the identical comment on the `--resume` path above.
   const escalationId = held.escalationId ?? escalationIdFor(task, held.round, held.head)
+  // Code review, round 2, MAJOR: the operator-typed `--agent` flag used to
+  // decide what gets terminated with nothing persisted to check it against.
+  // The escalation record now carries the agent the run was ACTUALLY
+  // dispatched under (`EscalationFacts.agent`, written at pause time) — read
+  // (peeked, never consumed) BEFORE `resolveEscalation` below so a mismatch
+  // is refused before the resolution is ever consumed, not after: a
+  // mistyped or stale `--agent` must never leave a genuine cancel decision
+  // silently recorded while still refusing to act on it. `undefined` only
+  // for an escalation record written before this field existed; that legacy
+  // case falls back to trusting the operator-supplied value, same as before
+  // this fix.
+  const peekedEscalation = readEscalationRecord(task, escalationId)
+  const dispatchedAgent = peekedEscalation?.agent
+  if (dispatchedAgent !== undefined && dispatchedAgent !== input.agent) {
+    throw new Error(
+      `devReviewLoop --cancel: task ${task}'s escalation was dispatched under agent '${dispatchedAgent}', not '${input.agent}' — refusing to terminate under the wrong agent. Retry with --agent ${dispatchedAgent}.`
+    )
+  }
+  const terminateAgent: AgentVendor =
+    dispatchedAgent !== undefined && isAgentVendor(dispatchedAgent) ? dispatchedAgent : input.agent
   const authenticatedBy = d.fetchNewestRulingAuthor(input.cancelPr) ?? 'unknown-principal'
   const authenticatedFrom = `${input.cancelPr}-${d.fetchNewestRulingOrdinal(input.cancelPr)}`
   let resolved: ResolveEscalationResult
@@ -2724,7 +2748,7 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
     throw err
   }
   const repo = await d.resolveRepo()
-  d.terminateInFlightLaunchesOnShutdown(task, input.agent, repo)
+  d.terminateInFlightLaunchesOnShutdown(task, terminateAgent, repo)
   const fencedEffectKeys = fenceStartedEffectsAsUncertain(task, resolved.epoch)
   await d.flushOutbox(task)
   return { task, escalationId, fencedEffectKeys }

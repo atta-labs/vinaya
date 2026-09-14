@@ -385,6 +385,7 @@ export type EscalationFacts = {
   branch: string
   pr: number | null
   runId: string
+  agent: string
   reason: PauseReason
   detail?: string
   evidence?: string
@@ -425,6 +426,7 @@ export function writeEscalationRecord(facts: EscalationFacts): EscalationRecord 
     runId: facts.runId,
     pid: process.pid,
     host: hostname(),
+    agent: facts.agent,
     reason: facts.reason,
     detail: facts.detail,
     evidence: facts.evidence,
@@ -544,6 +546,19 @@ export function resolveEscalation(
   if (escalation.value.pr !== expectedPr) {
     throw new WrongTargetResolutionError(task, escalationId, escalation.value.pr, expectedPr)
   }
+  // Code review, round 2, HIGH: a concurrent duplicate/replayed resolution
+  // attempt must never move state it was already consumed for — checked
+  // BEFORE ever acquiring ownership, so a replay of an ALREADY-consumed
+  // decision is refused without bumping the task's shared epoch at all. This
+  // does not (and cannot) close the narrower race of two genuinely
+  // concurrent FIRST attempts, both racing past this same check before
+  // either has written a resolution — that pair still both reach
+  // `acquireOwnership` below, and the loser's own epoch bump is what
+  // `fenceStartedEffectsAsUncertain`'s re-acquire loop already tolerates.
+  const alreadyResolved = readResolution(deps, task, escalationId)
+  if (alreadyResolved.status === 'ok') {
+    throw new ReplayedResolutionError(task, escalationId, alreadyResolved.value)
+  }
   const acquired = acquireOwnership(deps, task, `dev-review-loop:${task}:resolution:${escalationId}`)
   if (!acquired.acquired) {
     throw new Error(
@@ -592,20 +607,24 @@ const MAX_FENCE_REACQUIRE_ATTEMPTS = 5
  * Best-effort per key otherwise: a key that no longer reads `'started'` by
  * the time this runs is simply skipped, never an error.
  *
- * **This call's OWN writes can themselves lose that same race (code review,
- * round 2, HIGH).** `resolveEscalation` always calls `acquireOwnership`
- * before it knows whether its own resolution will be consumed or refused as
- * a replay — a concurrent duplicate/replayed `--cancel` racing in can bump
- * the task's shared epoch AFTER this (the genuinely winning) call already
+ * **This call's OWN writes can still lose a narrower race (code review,
+ * round 2, HIGH; narrowed in the same round's own fix).** `resolveEscalation`
+ * now checks the durable resolution record BEFORE ever calling
+ * `acquireOwnership`, so an ordinary replay of an ALREADY-consumed decision
+ * never bumps the epoch at all. What remains is the genuinely concurrent
+ * case — two FIRST attempts racing past that check before either has
+ * written a resolution — where a concurrent `--cancel` can still bump the
+ * task's shared epoch AFTER this (the genuinely winning) call already
  * committed to fencing under the epoch it was handed, even though that
- * duplicate call is itself refused moments later. Left unguarded, the very
- * next `markEffectUncertain` here would throw `StaleEpochWriteError`
- * uncaught, aborting a LEGITIMATE cancel before every started effect is
- * fenced and before the caller's outbox flush ever runs. Since this
- * function's own cancellation intent is already durably recorded (the
- * resolution was consumed before this ever runs), racing in and re-claiming
- * a fresh epoch to finish the fencing under is always safe and correct —
- * never a reason to leave an effect ambiguously `'started'` forever.
+ * other call is itself refused moments later at `consumeResolutionOnce`.
+ * Left unguarded, the very next `markEffectUncertain` here would throw
+ * `StaleEpochWriteError` uncaught, aborting a LEGITIMATE cancel before every
+ * started effect is fenced and before the caller's outbox flush ever runs.
+ * Since this function's own cancellation intent is already durably recorded
+ * (the resolution was consumed before this ever runs), racing in and
+ * re-claiming a fresh epoch to finish the fencing under is always safe and
+ * correct — never a reason to leave an effect ambiguously `'started'`
+ * forever.
  */
 export function fenceStartedEffectsAsUncertain(
   task: number,

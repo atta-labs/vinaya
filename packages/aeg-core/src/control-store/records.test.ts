@@ -278,6 +278,15 @@ describe('parseEscalationRecord (#556, O1)', () => {
     expect(parseEscalationRecord(JSON.stringify(withOptional))).toEqual({ status: 'ok', value: withOptional })
   })
 
+  it('accepts an optional agent field — present for a run dispatched under it, absent for a record written before this field existed (code review, round 2, MAJOR)', () => {
+    const withAgent = { ...validEscalation, agent: 'claude' }
+    expect(parseEscalationRecord(JSON.stringify(withAgent))).toEqual({ status: 'ok', value: withAgent })
+    // `validEscalation` itself carries no `agent` — the legacy shape — and
+    // already parses `ok` above (`accepts a fully-populated escalation
+    // record`); this asserts that is not an accident of `.optional()`.
+    expect(parseEscalationRecord(JSON.stringify(validEscalation))).toEqual({ status: 'ok', value: validEscalation })
+  })
+
   it('reports absent when nothing was ever written', () => {
     expect(parseEscalationRecord(undefined)).toEqual({ status: 'absent' })
   })

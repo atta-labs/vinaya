@@ -2076,6 +2076,15 @@ function resolutionRecordPath(home: string, task: number, round: number, head: s
   return join(home, '.vinaya', 'control-store', String(task), 'resolution', `${task}-${round}-${head}.json`)
 }
 
+/** Every `epoch-NNNNNN.json` ownership claim on disk for `task`, sorted — used to prove a replayed/refused resolution attempt never bumps the shared epoch (code review, round 2, HIGH). */
+function ownershipEpochFiles(home: string, task: number): string[] {
+  const dir = join(home, '.vinaya', 'control-store', String(task), 'ownership')
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
+    .filter((f) => /^epoch-\d+\.json$/.test(f))
+    .sort()
+}
+
 function seedRuling(home: string, commentName: string): void {
   writeFileSync(
     join(home, '.fake-gh-posted-comments', commentName),
@@ -2176,6 +2185,97 @@ describe('devReviewLoop — --cancel (O3)', () => {
     const resumeAfterCancel = runResume(home, cwd, path, 123)
     expect(resumeAfterCancel.status).not.toBe(0)
     expect(resumeAfterCancel.stderr).toMatch(/already has a consumed resolution|replay refused/)
+  }, 20000)
+
+  it('a replayed cancel is refused WITHOUT bumping the task epoch (code review, round 2, HIGH)', () => {
+    const { home, cwd, path } = setUpPauseResume()
+
+    const paused = runLoop(home, cwd, path)
+    expect(paused.status).not.toBe(0)
+
+    seedRuling(home, 'comment-3.md')
+
+    const cancelled = runCancel(home, cwd, path, 123)
+    expect(cancelled.status).toBe(0)
+    const epochsAfterFirstCancel = ownershipEpochFiles(home, TASK)
+    expect(epochsAfterFirstCancel.length).toBeGreaterThan(0)
+
+    // A duplicate/replayed cancel against the SAME already-consumed
+    // escalation must be refused before it ever claims a new epoch — a
+    // replayed decision must not move state it was already consumed for.
+    const cancelledAgain = runCancel(home, cwd, path, 123)
+    expect(cancelledAgain.status).not.toBe(0)
+    expect(cancelledAgain.stderr).toMatch(/already has a consumed resolution|replay refused/)
+    expect(ownershipEpochFiles(home, TASK)).toEqual(epochsAfterFirstCancel)
+  }, 20000)
+})
+
+describe('devReviewLoop — --cancel refuses a mismatched --agent (code review, round 2, MAJOR)', () => {
+  it('refuses to terminate under an --agent that does not match the run’s actual dispatched agent', () => {
+    const { home, cwd, path } = setUpPauseResume()
+
+    // `runLoop` always dispatches under `--agent claude` (its own fixed
+    // helper) — the escalation record persists that as the run's real
+    // agent at pause time.
+    const paused = runLoop(home, cwd, path)
+    expect(paused.status).not.toBe(0)
+
+    seedRuling(home, 'comment-3.md')
+
+    const escalation = JSON.parse(readFileSync(escalationRecordPath(home, TASK, 1, HEAD_SHA), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(escalation.agent).toBe('claude')
+
+    const mismatched = runDevReviewLoopArgs(home, cwd, path, ['--cancel', '123', '--agent', 'codex'])
+    expect(mismatched.status).not.toBe(0)
+    expect(mismatched.stderr).toMatch(/dispatched under agent 'claude', not 'codex'/)
+
+    // Refused before ever consuming the resolution — a correctly-agented
+    // cancel afterward still succeeds against the SAME still-open pause.
+    expect(existsSync(resolutionRecordPath(home, TASK, 1, HEAD_SHA))).toBe(false)
+    const cancelled = runCancel(home, cwd, path, 123)
+    expect(cancelled.status).toBe(0)
+    expect(cancelled.stdout).toMatch(/cancelled/)
+  }, 20000)
+})
+
+describe('devReviewLoop — resolveEscalation’s WrongTargetResolutionError/StaleEscalationError, above the storage level (code review, round 2, MINOR)', () => {
+  it('refuses a --resume whose escalation record was never written (StaleEscalationError)', () => {
+    const { home, cwd, path } = setUpPauseResume()
+
+    const paused = runLoop(home, cwd, path)
+    expect(paused.status).not.toBe(0)
+
+    seedRuling(home, 'comment-3.md')
+
+    const recordPath = escalationRecordPath(home, TASK, 1, HEAD_SHA)
+    expect(existsSync(recordPath)).toBe(true)
+    rmSync(recordPath)
+
+    const resumed = runResume(home, cwd, path, 123)
+    expect(resumed.status).not.toBe(0)
+    expect(resumed.stderr).toMatch(/is stale/)
+    expect(resumed.stderr).toMatch(/no escalation record was ever written/)
+  }, 20000)
+
+  it('refuses a --cancel whose escalation record names a different PR (WrongTargetResolutionError)', () => {
+    const { home, cwd, path } = setUpPauseResume()
+
+    const paused = runLoop(home, cwd, path)
+    expect(paused.status).not.toBe(0)
+
+    seedRuling(home, 'comment-3.md')
+
+    const recordPath = escalationRecordPath(home, TASK, 1, HEAD_SHA)
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')) as Record<string, unknown>
+    record.pr = 999
+    writeFileSync(recordPath, JSON.stringify(record))
+
+    const cancelled = runCancel(home, cwd, path, 123)
+    expect(cancelled.status).not.toBe(0)
+    expect(cancelled.stderr).toMatch(/names PR 999, not PR 123/)
   }, 20000)
 })
 

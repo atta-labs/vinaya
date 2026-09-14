@@ -188,6 +188,12 @@ export type EffectStatus = EffectRecord['status']
  * caller had in hand; `attemptedRecovery`/`recipient` come from the fixed
  * per-`reason` profile `pause-resume.ts` owns. `pr` is nullable for the one
  * pre-push escalation shape (`renderNoPushStopComment`) that has no PR yet.
+ * `agent` is the vendor this run was actually dispatched under (code review,
+ * round 2, MAJOR: `cancelDevReviewLoop` used to trust the operator-typed
+ * `--agent` flag with nothing persisted to cross-check it against) —
+ * `.optional()` since an escalation record written before this field existed
+ * never carries it; a reader falls back to the operator-supplied value only
+ * for that legacy case, never for a genuine mismatch.
  */
 export const EscalationRecordSchema = z
   .object({
@@ -202,6 +208,7 @@ export const EscalationRecordSchema = z
     runId: z.string().min(1),
     pid: z.number().int().positive(),
     host: z.string().min(1),
+    agent: z.string().min(1).optional(),
     reason: z.string().min(1),
     detail: z.string().optional(),
     evidence: z.string().optional(),
