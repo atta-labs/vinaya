@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  type EscalationRecord,
   type ManifestRecord,
   parseEffectRecord,
+  parseEscalationRecord,
   parseInputRecord,
   parseManifestRecord,
   parseOwnershipRecord,
+  parseResolutionRecord,
   parseRunRecord,
   parseTransitionRecord,
+  type ResolutionRecord,
   type RunRecord
 } from './records'
 
@@ -233,5 +237,87 @@ describe('parseEffectRecord', () => {
 
   it('reports absent when nothing was ever written', () => {
     expect(parseEffectRecord(undefined)).toEqual({ status: 'absent' })
+  })
+})
+
+describe('parseEscalationRecord (#556, O1)', () => {
+  const validEscalation: EscalationRecord = {
+    version: 1,
+    kind: 'escalation',
+    task: 556,
+    escalationId: `556-1-${'a'.repeat(40)}`,
+    round: 1,
+    head: 'a'.repeat(40),
+    branch: 'task/control-store-v1/6',
+    pr: 617,
+    runId: 'run-a',
+    pid: 4242,
+    host: 'test-host',
+    reason: 'escalation',
+    attemptedRecovery: 'none — an escalation is a decision request, not a retry condition.',
+    requestedDecision: 'rule or redirect the work',
+    recipient: 'principal',
+    briefHash: 'brief-hash',
+    objectivesVersion: 'v1',
+    rulingOrdinal: 0,
+    policyDigest: 'policy-digest',
+    recordedAt: '2026-09-15T00:00:00.000Z'
+  }
+
+  it('accepts a fully-populated escalation record', () => {
+    expect(parseEscalationRecord(JSON.stringify(validEscalation))).toEqual({ status: 'ok', value: validEscalation })
+  })
+
+  it('accepts nullable briefHash/objectivesVersion and no PR (the pre-push, Issue-anchored shape)', () => {
+    const preposh = { ...validEscalation, pr: null, briefHash: null, objectivesVersion: null }
+    expect(parseEscalationRecord(JSON.stringify(preposh))).toEqual({ status: 'ok', value: preposh })
+  })
+
+  it('accepts optional detail/evidence when present, omits them when absent', () => {
+    const withOptional = { ...validEscalation, detail: 'branch X is dirty', evidence: 'round 1 findings' }
+    expect(parseEscalationRecord(JSON.stringify(withOptional))).toEqual({ status: 'ok', value: withOptional })
+  })
+
+  it('reports absent when nothing was ever written', () => {
+    expect(parseEscalationRecord(undefined)).toEqual({ status: 'absent' })
+  })
+
+  it('reports corrupt on an unsupported version', () => {
+    expect(parseEscalationRecord(JSON.stringify({ ...validEscalation, version: 2 })).status).toBe('corrupt')
+  })
+
+  it('reports corrupt on a blank recipient — .strict() schemas refuse an empty required field', () => {
+    expect(parseEscalationRecord(JSON.stringify({ ...validEscalation, recipient: '' })).status).toBe('corrupt')
+  })
+
+  it('reports corrupt on an extra field — every record here is .strict()', () => {
+    expect(parseEscalationRecord(JSON.stringify({ ...validEscalation, extra: 'nope' })).status).toBe('corrupt')
+  })
+})
+
+describe('parseResolutionRecord (#556, O2)', () => {
+  const validResolution: ResolutionRecord = {
+    version: 1,
+    kind: 'resolution',
+    task: 556,
+    escalationId: `556-1-${'a'.repeat(40)}`,
+    decision: 'resume',
+    authenticatedBy: 'principal-login',
+    authenticatedFrom: '617-1',
+    consumedAt: '2026-09-15T00:05:00.000Z'
+  }
+
+  it('accepts a "resume" decision and a "cancel" decision — never a third value', () => {
+    expect(parseResolutionRecord(JSON.stringify(validResolution))).toEqual({ status: 'ok', value: validResolution })
+    expect(parseResolutionRecord(JSON.stringify({ ...validResolution, decision: 'cancel' })).status).toBe('ok')
+    expect(parseResolutionRecord(JSON.stringify({ ...validResolution, decision: 'defer' })).status).toBe('corrupt')
+  })
+
+  it('reports absent when nothing was ever written', () => {
+    expect(parseResolutionRecord(undefined)).toEqual({ status: 'absent' })
+  })
+
+  it('reports corrupt on torn JSON', () => {
+    expect(parseResolutionRecord('{"version":1,"kind":"resolution"').status).toBe('corrupt')
   })
 })

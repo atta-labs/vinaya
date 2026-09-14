@@ -45,3 +45,32 @@ export function newestPrincipalRulingOrdinal(comments: readonly RulingComment[],
   }
   return best
 }
+
+/**
+ * The AUTHOR of the newest principal-authored ruling comment — `null` when
+ * none matches (`newestPrincipalRulingOrdinal` returning `0` for the
+ * identical reason). `control-store-v1` task 6 (`#556`, O2)'s own need: an
+ * authenticated resolution record's `authenticatedBy` field names WHO
+ * authorized a `--resume`/`--cancel`, not just that an authorization
+ * existed. Same scan, same ordinal-wins rule, so the two functions can never
+ * disagree about which ruling is newest.
+ */
+export function newestPrincipalRulingAuthor(
+  comments: readonly RulingComment[],
+  allowlist: readonly string[]
+): string | null {
+  let best = 0
+  let bestAuthor: string | null = null
+  for (const c of comments) {
+    if (!isPrincipal(c.author, allowlist as string[])) continue
+    const firstLine = (c.body.split('\n')[0] ?? '').trim()
+    const m = RULING_MARKER_ORDINAL.exec(firstLine)
+    if (!m) continue
+    const k = Number.parseInt(m[1] as string, 10)
+    if (k > best) {
+      best = k
+      bestAuthor = c.author
+    }
+  }
+  return bestAuthor
+}

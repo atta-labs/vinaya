@@ -174,7 +174,84 @@ export const EffectRecordSchema = z
 export type EffectRecord = z.infer<typeof EffectRecordSchema>
 export type EffectStatus = EffectRecord['status']
 
-export type ControlRecord = RunRecord | InputRecord | OwnershipRecord | TransitionRecord | ManifestRecord | EffectRecord
+/**
+ * Everything a paused run's human decision needs without chat history
+ * (`control-store-v1` task 6, `#556`, O1) — one immutable record per pause
+ * instance, keyed by `escalationId` (`<task>-<round>-<head>`, the same
+ * round+head granularity `pause-resume.ts`'s own pause-comment idempotency
+ * key already uses, since two real pauses are told apart the identical way).
+ * `runId`/`pid`/`host` are the run identity; `briefHash`/`objectivesVersion`/
+ * `rulingOrdinal`/`policyDigest` are the input versions the round was
+ * judged against (the same four fields `ManifestRecord` binds a verdict to,
+ * reused here to bind an ESCALATION to instead); `evidence` is the last
+ * round's held verdict text or the pause's own `detail`, whichever the
+ * caller had in hand; `attemptedRecovery`/`recipient` come from the fixed
+ * per-`reason` profile `pause-resume.ts` owns. `pr` is nullable for the one
+ * pre-push escalation shape (`renderNoPushStopComment`) that has no PR yet.
+ */
+export const EscalationRecordSchema = z
+  .object({
+    version: z.literal(1),
+    kind: z.literal('escalation'),
+    task: taskId,
+    escalationId: z.string().min(1),
+    round: epochNumber,
+    head: z.string().min(1),
+    branch: z.string().min(1),
+    pr: z.number().int().positive().nullable(),
+    runId: z.string().min(1),
+    pid: z.number().int().positive(),
+    host: z.string().min(1),
+    reason: z.string().min(1),
+    detail: z.string().optional(),
+    evidence: z.string().optional(),
+    attemptedRecovery: z.string().min(1),
+    requestedDecision: z.string().min(1),
+    recipient: z.string().min(1),
+    briefHash: z.string().min(1).nullable(),
+    objectivesVersion: z.string().min(1).nullable(),
+    rulingOrdinal: epochNumber,
+    policyDigest: z.string().min(1),
+    recordedAt: isoTimestamp
+  })
+  .strict()
+export type EscalationRecord = z.infer<typeof EscalationRecordSchema>
+
+/**
+ * The authenticated human decision an escalation resolves to — `'resume'`
+ * or `'cancel'` — written AT MOST ONCE per `escalationId` (`local.ts`'s
+ * `consumeResolutionOnce` claims the file exclusively, the same `linkSync`
+ * discipline an ownership epoch uses, so a second attempt at the SAME
+ * `escalationId` collides rather than overwriting: single consumption is a
+ * storage guarantee here, not an application-level check). `authenticatedBy`
+ * is the principal login the decision was authenticated against (or
+ * `'driver-self'` for the two recoverable-hiccup reasons that resume without
+ * a ruling); `authenticatedFrom` names the ruling marker (`<pr>-<k>`) or the
+ * self-recovery tag it came from.
+ */
+export const ResolutionRecordSchema = z
+  .object({
+    version: z.literal(1),
+    kind: z.literal('resolution'),
+    task: taskId,
+    escalationId: z.string().min(1),
+    decision: z.union([z.literal('resume'), z.literal('cancel')]),
+    authenticatedBy: z.string().min(1),
+    authenticatedFrom: z.string().min(1),
+    consumedAt: isoTimestamp
+  })
+  .strict()
+export type ResolutionRecord = z.infer<typeof ResolutionRecordSchema>
+
+export type ControlRecord =
+  | RunRecord
+  | InputRecord
+  | OwnershipRecord
+  | TransitionRecord
+  | ManifestRecord
+  | EffectRecord
+  | EscalationRecord
+  | ResolutionRecord
 
 /**
  * `'absent'` — nothing was ever written at this path.
@@ -226,4 +303,12 @@ export function parseManifestRecord(raw: string | undefined): ParsedRecord<Manif
 
 export function parseEffectRecord(raw: string | undefined): ParsedRecord<EffectRecord> {
   return parseWith(EffectRecordSchema, raw)
+}
+
+export function parseEscalationRecord(raw: string | undefined): ParsedRecord<EscalationRecord> {
+  return parseWith(EscalationRecordSchema, raw)
+}
+
+export function parseResolutionRecord(raw: string | undefined): ParsedRecord<ResolutionRecord> {
+  return parseWith(ResolutionRecordSchema, raw)
 }

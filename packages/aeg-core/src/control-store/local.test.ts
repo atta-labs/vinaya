@@ -6,16 +6,23 @@ import {
   acquireOwnership,
   appendTransition,
   attemptEpochClaim,
+  consumeResolutionOnce,
   InvalidEffectKeyError,
+  InvalidEscalationIdError,
   InvalidRunIdError,
+  listStartedEffectKeys,
+  markEffectUncertain,
   readCurrentOwnership,
   readEffect,
+  readEscalation,
   readInput,
+  readResolution,
   readRun,
   readTransitions,
   readManifest,
   StaleEpochWriteError,
   writeEffect,
+  writeEscalation,
   writeInput,
   writeManifest,
   writeRun,
@@ -323,5 +330,191 @@ describe('writeEffect / readEffect', () => {
       })
     ).toThrow(InvalidEffectKeyError)
     expect(() => readEffect(deps, 552, '../escaped')).toThrow(InvalidEffectKeyError)
+  })
+})
+
+// --- escalation / resolution (control-store-v1 task 6, #556) ---------------
+
+const escalationInput = {
+  escalationId: '556-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  round: 1,
+  head: 'a'.repeat(40),
+  branch: 'task/control-store-v1/6',
+  pr: 617,
+  runId: 'run-a',
+  pid: 4242,
+  host: 'test-host',
+  reason: 'escalation',
+  attemptedRecovery: 'none — an escalation is a decision request, not a retry condition.',
+  requestedDecision: 'rule or redirect the work',
+  recipient: 'principal',
+  briefHash: 'brief-hash',
+  objectivesVersion: 'v1',
+  rulingOrdinal: 0,
+  policyDigest: 'policy-digest',
+  recordedAt: '2026-09-15T00:00:00.000Z'
+} as const
+
+describe('writeEscalation / readEscalation (#556, O1)', () => {
+  it('writes at the current epoch and reads back the same record', () => {
+    const acquired = acquireOwnership(deps, 556, 'run-a')
+    const epoch = acquired.acquired ? acquired.epoch : -1
+
+    const record = writeEscalation(deps, 556, epoch, escalationInput)
+
+    expect(readEscalation(deps, 556, escalationInput.escalationId)).toEqual({ status: 'ok', value: record })
+  })
+
+  it('is refused (StaleEpochWriteError) once the caller no longer holds the current epoch', () => {
+    acquireOwnership(deps, 556, 'run-a')
+    acquireOwnership(deps, 556, 'run-b') // takes over
+
+    expect(() => writeEscalation(deps, 556, 1, escalationInput)).toThrow(StaleEpochWriteError)
+  })
+
+  it('reports absent when nothing was ever written for an escalationId', () => {
+    expect(readEscalation(deps, 556, 'never-written')).toEqual({ status: 'absent' })
+  })
+
+  it('refuses an unsafe escalationId the same way an unsafe effect key is refused', () => {
+    const acquired = acquireOwnership(deps, 556, 'run-a')
+    const epoch = acquired.acquired ? acquired.epoch : -1
+
+    expect(() => writeEscalation(deps, 556, epoch, { ...escalationInput, escalationId: '../escaped' })).toThrow(
+      InvalidEscalationIdError
+    )
+    expect(() => readEscalation(deps, 556, '../escaped')).toThrow(InvalidEscalationIdError)
+  })
+})
+
+describe('consumeResolutionOnce / readResolution (#556, O2)', () => {
+  const resolutionInput = {
+    escalationId: escalationInput.escalationId,
+    decision: 'resume' as const,
+    authenticatedBy: 'principal-login',
+    authenticatedFrom: '617-1',
+    consumedAt: '2026-09-15T00:05:00.000Z'
+  }
+
+  it('the FIRST attempt at an escalationId is consumed and read back', () => {
+    const acquired = acquireOwnership(deps, 556, 'run-a')
+    const epoch = acquired.acquired ? acquired.epoch : -1
+
+    const outcome = consumeResolutionOnce(deps, 556, epoch, resolutionInput)
+
+    expect(outcome.outcome).toBe('consumed')
+    expect(readResolution(deps, 556, escalationInput.escalationId)).toEqual({
+      status: 'ok',
+      value: outcome.outcome === 'consumed' ? outcome.record : undefined
+    })
+  })
+
+  it('a SECOND attempt at the SAME escalationId is refused — replay is a storage-level guarantee, not an app-level check', () => {
+    const acquired = acquireOwnership(deps, 556, 'run-a')
+    const epoch = acquired.acquired ? acquired.epoch : -1
+    const first = consumeResolutionOnce(deps, 556, epoch, resolutionInput)
+    expect(first.outcome).toBe('consumed')
+
+    // A DIFFERENT decision (cancel, after an earlier resume) targeting the
+    // identical escalationId still collides — the escalation is already
+    // resolved, regardless of what the second attempt asks for.
+    const second = consumeResolutionOnce(deps, 556, epoch, { ...resolutionInput, decision: 'cancel' })
+
+    expect(second.outcome).toBe('already-consumed')
+    expect(second.outcome === 'already-consumed' && second.record?.decision).toBe('resume')
+  })
+
+  it('is refused (StaleEpochWriteError) once the caller no longer holds the current epoch', () => {
+    acquireOwnership(deps, 556, 'run-a')
+    acquireOwnership(deps, 556, 'run-b') // takes over
+
+    expect(() => consumeResolutionOnce(deps, 556, 1, resolutionInput)).toThrow(StaleEpochWriteError)
+  })
+
+  it('reports absent when nothing was ever consumed for an escalationId', () => {
+    expect(readResolution(deps, 556, 'never-written')).toEqual({ status: 'absent' })
+  })
+})
+
+describe('listStartedEffectKeys / markEffectUncertain (#556, O3)', () => {
+  it('lists only keys still status "started" — never "verified" or "corrupt"', () => {
+    const acquired = acquireOwnership(deps, 556, 'run-a')
+    const epoch = acquired.acquired ? acquired.epoch : -1
+    writeEffect(deps, 556, epoch, 'still-started', {
+      operation: 'pr-comment',
+      target: 'pr:1',
+      inputVersion: 1,
+      payloadDigest: 'a',
+      status: 'started',
+      recordedAt: clock.toISOString()
+    })
+    writeEffect(deps, 556, epoch, 'already-verified', {
+      operation: 'pr-comment',
+      target: 'pr:1',
+      inputVersion: 1,
+      payloadDigest: 'b',
+      status: 'verified',
+      url: 'https://example.test/1',
+      recordedAt: clock.toISOString()
+    })
+
+    expect(listStartedEffectKeys(deps, 556)).toEqual(['still-started'])
+  })
+
+  it('lists nothing for a task with no effect records at all', () => {
+    expect(listStartedEffectKeys(deps, 9999)).toEqual([])
+  })
+
+  it('advances a "started" effect to "uncertain" — a late write against the NEW epoch is then refused', () => {
+    const first = acquireOwnership(deps, 556, 'run-a')
+    const firstEpoch = first.acquired ? first.epoch : -1
+    writeEffect(deps, 556, firstEpoch, 'late-result', {
+      operation: 'pr-comment',
+      target: 'pr:1',
+      inputVersion: 1,
+      payloadDigest: 'c',
+      status: 'started',
+      recordedAt: clock.toISOString()
+    })
+
+    // Cancellation acquires a NEW epoch — the same epoch a resolution's own
+    // consumption is fenced under — and fences the stale-in-flight write.
+    const second = acquireOwnership(deps, 556, 'run-cancel')
+    const secondEpoch = second.acquired ? second.epoch : -1
+    const marked = markEffectUncertain(deps, 556, secondEpoch, 'late-result')
+
+    expect(marked?.status).toBe('uncertain')
+    expect(readEffect(deps, 556, 'late-result')).toEqual({ status: 'ok', value: marked })
+
+    // The late result itself — still trying to complete against the OLD,
+    // now-superseded epoch — is refused the instant it tries.
+    expect(() =>
+      writeEffect(deps, 556, firstEpoch, 'late-result', {
+        operation: 'pr-comment',
+        target: 'pr:1',
+        inputVersion: 1,
+        payloadDigest: 'c',
+        status: 'verified',
+        url: 'https://example.test/late',
+        recordedAt: clock.toISOString()
+      })
+    ).toThrow(StaleEpochWriteError)
+  })
+
+  it('is a no-op for a key that is no longer "started"', () => {
+    const acquired = acquireOwnership(deps, 556, 'run-a')
+    const epoch = acquired.acquired ? acquired.epoch : -1
+    writeEffect(deps, 556, epoch, 'already-verified', {
+      operation: 'pr-comment',
+      target: 'pr:1',
+      inputVersion: 1,
+      payloadDigest: 'a',
+      status: 'verified',
+      url: 'https://example.test/1',
+      recordedAt: clock.toISOString()
+    })
+
+    expect(markEffectUncertain(deps, 556, epoch, 'already-verified')).toBeNull()
+    expect(markEffectUncertain(deps, 556, epoch, 'never-written')).toBeNull()
   })
 })

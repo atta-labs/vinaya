@@ -199,7 +199,7 @@ export {
   isReviewGateExemptBranch
 } from './review-gate'
 export type { ReviewGateComment, ReviewGateInput, ReviewGateResult, ReviewGateVerdict } from './review-gate'
-export { newestPrincipalRulingOrdinal } from './ruling-ordinal'
+export { newestPrincipalRulingAuthor, newestPrincipalRulingOrdinal } from './ruling-ordinal'
 export type { RulingComment } from './ruling-ordinal'
 export {
   briefHash,
@@ -603,37 +603,49 @@ export {
   acquireOwnership,
   appendTransition,
   CONTROL_RECORD_VERSION,
+  consumeResolutionOnce,
   defaultControlStoreDeps,
   defaultIsPidAlive,
   InvalidEffectKeyError,
+  InvalidEscalationIdError,
   InvalidRunIdError,
+  listStartedEffectKeys,
+  markEffectUncertain,
   migrateLegacyTask,
   normalizeOutcome,
   parseEffectRecord,
+  parseEscalationRecord,
   parseInputRecord,
   parseManifestRecord,
   parseOwnershipRecord,
+  parseResolutionRecord,
   parseRunRecord,
   parseTransitionRecord,
   readCurrentOwnership,
   readEffect,
+  readEscalation,
   readInput,
   readManifest,
+  readResolution,
   readRun,
   readTransitions,
   StaleEpochWriteError,
   writeEffect,
+  writeEscalation,
   writeInput,
   writeManifest,
   writeRun
 } from './control-store'
 export type {
   AcquireResult,
+  ConsumeResolutionResult,
   ControlRecord,
   ControlStoreDeps,
   EffectInput,
   EffectRecord,
   EffectStatus,
+  EscalationInput,
+  EscalationRecord,
   InputInput,
   InputRecord,
   ManifestInput,
@@ -643,6 +655,8 @@ export type {
   OutcomeSignals,
   OwnershipRecord,
   ParsedRecord,
+  ResolutionInput,
+  ResolutionRecord,
   RunInput,
   RunRecord,
   TaskOutcomeStatus,
