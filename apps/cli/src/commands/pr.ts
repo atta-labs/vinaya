@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { formatTokenReportRow, type MeteringCapability, parsePremiseBlock } from '@attalabs/aeg-core'
 import { printJson } from '../lib/envelope'
 import {
   type BodyResult,
@@ -14,6 +15,7 @@ import {
   validateForgeWrite
 } from '../lib/forge-write'
 import { checkBareDigits } from '../checks/body-bare-digits-logic'
+import { derivePhase, isoToday, resolveTokenReportCapability, writeTokensBlock } from '../lib/pr-report-engine'
 
 const RETRY_CREATE = 'vinaya pr create --validate-only …'
 const RETRY_EDIT = 'vinaya pr edit <n> --validate-only …'
@@ -205,6 +207,98 @@ function refuseOnBareDigits(body: string, retryCommand: string): void {
   )
 }
 
+/** `--base <branch>` from the passthrough `gh` args — `gh pr create`'s own target when given; the repo's conventional default otherwise (every other base-branch reference in this file already assumes `main`). */
+function extractBaseBranch(args: string[]): string {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string
+    if (a === '--base' || a === '-B') return args[i + 1] ?? 'main'
+    if (a.startsWith('--base=')) return a.slice('--base='.length)
+  }
+  return 'main'
+}
+
+/** `git show <ref>:<path>` against the base branch — tries `origin/<base>` first (the ref CI/a fresh clone actually has), then the bare local name, `null` when neither resolves. Never the local worktree (that already carries this PR's own commits — the whole point of O8). */
+function baseBranchFileReader(baseBranch: string): (path: string) => string | null {
+  return (path: string) => {
+    for (const ref of [`origin/${baseBranch}`, baseBranch]) {
+      try {
+        return execFileSync('git', ['show', `${ref}:${path}`], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore']
+        })
+      } catch {
+        // try the next ref
+      }
+    }
+    return null
+  }
+}
+
+/**
+ * O8 (`#595`): a `Premise:` pin is supposed to name a pre-existing fact —
+ * something already true when the brief was authored. A `contains:` pin
+ * whose target string is absent from the base branch can only be true
+ * because THIS PR's own diff adds it — a self-referential premise that
+ * proves nothing about the surface the brief was written against. Checked
+ * against the base, never the local checkout (which already has this PR's
+ * commits and would trivially pass). Only `contains:` pins are in scope —
+ * `absent`/`sha256` pins ask a different question this objective doesn't
+ * cover.
+ */
+function refuseOnPremiseAboutOwnAdditions(body: string, baseBranch: string, retryCommand: string): void {
+  const contains = parsePremiseBlock(body).filter((a) => a.kind === 'contains')
+  if (contains.length === 0) return
+  const readBase = baseBranchFileReader(baseBranch)
+  const errors = contains
+    .filter((a) => {
+      const content = readBase(a.path)
+      return content === null || !content.includes(a.value)
+    })
+    .map((a) =>
+      makeCheckError(
+        'pr-premise-own-additions',
+        `Premise line \`- ${a.path} contains: ${a.value}\` names a symbol absent on \`${baseBranch}\` — a Premise pins a pre-existing fact, never something only this PR's own diff adds.`,
+        `Drop the pin, rephrase it to describe what \`${baseBranch}\` already has, or move the claim out of \`Premise:\` entirely, then re-run \`${retryCommand}\`.`
+      )
+    )
+  if (errors.length > 0) refuse(errors)
+}
+
+/**
+ * O7 (`#595`): the `AEG:TOKENS` row `pr create` splices into the body at
+ * open — real figures on a metering-capable host, the same accepted
+ * unavailable form `collectTokensAddition`'s own "any other incapable
+ * reason" branch already writes (`— (${reason})` in the Agent/Model cell)
+ * on every incapable host, `no-transcript-resolved` included. Never a
+ * refusal: unlike `vinaya pr report --write` (a re-run is always possible),
+ * `pr create` opens the PR exactly once, and `token-report`'s own
+ * `missingSectionError` refuses a task PR that carries no row at all — so
+ * the one outcome this function must never produce is no row.
+ */
+/**
+ * Pure half of `tokenRowForOpen`, below — split out so the two shapes
+ * (`capable`: real figures; anything else: the accepted unavailable form)
+ * are directly unit-testable against a fake `MeteringCapability`, without
+ * driving the real pointer/transcript resolution `resolveMeteringCapability`
+ * itself performs.
+ */
+export function tokenReportRowForCapability(capability: MeteringCapability, phase: string, date: string): string {
+  if (capability.capable) {
+    return formatTokenReportRow({ phase, role: 'Developer', summary: capability.summary, date })
+  }
+  return formatTokenReportRow({
+    phase,
+    role: 'Developer',
+    summary: null,
+    modelOverride: `— (${capability.reason})`,
+    date
+  })
+}
+
+function tokenRowForOpen(): string {
+  return tokenReportRowForCapability(resolveTokenReportCapability(), derivePhase(), isoToday())
+}
+
 export async function prCreateCommand(args: string[]): Promise<void> {
   const json = args.includes('--json')
   const validateOnly = args.includes('--validate-only')
@@ -266,13 +360,16 @@ export async function prCreateCommand(args: string[]): Promise<void> {
   })
   if (errors.length > 0) refuse(errors)
   refuseOnBareDigits(body, RETRY_CREATE)
+  refuseOnPremiseAboutOwnAdditions(body, extractBaseBranch(ghArgs), RETRY_CREATE)
   await runBodyChecks(body, branch, undefined, RETRY_CREATE)
 
   if (validateOnly) {
     reportPass(json, 'pr create')
     return
   }
-  runGhWrite(['pr', 'create'], ghArgs, bodyResult, json)
+  const bodyWithTokens = writeTokensBlock(body, tokenRowForOpen())
+  const finalBodyResult: BodyResult | null = bodyResult ? { ...bodyResult, body: bodyWithTokens } : null
+  runGhWrite(['pr', 'create'], ghArgs, finalBodyResult, json)
 }
 
 export async function prEditCommand(args: string[]): Promise<void> {

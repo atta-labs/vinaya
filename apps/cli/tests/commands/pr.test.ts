@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { tokenReportRowForCapability } from '../../src/commands/pr'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
@@ -286,6 +287,100 @@ describe('vinaya pr create --validate-only — runs the registry PR_BODY checks 
       ['pr', 'create', '--validate-only', '--body-file', join(FORGE_FIXTURES, 'pr-clean-body.md'), '--title', 'Fix: x'],
       { cwd: REPO_ROOT }
     )
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('PASS')
+  })
+})
+
+describe('tokenReportRowForCapability (pure) — O7 (#595)', () => {
+  it('a capable fake adapter with figures produces numbers', () => {
+    const row = tokenReportRowForCapability(
+      {
+        capable: true,
+        transcriptPath: '/fake/transcript.jsonl',
+        summary: {
+          components: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+          model: 'claude-sonnet-5',
+          messageCount: 2
+        }
+      },
+      '9: develop',
+      '2026-09-14'
+    )
+    expect(row).toBe('| 9: develop | Developer | claude-sonnet-5 | 100 | 50 | — | 2026-09-14 |')
+  })
+
+  it('an incapable fake adapter (no figures) produces the accepted unavailable form, never a bare —', () => {
+    const row = tokenReportRowForCapability(
+      { capable: false, reason: 'no-transcript-resolved', detail: 'no pointer found for this session' },
+      '9: develop',
+      '2026-09-14'
+    )
+    expect(row).toBe('| 9: develop | Developer | — (no-transcript-resolved) | — | — | — | 2026-09-14 |')
+    // The Agent/Model cell always carries the reason inline — never a bare
+    // `—` with nothing said about why.
+    expect(row.split('|')[3]?.trim()).not.toBe('—')
+  })
+})
+
+/**
+ * O8 (`#595`): a `Premise:` `contains:` pin must name something already
+ * true on the base branch — never something only THIS PR's own diff adds.
+ * A real git repo (not a fixture body alone): the check reads `base.ts`'s
+ * content via `git show main:base.ts`, so the base branch actually has to
+ * carry (or lack) the pinned symbol.
+ */
+describe('vinaya pr create --validate-only — refuses a Premise about the PR’s own additions (O8)', () => {
+  let cwd: string
+
+  function initRepoWithBase(): void {
+    const identityEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'x',
+      GIT_AUTHOR_EMAIL: 'x@x.com',
+      GIT_COMMITTER_NAME: 'x',
+      GIT_COMMITTER_EMAIL: 'x@x.com'
+    }
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd })
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({ rings: { ring1_forgeWriteInterception: false, ring2_asyncAudits: true } })
+    )
+    writeFileSync(join(cwd, 'base.ts'), 'export const BASE_SYMBOL = 1\n')
+    execFileSync('git', ['add', '.'], { cwd })
+    execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd, env: identityEnv })
+    execFileSync('git', ['checkout', '-q', '-b', 'task/x/1'], { cwd })
+  }
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-pr-premise-own-additions-'))
+  })
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it('refuses a body naming a symbol only the head adds', () => {
+    initRepoWithBase()
+    const bodyPath = join(cwd, 'pr-body.md')
+    writeFileSync(
+      bodyPath,
+      ['**Premise:**', '- base.ts contains: HEAD_ONLY_SYMBOL', '', '## Summary', '', 'no bare digits here.'].join('\n')
+    )
+    const r = runCli(['pr', 'create', '--validate-only', '--body-file', bodyPath, '--title', 'Feat: x'], { cwd })
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('pr-premise-own-additions')
+    expect(r.stderr).toContain('HEAD_ONLY_SYMBOL')
+    expect(r.stderr).toContain('main')
+  })
+
+  it('opens a body naming a symbol already on the base', () => {
+    initRepoWithBase()
+    const bodyPath = join(cwd, 'pr-body.md')
+    writeFileSync(
+      bodyPath,
+      ['**Premise:**', '- base.ts contains: BASE_SYMBOL', '', '## Summary', '', 'no bare digits here.'].join('\n')
+    )
+    const r = runCli(['pr', 'create', '--validate-only', '--body-file', bodyPath, '--title', 'Feat: x'], { cwd })
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
   })

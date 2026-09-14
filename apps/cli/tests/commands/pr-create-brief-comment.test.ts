@@ -201,6 +201,24 @@ describe('vinaya pr create — refuses a body still carrying the retired brief s
     expect(sentBody).not.toContain('aeg:brief')
   })
 
+  it('O7 (#595): splices an AEG:TOKENS row into the body actually sent to gh, never a bare-— row', () => {
+    const repo = initRepo()
+    const bodyPath = join(repo, 'pr-body.md')
+    writeFileSync(bodyPath, newShapedBody())
+    const { path, createBodyLogPath } = stubGh('https://github.com/acme/widget/pull/46')
+
+    const r = runCli(['pr', 'create', '--body-file', bodyPath, '--title', 'Fix(cli): fills the token row'], repo, path)
+    expect(r.status).toBe(0)
+
+    const sentBody = readFileSync(createBodyLogPath, 'utf-8')
+    expect(sentBody).toContain('<!-- AEG:TOKENS:START -->')
+    expect(sentBody).toContain('<!-- AEG:TOKENS:END -->')
+    expect(sentBody).toMatch(/\|\s*main:\s*develop\s*\|\s*Developer\s*\|/)
+    // This test sandbox resolves no real session transcript — the accepted
+    // unavailable form, never a bare `—` cell with no reason attached.
+    expect(sentBody).toMatch(/—\s*\([a-z-]+\)/)
+  })
+
   it('a body that only MENTIONS a legacy marker inline, backticked, in prose is not refused', () => {
     const repo = initRepo()
     const bodyPath = join(repo, 'pr-body.md')

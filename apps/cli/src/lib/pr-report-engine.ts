@@ -8,6 +8,7 @@ import {
   extractFencedBlocks,
   formatTokenReportRow,
   locateTestPlanSection,
+  type MeteringCapability,
   resolveMeteringCapability
 } from '@attalabs/aeg-core'
 import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
@@ -779,14 +780,14 @@ export function writeTokensBlock(body: string, addition: string): string {
  * and refusing here would block the Evidence half of this command over a
  * Token-report-only concern.
  */
-function derivePhase(): string {
+export function derivePhase(): string {
   const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'])
   const m = /^task\/[^/]+\/(.+)$/.exec(branch)
   const taskId = m ? m[1] : branch || 'unknown'
   return `${taskId}: develop`
 }
 
-function isoToday(): string {
+export function isoToday(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
@@ -851,6 +852,19 @@ export type TokensAddition = { collected: true; row: string } | { collected: fal
  *     established, and `token-collection-wired` already flags it as the wiring
  *     defect it is.
  */
+/**
+ * `resolveMeteringCapability(realDeps())` — the one call site every other
+ * caller in this file already reaches through (`collectTokensAddition`,
+ * below). Exported so a COMMAND (`pr create`, O7) can resolve capability
+ * without importing `realDeps` from `../commands/tokens.ts` itself —
+ * `apps/cli/specs/surface.md`'s own rule refuses a command calling into
+ * another `commands/*.ts` file outright; routing through this lib-layer
+ * wrapper keeps that call inside `apps/cli/src/lib`, where it already lived.
+ */
+export function resolveTokenReportCapability(): MeteringCapability {
+  return resolveMeteringCapability(realDeps())
+}
+
 export function collectTokensAddition(opts: {
   phase: string
   role: string
