@@ -297,14 +297,35 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     return doctrineCache
   }
 
+  // `deps.resolveRepo()` (the real default is `@attalabs/aeg-forge-state`'s
+  // `resolveRepo`) is called at most ONCE per sink, its result — including a
+  // failed `null` — cached for every later `log()` call in this process.
+  // `resolveRepo` itself deliberately does NOT cache a failure (a transient
+  // git-remote lookup error should retry on the NEXT call, in ITS docs'
+  // words) — correct for its own callers, wrong for a chokepoint every
+  // check attempt now reaches once each: a process running `vinaya check
+  // --all` calls `log()` once per check (dozens, `runChecks`'s own
+  // per-check chokepoint), and a `cwd` outside any git repository makes
+  // every one of those spawn its own `git remote get-url origin` subprocess
+  // with its own 5s timeout — measured live, running many such processes
+  // concurrently (the shape a CI matrix or a parallel test suite both take)
+  // stalls indefinitely under the resulting fork/exec pressure, where the
+  // otherwise-identical run without this per-check chokepoint completes in
+  // seconds. A repo identity cannot change mid-process, so caching the
+  // failure here is exactly as safe as caching the success already was.
+  let resolveRepoCache: ReturnType<LogSinkDeps['resolveRepo']> | undefined
+  const resolveRepoOnce = (): ReturnType<LogSinkDeps['resolveRepo']> => {
+    if (resolveRepoCache === undefined) resolveRepoCache = deps.resolveRepo()
+    return resolveRepoCache
+  }
+
   function log(e: LogEventInput): void {
     try {
       const env = deps.env()
       const host = hostFromEnv(env)
       const now = deps.now()
       const mySeq = seq++
-      deps
-        .resolveRepo()
+      resolveRepoOnce()
         .then((resolved) => {
           const repo =
             resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
