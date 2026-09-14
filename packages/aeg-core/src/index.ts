@@ -377,8 +377,11 @@ export type { TaskBranchIdentity } from './task-branch-identity'
 export {
   capabilityUnavailable,
   DEFAULT_PAGE_LIMIT,
+  isOperatorGranted,
   isTaskToolName,
   MAX_PAGE_LIMIT,
+  OPERATOR_STATUS_FOLLOW,
+  OPERATOR_TOOL_GRANT,
   TASK_CANCEL_TOOL,
   TASK_ESCALATION_READ_TOOL,
   TASK_RESUME_TOOL,
@@ -410,6 +413,7 @@ export {
 } from './task-tools'
 export type {
   Freshness,
+  OperatorGrantedTool,
   PageRequest,
   RequestedAuthority,
   TaskCancelInput,

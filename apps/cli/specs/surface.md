@@ -410,8 +410,11 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `TASK_CANCEL_TOOL` | const | `packages/aeg-core/src/task-tools.ts` |
 | `TASK_TOOL_CATALOG` | const | `packages/aeg-core/src/task-tools.ts` |
 | `taskToolByName` | function | `packages/aeg-core/src/task-tools.ts` |
+| `isOperatorGranted` | function | `packages/aeg-core/src/task-tools.ts` |
+| `OPERATOR_STATUS_FOLLOW` | const | `packages/aeg-core/src/task-tools.ts` |
+| `OPERATOR_TOOL_GRANT` | const | `packages/aeg-core/src/task-tools.ts` |
 
-(334 exports — 32 added by `task-operator-v1` task 1: the task-tool catalog. `TaskToolDefinition`/`TaskToolError`/`TaskToolErrorKind`/`TaskToolHandlerBinding`/`TaskToolName`/`TaskToolRef`/`Freshness`/`PageRequest`/`RequestedAuthority`/`TaskStatusInput`/`TaskStatusResult`/`TaskEscalationReadInput`/`TaskEscalationReadResult`/`TaskEscalationPacket`/`TaskStartInput`/`TaskResumeInput`/`TaskCancelInput` are type-only exports of the same file — per this file's own rule (line 11, "functions/consts/classes only"), they get no row; the remaining 18 come from `control-store-v1` task 1, merged separately.)
+(337 exports — 32 added by `task-operator-v1` task 1: the task-tool catalog. `TaskToolDefinition`/`TaskToolError`/`TaskToolErrorKind`/`TaskToolHandlerBinding`/`TaskToolName`/`TaskToolRef`/`Freshness`/`PageRequest`/`RequestedAuthority`/`TaskStatusInput`/`TaskStatusResult`/`TaskEscalationReadInput`/`TaskEscalationReadResult`/`TaskEscalationPacket`/`TaskStartInput`/`TaskResumeInput`/`TaskCancelInput` are type-only exports of the same file — per this file's own rule (line 11, "functions/consts/classes only"), they get no row; the remaining 18 come from `control-store-v1` task 1, merged separately. 3 more added by `task-operator-v1` task 3: `isOperatorGranted`/`OPERATOR_STATUS_FOLLOW`/`OPERATOR_TOOL_GRANT` — the Operator's tool grant, the machine-readable twin of `roles/operator.md`'s `allowed-tools`; `OperatorGrantedTool` is type-only and gets no row.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
@@ -427,6 +430,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `discoverRoleNames` | function | `apps/cli/src/lib/agents-skills-emitter.ts` |
 | `formatRoleTitle` | function | `apps/cli/src/lib/agents-skills-emitter.ts` |
 | `renderAgentSkill` | function | `apps/cli/src/lib/agents-skills-emitter.ts` |
+| `roleAllowedTools` | function | `apps/cli/src/lib/agents-skills-emitter.ts` |
 | `RETIRED_ROLE_NAMES` | const | `apps/cli/src/lib/agents-skills-emitter.ts` |
 | `staleAgentSkillPaths` | function | `apps/cli/src/lib/agents-skills-emitter.ts` |
 | `ARCHIVIST_WORKFLOW_PATH` | const | `apps/cli/src/lib/artifacts.ts` |
@@ -811,6 +815,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `taskResumeHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
 | `taskCancelHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
 | `routeTaskToolIntent` | function | `apps/cli/src/lib/task-tools/router.ts` |
+| `refuseUngrantedTool` | function | `apps/cli/src/lib/task-tools/router.ts` |
 | `discoverWorkspacePackages` | function | `apps/cli/src/lib/test-selector.ts` |
 | `extractImportSpecifiers` | function | `apps/cli/src/lib/test-selector.ts` |
 | `isTestFile` | function | `apps/cli/src/lib/test-selector.ts` |
@@ -821,7 +826,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(259 exports — 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. None of the three files front a `vinaya` subcommand yet — the catalog they implement is an agent-facing tool surface, not a CLI command — so no Commands-table row exists for any of them; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule.)
+(261 exports — 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. None of the three files front a `vinaya` subcommand yet — the catalog they implement is an agent-facing tool surface, not a CLI command — so no Commands-table row exists for any of them; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule. 2 more added by `task-operator-v1` task 3 O2: `router.ts`'s `refuseUngrantedTool` (the router's grant gate) and `agents-skills-emitter.ts`'s `roleAllowedTools` (reads a role's `allowed-tools` frontmatter so the generated skill carries the same grant).)
 
 ## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 

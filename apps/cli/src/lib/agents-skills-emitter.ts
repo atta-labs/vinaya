@@ -91,13 +91,50 @@ function doctrineInvocation(selfHost: VendoredVinaya | null): string {
   return selfHost ? `bun ${selfHost.dir}/src/index.ts doctrine` : 'vinaya doctrine'
 }
 
-/** Render the 3-line pointer content for an agent skill. */
-export function renderAgentSkill(roleName: string, selfHost: VendoredVinaya | null = null): string {
+/**
+ * Read a role file's `allowed-tools` frontmatter as a normalized string list —
+ * a YAML list (`- task_start`) or a comma-separated inline value both parse to
+ * the same array; anything else (absent, malformed, empty) yields `[]`. A role
+ * that declares a tool grant (today, only the Operator) carries it here so the
+ * generated skill can surface the SAME grant the role doc and the router
+ * enforce; a role with no grant is unchanged.
+ */
+export function roleAllowedTools(doctrineRoot: string, roleName: string): string[] {
+  const file = join(doctrineRoot, 'roles', `${roleName}.md`)
+  if (!existsSync(file)) return []
+  const { data } = matter(readFileSync(file, 'utf8'))
+  const raw = data['allowed-tools']
+  if (Array.isArray(raw))
+    return raw
+      .map(String)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0)
+  if (typeof raw === 'string')
+    return raw
+      .split(',')
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0)
+  return []
+}
+
+/**
+ * Render the pointer content for an agent skill. A role that declares an
+ * `allowed-tools` grant gets that grant carried into the generated skill's
+ * frontmatter, so the generated view exposes the SAME grant the role doc and
+ * the router enforce (O2); a role with no grant renders the unchanged 3-line
+ * pointer.
+ */
+export function renderAgentSkill(
+  roleName: string,
+  selfHost: VendoredVinaya | null = null,
+  allowedTools: readonly string[] = []
+): string {
   const roleTitle = formatRoleTitle(roleName)
+  const grantLine = allowedTools.length > 0 ? `allowed-tools: ${allowedTools.join(', ')}\n` : ''
   return `---
 name: vinaya-${roleName}
 description: Act as the AEG ${roleTitle} for this repo.
----
+${grantLine}---
 Run \`${doctrineInvocation(selfHost)} --role ${roleName}\` and follow its output as your operating instructions for this session.
 `
 }
@@ -108,7 +145,7 @@ export function buildAgentsSkillsOps(doctrineRoot: string, selfHost: VendoredVin
   return roles.map((role) => ({
     kind: 'create-file',
     path: agentSkillPath(role),
-    content: renderAgentSkill(role, selfHost),
+    content: renderAgentSkill(role, selfHost, roleAllowedTools(doctrineRoot, role)),
     group: AGENTS_SKILLS_GROUP
   }))
 }

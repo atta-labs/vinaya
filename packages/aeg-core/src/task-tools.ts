@@ -331,3 +331,35 @@ export function taskToolByName(name: TaskToolName): TaskToolDefinition {
   if (!found) throw new Error(`no catalog entry for task tool "${name}"`)
   return found as TaskToolDefinition
 }
+
+// --- the Operator's tool grant (O2) -----------------------------------------
+
+/**
+ * The one grant the task Operator holds beyond the five catalog tools: the
+ * append-only `task status --follow` read (`apps/cli/src/lib/task-status.ts`'s
+ * own `--follow` narration). Named as a grant token rather than a catalog
+ * tool because it is a bounded status stream the Operator follows, not one of
+ * the five typed task tools — but it is still part of what the router must
+ * recognize as granted, so it lives here beside the catalog rather than as a
+ * bare string a caller reinvents.
+ */
+export const OPERATOR_STATUS_FOLLOW = 'task_status_follow' as const
+
+/**
+ * The complete, closed set of tools the task Operator is granted (O2) — the
+ * five catalog tools plus the status-follow read, and nothing else. This is
+ * the machine-readable twin of `aeg-root/roles/operator.md`'s `allowed-tools`
+ * frontmatter and of the generated skill's `allowed-tools`; a test binds all
+ * three so no representation drifts from another. The router refuses every
+ * tool outside this set: a registered tool is a capability, but the grant is
+ * what says the Operator may call it — a shell, a forge write, an Issue edit,
+ * a review publish or a merge is never in it.
+ */
+export const OPERATOR_TOOL_GRANT = [...TASK_TOOL_NAMES, OPERATOR_STATUS_FOLLOW] as const
+
+export type OperatorGrantedTool = (typeof OPERATOR_TOOL_GRANT)[number]
+
+/** True only for a tool inside the Operator's grant — the membership test the router's refusal is built on. Any name not in `OPERATOR_TOOL_GRANT` (a shell, a forge write, an Issue edit, `merge`, a review publish) is outside the grant and refused. */
+export function isOperatorGranted(tool: string): tool is OperatorGrantedTool {
+  return (OPERATOR_TOOL_GRANT as readonly string[]).includes(tool)
+}
