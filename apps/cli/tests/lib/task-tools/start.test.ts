@@ -1,0 +1,124 @@
+import { describe, expect, it } from 'bun:test'
+import type { RepoRef } from '@attalabs/aeg-forge-state'
+import type { CallerContext } from '../../../src/lib/task-tools/server.js'
+import { createTaskStartHandler, type RequestStore, type StartRecord } from '../../../src/lib/task-tools/start.js'
+
+/**
+ * `task_start` (O2) driven in-process with injected deps: an in-memory
+ * idempotency store and a recording launcher, so every branch — validation,
+ * the absent-caller refusal, the first start, the idempotent replay, and a
+ * launch failure — is exercised with no real forge, git, or detached process.
+ * The protocol-level end-to-end path (a real client over stdio, disconnect
+ * leaves one run) is `protocol.test.ts`.
+ */
+
+const REPO: RepoRef = { owner: 'attalabs', repo: 'vinaya' } as RepoRef
+const CALLER: CallerContext = { caller: { id: 'operator-1' } }
+const NO_CALLER: CallerContext = { caller: null }
+
+function memStore(): { store: RequestStore; map: Map<string, StartRecord> } {
+  const map = new Map<string, StartRecord>()
+  return {
+    map,
+    store: {
+      claim(record) {
+        const existing = map.get(record.requestId)
+        if (existing) return { claimed: false, record: existing }
+        map.set(record.requestId, record)
+        return { claimed: true, record }
+      },
+      release(requestId) {
+        map.delete(requestId)
+      }
+    }
+  }
+}
+
+function harness(overrides: { launch?: () => void } = {}) {
+  const launches: Array<{ tranche: string; id: string }> = []
+  const { store, map } = memStore()
+  const handler = createTaskStartHandler({
+    resolveRepo: async () => REPO,
+    store,
+    launch: (target) => {
+      // Override first: a throwing launcher records nothing, mirroring a real
+      // detached spawn that fails before it starts.
+      overrides.launch?.()
+      launches.push(target)
+    },
+    now: () => '2026-01-01T00:00:00.000Z'
+  })
+  return { handler, launches, map }
+}
+
+describe('task_start handler', () => {
+  it('refuses malformed input with a validation error, before any caller check or launch', async () => {
+    const { handler, launches } = harness()
+    const result = await handler({}, CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.kind).toBe('validation')
+    expect(launches).toHaveLength(0)
+  })
+
+  it('refuses with an authority error when the invocation context carries no caller', async () => {
+    const { handler, launches } = harness()
+    const result = await handler({ tranche: 'task-operator-v1', id: '2' }, NO_CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.kind).toBe('authority')
+    expect(launches).toHaveLength(0)
+  })
+
+  it('starts the run once and returns the durable run identity', async () => {
+    const { handler, launches } = harness()
+    const result = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.result.started).toBe(true)
+    expect(result.result.run).toEqual({ tranche: 'task-operator-v1', id: '2' })
+    expect(result.result.mode).toBe('attended')
+    expect(result.result.requestId).toMatch(/^req_/)
+    expect(launches).toEqual([{ tranche: 'task-operator-v1', id: '2' }])
+  })
+
+  it('is idempotent per request identity — a duplicate start returns the same run and launches nothing new', async () => {
+    const { handler, launches } = harness()
+    const first = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
+    const second = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
+    expect(first.ok && second.ok).toBe(true)
+    if (!first.ok || !second.ok) return
+    expect(second.result.requestId).toBe(first.result.requestId)
+    expect(second.result.started).toBe(false)
+    expect(second.result.startedAt).toBe(first.result.startedAt)
+    expect(launches).toHaveLength(1)
+  })
+
+  it('scopes the request identity to the caller — a different caller is a distinct start', async () => {
+    const { handler, launches } = harness()
+    const a = await handler({ tranche: 'task-operator-v1', id: '2' }, { caller: { id: 'operator-1' } })
+    const b = await handler({ tranche: 'task-operator-v1', id: '2' }, { caller: { id: 'operator-2' } })
+    expect(a.ok && b.ok).toBe(true)
+    if (!a.ok || !b.ok) return
+    expect(a.result.requestId).not.toBe(b.result.requestId)
+    expect(launches).toHaveLength(2)
+  })
+
+  it('releases the claimed identity when the launch fails synchronously, so a retry can start it', async () => {
+    let fail = true
+    const { handler, launches, map } = harness({
+      launch: () => {
+        if (fail) throw new Error('launcher missing')
+      }
+    })
+    const first = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
+    expect(first.ok).toBe(false)
+    if (!first.ok) expect(first.error.kind).toBe('infrastructure')
+    expect(map.size).toBe(0) // claim released — no stale record blocking a retry
+
+    fail = false
+    const retry = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
+    expect(retry.ok).toBe(true)
+    if (retry.ok) expect(retry.result.started).toBe(true)
+    // one recorded push from the retry (the failed attempt threw before recording nothing durable)
+    expect(launches).toHaveLength(1)
+  })
+})

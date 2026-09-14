@@ -24,6 +24,7 @@ import { DOC_OWNERS_PATH, LABELS, type LabelKey, VERDICT_MARKER_SOURCE, WAIVER_L
 import { resolveDoctrineRoot } from '../commands/doctrine.js'
 import type { AgentVendor } from './agent-vendors.js'
 import { buildAgentsSkillsOps } from './agents-skills-emitter.js'
+import { claudeMcpJsonFile } from './task-tools/adapters.js'
 import { buildClaudeCommandOps } from './claude-command-emitter.js'
 import { buildClaudeStopHookOps } from './claude-stop-hook-emitter.js'
 import type { VinayaConfig } from './config.js'
@@ -99,6 +100,14 @@ export const BODY_CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-body-checks.y
 // the same way it reverses every other file `init` owns.
 export const CHECKS_FOLDER_PLACEHOLDER_PATH = 'vinaya/checks/.gitkeep'
 export const ROLES_FOLDER_PLACEHOLDER_PATH = 'vinaya/roles/.gitkeep'
+// Claude's project-root MCP registration for the task-tools server (task
+// operator v1 task 2). Strict JSON, so — like `.claude/settings.json` — it is a
+// refuse-if-foreign whole file, never a managed block, and it is written only
+// when `claude` is one of the selected agent vendors. The Codex equivalent
+// (`~/.codex/config.toml` `[mcp_servers]`) is a user-home file, not a repo
+// artifact, so it is documented in `apps/cli/specs/self-hosting.md` rather than
+// emitted here.
+export const MCP_JSON_PATH = '.mcp.json'
 
 const MANAGED_NOTE =
   'Managed by Vinaya — created by `vinaya init`. `vinaya upgrade` regenerates it; `vinaya eject` removes it.'
@@ -193,7 +202,7 @@ export function starterConfig(): VinayaConfig {
 // that as drift, and `vinaya upgrade` re-pins.
 // ---------------------------------------------------------------------------
 /** This installed package's own version — the hooks and the workflows pin to it. */
-function ownVersion(): string {
+export function ownVersion(): string {
   const pkg = JSON.parse(readFileSync(join(packageRoot(import.meta.url), 'package.json'), 'utf-8')) as {
     version: string
   }
@@ -1892,6 +1901,14 @@ export function buildInitOps(ctx: InitContext): Op[] {
   if (ctx.agents.has('claude')) {
     ops.push(...buildClaudeCommandOps(ctx.selfHost))
     ops.push(...buildClaudeStopHookOps())
+    // Claude's stdio MCP registration for the task-tools server (refuse-if-foreign
+    // whole file, same treatment as `.claude/settings.json`).
+    ops.push({
+      kind: 'create-file',
+      path: MCP_JSON_PATH,
+      content: claudeMcpJsonFile(ctx.selfHost),
+      group: 'Task-tools MCP server (Claude .mcp.json)'
+    })
   }
   if (ctx.agents.has('gemini')) {
     ops.push(buildGeminiCommandOp(ctx.selfHost))
