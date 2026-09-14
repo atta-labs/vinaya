@@ -1,9 +1,10 @@
 (version 1)
-;; Fixture for apps/cli/scripts/isolation-probe.ts (worker-isolation-v1 task 1, #549).
+;; Fixture for apps/cli/scripts/isolation-probe.ts.
 ;; A Seatbelt profile TEMPLATE — every {{PLACEHOLDER}} is substituted by
-;; buildSandboxProfile() with a canonicalized, absolute path before this file
-;; is written to a temp location and passed to `sandbox-exec -f`. Never
-;; invoked with the placeholders still present.
+;; buildSandboxProfile() with a canonicalized, absolute path (each value
+;; escaped for Scheme string-literal syntax) before this file is written to
+;; a temp location and passed to `sandbox-exec -f`. Never invoked with the
+;; placeholders still present.
 (allow default)
 
 ;; HOME confinement: deny the real HOME entirely, then carve out the one
@@ -18,17 +19,33 @@
 
 ;; Keychain: deny read/write on every keychain database location, layered
 ;; on top of the HOME deny above (the system/root keychain paths are not
-;; under HOME at all, so they need their own rule).
+;; under HOME at all, so they need their own rule). File access is only
+;; ONE route into the keychain — Keychain Services itself talks to
+;; `securityd`/`trustd` over mach IPC, not through a file descriptor on the
+;; database, so the mach services a Keychain Services call resolves through
+;; are denied too: a direct API call (bypassing any CLI entirely) cannot
+;; reach the daemon that would service it.
 (deny file-read* file-write*
   (subpath "{{REAL_HOME}}/Library/Keychains")
   (subpath "/Library/Keychains")
   (subpath "/System/Library/Keychains"))
+(deny mach-lookup
+  (global-name "com.apple.securityd")
+  (global-name "com.apple.securityd.xpc")
+  (global-name "com.apple.security.agent")
+  (global-name "com.apple.trustd")
+  (global-name "com.apple.SecurityServer"))
 
-;; Credential helper: deny executing the OS-level helper binaries outright,
-;; so a `git credential fill` inside the sandbox cannot shell out to either.
-(deny process-exec
-  (literal "{{CRED_HELPER_PATH}}")
-  (literal "/usr/bin/security"))
+;; Process exec: default-DENY, with an explicit allow for only the runtime
+;; interpreter this probe itself needs to keep running. A literal-path deny
+;; list (naming the credential-helper binary, say) is bypassable by copying
+;; that binary to an allowed directory and executing the copy under a new
+;; path the deny list never named — default-deny plus a narrow allowlist is
+;; not, since the copy is still unnamed by (and therefore refused under)
+;; the allowlist regardless of where it sits.
+(deny process-exec)
+(allow process-exec
+  (literal "{{RUNTIME_EXEC_PATH}}"))
 
 ;; Socket: deny outbound connection to the ssh-agent (or equivalent
 ;; ambient credential-agent) unix-domain socket. The path MUST already be

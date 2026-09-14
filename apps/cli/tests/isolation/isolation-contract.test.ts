@@ -4,11 +4,10 @@ import { join } from 'node:path'
 import { findHeadingLine, findTable, rowToRecord } from '@attalabs/aeg-core'
 
 /**
- * Parses apps/cli/specs/isolation.md's boundary contract table (worker-
- * isolation-v1 task 1, #549, O1) the same way every other doctrine table in
- * this repo is parsed — `@attalabs/aeg-core`'s `findTable`, never a one-off
- * regex — and asserts it names all six required boundaries, each with a
- * non-empty Permitted and Forbidden column.
+ * Parses apps/cli/specs/isolation.md's boundary contract table the same way
+ * every other doctrine table in this repo is parsed — `@attalabs/aeg-core`'s
+ * `findTable`, never a one-off regex — and asserts it names all six required
+ * boundaries, each with a non-empty Permitted and Forbidden column.
  */
 
 const SPEC_PATH = join(import.meta.dirname, '..', '..', 'specs', 'isolation.md')

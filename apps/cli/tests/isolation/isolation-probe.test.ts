@@ -41,24 +41,45 @@ describe('buildSandboxProfile', () => {
         realHome: '/REAL_HOME_MARKER',
         allowedDir: '/ALLOWED_DIR_MARKER',
         fakeHome: '/FAKE_HOME_MARKER',
-        credentialHelperPath: '/CRED_HELPER_MARKER',
-        sshSockCanon: '/SSH_SOCK_MARKER'
+        sshSockCanon: '/SSH_SOCK_MARKER',
+        runtimeExecPath: '/RUNTIME_EXEC_MARKER'
       })
       const rendered = readFileSync(profilePath, 'utf8')
       // The fixture's own header comment mentions the literal token
-      // `{{PLACEHOLDER}}` as documentation — check the five REAL
-      // placeholders by name rather than a blanket `{{` scan.
+      // `{{PLACEHOLDER}}` as documentation — check the real placeholders by
+      // name rather than a blanket `{{` scan.
       expect(rendered).not.toContain('{{REAL_HOME}}')
       expect(rendered).not.toContain('{{ALLOWED_DIR}}')
       expect(rendered).not.toContain('{{FAKE_HOME}}')
-      expect(rendered).not.toContain('{{CRED_HELPER_PATH}}')
       expect(rendered).not.toContain('{{SSH_SOCK_CANON}}')
+      expect(rendered).not.toContain('{{RUNTIME_EXEC_PATH}}')
       expect(rendered).toContain('/REAL_HOME_MARKER')
       expect(rendered).toContain('/ALLOWED_DIR_MARKER')
       expect(rendered).toContain('/FAKE_HOME_MARKER')
-      expect(rendered).toContain('/CRED_HELPER_MARKER')
       expect(rendered).toContain('/SSH_SOCK_MARKER')
+      expect(rendered).toContain('/RUNTIME_EXEC_MARKER')
       expect(rendered).toContain('(version 1)')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('escapes a backslash or double quote so it cannot break out of the profile string literal', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'isolation-probe-test-'))
+    try {
+      const hostile = '/tmp/evil"))(allow default)(deny file-read* (subpath "'
+      const profilePath = buildSandboxProfile({
+        realHome: hostile,
+        allowedDir: '/ALLOWED_DIR_MARKER',
+        fakeHome: '/FAKE_HOME_MARKER',
+        sshSockCanon: '/SSH_SOCK_MARKER',
+        runtimeExecPath: '/RUNTIME_EXEC_MARKER'
+      })
+      const rendered = readFileSync(profilePath, 'utf8')
+      // The injected `"` must show up escaped (`\"`), never as a bare
+      // quote that would close the string literal early.
+      expect(rendered).toContain('\\"')
+      expect(rendered).not.toContain(`"${hostile}"`)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

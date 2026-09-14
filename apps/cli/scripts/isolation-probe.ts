@@ -1,12 +1,11 @@
 #!/usr/bin/env bun
 /**
- * Disposable local probe for apps/cli/specs/isolation.md (worker-isolation-v1
- * task 1, #549, O2) — proves the chosen mechanism (Apple Seatbelt,
- * `sandbox-exec` + isolation-probe.sb) actually enforces the six negatives
- * the contract requires of a Worker/Reviewer boundary, and that the SAME
- * six checks succeed outside it. Never wired into `dispatchRole` — this
- * script is the proof, not the launcher (see isolation.md "What this task
- * does not change").
+ * Disposable local probe for apps/cli/specs/isolation.md — proves the chosen
+ * mechanism (Apple Seatbelt, `sandbox-exec` + isolation-probe.sb) actually
+ * enforces the six negatives the contract requires of a Worker/Reviewer
+ * boundary, and that the SAME six checks succeed outside it. Never wired
+ * into `dispatchRole` — this script is the proof, not the launcher (see
+ * isolation.md "What this task does not change").
  *
  * Two ways to invoke it:
  *   bun scripts/isolation-probe.ts            — orchestrate: run confined
@@ -49,6 +48,19 @@ export type ProbeResults = Record<ProbeCheckName, ProbeOutcome>
 const REAL_HOME_ENV = 'VINAYA_PROBE_REAL_HOME'
 const SECRET_ENV = 'VINAYA_PROBE_SECRET'
 const MARKER_BASENAME = '.vinaya-isolation-probe-marker'
+const SECURITY_BIN = '/usr/bin/security'
+
+/** Interprets a spawn's `error.code`: `'unavailable'` (the target binary
+ * doesn't exist on this host — nothing to grant or deny), `'blocked'` (the
+ * sandbox refused the exec), or `'ran'` (it executed, regardless of its own
+ * exit code — reaching a real exit code at all means the process-exec
+ * boundary let it through). */
+function classifySpawnAttempt(error: NodeJS.ErrnoException | undefined): 'unavailable' | 'blocked' | 'ran' {
+  if (!error) return 'ran'
+  if (error.code === 'ENOENT') return 'unavailable'
+  if (error.code === 'EPERM') return 'blocked'
+  return 'ran'
+}
 
 /** Resolves the OS-level git credential helper's on-disk path, or `null`
  * if this host has none installed (checks/registry.ts's own env-declared
@@ -106,22 +118,40 @@ export async function runProbeChecks(): Promise<ProbeResults> {
     results.home = null
   }
 
-  // 3. Keychain — direct file access to the login keychain database.
+  // 3. Keychain — two independent access routes, combined: direct file
+  // access to the login keychain database, AND invoking the `security`
+  // CLI (Keychain Services' own command-line front end, talking to
+  // `securityd` — a different code path than reading the database file
+  // directly). Either route succeeding counts as accessible; both must be
+  // denied (or absent) for the check to read as blocked. A real Keychain
+  // Services API call made in-process (bypassing any CLI, e.g. via a
+  // native binding) is a THIRD route this JS-only probe cannot itself
+  // exercise — closed at the OS level by the profile's own `mach-lookup`
+  // denial (isolation-probe.sb), not independently proven here; see
+  // isolation.md's own documented scope limit for this check.
   const keychainPath = realHome ? join(realHome, 'Library', 'Keychains', 'login.keychain-db') : null
+  let keychainFileAccess: 'unavailable' | 'blocked' | 'ran' = 'unavailable'
   if (keychainPath) {
     try {
       accessSync(keychainPath, constants.F_OK)
       try {
         accessSync(keychainPath, constants.R_OK)
-        results.keychain = true
+        keychainFileAccess = 'ran'
       } catch {
-        results.keychain = false
+        keychainFileAccess = 'blocked'
       }
     } catch {
-      results.keychain = null
+      keychainFileAccess = 'unavailable'
     }
-  } else {
+  }
+  const securityCliAttempt = spawnSync(SECURITY_BIN, ['find-generic-password', '-s', 'vinaya-isolation-probe'], {
+    timeout: 3000
+  })
+  const keychainCliAccess = classifySpawnAttempt(securityCliAttempt.error as NodeJS.ErrnoException | undefined)
+  if (keychainFileAccess === 'unavailable' && keychainCliAccess === 'unavailable') {
     results.keychain = null
+  } else {
+    results.keychain = keychainFileAccess === 'ran' || keychainCliAccess === 'ran'
   }
 
   // 4. Credential helper — attempt to exec the OS-level helper directly.
@@ -131,16 +161,8 @@ export async function runProbeChecks(): Promise<ProbeResults> {
       input: 'protocol=https\nhost=github.com\n\n',
       timeout: 3000
     })
-    const errCode = r.error ? (r.error as NodeJS.ErrnoException).code : undefined
-    if (errCode === 'ENOENT') {
-      // Helper binary named but not actually present on this host — nothing
-      // to grant or deny access to.
-      results.credentialHelper = null
-    } else if (errCode === 'EPERM') {
-      results.credentialHelper = false
-    } else {
-      results.credentialHelper = true
-    }
+    const attempt = classifySpawnAttempt(r.error as NodeJS.ErrnoException | undefined)
+    results.credentialHelper = attempt === 'unavailable' ? null : attempt === 'ran'
   } else {
     results.credentialHelper = null
   }
@@ -189,24 +211,33 @@ async function runReportMode(): Promise<void> {
   process.stdout.write(JSON.stringify(results))
 }
 
+/** Escapes a string for use inside a Seatbelt profile's Scheme string
+ * literal (`"..."`) — a backslash or a double quote in an unescaped path
+ * would otherwise terminate the literal early or splice attacker-chosen
+ * s-expression text into the compiled profile. */
+function escapeSbString(value: string): string {
+  return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')
+}
+
 /** Substitutes every `{{PLACEHOLDER}}` in the fixture profile with an
- * already-canonicalized absolute path, and writes the result to a fresh
- * temp file — never mutates the checked-in fixture. */
+ * already-canonicalized absolute path (each value escaped for the profile's
+ * own string-literal syntax), and writes the result to a fresh temp file —
+ * never mutates the checked-in fixture. */
 export function buildSandboxProfile(opts: {
   realHome: string
   allowedDir: string
   fakeHome: string
-  credentialHelperPath: string
   sshSockCanon: string
+  runtimeExecPath: string
 }): string {
   const fixturePath = join(import.meta.dirname, 'isolation-probe.sb')
   const template = readFileSync(fixturePath, 'utf8')
   const rendered = template
-    .replaceAll('{{REAL_HOME}}', opts.realHome)
-    .replaceAll('{{ALLOWED_DIR}}', opts.allowedDir)
-    .replaceAll('{{FAKE_HOME}}', opts.fakeHome)
-    .replaceAll('{{CRED_HELPER_PATH}}', opts.credentialHelperPath)
-    .replaceAll('{{SSH_SOCK_CANON}}', opts.sshSockCanon)
+    .replaceAll('{{REAL_HOME}}', escapeSbString(opts.realHome))
+    .replaceAll('{{ALLOWED_DIR}}', escapeSbString(opts.allowedDir))
+    .replaceAll('{{FAKE_HOME}}', escapeSbString(opts.fakeHome))
+    .replaceAll('{{SSH_SOCK_CANON}}', escapeSbString(opts.sshSockCanon))
+    .replaceAll('{{RUNTIME_EXEC_PATH}}', escapeSbString(opts.runtimeExecPath))
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-isolation-profile-'))
   const profilePath = join(dir, 'isolation-probe.sb')
   writeFileSync(profilePath, rendered)
@@ -254,8 +285,8 @@ export function runConfined(): ProbeResults {
     realHome,
     allowedDir: scratchDir,
     fakeHome,
-    credentialHelperPath,
-    sshSockCanon
+    sshSockCanon,
+    runtimeExecPath: execPath
   })
 
   try {
