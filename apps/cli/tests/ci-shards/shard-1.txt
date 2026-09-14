@@ -31,6 +31,7 @@ tests/lib/effects/executor.test.ts
 tests/import-boundary.test.ts
 tests/lib/dev-review-loop.test.ts
 tests/lib/dev-review-loop/reviewer-dispatch.test.ts
+tests/lib/dev-review-loop/reviewer-isolation.test.ts
 tests/lib/log-callers.test.ts
 tests/lib/log-sink.test.ts
 tests/lib/loop-log.test.ts
@@ -48,3 +49,5 @@ tests/lib/task-tools/adapters.test.ts
 tests/lib/dispatch/reconcile-launch.test.ts
 tests/lib/dispatch/outcomes.test.ts
 tests/lib/dispatch/launch-intent.test.ts
+tests/lib/broker/authenticate.test.ts
+tests/lib/broker/worker-grants.test.ts
