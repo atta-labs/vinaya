@@ -1869,6 +1869,98 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
   }, 20000)
 })
 
+/**
+ * Same as `writeFakeClaude`, plus — for both reviewer roles only — writing
+ * the role's own `$PWD` to `cwd.txt` and the content of a
+ * `candidate-marker.txt` file found at that `$PWD` to
+ * `candidate-marker-seen.txt`, both inside the role's own work directory.
+ * `#561`'s own wiring fixture: proves
+ * `dispatchReviewer` actually hands each reviewer a real, distinct `cwd`
+ * (never before this task — `dispatchRole`'s `spawn` call carried none at
+ * all) whose content traces back to the one shared candidate both roles
+ * were dispatched against.
+ */
+function writeFakeClaudeCapturingReviewerCwd(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+cat > /dev/null
+WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    pwd > "$WD/cwd.txt"
+    cat "$(pwd)/candidate-marker.txt" > "$WD/candidate-marker-seen.txt" 2>/dev/null || true
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    mkdir -p "$WD"
+    pwd > "$WD/cwd.txt"
+    cat "$(pwd)/candidate-marker.txt" > "$WD/candidate-marker-seen.txt" 2>/dev/null || true
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+describe('devReviewLoop — reviewers inspect one immutable candidate with isolated scratch space (#561)', () => {
+  it('both reviewers this round dispatch against the SAME candidate content, from separate scratch directories (O1/O2)', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaudeCapturingReviewerCwd(binDir)
+    writeFakeGh(binDir)
+    writeFakeGit(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    // Seeds the developer's own local worktree with content this task's
+    // snapshot mechanism copies from — the same `.worktrees/<branch>` path
+    // `worktreePathForBranch()` already resolves, and the same convention a
+    // real developer's pushed worktree already satisfies by the time
+    // reviewers dispatch.
+    const worktreeDir = join(cwd, '.worktrees', BRANCH)
+    mkdirSync(worktreeDir, { recursive: true })
+    writeFileSync(join(worktreeDir, 'candidate-marker.txt'), 'candidate content for round 1\n')
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    const taskDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    const reviewerCwd = readFileSync(join(taskDir, 'round-1-reviewer-work', 'cwd.txt'), 'utf8').trim()
+    const securityCwd = readFileSync(join(taskDir, 'round-1-security-work', 'cwd.txt'), 'utf8').trim()
+
+    // O1/O2: distinct scratch directories, never the shared candidate
+    // itself and never each other's.
+    expect(reviewerCwd).not.toBe(securityCwd)
+    expect(reviewerCwd).toMatch(/round-1-reviewer-scratch$/)
+    expect(securityCwd).toMatch(/round-1-security-scratch$/)
+
+    // O1: both reviewers read the identical candidate content.
+    expect(readFileSync(join(taskDir, 'round-1-reviewer-work', 'candidate-marker-seen.txt'), 'utf8')).toBe(
+      'candidate content for round 1\n'
+    )
+    expect(readFileSync(join(taskDir, 'round-1-security-work', 'candidate-marker-seen.txt'), 'utf8')).toBe(
+      'candidate content for round 1\n'
+    )
+  }, 20000)
+})
+
 // --- pause and --resume (O2) ------------------------------------------------
 
 /**
