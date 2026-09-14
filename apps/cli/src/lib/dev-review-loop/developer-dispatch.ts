@@ -10,21 +10,26 @@
  */
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { hostname as osHostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  defaultIsPidAlive,
   isPrincipal,
   issueBranchName,
   newestPrincipalRulingOrdinal,
+  normalizeOutcome,
+  type NormalizedOutcome,
   type Objective,
   objectivesOf,
   objectivesVersion,
+  type OutcomeSignals,
   extractSourceRevision,
   resolveNewestFrozenBrief,
   type ReviewPolicy
 } from '@attalabs/aeg-core'
 import { hasLabel } from '@attalabs/aeg-forge-state'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist, resolveReviewPolicy } from '../config.js'
+import { type AgentVendor, type LaunchRecord, type ParsedLaunch, readLaunchRecord } from '../dispatch.js'
 import { sh } from './gate-reading.js'
 
 const RULING_MARKER = /^<!-- aeg:principal:ruling:\d+-\d+ -->$/
@@ -505,4 +510,153 @@ export function taskFromPrBody(body: string): number | null {
 export function fetchPrBody(pr: number): string {
   const out = sh('gh', ['pr', 'view', String(pr), '--json', 'body'])
   return (JSON.parse(out) as { body: string }).body
+}
+
+// --- launch recovery (O3) --------------------------------------------------
+
+/**
+ * O3: the disposition recovery reaches for a prior launch, BEFORE the loop
+ * continues.
+ *
+ *   - `none`     — no launch record exists (or it is corrupt and continuity is
+ *                  not required): nothing to reconcile, dispatch fresh.
+ *   - `live`     — a prior launch's own child process is still alive on this
+ *                  host: it is still running, so the caller must NOT spawn a
+ *                  second worker onto the same task — reconcile, never race.
+ *   - `finished` — the launch is over and this worker's continuity is not
+ *                  required (a reviewer, always dispatched fresh): proceed,
+ *                  carrying the normalized outcome for the record.
+ *   - `resume`   — the launch is over, this worker's continuity IS required,
+ *                  and its exact vendor session is available: resume THAT
+ *                  session, never a fresh one.
+ *   - `pause`    — continuity is required but the session is gone (never
+ *                  bound, or the record is corrupt): pause explicitly rather
+ *                  than silently starting a fresh session that would lose the
+ *                  worker's continuity.
+ */
+export type LaunchReconciliation =
+  | { kind: 'none' }
+  | { kind: 'live'; record: LaunchRecord }
+  | { kind: 'finished'; record: LaunchRecord; outcome: NormalizedOutcome }
+  | { kind: 'resume'; record: LaunchRecord; resumeId: string; outcome: NormalizedOutcome }
+  | { kind: 'pause'; reason: 'infrastructure'; detail: string }
+
+export type ReconcileLaunchDeps = {
+  /** Is a process with this pid alive on this host? Injected so the pure reconciler stays testable without a real process. */
+  isPidAlive: (pid: number) => boolean
+  /** This machine's hostname — a launch recorded on a DIFFERENT host can never be probed for liveness here, so it is treated as not-live. */
+  hostname: () => string
+}
+
+export type ReconcileOpts = {
+  /** Whether this worker's continuity is required — the developer's is; a reviewer's is NEVER (a reviewer is always dispatched fresh, never resumed because the developer resumes — Traps to avoid). */
+  requireContinuity: boolean
+  /** Whether the launch's required artifacts are observable now (its branch/PR exists) — fed to the outcome normalizer so a finished launch is classified truthfully rather than assumed incomplete. Defaults to `false` (unproven → not done). */
+  artifactsPresent?: boolean
+}
+
+/**
+ * The manner-of-death signals a launch record carries, mapped onto the
+ * outcome normalizer's input (O2 ↔ O3). The launch record does not persist the
+ * raw exit code (the manner-of-death flag is what the parent acts on), so
+ * `exitCode` is `null` here — and the normalizer treats it as input only in
+ * any case. `postconditionsMet` is folded onto the same coarse
+ * `artifactsPresent` signal recovery has: recovery observes whether the work
+ * left an artifact, not each declared postcondition separately.
+ */
+function outcomeSignalsFor(record: LaunchRecord, artifactsPresent: boolean): OutcomeSignals {
+  return {
+    exitCode: null,
+    timedOut: record.failureReason === 'timeout',
+    cancelled: false,
+    refused: record.failureReason === 'refused',
+    infrastructure: record.failureReason === 'crash',
+    artifactsPresent,
+    postconditionsMet: artifactsPresent
+  }
+}
+
+/**
+ * Pure (O3): reconcile a prior launch — live, finished, or uncertain — into
+ * one disposition, from its parsed record plus injected pid-liveness. Never
+ * reads disk or probes a process itself; `recoverDeveloperLaunch` below is the
+ * disk-and-pid-reading wrapper. See `LaunchReconciliation` for the five
+ * dispositions and when each is reached.
+ */
+export function reconcileLaunch(
+  parsed: ParsedLaunch,
+  opts: ReconcileOpts,
+  deps: ReconcileLaunchDeps
+): LaunchReconciliation {
+  if (parsed.status === 'absent') return { kind: 'none' }
+  if (parsed.status === 'corrupt') {
+    // A corrupt record means a launch happened but its identity is unreadable
+    // — for a continuity-required worker that is an explicit pause (we cannot
+    // safely resume nor safely re-dispatch), never a silent fresh start.
+    return opts.requireContinuity
+      ? { kind: 'pause', reason: 'infrastructure', detail: `the prior launch record is corrupt (${parsed.reason})` }
+      : { kind: 'none' }
+  }
+
+  const record = parsed.record
+  const artifactsPresent = opts.artifactsPresent ?? false
+
+  // Live: the recorded child is still running, on THIS host. A launch recorded
+  // on another host cannot be probed and is treated as not-live. This is the
+  // "crash between spawn and session binding → child found by identity" case:
+  // the launch record, written before spawn and stamped with the child pid the
+  // instant spawn returned, is what lets recovery find the still-live child
+  // rather than spawning a duplicate.
+  if (record.childPid !== null && record.host === deps.hostname() && deps.isPidAlive(record.childPid)) {
+    return { kind: 'live', record }
+  }
+
+  const outcome = normalizeOutcome(outcomeSignalsFor(record, artifactsPresent))
+
+  if (!opts.requireContinuity) return { kind: 'finished', record, outcome }
+
+  // Continuity required (the developer). Resume the EXACT session when one was
+  // bound — even from an interrupted attempt, now that the session survives an
+  // interruption (O1). When none was ever bound, the session is genuinely gone
+  // and there is nothing to resume: pause explicitly rather than start fresh.
+  if (record.resumeId !== null) return { kind: 'resume', record, resumeId: record.resumeId, outcome }
+  return {
+    kind: 'pause',
+    reason: 'infrastructure',
+    detail:
+      `the developer's prior launch (attempt ${record.attempt}) ended ${outcome.status} ` +
+      `(${record.failureReason ?? 'no failure recorded'}) before its vendor session was ever bound — ` +
+      'cannot resume the exact session, and starting a fresh one would lose worker continuity'
+  }
+}
+
+/** Thrown by the driver's resume seam when `recoverDeveloperLaunch` returns a `pause` (a required session is gone) or a `live` prior launch (a second worker must never race the first) — caught by the loop's own outer handler and turned into the decided `pause{reason:'infrastructure'}` every thrown driver-path failure already becomes (`apps/cli/specs/loop.md`), so no new pause plumbing is added. */
+export class LaunchContinuityLost extends Error {
+  constructor(public readonly detail: string) {
+    super(`devReviewLoop: cannot continue the developer's launch: ${detail}`)
+    this.name = 'LaunchContinuityLost'
+  }
+}
+
+export function defaultReconcileLaunchDeps(): ReconcileLaunchDeps {
+  return { isPidAlive: defaultIsPidAlive, hostname: () => osHostname() }
+}
+
+/**
+ * O3: reconcile the developer's prior launch for `task` before the loop
+ * continues — the disk-and-pid-reading wrapper over `reconcileLaunch`, always
+ * with `requireContinuity: true` (the developer's session continuity is
+ * required; a reviewer's is not, and no reviewer path calls this). Reads the
+ * launch record `dispatch.ts` durably wrote, keyed by the same
+ * repo+role+vendor+task scope the resume record already used.
+ */
+export function recoverDeveloperLaunch(
+  task: number,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null,
+  opts: { artifactsPresent?: boolean } = {},
+  deps: ReconcileLaunchDeps = defaultReconcileLaunchDeps()
+): LaunchReconciliation {
+  const parsed = readLaunchRecord('developer', agent, repo, task)
+  return reconcileLaunch(parsed, { requireContinuity: true, artifactsPresent: opts.artifactsPresent }, deps)
 }
