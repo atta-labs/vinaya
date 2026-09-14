@@ -1109,6 +1109,44 @@ export function terminateChildWithGrace(pid: number, graceMs: number = TERMINATE
   }
 }
 
+/** How long `captureSettledChildSnapshot` polls for a spawned child's OWN exec chain to land before trusting its identity — bounded, same order of magnitude as `TERMINATE_GRACE_MS`. */
+const IDENTITY_SETTLE_BUDGET_MS = 1_000
+/** Poll interval within that budget. */
+const IDENTITY_SETTLE_POLL_MS = 20
+
+/**
+ * O3 (Issue #605, round N code review, MAJOR): `childCommand`/`childStartedAt`
+ * used to be captured from a single `getProcessSnapshot` read the instant
+ * `spawn()` returned. A vendor CLI installed through a typical npm shebang
+ * launcher (`#!/usr/bin/env node`) does not settle into its final image in
+ * that one kernel-triggered exec: the kernel execs `env` off the shebang
+ * line, and `env` itself then performs a SECOND, user-space `execve` into
+ * `node`. A read taken before that second exec lands can capture `env`'s own
+ * identity rather than the process that actually survives — precisely the
+ * two-hop race `writeIdentityStableFakeBinary`'s doc comment (in
+ * `dispatch.test.ts`) claimed only a synthetic test binary could hit; a real
+ * `#!/usr/bin/env node` install hits it too. A pid's start time is set once,
+ * at fork, and does not move across `execve` — only `comm` is unstable here
+ * — so this polls until two consecutive reads agree on `command`, or the
+ * budget elapses, and keeps the latest read either way. Never returns `null`
+ * once a live process has answered at least once; still returns the FIRST
+ * read if the process is gone by the next poll (a vendor CLI that exits
+ * within this budget is not the case this guards).
+ */
+function captureSettledChildSnapshot(pid: number): ProcessSnapshot | null {
+  let snapshot = getProcessSnapshot(pid)
+  if (snapshot === null) return null
+  const deadline = Date.now() + IDENTITY_SETTLE_BUDGET_MS
+  while (Date.now() < deadline) {
+    sleepSyncMs(IDENTITY_SETTLE_POLL_MS)
+    const next = getProcessSnapshot(pid)
+    if (next === null) return snapshot
+    if (next.command === snapshot.command) return next
+    snapshot = next
+  }
+  return snapshot
+}
+
 /**
  * O1 (Issue #605): called by the driver's own `SIGTERM`/`SIGINT` handler,
  * before it exits. A launch record still reading `'launched'` (a dispatch
@@ -1663,17 +1701,21 @@ export async function dispatchRole(
       }
     })
 
-    // O1/O3: bind the child's own identity onto the launch record the instant
-    // `spawn` returns it — this is what recovery probes to tell a still-live
-    // launch from a finished one, so it must be durable even if the driver
-    // dies in the very next tick (a crash between spawn and session binding).
-    // The snapshot (O3, Issue #605) is taken in this SAME instant, the one
-    // moment this pid is certainly the child just spawned — recovery compares
-    // a LATER snapshot of the same pid back against these two fields to tell
-    // this exact process apart from whatever the OS has since recycled the
-    // pid for.
+    // O1/O3: bind the child's own identity onto the launch record right
+    // after `spawn` returns it — this is what recovery probes to tell a
+    // still-live launch from a finished one, so it must be durable even if
+    // the driver dies in the very next tick (a crash between spawn and
+    // session binding). The snapshot (O3, Issue #605) is taken via
+    // `captureSettledChildSnapshot`, not a single immediate read: a vendor
+    // CLI launched through a shebang (`#!/usr/bin/env node`) can still be
+    // mid-exec the instant `spawn` returns, and a snapshot taken right then
+    // can describe the launcher rather than the process that survives — see
+    // that function's own doc comment. Recovery compares a LATER snapshot of
+    // the same pid back against these two fields to tell this exact,
+    // settled process apart from whatever the OS has since recycled the pid
+    // for.
     if (typeof child.pid === 'number') {
-      const snapshot = getProcessSnapshot(child.pid)
+      const snapshot = captureSettledChildSnapshot(child.pid)
       patchLaunch({
         childPid: child.pid,
         childStartedAt: snapshot?.startedAt ?? null,

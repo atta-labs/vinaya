@@ -5,8 +5,21 @@ import {
   type ReconcileLaunchDeps
 } from '../../../src/lib/dev-review-loop/developer-dispatch'
 import type { LaunchRecord, ParsedLaunch, ProcessSnapshot } from '../../../src/lib/dispatch'
+import { execFileSync } from 'node:child_process'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const THIS_HOST = 'test-host'
+
+const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+
+function tempDir(prefix: string): string {
+  return mkdtempSync(join(tmpdir(), prefix))
+}
+
+const PROMPT_FILE_CONTENT = 'do the thing'
 
 /** A launch record with sensible defaults; individual cases override only what they exercise. */
 function record(overrides: Partial<LaunchRecord> = {}): LaunchRecord {
@@ -52,7 +65,8 @@ function deps(
   return {
     isPidAlive: () => isAlive,
     hostname: () => host,
-    getProcessSnapshot: () => (isAlive ? snapshot : null)
+    getProcessSnapshot: () => (isAlive ? snapshot : null),
+    terminateChild: () => {}
   }
 }
 
@@ -157,7 +171,8 @@ describe('reconcileLaunch (O2, Issue #605) — an orphaned child is a takeover, 
       {
         isPidAlive: () => false,
         hostname: () => THIS_HOST,
-        getProcessSnapshot: () => ({ ppid: 1000, startedAt: null, command: null })
+        getProcessSnapshot: () => ({ ppid: 1000, startedAt: null, command: null }),
+        terminateChild: () => {}
       }
     )
     expect(out.kind).not.toBe('live')
@@ -303,4 +318,111 @@ describe('reconcileLaunch (O3) — a reviewer is never resumed for continuity', 
     expect(out.kind).toBe('finished')
     if (out.kind === 'finished') expect(out.outcome.status).toBe('incomplete')
   })
+})
+
+describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the reap step goes through ReconcileLaunchDeps, never dispatch.ts's terminateChildWithGrace directly", () => {
+  it('reaps a genuinely orphaned child through the INJECTED terminateChild — not a hardcoded real signal', () => {
+    // Proves the seam, not just the pure classifier: builds a REAL orphan
+    // (a subprocess that spawns a long-lived child via `dispatchRole`, writes
+    // the launch record, then exits — reparenting its child to init, exactly
+    // O2's "driver died without reaching shutdown" case) and calls
+    // `recoverDeveloperLaunch` with a `terminateChild` SPY that never sends a
+    // real signal. Before this fix, `recoverDeveloperLaunch` called
+    // `dispatch.ts`'s `terminateChildWithGrace` directly, ignoring whatever
+    // `terminateChild` a test injected — so a spy here would have been
+    // provably bypassed: the real process would have died anyway. This test
+    // fails on that old code (the process would already be gone by the time
+    // it checks) and passes only when the reap genuinely routes through
+    // `deps.terminateChild`.
+    const home = tempDir('vinaya-reconcile-home-')
+    const cwd = tempDir('vinaya-reconcile-cwd-')
+    const binDir = tempDir('vinaya-reconcile-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    writeFileSync(
+      join(binDir, 'claude'),
+      `#!${process.execPath}\nprocess.stdin.resume()\nawait new Promise(() => {})\n`
+    )
+    chmodSync(join(binDir, 'claude'), 0o755)
+
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const orphanScript = join(cwd, 'make-orphan.ts')
+    writeFileSync(
+      orphanScript,
+      [
+        `import { dispatchRole, readLaunchRecord } from ${JSON.stringify(dispatchLib)}`,
+        `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 44 }`,
+        `void dispatchRole('developer', 'claude', 'p', opts)`,
+        'async function waitForChildPid(timeoutMs) {',
+        '  const start = Date.now()',
+        '  while (Date.now() - start < timeoutMs) {',
+        `    const parsed = readLaunchRecord('developer', 'claude', null, 44)`,
+        `    if (parsed.status === 'ok' && parsed.record.childPid !== null) return`,
+        '    await new Promise((r) => setTimeout(r, 50))',
+        '  }',
+        `  throw new Error('timed out waiting for the launch record to carry a childPid')`,
+        '}',
+        'await waitForChildPid(5000)',
+        // Exit WITHOUT terminating the child — this process's own death is
+        // what reparents it to init, the orphan condition under test.
+        'process.exit(0)'
+      ].join('\n')
+    )
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${process.env.PATH ?? ''}` }
+    delete spawnEnv.VINAYA_RUN_ID
+    execFileSync('bun', [orphanScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+
+    const developerDispatchLib = join(CLI_ROOT, 'src', 'lib', 'dev-review-loop', 'developer-dispatch.ts')
+    const reaperScript = join(cwd, 'reap-attempt.ts')
+    const resultPath = join(cwd, 'result.json')
+    writeFileSync(
+      reaperScript,
+      [
+        `import { writeFileSync } from 'node:fs'`,
+        `import { execFileSync } from 'node:child_process'`,
+        `import { hostname } from 'node:os'`,
+        `import { recoverDeveloperLaunch } from ${JSON.stringify(developerDispatchLib)}`,
+        `import { readLaunchRecord, getProcessSnapshot } from ${JSON.stringify(dispatchLib)}`,
+        `const before = readLaunchRecord('developer', 'claude', null, 44)`,
+        `const childPid = before.status === 'ok' ? before.record.childPid : null`,
+        'let spyCalledWith = null',
+        'const deps = {',
+        '  isPidAlive: (pid) => { try { process.kill(pid, 0); return true } catch { return false } },',
+        '  hostname: () => hostname(),',
+        '  getProcessSnapshot,',
+        '  terminateChild: (pid) => { spyCalledWith = pid }',
+        '}',
+        `const out = recoverDeveloperLaunch(44, 'claude', null, {}, deps)`,
+        'let stillAlive = false',
+        'if (childPid !== null) {',
+        `  try { execFileSync('ps', ['-p', String(childPid)], { stdio: ['ignore', 'ignore', 'ignore'] }); stillAlive = true } catch { stillAlive = false }`,
+        '}',
+        // Real cleanup — the spy never actually killed it.
+        "if (childPid !== null) { try { process.kill(childPid, 'SIGKILL') } catch {} }",
+        `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ childPid, spyCalledWith, stillAlive, kind: out.kind }))`,
+        'process.exit(0)'
+      ].join('\n')
+    )
+    execFileSync('bun', [reaperScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+
+    const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
+      childPid: number
+      spyCalledWith: number | null
+      stillAlive: boolean
+      kind: string
+    }
+    // The injected spy — not a real signal — is what actually reaped it.
+    expect(result.spyCalledWith).toBe(result.childPid)
+    // Because the spy is a no-op, the real process must still be alive: proof
+    // the call was routed through `deps.terminateChild`, not a hardcoded
+    // `terminateChildWithGrace` the test's own spy could never intercept.
+    expect(result.stillAlive).toBe(true)
+    // With no session ever bound, continuity required, and the record still
+    // reading 'launched': pause explicitly once the (fake) reap has run.
+    expect(result.kind).toBe('pause')
+
+    rmSync(home, { recursive: true, force: true })
+    rmSync(cwd, { recursive: true, force: true })
+    rmSync(binDir, { recursive: true, force: true })
+  }, 15_000)
 })

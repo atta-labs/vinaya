@@ -451,6 +451,71 @@ describe('dispatchRole — two dispatches in the same process', () => {
   })
 })
 
+describe("dispatchRole — child identity settles across the vendor's own exec hop (O3, Issue #605, code review)", () => {
+  it('records the SETTLED process identity, not the shebang launcher it started as', () => {
+    // A real npm-installed vendor CLI shebangs `#!/usr/bin/env node`: the
+    // kernel's own shebang-triggered exec lands on `env`, and `env` THEN
+    // performs its own, second, user-space exec into `node` — the same
+    // process, but a different `comm`, landing some time after `spawn()`
+    // already returned. Modeled here with a `/bin/sh` launcher that sleeps
+    // briefly before `exec`-ing into the identity-stable leaf binary, so a
+    // read taken the instant `spawn()` returns is guaranteed to still see
+    // `sh`, not the process that survives.
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const finalBinary = writeIdentityStableFakeBinary(binDir, 'claude-final')
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\nsleep 0.3\nexec "${finalBinary}"\n`)
+
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const script = join(cwd, 'settle-identity.ts')
+    const resultPath = join(cwd, 'result.json')
+    writeFileSync(
+      script,
+      [
+        `import { writeFileSync } from 'node:fs'`,
+        `import { execFileSync } from 'node:child_process'`,
+        `import { dispatchRole, readLaunchRecord } from ${JSON.stringify(dispatchLib)}`,
+        `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 43 }`,
+        // Fire-and-forget, exactly as the shutdown tests above do: the
+        // child never exits on its own (`await new Promise(() => {})`).
+        `void dispatchRole('developer', 'claude', 'p', opts)`,
+        'async function waitForChildCommand(timeoutMs) {',
+        '  const start = Date.now()',
+        '  while (Date.now() - start < timeoutMs) {',
+        `    const parsed = readLaunchRecord('developer', 'claude', null, 43)`,
+        `    if (parsed.status === 'ok' && parsed.record.childCommand !== null) return parsed.record`,
+        '    await new Promise((r) => setTimeout(r, 50))',
+        '  }',
+        `  throw new Error('timed out waiting for the launch record to carry a childCommand')`,
+        '}',
+        'const record = await waitForChildCommand(5000)',
+        // Ground truth, via a FRESH `ps` read on the child's own pid, taken
+        // well after the shell's own 0.3s exec hop has certainly landed —
+        // never the same read `captureSettledChildSnapshot` itself took.
+        `const groundTruth = execFileSync('ps', ['-p', String(record.childPid), '-o', 'comm='], { encoding: 'utf8' }).trim()`,
+        `execFileSync('kill', ['-TERM', String(record.childPid)])`,
+        `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ childCommand: record.childCommand, groundTruth }))`,
+        'process.exit(0)'
+      ].join('\n')
+    )
+
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+    delete spawnEnv.VINAYA_RUN_ID
+    execFileSync('bun', [script], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+
+    const result = JSON.parse(readFileSync(resultPath, 'utf8')) as { childCommand: string | null; groundTruth: string }
+    // The launcher's own identity ('sh') must never be what gets recorded.
+    expect(result.childCommand).not.toBe('sh')
+    expect(result.childCommand).not.toBeNull()
+    // The recorded identity must match the SETTLED process, confirmed by an
+    // independent, later `ps` read on the same pid.
+    expect(result.childCommand).toBe(result.groundTruth)
+  }, 10_000)
+})
+
 describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, Issue #605)', () => {
   it("terminates the dispatched child and marks the launch record 'interrupted', leaving no orphan", () => {
     // Exercises `terminateLaunchedChildOnShutdown` directly, the way

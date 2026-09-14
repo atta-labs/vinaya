@@ -557,6 +557,8 @@ export type ReconcileLaunchDeps = {
   hostname: () => string
   /** O3, Issue #605: a live snapshot of `pid`'s current identity (parent pid, start time, command), or `null` when no process answers there at all. Injected so the pure reconciler stays testable without a real process — `classifyChildLiveness` is the pure logic that reads it. */
   getProcessSnapshot: (pid: number) => ProcessSnapshot | null
+  /** O2, Issue #605 (code review, MAJOR): terminates an abandoned child by pid — `recoverDeveloperLaunch`'s reap step calls THIS, never `dispatch.ts`'s `terminateChildWithGrace` directly, so the reap step itself has a test seam: a test can inject a spy here and assert the orphan was actually reaped, without sending a real OS signal. */
+  terminateChild: (pid: number) => void
 }
 
 /**
@@ -710,7 +712,12 @@ export class LaunchContinuityLost extends Error {
 
 /** The real pid-liveness + hostname + process-snapshot deps `recoverDeveloperLaunch` uses by default — internal, not part of the module's public surface (a test injects its own). */
 function defaultReconcileLaunchDeps(): ReconcileLaunchDeps {
-  return { isPidAlive: defaultIsPidAlive, hostname: () => osHostname(), getProcessSnapshot }
+  return {
+    isPidAlive: defaultIsPidAlive,
+    hostname: () => osHostname(),
+    getProcessSnapshot,
+    terminateChild: terminateChildWithGrace
+  }
 }
 
 /**
@@ -739,7 +746,7 @@ export function recoverDeveloperLaunch(
   // `'not-ours'` child is left untouched here.
   if (parsed.status === 'ok' && parsed.record.childPid !== null) {
     if (classifyChildLiveness(parsed.record, deps) === 'orphaned') {
-      terminateChildWithGrace(parsed.record.childPid)
+      deps.terminateChild(parsed.record.childPid)
     }
   }
   return reconcileLaunch(parsed, { requireContinuity: true, artifactsPresent: opts.artifactsPresent }, deps)
