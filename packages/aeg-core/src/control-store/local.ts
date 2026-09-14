@@ -153,24 +153,28 @@ function exclusiveCreateFile(path: string, contents: string): { created: true } 
   } finally {
     closeSync(fd)
   }
-  let outcome: { created: true } | { created: false }
   try {
     linkSync(tmp, path)
-    outcome = { created: true }
+    return { created: true }
   } catch (err) {
     if (!isErrnoException(err, 'EEXIST')) throw err
-    outcome = { created: false }
+    return { created: false }
+  } finally {
+    // Runs on every exit from the try above — both returns AND a rethrown
+    // non-EEXIST error alike (a full disk, a permissions fault) — so the
+    // private temp file is never left behind regardless of how `linkSync`
+    // failed. The temp file already did its job by this point (its content
+    // is durably published at `path`, or it wasn't needed because someone
+    // else published first, or publishing itself failed and there is
+    // nothing left to keep it for); a failure removing it is not this
+    // call's own concern to surface, so it's swallowed here rather than
+    // thrown, and never overrides the real return/throw decided above.
+    try {
+      unlinkSync(tmp)
+    } catch {
+      // leftover temp file, harmless — never thrown from here
+    }
   }
-  // Best-effort cleanup: the temp file already did its job (its content is
-  // durably published at `path`, or it wasn't needed because someone else
-  // published first) — a failure removing it is not this call's concern to
-  // surface, and must never override the real `outcome` decided above.
-  try {
-    unlinkSync(tmp)
-  } catch {
-    // leftover temp file, harmless — never thrown from here
-  }
-  return outcome
 }
 
 // `runId` reaches `runPath`/`inputPath` from a caller-supplied value

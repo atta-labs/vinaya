@@ -1,20 +1,31 @@
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { readCurrentOwnership, type AcquireResult } from './local'
 
 // `local.test.ts`'s own race fixture calls `attemptEpochClaim` twice,
-// sequentially, inside one process: it proves the exclusive-publish
-// primitive picks exactly one winner, but a single process never truly
-// overlaps two syscalls, so it cannot exercise the window a real concurrent
-// writer could hit — a second process opening a target file between another
-// process's `open` and its content write, before that write completes.
-// This suite spawns real, separate OS processes racing the exact
-// write-then-link sequence `exclusiveCreateFile` (`local.ts`) uses to
-// publish a file exclusively, to prove that sequence race-free under
-// genuine concurrency rather than a synchronous stand-in for it.
+// sequentially, inside one process, both times naming the SAME fixed
+// epoch: it proves the exclusive-publish primitive picks exactly one
+// winner for two callers that truly observed the same starting state, but
+// a single process never overlaps two syscalls, so it cannot exercise the
+// window a real concurrent writer could hit. This suite instead spawns
+// real, separate OS processes, each importing and calling the SHIPPED
+// `acquireOwnership` (`local.ts`) directly — the real public entry point
+// whose own retry loop drives `attemptEpochClaim`, which in turn drives
+// `exclusiveCreateFile` — never a hand-duplicated stand-in for any of that
+// chain, so a future edit reintroducing a race anywhere in it is exercised
+// by this exact fixture.
+//
+// Real OS scheduling rarely lines every racer up on the exact same
+// starting epoch — most legitimately take over the next epoch in sequence,
+// which is correct, not a race loss — so this suite does not assert "one
+// winner among N". It asserts the invariant a race would actually violate:
+// no two racers ever end up agreeing they hold the SAME epoch, and the
+// disk's own current record always matches whichever racer really holds
+// the highest one.
 
 const workerPath = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -22,16 +33,12 @@ const workerPath = join(
   '..',
   'tests',
   'fixtures',
-  'exclusive-create-race-worker.mjs'
+  'exclusive-create-race-worker.ts'
 )
 
-function runWorker(
-  targetPath: string,
-  content: string,
-  ownerId: string
-): Promise<{ outcome: string; ownerId: string }> {
+function runWorker(rootDir: string, task: number, ownerId: string): Promise<AcquireResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [workerPath, targetPath, content, ownerId], {
+    const child = spawn('bun', [workerPath, rootDir, String(task), ownerId], {
       stdio: ['ignore', 'pipe', 'pipe']
     })
     let stdout = ''
@@ -48,7 +55,7 @@ function runWorker(
         reject(new Error(`worker exited ${code}: ${stderr}`))
         return
       }
-      resolve(JSON.parse(stdout.trim()))
+      resolve(JSON.parse(stdout.trim()) as AcquireResult)
     })
   })
 }
@@ -63,25 +70,45 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-describe('exclusiveCreateFile publish, under genuine multi-process concurrency', () => {
-  it('exactly one of several real, concurrently-racing OS processes wins, and the published file matches the winner exactly — never a torn or divergent write', async () => {
-    const target = join(dir, 'contested.json')
+describe('acquireOwnership, under genuine multi-process concurrency', () => {
+  it('no two real, concurrently-racing OS processes ever acquire the same epoch, and the disk record matches the true highest winner exactly', async () => {
+    const task = 551
     const racers = ['owner-a', 'owner-b', 'owner-c', 'owner-d', 'owner-e', 'owner-f']
 
-    const results = await Promise.all(
-      racers.map((ownerId) => runWorker(target, JSON.stringify({ ownerId, content: 'x'.repeat(2000) }), ownerId))
-    )
+    const results = await Promise.all(racers.map((ownerId) => runWorker(dir, task, ownerId)))
+    expect(results).toHaveLength(racers.length)
 
-    const winners = results.filter((r) => r.outcome === 'won')
-    const losers = results.filter((r) => r.outcome === 'lost')
-    expect(winners).toHaveLength(1)
-    expect(losers).toHaveLength(racers.length - 1)
+    const winners = results.filter((r): r is Extract<AcquireResult, { acquired: true }> => r.acquired)
+    expect(winners.length).toBeGreaterThan(0)
 
-    // The file on disk is complete, parseable JSON — never partial — and
-    // names exactly the reported winner, never a different racer's
-    // content and never a mix of two racers' writes.
-    const onDisk = JSON.parse(readFileSync(target, 'utf8')) as { ownerId: string; content: string }
-    expect(onDisk.ownerId).toBe(winners[0]?.ownerId)
-    expect(onDisk.content).toBe('x'.repeat(2000))
+    // The core anti-double-ownership invariant: every winner's epoch is
+    // unique. A duplicate here is exactly the original defect — two
+    // processes each believing they hold the same epoch.
+    const epochs = winners.map((w) => w.epoch)
+    expect(new Set(epochs).size).toBe(epochs.length)
+
+    // Each winner's own returned record is internally consistent — never a
+    // record whose epoch or ownerId drifted from what that call believes it
+    // published (the exact divergence a torn-write race could cause).
+    for (const winner of winners) {
+      expect(winner.record.epoch).toBe(winner.epoch)
+    }
+
+    const highest = winners.reduce((max, w) => (w.epoch > max.epoch ? w : max))
+
+    // Every loser names a real epoch that some real winner actually holds
+    // — never a phantom epoch nobody claimed.
+    for (const result of results) {
+      if (result.acquired) continue
+      expect(epochs).toContain(result.currentEpoch)
+    }
+
+    // The on-disk record — read fresh, independent of anything any racer
+    // reported — matches the true highest winner exactly, and no corrupt
+    // epoch slot was left behind.
+    const onDisk = readCurrentOwnership({ root: () => dir }, task)
+    expect(onDisk.epoch).toBe(highest.epoch)
+    expect(onDisk.record?.ownerId).toBe(highest.record.ownerId)
+    expect(onDisk.corruptEpochs).toEqual([])
   })
 })
