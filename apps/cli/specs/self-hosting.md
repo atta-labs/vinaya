@@ -109,7 +109,7 @@ This artifact is deliberately **outside** the two-shapes system this document ot
 
 The earlier "`.claude/**` is out of v1.0 scope" ruling does not apply here — it was already superseded in practice by `.claude/commands/vinaya.md` (task 5's agent-native emitters) before this task landed.
 
-### The task-tools MCP server — Claude and Codex registration (`task-operator-v1` task 2)
+### The task-tools MCP server — Claude and Codex registration
 
 The task-operator tool catalog (`packages/aeg-core/src/task-tools.ts`) is exposed to an agent runtime through one shared, transport-agnostic MCP server (`apps/cli/src/lib/task-tools/server.ts`), run by `vinaya task-tools serve` over stdio. The server speaks newline-delimited JSON-RPC 2.0 (MCP `initialize`/`tools/list`/`tools/call`), implemented directly rather than through an MCP SDK — this adds no dependency and lets every protocol fixture run hermetically against real framing. The protocol revision it implements, and both adapters target, is **`2025-06-18`** (`MCP_PROTOCOL_VERSION`).
 

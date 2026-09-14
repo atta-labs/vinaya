@@ -100,9 +100,9 @@ export const BODY_CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-body-checks.y
 // the same way it reverses every other file `init` owns.
 export const CHECKS_FOLDER_PLACEHOLDER_PATH = 'vinaya/checks/.gitkeep'
 export const ROLES_FOLDER_PLACEHOLDER_PATH = 'vinaya/roles/.gitkeep'
-// Claude's project-root MCP registration for the task-tools server (task
-// operator v1 task 2). Strict JSON, so — like `.claude/settings.json` — it is a
-// refuse-if-foreign whole file, never a managed block, and it is written only
+// Claude's project-root MCP registration for the task-tools server. Strict
+// JSON, so — like `.claude/settings.json` — it is a refuse-if-foreign whole
+// file, never a managed block, and it is written only
 // when `claude` is one of the selected agent vendors. The Codex equivalent
 // (`~/.codex/config.toml` `[mcp_servers]`) is a user-home file, not a repo
 // artifact, so it is documented in `apps/cli/specs/self-hosting.md` rather than

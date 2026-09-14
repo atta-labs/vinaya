@@ -112,7 +112,8 @@ export function taskEscalationReadHandler(input: unknown): TaskToolCallResult<Ta
 
 // --- task_resume / task_cancel (O3 — refusing stubs) ----------------------
 // `task_start` is no longer here — it is a real, caller-context-aware handler
-// in `start.ts` (O2). Resume and cancel remain refusing stubs (task 4).
+// in `start.ts` (O2). Resume and cancel remain refusing stubs — no process
+// start, no forge write — until a later tranche gives them a real handler.
 
 export function taskResumeHandler(input: unknown): TaskToolCallResult<never> {
   const parsed = TaskResumeInputSchema.safeParse(input)
