@@ -12,8 +12,42 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { REVIEW_GATE_CHECK_RUN_NAME } from '../review-gate-check-name.js'
 
+/** Env-overridable, same idiom `dev-review-loop.ts`'s own `gatePollEnvOverride` uses — a fixture needs sub-millisecond backoff, real usage needs real spacing between retries. */
+function shEnvOverride(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (!raw) return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
+/** Blocking, in-process sleep — `sh()` is itself fully synchronous (`execFileSync`), so an `async` backoff here would require threading a Promise through every one of this module's exported, synchronous read functions. */
+function sleepSyncMs(ms: number): void {
+  if (ms <= 0) return
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
 function sh(cmd: string, args: string[]): string {
-  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  if (cmd !== 'gh') {
+    return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  }
+  // O5: every `gh` READ this driver makes retries this many times, total,
+  // before a transient forge hiccup counts as a real failure — never
+  // applied to `git` (this module's other `sh()` caller), and never to a
+  // write (those never go through `sh()` — see `publication.ts`'s own
+  // direct `execFileSync`). Read per call, not once at module load, so a
+  // fixture can override it without needing a fresh module instance.
+  const attempts = shEnvOverride('VINAYA_DEV_REVIEW_LOOP_GH_RETRY_ATTEMPTS', 3)
+  const backoffMs = shEnvOverride('VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS', 500)
+  let lastErr: unknown
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    } catch (err) {
+      lastErr = err
+      if (attempt < attempts) sleepSyncMs(backoffMs * attempt)
+    }
+  }
+  throw lastErr
 }
 
 /**
@@ -37,7 +71,7 @@ export function resolveHead(branch: string): string {
   return sha
 }
 
-type RestCheckRun = { id: number; name: string; status: string; conclusion: string | null }
+type RestCheckRun = { id: number; name: string; status: string; conclusion: string | null; started_at: string }
 
 /**
  * Every mechanical check-run GitHub reports for `headSha`, deduped to the
@@ -59,7 +93,7 @@ function fetchMechanicalCheckRuns(headSha: string): RestCheckRun[] | null {
       `repos/{owner}/{repo}/commits/${headSha}/check-runs`,
       '--paginate',
       '--jq',
-      '.check_runs[] | {id, name, status, conclusion}'
+      '.check_runs[] | {id, name, status, conclusion, started_at}'
     ])
   } catch {
     return null
@@ -69,10 +103,17 @@ function fetchMechanicalCheckRuns(headSha: string): RestCheckRun[] | null {
     .filter((l) => l.trim().length > 0)
     .map((l) => JSON.parse(l) as RestCheckRun)
 
+  // O3: the newest `started_at` wins, not the highest `id` — a check
+  // re-run (the same name, requested again after an earlier failure) is
+  // what this dedupe exists for, and GitHub's own run ids are an
+  // implementation detail this driver never relied on being monotonic
+  // with re-run order. Ties (an identical timestamp) keep whichever run
+  // this loop saw first — real re-runs a Principal or CI triggers by hand
+  // are always seconds apart, never truly simultaneous.
   const latestByName = new Map<string, RestCheckRun>()
   for (const run of runs) {
     const seen = latestByName.get(run.name)
-    if (!seen || run.id > seen.id) latestByName.set(run.name, run)
+    if (!seen || Date.parse(run.started_at) > Date.parse(seen.started_at)) latestByName.set(run.name, run)
   }
   return Array.from(latestByName.values()).filter((r) => r.name !== REVIEW_GATE_CHECK_RUN_NAME)
 }

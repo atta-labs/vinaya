@@ -57,6 +57,7 @@ import { hostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  assertValidLoopEvent,
   buildReexecArgs,
   CONFIDENCE_PROMPT_LINE,
   describeObjectivesEdit,
@@ -2860,6 +2861,77 @@ exit 1
   )
 }
 
+/**
+ * Same as `writeFakeGhAlwaysRedCi`, plus `pr view --json body` (O5, `#595`)
+ * — `--resume`'s very first read (`fetchPrBody`, to derive the task from
+ * `Closes #N`) has no answer in the plain fixture, which never resumes.
+ */
+function writeFakeGhAlwaysRedCiResumable(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  printf '%s\\n' '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"failure"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+function setUpNeverPushesResumable(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeNeverPushes(binDir)
+  writeFakeGhAlwaysRedCiResumable(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
 function setUpNeverPushes(): { home: string; cwd: string; path: string } {
   const home = tempDir('vinaya-drl-home-')
   const cwd = tempDir('vinaya-drl-cwd-')
@@ -2920,6 +2992,278 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     expect(gateRedPrompt).toMatch(/CI is red on the last head/)
     expect(gateRedPrompt).toMatch(/`git push`/)
   }, 20000)
+})
+
+/**
+ * O1 (`#595`): `token-report` is just one more mechanical check-run name —
+ * the driver never special-cases it. A blank/dash-only token row fails it
+ * exactly like any other red check, and the SAME gate-red-retry machinery
+ * every other red-CI fixture in this file already exercises applies: one
+ * developer resume, the driver stays alive, and once the row is fixed (the
+ * marker file below stands in for "the developer re-ran `vinaya pr report`
+ * and pushed") the round goes green and the loop runs to completion.
+ */
+function writeFakeClaudeTokenReportFix(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+PROMPT="$(cat)"
+WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    N=$(ls "$HOME"/.dev-prompt-*.txt 2>/dev/null | wc -l | tr -d ' ')
+    N=$((N + 1))
+    printf '%s' "$PROMPT" > "$HOME/.dev-prompt-$N.txt"
+    if [ "$N" -ge 2 ]; then
+      touch "$HOME/.token-report-fixed"
+    fi
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+/** Same as \`writeFakeGit\`, except \`ls-remote\` answers a NEW head once \`.token-report-fixed\` exists — the fixture's stand-in for "the developer fixed the row and pushed." */
+function writeFakeGitTokenReportFix(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.token-report-fixed" ]; then
+    echo "${'c'.repeat(40)}	refs/heads/${BRANCH}"
+  elif [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+/** Same as \`writeFakeGh\`, except \`gh api …/check-runs\` answers \`token-report: failure\` until \`.token-report-fixed\` exists, then \`success\` — never the review gate's own name, and never any OTHER check name (isolating this one). */
+function writeFakeGhTokenReportRedThenGreen(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  if [ -f "$HOME/.token-report-fixed" ]; then
+    echo '{"id":1,"name":"token-report","status":"completed","conclusion":"success"}'
+  else
+    echo '{"id":1,"name":"token-report","status":"completed","conclusion":"failure"}'
+  fi
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+function setUpTokenReportRedThenGreen(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeTokenReportFix(binDir)
+  writeFakeGhTokenReportRedThenGreen(binDir)
+  writeFakeGitTokenReportFix(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — O1 (#595): a blank/dash-only token-report row never ends the driver', () => {
+  it('yields one developer resume naming token-report, then a live driver that runs to publish once the row is fixed', () => {
+    const { home, cwd, path } = setUpTokenReportRedThenGreen()
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '20',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
+    })
+    // A live driver that ran to completion — never a crash, never an exit
+    // on the way there.
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+    expect(r.stderr).not.toMatch(/Uncaught|TypeError|at Object\./)
+
+    // Exactly one developer resume for the red gate: round 1's own fresh
+    // dispatch is `.dev-prompt-1.txt`, and the ONE gate-red retry that
+    // names the failing check is `.dev-prompt-2.txt` — never a third (the
+    // fix lands on that very turn).
+    expect(existsSync(join(home, '.dev-prompt-2.txt'))).toBe(true)
+    expect(existsSync(join(home, '.dev-prompt-3.txt'))).toBe(false)
+    const resumePrompt = readFileSync(join(home, '.dev-prompt-2.txt'), 'utf8')
+    expect(resumePrompt).toMatch(/token-report/)
+    expect(resumePrompt).toMatch(/`git push`/)
+
+    // Never a pause of any kind — this run reaches a clean publish.
+    expect(existsSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'))).toBe(false)
+  }, 20000)
+})
+
+describe('devReviewLoop — O4 (#595): a re-exec child whose own first gate read is red stays alive and pauses, never exits', () => {
+  it('the parent hands off mid-round-1, and the child — CI red on its own first read — ends bounded-paused, never crashed', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaudeBaseMovesAfterFirstTurn(binDir)
+    writeFakeGhAlwaysRedCi(binDir)
+    writeFakeGitBaseMovesWithSuccessfulPull(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_PR_POLL_MAX_ATTEMPTS: '5',
+      VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '5',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
+    })
+
+    // The re-exec (the parent's own hand-off) really happened.
+    expect(existsSync(join(home, '.git-pull-called'))).toBe(true)
+
+    // The CHILD process — the one that actually ends this run — is alive
+    // and reached a DECIDED pause, never an uncaught crash: a real exit
+    // code this harness itself set (`d.exitProcess`/the pause-return path),
+    // never a bare stack trace, and never the parent's own re-exec exit
+    // code masquerading as success.
+    expect(r.status).not.toBe(0)
+    expect(r.stderr).not.toMatch(/Uncaught|TypeError|ReferenceError|at Object\./)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+    // Never `stale_driver` — the staleness was absorbed by the re-exec
+    // itself; what pauses the CHILD is its own red gate, a different fact.
+    expect(r.stdout).not.toMatch(/paused \(stale_driver\)/)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+  }, 30000)
+})
+
+describe('devReviewLoop — O5 (#595): an infrastructure pause resumes on the bare command, no Principal ruling needed', () => {
+  it('--resume continues past an infrastructure pause with zero ruling comments ever posted', () => {
+    const { home, cwd, path } = setUpNeverPushesResumable()
+    const paused = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
+      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
+    })
+    expect(paused.status).not.toBe(0)
+    expect(paused.stdout).toMatch(/paused \(infrastructure\)/)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+
+    // Every other pause reason requires a Principal ruling comment before
+    // `--resume` will proceed at all (`devReviewLoop --resume: PR #<n>
+    // carries no Principal ruling comment yet`) — this run posts NONE, ever,
+    // and `--resume` must still continue rather than throw that error.
+    expect(postedCommentFiles(home).length).toBeGreaterThan(0)
+    for (const f of postedCommentFiles(home)) {
+      expect(readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8')).not.toMatch(/aeg:principal:ruling/)
+    }
+
+    const resumed = runDevReviewLoopArgs(home, cwd, path, ['--resume', '123', '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
+      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
+    })
+    expect(resumed.stderr).not.toMatch(/carries no Principal ruling comment yet/)
+    // Still stuck on the exact same never-fixed red gate — resumes straight
+    // back into the same bounded infrastructure pause, never a crash.
+    expect(resumed.status).not.toBe(0)
+    expect(resumed.stdout).toMatch(/paused \(infrastructure\)/)
+  }, 30000)
 })
 
 /**
@@ -3144,6 +3488,155 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
     expect(resumeEvent?.kind).toBe('dev_review_loop')
     expect(resumeEvent?.branch).toBe(BRANCH)
     expect(resumeEvent?.detail as string).toMatch(/smoke\.ts/)
+  }, 20000)
+})
+
+// --- O2 (#595): the loop's own control files are never unpushed work ---
+
+/** `git -C <worktree> status --porcelain` reporting ONLY the loop's own two control files as untracked — never real work. */
+function writeFakeGitControlFilesOnly(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "status" ]; then
+  printf '%s\\n' '?? .vinaya-confidence'
+  printf '%s\\n' '?? .vinaya-round-response'
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "rev-list" ]; then
+  echo "0"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+/** Same as \`writeFakeGitDirtyWorktree\`, plus the loop's own two control files alongside the real dirty one — proves the pause detail names only the real file, never the control files too. */
+function writeFakeGitDirtyWorktreeWithControlFiles(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "status" ]; then
+  printf '%s\\n' ' M smoke.ts'
+  printf '%s\\n' '?? .vinaya-confidence'
+  printf '%s\\n' '?? .vinaya-round-response'
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "rev-list" ]; then
+  echo "1"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+function setUpNeverPushesControlFilesOnly(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeNeverPushes(binDir)
+  writeFakeGhAlwaysRedCi(binDir)
+  writeFakeGitControlFilesOnly(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+function setUpNeverPushesDirtyWithControlFiles(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeNeverPushes(binDir)
+  writeFakeGhAlwaysRedCi(binDir)
+  writeFakeGitDirtyWorktreeWithControlFiles(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe("devReviewLoop — O2 (#595): the loop's own control files are never unpushed work", () => {
+  it('a worktree dirty ONLY in .vinaya-confidence/.vinaya-round-response reads clean — never a no_push pause', () => {
+    const { home, cwd, path } = setUpNeverPushesControlFilesOnly()
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
+    })
+    expect(r.status).not.toBe(0)
+    // Same generic bound a plain, genuinely-clean stall hits — never the
+    // no_push-specific pause, and never a resume for "unpushed work" that
+    // was never real.
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+    expect(r.stdout).not.toMatch(/paused \(no_push\)/)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('infrastructure')
+
+    const commentsDir = join(home, '.fake-gh-posted-comments')
+    for (const f of readdirSync(commentsDir)) {
+      expect(readFileSync(join(commentsDir, f), 'utf8')).not.toMatch(/aeg:loop:unpushed-work-resume/)
+    }
+  }, 20000)
+
+  it('one dirty file alongside the two control files still reads as unpushed — no_push, naming only the real file', () => {
+    const { home, cwd, path } = setUpNeverPushesDirtyWithControlFiles()
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
+    })
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(no_push\)/)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.reason).toBe('no_push')
+    expect(pauseState.detail).toMatch(/smoke\.ts/)
+    expect(pauseState.detail).not.toMatch(/\.vinaya-confidence/)
+    expect(pauseState.detail).not.toMatch(/\.vinaya-round-response/)
   }, 20000)
 })
 
@@ -5239,6 +5732,113 @@ describe('CONFIDENCE_PROMPT_LINE (pure) — O11 (task-run-v1 21, #541, round 2 r
   it('the confidence re-ask prompt (dispatched via dispatchDeveloper, which always prepends the resume-context block on a resume) still carries this same command, since it is appended verbatim', () => {
     const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${CONFIDENCE_PROMPT_LINE}`
     expect(reaskPrompt).toMatch(/`echo '.*' > \.vinaya-confidence`/)
+  })
+})
+
+describe('assertValidLoopEvent (pure) — O6 (#595): a malformed emitted event is refused at emit time, field named', () => {
+  it('passes every well-formed event this loop actually emits, across one full round’s worth of shapes', () => {
+    const loopId = 'loop-1'
+    const events: DevReviewLoopEventInput[] = [
+      {
+        kind: 'dev_review_loop',
+        payload: {},
+        event: 'loop_started',
+        loop_id: loopId,
+        task: TASK,
+        policy: { max_rounds: 3, reviewers: ['code-reviewer', 'security'], models: {} }
+      },
+      { kind: 'dev_review_loop', payload: {}, event: 'round_started', loop_id: loopId, round: 1, base_head: BASE_SHA },
+      {
+        kind: 'dev_review_loop',
+        payload: {},
+        event: 'gate_result_read',
+        loop_id: loopId,
+        round: 1,
+        head: HEAD_SHA,
+        green: true
+      },
+      {
+        kind: 'dev_review_loop',
+        payload: {},
+        event: 'verdicts_read',
+        loop_id: loopId,
+        round: 1,
+        head: HEAD_SHA,
+        all_approve: true,
+        blockers: 0
+      },
+      {
+        kind: 'dev_review_loop',
+        payload: {},
+        event: 'findings_compared',
+        loop_id: loopId,
+        round: 1,
+        open: [],
+        resolved: [],
+        new: [],
+        recurring: []
+      },
+      {
+        kind: 'dev_review_loop',
+        payload: {},
+        event: 'stop_condition_met',
+        loop_id: loopId,
+        round: 1,
+        condition: 'green'
+      },
+      {
+        kind: 'dev_review_loop',
+        payload: {},
+        event: 'round_ended',
+        loop_id: loopId,
+        round: 1,
+        base_head: BASE_SHA,
+        head: HEAD_SHA,
+        files_changed: 1,
+        insertions: 1,
+        deletions: 0,
+        wall_ms: 10,
+        outcome: 'green'
+      },
+      {
+        kind: 'dev_review_loop',
+        payload: {},
+        event: 'journal_finalized',
+        loop_id: loopId,
+        rounds: 1,
+        total_wall_ms: 10,
+        time_to_green_ms: 10,
+        files_changed_total: 1,
+        final_head: HEAD_SHA,
+        result: 'merged_ready'
+      }
+    ]
+    for (const e of events) expect(() => assertValidLoopEvent(e)).not.toThrow()
+  })
+
+  it('refuses a malformed event, naming the exact field that fails its schema', () => {
+    const malformed = {
+      kind: 'dev_review_loop',
+      payload: {},
+      event: 'round_started',
+      loop_id: 'loop-1',
+      round: 'not-a-number',
+      base_head: BASE_SHA
+    } as unknown as DevReviewLoopEventInput
+    expect(() => assertValidLoopEvent(malformed)).toThrow(/round/)
+  })
+
+  it('refuses an event carrying an extra, unrecognized field — every schema here is .strict()', () => {
+    const malformed = {
+      kind: 'dev_review_loop',
+      payload: {},
+      event: 'round_started',
+      loop_id: 'loop-1',
+      round: 1,
+      base_head: BASE_SHA,
+      unexpected_field: 'x'
+    } as unknown as DevReviewLoopEventInput
+    expect(() => assertValidLoopEvent(malformed)).toThrow(/unexpected_field/)
   })
 })
 

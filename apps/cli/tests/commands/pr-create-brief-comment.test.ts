@@ -82,7 +82,11 @@ exit 1
 
 function initRepo(): string {
   const repo = tempDir('pr-create-repo-')
-  execFileSync('git', ['init', '-q'], { cwd: repo })
+  // `-b main`: `derivePhase()`'s fallback names the raw branch when it isn't
+  // `task/<tranche>/<n>`-shaped — never left to `git init`'s own default
+  // (`init.defaultBranch`, environment-dependent: `main` locally, `master`
+  // on the CI runner used here — found live, CI red on exactly this).
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
   execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
   // ring1_forgeWriteInterception: false opts OUT of brief-schema validation
@@ -199,6 +203,24 @@ describe('vinaya pr create — refuses a body still carrying the retired brief s
     expect(sentBody).toContain('## Decisions')
     expect(sentBody).not.toContain('## Reference')
     expect(sentBody).not.toContain('aeg:brief')
+  })
+
+  it('O7 (#595): splices an AEG:TOKENS row into the body actually sent to gh, never a bare-— row', () => {
+    const repo = initRepo()
+    const bodyPath = join(repo, 'pr-body.md')
+    writeFileSync(bodyPath, newShapedBody())
+    const { path, createBodyLogPath } = stubGh('https://github.com/acme/widget/pull/46')
+
+    const r = runCli(['pr', 'create', '--body-file', bodyPath, '--title', 'Fix(cli): fills the token row'], repo, path)
+    expect(r.status).toBe(0)
+
+    const sentBody = readFileSync(createBodyLogPath, 'utf-8')
+    expect(sentBody).toContain('<!-- AEG:TOKENS:START -->')
+    expect(sentBody).toContain('<!-- AEG:TOKENS:END -->')
+    expect(sentBody).toMatch(/\|\s*main:\s*develop\s*\|\s*Developer\s*\|/)
+    // This test sandbox resolves no real session transcript — the accepted
+    // unavailable form, never a bare `—` cell with no reason attached.
+    expect(sentBody).toMatch(/—\s*\([a-z-]+\)/)
   })
 
   it('a body that only MENTIONS a legacy marker inline, backticked, in prose is not refused', () => {
