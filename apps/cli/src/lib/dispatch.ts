@@ -1037,6 +1037,34 @@ export function getProcessSnapshot(pid: number): ProcessSnapshot | null {
   return { ppid, startedAt: psField(pid, 'lstart='), command: psField(pid, 'comm=') }
 }
 
+/**
+ * O3 (Issue #605; round 4 security review, HIGH): does `snapshot` (a LIVE
+ * re-read of a pid) still match the identity `record` captured for that
+ * same pid at spawn time? The one identity guard both callers that ever
+ * treat a pid as this launch's own child now share — `dev-review-loop/
+ * developer-dispatch.ts`'s `classifyChildLiveness` (recovery, reading a
+ * PRIOR launch back) and `terminateLaunchedChildOnShutdown` below (the
+ * driver's own shutdown path, acting on a launch it is ENDING) — so a
+ * recycled pid is refused identically on both paths, never signaled just
+ * because the recovery-side check happens to live somewhere else. A field
+ * `record` DID capture must be read back and agree; one it never captured
+ * (any record written before this task) has nothing to check and is
+ * trusted as before — the `ppid`/liveness half of the decision is each
+ * caller's own concern, not this function's.
+ */
+export function matchesCapturedIdentity(
+  record: Pick<LaunchRecord, 'childStartedAt' | 'childCommand'>,
+  snapshot: ProcessSnapshot
+): boolean {
+  if (record.childStartedAt !== null) {
+    if (snapshot.startedAt === null || record.childStartedAt !== snapshot.startedAt) return false
+  }
+  if (record.childCommand !== null) {
+    if (snapshot.command === null || record.childCommand !== snapshot.command) return false
+  }
+  return true
+}
+
 /** Bounded grace between the two escalating signals `terminateChildWithGrace` sends — the same order of magnitude as `SIGKILL_GRACE_MS` (the dispatch timeout's own escalation), reused here for a driver-initiated termination rather than a child that overran its own ceiling. */
 const TERMINATE_GRACE_MS = 2_000
 
@@ -1093,6 +1121,19 @@ export function terminateChildWithGrace(pid: number, graceMs: number = TERMINATE
  * untouched — there is nothing left to terminate or reclassify. A missing
  * or corrupt record is likewise left alone: there is no in-flight launch to
  * account for.
+ *
+ * Round 4 security review, HIGH: the signal handlers register early — a
+ * driver killed before it ever reaches its OWN recovery step still has this
+ * called on its next start's shutdown, against whatever record is on disk,
+ * which could be a stale one an EARLIER process instance left behind
+ * (itself `SIGKILL`ed before reaching this same path). `record.childPid` is
+ * therefore never signaled on identity alone: `getProcessSnapshot` re-reads
+ * the live pid and `matchesCapturedIdentity` — the SAME identity guard
+ * `classifyChildLiveness` applies on the recovery side — must agree before
+ * `terminateChildWithGrace` ever runs. No live process at that pid, or one
+ * that fails the identity match (the OS has recycled it for something
+ * unrelated), is left untouched: there is nothing of this launch's own left
+ * to terminate, and the record is patched exactly as if there had been.
  */
 export function terminateLaunchedChildOnShutdown(
   role: Role,
@@ -1107,7 +1148,10 @@ export function terminateLaunchedChildOnShutdown(
   if (record.status !== 'launched') return
 
   if (record.childPid !== null && record.host === osHostname()) {
-    terminateChildWithGrace(record.childPid)
+    const snapshot = getProcessSnapshot(record.childPid)
+    if (snapshot !== null && matchesCapturedIdentity(record, snapshot)) {
+      terminateChildWithGrace(record.childPid)
+    }
   }
 
   writeLaunchRecord({

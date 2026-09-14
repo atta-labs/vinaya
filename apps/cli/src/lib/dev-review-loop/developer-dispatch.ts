@@ -33,6 +33,7 @@ import {
   type AgentVendor,
   getProcessSnapshot,
   type LaunchRecord,
+  matchesCapturedIdentity,
   type ParsedLaunch,
   type ProcessSnapshot,
   readLaunchRecord,
@@ -594,20 +595,16 @@ export function classifyChildLiveness(
   if (record.childPid === null || record.host !== deps.hostname()) return 'not-ours'
   const snapshot = deps.getProcessSnapshot(record.childPid)
   if (snapshot === null) return 'not-ours'
-  // Round 3 security review, MEDIUM: a field this record DID capture at
-  // spawn time must be re-confirmed now, not silently skipped, when the
-  // live snapshot can't read it back — a transient `ps` read failure (a
+  // Round 3 security review, MEDIUM (round 4: factored into `dispatch.ts`'s
+  // `matchesCapturedIdentity`, the ONE identity guard this and the driver's
+  // own shutdown path now share): a field this record DID capture at spawn
+  // time must be re-confirmed now, not silently skipped, when the live
+  // snapshot can't read it back — a transient `ps` read failure (a
   // permissions hiccup, a race) is not proof of identity and must never be
-  // treated as one. Comparing against `null` on the record's OWN side
-  // (never captured — every record written before this task) is the one
-  // case with nothing to re-confirm, and is left to the ppid+liveness
-  // fallback below exactly as before.
-  if (record.childStartedAt !== null) {
-    if (snapshot.startedAt === null || record.childStartedAt !== snapshot.startedAt) return 'not-ours'
-  }
-  if (record.childCommand !== null) {
-    if (snapshot.command === null || record.childCommand !== snapshot.command) return 'not-ours'
-  }
+  // treated as one. A record that never captured identity at all (every
+  // record written before this task) has nothing to re-confirm and falls
+  // through to the ppid+liveness check below exactly as before.
+  if (!matchesCapturedIdentity(record, snapshot)) return 'not-ours'
   if (snapshot.ppid === record.dispatcherPid && deps.isPidAlive(record.dispatcherPid)) return 'live'
   return 'orphaned'
 }
