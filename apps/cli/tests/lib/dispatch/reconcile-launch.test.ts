@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { reconcileLaunch, type ReconcileLaunchDeps } from '../../../src/lib/dev-review-loop/developer-dispatch'
+import {
+  classifyChildLiveness,
+  reconcileLaunch,
+  type ReconcileLaunchDeps
+} from '../../../src/lib/dev-review-loop/developer-dispatch'
 import type { LaunchRecord, ParsedLaunch } from '../../../src/lib/dispatch'
 
 const THIS_HOST = 'test-host'
@@ -29,9 +33,20 @@ function record(overrides: Partial<LaunchRecord> = {}): LaunchRecord {
   }
 }
 
-/** Deps whose pid-liveness answer and hostname are fixed per case. */
-function deps(isAlive: boolean, host = THIS_HOST): ReconcileLaunchDeps {
-  return { isPidAlive: () => isAlive, hostname: () => host }
+/**
+ * Deps whose pid-liveness answer, hostname, and ppid answer are fixed per
+ * case. `isAlive` drives both `isPidAlive` (probed for the dispatcher pid by
+ * `classifyChildLiveness`) and whether `getPpid` finds anything at all at the
+ * queried (child) pid — `ppid` names what it finds when it does, defaulting
+ * to `record()`'s own default `dispatcherPid` (1000) so every pre-existing
+ * "live" case here keeps meaning what it always meant.
+ */
+function deps(isAlive: boolean, host = THIS_HOST, ppid = 1000): ReconcileLaunchDeps {
+  return {
+    isPidAlive: () => isAlive,
+    hostname: () => host,
+    getPpid: () => (isAlive ? ppid : null)
+  }
 }
 
 describe('reconcileLaunch (O3) — no prior launch', () => {
@@ -79,6 +94,57 @@ describe('reconcileLaunch (O3) — a live launch is found by identity', () => {
       record: record({ status: 'interrupted', childPid: null, resumeId: 'sess-1' })
     }
     const out = reconcileLaunch(parsed, { requireContinuity: true }, deps(true))
+    expect(out.kind).not.toBe('live')
+  })
+
+  it('a live pid with a live recorded parent still returns live — no regression on the duplicate-worker guard', () => {
+    const parsed: ParsedLaunch = {
+      status: 'ok',
+      record: record({ status: 'launched', resumeId: null, dispatcherPid: 1000, childPid: 2000 })
+    }
+    const out = reconcileLaunch(parsed, { requireContinuity: true }, deps(true, THIS_HOST, 1000))
+    expect(out.kind).toBe('live')
+  })
+})
+
+describe('reconcileLaunch (O2, Issue #605) — an orphaned child is a takeover, never live', () => {
+  it('a live pid whose PPID is 1 (reparented to init) never reads live — the driver that spawned it is gone', () => {
+    const parsed: ParsedLaunch = {
+      status: 'ok',
+      record: record({ status: 'launched', dispatcherPid: 1000, childPid: 2000, resumeId: 'sess-mid' })
+    }
+    const out = reconcileLaunch(parsed, { requireContinuity: true }, deps(true, THIS_HOST, 1))
+    expect(out.kind).not.toBe('live')
+    // Continuity was required and a session was already bound before the
+    // driver died — the orphan is a TAKEOVER (resume that exact session),
+    // never a block and never a silent fresh start.
+    expect(out.kind).toBe('resume')
+    if (out.kind === 'resume') expect(out.resumeId).toBe('sess-mid')
+  })
+
+  it('`classifyChildLiveness` names the orphan case directly, for the recovery wrapper to reap', () => {
+    const rec = record({ status: 'launched', dispatcherPid: 1000, childPid: 2000 })
+    const liveness = classifyChildLiveness(rec, deps(true, THIS_HOST, 1))
+    expect(liveness).toBe('orphaned')
+  })
+
+  it('a reparented child whose OWN recorded dispatcher pid no longer answers is also orphaned, not live', () => {
+    const parsed: ParsedLaunch = {
+      status: 'ok',
+      record: record({ status: 'launched', dispatcherPid: 1000, childPid: 2000, resumeId: null })
+    }
+    // The child still shows its old dispatcher as parent (ppid matches),
+    // but that dispatcher pid itself no longer answers a liveness probe —
+    // still never live.
+    const out = reconcileLaunch(
+      parsed,
+      { requireContinuity: true },
+      {
+        isPidAlive: () => false,
+        hostname: () => THIS_HOST,
+        getPpid: () => 1000
+      }
+    )
     expect(out.kind).not.toBe('live')
   })
 })
