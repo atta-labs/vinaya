@@ -23,7 +23,7 @@ function capture(): { events: LogEventInput[]; log: (e: LogEventInput) => void }
 const BASE_OPTS = { parallel: 1, diffOnly: false, changedFiles: null, defaultTimeoutMs: 5000 }
 
 /**
- * task-log-v1 3, O1/O2 — one `gate` `checked` observation per terminal
+ * One `gate` `checked` observation per terminal
  * outcome the runner can reach, each carrying `check_version`,
  * `policy_version`, `input_fingerprint`, `outcome`, `duration_ms` and a
  * structured `reason` (never a check's own free-text `CheckError.message`,

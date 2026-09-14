@@ -1273,7 +1273,7 @@ const HOOK_PREAMBLE = '#!/usr/bin/env sh\n'
  * run. Deliberately not auto-building: a hook that silently spends a build on
  * someone's commit is worse than one that tells them what to run.
  */
-// `VINAYA_HOST=hook` (task-log-v1 3, O2/O3) marks every gate observation
+// `VINAYA_HOST=hook` marks every gate observation
 // emitted from THIS invocation as `meta.host: 'hook'` — never inferred after
 // the fact, since a bare `vinaya check` run outside a hook is otherwise
 // indistinguishable from one run BY a hook (both would read `host: 'cli'`,

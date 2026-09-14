@@ -45,7 +45,7 @@ function readGateLines(dir: string, issue: string): Array<Record<string, unknown
 }
 
 /**
- * task-log-v1 3, O3 — hook, CLI and CI are distinguished ONLY by
+ * Hook, CLI and CI are distinguished ONLY by
  * `meta.host` (derived from the real environment `hostFromEnv` reads,
  * `apps/cli/src/lib/log-sink.ts`), never by anything `runner.ts` invents
  * itself. Each caller here is its own `createLogSink` instance — the same

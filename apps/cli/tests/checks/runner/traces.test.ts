@@ -21,7 +21,7 @@ const BASE_OPTS = { parallel: 1, diffOnly: false, changedFiles: null, defaultTim
 
 type GateEvent = Extract<LogEventInput, { kind: 'gate' }>
 
-describe('runChecks — reject-then-correct trace (task-log-v1 3, O3)', () => {
+describe('runChecks — reject-then-correct trace', () => {
   it('a rejected round then a corrected round produce two distinct gate observations, never one overwritten record', async () => {
     const { events, log } = capture()
 

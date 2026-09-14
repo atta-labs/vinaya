@@ -7,7 +7,7 @@ const FIXTURES = join(import.meta.dir, '..', '..', 'fixtures', 'checks')
 const RUN_AND_HANG = join(FIXTURES, 'run-and-hang.ts')
 
 /**
- * task-log-v1 3, O1 — a check killed by SIGINT/SIGTERM never reaches one of
+ * A check killed by SIGINT/SIGTERM never reaches one of
  * `runOne`'s own `return` statements, so it can only be recorded from the
  * signal handler itself (`installSignalForwarding`'s `forward`). Exercised
  * out-of-process, same as `runner.test.ts`'s own SIGINT-forwarding test —

@@ -44,7 +44,7 @@ export type RunOptions = {
    * Injectable for tests — defaults to the process-wide Vinaya Log sink
    * (`../lib/log-sink.js`'s `log`), the same singleton every check attempt
    * in a real `vinaya check`/hook/CI invocation shares one `run_id` through
-   * (task-log-v1 3, O3: one process, one correlated run). A test passes its
+   * (one process, one correlated run). A test passes its
    * own capturing function instead of exercising the real outbox on disk.
    */
   log?: (e: LogEventInput) => void
@@ -166,7 +166,7 @@ const KILL_GRACE_MS = 2000
  * One entry per check currently spawned (registered right after `spawn`,
  * removed right before `runOne` returns) — the SIGINT/SIGTERM handler below
  * reads this to both kill every in-flight check's whole process tree AND
- * (task-log-v1 3, O1) emit its `gate` observation as `cancelled` before this
+ * also emit its `gate` observation as `cancelled` before this
  * process exits, since a check killed this way never reaches one of
  * `runOne`'s own `return` statements to log itself.
  */
@@ -202,9 +202,9 @@ function installSignalForwarding(): void {
       // child's own `proc.on('close', …)` in `runOne` resolve before this
       // process actually exits, and `runOne` would otherwise carry on to
       // its own normal-completion `logGateChecked` call for the SAME
-      // attempt — a real double-emission this flag exists to prevent
-      // (task-log-v1 3, O3). `runOne` checks it right before every one of
-      // its own remaining log calls and skips when it's already set.
+      // attempt — a real double-emission this flag exists to prevent.
+      // `runOne` checks it right before every one of its own remaining log
+      // calls and skips when it's already set.
       entry.cancelled = true
       logGateChecked({
         spec: entry.spec,
@@ -636,13 +636,13 @@ async function runOne(
  * Every outcome this function or `runOne` reaches — skip, pass, fail
  * (rejected or waiting), timeout, and the two `error` flavors
  * (`unavailable_dependency`/`invalid_input`) — is recorded as one `gate`
- * `checked` observation (`logGateChecked`, task-log-v1 3, O1) at the exact
- * point the outcome is decided, so the recorded reason always matches real
- * local context rather than being re-derived from the returned
- * `CheckOutcome` after the fact. This never changes what `runChecks`
- * returns or what `isRunFailed` reads from it (task-log-v1 3 Traps: "do not
- * modify gate decisions while adding observations") — the log call is
- * strictly additional to every existing return statement.
+ * `checked` observation (`logGateChecked`) at the exact point the outcome
+ * is decided, so the recorded reason always matches real local context
+ * rather than being re-derived from the returned `CheckOutcome` after the
+ * fact. This never changes what `runChecks` returns or what `isRunFailed`
+ * reads from it, and never modifies a gate decision while adding an
+ * observation — the log call is strictly additional to every existing
+ * return statement.
  */
 export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<CheckOutcome[]> {
   const callerEnv = opts.callerEnv ?? process.env
