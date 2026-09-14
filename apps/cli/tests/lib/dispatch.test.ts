@@ -761,7 +761,7 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     expect(existsSync(join(home, '.vinaya', 'dispatch-resume', 'etc'))).toBe(false)
   })
 
-  it('a crashing child writes no resume record — there is no session to resume', () => {
+  it('a crashing child that never reported a session keeps its interrupted intent record, with no session to resume (O1)', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
@@ -769,10 +769,60 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
     const path = `${binDir}:${pathWithoutRealVendors()}`
 
+    // Crashes before printing any `session_id` at all — the "failed attempts
+    // can lose session identity" defect this task closes: the intent record
+    // now PERSISTS (O1, launch intent written before spawn, never deleted on
+    // an interrupt), marked `interrupted`/`crash`, but with `resumeId: null`
+    // because the vendor never reported one — the honest "there is genuinely
+    // no session to resume" case, distinct from "no launch ever happened."
     writeFakeBinary(binDir, 'claude', '#!/bin/sh\ncat > /dev/null\nexit 7\n')
     const result = runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
     expect(result.status).toBe(1)
-    expect(existsSync(join(home, '.vinaya', 'dispatch-resume'))).toBe(false)
+
+    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-unscoped.json')
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')) as {
+      status: string
+      failureReason: string | null
+      resumeId: string | null
+    }
+    expect(record.status).toBe('interrupted')
+    expect(record.failureReason).toBe('crash')
+    // No session was ever bound — `readResumeRecord`'s own compat view returns
+    // null for exactly this, so the loop still starts fresh rather than
+    // resuming a session that never existed.
+    expect(record.resumeId).toBeNull()
+  })
+
+  it('a crash AFTER the vendor reported its session keeps that session on the interrupted record — session identity survives the interruption (O1)', () => {
+    const synthId = '88888888-8888-8888-8888-888888888888'
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    // The vendor prints its session id (bound mid-stream), then exits non-zero
+    // — before this task an interrupted attempt wrote no record at all and the
+    // session was lost; now the bound session survives on the interrupted
+    // record so recovery can resume the exact session.
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' '{"type":"system","subtype":"init","session_id":"${synthId}"}'\nexit 7\n`
+    )
+    const result = runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
+    expect(result.status).toBe(1)
+
+    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-unscoped.json')
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')) as {
+      status: string
+      failureReason: string | null
+      resumeId: string | null
+    }
+    expect(record.status).toBe('interrupted')
+    expect(record.failureReason).toBe('crash')
+    expect(record.resumeId).toBe(synthId)
   })
 })
 

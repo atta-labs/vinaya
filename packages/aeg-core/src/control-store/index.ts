@@ -36,3 +36,5 @@ export {
 export type { AcquireResult, ControlStoreDeps, EffectInput, InputInput, RunInput, TransitionInput } from './local'
 export { defaultIsPidAlive, migrateLegacyTask } from './migration'
 export type { MigrationResult } from './migration'
+export { normalizeOutcome } from './outcomes'
+export type { NormalizedOutcome, OutcomeSignals, TaskOutcomeStatus } from './outcomes'

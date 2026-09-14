@@ -101,6 +101,8 @@ import {
   fetchRulings,
   fetchSourceRevision,
   findOpenPrForBranch,
+  LaunchContinuityLost,
+  recoverDeveloperLaunch,
   resolveIssueObjectives,
   reviewPolicy,
   taskFromPrBody,
@@ -964,6 +966,38 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return handle
     }
 
+    /**
+     * O3: reconcile the developer's prior launch before resuming it, at every
+     * seam that used to read the durable resume record blind. A prior launch
+     * whose child is still running, or one whose required session is gone,
+     * both throw `LaunchContinuityLost` — the loop's own outer handler turns it
+     * into a decided `pause{reason:'infrastructure'}` (`apps/cli/specs/loop.md`),
+     * so a second worker never races the first and a lost session pauses
+     * explicitly instead of silently starting fresh. A recoverable session
+     * (now including one bound on an INTERRUPTED attempt — O1) sets
+     * `devResumeId` to the exact session. `none` — no launch record, the
+     * common case, and the only case every existing fixture reaches with its
+     * scratch `$HOME` — falls back to the durable resume-record read the loop
+     * already used, unchanged.
+     */
+    function reconcileDeveloperResume(artifactsPresent: boolean): void {
+      const recon = recoverDeveloperLaunch(task, input.agent, repo, { artifactsPresent })
+      if (recon.kind === 'live') {
+        throw new LaunchContinuityLost(
+          `a prior dispatched developer launch (pid ${recon.record.childPid}) is still running for task ${task} — refusing to start a second worker on the same task`
+        )
+      }
+      if (recon.kind === 'pause') throw new LaunchContinuityLost(recon.detail)
+      if (recon.kind === 'resume') {
+        devResumeId = recon.resumeId
+        return
+      }
+      // 'none' | 'finished' — no continuity-required session to reconcile;
+      // fall back to the durable resume-record read the loop already used.
+      const rec = d.readResumeRecord(task, input.agent, repo)
+      if (rec) devResumeId = rec.resumeId
+    }
+
     /** O2/O3: the developer's own worktree convention (`aeg-root/roles/developer.md`) — `.worktrees/<branch>` under this repo's root, the SAME path `confidenceFilePath` above already derives its own parent from. */
     function worktreePathForBranch(): string {
       return join(repoRoot, '.worktrees', branch)
@@ -1097,11 +1131,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const stop = d.fetchDeveloperStop(task)
         if (stop !== null) throw new DeveloperStopSignal(stop)
 
-        // O2: resume once, foreground — this single resume's own prompt
-        // covers both the missing push and (since it also asks for the
-        // open) the common case where the PR was never opened either.
-        const rec = d.readResumeRecord(task, input.agent, repo)
-        if (rec) devResumeId = rec.resumeId
+        // O2/O3: reconcile the prior launch, then resume once, foreground —
+        // this single resume's own prompt covers both the missing push and
+        // (since it also asks for the open) the common case where the PR was
+        // never opened either. `artifactsPresent: false` — no head reached the
+        // remote yet.
+        reconcileDeveloperResume(false)
         await dispatchDeveloper(PUSH_AND_OPEN_PROMPT, round)
         return await pollUntil(
           () => d.findOpenPrForBranch(branch),
@@ -1119,10 +1154,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       if (existingPrNow) return existingPrNow.number
 
       // Pushed (originally, or by this call's own `alreadyPushed: true`
-      // crash-recovery path) but the PR is still missing: resume once to
-      // open it, then poll.
-      const rec = d.readResumeRecord(task, input.agent, repo)
-      if (rec) devResumeId = rec.resumeId
+      // crash-recovery path) but the PR is still missing: reconcile the prior
+      // launch, then resume once to open it, then poll. `artifactsPresent:
+      // true` — a head is on the remote, the branch itself is real work.
+      reconcileDeveloperResume(true)
       await dispatchDeveloper(OPEN_PR_PROMPT, round)
       return await pollUntil(
         () => d.findOpenPrForBranch(branch),
@@ -1584,8 +1619,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // next, unmodified, straight off `firstPass` — UNLESS O4 (below)
           // recovers a real round from held state.
           prNumber = existingPr.number
-          const rec = d.readResumeRecord(task, input.agent, repo)
-          if (rec) devResumeId = rec.resumeId
+          // O3: reconcile the prior launch before a later round resumes it —
+          // an open PR means the branch is real work (`artifactsPresent`).
+          reconcileDeveloperResume(true)
           seedLoopHistory()
 
           // O4 (task 3, `#482`): a prior process may have

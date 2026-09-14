@@ -586,6 +586,7 @@ export {
   InvalidEffectKeyError,
   InvalidRunIdError,
   migrateLegacyTask,
+  normalizeOutcome,
   parseEffectRecord,
   parseInputRecord,
   parseOwnershipRecord,
@@ -611,10 +612,13 @@ export type {
   InputInput,
   InputRecord,
   MigrationResult,
+  NormalizedOutcome,
+  OutcomeSignals,
   OwnershipRecord,
   ParsedRecord,
   RunInput,
   RunRecord,
+  TaskOutcomeStatus,
   TransitionInput,
   TransitionRecord
 } from './control-store'
