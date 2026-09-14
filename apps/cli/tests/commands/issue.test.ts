@@ -16,13 +16,24 @@ const ISSUE_CONFIG = {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
+// `AEG_REPO` short-circuits `@attalabs/aeg-forge-state`'s `resolveRepo` (read
+// first, before it ever touches git) — every registered check run through
+// `runIssueChecks` now emits its own `gate` observation via the real Vinaya
+// Log sink, which resolves a repo identity for its envelope on every call.
+// Without this, a `cwd` that isn't a git repository at all (most fixtures
+// here) makes `resolveRepo` spawn `git remote get-url origin`, fail, and
+// print its own `console.warn` retry line straight onto this process's
+// stderr — exactly the stream every assertion below parses as pure
+// `CheckError` JSON.
+const DEFAULT_TEST_ENV = { AEG_REPO: 'example/example' }
+
 function runCli(args: string[], cwd: string, env?: Record<string, string>): CliResult {
   try {
     const stdout = execFileSync('bun', [INDEX, ...args], {
       cwd,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: env ? { ...process.env, ...env } : process.env
+      env: { ...process.env, ...DEFAULT_TEST_ENV, ...env }
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {
