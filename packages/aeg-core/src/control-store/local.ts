@@ -64,11 +64,13 @@ import {
   type EffectRecord,
   type EscalationRecord,
   type InputRecord,
+  type LoopStateRecord,
   type ManifestRecord,
   type OwnershipRecord,
   parseEffectRecord,
   parseEscalationRecord,
   parseInputRecord,
+  parseLoopStateRecord,
   parseManifestRecord,
   parseOwnershipRecord,
   parseResolutionRecord,
@@ -121,8 +123,32 @@ function readIfExists(path: string): string | undefined {
     if (isErrnoException(err, 'ENOENT')) return undefined
     // A real read failure (permissions, an unreadable special file) is not
     // "nothing was ever written" — surface it as a corrupt read rather than
-    // silently reporting absence.
+    // silently reporting absence. Rethrown here, never swallowed — `readRecord`
+    // below is what turns this into the `'corrupt'` a caller actually reads;
+    // this function's own contract stays "the raw bytes, undefined, or throw".
     throw err
+  }
+}
+
+/**
+ * Every direct `parse<X>Record(readIfExists(path))` read in this file goes
+ * through here instead (round 3 review, BLOCKER): `readIfExists` rethrows a
+ * real filesystem fault (permission denied, an unreadable special file, an
+ * EIO) raw, and every one of `parseWith`'s callers sits upstream of a caller
+ * that reads that record BEFORE its own try/catch is in scope (`recoverLoopState`
+ * in `dev-review-loop.ts`, most concretely) — the exact "escapes uncaught
+ * instead of becoming a decided pause" failure class round 1's BLOCKER
+ * already named for malformed JSON, reopened here through a different
+ * trigger. A real read failure is "something is there but untrustworthy," the
+ * same fact `parseWith` already reports as `'corrupt'` for torn JSON or a
+ * schema violation — never `'absent'`, and never left to erupt uncaught out
+ * of every caller of every record kind this store has.
+ */
+function readRecord<T>(path: string, parse: (raw: string | undefined) => ParsedRecord<T>): ParsedRecord<T> {
+  try {
+    return parse(readIfExists(path))
+  } catch (err) {
+    return { status: 'corrupt', reason: `filesystem read failed: ${err instanceof Error ? err.message : String(err)}` }
   }
 }
 
@@ -263,6 +289,10 @@ function inputPath(root: string, task: number, runId: string): string {
 
 function manifestPath(root: string, task: number, round: number): string {
   return join(taskRoot(root, task), 'manifest', `round-${String(round).padStart(6, '0')}.json`)
+}
+
+function loopStatePath(root: string, task: number): string {
+  return join(taskRoot(root, task), 'loop-state.json')
 }
 
 function effectPath(root: string, task: number, key: string): string {
@@ -411,7 +441,7 @@ export function writeRun(deps: ControlStoreDeps, task: number, epoch: number, in
 }
 
 export function readRun(deps: Pick<ControlStoreDeps, 'root'>, task: number, runId: string): ParsedRecord<RunRecord> {
-  return parseRunRecord(readIfExists(runPath(deps.root(), task, runId)))
+  return readRecord(runPath(deps.root(), task, runId), parseRunRecord)
 }
 
 export type InputInput = Omit<InputRecord, 'version' | 'kind' | 'task'>
@@ -428,7 +458,7 @@ export function readInput(
   task: number,
   runId: string
 ): ParsedRecord<InputRecord> {
-  return parseInputRecord(readIfExists(inputPath(deps.root(), task, runId)))
+  return readRecord(inputPath(deps.root(), task, runId), parseInputRecord)
 }
 
 export type ManifestInput = Omit<ManifestRecord, 'version' | 'kind' | 'task'>
@@ -462,7 +492,28 @@ export function readManifest(
   task: number,
   round: number
 ): ParsedRecord<ManifestRecord> {
-  return parseManifestRecord(readIfExists(manifestPath(deps.root(), task, round)))
+  return readRecord(manifestPath(deps.root(), task, round), parseManifestRecord)
+}
+
+export type LoopStateInput = Omit<LoopStateRecord, 'version' | 'kind' | 'task'>
+
+/**
+ * Writes the dev-review-loop's authoritative recovery snapshot for `task` —
+ * phase, round, budgets, held-result and delivered-findings identity.
+ * Deliberately NOT epoch-fenced, the same
+ * precedent `writeManifest` sets: see `LoopStateRecordSchema`'s own doc
+ * comment. Overwritten in place on every transition, unlike
+ * `writeRun`/`writeInput`.
+ */
+export function writeLoopState(deps: ControlStoreDeps, task: number, input: LoopStateInput): LoopStateRecord {
+  const record: LoopStateRecord = { version: 1, kind: 'loop_state', task, ...input }
+  atomicWriteFile(loopStatePath(deps.root(), task), JSON.stringify(record))
+  return record
+}
+
+/** The loop-state snapshot recorded for `task`, or `'absent'`/`'corrupt'` — the same three-way read every other record uses, never a nullable read that conflates the two (O3: a caller must be able to tell "nothing recovered yet" apart from "something recorded but untrustworthy," since the latter must never be read as license to reset budgets). */
+export function readLoopState(deps: Pick<ControlStoreDeps, 'root'>, task: number): ParsedRecord<LoopStateRecord> {
+  return readRecord(loopStatePath(deps.root(), task), parseLoopStateRecord)
 }
 
 export type TransitionInput = Omit<TransitionRecord, 'version' | 'kind' | 'task' | 'epoch' | 'seq'>
@@ -506,7 +557,7 @@ export function readTransitions(
   return readdirSync(dir)
     .filter((name) => /^\d+\.json$/.test(name))
     .sort()
-    .map((name) => parseTransitionRecord(readIfExists(join(dir, name))))
+    .map((name) => readRecord(join(dir, name), parseTransitionRecord))
 }
 
 export type EffectInput = Omit<EffectRecord, 'version' | 'kind' | 'task' | 'key'>
@@ -536,7 +587,7 @@ export function readEffect(
   task: number,
   key: string
 ): ParsedRecord<EffectRecord> {
-  return parseEffectRecord(readIfExists(effectPath(deps.root(), task, key)))
+  return readRecord(effectPath(deps.root(), task, key), parseEffectRecord)
 }
 
 /**

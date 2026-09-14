@@ -67,6 +67,7 @@ import {
   type ReconstructedJournal,
   type ReviewInputManifest,
   type ReviewPolicy,
+  type RoundHeadIdentity,
   type RoundStats
 } from '@attalabs/aeg-core'
 import {
@@ -133,6 +134,12 @@ import {
   writeHeldVerdict
 } from './dev-review-loop/reviewer-dispatch.js'
 import {
+  buildReviewerScratch,
+  buildVerifiedReviewerCandidate,
+  cleanupAllReviewerIsolationArtifacts,
+  cleanupReviewerIsolationForRound
+} from './dev-review-loop/reviewer-isolation.js'
+import {
   assertDispatchOrEscalate,
   CONFIDENCE_FILE_NAME,
   CONFIDENCE_PROMPT_LINE,
@@ -141,9 +148,11 @@ import {
   driverCrashEvents,
   driverDecidedPauseEvents,
   MAX_GATE_STALLED_TURNS,
+  MAX_INFRASTRUCTURE_RETRIES,
   parseConfidenceReply,
   parseRoundResponseFindingIds,
   parseShortstat,
+  persistLoopState,
   pollUntil,
   renderDeveloperRoundComment,
   ROUND_RESPONSE_PROMPT_LINE,
@@ -168,6 +177,7 @@ import {
   readDriverLock,
   readEscalationRecord,
   readPauseState,
+  recoverLoopState,
   ReplayedResolutionError,
   resolveEscalation,
   type ResolveEscalationResult,
@@ -738,10 +748,38 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // `--resume` continues it on the bare command, no Principal ruling
     // required. Every OTHER pause reason is unchanged: a genuine decision
     // point still refuses to resume without one.
-    const rulings = held.reason === 'infrastructure' ? [] : d.fetchRulings(resumePr)
-    if (held.reason !== 'infrastructure' && rulings.length === 0) {
+    // Bounded, and the bound is READ from
+    // the control store rather than reset by this restart — a task that
+    // keeps hitting `'infrastructure'`/`'stale_driver'` and getting resumed
+    // past it forever, with no genuine review round in between, exhausts
+    // this bare-command allowance and starts requiring a ruling like any
+    // other reason. `'corrupt'` is read as "budget unknown, be
+    // conservative" here — never as `0` — so a control-store read failure
+    // can never itself grant an unbounded bare-command resume. Floored
+    // against `held.infrastructureRetries` (round 2 review, security HIGH):
+    // `held` is `writePauseState`'s own plain `writeFileSync` record, a
+    // different write path than `persistLoopState`'s control-store one, so
+    // a `persistLoopState` write that silently failed at the very pause
+    // `held` itself records still leaves this floor intact — the
+    // control-store read alone can no longer heal a real count down to `0`
+    // (or any lower number) just because its own write never landed.
+    const recoveredForResume = recoverLoopState(closesTask)
+    const controlStoreInfrastructureRetries =
+      recoveredForResume.status === 'ok'
+        ? recoveredForResume.value.budgets.infrastructureRetries
+        : recoveredForResume.status === 'corrupt'
+          ? Number.POSITIVE_INFINITY
+          : 0
+    const infrastructureRetriesSoFar = Math.max(controlStoreInfrastructureRetries, held.infrastructureRetries ?? 0)
+    const bareInfrastructureResume =
+      held.reason === 'infrastructure' && infrastructureRetriesSoFar < MAX_INFRASTRUCTURE_RETRIES
+    const rulings = bareInfrastructureResume ? [] : d.fetchRulings(resumePr)
+    if (!bareInfrastructureResume && rulings.length === 0) {
       throw new Error(
-        `devReviewLoop --resume: PR #${resumePr} carries no Principal ruling comment yet — nothing to resume from.`
+        `devReviewLoop --resume: PR #${resumePr} carries no Principal ruling comment yet — nothing to resume from.` +
+          (held.reason === 'infrastructure'
+            ? ` (task ${closesTask} has hit ${infrastructureRetriesSoFar} infrastructure/stale_driver pause(s) — at or past the bound of ${MAX_INFRASTRUCTURE_RETRIES}, a ruling is required even for this reason.)`
+            : '')
       )
     }
     // O2: the authenticated resolution — consumed at most once
@@ -819,6 +857,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     )
   }
   writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString() })
+  // O3 (`#561`): restart cleanliness — a crashed or killed prior run's own
+  // reviewer candidate/scratch directories never leak into this run. Safe
+  // on a fresh task (nothing to remove) and mid-recovery from a stale lock
+  // (above): this run builds its own artifacts for whichever round it
+  // reaches first and never reads a prior run's leftovers.
+  cleanupAllReviewerIsolationArtifacts(root, task)
 
   // True only for the two pause reasons that are
   // themselves an infrastructure/re-exec hiccup, never a human decision
@@ -1001,6 +1045,76 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
     }
     let round = resumeFrom ? resumeFrom.round : 1
+
+    // The authoritative recovery read —
+    // this task's control-store `loop_state` record, if one has ever been
+    // persisted. `'absent'` seeds every budget at zero, exactly the prior
+    // behavior for a fresh task or one that predates this mechanism.
+    // `'corrupt'` is read as "nothing safe to seed FROM here" for
+    // `heldResultIdentity`/`deliveredFindingsIdentity` below (identical to
+    // `'absent'`'s own defaults there) — never as license to guess a real
+    // budget. The actual refusal is thrown from INSIDE the `try` block below
+    // (round 2 review, BLOCKER): this call site sits before that `try` even
+    // starts, so a throw here would escape `devReviewLoop` uncaught instead
+    // of reaching the outer `catch` that turns it into a decided
+    // `pause{reason:'infrastructure'}` — the one thing every comment on this
+    // path already claimed it did. THAT catch persists whatever this
+    // process's own `infrastructureRetries` variable holds at the moment of
+    // the throw (`persistCurrentLoopState`) — so seeding it at `0` for
+    // `'corrupt'`, the same default `'absent'` gets, would silently WRITE
+    // BACK a healed, zeroed budget over the very record just refused as
+    // untrustworthy (round 2 review, security HIGH: "a corrupted record
+    // self-heals to a low count"). `infrastructureRetries` alone therefore
+    // seeds `'corrupt'` at `MAX_INFRASTRUCTURE_RETRIES` — already "at the
+    // bound," a real, JSON-safe number (unlike `--resume`'s own in-memory-only
+    // `Number.POSITIVE_INFINITY` comparison, this value IS persisted) that
+    // forces the next `--resume` to require a ruling rather than granting a
+    // fresh bare-command allowance off a corruption-erased count.
+    const recoveredLoopState = recoverLoopState(task)
+    /**
+     * O2: never reset by a restart — seeded from the control store, never
+     * hardcoded to `0` the way a fresh in-memory run otherwise would be.
+     * Floored against `resumeFrom.infrastructureRetries` (round 3 review,
+     * MAJOR): on `--resume`, `resumeFrom` is the SAME `pause-state.json`
+     * record the gate check above (`infrastructureRetriesSoFar`) already
+     * floors its own comparison against — a different write path than
+     * `persistLoopState`'s control-store one, so a control-store write that
+     * has been silently failing for this task's whole life still leaves this
+     * count recoverable there. Without this floor, a resume this process
+     * legitimately reaches (bare, or ruling-backed) would reseed its OWN
+     * live counter at the control store's understated reading, then persist
+     * THAT lower number back into `pause-state.json` on its next pause —
+     * overwriting the one independent record the gate depends on with a
+     * value lower than the truth, reopening the exact unbounded-resume hole
+     * the ruling ordered closed. `resumeFrom` is `null` on a fresh
+     * (non-resume) start, where `?? 0` makes this `Math.max` a no-op.
+     */
+    let infrastructureRetries = Math.max(
+      recoveredLoopState.status === 'ok'
+        ? recoveredLoopState.value.budgets.infrastructureRetries
+        : recoveredLoopState.status === 'corrupt'
+          ? MAX_INFRASTRUCTURE_RETRIES
+          : 0,
+      resumeFrom?.infrastructureRetries ?? 0
+    )
+    /** O1/O3: the round whose verdict is currently held on disk, awaiting delivery or publish — recovered so a crash between holding a verdict and delivering/publishing it is never silently forgotten. */
+    let heldResultIdentity: RoundHeadIdentity | null =
+      recoveredLoopState.status === 'ok' ? recoveredLoopState.value.heldResult : null
+    /** O3: the round+head whose findings have already been delivered to the developer once — recovered so a later attach never redelivers the same pair, even when the local `round-<k>-attach-redelivered` marker file this same identity backs up is itself lost. */
+    let deliveredFindingsIdentity: RoundHeadIdentity | null =
+      recoveredLoopState.status === 'ok' ? recoveredLoopState.value.deliveredFindings : null
+
+    /** O1: writes the current in-memory round/budget/held-result/delivered-findings state to the control store — called at every meaningful transition below, never only at pause, so a kill mid-round has something fresher than "the last pause" to recover from. */
+    function persistCurrentLoopState(phase: string, pauseReason?: string): void {
+      persistLoopState(task, {
+        round,
+        phase,
+        pauseReason,
+        budgets: { mechanicalRetries: gateStalledStreak, reviewRounds: round, infrastructureRetries },
+        heldResult: heldResultIdentity,
+        deliveredFindings: deliveredFindingsIdentity
+      })
+    }
     let devResumeId: string | null = null
     let devDispatchSucceededBefore = false
     let lastReviewContext: string | null = null
@@ -1064,8 +1178,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let lastFailingChecks: string[] = []
     /** O2: true iff the current `dispatch_developer` decision came from a red gate (never inferred from `decision` itself — see this branch's own comment, below). Reset to `false` by every genuine `gate` observation. */
     let pendingGateRedRetry = false
-    /** O2: consecutive gate-red developer turns that produced no push on one head — reset to 0 by every genuine `gate` observation. */
-    let gateStalledStreak = 0
+    /** O2: consecutive gate-red developer turns that produced no push on one head — reset to 0 by every genuine `gate` observation. Seeded from the control store, never hardcoded to `0`, so a kill mid-stall-episode resumes the SAME count rather than a fresh budget. */
+    let gateStalledStreak = recoveredLoopState.status === 'ok' ? recoveredLoopState.value.budgets.mechanicalRetries : 0
+    /**
+     * O2: a recovered, non-zero `gateStalledStreak` must survive exactly
+     * ONE "genuine gate observation" reset — the very first one this
+     * process makes, which on an attach or a fresh `--resume` is ALSO this
+     * process's first gate check ever, indistinguishable in memory from a
+     * truly fresh situation unless this flag says otherwise. Consumed
+     * (never reset back to `true`) the first time either reset site below
+     * runs; every later genuine observation resets to `0` exactly as
+     * before. A task with no recovered budget (`gateStalledStreak` seeded
+     * at `0`) never sets this at all — resetting `0` to `0` is a no-op, so
+     * this flag changes nothing for a genuinely fresh task.
+     */
+    let mechanicalRetryRecoverySurvivesOneReset = gateStalledStreak > 0
     /** (`#543` O2) True once this stall episode has already used its one unpushed-work resume — reset alongside `gateStalledStreak`, by every genuine `gate` observation, so a LATER stall gets its own resume. */
     let unpushedResumeAttempted = false
     /** O4/O6: the conflicting file(s) from the last mergeability read, consumed by the very next `dispatch_developer` prompt, then cleared — never a CI-red retry (never sets `pendingGateRedRetry`), so the head-change-wait that follows always re-checks the gate fresh rather than replaying `lastFailingChecks`. */
@@ -1397,19 +1524,27 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       role: 'reviewer' | 'security',
       roundNum: number,
       facts: ReviewerPromptFacts,
-      firstVerdict: RoundVerdictParse
+      firstVerdict: RoundVerdictParse,
+      candidateDir: string | null
     ): Promise<{ verdict: RoundVerdictParse; findingsUncitable: boolean }> {
       const hasObjectives = hasObjectivesFacts(facts)
       const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
       const workDir = reviewerWorkDir(root, task, roundNum, role, 3)
       mkdirSync(workDir, { recursive: true })
       const prompt = citeFindingIdsPrompt(workDir)
+      // O2/O3 (`#561`): a fresh scratch copy for this resend attempt — never
+      // the first attempt's own, matching this function's own fresh-dispatch
+      // invariant. `null` when no candidate was built this round (a fresh
+      // attach with no local worktree yet) — `d.dispatchRole` then gets no
+      // `cwd` override, exactly as before this task.
+      const scratchDir = candidateDir ? buildReviewerScratch(root, task, roundNum, role, 3, candidateDir) : null
       const handle = await withPromptFile(prompt, (promptFile) =>
         d.dispatchRole(dispatchRoleName, input.agent, prompt, {
           task: task,
           round: roundNum,
           promptFile,
-          roleLogPath: loopLogPath
+          roleLogPath: loopLogPath,
+          ...(scratchDir ? { cwd: scratchDir } : {})
         })
       )
       await assertDispatchOrEscalate(handle, input.agent, false, false)
@@ -1437,7 +1572,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     async function dispatchReviewer(
       role: 'reviewer' | 'security',
       roundNum: number,
-      facts: ReviewerPromptFacts
+      facts: ReviewerPromptFacts,
+      candidateDir: string | null
     ): Promise<{ verdict: RoundVerdictParse; findingsUncitable: boolean }> {
       const hasObjectives = hasObjectivesFacts(facts)
       const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
@@ -1447,12 +1583,22 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const workDir = reviewerWorkDir(root, task, roundNum, role, attempt)
         mkdirSync(workDir, { recursive: true })
         const prompt = renderReviewerDispatchPrompt(role, facts, workDir)
+        // O1/O2 (`#561`): a fresh, writable copy of this round's shared,
+        // read-only candidate (built once, below, before both roles
+        // dispatch) — never the candidate itself, never the sibling role's
+        // own copy, and never a prior attempt's own (fresh per attempt,
+        // same invariant `reviewerWorkDir`'s own `attempt` suffix already
+        // holds for `findings.txt`/`report.txt`). `null` when no candidate
+        // was built this round — `cwd` is then omitted, exactly as every
+        // dispatch before this task.
+        const scratchDir = candidateDir ? buildReviewerScratch(root, task, roundNum, role, attempt, candidateDir) : null
         const handle = await withPromptFile(prompt, (promptFile) =>
           d.dispatchRole(dispatchRoleName, input.agent, prompt, {
             task: task,
             round: roundNum,
             promptFile,
-            roleLogPath: loopLogPath
+            roleLogPath: loopLogPath,
+            ...(scratchDir ? { cwd: scratchDir } : {})
           })
         )
         await assertDispatchOrEscalate(handle, input.agent, false, false)
@@ -1480,7 +1626,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           if (findingIdsCited(workDir, verdict.observation.findings.length)) {
             return { verdict, findingsUncitable: false }
           }
-          return await resendForFindingIds(role, roundNum, facts, verdict)
+          return await resendForFindingIds(role, roundNum, facts, verdict, candidateDir)
         } catch (err) {
           if (!(err instanceof ReviewerReportParseFailure)) throw err
           lastParseFailure = err
@@ -1633,11 +1779,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // `'launched'` record for the next start to trip over.
     process.on('SIGTERM', () => {
       d.terminateInFlightLaunchesOnShutdown(task, input.agent, repo)
+      cleanupAllReviewerIsolationArtifacts(root, task)
       recordDriverExited('signal')
       process.exit(143)
     })
     process.on('SIGINT', () => {
       d.terminateInFlightLaunchesOnShutdown(task, input.agent, repo)
+      cleanupAllReviewerIsolationArtifacts(root, task)
       recordDriverExited('signal')
       process.exit(130)
     })
@@ -1738,6 +1886,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const detail = `base moved from ${baseHeadAtStart} to ${currentBaseHead}, touching this driver's own code (${touching.join('; ')}) — ${reexecFailureNote}`
       await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
       decision = { type: 'pause', reason: 'stale_driver', detail }
+      // Cumulative, never reset by a
+      // restart — see `MAX_INFRASTRUCTURE_RETRIES`'s own doc comment.
+      infrastructureRetries += 1
       await d.flushOutbox(task)
       return true
     }
@@ -1754,6 +1905,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // or round-1's own entry uncovered lets a `gh`/`git` failure there crash
     // the driver instead of pausing it.
     try {
+      // A corrupt control-store loop-state record is refused HERE, first
+      // thing inside the `try` (round 2 review, BLOCKER) — never at the
+      // earlier `recoverLoopState` call site, which sits before this `try`
+      // even starts and would let the throw escape uncaught. Thrown here,
+      // it reaches the SAME outer `catch` below as every other setup
+      // failure on this path, which decides `pause{reason:'infrastructure'}`,
+      // writes the pause state, posts the pause comment, and keeps the
+      // driver lock alive — never a silent crash with no forge-visible
+      // trace at all.
+      if (recoveredLoopState.status === 'corrupt') {
+        throw new Error(
+          `devReviewLoop: task ${task}'s control-store loop-state record is corrupt: ${recoveredLoopState.reason} — refusing to recover budgets from it.`
+        )
+      }
+
       // Which severities block is repository policy (task 8, `#506`,
       // O1/O4) — resolved once, from the default branch, and reused for
       // every round's derivation and this run's publication self-check; the
@@ -1830,7 +1996,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // `no_progress`, not another redelivery drifting toward a
               // confidence collapse.
               const marker = join(root, 'dev-review-loop', String(task), `round-${held.round}-attach-redelivered`)
-              if (existsSync(marker)) {
+              // The control-store
+              // `deliveredFindings` identity backs up the SAME "already
+              // delivered" fact the local marker file records — checked
+              // alongside it, never instead of it, so a machine whose local
+              // marker was lost (a different host, an outbox that was
+              // cleaned) still refuses a second redelivery of the same
+              // (round, head) pair.
+              const alreadyDeliveredInStore =
+                deliveredFindingsIdentity !== null &&
+                deliveredFindingsIdentity.round === held.round &&
+                deliveredFindingsIdentity.head === currentHead
+              if (existsSync(marker) || alreadyDeliveredInStore) {
                 const stats = computeStats(currentHead, d.now())
                 await logEvents(driverDecidedPauseEvents(config.loopId, state, held.round + 1, stats))
                 decision = {
@@ -1844,6 +2021,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 round = held.round + 1
                 lastReviewContext = held.rendered
                 firstPass = false
+                deliveredFindingsIdentity = { round: held.round, head: currentHead }
+                persistCurrentLoopState('dispatch_developer')
               }
             }
           }
@@ -1893,6 +2072,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // locally-held recovery above when both agree or the local one is
       // ahead.
       if (!resumeFrom && historyApplies) round = Math.max(round, nextRoundNumber(loopHistory.rounds))
+
+      // The control store's own
+      // recovered round is the authoritative one — `Math.max` only ever
+      // advances `round` here, never regresses it, so every mechanism
+      // above (the ruling ordinal on `--resume`, the locally-held
+      // request-changes recovery, the optional-event-history fallback
+      // just above) keeps winning whenever it already agrees or is ahead.
+      // What this closes: a task whose held-verdict files and forge-
+      // flushed journal are BOTH unavailable (a different machine, a
+      // GitHub read that fails, an outbox that was cleaned) no longer
+      // silently restarts numbering at 1 as long as this task's own
+      // control-store record survived — recovery stops depending on that
+      // optional event history alone.
+      if (recoveredLoopState.status === 'ok') round = Math.max(round, recoveredLoopState.value.round)
 
       // Held back from `logEvents` until `publishRound` (below) actually
       // succeeds — `assessRound`'s one `journal_finalized`/`merged_ready` event
@@ -1968,6 +2161,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         detail: `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       keepLockAlive = true
+      // The SAME durable snapshot every
+      // other pause reason gets, best-effort like the write itself already
+      // is — a genuinely uncaught error is exactly the case this record
+      // exists for, so the next attach/resume recovers this round's
+      // budgets rather than starting a fresh in-memory count at zero.
+      infrastructureRetries += 1
+      persistCurrentLoopState('pause', decision.reason)
       // This bookkeeping is best-effort, never a second chance for the
       // process to crash on its way out — the ORIGINAL error is already
       // handled (this pause IS the handling); a forge write failing here
@@ -2012,7 +2212,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           reason: decision.reason,
           detail: decision.detail,
           pausedAt: new Date().toISOString(),
-          escalationId: escalationRecord?.escalationId
+          escalationId: escalationRecord?.escalationId,
+          infrastructureRetries
         })
         // A crash this early — setup, or a fresh round-1 task never getting
         // as far as resolving one — leaves `prNumber` at its `-1` sentinel:
@@ -2175,6 +2376,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 // read (the head never moved), so this feeds the DRIVER's own
                 // bounded stall counter instead of `fetchCiConclusion` again.
                 gateStalledStreak += 1
+                // Persisted the moment it
+                // increments, not only once a pause eventually fires — a
+                // kill mid-episode (the process dies before ever reaching
+                // the bound below) must not hand the next attach a fresh
+                // budget of `MAX_GATE_STALLED_TURNS` turns.
+                persistCurrentLoopState('dispatch_developer')
                 const stats = computeStats(headBeforeDispatch, roundStartMs)
                 const detail =
                   conflictFiles !== null
@@ -2190,6 +2397,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 }
                 await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
                 decision = { type: 'pause', reason: 'infrastructure', detail }
+                infrastructureRetries += 1
                 await d.flushOutbox(task)
                 continue
               }
@@ -2238,7 +2446,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const gateGreen = gate.green && !premiseFailed
           lastFailingChecks = [...gate.failingChecks, ...premiseFailureLines]
           pendingGateRedRetry = !gateGreen
-          gateStalledStreak = 0
+          if (mechanicalRetryRecoverySurvivesOneReset) {
+            mechanicalRetryRecoverySurvivesOneReset = false
+          } else {
+            gateStalledStreak = 0
+          }
           unpushedResumeAttempted = false
           const confidence = round >= 2 && gateGreen ? readAndClearConfidence() : undefined
           const obs: Observations = { kind: 'gate', round, green: gateGreen, confidence, stats: gate.stats }
@@ -2247,6 +2459,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           decision = result.decision
           await logEvents(result.events)
           await d.flushOutbox(task)
+          persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
         } else if (decision.type === 'ask_confidence') {
           const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${CONFIDENCE_PROMPT_LINE}`
           await dispatchDeveloper(reaskPrompt, round)
@@ -2258,10 +2471,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           state = result.state
           decision = result.decision
           pendingGateRedRetry = false
-          gateStalledStreak = 0
+          if (mechanicalRetryRecoverySurvivesOneReset) {
+            mechanicalRetryRecoverySurvivesOneReset = false
+          } else {
+            gateStalledStreak = 0
+          }
           unpushedResumeAttempted = false
           await logEvents(result.events)
           await d.flushOutbox(task)
+          persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
         } else if (decision.type === 'dispatch_reviewers') {
           // O4/O7: mergeability is read BEFORE any CI
           // read or reviewer dispatch — a branch in conflict with the base
@@ -2362,6 +2580,34 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 { verdict: RoundVerdictParse; findingsUncitable: boolean }
               ]
             | null = null
+          // O1 (`#561`): ONE shared, read-only candidate for this round,
+          // built once here — before either reviewer dispatches — from the
+          // developer's own local worktree, so both roles judge byte-
+          // identical content regardless of what that worktree does after
+          // this copy is taken. `null` when no local worktree exists on
+          // this machine (a fresh attach with nothing dispatched here yet)
+          // OR the local worktree's own head no longer matches the round's
+          // resolved candidate sha (round 2 review, MAJOR: a diverged local
+          // worktree copied blind would hand both reviewers content the
+          // manifest's `headSha` never actually pinned, with nothing else
+          // in this mechanism positioned to catch it) — `dispatchReviewer`
+          // then omits `cwd` entirely, the same as every round before this
+          // task.
+          const candidateSourceDir = worktreePathForBranch()
+          // `buildVerifiedReviewerCandidate` (reviewer-isolation.ts) checks
+          // the worktree's head both before AND after the copy — the local
+          // worktree can advance mid-copy (round 2 review, MINOR), and a
+          // candidate caught that way is discarded rather than handed to
+          // both reviewers as bytes the manifest's own `headSha` never
+          // actually pinned.
+          const candidateDir = buildVerifiedReviewerCandidate(
+            root,
+            task,
+            round,
+            candidateSourceDir,
+            head,
+            d.readWorktreeHead
+          )
           try {
             // O1/O2: the evidence report runs IN PARALLEL with both reviewer
             // dispatches, never before or after them — reviewers dispatch on
@@ -2373,8 +2619,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // gate's own `evidence-fresh` check is the real backstop for a
             // report that never lands.
             const [reviewerResult, securityResult, evidenceOutcome] = await Promise.all([
-              dispatchReviewer('reviewer', round, facts),
-              dispatchReviewer('security', round, facts),
+              dispatchReviewer('reviewer', round, facts, candidateDir),
+              dispatchReviewer('security', round, facts, candidateDir),
               d.runEvidenceReport(prNumber, worktreePathForBranch(), branch)
             ])
             verdicts = [reviewerResult, securityResult]
@@ -2397,6 +2643,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             const stats = computeStats(head, roundStartMs)
             await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
             decision = { type: 'pause', reason: 'infrastructure', detail: err.message }
+            infrastructureRetries += 1
+          } finally {
+            // O3: this round's candidate and every scratch copy any attempt
+            // created — removed the moment the round's reviewer dispatches
+            // are done with it, whether the round published, paused, or is
+            // about to hand another round back to the developer. Never
+            // conditioned on `verdicts` being set: an infrastructure failure
+            // above still built a candidate/scratch worth cleaning up.
+            cleanupReviewerIsolationForRound(root, task, round)
           }
 
           if (verdicts) {
@@ -2464,6 +2719,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // comment, above).
               writeHeldVerdict(root, task, round, 'reviewer', reviewer.verdict.rendered)
               writeHeldVerdict(root, task, round, 'security', security.verdict.rendered)
+              // The round whose verdict is
+              // now held on disk, awaiting delivery or publish — recovered
+              // so a crash right after this write, before the round's own
+              // outcome is even decided, is never silently forgotten.
+              heldResultIdentity = { round, head }
               lastReviewContext = `${reviewer.verdict.rendered}\n\n---\n\n${security.verdict.rendered}`
 
               // (`#543` O3) Recorded once per round, so a Principal reading
@@ -2502,8 +2762,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               await logEvents(routed.toLogNow)
               await d.flushOutbox(task)
               if (decision.type === 'dispatch_developer') round += 1
+              persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
             }
           } else {
+            persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
             await d.flushOutbox(task)
           }
         }
@@ -2525,6 +2787,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             pendingCompletionEvents = []
             pendingConflictFiles = d.fetchConflictingFiles('main', branch)
             decision = { type: 'dispatch_developer' }
+            // The held-verdict files this round's `heldResultIdentity` named
+            // were just discarded above — nothing is held any more.
+            heldResultIdentity = null
+            persistCurrentLoopState(decision.type)
             await d.flushOutbox(task)
             continue
           }
@@ -2569,6 +2835,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // failed, or re-parsed dirty) skips this entirely, so the log never
           // claims `merged_ready` for a run that did not actually finish.
           await logEvents(pendingCompletionEvents)
+          // Published — nothing is held any more.
+          heldResultIdentity = null
+          persistCurrentLoopState('publish')
           await d.flushOutbox(task)
           return { finalDecision: decision, prNumber, task }
         }
@@ -2619,9 +2888,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             reason: decision.reason,
             detail: decision.detail,
             pausedAt: new Date().toISOString(),
-            escalationId: escalationRecord?.escalationId
+            escalationId: escalationRecord?.escalationId,
+            infrastructureRetries
           })
           postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail)
+          // Every pause, regardless of
+          // which branch above decided it, funnels through here exactly
+          // once before returning — the one call site that makes every
+          // pause reason's final round/budget/held-result state durable.
+          persistCurrentLoopState('pause', decision.reason)
           await d.flushOutbox(task)
           return { finalDecision: decision, prNumber, task }
         }

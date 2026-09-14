@@ -3,6 +3,7 @@ export {
   parseEffectRecord,
   parseEscalationRecord,
   parseInputRecord,
+  parseLoopStateRecord,
   parseManifestRecord,
   parseOwnershipRecord,
   parseResolutionRecord,
@@ -15,10 +16,13 @@ export type {
   EffectStatus,
   EscalationRecord,
   InputRecord,
+  LoopBudgets,
+  LoopStateRecord,
   ManifestRecord,
   OwnershipRecord,
   ParsedRecord,
   ResolutionRecord,
+  RoundHeadIdentity,
   RunRecord,
   TransitionRecord
 } from './records'
@@ -37,6 +41,7 @@ export {
   readEffect,
   readEscalation,
   readInput,
+  readLoopState,
   readManifest,
   readResolution,
   readRun,
@@ -45,6 +50,7 @@ export {
   writeEffect,
   writeEscalation,
   writeInput,
+  writeLoopState,
   writeManifest,
   writeRun
 } from './local'
@@ -55,6 +61,7 @@ export type {
   EffectInput,
   EscalationInput,
   InputInput,
+  LoopStateInput,
   ManifestInput,
   ResolutionInput,
   RunInput,

@@ -170,6 +170,18 @@ export type DispatchOpts = {
    * `loop-log.ts` names.
    */
   roleLogPath?: string
+  /**
+   * (`#561`, O1/O2) The child's own working
+   * directory — never set before this task, which meant every dispatched
+   * role's shell ran from wherever THIS process's own `cwd` happened to be,
+   * not from any content this task actually names. `dev-review-loop.ts`'s
+   * reviewer dispatch is the first caller to pass one (a per-reviewer
+   * scratch copy of the round's shared, read-only candidate — see
+   * `dev-review-loop/reviewer-isolation.ts`); every other caller omits it,
+   * which keeps `spawn`'s own default (inherit this process's `cwd`)
+   * unchanged for the developer role and every pre-existing dispatch site.
+   */
+  cwd?: string
 }
 
 /** `'signal'` (O1, Issue #605): the driver's own shutdown path terminated this launch's child on `SIGTERM`/`SIGINT` — distinct from `'crash'` (the child died on its own) so recovery can read it as a cancelled attempt, never an infrastructure failure of the child's own making. */
@@ -1257,6 +1269,63 @@ export function realDispatchTeeRecoveryDeps(): DispatchTeeRecoveryDeps {
 export type DispatchTeeRecovery = { summary: TranscriptSummary; teePath: string }
 
 /**
+ * Walks every launch record this machine currently holds
+ * (`deps.listLaunchRecordPaths`) and returns the first one satisfying
+ * `predicate`, or `null` if none does — a torn/unreadable file along the
+ * way is skipped, never thrown. The one shared walk both
+ * `recoverUsageFromDispatchTee` and `launchRecordMatchesRun` build their own
+ * narrower match on top of, so the two never drift into two slightly
+ * different readings of the same on-disk record.
+ */
+function findMatchingLaunchRecord(
+  deps: DispatchTeeRecoveryDeps,
+  predicate: (record: LaunchRecord) => boolean
+): LaunchRecord | null {
+  for (const path of deps.listLaunchRecordPaths()) {
+    let raw: string
+    try {
+      raw = deps.readFile(path)
+    } catch {
+      continue
+    }
+    let json: unknown
+    try {
+      json = JSON.parse(raw)
+    } catch {
+      continue
+    }
+    const record = coerceLaunchRecord(json)
+    if (record && predicate(record)) return record
+  }
+  return null
+}
+
+/**
+ * True only when a launch record exists naming EXACTLY this
+ * `(runId, role, task)` triple — the cross-check `broker.ts`'s
+ * `authenticateWorkerInvocation` needs before trusting a dispatched child's
+ * own claimed `VINAYA_TASK`. `VINAYA_ROLE`/`VINAYA_TASK` are read from the
+ * SAME caller-controlled environment this module's own doc already warns a
+ * compromised or merely buggy Worker can set to anything (this file's
+ * header comment); accepting them alone never proves the controller
+ * actually dispatched this child for the task it claims. A launch record is
+ * written by the controller itself, before the child is ever spawned
+ * (`dispatchRole`, below) — `runId` is the one identifier `dispatchRole`
+ * generates and the child never chooses, so a forged `task` for a REAL
+ * `runId` finds no launch record at that (runId, role, task) triple: the
+ * one the controller actually wrote sits at the child's true task, not the
+ * one it is now claiming.
+ */
+export function launchRecordMatchesRun(
+  deps: DispatchTeeRecoveryDeps,
+  runId: string,
+  role: Role,
+  task: number
+): boolean {
+  return findMatchingLaunchRecord(deps, (r) => r.runId === runId && r.role === role && r.task === task) !== null
+}
+
+/**
  * O1 (#608): recovers a dispatched session's real usage from the
  * coordinator's own tee'd copy of that session's stdout (`openOutputTee`),
  * for the case its OWN transcript pointer never resolved at all — the
@@ -1286,26 +1355,11 @@ export function recoverUsageFromDispatchTee(deps: DispatchTeeRecoveryDeps): Disp
   const task = Number(taskRaw)
   if (!Number.isInteger(task)) return null
 
-  let effectId: string | null = null
-  for (const path of deps.listLaunchRecordPaths()) {
-    let raw: string
-    try {
-      raw = deps.readFile(path)
-    } catch {
-      continue
-    }
-    let json: unknown
-    try {
-      json = JSON.parse(raw)
-    } catch {
-      continue
-    }
-    const record = coerceLaunchRecord(json)
-    if (record && record.runId === runId && record.role === role && record.task === task && record.effectId) {
-      effectId = record.effectId
-      break
-    }
-  }
+  const record = findMatchingLaunchRecord(
+    deps,
+    (r) => r.runId === runId && r.role === role && r.task === task && !!r.effectId
+  )
+  const effectId = record?.effectId ?? null
   // Same shape the tee was refused for at write time (`openOutputTee`) — a
   // launch record is this module's own, never untrusted input, but the
   // `effectId` field still gets the same guard before it reaches a path
@@ -1804,6 +1858,7 @@ export async function dispatchRole(
     const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
     const child = spawn(binaryPath, spawnArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
       env: {
         ...process.env,
         VINAYA_RUN_ID: runId,

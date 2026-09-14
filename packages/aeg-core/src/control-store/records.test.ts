@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   type EscalationRecord,
+  type LoopStateRecord,
   type ManifestRecord,
   parseEffectRecord,
   parseEscalationRecord,
   parseInputRecord,
+  parseLoopStateRecord,
   parseManifestRecord,
   parseOwnershipRecord,
   parseResolutionRecord,
@@ -203,6 +205,57 @@ describe('parseManifestRecord (#555, O1)', () => {
 
   it('a negative round is corrupt', () => {
     expect(parseManifestRecord(JSON.stringify({ ...validManifest, round: -1 })).status).toBe('corrupt')
+  })
+})
+
+describe('parseLoopStateRecord (control-store-v1 task 4, O1)', () => {
+  const validLoopState: LoopStateRecord = {
+    version: 1,
+    kind: 'loop_state',
+    task: 554,
+    round: 2,
+    phase: 'dispatch_developer',
+    pauseReason: null,
+    budgets: { mechanicalRetries: 1, reviewRounds: 2, infrastructureRetries: 0 },
+    heldResult: { round: 2, head: 'a'.repeat(40) },
+    deliveredFindings: { round: 1, head: 'b'.repeat(40) },
+    recordedAt: '2026-09-14T00:00:00.000Z'
+  }
+
+  it('round-trips phase, round, budgets, held-result and delivered-findings identity', () => {
+    expect(parseLoopStateRecord(JSON.stringify(validLoopState))).toEqual({ status: 'ok', value: validLoopState })
+  })
+
+  it('accepts a pause phase with a reason, and null held-result/delivered-findings', () => {
+    const paused: LoopStateRecord = {
+      ...validLoopState,
+      phase: 'pause',
+      pauseReason: 'infrastructure',
+      heldResult: null,
+      deliveredFindings: null
+    }
+    expect(parseLoopStateRecord(JSON.stringify(paused))).toEqual({ status: 'ok', value: paused })
+  })
+
+  it('an absent read is absent, never confused with a corrupt one', () => {
+    expect(parseLoopStateRecord(undefined)).toEqual({ status: 'absent' })
+  })
+
+  it('torn JSON is corrupt, never absent', () => {
+    expect(parseLoopStateRecord('{"version":1,"kind":"loop_state"').status).toBe('corrupt')
+  })
+
+  it('an unknown version is corrupt (a closed literal), never silently accepted', () => {
+    expect(parseLoopStateRecord(JSON.stringify({ ...validLoopState, version: 2 })).status).toBe('corrupt')
+  })
+
+  it('a negative mechanical-retry count is corrupt', () => {
+    const bad = { ...validLoopState, budgets: { ...validLoopState.budgets, mechanicalRetries: -1 } }
+    expect(parseLoopStateRecord(JSON.stringify(bad)).status).toBe('corrupt')
+  })
+
+  it('an extra key is corrupt (strict schema)', () => {
+    expect(parseLoopStateRecord(JSON.stringify({ ...validLoopState, extra: 'nope' })).status).toBe('corrupt')
   })
 })
 

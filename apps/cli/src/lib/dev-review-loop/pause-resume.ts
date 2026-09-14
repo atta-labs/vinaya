@@ -16,19 +16,22 @@ import {
   consumeResolutionOnce,
   type ControlStoreDeps,
   defaultControlStoreDeps,
-  listStartedEffectKeys,
-  markEffectUncertain,
   type EscalationRecord,
+  listStartedEffectKeys,
+  type LoopBudgets,
+  markEffectUncertain,
   type PauseReason,
   readEscalation,
   readResolution,
   type RequestedAuthority,
   type ResolutionRecord,
+  type RoundHeadIdentity,
   StaleEpochWriteError,
   writeEscalation
 } from '@attalabs/aeg-core'
 import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../effects.js'
 import { markedCommentBody, postMarkedComment, reconcileGhComment } from '../forge-write.js'
+import { loadLoopState } from './round-assess.js'
 import { readIfExists } from './reviewer-dispatch.js'
 
 /** `sanitizePublicPauseDetail` truncates to this — long enough to stay informative, short enough that a runaway stack trace or subprocess dump never balloons a public PR comment. */
@@ -217,6 +220,20 @@ export type PauseState = {
    * collision ever happened.
    */
   escalationId?: string
+  /**
+   * The in-memory `infrastructureRetries` count at the moment of this pause
+   * (round 2 review, security HIGH) — a second, independent source for
+   * `--resume`'s bound check, alongside `recoverLoopState`'s control-store
+   * read. `writePauseState` is a plain `writeFileSync`, not the control
+   * store's own effect-executor machinery `persistLoopState` swallows
+   * failures from, so a control-store write that silently fails at the SAME
+   * pause this field is written from still leaves this count recoverable —
+   * the control store reading `'absent'` (or a stale lower count) after a
+   * swallowed write can no longer, by itself, reset the bound to zero.
+   * `undefined` on a record written before this field existed; treated as
+   * `0` by the reader, same as a genuinely fresh task.
+   */
+  infrastructureRetries?: number
 }
 
 function pauseStatePath(root: string, task: number): string {
@@ -236,6 +253,44 @@ export function readPauseState(root: string, task: number): PauseState | null {
     return JSON.parse(raw) as PauseState
   } catch {
     return null
+  }
+}
+
+// --- authoritative loop-state recovery --------------------------------------
+
+export type RecoveredLoopState = {
+  round: number
+  budgets: LoopBudgets
+  heldResult: RoundHeadIdentity | null
+  deliveredFindings: RoundHeadIdentity | null
+}
+
+/**
+ * The authoritative recovery read for attach and `--resume` alike — the
+ * control-store `loop_state` record `persistLoopState` (`round-assess.ts`)
+ * writes on every transition. `'absent'` is not an error and never resets
+ * anything: it means no record exists yet (a fresh task, or one that
+ * predates this mechanism), so the caller falls back to whatever recovery
+ * it already had — this is what keeps O3's "missing telemetry cannot reset
+ * budgets or authorize progression" true even here, since absence is read
+ * as "nothing to recover FROM CONTROL STORE," never as license to zero a
+ * value some other mechanism already recovered. `'corrupt'` is surfaced,
+ * never silently downgraded to `'absent'` — the caller (`dev-review-loop.ts`)
+ * refuses to guess past it rather than risk resetting real budgets.
+ */
+export function recoverLoopState(
+  task: number
+): { status: 'ok'; value: RecoveredLoopState } | { status: 'absent' } | { status: 'corrupt'; reason: string } {
+  const parsed = loadLoopState(task)
+  if (parsed.status !== 'ok') return parsed
+  return {
+    status: 'ok',
+    value: {
+      round: parsed.value.round,
+      budgets: parsed.value.budgets,
+      heldResult: parsed.value.heldResult,
+      deliveredFindings: parsed.value.deliveredFindings
+    }
   }
 }
 
