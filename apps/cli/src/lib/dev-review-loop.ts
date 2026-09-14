@@ -127,7 +127,12 @@ import {
   type RoundVerdictParse,
   writeHeldVerdict
 } from './dev-review-loop/reviewer-dispatch.js'
-import { buildReviewerCandidate, buildReviewerScratch } from './dev-review-loop/reviewer-isolation.js'
+import {
+  buildReviewerCandidate,
+  buildReviewerScratch,
+  cleanupAllReviewerIsolationArtifacts,
+  cleanupReviewerIsolationForRound
+} from './dev-review-loop/reviewer-isolation.js'
 import {
   assertDispatchOrEscalate,
   CONFIDENCE_FILE_NAME,
@@ -745,6 +750,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     )
   }
   writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString() })
+  // O3 (`#561`): restart cleanliness — a crashed or killed prior run's own
+  // reviewer candidate/scratch directories never leak into this run. Safe
+  // on a fresh task (nothing to remove) and mid-recovery from a stale lock
+  // (above): this run builds its own artifacts for whichever round it
+  // reaches first and never reads a prior run's leftovers.
+  cleanupAllReviewerIsolationArtifacts(root, task)
 
   // True only for the two pause reasons that are
   // themselves an infrastructure/re-exec hiccup, never a human decision
@@ -1528,11 +1539,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // `'launched'` record for the next start to trip over.
     process.on('SIGTERM', () => {
       d.terminateInFlightLaunchesOnShutdown(task, input.agent, repo)
+      cleanupAllReviewerIsolationArtifacts(root, task)
       recordDriverExited('signal')
       process.exit(143)
     })
     process.on('SIGINT', () => {
       d.terminateInFlightLaunchesOnShutdown(task, input.agent, repo)
+      cleanupAllReviewerIsolationArtifacts(root, task)
       recordDriverExited('signal')
       process.exit(130)
     })
@@ -2273,6 +2286,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             const stats = computeStats(head, roundStartMs)
             await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
             decision = { type: 'pause', reason: 'infrastructure', detail: err.message }
+          } finally {
+            // O3: this round's candidate and every scratch copy any attempt
+            // created — removed the moment the round's reviewer dispatches
+            // are done with it, whether the round published, paused, or is
+            // about to hand another round back to the developer. Never
+            // conditioned on `verdicts` being set: an infrastructure failure
+            // above still built a candidate/scratch worth cleaning up.
+            cleanupReviewerIsolationForRound(root, task, round)
           }
 
           if (verdicts) {

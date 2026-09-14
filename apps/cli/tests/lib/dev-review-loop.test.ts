@@ -1919,7 +1919,7 @@ exit 0
 }
 
 describe('devReviewLoop — reviewers inspect one immutable candidate with isolated scratch space (#561)', () => {
-  it('both reviewers this round dispatch against the SAME candidate content, from separate scratch directories (O1/O2)', () => {
+  it('both reviewers this round dispatch against the SAME candidate content, from separate scratch directories, cleaned up once the round publishes (O1/O2/O3)', () => {
     const home = tempDir('vinaya-drl-home-')
     const cwd = tempDir('vinaya-drl-cwd-')
     const binDir = tempDir('vinaya-drl-bin-')
@@ -1958,6 +1958,28 @@ describe('devReviewLoop — reviewers inspect one immutable candidate with isola
     expect(readFileSync(join(taskDir, 'round-1-security-work', 'candidate-marker-seen.txt'), 'utf8')).toBe(
       'candidate content for round 1\n'
     )
+
+    // O3: the round's candidate and both scratch copies are gone once the
+    // round published — nothing left over for a human, or the next round,
+    // to find.
+    expect(existsSync(join(taskDir, 'round-1-candidate'))).toBe(false)
+    expect(existsSync(reviewerCwd)).toBe(false)
+    expect(existsSync(securityCwd)).toBe(false)
+  }, 20000)
+
+  it('restart cleanliness: a candidate/scratch directory left by a crashed prior run is gone before this run dispatches anything (O3)', () => {
+    const { home, cwd, path } = setUp()
+    const taskDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    const staleCandidate = join(taskDir, 'round-9-candidate')
+    mkdirSync(staleCandidate, { recursive: true })
+    writeFileSync(join(staleCandidate, 'leftover.txt'), 'from a crashed prior run')
+    const staleScratch = join(taskDir, 'round-9-reviewer-scratch')
+    mkdirSync(staleScratch, { recursive: true })
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(existsSync(staleCandidate)).toBe(false)
+    expect(existsSync(staleScratch)).toBe(false)
   }, 20000)
 })
 
