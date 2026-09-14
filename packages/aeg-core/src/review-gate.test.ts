@@ -388,6 +388,76 @@ describe('checkReviewGate', () => {
   })
 })
 
+describe('checkReviewGate — base identity binding (#555, O1/O3)', () => {
+  const BASE_A = 'f'.repeat(40)
+  const BASE_B = 'e'.repeat(40)
+  const codeReviewAtBase = (base: string): ReviewGateComment =>
+    principal(
+      `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${base}`
+    )
+  const securityAtBase = (base: string): ReviewGateComment =>
+    principal(
+      `VERDICT: PASS\n\nJudged head: ${HEAD_SHA}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${base}`
+    )
+
+  const gate = (comments: ReviewGateComment[], baseSha: string | null) =>
+    checkReviewGate({
+      comments,
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      baseSha,
+      objectivesVersion: null,
+      rulingOrdinal: 0
+    })
+
+  it('passes when both verdicts echo the current base', () => {
+    expect(gate([codeReviewAtBase(BASE_A), securityAtBase(BASE_A)], BASE_A).verdict).toBe('pass')
+  })
+
+  it('a base-only change (identical head, moved base) invalidates a previously clean gate', () => {
+    const result = gate([codeReviewAtBase(BASE_A), securityAtBase(BASE_A)], BASE_B)
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('base-only change')
+  })
+
+  it('a base-only change STILL invalidates when a real patchIdOf is wired in (round 3 review, #555 F1 BLOCKER)', () => {
+    // `check-review-gate.ts` always supplies a real `patchIdOf` — never
+    // `undefined` — so this is the actual production configuration, unlike
+    // every other test in this block, which omits it entirely. Before the
+    // fix, calling `patchIdOf` with the SAME sha on both sides (the head is
+    // unchanged here) trivially reported "equal," which the gate read as a
+    // proven rebase and used to bypass the base check — silently passing a
+    // base-only change on every real evaluation.
+    const result = checkReviewGate({
+      comments: [codeReviewAtBase(BASE_A), securityAtBase(BASE_A)],
+      labels: [],
+      waiverLabelActor: null,
+      mechanicalChecks: CLEAN_CHECKS,
+      headSha: HEAD_SHA,
+      baseSha: BASE_B,
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      patchIdOf: (sha: string) => `patch-for-${sha}`
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('base-only change')
+  })
+
+  it('a verdict carrying no Judged base: line refuses against a real current base (missing required input)', () => {
+    // The legacy/pre-cutover shape — no base echo — is unbound the moment a
+    // real base exists to bind against, the same fail-closed transition every
+    // other manifest field takes.
+    const result = gate([APPROVE_COMMENT, PASS_COMMENT], BASE_A)
+    expect(result.verdict).toBe('fail')
+  })
+
+  it('a null current base (none resolvable) skips the base binding — the pre-base gate behavior is unchanged', () => {
+    expect(gate([APPROVE_COMMENT, PASS_COMMENT], null).verdict).toBe('pass')
+  })
+})
+
 describe('isReviewGateExemptBranch', () => {
   it('does NOT trust a plan prefix — a contributor controls the branch name and may put code on it', () => {
     expect(isReviewGateExemptBranch('plan/vinaya-v1')).toBe(false)

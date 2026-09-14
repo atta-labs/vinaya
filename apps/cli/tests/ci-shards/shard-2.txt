@@ -32,6 +32,7 @@ tests/doctrine-resolution.test.ts
 tests/envelope.test.ts
 tests/forge-write.test.ts
 tests/lib/dev-review-loop/developer-dispatch.test.ts
+tests/lib/dev-review-loop/publication.test.ts
 tests/lib/dispatch-task.test.ts
 tests/lib/dispatch.test.ts
 tests/lib/remote-base.test.ts

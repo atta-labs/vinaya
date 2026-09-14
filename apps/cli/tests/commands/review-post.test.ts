@@ -532,7 +532,8 @@ describe('renderEscalationComment — never a line the gate reads as a verdict',
       objectivesVersion: null,
       rulingOrdinal: 0,
       briefHash: null,
-      policyDigest: 'p'.repeat(64)
+      policyDigest: 'p'.repeat(64),
+      baseSha: null
     })
     expect(body).toContain('ESCALATE: strategy')
     expect(body).toContain(`Judged head: ${HEAD}`)
@@ -550,7 +551,8 @@ describe('renderEscalationComment — never a line the gate reads as a verdict',
       objectivesVersion: null,
       rulingOrdinal: 0,
       briefHash: null,
-      policyDigest: 'p'.repeat(64)
+      policyDigest: 'p'.repeat(64),
+      baseSha: null
     })
     expect(extractCodeReviewVerdict([body]).danglingNote).not.toBeNull()
     expect(extractSecurityReviewVerdict([body]).danglingNote).not.toBeNull()
@@ -568,7 +570,8 @@ describe('renderEscalationComment — never a line the gate reads as a verdict',
       objectivesVersion: null,
       rulingOrdinal: 0,
       briefHash: null,
-      policyDigest: 'p'.repeat(64)
+      policyDigest: 'p'.repeat(64),
+      baseSha: null
     })
     const result = verifyPostedEscalation([{ body: 'VERDICT: APPROVE', author: 'daniboomerang' }], escalation)
     expect(result.ok).toBe(false)
@@ -1446,6 +1449,7 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       rulingOrdinal: 0,
       briefHash: null,
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: null
     })
     expect(checkRenderedComment(body, { kind: 'code-review', verdict: 'APPROVE' })).toEqual({ ok: true })
@@ -1464,6 +1468,7 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       rulingOrdinal: 0,
       briefHash: null,
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: null
     })
     expect(checkRenderedComment(body, { kind: 'security', verdict: 'PASS' })).toEqual({ ok: true })
@@ -1480,7 +1485,8 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       objectivesVersion: null,
       rulingOrdinal: 0,
       briefHash: null,
-      policyDigest: 'p'.repeat(64)
+      policyDigest: 'p'.repeat(64),
+      baseSha: null
     })
     expect(checkRenderedComment(body, { kind: 'escalation' })).toEqual({ ok: true })
   })
@@ -1506,6 +1512,7 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       rulingOrdinal: 0,
       briefHash: null,
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: null
     })
     expect(checkRenderedComment(body, { kind: 'code-review', verdict: 'APPROVE' })).toEqual({ ok: true })
@@ -1540,12 +1547,13 @@ describe('checkRenderedComment — the pre-post dry run (round-4 ruling: replace
       objectivesVersion: null,
       rulingOrdinal: 0,
       briefHash: null,
-      policyDigest: 'p'.repeat(64)
+      policyDigest: 'p'.repeat(64),
+      baseSha: null
     })
-    // Brief hash:/Policy digest: (task 4, #478) now render unconditionally
-    // ahead of the summary too, pushing it from line 7 to line 11 — still
-    // well outside every extractor's own read window.
-    expect(body.split('\n')[10]).toBe('VERDICT: APPROVE')
+    // Brief hash:/Policy digest: (task 4, #478) and now Judged base: (`#555`,
+    // O1) all render unconditionally ahead of the summary, pushing it from
+    // line 7 to line 13 — still well outside every extractor's own read window.
+    expect(body.split('\n')[12]).toBe('VERDICT: APPROVE')
     const result = checkRenderedComment(body, { kind: 'escalation' })
     expect(result.ok).toBe(true)
   })
@@ -1671,11 +1679,14 @@ describe('review post — --scope-evidence-file: a fence directly below the verd
       expect(lines[verdictLine + 4]).toBe('Ruling ordinal: 0')
       expect(lines[verdictLine + 6]).toBe('Brief hash: (none)')
       expect(lines[verdictLine + 8]).toMatch(/^Policy digest: [0-9a-f]{64}$/)
-      expect(lines[verdictLine + 10]).toBe('```')
-      expect(lines[verdictLine + 11]).toContain('2 files changed')
+      // Judged base: renders last of the head lines (`#555`, O1), ahead of the
+      // scope-evidence fence, which shifts down by two.
+      expect(lines[verdictLine + 10]).toMatch(/^Judged base: /)
+      expect(lines[verdictLine + 12]).toBe('```')
+      expect(lines[verdictLine + 13]).toContain('2 files changed')
       // The fence closes before BRIEF CONFORMANCE — evidence sits directly
       // below the verdict block, not mixed into the free-text fields.
-      const fenceClose = lines.indexOf('```', verdictLine + 11)
+      const fenceClose = lines.indexOf('```', verdictLine + 13)
       expect(lines[fenceClose + 2]).toBe('BRIEF CONFORMANCE: x')
       // No Objectives version: line either — this PR is `Closes #1`, well
       // below `OBJECTIVES_SINCE_ISSUE`, so `resolveObjectivesForPr` returns
@@ -1825,6 +1836,7 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       rulingOrdinal: 0,
       briefHash: null,
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: RESULTS
     })
     const lines = body.split('\n')
@@ -1852,13 +1864,17 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       rulingOrdinal: 0,
       briefHash: null,
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: null
     })
     expect(body).not.toContain('Objectives version:')
     expect(body).not.toContain('OBJECTIVES:')
     expect(body.split('\n')[4]).toBe('Ruling ordinal: 0')
     expect(body.split('\n')[6]).toBe('Brief hash: (none)')
-    expect(body.split('\n')[10]).toBe('BRIEF CONFORMANCE: x')
+    // Judged base: renders last of the head lines (`#555`, O1), pushing BRIEF
+    // CONFORMANCE: down by two.
+    expect(body.split('\n')[10]).toBe('Judged base: (none)')
+    expect(body.split('\n')[12]).toBe('BRIEF CONFORMANCE: x')
   })
 
   it('security: Objectives version: renders as line 5, and the block before CONFIG SCAN:', () => {
@@ -1874,6 +1890,7 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       rulingOrdinal: 0,
       briefHash: null,
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: RESULTS
     })
     const lines = body.split('\n')
@@ -1896,7 +1913,8 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       objectivesVersion: OBJ_VERSION,
       rulingOrdinal: 0,
       briefHash: null,
-      policyDigest: 'p'.repeat(64)
+      policyDigest: 'p'.repeat(64),
+      baseSha: null
     })
     const lines = body.split('\n')
     expect(lines[4]).toBe(`Objectives version: ${OBJ_VERSION}`)
@@ -1914,7 +1932,8 @@ describe('renderCodeReviewComment/renderSecurityComment/renderEscalationComment 
       objectivesVersion: null,
       rulingOrdinal: 0,
       briefHash: null,
-      policyDigest: 'p'.repeat(64)
+      policyDigest: 'p'.repeat(64),
+      baseSha: null
     })
     expect(body).not.toContain('Objectives version:')
   })

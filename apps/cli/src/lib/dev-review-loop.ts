@@ -115,6 +115,7 @@ import {
   latestHeldRequestChanges,
   missingReviewerArtifacts,
   outboxRoot,
+  persistManifestRecord,
   readIfExists,
   renderReviewerDispatchPrompt,
   type ReviewerPromptFacts,
@@ -891,6 +892,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let devResumeId: string | null = null
     let devDispatchSucceededBefore = false
     let lastReviewContext: string | null = null
+    // The manifest the most recent `dispatch_reviewers` round was dispatched
+    // against (`#555`, O3) — hoisted here so the sibling `publish` block can
+    // bind the posted verdicts against it with the SAME `compareManifest` the
+    // gate uses. Set the moment the manifest is built, read only at publish.
+    let lastDispatchedManifest: ReviewInputManifest | undefined
     let resumedDispatch = resumeFrom !== null
     /** O3: the last red gate's failing check-run names, for the next gate-red dispatch prompt and, if it stalls, the pause detail. */
     let lastFailingChecks: string[] = []
@@ -2083,13 +2089,25 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const rulingOrdinal = d.fetchNewestRulingOrdinal(prNumber)
           const revision = d.fetchSourceRevision(task)
           const briefContentAtDispatch = d.fetchFrozenBrief(task)
+          // The base identity this round's candidate is judged against
+          // (task 5, `#555`, O1) — origin/main's tip, the
+          // same base the merge gate binds against. Resolved ONCE here and
+          // reused in the self-check below, so it never drifts within a single
+          // round: the same treatment the policy already gets (`loop.md`, "the
+          // policy is resolved once per loop run and so never drifts within a
+          // single run"). A base move across rounds is caught by the gate and
+          // by the existing `stale_driver` guard, not by manufacturing a new
+          // mid-round pause reason.
+          const baseSha = d.gitRevParseOriginMain()
           const manifest: ReviewInputManifest = buildReviewInputManifest({
             headSha: head,
+            baseSha,
             briefContent: briefContentAtDispatch,
             objectivesVersion: resolvedObjectives.version,
             rulingOrdinal,
             policy
           })
+          lastDispatchedManifest = manifest
           const facts: ReviewerPromptFacts = {
             objectives: resolvedObjectives.text,
             resolvedObjectives: resolvedObjectives.objectives,
@@ -2097,6 +2115,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             ciConclusion,
             revision,
             manifest
+          }
+
+          // O1: the parent persists this round's manifest to the control store
+          // BEFORE dispatching reviewers — the durable record `loop.md`'s
+          // "Deferred, deliberately" paragraph named, now that the store is
+          // built. Best-effort (see `persistManifestRecord`): a snapshot that
+          // could not be written never fails the round; the echoed-comment
+          // binding is what gates a verdict. Skipped only when the repository
+          // cannot be resolved (no identity to key the record on).
+          if (repo) {
+            persistManifestRecord(root, task, manifest, {
+              repository: `${repo.owner}/${repo.repo}`,
+              pr: prNumber,
+              branch,
+              round,
+              recordedAt: new Date(d.now()).toISOString()
+            })
           }
 
           // O1/O2: the head's required CI is already green (this branch is
@@ -2186,6 +2221,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             const reassessedBriefContent = d.fetchFrozenBrief(task)
             const currentManifest: ReviewInputManifest = buildReviewInputManifest({
               headSha: head,
+              baseSha,
               briefContent: reassessedBriefContent,
               objectivesVersion: reassessedObjectives.version,
               rulingOrdinal: reassessedRulingOrdinal,
@@ -2311,7 +2347,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             prNumber,
             expectedHead: d.resolveHead(branch),
             journal: { rounds: state.rounds },
-            policy
+            policy,
+            // The manifest this round was dispatched against (`#555`, O3) —
+            // the pre-hold self-check already proved it did not drift before
+            // either verdict was held, so binding the posted comments against
+            // it is the same field-complete check the gate applies. Non-null
+            // on every real path here: a `publish` decision is only ever set
+            // inside the `dispatch_reviewers` branch that just assigned it.
+            manifest:
+              lastDispatchedManifest ??
+              buildReviewInputManifest({
+                headSha: d.resolveHead(branch),
+                baseSha: d.gitRevParseOriginMain(),
+                briefContent: d.fetchFrozenBrief(task),
+                objectivesVersion: d.resolveIssueObjectives(task).version,
+                rulingOrdinal: d.fetchNewestRulingOrdinal(prNumber),
+                policy
+              })
           })
           // Only now — posts confirmed, not merely attempted — does the durable
           // log get to say this run completed. A throw above (a post that
