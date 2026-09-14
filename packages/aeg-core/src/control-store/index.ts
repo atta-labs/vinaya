@@ -27,3 +27,5 @@ export {
   writeRun
 } from './local'
 export type { AcquireResult, ControlStoreDeps, InputInput, RunInput, TransitionInput } from './local'
+export { defaultIsPidAlive, migrateLegacyTask } from './migration'
+export type { MigrationResult } from './migration'
