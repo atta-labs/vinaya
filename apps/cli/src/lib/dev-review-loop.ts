@@ -72,7 +72,8 @@ import {
   dispatchRole as realDispatchRole,
   type DispatchHandle,
   readResumeRecord as realReadResumeRecord,
-  type ResumeRecord
+  type ResumeRecord,
+  terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
 } from './dispatch.js'
 import { postMarkedComment } from './forge-write.js'
 import { createLogSink, outboxPathFor } from './log-sink.js'
@@ -308,6 +309,21 @@ export type LoopDeps = {
     cwd: string,
     branch: string
   ) => Promise<{ ok: true; gatesFailed: boolean } | { ok: false; reason: string }>
+  /**
+   * O1 (Issue #605): called from the driver's own `SIGTERM`/`SIGINT`
+   * handlers, before it exits. Terminates the developer's dispatched child
+   * (if a launch is genuinely in flight) and marks its launch record
+   * `interrupted` — never an orphan left running past this driver's own
+   * death, and never a stale `'launched'` record for the next start to
+   * misread as still live. Injected so a test can observe "the driver would
+   * clean up here" without touching a real process or the real
+   * `~/.vinaya/dispatch-resume/` home.
+   */
+  terminateDeveloperLaunchOnShutdown: (
+    task: number,
+    agent: AgentVendor,
+    repo: { owner: string; repo: string } | null
+  ) => void
 }
 
 function defaultRepoRoot(): string {
@@ -597,7 +613,9 @@ function defaultDeps(): LoopDeps {
     pullDefaultBranch: defaultPullDefaultBranch,
     reexecSelf: defaultReexecSelf,
     exitProcess: (code) => process.exit(code),
-    runEvidenceReport: defaultRunEvidenceReport
+    runEvidenceReport: defaultRunEvidenceReport,
+    terminateDeveloperLaunchOnShutdown: (task, agent, repo) =>
+      realTerminateLaunchedChildOnShutdown('developer', agent, repo, task)
   }
 }
 
@@ -1456,11 +1474,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // real OS signal) is deliberate: without it, a second delivery of the
     // same signal would be Node's own default (immediate termination,
     // uncatchable) rather than this line ever finishing its write.
+    // O1 (Issue #605): `terminateDeveloperLaunchOnShutdown` runs FIRST,
+    // before either the exit trace or `process.exit` — it terminates the
+    // dispatched child (if a launch is genuinely in flight) and marks its
+    // launch record `interrupted`, so a killed driver leaves no orphan and
+    // no stale `'launched'` record for the next start to trip over.
     process.on('SIGTERM', () => {
+      d.terminateDeveloperLaunchOnShutdown(task, input.agent, repo)
       recordDriverExited('signal')
       process.exit(143)
     })
     process.on('SIGINT', () => {
+      d.terminateDeveloperLaunchOnShutdown(task, input.agent, repo)
       recordDriverExited('signal')
       process.exit(130)
     })

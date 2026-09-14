@@ -172,7 +172,8 @@ export type DispatchOpts = {
   roleLogPath?: string
 }
 
-export type DispatchFailureReason = 'timeout' | 'crash' | 'refused'
+/** `'signal'` (O1, Issue #605): the driver's own shutdown path terminated this launch's child on `SIGTERM`/`SIGINT` — distinct from `'crash'` (the child died on its own) so recovery can read it as a cancelled attempt, never an infrastructure failure of the child's own making. */
+export type DispatchFailureReason = 'timeout' | 'crash' | 'refused' | 'signal'
 
 export type DispatchHandle = {
   exitCode: number | null
@@ -866,7 +867,10 @@ function coerceLaunchRecord(json: unknown): LaunchRecord | null {
         : 'launched'
   const num = (v: unknown): number | null => (typeof v === 'number' ? v : null)
   const failureReason =
-    o.failureReason === 'timeout' || o.failureReason === 'crash' || o.failureReason === 'refused'
+    o.failureReason === 'timeout' ||
+    o.failureReason === 'crash' ||
+    o.failureReason === 'refused' ||
+    o.failureReason === 'signal'
       ? o.failureReason
       : null
   return {
@@ -986,6 +990,87 @@ export function readResumeRecord(
     effectId: r.effectId,
     capturedAt: r.boundAt ?? r.startedAt
   }
+}
+
+/** Bounded grace between the two escalating signals `terminateChildWithGrace` sends — the same order of magnitude as `SIGKILL_GRACE_MS` (the dispatch timeout's own escalation), reused here for a driver-initiated termination rather than a child that overran its own ceiling. */
+const TERMINATE_GRACE_MS = 2_000
+
+function pidAliveHere(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Blocking, in-process sleep — the same `Atomics.wait` idiom `dev-review-loop/gate-reading.ts`'s own `sleepSyncMs` already uses, restated here rather than imported across that module boundary (its own doc comment: moved out of `dev-review-loop.ts` verbatim, kept self-contained). */
+function sleepSyncMs(ms: number): void {
+  if (ms <= 0) return
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * `SIGTERM`, a bounded grace period, then `SIGKILL` only if still alive —
+ * the same escalation `dispatchRole`'s own timeout path already applies to
+ * a child that overran its ceiling, reused here for a driver-initiated
+ * termination: the driver's own shutdown path (O1) terminating its
+ * dispatched child, and recovery (O2) reaping a child abandoned by a driver
+ * that died without reaching that shutdown path. Best-effort throughout: a
+ * pid already gone by either signal is silently treated as done, never an
+ * error — the goal (no orphan survives) is already met in that case.
+ */
+export function terminateChildWithGrace(pid: number, graceMs: number = TERMINATE_GRACE_MS): void {
+  try {
+    process.kill(pid, 'SIGTERM')
+  } catch {
+    return
+  }
+  sleepSyncMs(graceMs)
+  if (pidAliveHere(pid)) {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // Already gone between the check and the signal — fine.
+    }
+  }
+}
+
+/**
+ * O1 (Issue #605): called by the driver's own `SIGTERM`/`SIGINT` handler,
+ * before it exits. A launch record still reading `'launched'` (a dispatch
+ * genuinely in flight when the signal arrived) has its child terminated —
+ * on this host, best-effort — and is patched to `'interrupted'`, so the
+ * next start finds a truthful record and no orphan left behind for it to
+ * trip over (the Defect this task closes). A record that already reads
+ * `'completed'`/`'interrupted'` (the dispatch's own exit handler in this
+ * same file already settled it before the signal arrived) is left
+ * untouched — there is nothing left to terminate or reclassify. A missing
+ * or corrupt record is likewise left alone: there is no in-flight launch to
+ * account for.
+ */
+export function terminateLaunchedChildOnShutdown(
+  role: Role,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null,
+  task?: number,
+  pr?: number
+): void {
+  const parsed = readLaunchRecord(role, agent, repo, task, pr)
+  if (parsed.status !== 'ok') return
+  const record = parsed.record
+  if (record.status !== 'launched') return
+
+  if (record.childPid !== null && record.host === osHostname()) {
+    terminateChildWithGrace(record.childPid)
+  }
+
+  writeLaunchRecord({
+    ...record,
+    status: 'interrupted',
+    finishedAt: new Date().toISOString(),
+    failureReason: 'signal'
+  })
 }
 
 /** The next per-scope attempt number — one past the prior launch record for this scope, or `1` when none exists or it is corrupt (a corrupt prior never blocks a fresh attempt from starting). */
