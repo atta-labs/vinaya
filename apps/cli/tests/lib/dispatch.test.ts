@@ -104,6 +104,27 @@ function writeFakeBinary(dir: string, name: string, script: string): string {
   return p
 }
 
+/**
+ * A fake vendor binary that stays identity-stable — `comm` and start time
+ * unchanged from `spawn()` all the way through termination — the way a real
+ * installed vendor CLI does (one shebang-triggered exec, never a second
+ * one). `#!/bin/sh … exec sleep 30` used to serve the O1 shutdown tests'
+ * need for a clean, signal-killable leaf process, but its own TWO exec
+ * transitions (`/bin/sh` then `sleep`) raced the identity capture O3 added:
+ * `childCommand`, snapshotted the instant `spawn()` returns, could still
+ * read the pre-exec `sh` name if that second `exec` hadn't run yet by the
+ * time a later re-check ran — a real, found-live flake on a slower/loaded
+ * CI runner (`Test (apps/cli, shard 2)`), never reproduced locally where
+ * both reads happened to land on the same side of the race. Shebang-ing
+ * DIRECTLY at the real `bun` binary (`process.execPath` — never `/usr/bin/env
+ * bun`, which is itself a second exec hop with the identical race) gives a
+ * single, stable process image throughout, so identity capture and every
+ * later re-check always agree.
+ */
+function writeIdentityStableFakeBinary(dir: string, name: string): string {
+  return writeFakeBinary(dir, name, `#!${process.execPath}\nprocess.stdin.resume()\nawait new Promise(() => {})\n`)
+}
+
 function outboxLines(home: string, issue: number | 'none'): unknown[] {
   const p = join(home, '.vinaya', 'outbox', 'unresolved', `${issue}.ndjson`)
   return readFileSync(p, 'utf8')
@@ -429,6 +450,345 @@ describe('dispatchRole — two dispatches in the same process', () => {
     expect(lines.length).toBe(4)
     const runIds = new Set(lines.map((l) => l.meta.run_id))
     expect(runIds.size).toBe(2)
+  })
+})
+
+describe("dispatchRole — child identity settles across the vendor's own exec hop (O3, Issue #605, code review)", () => {
+  it('records the SETTLED process identity, not the shebang launcher it started as', () => {
+    // A real npm-installed vendor CLI shebangs `#!/usr/bin/env node`: the
+    // kernel's own shebang-triggered exec lands on `env`, and `env` THEN
+    // performs its own, second, user-space exec into `node` — the same
+    // process, but a different `comm`, landing some time after `spawn()`
+    // already returned. Modeled here with a `/bin/sh` launcher that sleeps
+    // briefly before `exec`-ing into the identity-stable leaf binary, so a
+    // read taken the instant `spawn()` returns is guaranteed to still see
+    // `sh`, not the process that survives.
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const finalBinary = writeIdentityStableFakeBinary(binDir, 'claude-final')
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\nsleep 0.3\nexec "${finalBinary}"\n`)
+
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const script = join(cwd, 'settle-identity.ts')
+    const resultPath = join(cwd, 'result.json')
+    writeFileSync(
+      script,
+      [
+        `import { writeFileSync } from 'node:fs'`,
+        `import { execFileSync } from 'node:child_process'`,
+        `import { dispatchRole, readLaunchRecord } from ${JSON.stringify(dispatchLib)}`,
+        `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 43 }`,
+        // Fire-and-forget, exactly as the shutdown tests above do: the
+        // child never exits on its own (`await new Promise(() => {})`).
+        `void dispatchRole('developer', 'claude', 'p', opts)`,
+        'async function waitForChildCommand(timeoutMs) {',
+        '  const start = Date.now()',
+        '  while (Date.now() - start < timeoutMs) {',
+        `    const parsed = readLaunchRecord('developer', 'claude', null, 43)`,
+        `    if (parsed.status === 'ok' && parsed.record.childCommand !== null) return parsed.record`,
+        '    await new Promise((r) => setTimeout(r, 50))',
+        '  }',
+        `  throw new Error('timed out waiting for the launch record to carry a childCommand')`,
+        '}',
+        'const record = await waitForChildCommand(5000)',
+        // Ground truth, via a FRESH `ps` read on the child's own pid, taken
+        // well after the shell's own 0.3s exec hop has certainly landed —
+        // never the same read `captureSettledChildSnapshot` itself took.
+        `const groundTruth = execFileSync('ps', ['-p', String(record.childPid), '-o', 'comm='], { encoding: 'utf8' }).trim()`,
+        `execFileSync('kill', ['-TERM', String(record.childPid)])`,
+        `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ childCommand: record.childCommand, groundTruth }))`,
+        'process.exit(0)'
+      ].join('\n')
+    )
+
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+    delete spawnEnv.VINAYA_RUN_ID
+    execFileSync('bun', [script], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+
+    const result = JSON.parse(readFileSync(resultPath, 'utf8')) as { childCommand: string | null; groundTruth: string }
+    // The launcher's own identity ('sh') must never be what gets recorded.
+    expect(result.childCommand).not.toBe('sh')
+    expect(result.childCommand).not.toBeNull()
+    // The recorded identity must match the SETTLED process, confirmed by an
+    // independent, later `ps` read on the same pid.
+    expect(result.childCommand).toBe(result.groundTruth)
+  }, 10_000)
+})
+
+describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, Issue #605)', () => {
+  it("terminates the dispatched child and marks the launch record 'interrupted', leaving no orphan", () => {
+    // Exercises `terminateLaunchedChildOnShutdown` directly, the way
+    // `dev-review-loop.ts`'s own SIGTERM/SIGINT handler calls it — from a
+    // dedicated script subprocess (the "two dispatches" pattern above),
+    // never by importing `dispatch.ts` into THIS test process (whose
+    // `GLOBAL_VINAYA_HOME` is frozen at first import from the real `HOME`).
+    // A real OS signal is never sent to this test's own process here:
+    // `dev-review-loop.ts`'s handler wiring is a thin, one-line call into
+    // this exact function, so what needs proving is the function's own
+    // behavior, not Node's signal-delivery machinery.
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    // Identity-stable (round 5, CI flake fix — see the helper's own doc
+    // comment) and, like `sleep`, terminates on a plain `SIGTERM` with no
+    // grandchild left behind to reparent.
+    writeIdentityStableFakeBinary(binDir, 'claude')
+
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const script = join(cwd, 'shutdown-terminate.ts')
+    const resultPath = join(cwd, 'result.json')
+    writeFileSync(
+      script,
+      [
+        `import { writeFileSync } from 'node:fs'`,
+        `import { execFileSync } from 'node:child_process'`,
+        `import { dispatchRole, readLaunchRecord, terminateLaunchedChildOnShutdown } from ${JSON.stringify(dispatchLib)}`,
+        `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 42 }`,
+        // Fire-and-forget: this promise settles only once the child exits,
+        // which (absent our own termination below) would not happen until
+        // its own 30s sleep — never awaited here.
+        `void dispatchRole('developer', 'claude', 'p', opts)`,
+        'async function waitForChildPid(timeoutMs) {',
+        '  const start = Date.now()',
+        '  while (Date.now() - start < timeoutMs) {',
+        `    const parsed = readLaunchRecord('developer', 'claude', null, 42)`,
+        `    if (parsed.status === 'ok' && parsed.record.childPid !== null) return`,
+        '    await new Promise((r) => setTimeout(r, 50))',
+        '  }',
+        `  throw new Error('timed out waiting for the launch record to carry a childPid')`,
+        '}',
+        'await waitForChildPid(5000)',
+        `const before = readLaunchRecord('developer', 'claude', null, 42)`,
+        `const childPid = before.status === 'ok' ? before.record.childPid : null`,
+        // The call under test — synchronous, and (like the real SIGTERM
+        // handler) never yielding to the event loop before the process
+        // below reads the record back and exits.
+        `terminateLaunchedChildOnShutdown('developer', 'claude', null, 42)`,
+        `const after = readLaunchRecord('developer', 'claude', null, 42)`,
+        // Real OS ground truth, via a fresh `ps` invocation — never
+        // `process.kill(childPid, 0)` from THIS SAME process, which still
+        // holds `dispatchRole`'s own (never-awaited, never-reaped)
+        // `ChildProcess` handle open on `childPid`: that keeps reporting the
+        // pid "alive" by this process's own bookkeeping for a beat after the
+        // kernel has already reaped it, a same-process artifact with no
+        // bearing on whether an orphan actually persists on the system.
+        'let childAlive = false',
+        'if (childPid !== null) {',
+        `  try { execFileSync('ps', ['-p', String(childPid)], { stdio: ['ignore', 'ignore', 'ignore'] }); childAlive = true } catch { childAlive = false }`,
+        '}',
+        `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ before, after, childAlive }))`,
+        'process.exit(0)'
+      ].join('\n')
+    )
+
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+    delete spawnEnv.VINAYA_RUN_ID
+    execFileSync('bun', [script], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+
+    const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
+      before: { status: string; record: { status: string; childPid: number } }
+      after: { status: string; record: { status: string; failureReason: string | null; finishedAt: string | null } }
+      childAlive: boolean
+    }
+    expect(result.before.record.status).toBe('launched')
+    // O1: no orphan left behind.
+    expect(result.childAlive).toBe(false)
+    // O1: no stale `'launched'` record for the next start to misread as live.
+    expect(result.after.record.status).toBe('interrupted')
+    expect(result.after.record.failureReason).toBe('signal')
+    expect(result.after.record.finishedAt).not.toBeNull()
+  }, 10_000)
+
+  it('round 4 security review, HIGH: never signals a pid whose recorded identity no longer matches — a stale record naming a recycled pid is left untouched', () => {
+    // Simulates the exact scenario the finding named: the on-disk record
+    // still names a real, live pid (our own spawned child, standing in for
+    // "the OS has since recycled this number"), but its captured identity
+    // (`childStartedAt`) no longer matches — exactly what recovery's own
+    // `classifyChildLiveness` already refuses to treat as a match.
+    // `terminateLaunchedChildOnShutdown` must refuse identically: no signal
+    // sent, the child left running, the record still patched to
+    // `'interrupted'` (there is nothing of THIS launch's own left to
+    // terminate, accounted for all the same).
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    writeIdentityStableFakeBinary(binDir, 'claude')
+
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const script = join(cwd, 'shutdown-terminate-identity-mismatch.ts')
+    const resultPath = join(cwd, 'result-identity-mismatch.json')
+    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-issue42.json')
+    writeFileSync(
+      script,
+      [
+        `import { writeFileSync, readFileSync } from 'node:fs'`,
+        `import { execFileSync } from 'node:child_process'`,
+        `import { dispatchRole, readLaunchRecord, terminateLaunchedChildOnShutdown } from ${JSON.stringify(dispatchLib)}`,
+        `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 42 }`,
+        `void dispatchRole('developer', 'claude', 'p', opts)`,
+        'async function waitForChildPid(timeoutMs) {',
+        '  const start = Date.now()',
+        '  while (Date.now() - start < timeoutMs) {',
+        `    const parsed = readLaunchRecord('developer', 'claude', null, 42)`,
+        `    if (parsed.status === 'ok' && parsed.record.childPid !== null) return`,
+        '    await new Promise((r) => setTimeout(r, 50))',
+        '  }',
+        `  throw new Error('timed out waiting for the launch record to carry a childPid')`,
+        '}',
+        'await waitForChildPid(5000)',
+        // Corrupt the record's own captured identity in place, on disk —
+        // the real childPid is untouched (still our real sleeping child),
+        // only what the record CLAIMS about it changes, exactly as a stale
+        // record from an earlier, differently-identified process would read.
+        `const raw = JSON.parse(readFileSync(${JSON.stringify(recordPath)}, 'utf8'))`,
+        `raw.childStartedAt = 'Mon Jan 1 00:00:00 2024'`,
+        `writeFileSync(${JSON.stringify(recordPath)}, JSON.stringify(raw, null, 2))`,
+        `const before = readLaunchRecord('developer', 'claude', null, 42)`,
+        `const childPid = before.status === 'ok' ? before.record.childPid : null`,
+        `terminateLaunchedChildOnShutdown('developer', 'claude', null, 42)`,
+        `const after = readLaunchRecord('developer', 'claude', null, 42)`,
+        'let childAlive = false',
+        'if (childPid !== null) {',
+        `  try { execFileSync('ps', ['-p', String(childPid)], { stdio: ['ignore', 'ignore', 'ignore'] }); childAlive = true } catch { childAlive = false }`,
+        '}',
+        // Clean up the real child ourselves — the function under test must
+        // NOT have done this, which is exactly what this test proves.
+        "if (childPid !== null) { try { process.kill(childPid, 'SIGKILL') } catch {} }",
+        `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ before, after, childAlive }))`,
+        'process.exit(0)'
+      ].join('\n')
+    )
+
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+    delete spawnEnv.VINAYA_RUN_ID
+    execFileSync('bun', [script], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+
+    const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
+      before: { record: { status: string; childStartedAt: string } }
+      after: { record: { status: string; failureReason: string | null } }
+      childAlive: boolean
+    }
+    expect(result.before.record.childStartedAt).toBe('Mon Jan 1 00:00:00 2024')
+    // The real point: identity mismatched, so the real child was NEVER signaled.
+    expect(result.childAlive).toBe(true)
+    // The record is still accounted for — nothing of THIS launch's own is
+    // left in flight, even though the pid it once named turned out not to
+    // be a match any more.
+    expect(result.after.record.status).toBe('interrupted')
+    expect(result.after.record.failureReason).toBe('signal')
+  }, 10_000)
+
+  it("round 3 review, MAJOR/HIGH: terminates a REVIEWER's dispatched child too — the driver now calls this for every in-flight role, not developer only", () => {
+    // Same mechanism, same proof — `terminateLaunchedChildOnShutdown` takes
+    // `role` as a plain parameter with no developer-specific logic inside
+    // it; `dev-review-loop.ts`'s own SIGTERM/SIGINT handlers now call it for
+    // `'code-reviewer'`/`'security'` too (both dispatched concurrently via
+    // `Promise.all`, exactly as capable of being orphaned mid-round as the
+    // developer's own launch).
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    writeIdentityStableFakeBinary(binDir, 'claude')
+
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const script = join(cwd, 'shutdown-terminate-reviewer.ts')
+    const resultPath = join(cwd, 'result-reviewer.json')
+    writeFileSync(
+      script,
+      [
+        `import { writeFileSync } from 'node:fs'`,
+        `import { execFileSync } from 'node:child_process'`,
+        `import { dispatchRole, readLaunchRecord, terminateLaunchedChildOnShutdown } from ${JSON.stringify(dispatchLib)}`,
+        `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 42 }`,
+        `void dispatchRole('code-reviewer', 'claude', 'p', opts)`,
+        'async function waitForChildPid(timeoutMs) {',
+        '  const start = Date.now()',
+        '  while (Date.now() - start < timeoutMs) {',
+        `    const parsed = readLaunchRecord('code-reviewer', 'claude', null, 42)`,
+        `    if (parsed.status === 'ok' && parsed.record.childPid !== null) return`,
+        '    await new Promise((r) => setTimeout(r, 50))',
+        '  }',
+        `  throw new Error('timed out waiting for the launch record to carry a childPid')`,
+        '}',
+        'await waitForChildPid(5000)',
+        `const before = readLaunchRecord('code-reviewer', 'claude', null, 42)`,
+        `const childPid = before.status === 'ok' ? before.record.childPid : null`,
+        `terminateLaunchedChildOnShutdown('code-reviewer', 'claude', null, 42)`,
+        `const after = readLaunchRecord('code-reviewer', 'claude', null, 42)`,
+        'let childAlive = false',
+        'if (childPid !== null) {',
+        `  try { execFileSync('ps', ['-p', String(childPid)], { stdio: ['ignore', 'ignore', 'ignore'] }); childAlive = true } catch { childAlive = false }`,
+        '}',
+        `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ before, after, childAlive }))`,
+        'process.exit(0)'
+      ].join('\n')
+    )
+
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+    delete spawnEnv.VINAYA_RUN_ID
+    execFileSync('bun', [script], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+
+    const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
+      before: { record: { status: string } }
+      after: { record: { status: string; failureReason: string | null } }
+      childAlive: boolean
+    }
+    expect(result.before.record.status).toBe('launched')
+    expect(result.childAlive).toBe(false)
+    expect(result.after.record.status).toBe('interrupted')
+    expect(result.after.record.failureReason).toBe('signal')
+  }, 10_000)
+
+  it("a launch record that already read 'completed' or 'interrupted' is left untouched — nothing left to terminate", () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{}'\nexit 0\n`)
+
+    // A real, already-completed dispatch through the ordinary CLI path.
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '43'],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const script = join(cwd, 'shutdown-terminate-noop.ts')
+    const resultPath = join(cwd, 'result-noop.json')
+    writeFileSync(
+      script,
+      [
+        `import { writeFileSync } from 'node:fs'`,
+        `import { readLaunchRecord, terminateLaunchedChildOnShutdown } from ${JSON.stringify(dispatchLib)}`,
+        `const before = readLaunchRecord('developer', 'claude', null, 43)`,
+        `terminateLaunchedChildOnShutdown('developer', 'claude', null, 43)`,
+        `const after = readLaunchRecord('developer', 'claude', null, 43)`,
+        `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ before, after }))`
+      ].join('\n')
+    )
+    execFileSync('bun', [script], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HOME: home } })
+
+    const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
+      before: { record: { status: string; finishedAt: string } }
+      after: { record: { status: string; finishedAt: string } }
+    }
+    expect(result.before.record.status).toBe('completed')
+    // Untouched: same status, same `finishedAt` — never re-patched to `interrupted`.
+    expect(result.after.record.status).toBe('completed')
+    expect(result.after.record.finishedAt).toBe(result.before.record.finishedAt)
   })
 })
 

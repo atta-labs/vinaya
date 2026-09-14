@@ -29,7 +29,16 @@ import {
 } from '@attalabs/aeg-core'
 import { hasLabel } from '@attalabs/aeg-forge-state'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist, resolveReviewPolicy } from '../config.js'
-import { type AgentVendor, type LaunchRecord, type ParsedLaunch, readLaunchRecord } from '../dispatch.js'
+import {
+  type AgentVendor,
+  getProcessSnapshot,
+  type LaunchRecord,
+  matchesCapturedIdentity,
+  type ParsedLaunch,
+  type ProcessSnapshot,
+  readLaunchRecord,
+  terminateChildWithGrace
+} from '../dispatch.js'
 import { sh } from './gate-reading.js'
 
 const RULING_MARKER = /^<!-- aeg:principal:ruling:\d+-\d+ -->$/
@@ -546,6 +555,60 @@ export type ReconcileLaunchDeps = {
   isPidAlive: (pid: number) => boolean
   /** This machine's hostname — a launch recorded on a DIFFERENT host can never be probed for liveness here, so it is treated as not-live. */
   hostname: () => string
+  /** O3, Issue #605: a live snapshot of `pid`'s current identity (parent pid, start time, command), or `null` when no process answers there at all. Injected so the pure reconciler stays testable without a real process — `classifyChildLiveness` is the pure logic that reads it. */
+  getProcessSnapshot: (pid: number) => ProcessSnapshot | null
+  /** O2, Issue #605 (code review, MAJOR): terminates an abandoned child by pid — `recoverDeveloperLaunch`'s reap step calls THIS, never `dispatch.ts`'s `terminateChildWithGrace` directly, so the reap step itself has a test seam: a test can inject a spy here and assert the orphan was actually reaped, without sending a real OS signal. */
+  terminateChild: (pid: number) => void
+}
+
+/**
+ * O2/O3 (Issue #605), pure: is `record.childPid` genuinely still this
+ * launch's own child — and, if so, still parented to the driver that
+ * spawned it?
+ *
+ *   - `'not-ours'`   — no process answers at that pid on this host, or one
+ *                       does but its own identity (start time and/or
+ *                       command, snapshotted the instant `spawn` returned
+ *                       it) does not match the record's, OR a field the
+ *                       record DID capture can no longer be read back at
+ *                       all (a transient `ps` failure is never treated as
+ *                       proof of identity, round 3 security review, MEDIUM):
+ *                       a pid the OS has since recycled for an unrelated
+ *                       process is never treated as this launch's child,
+ *                       and is never touched (O3 — Traps: never rely on a
+ *                       pid number alone).
+ *   - `'orphaned'`    — the SAME process, confirmed by identity, is still
+ *                       alive but no longer parented to the dispatcher that
+ *                       spawned it (reparented to init, or that dispatcher
+ *                       pid itself no longer answers): abandoned by a
+ *                       driver that died without reaching its own shutdown
+ *                       path (O1's gap) — ours to reap and take over, never
+ *                       returned as `'live'` (O2).
+ *   - `'live'`        — the same process, still parented to a dispatcher
+ *                       that is itself still alive: a genuinely live
+ *                       worker. The duplicate-worker guard's contract is
+ *                       unchanged here — this is the one case a second
+ *                       worker must still never race.
+ */
+export function classifyChildLiveness(
+  record: LaunchRecord,
+  deps: ReconcileLaunchDeps
+): 'live' | 'orphaned' | 'not-ours' {
+  if (record.childPid === null || record.host !== deps.hostname()) return 'not-ours'
+  const snapshot = deps.getProcessSnapshot(record.childPid)
+  if (snapshot === null) return 'not-ours'
+  // Round 3 security review, MEDIUM (round 4: factored into `dispatch.ts`'s
+  // `matchesCapturedIdentity`, the ONE identity guard this and the driver's
+  // own shutdown path now share): a field this record DID capture at spawn
+  // time must be re-confirmed now, not silently skipped, when the live
+  // snapshot can't read it back — a transient `ps` read failure (a
+  // permissions hiccup, a race) is not proof of identity and must never be
+  // treated as one. A record that never captured identity at all (every
+  // record written before this task) has nothing to re-confirm and falls
+  // through to the ppid+liveness check below exactly as before.
+  if (!matchesCapturedIdentity(record, snapshot)) return 'not-ours'
+  if (snapshot.ppid === record.dispatcherPid && deps.isPidAlive(record.dispatcherPid)) return 'live'
+  return 'orphaned'
 }
 
 export type ReconcileOpts = {
@@ -568,7 +631,10 @@ function outcomeSignalsFor(record: LaunchRecord, artifactsPresent: boolean): Out
   return {
     exitCode: null,
     timedOut: record.failureReason === 'timeout',
-    cancelled: false,
+    // O1 (Issue #605): a driver-terminated child (`'signal'`) is a cancelled
+    // attempt, never an infrastructure failure of its own making — the same
+    // distinction `'crash'` (the child's own doing) already draws.
+    cancelled: record.failureReason === 'signal',
     refused: record.failureReason === 'refused',
     infrastructure: record.failureReason === 'crash',
     artifactsPresent,
@@ -601,13 +667,19 @@ export function reconcileLaunch(
   const record = parsed.record
   const artifactsPresent = opts.artifactsPresent ?? false
 
-  // Live: the recorded child is still running, on THIS host. A launch recorded
-  // on another host cannot be probed and is treated as not-live. This is the
-  // "crash between spawn and session binding → child found by identity" case:
-  // the launch record, written before spawn and stamped with the child pid the
-  // instant spawn returned, is what lets recovery find the still-live child
-  // rather than spawning a duplicate.
-  if (record.childPid !== null && record.host === deps.hostname() && deps.isPidAlive(record.childPid)) {
+  // Live: the recorded child is still running, on THIS host, confirmed by
+  // identity, and still parented to the dispatcher that spawned it (O2/O3
+  // — `classifyChildLiveness`). This is the "crash between spawn and
+  // session binding → child found by identity" case: the launch record,
+  // written before spawn and stamped with the child pid the instant spawn
+  // returned, is what lets recovery find the still-live child rather than
+  // spawning a duplicate. An `'orphaned'` child — alive, but reparented to
+  // init because its own driver died without reaching its shutdown path —
+  // falls through to the SAME finished/resume/pause path below as a `null`
+  // childPid always did; `recoverDeveloperLaunch` reaps it before this
+  // function is ever called, so by the time execution reaches here an
+  // orphan already reads as gone.
+  if (classifyChildLiveness(record, deps) === 'live') {
     return { kind: 'live', record }
   }
 
@@ -638,9 +710,14 @@ export class LaunchContinuityLost extends Error {
   }
 }
 
-/** The real pid-liveness + hostname deps `recoverDeveloperLaunch` uses by default — internal, not part of the module's public surface (a test injects its own). */
+/** The real pid-liveness + hostname + process-snapshot deps `recoverDeveloperLaunch` uses by default — internal, not part of the module's public surface (a test injects its own). */
 function defaultReconcileLaunchDeps(): ReconcileLaunchDeps {
-  return { isPidAlive: defaultIsPidAlive, hostname: () => osHostname() }
+  return {
+    isPidAlive: defaultIsPidAlive,
+    hostname: () => osHostname(),
+    getProcessSnapshot,
+    terminateChild: terminateChildWithGrace
+  }
 }
 
 /**
@@ -659,5 +736,18 @@ export function recoverDeveloperLaunch(
   deps: ReconcileLaunchDeps = defaultReconcileLaunchDeps()
 ): LaunchReconciliation {
   const parsed = readLaunchRecord('developer', agent, repo, task)
+  // O2 (Issue #605): an abandoned child — still alive, confirmed by
+  // identity, but no longer parented to the driver that spawned it — is
+  // reaped HERE, before the disposition below is computed, so it never
+  // survives to race whatever worker this reconciliation is about to hand
+  // continuity to (the duplicate-worker guard's entire point — Traps to
+  // avoid). Once reaped, `reconcileLaunch`'s own liveness check reads it as
+  // gone, exactly like any other finished launch; a genuinely `'live'` or
+  // `'not-ours'` child is left untouched here.
+  if (parsed.status === 'ok' && parsed.record.childPid !== null) {
+    if (classifyChildLiveness(parsed.record, deps) === 'orphaned') {
+      deps.terminateChild(parsed.record.childPid)
+    }
+  }
   return reconcileLaunch(parsed, { requireContinuity: true, artifactsPresent: opts.artifactsPresent }, deps)
 }
