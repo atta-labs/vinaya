@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from 'bun:test'
 import { createServer } from 'node:net'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
@@ -153,7 +153,11 @@ test.skipIf(isSandboxSupported())(
 test.skipIf(!isSandboxSupported())(
   'confined run cannot write outside its allowed directory or reach the network',
   async () => {
-    const scratchDir = mkdtempSync(join(tmpdir(), 'isolation-probe-extra-'))
+    // Realpath'd for the same reason `runConfined` realpaths its own scratch
+    // dir: `tmpdir()` can return a path through a symlinked alias (macOS's
+    // `/var` resolves to `/private/var`), and Seatbelt's `subpath` filter
+    // matches the resolved path, not the alias.
+    const scratchDir = realpathSync(mkdtempSync(join(tmpdir(), 'isolation-probe-extra-')))
     const fakeHome = join(scratchDir, 'fake-home')
     const outsidePath = join(tmpdir(), `isolation-probe-outside-${process.pid}-${Date.now()}`)
     const scriptPath = join(scratchDir, 'extra-check.js')

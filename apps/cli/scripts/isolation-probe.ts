@@ -21,7 +21,7 @@
  *                                                 sandbox-exec.
  */
 import { spawnSync } from 'node:child_process'
-import { accessSync, constants, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { accessSync, constants, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { connect } from 'node:net'
 import { tmpdir, homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -238,6 +238,7 @@ export function buildSandboxProfile(opts: {
     .replaceAll('{{FAKE_HOME}}', escapeSbString(opts.fakeHome))
     .replaceAll('{{SSH_SOCK_CANON}}', escapeSbString(opts.sshSockCanon))
     .replaceAll('{{RUNTIME_EXEC_PATH}}', escapeSbString(opts.runtimeExecPath))
+    .replaceAll('{{RUNTIME_DIR}}', escapeSbString(dirname(opts.runtimeExecPath)))
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-isolation-profile-'))
   const profilePath = join(dir, 'isolation-probe.sb')
   writeFileSync(profilePath, rendered)
@@ -263,18 +264,24 @@ function selfInvocation(): { execPath: string; scriptPath: string } {
 /** Runs the six checks inside the Seatbelt confinement — the negative
  * half of the probe. */
 export function runConfined(): ProbeResults {
-  const realHome = homedir()
+  // `mkdtempSync(tmpdir())` and `homedir()` can both return a path through a
+  // symlinked alias (macOS's own `/var` resolves to `/private/var`, same as
+  // the `/var/run` case `resolveSshSocketPath` already canonicalizes) —
+  // Seatbelt's `subpath` filter matches the resolved path, not the alias, so
+  // every path handed to `buildSandboxProfile` is realpath'd here first.
+  const realHome = realpathSync(homedir())
   const markerPath = join(realHome, MARKER_BASENAME)
   writeFileSync(markerPath, 'vinaya-isolation-probe\n')
 
-  const scratchDir = mkdtempSync(join(tmpdir(), 'vinaya-isolation-scratch-'))
+  const scratchDir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-isolation-scratch-')))
   const fakeHome = join(scratchDir, 'fake-home')
   writeFileSync(join(scratchDir, '.keep'), '')
 
   const credentialHelperPath = resolveCredentialHelperPath() ?? '/nonexistent/git-credential-osxkeychain'
   const sshSockCanon = resolveSshSocketPath() ?? '/nonexistent/ssh-auth-sock'
 
-  const { execPath, scriptPath: originalScriptPath } = selfInvocation()
+  const { execPath: rawExecPath, scriptPath: originalScriptPath } = selfInvocation()
+  const execPath = realpathSync(rawExecPath)
   // The confined child's only readable filesystem is `scratchDir` (standing
   // in for a Worker's own worktree) — a self-contained copy of this script
   // (no local imports, only node: builtins) is placed there so the child

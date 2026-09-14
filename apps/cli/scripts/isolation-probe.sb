@@ -5,7 +5,20 @@
 ;; escaped for Scheme string-literal syntax) before this file is written to
 ;; a temp location and passed to `sandbox-exec -f`. Never invoked with the
 ;; placeholders still present.
-(allow default)
+;; Default-deny baseline: only `system.sb`'s own common OS-required
+;; operations (dyld/library loading, basic mach bootstrap, sysctl reads) are
+;; allowed ambiently; everything else needs an explicit allow below. This
+;; replaces an earlier `(allow default)` baseline that left every OS surface
+;; the six named checks don't themselves exercise (other mach services,
+;; iokit, sysctl-write) reachable from a confined child.
+(deny default)
+(import "system.sb")
+
+;; The runtime interpreter reads its own binary and adjacent files (shared
+;; libraries, bundled data) beyond the bare execve the process-exec rule
+;; below grants — allow read of its own installation directory only.
+(allow file-read*
+  (subpath "{{RUNTIME_DIR}}"))
 
 ;; HOME confinement: deny the real HOME entirely, then carve out the one
 ;; directory the confined child actually needs to do its work in (a
