@@ -99,11 +99,16 @@ export function taskEscalationReadHandler(input: unknown): TaskToolCallResult<Ta
   if (issue === null) return fail(taskToolError('precondition', `no open task matches ${refDescription(task)}`))
 
   // A task with no pause record ever written is not an error (the catalog's
-  // own boundary note) — it answers with an empty page.
+  // own boundary note) — it answers with an empty, unknown-freshness page.
   const packet = readEscalationPacket(outboxRoot(), issue)
   const items = packet ? [packet] : []
   const page = paginate(items, cursor, limit ?? DEFAULT_PAGE_LIMIT)
-  return ok({ items: page.items, nextCursor: page.nextCursor })
+  return ok({
+    items: page.items,
+    nextCursor: page.nextCursor,
+    observedAt: packet?.observedAt ?? new Date().toISOString(),
+    freshness: packet?.freshness ?? 'unknown'
+  })
 }
 
 // --- task_start / task_resume / task_cancel (O3 — refusing stubs) ---------

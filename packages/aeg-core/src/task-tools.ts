@@ -185,10 +185,12 @@ export const TaskEscalationPacketSchema = z
 
 export type TaskEscalationPacket = z.infer<typeof TaskEscalationPacketSchema>
 
-export const TaskEscalationReadResultSchema = z.object({
-  items: z.array(TaskEscalationPacketSchema),
-  nextCursor: z.string().nullable()
-})
+export const TaskEscalationReadResultSchema = z
+  .object({
+    items: z.array(TaskEscalationPacketSchema),
+    nextCursor: z.string().nullable()
+  })
+  .merge(ObservedSchema)
 
 export type TaskEscalationReadResult = z.infer<typeof TaskEscalationReadResultSchema>
 

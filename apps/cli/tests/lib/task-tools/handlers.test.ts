@@ -44,9 +44,14 @@ describe('taskEscalationReadHandler', () => {
     if (!result.ok) expect(result.error.kind).toBe('validation')
   })
 
-  it('answers an empty page, never an error, for a bare Issue ref with no outbox record', () => {
+  it('answers an empty, unknown-freshness page, never an error, for a bare Issue ref with no outbox record', () => {
     const result = taskEscalationReadHandler({ task: { issue: NEVER_DISPATCHED_ISSUE } })
-    expect(result).toEqual({ ok: true, result: { items: [], nextCursor: null } })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.result.items).toEqual([])
+    expect(result.result.nextCursor).toBeNull()
+    expect(result.result.freshness).toBe('unknown')
+    expect(typeof result.result.observedAt).toBe('string')
   })
 })
 
