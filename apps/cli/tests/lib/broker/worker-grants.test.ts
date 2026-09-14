@@ -1,7 +1,7 @@
 /**
- * Worker grant matrix (Issue #557, O2, Part 2) — "Worker grants support
- * required branch and change operations without allowing rulings, criteria
- * edits, protected merge or independent review approval publication." Every
+ * Worker grant matrix — "Worker grants support required branch and change
+ * operations without allowing rulings, criteria edits, protected merge or
+ * independent review approval publication." Every
  * operation in `WORKER_OPERATIONS` is allowed; every operation in
  * `NEVER_GRANTED_OPERATIONS` is refused BY NAME, not merely by a generic
  * "unknown operation" case — a grant-table edit that accidentally added one
@@ -17,6 +17,7 @@ import {
   type InvocationContext,
   NEVER_GRANTED_OPERATIONS,
   requestEffect,
+  scopeTarget,
   UngrantedOperationError,
   WORKER_OPERATIONS
 } from '../../../src/lib/broker'
@@ -41,8 +42,7 @@ describe('Worker grant matrix', () => {
       let posts = 0
       const url = requestEffect(deps, worker, {
         operation,
-        target: operation === 'branch-push' ? 'task/worker-isolation-v1/2' : 'pr:1234',
-        targetTask: 2,
+        target: scopeTarget(2, operation === 'branch-push' ? 'task/worker-isolation-v1/2' : 'pr:1234'),
         inputVersion: 1,
         key: `matrix-${operation}`,
         payload: operation,
@@ -65,8 +65,7 @@ describe('Worker grant matrix', () => {
       expect(() =>
         requestEffect(deps, worker, {
           operation,
-          target: 'task/worker-isolation-v1/2',
-          targetTask: 2,
+          target: scopeTarget(2, 'task/worker-isolation-v1/2'),
           inputVersion: 1,
           key: `matrix-denied-${operation}`,
           payload: operation,

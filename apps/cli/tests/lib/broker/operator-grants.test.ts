@@ -1,8 +1,8 @@
 /**
- * Operator grant matrix (Issue #557, O3, Part 3) — "Operator grants allow
- * selected-task execution and observation only; human resolution uses a
- * separately authenticated channel and denial tests cover forged role
- * names and replayed capabilities."
+ * Operator grant matrix — "Operator grants allow selected-task execution
+ * and observation only; human resolution uses a separately authenticated
+ * channel and denial tests cover forged role names and replayed
+ * capabilities."
  *
  * "Human resolution uses a separately authenticated channel" is proven
  * here by ABSENCE, not a special-cased refusal: `human-resolve` is not in
@@ -26,6 +26,7 @@ import {
   OPERATOR_OPERATIONS,
   ReplayedInputVersionError,
   requestEffect,
+  scopeTarget,
   UngrantedOperationError
 } from '../../../src/lib/broker'
 
@@ -49,8 +50,7 @@ describe('Operator grant matrix', () => {
       let posts = 0
       const url = requestEffect(deps, operator, {
         operation,
-        target: 'task:4',
-        targetTask: 4,
+        target: scopeTarget(4, 'task:4'),
         inputVersion: 1,
         key: `matrix-${operation}`,
         payload: operation,
@@ -72,8 +72,7 @@ describe('Operator grant matrix', () => {
     expect(() =>
       requestEffect(deps, operator, {
         operation: 'human-resolve',
-        target: 'task:4',
-        targetTask: 4,
+        target: scopeTarget(4, 'task:4'),
         inputVersion: 1,
         key: 'matrix-human-resolve',
         payload: 'resume',
@@ -93,8 +92,7 @@ describe('Operator grant matrix', () => {
     expect(() =>
       requestEffect(deps, operator, {
         operation: 'branch-push',
-        target: 'task/worker-isolation-v1/4',
-        targetTask: 4,
+        target: scopeTarget(4, 'task/worker-isolation-v1/4'),
         inputVersion: 1,
         key: 'matrix-cross-role',
         payload: 'x',
@@ -123,8 +121,7 @@ describe('forged role names (O3 denial test)', () => {
     expect(() =>
       requestEffect(deps, forged, {
         operation: 'task-execute',
-        target: 'task:4',
-        targetTask: 4,
+        target: scopeTarget(4, 'task:4'),
         inputVersion: 1,
         key: 'forged-worker-task-execute',
         payload: 'x',
@@ -141,8 +138,7 @@ describe('replayed capabilities (O3 denial test)', () => {
   it("a captured task-execute request replayed with the task's stale (already-superseded) inputVersion is refused, never re-executed", () => {
     requestEffect(deps, operator, {
       operation: 'task-execute',
-      target: 'task:4',
-      targetTask: 4,
+      target: scopeTarget(4, 'task:4'),
       inputVersion: 3,
       key: 'task-execute-4',
       payload: 'round 3 start',
@@ -156,8 +152,7 @@ describe('replayed capabilities (O3 denial test)', () => {
     expect(() =>
       requestEffect(deps, operator, {
         operation: 'task-execute',
-        target: 'task:4',
-        targetTask: 4,
+        target: scopeTarget(4, 'task:4'),
         inputVersion: 1,
         key: 'task-execute-4',
         payload: 'a captured, replayed round 1 start request',
@@ -177,8 +172,7 @@ describe('replayed capabilities (O3 denial test)', () => {
     let posts = 0
     const request = {
       operation: 'task-execute',
-      target: 'task:4',
-      targetTask: 4,
+      target: scopeTarget(4, 'task:4'),
       inputVersion: 1,
       key: 'task-execute-idempotent',
       payload: 'round 1 start',

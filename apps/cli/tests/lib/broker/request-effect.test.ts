@@ -1,8 +1,8 @@
 /**
- * `requestEffect` (Issue #557, O1) — target binding, protected-path
- * refusal, replayed-input-version refusal, and delegation to the SAME
- * epoch-fenced `EffectExecutor` every other control-store writer already
- * uses ("owner epoch checked", this task's Test Plan).
+ * `requestEffect` — target binding, protected-path refusal,
+ * replayed-input-version refusal, and delegation to the SAME epoch-fenced
+ * `EffectExecutor` every other control-store writer already uses ("owner
+ * epoch checked", this task's Test Plan).
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
@@ -16,6 +16,7 @@ import {
   ProtectedPathError,
   ReplayedInputVersionError,
   requestEffect,
+  scopeTarget,
   UnboundTargetError,
   UngrantedOperationError
 } from '../../../src/lib/broker'
@@ -43,8 +44,7 @@ describe('requestEffect', () => {
     let posts = 0
     const url = requestEffect(deps, worker, {
       operation: 'branch-push',
-      target: 'task/worker-isolation-v1/2',
-      targetTask: 2,
+      target: scopeTarget(2, 'task/worker-isolation-v1/2'),
       inputVersion: 1,
       key: 'push-1',
       payload: 'commit-sha-abc',
@@ -63,8 +63,7 @@ describe('requestEffect', () => {
     expect(() =>
       requestEffect(deps, worker, {
         operation: 'ruling-post',
-        target: 'task/worker-isolation-v1/2',
-        targetTask: 2,
+        target: scopeTarget(2, 'task/worker-isolation-v1/2'),
         inputVersion: 1,
         key: 'ruling-1',
         payload: 'x',
@@ -78,12 +77,47 @@ describe('requestEffect', () => {
     expect(posts).toBe(0)
   })
 
-  it("refuses a request whose targetTask is not the invocation's own task (branch-write bound to the current task)", () => {
+  it("refuses a target scoped to a different task, even naming that task's OWN real branch (target string is what's checked, not a trusted side field)", () => {
     expect(() =>
       requestEffect(deps, worker, {
         operation: 'branch-push',
-        target: 'task/worker-isolation-v1/5',
-        targetTask: 5,
+        target: scopeTarget(5, 'task/worker-isolation-v1/5'),
+        inputVersion: 1,
+        key: 'push-1',
+        payload: 'x',
+        poster: () => 'https://example.com',
+        reconcile: neverReconcile
+      })
+    ).toThrow(UnboundTargetError)
+  })
+
+  it('refuses a plain, unscoped target — a caller cannot bypass task-binding by simply omitting the `<task>:` prefix `scopeTarget` requires', () => {
+    let posts = 0
+    expect(() =>
+      requestEffect(deps, worker, {
+        operation: 'branch-push',
+        // Not built via scopeTarget: no task prefix at all.
+        target: 'task/worker-isolation-v1/2',
+        inputVersion: 1,
+        key: 'push-1',
+        payload: 'x',
+        poster: () => {
+          posts++
+          return 'https://example.com'
+        },
+        reconcile: neverReconcile
+      })
+    ).toThrow(UnboundTargetError)
+    expect(posts).toBe(0)
+  })
+
+  it('refuses a target whose scoped task prefix does not match its own numeric value read literally (defends the parse itself, not just the compare)', () => {
+    expect(() =>
+      requestEffect(deps, worker, {
+        operation: 'branch-push',
+        // A hand-forged string mimicking scopeTarget's shape but naming a
+        // different task in the prefix than the invocation actually holds.
+        target: '999:task/worker-isolation-v1/2',
         inputVersion: 1,
         key: 'push-1',
         payload: 'x',
@@ -97,8 +131,7 @@ describe('requestEffect', () => {
     expect(() =>
       requestEffect(deps, worker, {
         operation: 'branch-push',
-        target: 'task/worker-isolation-v1/2',
-        targetTask: 2,
+        target: scopeTarget(2, 'task/worker-isolation-v1/2'),
         inputVersion: 1,
         key: 'push-1',
         payload: 'x',
@@ -112,8 +145,7 @@ describe('requestEffect', () => {
   it('refuses a replayed capability — a request presenting an inputVersion older than one already recorded for the same key', () => {
     requestEffect(deps, worker, {
       operation: 'pr-comment',
-      target: 'pr:1234',
-      targetTask: 2,
+      target: scopeTarget(2, 'pr:1234'),
       inputVersion: 2,
       key: 'comment-1',
       payload: 'round 2 comment',
@@ -125,8 +157,7 @@ describe('requestEffect', () => {
     expect(() =>
       requestEffect(deps, worker, {
         operation: 'pr-comment',
-        target: 'pr:1234',
-        targetTask: 2,
+        target: scopeTarget(2, 'pr:1234'),
         inputVersion: 1,
         key: 'comment-1',
         payload: 'a captured, replayed round 1 comment',
@@ -143,8 +174,7 @@ describe('requestEffect', () => {
   it('a genuinely newer inputVersion under the same key is a fresh post, not a replay', () => {
     requestEffect(deps, worker, {
       operation: 'pr-comment',
-      target: 'pr:1234',
-      targetTask: 2,
+      target: scopeTarget(2, 'pr:1234'),
       inputVersion: 1,
       key: 'comment-1',
       payload: 'round 1 comment',
@@ -155,8 +185,7 @@ describe('requestEffect', () => {
     let posts = 0
     const url = requestEffect(deps, worker, {
       operation: 'pr-comment',
-      target: 'pr:1234',
-      targetTask: 2,
+      target: scopeTarget(2, 'pr:1234'),
       inputVersion: 2,
       key: 'comment-1',
       payload: 'round 2 comment',
@@ -174,8 +203,7 @@ describe('requestEffect', () => {
     expect(() =>
       requestEffect(deps, worker, {
         operation: 'branch-push',
-        target: 'task/worker-isolation-v1/2',
-        targetTask: 2,
+        target: scopeTarget(2, 'task/worker-isolation-v1/2'),
         inputVersion: 1,
         key: 'push-race',
         payload: 'x',

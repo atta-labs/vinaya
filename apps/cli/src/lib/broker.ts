@@ -37,7 +37,8 @@
  * Real credential minting stays future work, not yet assigned anywhere.
  */
 
-import { acquireOwnership, type ControlStoreDeps, readEffect } from '@attalabs/aeg-core'
+import { acquireOwnership, type ControlStoreDeps, readEffect, type Role, ROLE_VALUES } from '@attalabs/aeg-core'
+import { type DispatchTeeRecoveryDeps, launchRecordMatchesRun, realDispatchTeeRecoveryDeps } from './dispatch.js'
 import { createEffectExecutor, type EffectReconciler, sha256Hex } from './effects.js'
 
 // --- invocation context (O1) ------------------------------------------------
@@ -52,8 +53,13 @@ import { createEffectExecutor, type EffectReconciler, sha256Hex } from './effect
 export type BrokerRole = 'worker' | 'operator'
 
 /** The one dispatched `VINAYA_ROLE` value that maps to the Worker broker role — `isolation.md` §1's own "Worker" row ("The dispatched Developer role's ... child process"). Every other role value dispatch ever sets (`code-reviewer`, `security`) is a real, legitimately dispatched role that simply holds no Worker grant; `principal`/`planner`/`archivist`/`architect` are never dispatched-child values at all. */
-const DISPATCHED_ROLE_TO_BROKER_ROLE: Readonly<Record<string, BrokerRole>> = {
+const DISPATCHED_ROLE_TO_BROKER_ROLE: Readonly<Partial<Record<Role, BrokerRole>>> = {
   developer: 'worker'
+}
+
+/** `role in DISPATCHED_ROLE_TO_BROKER_ROLE` alone doesn't narrow `string` to `Role` for TypeScript — this does, off the SAME closed vocabulary `envelope.ts`'s own `isRole` validates the Vinaya Log's `subject.role` against. */
+function isDispatchedRole(value: string | undefined): value is Role {
+  return value !== undefined && (ROLE_VALUES as readonly string[]).includes(value)
 }
 
 /** Thrown by both `authenticate*Invocation` functions — an invocation context that cannot be trusted is refused before any grant is even looked up, never defaulted to the least-privileged role silently (silently downgrading would hide a forged claim rather than surfacing it). */
@@ -77,35 +83,68 @@ function assertPositiveTaskId(task: number, raw: unknown): number {
 }
 
 /**
- * Authenticates a Worker's invocation context from the SAME two attribution
+ * Authenticates a Worker's invocation context from the SAME attribution
  * variables `dispatchRole` sets on every spawned child's own environment
- * (`dispatch.ts`, `VINAYA_ROLE`/`VINAYA_TASK`) — never a value the caller
- * passes as a function argument, since an argument is exactly the
- * self-asserted claim `task-tools/router.ts`'s own module doc says
- * authenticates nothing. `VINAYA_ROLE=developer` is the only value this
- * maps to a grantable role; anything else — a forged `principal`, a real
- * but ungranted `code-reviewer`, a missing or empty value — is refused.
+ * (`dispatch.ts`, `VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_RUN_ID`) — never a
+ * value the caller passes as a function argument, since an argument is
+ * exactly the self-asserted claim `task-tools/router.ts`'s own module doc
+ * says authenticates nothing. `VINAYA_ROLE=developer` is the only value
+ * this maps to a grantable role; anything else — a forged `principal`, a
+ * real but ungranted `code-reviewer`, a missing or empty value — is
+ * refused.
+ *
+ * `VINAYA_ROLE` and `VINAYA_TASK` both come from the SAME caller-controlled
+ * environment a compromised or merely buggy Worker can set to anything
+ * (this module's own header doc) — accepting `VINAYA_TASK` at face value
+ * would let a Worker genuinely dispatched for one task claim any other
+ * task id and satisfy every downstream task-binding check with a forged
+ * value. `launchRecordMatchesRun` (`dispatch.ts`) closes that: it looks for
+ * a launch record the CONTROLLER itself wrote, before this child was ever
+ * spawned, naming the presented `(runId, role, task)` triple exactly — a
+ * forged task finds no such record (the real one sits at the child's true
+ * task), so the claim is refused before a grant is ever checked. `runId`
+ * is `dispatchRole`'s own generated identifier, never a value the child
+ * chooses.
  */
-export function authenticateWorkerInvocation(env: Readonly<Record<string, string | undefined>>): InvocationContext {
+export function authenticateWorkerInvocation(
+  env: Readonly<Record<string, string | undefined>>,
+  deps: DispatchTeeRecoveryDeps = realDispatchTeeRecoveryDeps()
+): InvocationContext {
   const role = env.VINAYA_ROLE
-  const mapped = role === undefined ? undefined : DISPATCHED_ROLE_TO_BROKER_ROLE[role]
+  if (!isDispatchedRole(role)) {
+    throw new ForgedInvocationError(
+      `VINAYA_ROLE ${JSON.stringify(role ?? null)} is not a recognized dispatched role at all`
+    )
+  }
+  const mapped = DISPATCHED_ROLE_TO_BROKER_ROLE[role]
   if (mapped === undefined) {
     throw new ForgedInvocationError(
-      `VINAYA_ROLE ${JSON.stringify(role ?? null)} does not map to a broker-grantable Worker role`
+      `VINAYA_ROLE ${JSON.stringify(role)} does not map to a broker-grantable Worker role`
     )
   }
   const taskRaw = env.VINAYA_TASK
   const task = taskRaw === undefined ? Number.NaN : Number.parseInt(taskRaw, 10)
-  return { role: mapped, task: assertPositiveTaskId(task, taskRaw ?? null) }
+  const validTask = assertPositiveTaskId(task, taskRaw ?? null)
+
+  const runId = env.VINAYA_RUN_ID
+  if (runId === undefined || runId.trim().length === 0) {
+    throw new ForgedInvocationError('no VINAYA_RUN_ID on this invocation — cannot cross-check the claimed task')
+  }
+  if (!launchRecordMatchesRun(deps, runId, role, validTask)) {
+    throw new ForgedInvocationError(
+      `no launch record names run ${JSON.stringify(runId)} as role ${JSON.stringify(role)} for task ${validTask} — the claimed task does not match what dispatchRole actually launched this child for`
+    )
+  }
+  return { role: mapped, task: validTask }
 }
 
 /**
  * Authenticates an Operator's invocation context through the SAME channel
  * `task-tools/server.ts` already authenticates an Operator's MCP session
- * with — `VINAYA_MCP_CALLER` — rather than a second identity scheme: #557's
- * own sizing note is "one agent holds one broker and one grant table," and
- * inventing a parallel Operator credential here would be exactly the second
- * table that note rules out. `task` is the task the Operator's request
+ * with — `VINAYA_MCP_CALLER` — rather than a second identity scheme: this
+ * module holds one broker and one grant table, and inventing a parallel
+ * Operator credential here would be exactly the second table that sizing
+ * constraint rules out. `task` is the task the Operator's request
  * names (its own `task_start`/`task_status` argument) — not read from this
  * env, since an Operator's channel carries no per-dispatch `VINAYA_TASK`.
  */
@@ -189,10 +228,36 @@ function assertGranted(role: BrokerRole, operation: string): void {
 export class UnboundTargetError extends Error {
   constructor(
     readonly task: number,
-    readonly targetTask: number
+    readonly target: string
   ) {
-    super(`broker: a request for task ${targetTask} is not bound to the invocation's own task ${task}`)
+    super(`broker: target ${JSON.stringify(target)} is not scoped to the invocation's own task ${task}`)
     this.name = 'UnboundTargetError'
+  }
+}
+
+/**
+ * Every target this broker will act on MUST name its own task explicitly,
+ * as a `<task>:` prefix — a caller never gets to supply a bare identity
+ * string (a branch name, a PR ref) and a SEPARATE numeric task field the
+ * broker trusts without cross-checking the two against each other. A
+ * separate `targetTask` field, checked only against `context.task` and
+ * never against `target`'s own text, is exactly how a request naming a
+ * DIFFERENT task's branch or PR could still pass the binding check as long
+ * as its numeric field happened to match — found on review. Folding the
+ * task into `target` itself, and parsing it back out here, makes "which
+ * task does this write belong to" answerable only one way.
+ */
+export function scopeTarget(task: number, identity: string): string {
+  return `${task}:${identity}`
+}
+
+const SCOPED_TARGET = /^(\d+):(.*)$/
+
+/** Parses a `scopeTarget`-shaped string back into its task and identity halves, or refuses — never returns a partial/best-effort parse. */
+function assertTargetScopedToTask(task: number, target: string): void {
+  const match = SCOPED_TARGET.exec(target)
+  if (match === null || Number.parseInt(match[1] as string, 10) !== task) {
+    throw new UnboundTargetError(task, target)
   }
 }
 
@@ -258,10 +323,8 @@ function assertNoReplayedInputVersion(
 export type BrokerEffectRequest = {
   /** The operation being requested — checked against the invocation context's role grant. Typed `string`: see `assertGranted`'s own doc for why. */
   operation: string
-  /** `EffectIdentity.target` — the free-form identity `effects.ts` binds the write to (a branch name, `pr:<n>`, whatever the operation naturally identifies its write by). */
+  /** Build with `scopeTarget(task, identity)` — the task MUST be encoded in this string itself and is parsed back out (`assertTargetScopedToTask`), never trusted from a separate numeric field a caller could set inconsistently with the identity it names. Passed through to `EffectIdentity.target` unchanged. */
   target: string
-  /** The task this request is about — checked against the invocation context's own task (O2's "bind branch-writing grants to the current task"), never inferred from `target`'s own text. */
-  targetTask: number
   /** `EffectIdentity.inputVersion` — see `assertNoReplayedInputVersion`. */
   inputVersion: number
   /** Repo-relative paths this operation would touch, when applicable (a `branch-push`'s changed files) — checked against `PROTECTED_ADMIN_PATHS` regardless of role or grant. */
@@ -300,9 +363,7 @@ export function requestEffect(
   request: BrokerEffectRequest
 ): string {
   assertGranted(context.role, request.operation)
-  if (request.targetTask !== context.task) {
-    throw new UnboundTargetError(context.task, request.targetTask)
-  }
+  assertTargetScopedToTask(context.task, request.target)
   assertNoProtectedPaths(request.touchedPaths)
   assertNoReplayedInputVersion(deps, context.task, request.key, request.inputVersion)
 
