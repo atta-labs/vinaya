@@ -190,6 +190,15 @@ The "Deferred, deliberately" paragraph above named the gap: base identity and a 
 
 **Not yet wired into this driver.** This task built and unit-tested the store and its migration path (`packages/aeg-core/src/control-store/*.test.ts`); `dev-review-loop.ts` and `pause-resume.ts` still read and write the side files described above, unchanged, exactly as this file already documents them. Cutting the driver over — replacing the pid-lock guard with an acquired epoch, and the pause-state/effect-record side files with control-store writes — is later adoption work, not this task's.
 
+## A task-operator read interface over these same records (task-operator-v1 task 1)
+
+`apps/cli/src/lib/task-tools/read.ts` reads the pause record, held verdicts and effect markers this file documents — never through a second write path, never through `ps`. Two functions:
+
+- `readTaskLoopStateObserved(root, task)` wraps `task-status.ts`'s own `deriveLoopState` in a timestamp and a `fresh`/`unknown` marker — `unknown` only for `no_driver` (no record of any kind exists yet); every other `TaskLoopState` kind is `deriveLoopState`'s current, fresh answer, since it already resolves a superseded pause into `published` internally.
+- `readEscalationPacket(root, task)` reads `pause-state.json` directly — independent of `deriveLoopState` — so it can tell a pause that predates the outbox's own newest published round (`freshness: 'stale'`) apart from the live one (`'fresh'`) apart from no pause ever recorded (`null`). Its result carries the pause's own `reason`/`detail`/`inputs` (task, round, head, branch, PR number — all already on the pause record, this file's own "Pause and `--resume`" section above), the last round's held verdict lines as `evidence`, and a fixed per-reason `requestedAuthority`/`attemptedRecovery`/`permittedNextActions` — `self` for the five driver-decided reasons this file already names (`objectives_changed`, `ruling_posted`, `stale_driver`, `brief_superseded`, `policy_changed` — the loop resumes on its own), `operator` for the two environment-shaped ones (`infrastructure`, `no_push`), `principal` for the four O2-exit reasons that need real judgment (`escalation`, `max_rounds`, `no_progress`, `confidence`, `reappearance`).
+
+`apps/cli/src/lib/task-tools/handlers.ts` binds these to the catalog's `task_status`/`task_escalation_read` tools (`packages/aeg-core/src/task-tools.ts`), composing them with `task-status.ts`'s forge-touching identity/PR lookup. `task_start`/`task_resume`/`task_cancel` refuse every call unconditionally — no new control manifest, no process start, no forge write. `apps/cli/src/lib/task-tools/router.ts` classifies a caller's free-text intent to the one tool that answers it, so an agent surface built on this catalog later never routes a read request into a mutating handler.
+
 ## Doc-owners binding
 
 `.vinaya/doc-owners` binds `apps/cli/src/lib/dev-review-loop.ts` to this file — a code change to the driver requires this file to appear in the same diff (or a `Doc-ack`/waiver), per `verify-docs` C5.

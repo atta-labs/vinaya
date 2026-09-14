@@ -378,8 +378,40 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `readTransitions` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `defaultIsPidAlive` | function | `packages/aeg-core/src/control-store/migration.ts` |
 | `migrateLegacyTask` | function | `packages/aeg-core/src/control-store/migration.ts` |
+| `TASK_TOOL_ERROR_KINDS` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TaskToolErrorSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `taskToolError` | function | `packages/aeg-core/src/task-tools.ts` |
+| `capabilityUnavailable` | function | `packages/aeg-core/src/task-tools.ts` |
+| `TaskToolRefSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `DEFAULT_PAGE_LIMIT` | const | `packages/aeg-core/src/task-tools.ts` |
+| `MAX_PAGE_LIMIT` | const | `packages/aeg-core/src/task-tools.ts` |
+| `PageRequestSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `FreshnessSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `ObservedSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TaskStatusInputSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TaskStatusItemSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TaskStatusResultSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `RequestedAuthoritySchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `EscalationInputsSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `EscalationEvidenceSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TaskEscalationReadInputSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TaskEscalationPacketSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TaskEscalationReadResultSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TaskStartInputSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TaskResumeInputSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TaskCancelInputSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `NoResultSchema` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TASK_TOOL_NAMES` | const | `packages/aeg-core/src/task-tools.ts` |
+| `isTaskToolName` | function | `packages/aeg-core/src/task-tools.ts` |
+| `TASK_STATUS_TOOL` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TASK_ESCALATION_READ_TOOL` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TASK_START_TOOL` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TASK_RESUME_TOOL` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TASK_CANCEL_TOOL` | const | `packages/aeg-core/src/task-tools.ts` |
+| `TASK_TOOL_CATALOG` | const | `packages/aeg-core/src/task-tools.ts` |
+| `taskToolByName` | function | `packages/aeg-core/src/task-tools.ts` |
 
-(302 exports.)
+(334 exports — 32 added by `task-operator-v1` task 1: the task-tool catalog. `TaskToolDefinition`/`TaskToolError`/`TaskToolErrorKind`/`TaskToolHandlerBinding`/`TaskToolName`/`TaskToolRef`/`Freshness`/`PageRequest`/`RequestedAuthority`/`TaskStatusInput`/`TaskStatusResult`/`TaskEscalationReadInput`/`TaskEscalationReadResult`/`TaskEscalationPacket`/`TaskStartInput`/`TaskResumeInput`/`TaskCancelInput` are type-only exports of the same file — per this file's own rule (line 11, "functions/consts/classes only"), they get no row; the remaining 18 come from `control-store-v1` task 1, merged separately.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
@@ -764,6 +796,17 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `lastRoundVerdictLines` | function | `apps/cli/src/lib/task-status.ts` |
 | `renderTaskStatusRow` | function | `apps/cli/src/lib/task-status.ts` |
 | `resumeCommandFor` | function | `apps/cli/src/lib/task-status.ts` |
+| `paginate` | function | `apps/cli/src/lib/task-tools/read.ts` |
+| `readTaskLoopStateObserved` | function | `apps/cli/src/lib/task-tools/read.ts` |
+| `classifyStateFreshness` | function | `apps/cli/src/lib/task-tools/read.ts` |
+| `describeTaskLoopState` | function | `apps/cli/src/lib/task-tools/read.ts` |
+| `readEscalationPacket` | function | `apps/cli/src/lib/task-tools/read.ts` |
+| `taskStatusHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
+| `taskEscalationReadHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
+| `taskStartHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
+| `taskResumeHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
+| `taskCancelHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
+| `routeTaskToolIntent` | function | `apps/cli/src/lib/task-tools/router.ts` |
 | `discoverWorkspacePackages` | function | `apps/cli/src/lib/test-selector.ts` |
 | `extractImportSpecifiers` | function | `apps/cli/src/lib/test-selector.ts` |
 | `isTestFile` | function | `apps/cli/src/lib/test-selector.ts` |
@@ -774,7 +817,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(248 exports.)
+(259 exports — 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. None of the three files front a `vinaya` subcommand yet — the catalog they implement is an agent-facing tool surface, not a CLI command — so no Commands-table row exists for any of them; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule.)
 
 ## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 

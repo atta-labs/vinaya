@@ -42,3 +42,4 @@ tests/registry-write.test.ts
 tests/review-post.test.ts
 tests/serial-lock.test.ts
 tests/surface-spec-exports.test.ts
+tests/lib/task-tools/read.test.ts

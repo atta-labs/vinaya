@@ -374,6 +374,59 @@ export { checkBranchTopology, taskBranchTopologyFields } from './branch-topology
 export type { BranchTopologyInput, BranchTopologyResult, BranchTopologyVerdict } from './branch-topology-gate'
 export { issueBranchName, parseTaskBranchIdentity } from './task-branch-identity'
 export type { TaskBranchIdentity } from './task-branch-identity'
+export {
+  capabilityUnavailable,
+  DEFAULT_PAGE_LIMIT,
+  isTaskToolName,
+  MAX_PAGE_LIMIT,
+  TASK_CANCEL_TOOL,
+  TASK_ESCALATION_READ_TOOL,
+  TASK_RESUME_TOOL,
+  TASK_START_TOOL,
+  TASK_STATUS_TOOL,
+  TASK_TOOL_CATALOG,
+  TASK_TOOL_ERROR_KINDS,
+  TASK_TOOL_NAMES,
+  taskToolByName,
+  taskToolError,
+  EscalationEvidenceSchema,
+  EscalationInputsSchema,
+  FreshnessSchema,
+  NoResultSchema,
+  ObservedSchema,
+  PageRequestSchema,
+  RequestedAuthoritySchema,
+  TaskCancelInputSchema,
+  TaskEscalationPacketSchema,
+  TaskEscalationReadInputSchema,
+  TaskEscalationReadResultSchema,
+  TaskToolRefSchema,
+  TaskResumeInputSchema,
+  TaskStartInputSchema,
+  TaskStatusInputSchema,
+  TaskStatusItemSchema,
+  TaskStatusResultSchema,
+  TaskToolErrorSchema
+} from './task-tools'
+export type {
+  Freshness,
+  PageRequest,
+  RequestedAuthority,
+  TaskCancelInput,
+  TaskEscalationPacket,
+  TaskEscalationReadInput,
+  TaskEscalationReadResult,
+  TaskResumeInput,
+  TaskStartInput,
+  TaskStatusInput,
+  TaskStatusResult,
+  TaskToolDefinition,
+  TaskToolError,
+  TaskToolErrorKind,
+  TaskToolHandlerBinding,
+  TaskToolName,
+  TaskToolRef
+} from './task-tools'
 export { checkFirstPushDispatchGate, parseTaskBranch } from './first-push-dispatch-gate'
 export type {
   DispatchReadinessFact,
