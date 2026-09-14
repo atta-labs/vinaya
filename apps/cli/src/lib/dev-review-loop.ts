@@ -80,9 +80,10 @@ import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log
 import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
+  describeFailingCheckRun,
   fetchCiConclusion,
   fetchConflictingFiles,
-  fetchFailingCheckNames,
+  fetchFailingCheckRuns,
   fetchMergeableState,
   gitCommitsTouchingDriverPaths,
   type MergeableState,
@@ -115,6 +116,7 @@ import {
   latestHeldRequestChanges,
   missingReviewerArtifacts,
   outboxRoot,
+  persistManifestRecord,
   readIfExists,
   renderReviewerDispatchPrompt,
   type ReviewerPromptFacts,
@@ -166,9 +168,10 @@ import {
 // resolves from this exact path, either defined below or re-exported from
 // the module that now owns it (task 8, `#506`).
 export {
+  describeFailingCheckRun,
   fetchCiConclusion,
   fetchConflictingFiles,
-  fetchFailingCheckNames,
+  fetchFailingCheckRuns,
   fetchMergeableState,
   gitCommitsTouchingDriverPaths,
   readWorktreeHead,
@@ -235,7 +238,7 @@ export type LoopDeps = {
   resolveHead: typeof resolveHead
   fetchCiConclusion: typeof fetchCiConclusion
   /** O3: named check-runs, never the review gate's own (excluded upstream). */
-  fetchFailingCheckNames: typeof fetchFailingCheckNames
+  fetchFailingCheckRuns: typeof fetchFailingCheckRuns
   fetchRulings: typeof fetchRulings
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   fetchFrozenBrief: typeof fetchFrozenBrief
@@ -561,7 +564,7 @@ function defaultDeps(): LoopDeps {
     dispatchRole: realDispatchRole,
     resolveHead,
     fetchCiConclusion,
-    fetchFailingCheckNames,
+    fetchFailingCheckRuns,
     fetchRulings,
     fetchNewestRulingOrdinal,
     fetchFrozenBrief,
@@ -891,6 +894,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let devResumeId: string | null = null
     let devDispatchSucceededBefore = false
     let lastReviewContext: string | null = null
+    // The manifest the most recent `dispatch_reviewers` round was dispatched
+    // against (`#555`, O3) — hoisted here so the sibling `publish` block can
+    // bind the posted verdicts against it with the SAME `compareManifest` the
+    // gate uses. Set the moment the manifest is built, read only at publish.
+    let lastDispatchedManifest: ReviewInputManifest | undefined
     let resumedDispatch = resumeFrom !== null
     /** O3: the last red gate's failing check-run names, for the next gate-red dispatch prompt and, if it stalls, the pause detail. */
     let lastFailingChecks: string[] = []
@@ -1355,7 +1363,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       green: boolean
       stats: RoundStats
       ciConclusion: 'green' | 'red' | 'pending'
-      /** O3: the mechanical check-runs that actually failed, never the review gate's own — empty unless `ciConclusion === 'red'`. */
+      /** O3 (`#607`): the mechanical check-runs that actually failed, named by check name AND run — never the review gate's own, never a superseded run (`fetchFailingCheckRuns` is already deduped to the newest per name) — empty unless `ciConclusion === 'red'`. */
       failingChecks: string[]
     }> {
       const head = d.resolveHead(branch)
@@ -1369,7 +1377,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         d.sleep,
         `devReviewLoop: CI never resolved off 'pending' for head ${head} within the poll budget.`
       ).catch(() => 'red' as const)
-      const failingChecks = conclusion === 'red' ? d.fetchFailingCheckNames(head) : []
+      const failingChecks = conclusion === 'red' ? d.fetchFailingCheckRuns(head).map(describeFailingCheckRun) : []
       return {
         green: conclusion === 'green',
         stats: computeStats(head, roundStartMs),
@@ -2083,13 +2091,25 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const rulingOrdinal = d.fetchNewestRulingOrdinal(prNumber)
           const revision = d.fetchSourceRevision(task)
           const briefContentAtDispatch = d.fetchFrozenBrief(task)
+          // The base identity this round's candidate is judged against
+          // (task 5, `#555`, O1) — origin/main's tip, the
+          // same base the merge gate binds against. Resolved ONCE here and
+          // reused in the self-check below, so it never drifts within a single
+          // round: the same treatment the policy already gets (`loop.md`, "the
+          // policy is resolved once per loop run and so never drifts within a
+          // single run"). A base move across rounds is caught by the gate and
+          // by the existing `stale_driver` guard, not by manufacturing a new
+          // mid-round pause reason.
+          const baseSha = d.gitRevParseOriginMain()
           const manifest: ReviewInputManifest = buildReviewInputManifest({
             headSha: head,
+            baseSha,
             briefContent: briefContentAtDispatch,
             objectivesVersion: resolvedObjectives.version,
             rulingOrdinal,
             policy
           })
+          lastDispatchedManifest = manifest
           const facts: ReviewerPromptFacts = {
             objectives: resolvedObjectives.text,
             resolvedObjectives: resolvedObjectives.objectives,
@@ -2097,6 +2117,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             ciConclusion,
             revision,
             manifest
+          }
+
+          // O1: the parent persists this round's manifest to the control store
+          // BEFORE dispatching reviewers — the durable record `loop.md`'s
+          // "Deferred, deliberately" paragraph named, now that the store is
+          // built. Best-effort (see `persistManifestRecord`): a snapshot that
+          // could not be written never fails the round; the echoed-comment
+          // binding is what gates a verdict. Skipped only when the repository
+          // cannot be resolved (no identity to key the record on).
+          if (repo) {
+            persistManifestRecord(root, task, manifest, {
+              repository: `${repo.owner}/${repo.repo}`,
+              pr: prNumber,
+              branch,
+              round,
+              recordedAt: new Date(d.now()).toISOString()
+            })
           }
 
           // O1/O2: the head's required CI is already green (this branch is
@@ -2186,6 +2223,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             const reassessedBriefContent = d.fetchFrozenBrief(task)
             const currentManifest: ReviewInputManifest = buildReviewInputManifest({
               headSha: head,
+              baseSha,
               briefContent: reassessedBriefContent,
               objectivesVersion: reassessedObjectives.version,
               rulingOrdinal: reassessedRulingOrdinal,
@@ -2311,7 +2349,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             prNumber,
             expectedHead: d.resolveHead(branch),
             journal: { rounds: state.rounds },
-            policy
+            policy,
+            // The manifest this round was dispatched against (`#555`, O3) —
+            // the pre-hold self-check already proved it did not drift before
+            // either verdict was held, so binding the posted comments against
+            // it is the same field-complete check the gate applies. Non-null
+            // on every real path here: a `publish` decision is only ever set
+            // inside the `dispatch_reviewers` branch that just assigned it.
+            manifest:
+              lastDispatchedManifest ??
+              buildReviewInputManifest({
+                headSha: d.resolveHead(branch),
+                baseSha: d.gitRevParseOriginMain(),
+                briefContent: d.fetchFrozenBrief(task),
+                objectivesVersion: d.resolveIssueObjectives(task).version,
+                rulingOrdinal: d.fetchNewestRulingOrdinal(prNumber),
+                policy
+              })
           })
           // Only now — posts confirmed, not merely attempted — does the durable
           // log get to say this run completed. A throw above (a post that

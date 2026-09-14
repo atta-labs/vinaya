@@ -3078,6 +3078,11 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     expect(pauseComment).toMatch(/Vinaya CI/)
     expect(pauseComment).not.toMatch(/review gate/i)
 
+    // O3 (`driver-lifecycle-v1` task 2, `#607`): the pause detail names the
+    // exact run the pause was built from (its id), not just the check name
+    // — the evidence behind the pause is auditable after the fact.
+    expect(pauseComment).toMatch(/Vinaya CI \(run 1\)/)
+
     // O2: the driver's own bounded events for this pause — `stop_condition_met`
     // fires exactly once (at the bound), never once per stalled turn.
     const loopEvents = outboxLines(home)
@@ -3093,6 +3098,7 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     ) as Record<string, unknown>
     expect(pauseState.reason).toBe('infrastructure')
     expect(pauseState.detail).toMatch(/head .* unchanged/)
+    expect(pauseState.detail).toMatch(/Vinaya CI \(run 1\)/)
 
     // O11 (task-run-v1 21, #541): the gate-red retry prompt — round 1's own
     // fresh dispatch is `.dev-prompt-1.txt`; every dispatch after it is a
@@ -3194,13 +3200,16 @@ describe('devReviewLoop — a genuinely failing current check-run still pauses, 
     ) as Record<string, unknown>
     expect(pauseState.reason).toBe('infrastructure')
     expect(pauseState.detail).toMatch(/head .* unchanged/)
-    // Same shape as the single-failing-run case above: the CURRENT failing
-    // check name is present — the superseded success never contributes.
-    expect(pauseState.detail).toMatch(/Vinaya CI/)
+    // Same shape as the single-failing-run case above: the surviving,
+    // CURRENT failure (run 2) is named — never the superseded success (run
+    // 1), and never a bare check name with no run identity to audit it
+    // against (O3, `#607`).
+    expect(pauseState.detail).toMatch(/Vinaya CI \(run 2, started 2026-09-14T10:05:00Z\)/)
+    expect(pauseState.detail).not.toMatch(/run 1/)
 
     const gateRedPrompt = readFileSync(join(home, '.dev-prompt-2.txt'), 'utf8')
     expect(gateRedPrompt).toMatch(/CI is red on the last head/)
-    expect(gateRedPrompt).toMatch(/Vinaya CI/)
+    expect(gateRedPrompt).toMatch(/Vinaya CI \(run 2, started 2026-09-14T10:05:00Z\)/)
   }, 20000)
 })
 
@@ -6246,6 +6255,7 @@ describe('renderReviewerPrompt (pure) — task 4, #483, O2', () => {
     revision: 'b'.repeat(40),
     manifest: {
       headSha: 'a'.repeat(40),
+      baseSha: 'e'.repeat(40),
       briefHash: 'c'.repeat(64),
       objectivesVersion: null,
       rulingOrdinal: 0,
@@ -6452,6 +6462,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       briefHash: null,
 
       policyDigest: DEFAULT_POLICY_DIGEST,
+      baseSha: null,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
     const securityComment = renderSecurityComment({
@@ -6468,6 +6479,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       briefHash: null,
 
       policyDigest: DEFAULT_POLICY_DIGEST,
+      baseSha: null,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
 
@@ -6506,6 +6518,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       briefHash: null,
 
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
     const securityComment = renderSecurityComment({
@@ -6522,6 +6535,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       briefHash: null,
 
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: [{ id: 'O1', status: 'MET', evidence: 'done' }]
     })
 
@@ -6579,6 +6593,7 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
       briefHash: null,
 
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: null
     })
     const securityComment = renderSecurityComment({
@@ -6595,6 +6610,7 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
       briefHash: null,
 
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: null
     })
 
@@ -6640,6 +6656,7 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
       briefHash: null,
 
       policyDigest: DEFAULT_POLICY_DIGEST,
+      baseSha: null,
       objectiveResults: null
     })
     const securityComment = renderSecurityComment({
@@ -6656,6 +6673,7 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
       briefHash: null,
 
       policyDigest: DEFAULT_POLICY_DIGEST,
+      baseSha: null,
       objectiveResults: null
     })
 
@@ -6709,6 +6727,7 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
       briefHash: null,
 
       policyDigest: DEFAULT_POLICY_DIGEST,
+      baseSha: null,
       objectiveResults: null
     })
     const securityComment = renderSecurityComment({
@@ -6725,6 +6744,7 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
       briefHash: null,
 
       policyDigest: DEFAULT_POLICY_DIGEST,
+      baseSha: null,
       objectiveResults: null
     })
 
@@ -6763,6 +6783,7 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
       briefHash: null,
 
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: null
     })
     const securityComment = renderSecurityComment({
@@ -6779,6 +6800,7 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
       briefHash: null,
 
       policyDigest: 'p'.repeat(64),
+      baseSha: null,
       objectiveResults: null
     })
 

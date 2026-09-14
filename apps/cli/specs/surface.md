@@ -538,9 +538,10 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `devReviewLoop` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `sanitizeUncaughtErrorForPublicPause` | function | `apps/cli/src/lib/dev-review-loop.ts` |
 | `DRIVER_OWNED_PATHS` | const | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
+| `describeFailingCheckRun` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
 | `fetchCiConclusion` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
 | `fetchConflictingFiles` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
-| `fetchFailingCheckNames` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
+| `fetchFailingCheckRuns` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
 | `fetchMergeableState` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
 | `gitCommitsTouchingDriverPaths` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
 | `parseMergeTreeConflictFiles` | function | `apps/cli/src/lib/dev-review-loop/gate-reading.ts` |
