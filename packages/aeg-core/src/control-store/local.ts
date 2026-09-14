@@ -61,8 +61,10 @@ import {
 import { hostname as osHostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
+  type EffectRecord,
   type InputRecord,
   type OwnershipRecord,
+  parseEffectRecord,
   parseInputRecord,
   parseOwnershipRecord,
   parseRunRecord,
@@ -199,6 +201,20 @@ function assertSafeRunId(runId: string): void {
   }
 }
 
+/** An effect's `key` reaches `effectPath` from a caller (`EffectExecutor`'s own caller, ultimately a forge-write call site) the same way `runId` does — the identical path-safety discipline, under its own error type so a caller can tell which id was rejected. */
+export class InvalidEffectKeyError extends Error {
+  constructor(readonly key: string) {
+    super(`control-store: refusing an unsafe effect key (must be a single path-safe segment): ${JSON.stringify(key)}`)
+    this.name = 'InvalidEffectKeyError'
+  }
+}
+
+function assertSafeEffectKey(key: string): void {
+  if (!SAFE_ID_SEGMENT.test(key) || key.includes('..')) {
+    throw new InvalidEffectKeyError(key)
+  }
+}
+
 function taskRoot(root: string, task: number): string {
   return join(root, String(task))
 }
@@ -221,6 +237,11 @@ function runPath(root: string, task: number, runId: string): string {
 function inputPath(root: string, task: number, runId: string): string {
   assertSafeRunId(runId)
   return join(taskRoot(root, task), 'input', `${runId}.json`)
+}
+
+function effectPath(root: string, task: number, key: string): string {
+  assertSafeEffectKey(key)
+  return join(taskRoot(root, task), 'effect', `${key}.json`)
 }
 
 function transitionsDir(root: string, task: number, epoch: number): string {
@@ -412,4 +433,34 @@ export function readTransitions(
     .filter((name) => /^\d+\.json$/.test(name))
     .sort()
     .map((name) => parseTransitionRecord(readIfExists(join(dir, name))))
+}
+
+export type EffectInput = Omit<EffectRecord, 'version' | 'kind' | 'task' | 'key'>
+
+/**
+ * Writes (or overwrites — unlike `writeRun`/`writeInput`, an effect record
+ * advances through `'started'` → `'verified'`/`'uncertain'` in place, one
+ * file per `key`) an effect record, fenced by `epoch` the same as every
+ * other write here: refused (`StaleEpochWriteError`) the instant the caller
+ * no longer holds `task`'s current epoch.
+ */
+export function writeEffect(
+  deps: ControlStoreDeps,
+  task: number,
+  epoch: number,
+  key: string,
+  input: EffectInput
+): EffectRecord {
+  assertCurrentEpoch(deps, task, epoch)
+  const record: EffectRecord = { version: 1, kind: 'effect', task, key, ...input }
+  atomicWriteFile(effectPath(deps.root(), task, key), JSON.stringify(record))
+  return record
+}
+
+export function readEffect(
+  deps: Pick<ControlStoreDeps, 'root'>,
+  task: number,
+  key: string
+): ParsedRecord<EffectRecord> {
+  return parseEffectRecord(readIfExists(effectPath(deps.root(), task, key)))
 }

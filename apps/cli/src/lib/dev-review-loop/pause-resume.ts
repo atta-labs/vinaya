@@ -10,9 +10,9 @@
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { PauseReason } from '@attalabs/aeg-core'
-import { postMarkedComment } from '../forge-write.js'
-import { postForgeEffectOnce } from './publication.js'
+import { defaultControlStoreDeps, type PauseReason } from '@attalabs/aeg-core'
+import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../effects.js'
+import { markedCommentBody, postMarkedComment, reconcileGhComment } from '../forge-write.js'
 import { readIfExists } from './reviewer-dispatch.js'
 
 /** `sanitizePublicPauseDetail` truncates to this — long enough to stay informative, short enough that a runaway stack trace or subprocess dump never balloons a public PR comment. */
@@ -111,19 +111,29 @@ export function renderNoPushStopComment(task: number, reason: PauseReason, detai
  * before any pull request is known to exist. Sanitizes `detail` HERE,
  * unconditionally, the same chokepoint discipline `postPauseComment` applies
  * for the PR case, so a call site never posts a raw `detail` un-redacted
- * either way.
+ * either way. Posts through the shared `EffectExecutor` (Issue #552), the
+ * same replacement `postPauseComment` gets below — neither writer takes a
+ * root-relative outbox path any more, since both store through the
+ * control-store's own root (`controlStoreRoot`), not a caller-supplied one.
  */
-export function postIssuePauseComment(
-  root: string,
-  task: number,
-  round: number,
-  reason: PauseReason,
-  detail?: string
-): void {
+export function postIssuePauseComment(task: number, round: number, reason: PauseReason, detail?: string): void {
   const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
-  postForgeEffectOnce(root, task, `pause-issue-${round}-${reason}`, () =>
-    postMarkedComment('issue', String(task), pauseMarker(reason), renderNoPushStopComment(task, reason, publicDetail))
-  )
+  const marker = pauseMarker(reason)
+  const body = renderNoPushStopComment(task, reason, publicDetail)
+  const key = `pause-issue-${round}-${reason}`
+  const deps = defaultControlStoreDeps(controlStoreRoot)
+  const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
+  executor.execute({
+    key,
+    identity: {
+      operation: 'issue-comment',
+      target: `issue:${task}`,
+      inputVersion: round,
+      payloadDigest: sha256Hex(markedCommentBody(marker, body))
+    },
+    poster: () => postMarkedComment('issue', String(task), marker, body),
+    reconcile: reconcileGhComment('issue', String(task))
+  })
 }
 
 /**
@@ -138,7 +148,6 @@ export function postIssuePauseComment(
  * requirement; only the key changed, not the once-only guarantee.
  */
 export function postPauseComment(
-  root: string,
   task: number,
   round: number,
   head: string,
@@ -151,9 +160,22 @@ export function postPauseComment(
   // reviewer-authored file's own text), never pre-sanitized by convention.
   // See `sanitizePublicPauseDetail`'s own doc comment for what this closes.
   const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
-  postForgeEffectOnce(root, task, `pause-${round}-${head}`, () =>
-    postMarkedComment('pr', String(prNumber), pauseMarker(reason), renderPauseComment(prNumber, reason, publicDetail))
-  )
+  const marker = pauseMarker(reason)
+  const body = renderPauseComment(prNumber, reason, publicDetail)
+  const key = `pause-${round}-${head}`
+  const deps = defaultControlStoreDeps(controlStoreRoot)
+  const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
+  executor.execute({
+    key,
+    identity: {
+      operation: 'pr-comment',
+      target: `pr:${prNumber}`,
+      inputVersion: round,
+      payloadDigest: sha256Hex(markedCommentBody(marker, body))
+    },
+    poster: () => postMarkedComment('pr', String(prNumber), marker, body),
+    reconcile: reconcileGhComment('pr', String(prNumber))
+  })
 }
 
 export type PauseState = {
