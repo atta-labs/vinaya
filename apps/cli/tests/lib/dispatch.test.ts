@@ -102,6 +102,27 @@ function writeFakeBinary(dir: string, name: string, script: string): string {
   return p
 }
 
+/**
+ * A fake vendor binary that stays identity-stable — `comm` and start time
+ * unchanged from `spawn()` all the way through termination — the way a real
+ * installed vendor CLI does (one shebang-triggered exec, never a second
+ * one). `#!/bin/sh … exec sleep 30` used to serve the O1 shutdown tests'
+ * need for a clean, signal-killable leaf process, but its own TWO exec
+ * transitions (`/bin/sh` then `sleep`) raced the identity capture O3 added:
+ * `childCommand`, snapshotted the instant `spawn()` returns, could still
+ * read the pre-exec `sh` name if that second `exec` hadn't run yet by the
+ * time a later re-check ran — a real, found-live flake on a slower/loaded
+ * CI runner (`Test (apps/cli, shard 2)`), never reproduced locally where
+ * both reads happened to land on the same side of the race. Shebang-ing
+ * DIRECTLY at the real `bun` binary (`process.execPath` — never `/usr/bin/env
+ * bun`, which is itself a second exec hop with the identical race) gives a
+ * single, stable process image throughout, so identity capture and every
+ * later re-check always agree.
+ */
+function writeIdentityStableFakeBinary(dir: string, name: string): string {
+  return writeFakeBinary(dir, name, `#!${process.execPath}\nprocess.stdin.resume()\nawait new Promise(() => {})\n`)
+}
+
 function outboxLines(home: string, issue: number | 'none'): unknown[] {
   const p = join(home, '.vinaya', 'outbox', 'unresolved', `${issue}.ndjson`)
   return readFileSync(p, 'utf8')
@@ -446,11 +467,10 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
     const binDir = tempDir('vinaya-dispatch-bin-')
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
-    // `exec` replaces the shell's own process image with `sleep` — the
-    // recorded child pid IS the sleeping process, so a plain SIGTERM (its
-    // own default disposition) ends it with no grandchild left behind to
-    // reparent.
-    writeFakeBinary(binDir, 'claude', '#!/bin/sh\ncat > /dev/null\nexec sleep 30\n')
+    // Identity-stable (round 5, CI flake fix — see the helper's own doc
+    // comment) and, like `sleep`, terminates on a plain `SIGTERM` with no
+    // grandchild left behind to reparent.
+    writeIdentityStableFakeBinary(binDir, 'claude')
 
     const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
     const script = join(cwd, 'shutdown-terminate.ts')
@@ -532,7 +552,7 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
     const binDir = tempDir('vinaya-dispatch-bin-')
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
-    writeFakeBinary(binDir, 'claude', '#!/bin/sh\ncat > /dev/null\nexec sleep 30\n')
+    writeIdentityStableFakeBinary(binDir, 'claude')
 
     const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
     const script = join(cwd, 'shutdown-terminate-identity-mismatch.ts')
@@ -610,7 +630,7 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
     const binDir = tempDir('vinaya-dispatch-bin-')
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
-    writeFakeBinary(binDir, 'claude', '#!/bin/sh\ncat > /dev/null\nexec sleep 30\n')
+    writeIdentityStableFakeBinary(binDir, 'claude')
 
     const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
     const script = join(cwd, 'shutdown-terminate-reviewer.ts')
