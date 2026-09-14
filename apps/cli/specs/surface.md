@@ -776,10 +776,12 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `isoToday` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `MissingEvidenceAnchorError` | class | `apps/cli/src/lib/pr-report-engine.ts` |
 | `prReportExitCode` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `realTokenReportCapabilityDeps` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `renderGroupC` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `replaceEvidenceBlock` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `resolveCommandTimeoutMs` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `resolveTokenReportCapability` | function | `apps/cli/src/lib/pr-report-engine.ts` |
+| `resolveTokenReportCapabilityWith` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `runAgentCommand` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `runReportForOpenPr` | function | `apps/cli/src/lib/pr-report-engine.ts` |
 | `runRealGates` | function | `apps/cli/src/lib/pr-report-engine.ts` |

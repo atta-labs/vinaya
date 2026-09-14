@@ -31,6 +31,7 @@ import {
   UnresolvableMergeBaseError,
   writeTokensBlock
 } from '../src/commands/pr-report'
+import { resolveTokenReportCapabilityWith } from '../src/lib/pr-report-engine'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -871,6 +872,94 @@ describe('AEG:TOKENS carries distinct rows per role (task 7, #274)', () => {
 
     const totals = sumLedger(parseTokenReportEntries(final))
     expect(totals).toMatchObject({ tokensIn: 6050 + 1210 + 2720, tokensOut: 200 + 80 + 150, rows: 3 })
+  })
+})
+
+/**
+ * `resolveTokenReportCapabilityWith` (O1, #608, round-2 review MAJOR finding
+ * F1) — `recoverUsageFromDispatchTee` and `resolveMeteringCapability` each
+ * had unit coverage in isolation, but nothing proved the MERGE: a
+ * `no-transcript-resolved` verdict plus a real recovered summary actually
+ * becoming a `capable: true` result carrying that summary and the tee's own
+ * path. Every case below is a fake `TokenReportCapabilityDeps` — no real
+ * transcript, launch record, or tee file touched.
+ */
+describe('resolveTokenReportCapabilityWith (O1, #608)', () => {
+  const RECOVERY = {
+    summary: {
+      components: { inputTokens: 100, outputTokens: 10, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+      model: 'claude-sonnet-5',
+      messageCount: 1
+    },
+    teePath: '/fake/dispatch-output/effect-abc.log'
+  }
+
+  it('no-transcript-resolved + a real recovery: merges into capable:true carrying the recovered summary and teePath', () => {
+    const result = resolveTokenReportCapabilityWith({
+      resolveMetering: () => ({ capable: false, reason: 'no-transcript-resolved', detail: 'no pointer' }),
+      recoverFromTee: () => RECOVERY
+    })
+    expect(result).toEqual({ capable: true, transcriptPath: RECOVERY.teePath, summary: RECOVERY.summary })
+  })
+
+  it('no-transcript-resolved + no recovery: the original incapable verdict passes through unchanged', () => {
+    const incapable = { capable: false, reason: 'no-transcript-resolved', detail: 'no pointer' } as const
+    const result = resolveTokenReportCapabilityWith({
+      resolveMetering: () => incapable,
+      recoverFromTee: () => null
+    })
+    expect(result).toEqual(incapable)
+  })
+
+  it('already capable: recovery is never even consulted', () => {
+    let recoverCalled = false
+    const capable = {
+      capable: true,
+      transcriptPath: '/real/transcript.jsonl',
+      summary: {
+        components: { inputTokens: 1, outputTokens: 1, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+        model: 'x',
+        messageCount: 1
+      }
+    } as const
+    const result = resolveTokenReportCapabilityWith({
+      resolveMetering: () => capable,
+      recoverFromTee: () => {
+        recoverCalled = true
+        return RECOVERY
+      }
+    })
+    expect(result).toEqual(capable)
+    expect(recoverCalled).toBe(false)
+  })
+
+  it('incapable for a wiring-defect reason (not no-transcript-resolved): recovery is never consulted, the real diagnosis stands', () => {
+    let recoverCalled = false
+    const wiringBroken = { capable: false, reason: 'pointer-unusable', detail: 'stale pointer' } as const
+    const result = resolveTokenReportCapabilityWith({
+      resolveMetering: () => wiringBroken,
+      recoverFromTee: () => {
+        recoverCalled = true
+        return RECOVERY
+      }
+    })
+    expect(result).toEqual(wiringBroken)
+    expect(recoverCalled).toBe(false)
+  })
+
+  it('passes the caller-supplied transcriptPath straight through to resolveMetering', () => {
+    let seenPath: string | undefined
+    resolveTokenReportCapabilityWith(
+      {
+        resolveMetering: (transcriptPath) => {
+          seenPath = transcriptPath
+          return { capable: false, reason: 'transcript-unreadable', detail: 'x' }
+        },
+        recoverFromTee: () => null
+      },
+      '/explicit/transcript.jsonl'
+    )
+    expect(seenPath).toBe('/explicit/transcript.jsonl')
   })
 })
 
