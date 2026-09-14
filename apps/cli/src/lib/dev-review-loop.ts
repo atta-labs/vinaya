@@ -984,13 +984,32 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // forces the next `--resume` to require a ruling rather than granting a
     // fresh bare-command allowance off a corruption-erased count.
     const recoveredLoopState = recoverLoopState(task)
-    /** O2: never reset by a restart — seeded from the control store, never hardcoded to `0` the way a fresh in-memory run otherwise would be. */
-    let infrastructureRetries =
+    /**
+     * O2: never reset by a restart — seeded from the control store, never
+     * hardcoded to `0` the way a fresh in-memory run otherwise would be.
+     * Floored against `resumeFrom.infrastructureRetries` (round 3 review,
+     * MAJOR): on `--resume`, `resumeFrom` is the SAME `pause-state.json`
+     * record the gate check above (`infrastructureRetriesSoFar`) already
+     * floors its own comparison against — a different write path than
+     * `persistLoopState`'s control-store one, so a control-store write that
+     * has been silently failing for this task's whole life still leaves this
+     * count recoverable there. Without this floor, a resume this process
+     * legitimately reaches (bare, or ruling-backed) would reseed its OWN
+     * live counter at the control store's understated reading, then persist
+     * THAT lower number back into `pause-state.json` on its next pause —
+     * overwriting the one independent record the gate depends on with a
+     * value lower than the truth, reopening the exact unbounded-resume hole
+     * the ruling ordered closed. `resumeFrom` is `null` on a fresh
+     * (non-resume) start, where `?? 0` makes this `Math.max` a no-op.
+     */
+    let infrastructureRetries = Math.max(
       recoveredLoopState.status === 'ok'
         ? recoveredLoopState.value.budgets.infrastructureRetries
         : recoveredLoopState.status === 'corrupt'
           ? MAX_INFRASTRUCTURE_RETRIES
-          : 0
+          : 0,
+      resumeFrom?.infrastructureRetries ?? 0
+    )
     /** O1/O3: the round whose verdict is currently held on disk, awaiting delivery or publish — recovered so a crash between holding a verdict and delivering/publishing it is never silently forgotten. */
     let heldResultIdentity: RoundHeadIdentity | null =
       recoveredLoopState.status === 'ok' ? recoveredLoopState.value.heldResult : null

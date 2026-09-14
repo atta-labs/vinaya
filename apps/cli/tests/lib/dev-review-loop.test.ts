@@ -3312,6 +3312,41 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, round 2 review, BLOCK
   }, 20000)
 })
 
+describe('devReviewLoop — control-store-v1 task 4 (round 3 review, BLOCKER): a real filesystem read fault on loop-state.json decides a pause too, never an uncaught crash', () => {
+  it('exits non-zero with a decided infrastructure pause, dispatching no developer at all', () => {
+    const { home, cwd, path } = setUpStopBeforePush()
+
+    // The loop-state record's own path is itself a directory, not a file —
+    // `readFileSync` throws `EISDIR`, a real fs fault distinct from the
+    // torn-JSON case above (something readable but unparseable) and from
+    // `ENOENT` (never written). Before the fix, `readIfExists`
+    // (`packages/aeg-core/src/control-store/local.ts`) rethrew this raw, and
+    // nothing between it and `recoverLoopState` caught it — the exact
+    // "escapes uncaught instead of a decided pause" failure class the
+    // BLOCKER test above already covers for malformed JSON, reopened here
+    // through a different trigger (permission denied, an unreadable special
+    // file, an EIO would all take the same path in production).
+    const loopStatePath = controlStoreLoopStatePath(home)
+    mkdirSync(loopStatePath, { recursive: true })
+
+    const r = runLoop(home, cwd, path)
+
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+    expect(r.stdout).not.toMatch(/unhandled|Unhandled/)
+    expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
+    expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(false)
+
+    const posted = postedCommentFiles(home)
+    const pauseFiles = posted.filter((f) =>
+      readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8').includes('aeg:loop:paused:infrastructure')
+    )
+    expect(pauseFiles).toHaveLength(1)
+    const body = readFileSync(join(home, '.fake-gh-posted-comments', pauseFiles[0] as string), 'utf8')
+    expect(body).toMatch(/control-store loop-state record is corrupt/)
+  }, 20000)
+})
+
 describe('devReviewLoop — control-store-v1 task 4 (round 2 review, security HIGH): refusing a corrupt loop-state record never self-heals its infrastructure-retry count to zero', () => {
   it('persists MAX_INFRASTRUCTURE_RETRIES, not 0, to both the control store and the pause-state file', () => {
     const { home, cwd, path } = setUpStopBeforePush()
@@ -3393,6 +3428,59 @@ describe('devReviewLoop — control-store-v1 task 4 (round 2 review, security HI
     expect(resumed.status).not.toBe(0)
     expect(resumed.stdout).not.toMatch(/paused \(infrastructure\)/)
     expect(resumed.stderr).toMatch(/fetchRulings/)
+  }, 30000)
+})
+
+describe('devReviewLoop — control-store-v1 task 4 (round 3 review, MAJOR): a resumed process floors its own in-memory infrastructure-retry count against pause-state.json too', () => {
+  it('never regresses the persisted count after a further pause, even with the control-store record absent going in', () => {
+    const { home, cwd, path } = setUpNeverPushesResumable()
+    const paused = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
+      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
+    })
+    expect(paused.status).not.toBe(0)
+    expect(paused.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // Simulates a `persistLoopState` write that has been silently failing
+    // since well before this resume: the control-store record is gone
+    // entirely, while `pause-state.json` — a different, simpler write path —
+    // already carries a real prior count of `3`, still comfortably under
+    // `MAX_INFRASTRUCTURE_RETRIES` (`5`), so the resume GATE check
+    // (`infrastructureRetriesSoFar`, already floored against this same file
+    // since the security-HIGH fix) grants the bare-command resume cleanly —
+    // this test is entirely about what happens to the IN-PROCESS seed once
+    // that resumed process actually starts running, not about the gate.
+    const pauseStatePath = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json')
+    const pauseState = JSON.parse(readFileSync(pauseStatePath, 'utf8')) as Record<string, unknown>
+    pauseState.infrastructureRetries = 3
+    writeFileSync(pauseStatePath, JSON.stringify(pauseState), 'utf8')
+    rmSync(controlStoreLoopStatePath(home), { force: true })
+
+    // The SAME always-red CI stalls this resumed process again — one more
+    // genuine infrastructure pause, which persists whatever the in-process
+    // `infrastructureRetries` variable was seeded at, plus one.
+    const resumed = runDevReviewLoopArgs(home, cwd, path, ['--resume', '123', '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
+      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
+    })
+    expect(resumed.status).not.toBe(0)
+    expect(resumed.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // Before the fix, the in-process seed read the (now-absent)
+    // control-store alone: `0`, incremented once by this pause, persisted as
+    // `1` — silently regressing the true count from `3` down to `1`, even
+    // though `pause-state.json` itself already said `3` going in. With the
+    // fix, the seed floors against `resumeFrom.infrastructureRetries` (`3`),
+    // so this pause can only ever advance it to `4` or more, never back down.
+    const persisted = JSON.parse(readFileSync(controlStoreLoopStatePath(home), 'utf8')) as {
+      budgets: { infrastructureRetries: number }
+    }
+    expect(persisted.budgets.infrastructureRetries).toBeGreaterThanOrEqual(4)
+
+    const newPauseState = JSON.parse(readFileSync(pauseStatePath, 'utf8')) as { infrastructureRetries: number }
+    expect(newPauseState.infrastructureRetries).toBeGreaterThanOrEqual(4)
   }, 30000)
 })
 
