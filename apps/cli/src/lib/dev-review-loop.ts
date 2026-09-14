@@ -2256,10 +2256,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // then omits `cwd` entirely, the same as every round before this
           // task.
           const candidateSourceDir = worktreePathForBranch()
-          const candidateDir =
+          let candidateDir =
             d.readWorktreeHead(candidateSourceDir) === head
               ? buildReviewerCandidate(root, task, round, candidateSourceDir)
               : null
+          // The check above and the copy inside `buildReviewerCandidate` are
+          // not one atomic step (round 2 review, MINOR): the local worktree
+          // can advance between them. Re-read the head once the copy has
+          // finished and discard a candidate the copy raced against, rather
+          // than hand both reviewers bytes the manifest's own `headSha`
+          // never actually pinned.
+          if (candidateDir && d.readWorktreeHead(candidateSourceDir) !== head) {
+            cleanupReviewerIsolationForRound(root, task, round)
+            candidateDir = null
+          }
           try {
             // O1/O2: the evidence report runs IN PARALLEL with both reviewer
             // dispatches, never before or after them — reviewers dispatch on

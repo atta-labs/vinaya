@@ -10,6 +10,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
@@ -168,6 +169,63 @@ describe('buildReviewerCandidate — O1, one shared read-only checkout per round
     expect(statSync(externalTarget).mode & 0o777).toBe(0o644)
     expect(lstatSync(join(src, 'sneaky-link.txt')).isSymbolicLink()).toBe(true)
   })
+
+  it('never copies a filename recognized as secret-bearing, even when nothing gitignores it (round 2 review, HIGH)', () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    writeFileSync(join(src, '.env'), 'API_KEY=secret\n')
+    writeFileSync(join(src, '.env.local'), 'API_KEY=secret2\n')
+    mkdirSync(join(src, 'nested'), { recursive: true })
+    writeFileSync(join(src, 'nested', 'id_rsa'), 'private key material\n')
+
+    const dest = buildReviewerCandidate(root, 9001, 1, src) as string
+
+    expect(existsSync(join(dest, '.env'))).toBe(false)
+    expect(existsSync(join(dest, '.env.local'))).toBe(false)
+    expect(existsSync(join(dest, 'nested', 'id_rsa'))).toBe(false)
+    expect(readFileSync(join(dest, 'README.md'), 'utf8')).toBe('# hello\n')
+  })
+
+  it("honors the developer worktree's own .gitignore — an untracked ignored file or directory is never copied (round 2 review, HIGH)", () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = tempDir('vinaya-riso-src-git-')
+    execFileSync('git', ['init', '-q'], { cwd: src })
+    writeFileSync(join(src, '.gitignore'), 'ignored-secret.txt\nbuild/\n')
+    writeFileSync(join(src, 'tracked.txt'), 'kept\n')
+    writeFileSync(join(src, 'ignored-secret.txt'), 'untracked and gitignored\n')
+    mkdirSync(join(src, 'build'), { recursive: true })
+    writeFileSync(join(src, 'build', 'output.js'), 'built artifact\n')
+
+    const dest = buildReviewerCandidate(root, 9002, 1, src) as string
+
+    expect(readFileSync(join(dest, 'tracked.txt'), 'utf8')).toBe('kept\n')
+    expect(existsSync(join(dest, 'ignored-secret.txt'))).toBe(false)
+    expect(existsSync(join(dest, 'build'))).toBe(false)
+  })
+
+  it('locks to read-only without widening a narrower-than-default source mode to world-readable (round 2 review, HIGH)', () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    const ownerOnly = join(src, 'owner-only.txt')
+    writeFileSync(ownerOnly, 'owner-only content\n')
+    chmodSync(ownerOnly, 0o600)
+
+    const dest = buildReviewerCandidate(root, 9001, 1, src) as string
+
+    // The developer's own `0o600` never survives as `0o444`: locking only
+    // ever strips write bits, so a file with no group/other read access to
+    // begin with keeps having none.
+    expect(statSync(join(dest, 'owner-only.txt')).mode & 0o777).toBe(0o400)
+  })
+
+  it('creates the candidate directory itself owner-only, so its predictable path buys nothing without also being the owning user (round 2 review, MEDIUM)', () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+
+    const dest = buildReviewerCandidate(root, 9001, 1, src) as string
+
+    expect(statSync(dest).mode & 0o077).toBe(0)
+  })
 })
 
 describe('buildReviewerScratch — O2, a fresh writable copy per reviewer, derived from the SAME candidate', () => {
@@ -224,6 +282,32 @@ describe('buildReviewerScratch — O2, a fresh writable copy per reviewer, deriv
     const root = tempDir('vinaya-riso-root-')
     const missingCandidate = join(root, 'dev-review-loop', '9001', 'round-1-candidate')
     expect(buildReviewerScratch(root, 9001, 1, 'reviewer', 1, missingCandidate)).toBeNull()
+  })
+
+  it('unlocks only the owner write bit, never widening a narrower-than-default source mode to group/other (round 2 review, HIGH)', () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    const ownerOnly = join(src, 'owner-only.txt')
+    writeFileSync(ownerOnly, 'owner-only content\n')
+    chmodSync(ownerOnly, 0o600)
+    const candidate = buildReviewerCandidate(root, 9001, 1, src) as string
+
+    const scratch = buildReviewerScratch(root, 9001, 1, 'reviewer', 1, candidate) as string
+
+    // The candidate's own locked `0o400` becomes writable again for the
+    // owner only — never `0o644`, which would grant group/other read access
+    // the original file never had.
+    expect(statSync(join(scratch, 'owner-only.txt')).mode & 0o777).toBe(0o600)
+  })
+
+  it("creates the scratch directory itself owner-only, same as the candidate it's derived from (round 2 review, MEDIUM)", () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    const candidate = buildReviewerCandidate(root, 9001, 1, src) as string
+
+    const scratch = buildReviewerScratch(root, 9001, 1, 'reviewer', 1, candidate) as string
+
+    expect(statSync(scratch).mode & 0o077).toBe(0)
   })
 })
 

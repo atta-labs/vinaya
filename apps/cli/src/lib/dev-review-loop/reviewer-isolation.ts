@@ -28,11 +28,21 @@
  * candidate (`buildReviewerScratch`) — never the candidate itself, and never
  * each other's copy — so a reviewer that writes or runs its own toolchain
  * inside its own `cwd` can never mutate the shared snapshot or the sibling
- * role's context. Neither copy ever includes a symlink from the source tree
- * (see `copyTree`'s own doc comment) — the developer's worktree is untrusted
- * input, and a symlink surviving into a candidate/scratch tree would let a
- * reviewer read, or a stray `chmod` reach, a path outside that tree
- * entirely. Every function here is best-effort by design, matching
+ * role's context. Neither copy ever includes a symlink, a `.gitignore`d
+ * path, or a filename `copyTree`'s own `SECRET_FILENAME_RE` recognizes
+ * (see `copyTree`'s own doc comment) — the developer's worktree, and
+ * everything untracked inside it, is untrusted input. A symlink surviving
+ * into a candidate/scratch tree would let a reviewer read, or a stray
+ * `chmod` reach, a path outside that tree entirely; an untracked secret
+ * copied in verbatim would hand it to both reviewer processes just as
+ * readily as a tracked source file. `chmodTree` locks or unlocks each
+ * entry's own preserved-from-source mode (`LOCK_READ_ONLY`/
+ * `UNLOCK_OWNER_WRITE`) rather than overwriting it with a fixed value, so a
+ * file the developer had `0o600` never comes out world-readable on the way
+ * through — and the candidate/scratch directory itself is created `0o700`,
+ * so its own predictable, forge-derived path buys another host user
+ * nothing without also being the owning user. Every function here is
+ * best-effort by design, matching
  * this file's sibling `persistManifestRecord`/`runEvidenceReport`: a
  * snapshot or scratch copy that could not be built degrades to `null` —
  * the caller then dispatches with no `cwd` override, exactly as before this
@@ -44,8 +54,9 @@
  * alter what the other reads.
  */
 
-import { basename, join } from 'node:path'
+import { basename, join, relative } from 'node:path'
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 
 export type ReviewerRole = 'reviewer' | 'security'
 
@@ -68,6 +79,17 @@ export function reviewerScratchDir(root: string, task: number, round: number, ro
 /** Never copied into a candidate or scratch tree: version-control internals and installed dependencies a reviewer never needs to read, and — for `.worktrees` specifically — every OTHER task's own worktree, were a stray one ever nested under the source directory. */
 const ISOLATION_COPY_EXCLUDES: ReadonlySet<string> = new Set(['.git', 'node_modules', '.worktrees'])
 
+/**
+ * Never copied into a candidate tree regardless of `.gitignore` (round 2
+ * review, HIGH: a developer worktree's OWN `.gitignore` is untrusted input
+ * too — a repo that never lists `.env`, or lists it inconsistently, would
+ * otherwise still get it copied). Matched against the basename only, so
+ * `.env`, `.env.local`, a private key, an `.npmrc`/`.netrc` carrying a
+ * registry token, or an SSH key is refused at any depth in the tree.
+ */
+const SECRET_FILENAME_RE =
+  /^\.env(\..+)?$|^\.npmrc$|^\.netrc$|^id_(rsa|ed25519|ecdsa|dsa)(\.pub)?$|\.(pem|key|p12|pfx)$/i
+
 /** `lstatSync` (never `statSync`) so a symlink is identified as itself, not as whatever it points to. Best-effort: an entry that vanishes between `readdirSync` and this call is treated as "not a symlink" — `cpSync`'s own read of the same path fails it out a moment later regardless. */
 function isSymlink(path: string): boolean {
   try {
@@ -76,6 +98,43 @@ function isSymlink(path: string): boolean {
     return false
   }
 }
+
+/**
+ * Every path `git`, run from `root`, considers ignored — untracked files a
+ * developer's own `.gitignore` (or global excludes) keeps out of the repo,
+ * which is exactly where a stray secret file most often lives (round 2
+ * review, HIGH: `copyTree` previously honored neither `.gitignore` nor any
+ * secret-bearing filename, so an untracked `.env` sitting in the developer
+ * worktree was copied into the shared candidate verbatim). `--directory`
+ * collapses an entirely-ignored directory into one entry ending in `/` so a
+ * large ignored tree (a build output directory, say) is matched by prefix
+ * rather than walked file by file. Best-effort: a `sourceDir` that isn't a
+ * git worktree at all (already unreachable in practice — every caller here
+ * passes a `.worktrees/<branch>` checkout) yields an empty set rather than
+ * throwing.
+ */
+function listGitIgnoredPaths(root: string): ReadonlySet<string> {
+  try {
+    const out = execFileSync(
+      'git',
+      ['-C', root, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    )
+    return new Set(out.split('\0').filter(Boolean))
+  } catch {
+    return new Set()
+  }
+}
+
+function isGitIgnored(relPath: string, ignored: ReadonlySet<string>): boolean {
+  if (ignored.has(relPath)) return true
+  for (const entry of ignored) {
+    if (entry.endsWith('/') && (relPath === entry.slice(0, -1) || relPath.startsWith(entry))) return true
+  }
+  return false
+}
+
+const NO_IGNORED_PATHS: ReadonlySet<string> = new Set()
 
 /**
  * Never copies a symlink into a candidate or scratch tree (round 2 review,
@@ -90,17 +149,50 @@ function isSymlink(path: string): boolean {
  * chmod-something-external vectors in one place, structurally, rather than
  * naming this one incident and leaving the next symlink shape to be found
  * the same way.
+ *
+ * `dest` is created `0o700` before anything is copied into it — owner-only,
+ * so the candidate/scratch directory's own predictable path (round 2
+ * review, MEDIUM) buys another host user nothing: entering it at all, not
+ * just reading a file inside it, requires being the owning user. `ignored`
+ * (only ever non-empty for the developer-worktree source, never for a
+ * candidate-to-scratch copy, whose source has already been filtered once)
+ * additionally drops every `.gitignore`d path and every filename
+ * `SECRET_FILENAME_RE` matches.
  */
-function copyTree(src: string, dest: string): void {
+function copyTree(src: string, dest: string, ignored: ReadonlySet<string> = NO_IGNORED_PATHS): void {
   mkdirSync(dest, { recursive: true })
+  chmodSync(dest, 0o700)
   cpSync(src, dest, {
     recursive: true,
-    filter: (source) => !ISOLATION_COPY_EXCLUDES.has(basename(source)) && !isSymlink(source)
+    filter: (source) => {
+      const rel = relative(src, source)
+      if (rel === '') return true
+      const base = basename(source)
+      if (ISOLATION_COPY_EXCLUDES.has(base)) return false
+      if (isSymlink(source)) return false
+      if (SECRET_FILENAME_RE.test(base)) return false
+      if (isGitIgnored(rel, ignored)) return false
+      return true
+    }
   })
 }
 
-/** Recursive `chmod`, best-effort per entry — a single unreadable/removed entry never aborts the whole walk (mirrors this module's blanket best-effort posture). */
-function chmodTree(dir: string, fileMode: number, dirMode: number): void {
+/**
+ * Recursive `chmod`, best-effort per entry — a single unreadable/removed
+ * entry never aborts the whole walk (mirrors this module's blanket
+ * best-effort posture). `mode` derives the new mode from each entry's OWN
+ * current mode rather than overwriting it with a fixed value (round 2
+ * review, HIGH: `chmodTree(dest, 0o444, 0o555)`/`chmodTree(dest, 0o644,
+ * 0o755)` forced every file to that exact mode regardless of its original
+ * one, so a file the developer had `0o600` — owner-only, the shape a
+ * locally-generated secret that slipped past `copyTree`'s own excludes
+ * would carry — came out `0o444`, world-readable, on the way through; using
+ * `cpSync`'s own preserved-from-source mode as the input to a transform
+ * (strip write bits to lock, add the owner's own write bit to unlock) can
+ * only ever narrow or restore what the source already granted, never widen
+ * it past that.
+ */
+function chmodTree(dir: string, mode: (current: number) => number): void {
   let entries: import('node:fs').Dirent[]
   try {
     entries = readdirSync(dir, { withFileTypes: true })
@@ -108,7 +200,7 @@ function chmodTree(dir: string, fileMode: number, dirMode: number): void {
     return
   }
   try {
-    chmodSync(dir, dirMode)
+    chmodSync(dir, mode(lstatSync(dir).mode) & 0o777)
   } catch {
     // best-effort
   }
@@ -123,10 +215,10 @@ function chmodTree(dir: string, fileMode: number, dirMode: number): void {
       continue
     }
     if (entry.isDirectory()) {
-      chmodTree(full, fileMode, dirMode)
+      chmodTree(full, mode)
     } else {
       try {
-        chmodSync(full, fileMode)
+        chmodSync(full, mode(lstatSync(full).mode) & 0o777)
       } catch {
         // best-effort
       }
@@ -134,12 +226,17 @@ function chmodTree(dir: string, fileMode: number, dirMode: number): void {
   }
 }
 
+/** Strips every write bit (owner, group, other), preserving whatever read/execute bits the source already had. */
+const LOCK_READ_ONLY = (current: number): number => current & ~0o222
+/** Restores the owner's own write bit only — never grants group/other anything they did not already have from the source. */
+const UNLOCK_OWNER_WRITE = (current: number): number => current | 0o200
+
 function removeIfPresent(dir: string): void {
   try {
     // A prior read-only candidate/scratch tree must be unlocked before
-    // `rmSync` can remove its entries — a directory chmod'd `0o555` refuses
-    // even its own owner permission to unlink a child.
-    chmodTree(dir, 0o644, 0o755)
+    // `rmSync` can remove its entries — a directory with no owner write bit
+    // refuses even its own owner permission to unlink a child.
+    chmodTree(dir, UNLOCK_OWNER_WRITE)
     rmSync(dir, { recursive: true, force: true })
   } catch {
     // best-effort — never fails a round over cleanup.
@@ -174,8 +271,8 @@ export function buildReviewerCandidate(root: string, task: number, round: number
   const dest = reviewerCandidateDir(root, task, round)
   try {
     removeIfPresent(dest)
-    copyTree(sourceDir, dest)
-    chmodTree(dest, 0o444, 0o555)
+    copyTree(sourceDir, dest, listGitIgnoredPaths(sourceDir))
+    chmodTree(dest, LOCK_READ_ONLY)
     return dest
   } catch {
     removeIfPresent(dest)
@@ -207,7 +304,10 @@ export function buildReviewerScratch(
     // this copies from is chmod'd read-only (`buildReviewerCandidate`), so
     // without this the scratch copy would inherit that same read-only mode
     // and defeat the entire point of a WRITABLE per-reviewer scratch space.
-    chmodTree(dest, 0o644, 0o755)
+    // `UNLOCK_OWNER_WRITE` only ever adds the owner's own write bit back —
+    // it never grants group/other anything the original file in the
+    // developer's worktree didn't already have (round 2 review, HIGH).
+    chmodTree(dest, UNLOCK_OWNER_WRITE)
     return dest
   } catch {
     removeIfPresent(dest)
