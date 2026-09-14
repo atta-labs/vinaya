@@ -34,7 +34,7 @@ import {
   type TaskToolName,
   taskToolError
 } from '@attalabs/aeg-core'
-import type { Readable, Writable } from 'node:stream'
+import { type Readable, Writable } from 'node:stream'
 import type { TaskToolCallResult } from './handlers.js'
 import { taskCancelHandler, taskEscalationReadHandler, taskResumeHandler, taskStatusHandler } from './handlers.js'
 import { defaultTaskStartHandler } from './start.js'
@@ -336,4 +336,37 @@ export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions):
   }
 
   return { handleLine, serve }
+}
+
+/**
+ * Runs the production server on this process's stdio (the `vinaya task tools
+ * serve` entry point). The one non-obvious property it guarantees: **stdout
+ * carries JSON-RPC and nothing else.** Handler code reaches deep into the CLI
+ * (`task_status` reads the forge, which can print a trust-anchor warning), and
+ * a single stray `process.stdout.write`/`console.log` from anywhere in that
+ * call tree would corrupt the protocol stream and wedge the client. So the real
+ * stdout is captured for the server's own writes, and the global
+ * `process.stdout.write` is redirected to stderr for the process's lifetime —
+ * every stray write becomes harmless diagnostic output on stderr, never a
+ * malformed protocol frame. `serverVersion` is passed in (never imported from
+ * `artifacts.ts` here) to keep this module free of the `artifacts → adapters →
+ * server` import cycle.
+ */
+export async function serveTaskToolsStdio(serverVersion: string): Promise<void> {
+  const realStdoutWrite = process.stdout.write.bind(process.stdout)
+  const protocolOut = new Writable({
+    write(chunk, _encoding, callback) {
+      realStdoutWrite(chunk as string | Uint8Array)
+      callback()
+    }
+  })
+  // Any other stdout write (a library warning, a stray console.log) goes to
+  // stderr from here on, so it can never land in the JSON-RPC stream.
+  process.stdout.write = process.stderr.write.bind(process.stderr) as typeof process.stdout.write
+
+  const server = createTaskToolsMcpServer({
+    serverVersion,
+    callerContext: resolveCallerFromEnv(process.env)
+  })
+  await server.serve(process.stdin, protocolOut)
 }

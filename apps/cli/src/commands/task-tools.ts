@@ -14,12 +14,8 @@
  */
 
 import { ownVersion } from '../lib/artifacts.js'
-import { createTaskToolsMcpServer, resolveCallerFromEnv } from '../lib/task-tools/server.js'
+import { serveTaskToolsStdio } from '../lib/task-tools/server.js'
 
 export async function taskToolsServeCommand(_args: string[]): Promise<void> {
-  const server = createTaskToolsMcpServer({
-    serverVersion: ownVersion(),
-    callerContext: resolveCallerFromEnv(process.env)
-  })
-  await server.serve(process.stdin, process.stdout)
+  await serveTaskToolsStdio(ownVersion())
 }

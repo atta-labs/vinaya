@@ -823,6 +823,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `TASK_TOOL_INPUT_JSON_SCHEMAS` | const | `apps/cli/src/lib/task-tools/server.ts` |
 | `toolListEntry` | function | `apps/cli/src/lib/task-tools/server.ts` |
 | `createTaskToolsMcpServer` | function | `apps/cli/src/lib/task-tools/server.ts` |
+| `serveTaskToolsStdio` | function | `apps/cli/src/lib/task-tools/server.ts` |
 | `TASK_TOOLS_SERVE_ARGS` | const | `apps/cli/src/lib/task-tools/adapters.ts` |
 | `taskToolsServerInvocation` | function | `apps/cli/src/lib/task-tools/adapters.ts` |
 | `CLAUDE_MCP_ADAPTER` | const | `apps/cli/src/lib/task-tools/adapters.ts` |
@@ -847,7 +848,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(283 exports — 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. Task 2 adds 24 more, net: the shared MCP server (`server.ts`, 9), the two runtime adapters (`adapters.ts`, 8), and the `task_start` handler (`start.ts`, 6), plus `ownVersion`/`MCP_JSON_PATH` on `artifacts.ts`; `taskStartHandler` moved off `handlers.ts` into `start.ts` as `defaultTaskStartHandler`. Task 2's read/handler files still front no `vinaya` subcommand each — but `vinaya task tools serve` (`commands/task-tools.ts`) now fronts the server, the one Commands-table row this surface gained. Type-only exports (`Observed`/`Page`, `TaskToolCallResult`, `CallerContext`/`ToolHandler`/`StartRecord` and the adapter/deps types) get no row, per this file's own rule.)
+(284 exports — 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. Task 2 adds 25 more, net: the shared MCP server (`server.ts`, 10), the two runtime adapters (`adapters.ts`, 8), and the `task_start` handler (`start.ts`, 6), plus `ownVersion`/`MCP_JSON_PATH` on `artifacts.ts`; `taskStartHandler` moved off `handlers.ts` into `start.ts` as `defaultTaskStartHandler`. Task 2's read/handler files still front no `vinaya` subcommand each — but `vinaya task tools serve` (`commands/task-tools.ts`) now fronts the server, the one Commands-table row this surface gained. Type-only exports (`Observed`/`Page`, `TaskToolCallResult`, `CallerContext`/`ToolHandler`/`StartRecord` and the adapter/deps types) get no row, per this file's own rule.)
 
 ## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
