@@ -47,6 +47,12 @@ describe('check-review-gate — objectives-version binding (O3)', () => {
     g(['commit', '-qm', 'initial'])
     const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: d, encoding: 'utf8' }).trim()
     g(['remote', 'add', 'origin', d])
+    // `resolveBaseSha` now fails closed on an unresolvable base tip (round 2
+    // review, security MEDIUM) — every PR fixture below names `baseRefName:
+    // 'main'`, so a real `main` ref must exist for `git ls-remote` to
+    // resolve it, or every `exitCode` assertion in this file would see 1
+    // for the wrong reason.
+    g(['branch', 'main'])
     return { dir: d, sha }
   }
 
@@ -123,11 +129,11 @@ process.exit(1)
       number: 1,
       comments: [
         {
-          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nObjectives version: ${ISSUE_VERSION}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nObjectives version: ${ISSUE_VERSION}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         },
         {
-          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nObjectives version: ${ISSUE_VERSION}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nObjectives version: ${ISSUE_VERSION}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         }
       ],
@@ -157,11 +163,11 @@ process.exit(1)
       number: 1,
       comments: [
         {
-          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nObjectives version: ${staleVersion}`,
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nObjectives version: ${staleVersion}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         },
         {
-          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nObjectives version: ${staleVersion}`,
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nObjectives version: ${staleVersion}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         }
       ],
@@ -197,11 +203,11 @@ process.exit(1)
       number: 1,
       comments: [
         {
-          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nObjectives version: ${bodyVersion}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nObjectives version: ${bodyVersion}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         },
         {
-          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nObjectives version: ${bodyVersion}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nObjectives version: ${bodyVersion}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         }
       ],
@@ -229,11 +235,11 @@ process.exit(1)
       number: 1,
       comments: [
         {
-          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         },
         {
-          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         }
       ],
@@ -261,11 +267,11 @@ process.exit(1)
       number: 1,
       comments: [
         {
-          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         },
         {
-          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         }
       ],
@@ -296,11 +302,11 @@ process.exit(1)
       number: 1,
       comments: [
         {
-          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         },
         {
-          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         }
       ],
@@ -335,11 +341,11 @@ process.exit(1)
       number: 1,
       comments: [
         {
-          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         },
         {
-          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         }
       ],
@@ -370,11 +376,11 @@ process.exit(1)
       number: 1,
       comments: [
         {
-          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: APPROVE\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         },
         {
-          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`,
+          body: `VERDICT: PASS\n\nJudged head: ${sha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}`,
           author: { login: 'daniboomerang' }
         }
       ],

@@ -14,14 +14,19 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
+  compareManifest,
   defaultControlStoreDeps,
+  type EchoedManifest,
   evaluateCodeReview,
   evaluateSecurityReview,
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
   type Journal,
+  type ManifestBindingResult,
   renderSummary,
-  type ReviewPolicy
+  type ReviewInputManifest,
+  type ReviewPolicy,
+  type VerdictExtraction
 } from '@attalabs/aeg-core'
 import { principalBodies } from '../../commands/review-post.js'
 import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../effects.js'
@@ -146,6 +151,50 @@ export type PublishInput = {
   journal: Journal
   /** Which severities block is repository policy (task 8, `#506`, O2/O3) — the SAME resolved value `buildVerdictFromReport` derived this round's held verdicts under. */
   policy: ReviewPolicy
+  /**
+   * The manifest this round was dispatched against (task 5,
+   * `#555`, O3) — `compareManifest`, the SAME comparison the merge gate and
+   * the driver's own pre-hold self-check call, is applied here too against
+   * each posted verdict's echoed lines, so publication binds on EVERY field
+   * (base, brief, objectives, ruling, policy), not just the head it already
+   * re-checked. A posted verdict that does not fully bind is refused, never
+   * published — the same "nothing published against state it never covered"
+   * invariant, now field-complete rather than head-only.
+   */
+  manifest: ReviewInputManifest
+}
+
+/** The field names `compareManifest` reports as unbound — `[]` when everything binds. */
+export function unboundFields(binding: ManifestBindingResult): string[] {
+  const unbound: string[] = []
+  if (!binding.head) unbound.push('head')
+  if (!binding.base) unbound.push('base')
+  if (!binding.briefHash) unbound.push('brief hash')
+  if (!binding.objectivesVersion) unbound.push('objectives version')
+  if (!binding.rulingOrdinal) unbound.push('ruling ordinal')
+  if (!binding.policyDigest) unbound.push('policy digest')
+  return unbound
+}
+
+/**
+ * The echoed manifest a posted verdict re-parses to, compared against the
+ * round's own manifest with the SAME `compareManifest` the gate uses (`#555`,
+ * O3). Never trusts the echo as provenance — it is read back from the posted
+ * text only to confirm the comment still covers the manifest the round was
+ * dispatched with (`patchIdOf` is deliberately not supplied here: a
+ * just-posted verdict must bind by exact identity, never rely on a rebase
+ * tolerance that only makes sense across a real head move at the gate).
+ */
+export function bindingOfPosted(posted: VerdictExtraction, manifest: ReviewInputManifest): ManifestBindingResult {
+  const echoed: EchoedManifest = {
+    headSha: posted.headSha,
+    baseSha: posted.baseSha,
+    briefHash: posted.briefHash,
+    objectivesVersion: posted.objectivesVersion,
+    rulingOrdinal: posted.rulingOrdinal,
+    policyDigest: posted.policyDigest
+  }
+  return compareManifest(echoed, manifest)
 }
 
 /**
@@ -162,7 +211,7 @@ export type PublishInput = {
  * not posted.
  */
 export function publishRound(root: string, input: PublishInput): void {
-  const { task, round, prNumber, expectedHead, policy } = input
+  const { task, round, prNumber, expectedHead, policy, manifest } = input
   const reviewerBody = readIfExists(heldVerdictPath(root, task, round, 'reviewer'))
   const securityBody = readIfExists(heldVerdictPath(root, task, round, 'security'))
   if (!reviewerBody || !securityBody) {
@@ -176,6 +225,15 @@ export function publishRound(root: string, input: PublishInput): void {
   if (postedReviewer.danglingNote || postedReviewer.headSha !== expectedHead) {
     throw new Error(
       `publishRound: posted reviewer verdict does not re-parse clean through extractCodeReviewVerdict bound to ${expectedHead}: ${postedReviewer.danglingNote ?? `headSha read back as ${String(postedReviewer.headSha)}`}`
+    )
+  }
+  // O3: the SAME `compareManifest` binding the gate applies — the posted
+  // comment must cover every field of the round's manifest (base included),
+  // not merely its head.
+  const reviewerUnbound = unboundFields(bindingOfPosted(postedReviewer, manifest))
+  if (reviewerUnbound.length > 0) {
+    throw new Error(
+      `publishRound: posted reviewer verdict does not bind to the round's manifest on: ${reviewerUnbound.join(', ')} — refusing to publish a verdict that does not cover the state it was dispatched against.`
     )
   }
   // O3: the reviewer's own posted APPROVE never overrides the evaluator —
@@ -195,6 +253,12 @@ export function publishRound(root: string, input: PublishInput): void {
   if (postedSecurity.danglingNote || postedSecurity.headSha !== expectedHead) {
     throw new Error(
       `publishRound: posted security verdict does not re-parse clean through extractSecurityReviewVerdict bound to ${expectedHead}: ${postedSecurity.danglingNote ?? `headSha read back as ${String(postedSecurity.headSha)}`}`
+    )
+  }
+  const securityUnbound = unboundFields(bindingOfPosted(postedSecurity, manifest))
+  if (securityUnbound.length > 0) {
+    throw new Error(
+      `publishRound: posted security verdict does not bind to the round's manifest on: ${securityUnbound.join(', ')} — refusing to publish a verdict that does not cover the state it was dispatched against.`
     )
   }
   const postedSecurityPolicy = evaluateSecurityReview(postedSecurity.findingSeverities, policy)

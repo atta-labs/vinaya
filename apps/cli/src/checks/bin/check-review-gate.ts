@@ -351,6 +351,21 @@ function shaFromGhApi(branch: string): string | null {
  * stderr, never fails the check on its own, when `pr.headRefOid` disagrees
  * with the resolved true head.
  */
+/**
+ * The base commit the PR's candidate is judged against (task 5, `#555`, O1)
+ * — the PR's base branch (`baseRefName`) resolved to its
+ * current tip via the same `git ls-remote`/forge-ref path `resolveTrueHeadSha`
+ * uses for the head. `null` on a genuine resolution failure, which
+ * `checkReviewGate` reads as "skip the base binding" — never a fallback to a
+ * stale or attacker-suppliable value, the same fail-safe direction the head
+ * resolution above takes. The base branch NAME comes from `gh pr view`'s
+ * `baseRefName` (server-side PR metadata), and only its tip sha is resolved
+ * here, so a PR cannot steer this at a base it does not actually target.
+ */
+function resolveBaseSha(pr: PrView): string | null {
+  return shaFromLsRemote(pr.baseRefName) ?? shaFromGhApi(pr.baseRefName)
+}
+
 function resolveTrueHeadSha(pr: PrView): string | null {
   const trueSha = shaFromLsRemote(pr.headRefName) ?? shaFromGhApi(pr.headRefName)
   if (trueSha && pr.headRefOid && trueSha !== pr.headRefOid) {
@@ -506,6 +521,32 @@ function main(): void {
     process.exit(1)
   }
 
+  // The base branch NAME (`pr.baseRefName`) always exists for a real PR —
+  // unlike `resolveBriefHash`/`resolveObjectivesVersion`'s `null`, which can
+  // be a genuine "nothing to bind against" fact (no linked Issue, no frozen
+  // brief posted yet), `resolveBaseSha` returning `null` here is ALWAYS a
+  // resolution failure (both `git ls-remote` and the forge's ref API
+  // failed), never a legitimate base-less case. Passing that failure through
+  // as `baseSha: null` would make `compareManifest`'s own "nothing to bind
+  // against" skip (`isBoundToBase`) silently revert this check to its
+  // pre-task, base-blind behavior on a transient `gh`/`git` hiccup — the
+  // exact bug `#433`'s MAJOR finding already closed for
+  // `resolveObjectivesVersion`, reapplied here (round 2 review, security
+  // MEDIUM). Fails closed the same way `resolveTrueHeadSha`'s own `null`
+  // does, above.
+  const baseSha = resolveBaseSha(pr)
+  if (!baseSha) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `review-gate severity:infra — could not resolve PR #${prNumber}'s base branch \`${pr.baseRefName}\`'s tip via \`git ls-remote\` or the forge's \`git/ref/heads\` API.`,
+      agent_recovery_prompt:
+        'Confirm the base branch still exists on origin and `gh auth status` passes, then re-run `vinaya check review-gate`.'
+    })
+    process.exit(1)
+  }
+
   // `principals` comes from GitHub's API (default-branch, server-side state),
   // never local git / the PR's checkout / any env var. The generated authority
   // workflows likewise execute only their explicit default-branch checkout;
@@ -565,6 +606,12 @@ function main(): void {
     // from `main` or a rebase that leaves the patch untouched must not void
     // a review that already read exactly those changes.
     patchIdOf: (sha: string) => patchIdAt(pr.baseRefName, sha),
+    // The base identity the verdict is bound to (task 5, `#555`, O1) — the
+    // PR's base branch tip, resolved the same fail-safe way as the head. A
+    // base-only change under an unchanged candidate now invalidates; an
+    // equivalent rebase (patchIdOf above proving the diff identical) still
+    // keeps, unchanged.
+    baseSha,
     objectivesVersion: waived ? null : resolveObjectivesVersion(pr),
     // The newest principal ruling ordinal on this PR (task 3, #477, O2) —
     // a pure count over `pr.comments`, already fetched
