@@ -136,6 +136,22 @@ describe('writeLoopState / readLoopState (control-store-v1 task 4, O1)', () => {
     writeFileSync(path, '{"version":1,"kind":"loop_state"')
     expect(readLoopState(deps, 554).status).toBe('corrupt')
   })
+
+  it('a real filesystem read fault, not merely torn JSON, is refused as corrupt too — never left to throw (round 3 review, BLOCKER)', () => {
+    // The record's own path is itself a directory, not a file — `readFileSync`
+    // throws `EISDIR`, a real fs fault distinct from `ENOENT` (never written)
+    // and from torn JSON (something readable but unparseable). Before the
+    // fix, `readIfExists` rethrew this raw and `readLoopState` had no catch
+    // of its own, so it escaped every caller — `recoverLoopState` in
+    // `dev-review-loop.ts` included, before that function's own try block
+    // even starts — reproducing round 1's "escapes uncaught instead of a
+    // decided pause" failure class through a different trigger.
+    const path = join(dir, '554', 'loop-state.json')
+    mkdirSync(path, { recursive: true })
+    const result = readLoopState(deps, 554)
+    expect(result.status).toBe('corrupt')
+    expect(result.status === 'corrupt' && result.reason).toMatch(/filesystem read failed/)
+  })
 })
 
 describe('acquireOwnership', () => {
