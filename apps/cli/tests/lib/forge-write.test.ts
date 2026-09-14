@@ -16,6 +16,8 @@ import {
 
 const CLI_ROOT = join(import.meta.dir, '..', '..')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
+const INDEX = join(CLI_ROOT, 'src', 'index.ts')
+const FAKE_PRINCIPAL_OWED_CHECK = join(CLI_ROOT, 'tests', 'fixtures', 'forge', 'fake-principal-owed-check.cjs')
 
 // ---------------------------------------------------------------------------
 // O1 — the write gate runs every group over one body and refuses once with
@@ -689,5 +691,110 @@ exit 1
     writeFileSync(commentsFile, 'not json', 'utf8')
     const result = reconcileGhComment('issue', '552')(identity)
     expect(result.outcome).toBe('ambiguous')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// task driver-lifecycle-v1/5 — `runBodyChecks` excludes a `principalOwed`
+// check's failure from the body-write refusal decision ONLY when every error
+// it reported is `pending: true`, matching `isRunFailed`'s
+// (`commands/check.ts`) own rule exactly. `refuse()` calls `process.exit(1)`
+// directly (see the comment above the O1 describe block in
+// `tests/forge-write.test.ts`), so the refusal path is exercised as a real
+// subprocess — `vinaya pr edit <n> --validate-only` — never in-process. A
+// fake `gh` answers the one `gh pr view` call `pr edit` makes; a
+// config-registered fixture check (`fake-principal-owed-check.cjs`) stands in
+// for `test-plan`'s real pending/structural distinction, driven by a marker
+// in the body so the three outcomes (pending-only, structural, mixed) are
+// each independently reproducible without a live PR.
+// ---------------------------------------------------------------------------
+
+describe("runBodyChecks — a principalOwed check's pending-only failure never refuses (O1/O2)", () => {
+  let cwd: string
+  let bodyPath: string
+
+  function bodyWithCase(marker: string): string {
+    return ['**Project:** cli', '', '## Fixture case', '', marker, ''].join('\n')
+  }
+
+  function writeVinayaConfig(): void {
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({
+        briefSchema: { pr: { sections: [] } },
+        checks: {
+          'fixture/principal-owed': {
+            run: 'node',
+            args: [FAKE_PRINCIPAL_OWED_CHECK],
+            scope: 'full',
+            validates: 'body',
+            principalOwed: true,
+            env: { PR_BODY: { optional: true } }
+          }
+        }
+      }),
+      'utf8'
+    )
+  }
+
+  function writeFakeGh(): void {
+    const gh = join(cwd, 'gh')
+    writeFileSync(
+      gh,
+      `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  echo '{"headRefName":"fix/fixture","files":[]}'
+  exit 0
+fi
+exit 1
+`
+    )
+    execFileSync('chmod', ['+x', gh])
+  }
+
+  function runPrEdit(): { status: number; stderr: string } {
+    try {
+      execFileSync('bun', [INDEX, 'pr', 'edit', 'one', '--validate-only', '--body-file', bodyPath], {
+        cwd,
+        encoding: 'utf8',
+        env: { ...process.env, PATH: `${cwd}:${process.env.PATH ?? ''}` },
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      return { status: 0, stderr: '' }
+    } catch (e) {
+      const err = e as { status?: number; stderr?: string }
+      return { status: err.status ?? 1, stderr: String(err.stderr ?? '') }
+    }
+  }
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-body-checks-principal-owed-'))
+    writeVinayaConfig()
+    writeFakeGh()
+    bodyPath = join(cwd, 'pr-body.md')
+  })
+
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it('does not refuse when the only failure is a principalOwed check reporting all-pending errors (O1)', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_PENDING_ONLY'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(0)
+  })
+
+  it('still refuses a structural failure on the same principalOwed check — no pending errors at all (O2)', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_STRUCTURAL'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('"check":"fixture/principal-owed"')
+  })
+
+  it('still refuses when the same principalOwed check reports a mix of pending and non-pending errors (O2)', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_MIXED'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('"check":"fixture/principal-owed"')
   })
 })
