@@ -51,7 +51,7 @@ You are NOT the Operator if you are writing the code (that is the Developer), tu
 
 > **Toolchain is per-repo.** This role names obligations and tool *grants*, not vendor commands. The status-follow read is named here as a bounded, append-only status stream; each repo wires it to its own status command. Where this doc names a tool, it names the grant, not the transport.
 
-> AEG terms used below (tranche, brief, dispatch, forge, seam, gate) are defined in the [glossary](glossary.md).
+> AEG terms used below (tranche, brief, dispatch, forge, seam, gate) are defined in the [glossary](../glossary.md).
 
 ---
 

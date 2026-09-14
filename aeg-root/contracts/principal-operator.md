@@ -32,7 +32,7 @@ This seam sits between the seat that decides **what is true and what is allowed*
 
 **Status:** active
 **Seam:** the hand-off between the Principal (producer of process delegation and content rulings) and the Operator (consumer, running the selected task).
-**Single source of truth for this seam.** `roles/principal.md` and `roles/operator.md` do not redefine what crosses here — they point to this file. AEG terms (seam, ratification, escalation, forge) are defined in the [glossary](glossary.md).
+**Single source of truth for this seam.** `roles/principal.md` and `roles/operator.md` do not redefine what crosses here — they point to this file. AEG terms (seam, ratification, escalation, forge) are defined in the [glossary](../glossary.md).
 
 ---
 

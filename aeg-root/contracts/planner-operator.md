@@ -32,7 +32,7 @@ This seam sits between the seat that **decides what a task is** (the Planner, ac
 
 **Status:** active
 **Seam:** the hand-off between the Planner (producer of dispatchable tasks and re-plans) and the Operator (consumer, running them).
-**Single source of truth for this seam.** `roles/planner.md`'s delegation section and `roles/operator.md` point to this file; neither redefines the boundary alone. AEG terms (seam, tranche, brief, dispatch, gate) are defined in the [glossary](glossary.md).
+**Single source of truth for this seam.** `roles/planner.md`'s delegation section and `roles/operator.md` point to this file; neither redefines the boundary alone. AEG terms (seam, tranche, brief, dispatch, gate) are defined in the [glossary](../glossary.md).
 
 ---
 
