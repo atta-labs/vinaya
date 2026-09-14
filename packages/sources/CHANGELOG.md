@@ -1,5 +1,14 @@
 # @atta/vinaya-sources
 
+## 0.28.0
+
+### Patch Changes
+
+- Updated dependencies [21219e7]
+  - @attalabs/aeg-core@0.28.0
+  - @attalabs/aeg-forge-state@0.28.0
+  - @attalabs/aeg-types@0.28.0
+
 ## 0.27.2
 
 ### Patch Changes
