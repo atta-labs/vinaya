@@ -14,6 +14,7 @@ import {
   acquireOwnership,
   appendTransition,
   consumeResolutionOnce,
+  type ControlStoreDeps,
   defaultControlStoreDeps,
   listStartedEffectKeys,
   markEffectUncertain,
@@ -23,6 +24,7 @@ import {
   readResolution,
   type RequestedAuthority,
   type ResolutionRecord,
+  StaleEpochWriteError,
   writeEscalation
 } from '@attalabs/aeg-core'
 import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../effects.js'
@@ -201,6 +203,20 @@ export type PauseState = {
   reason: PauseReason
   detail?: string
   pausedAt: string
+  /**
+   * The escalation record's OWN `escalationId` — not necessarily
+   * `escalationIdFor(task, round, head)` any more (code review, round 2,
+   * MEDIUM): `writeEscalation` claims a disambiguating `-<n>` suffix when a
+   * genuinely different escalation collides on that natural key (a
+   * self-resumed pause that hits a second, different pause condition before
+   * the head moves), and this is the only place that real id is durably
+   * recorded for a later `--resume`/`--cancel` to find. Absent on a
+   * `PauseState` written before this field existed, or when the best-effort
+   * escalation write itself failed — `resolveEscalation`'s callers fall back
+   * to the natural key in either case, which is still correct whenever no
+   * collision ever happened.
+   */
+  escalationId?: string
 }
 
 function pauseStatePath(root: string, task: number): string {
@@ -425,10 +441,27 @@ export function writeEscalationRecord(facts: EscalationFacts): EscalationRecord 
   return record
 }
 
-/** The durable escalation record for `(task, round, head)`, or `null` — never thrown; a caller that needs to distinguish absent from corrupt reads `readEscalation` from `@attalabs/aeg-core` directly. */
-export function readEscalationRecord(task: number, round: number, head: string): EscalationRecord | null {
-  const deps = defaultControlStoreDeps(controlStoreRoot)
-  const parsed = readEscalation(deps, task, escalationIdFor(task, round, head))
+/**
+ * The durable escalation record for `escalationId`, or `null` — never
+ * thrown; a caller that needs to distinguish absent from corrupt reads
+ * `readEscalation` from `@attalabs/aeg-core` directly. Takes the id itself,
+ * never `(round, head)` alone (code review, round 2, MEDIUM) — a colliding
+ * escalation can live at a disambiguating `-<n>` suffix, so a caller reads
+ * `PauseState.escalationId` (falling back to `escalationIdFor(task, round,
+ * head)` only for a `PauseState` written before that field existed).
+ *
+ * `deps` defaults to the real global control store but is overridable
+ * (code review, round 2, MEDIUM) — `task-tools/read.ts`'s own
+ * `readEscalationPacket` takes an explicit, fixture-testable outbox `root`
+ * and must never let ITS OWN reads reach past that root into this
+ * machine's real `~/.vinaya/control-store/` regardless.
+ */
+export function readEscalationRecord(
+  task: number,
+  escalationId: string,
+  deps: ControlStoreDeps = defaultControlStoreDeps(controlStoreRoot)
+): EscalationRecord | null {
+  const parsed = readEscalation(deps, task, escalationId)
   return parsed.status === 'ok' ? parsed.value : null
 }
 
@@ -544,23 +577,68 @@ export function readResolutionRecord(task: number, escalationId: string): Resolu
   return parsed.status === 'ok' ? parsed.value : null
 }
 
+/** Bounds the re-acquire-and-retry loop below — a genuine collision resolves in one or two attempts; this exists so a pathological repeated race fails loudly rather than spinning forever. */
+const MAX_FENCE_REACQUIRE_ATTEMPTS = 5
+
 /**
  * O3's "unresolved effects remain explicitly uncertain": every effect
  * record for `task` still `'started'` — a write that was recorded as
  * attempted but never confirmed — is advanced to `'uncertain'`, fenced by
- * the SAME epoch `resolveEscalation`'s cancel path just consumed under.
- * Because that epoch is now current, any OTHER process still trying to
- * complete one of these writes under its own, now-stale epoch is refused by
- * `StaleEpochWriteError` at the moment it tries — a late result is fenced
- * by the epoch mismatch itself, not by this function racing it. Best-effort
- * per key: a key that no longer reads `'started'` by the time this runs is
- * simply skipped, never an error.
+ * the epoch the caller names (`resolveEscalation`'s cancel path). Because
+ * that epoch is current the moment this starts, any OTHER process still
+ * trying to complete one of these writes under its own, now-stale epoch is
+ * refused by `StaleEpochWriteError` at the moment IT tries — a late result
+ * is fenced by the epoch mismatch itself, not by this function racing it.
+ * Best-effort per key otherwise: a key that no longer reads `'started'` by
+ * the time this runs is simply skipped, never an error.
+ *
+ * **This call's OWN writes can themselves lose that same race (code review,
+ * round 2, HIGH).** `resolveEscalation` always calls `acquireOwnership`
+ * before it knows whether its own resolution will be consumed or refused as
+ * a replay — a concurrent duplicate/replayed `--cancel` racing in can bump
+ * the task's shared epoch AFTER this (the genuinely winning) call already
+ * committed to fencing under the epoch it was handed, even though that
+ * duplicate call is itself refused moments later. Left unguarded, the very
+ * next `markEffectUncertain` here would throw `StaleEpochWriteError`
+ * uncaught, aborting a LEGITIMATE cancel before every started effect is
+ * fenced and before the caller's outbox flush ever runs. Since this
+ * function's own cancellation intent is already durably recorded (the
+ * resolution was consumed before this ever runs), racing in and re-claiming
+ * a fresh epoch to finish the fencing under is always safe and correct —
+ * never a reason to leave an effect ambiguously `'started'` forever.
  */
-export function fenceStartedEffectsAsUncertain(task: number, epoch: number): string[] {
-  const deps = defaultControlStoreDeps(controlStoreRoot)
+export function fenceStartedEffectsAsUncertain(
+  task: number,
+  epoch: number,
+  deps: ControlStoreDeps = defaultControlStoreDeps(controlStoreRoot)
+): string[] {
   const fenced: string[] = []
-  for (const key of listStartedEffectKeys(deps, task)) {
-    if (markEffectUncertain(deps, task, epoch, key)) fenced.push(key)
+  let currentEpoch = epoch
+  for (let attempt = 0; attempt <= MAX_FENCE_REACQUIRE_ATTEMPTS; attempt++) {
+    let racedAway = false
+    for (const key of listStartedEffectKeys(deps, task)) {
+      if (fenced.includes(key)) continue
+      try {
+        if (markEffectUncertain(deps, task, currentEpoch, key)) fenced.push(key)
+      } catch (err) {
+        if (!(err instanceof StaleEpochWriteError)) throw err
+        racedAway = true
+        break
+      }
+    }
+    if (!racedAway) return fenced
+    if (attempt === MAX_FENCE_REACQUIRE_ATTEMPTS) {
+      throw new Error(
+        `fenceStartedEffectsAsUncertain: task ${task}'s control-store epoch kept moving out from under this cancel after ${MAX_FENCE_REACQUIRE_ATTEMPTS} re-acquire attempts — some effect(s) may remain ambiguously 'started'`
+      )
+    }
+    const acquired = acquireOwnership(deps, task, `dev-review-loop:${task}:cancel-fence-retry`)
+    if (!acquired.acquired) {
+      throw new Error(
+        `fenceStartedEffectsAsUncertain: could not re-acquire a control-store epoch for task ${task} after a race — epoch ${acquired.currentEpoch} is currently held by ${acquired.currentOwnerId ?? 'unknown'}`
+      )
+    }
+    currentEpoch = acquired.epoch
   }
   return fenced
 }

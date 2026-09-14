@@ -60,6 +60,7 @@ import {
   type Confidence,
   type Decision,
   type DevReviewLoopEventInput,
+  type EscalationRecord,
   type LoopConfig,
   type LoopState,
   type Observations,
@@ -748,7 +749,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // so it authenticates as the driver's own recoverable-hiccup recovery
     // rather than a principal decision — still consumed at most once, so a
     // duplicate bare `--resume` against the SAME held hiccup is refused too.
-    const resumeEscalationId = escalationIdFor(closesTask, held.round, held.head)
+    // `held.escalationId` is the escalation's OWN real id — a disambiguating
+    // suffix when `writeEscalation` had to claim one (code review, round 2,
+    // MEDIUM); the natural key is still correct whenever no collision ever
+    // happened, and for a `PauseState` written before this field existed.
+    const resumeEscalationId = held.escalationId ?? escalationIdFor(closesTask, held.round, held.head)
     const resumeAuthenticatedBy =
       held.reason === 'infrastructure' ? 'driver-self' : (d.fetchNewestRulingAuthor(resumePr) ?? 'unknown-principal')
     const resumeAuthenticatedFrom =
@@ -1969,21 +1974,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // above already follow the identical "never throws" discipline for
       // the same reason.
       try {
-        writePauseState(root, {
-          task,
-          round,
-          head,
-          branch,
-          prNumber,
-          reason: decision.reason,
-          detail: decision.detail,
-          pausedAt: new Date().toISOString()
-        })
-        // O1: the durable escalation record — same best-effort discipline as
-        // every other write in this catch (never a second chance for the
-        // process to crash on its way out).
+        // O1: the durable escalation record — best-effort (never a second
+        // chance for the process to crash on its way out), written BEFORE
+        // `pause-state.json` so its own real `escalationId` (code review,
+        // round 2, MEDIUM: `writeEscalation` claims a disambiguating suffix
+        // rather than silently overwriting a colliding, genuinely different
+        // escalation) can be carried on `PauseState` for `--resume`/
+        // `--cancel` to find later.
+        let escalationRecord: EscalationRecord | null = null
         try {
-          writeEscalationRecord({
+          escalationRecord = writeEscalationRecord({
             task,
             round,
             head,
@@ -1996,10 +1996,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             ...bestEffortInputVersions()
           })
         } catch {
-          // Best-effort — the pause state and comment above are the
+          // Best-effort — the pause state and comment below are the
           // authoritative record; a control-store write failure here never
           // undoes them.
         }
+        writePauseState(root, {
+          task,
+          round,
+          head,
+          branch,
+          prNumber,
+          reason: decision.reason,
+          detail: decision.detail,
+          pausedAt: new Date().toISOString(),
+          escalationId: escalationRecord?.escalationId
+        })
         // A crash this early — setup, or a fresh round-1 task never getting
         // as far as resolving one — leaves `prNumber` at its `-1` sentinel:
         // no PR is known to exist, so a PR comment would target a number
@@ -2573,20 +2584,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             keepLockAlive = true
           }
           const pauseHead = d.resolveHead(branch)
-          writePauseState(root, {
-            task,
-            round,
-            head: pauseHead,
-            branch,
-            prNumber,
-            reason: decision.reason,
-            detail: decision.detail,
-            pausedAt: new Date().toISOString()
-          })
           // O1: best-effort, same discipline as the crash-catch pause site —
-          // the pause state and comment above are the authoritative record.
+          // written BEFORE `pause-state.json` so its own real `escalationId`
+          // (code review, round 2, MEDIUM — see `writeEscalation`'s own doc
+          // comment) can be carried on `PauseState`.
+          let escalationRecord: EscalationRecord | null = null
           try {
-            writeEscalationRecord({
+            escalationRecord = writeEscalationRecord({
               task,
               round,
               head: pauseHead,
@@ -2599,8 +2603,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               ...bestEffortInputVersions()
             })
           } catch {
-            // Best-effort — see above.
+            // Best-effort — the pause state and comment below are the
+            // authoritative record.
           }
+          writePauseState(root, {
+            task,
+            round,
+            head: pauseHead,
+            branch,
+            prNumber,
+            reason: decision.reason,
+            detail: decision.detail,
+            pausedAt: new Date().toISOString(),
+            escalationId: escalationRecord?.escalationId
+          })
           postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail)
           await d.flushOutbox(task)
           return { finalDecision: decision, prNumber, task }
@@ -2690,7 +2706,8 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
       `devReviewLoop --cancel: PR #${input.cancelPr} carries no Principal ruling comment yet — nothing authenticates this cancel.`
     )
   }
-  const escalationId = escalationIdFor(task, held.round, held.head)
+  // See the identical comment on the `--resume` path above.
+  const escalationId = held.escalationId ?? escalationIdFor(task, held.round, held.head)
   const authenticatedBy = d.fetchNewestRulingAuthor(input.cancelPr) ?? 'unknown-principal'
   const authenticatedFrom = `${input.cancelPr}-${d.fetchNewestRulingOrdinal(input.cancelPr)}`
   let resolved: ResolveEscalationResult

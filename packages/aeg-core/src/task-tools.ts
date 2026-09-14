@@ -165,6 +165,21 @@ export const EscalationEvidenceSchema = z.object({
   security: z.string().nullable()
 })
 
+/** The escalation's run identity — `null` when no durable `EscalationRecord` exists yet for this pause (a `PauseState` written before that control-store adoption, or a best-effort write that itself failed). */
+export const EscalationRunIdentitySchema = z.object({
+  runId: z.string(),
+  pid: z.number().int().positive(),
+  host: z.string()
+})
+
+/** The input versions the pause's round was judged against — `null` under the identical condition `EscalationRunIdentitySchema` is. */
+export const EscalationInputVersionsSchema = z.object({
+  briefHash: z.string().nullable(),
+  objectivesVersion: z.string().nullable(),
+  rulingOrdinal: z.number().int().nonnegative(),
+  policyDigest: z.string()
+})
+
 export const TaskEscalationReadInputSchema = z
   .object({
     task: TaskToolRefSchema
@@ -182,7 +197,11 @@ export const TaskEscalationPacketSchema = z
     evidence: EscalationEvidenceSchema.nullable(),
     attemptedRecovery: z.string(),
     requestedAuthority: RequestedAuthoritySchema,
-    permittedNextActions: z.array(z.string())
+    permittedNextActions: z.array(z.string()),
+    /** From the durable `EscalationRecord` — `null` when none exists for this pause (see the field's own schema doc). */
+    runIdentity: EscalationRunIdentitySchema.nullable(),
+    /** From the durable `EscalationRecord` — `null` under the identical condition. */
+    inputVersions: EscalationInputVersionsSchema.nullable()
   })
   .merge(ObservedSchema)
 

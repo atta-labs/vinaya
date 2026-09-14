@@ -385,6 +385,44 @@ describe('writeEscalation / readEscalation (#556, O1)', () => {
     )
     expect(() => readEscalation(deps, 556, '../escaped')).toThrow(InvalidEscalationIdError)
   })
+
+  it('a rerun of the IDENTICAL pause instance overwrites in place at the canonical key (code review, round 2, MEDIUM)', () => {
+    const acquired = acquireOwnership(deps, 556, 'run-a')
+    const epoch = acquired.acquired ? acquired.epoch : -1
+
+    writeEscalation(deps, 556, epoch, escalationInput)
+    const rerun = writeEscalation(deps, 556, epoch, { ...escalationInput, recordedAt: '2026-09-15T00:10:00.000Z' })
+
+    expect(rerun.escalationId).toBe(escalationInput.escalationId)
+    expect(readEscalation(deps, 556, escalationInput.escalationId)).toEqual({ status: 'ok', value: rerun })
+  })
+
+  it('a GENUINELY DIFFERENT escalation colliding on the same key never overwrites — claims a disambiguating suffix instead (code review, round 2, MEDIUM)', () => {
+    const acquired = acquireOwnership(deps, 556, 'run-a')
+    const epoch = acquired.acquired ? acquired.epoch : -1
+
+    const first = writeEscalation(deps, 556, epoch, escalationInput)
+    const second = writeEscalation(deps, 556, epoch, { ...escalationInput, reason: 'ruling_posted' })
+
+    expect(second.escalationId).toBe(`${escalationInput.escalationId}-2`)
+    expect(second.reason).toBe('ruling_posted')
+    // The FIRST escalation's own content is untouched — still readable at its
+    // original key, never clobbered by the second, colliding instance.
+    expect(readEscalation(deps, 556, escalationInput.escalationId)).toEqual({ status: 'ok', value: first })
+    expect(readEscalation(deps, 556, `${escalationInput.escalationId}-2`)).toEqual({ status: 'ok', value: second })
+  })
+
+  it('a THIRD distinct collision at the same key claims the next free suffix', () => {
+    const acquired = acquireOwnership(deps, 556, 'run-a')
+    const epoch = acquired.acquired ? acquired.epoch : -1
+
+    writeEscalation(deps, 556, epoch, escalationInput)
+    writeEscalation(deps, 556, epoch, { ...escalationInput, reason: 'ruling_posted' })
+    const third = writeEscalation(deps, 556, epoch, { ...escalationInput, reason: 'objectives_changed' })
+
+    expect(third.escalationId).toBe(`${escalationInput.escalationId}-3`)
+    expect(third.reason).toBe('objectives_changed')
+  })
 })
 
 describe('consumeResolutionOnce / readResolution (#556, O2)', () => {

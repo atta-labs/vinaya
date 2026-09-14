@@ -593,7 +593,52 @@ export function markEffectUncertain(
 
 export type EscalationInput = Omit<EscalationRecord, 'version' | 'kind' | 'task'>
 
-/** Refuses (`StaleEpochWriteError`) unless `epoch` is still the task's current epoch — an escalation can only be recorded by whoever currently owns the task's pause. Idempotent on a rerun of the SAME pause instance (identical `escalationId`, identical content) — an ordinary overwrite, like `writeManifest`. */
+/**
+ * True when two escalation inputs describe the SAME pause instance — every
+ * field but `recordedAt` (which always differs on a rerun) and `evidence`
+ * (best-effort, allowed to fill in on a later attempt where an earlier one
+ * had none). Used only to tell "a rerun of the identical pause" apart from
+ * "a genuinely different pause that happens to collide on the same
+ * `(task, round, head)` key" — see `writeEscalation`'s own doc comment.
+ */
+function sameEscalationInstance(a: EscalationInput, b: EscalationInput): boolean {
+  return (
+    a.round === b.round &&
+    a.head === b.head &&
+    a.branch === b.branch &&
+    a.pr === b.pr &&
+    a.reason === b.reason &&
+    (a.detail ?? null) === (b.detail ?? null)
+  )
+}
+
+/** Bounds the disambiguating-suffix probe below — real collisions never approach this; exists so a pathological repeated-collision case fails loudly rather than spinning forever. */
+const MAX_ESCALATION_COLLISION_ATTEMPTS = 8
+
+/**
+ * Refuses (`StaleEpochWriteError`) unless `epoch` is still the task's
+ * current epoch — an escalation can only be recorded by whoever currently
+ * owns the task's pause. Idempotent on a rerun of the SAME pause instance
+ * (`sameEscalationInstance` — an ordinary overwrite, like `writeManifest`).
+ *
+ * A GENUINELY DIFFERENT escalation colliding on the same `escalationId`
+ * (`<task>-<round>-<head>`) — a resumed run that hits a second, different
+ * pause condition before the head moves, most plausibly one of the
+ * self-resumed reasons (`objectives_changed`, `ruling_posted`,
+ * `stale_driver`, `brief_superseded`, `policy_changed`), which dispatch no
+ * developer and so never guarantee a new head — is never silently
+ * overwritten (code review, round 2, MEDIUM: the earlier pause's own
+ * reason/detail/evidence would otherwise become unrecoverable except
+ * through chat history, exactly what O1 exists to avoid). Instead it claims
+ * the next free `<escalationId>-<n>` suffix via the same exclusive-create
+ * discipline `attemptEpochClaim`/`appendTransition`'s own seq-slot claim
+ * uses — never `atomicWriteFile` for this branch, so two colliding writers
+ * can never both believe they won the same suffix. The record actually
+ * written (never the caller's original `input.escalationId` once a suffix
+ * was needed) is what the caller must key any later read against — see
+ * `writeEscalationRecord` (`pause-resume.ts`), which persists the real id
+ * back onto `PauseState` for exactly this reason.
+ */
 export function writeEscalation(
   deps: ControlStoreDeps,
   task: number,
@@ -601,9 +646,27 @@ export function writeEscalation(
   input: EscalationInput
 ): EscalationRecord {
   assertCurrentEpoch(deps, task, epoch)
-  const record: EscalationRecord = { version: 1, kind: 'escalation', task, ...input }
-  atomicWriteFile(escalationPath(deps.root(), task, input.escalationId), JSON.stringify(record))
-  return record
+  const canonicalId = input.escalationId
+  const existing = readEscalation(deps, task, canonicalId)
+  if (existing.status !== 'ok' || sameEscalationInstance(existing.value, input)) {
+    // Absent, corrupt (healed by overwrite), or a genuine rerun of the
+    // identical instance — safe to (re)write at the canonical key.
+    const record: EscalationRecord = { version: 1, kind: 'escalation', task, ...input }
+    atomicWriteFile(escalationPath(deps.root(), task, canonicalId), JSON.stringify(record))
+    return record
+  }
+  for (let n = 2; n <= MAX_ESCALATION_COLLISION_ATTEMPTS; n++) {
+    const candidateId = `${canonicalId}-${n}`
+    const record: EscalationRecord = { version: 1, kind: 'escalation', task, ...input, escalationId: candidateId }
+    const result = exclusiveCreateFile(escalationPath(deps.root(), task, candidateId), JSON.stringify(record))
+    if (result.created) return record
+    const there = readEscalation(deps, task, candidateId)
+    if (there.status === 'ok' && sameEscalationInstance(there.value, input)) return there.value
+    // Slot taken by yet another distinct instance — try the next suffix.
+  }
+  throw new Error(
+    `control-store: could not claim a disambiguating escalation slot for task ${task}, key '${canonicalId}', after ${MAX_ESCALATION_COLLISION_ATTEMPTS} attempts`
+  )
 }
 
 export function readEscalation(

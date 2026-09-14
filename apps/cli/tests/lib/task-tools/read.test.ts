@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { paginate, readEscalationPacket, readTaskLoopStateObserved } from '../../../src/lib/task-tools/read.js'
 
 const TASK = 558
@@ -26,6 +26,24 @@ function writeOutboxFile(root: string, task: number, name: string, content: stri
   const dir = taskDir(root, task)
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, name), content, 'utf8')
+}
+
+/**
+ * Writes a fixture `EscalationRecord` at the SAME `dirname(root)/control-
+ * store/<task>/escalation/<escalationId>.json` path `readEscalationPacket`
+ * itself derives from `root` (code review, round 2, MEDIUM) — proves the
+ * derivation is a real, fixture-testable sibling of `root`, never a read
+ * that escapes to this machine's real global control store.
+ */
+function writeEscalationFixture(
+  root: string,
+  task: number,
+  escalationId: string,
+  record: Record<string, unknown>
+): void {
+  const dir = join(dirname(root), 'control-store', String(task), 'escalation')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, `${escalationId}.json`), JSON.stringify(record), 'utf8')
 }
 
 function deadPid(): number {
@@ -139,6 +157,95 @@ describe('readEscalationPacket', () => {
     const root = tempDir()
     writePause(root, TASK, { round: 1, reason: 'ruling_posted' })
     expect(readEscalationPacket(root, TASK)?.requestedAuthority).toBe('self')
+  })
+
+  it('runIdentity/inputVersions are null when no durable escalation record exists yet (code review, round 2, MEDIUM)', () => {
+    const root = tempDir()
+    writePause(root, TASK, { round: 3, reason: 'escalation' })
+    const packet = readEscalationPacket(root, TASK)
+    expect(packet?.runIdentity).toBeNull()
+    expect(packet?.inputVersions).toBeNull()
+  })
+
+  it('exposes runIdentity/inputVersions from the durable escalation record, read through a root derived from the SAME outbox root — never the real machine global (code review, round 2, MEDIUM)', () => {
+    const root = tempDir()
+    writePause(root, TASK, { round: 3, reason: 'escalation' })
+    const escalationId = `${TASK}-3-abc123`
+    writeEscalationFixture(root, TASK, escalationId, {
+      version: 1,
+      kind: 'escalation',
+      task: TASK,
+      escalationId,
+      round: 3,
+      head: 'abc123',
+      branch: `task/issue-${TASK}`,
+      pr: 900,
+      runId: 'run-abc',
+      pid: 4242,
+      host: 'ci-box',
+      reason: 'escalation',
+      attemptedRecovery: 'none — an escalation is a decision request, not a retry condition.',
+      requestedDecision: 'rule or redirect the work',
+      recipient: 'principal',
+      briefHash: 'brief-hash',
+      objectivesVersion: 'v1',
+      rulingOrdinal: 0,
+      policyDigest: 'policy-digest',
+      recordedAt: '2026-09-15T00:00:00.000Z'
+    })
+
+    const packet = readEscalationPacket(root, TASK)
+
+    expect(packet?.runIdentity).toEqual({ runId: 'run-abc', pid: 4242, host: 'ci-box' })
+    expect(packet?.inputVersions).toEqual({
+      briefHash: 'brief-hash',
+      objectivesVersion: 'v1',
+      rulingOrdinal: 0,
+      policyDigest: 'policy-digest'
+    })
+  })
+
+  it('follows PauseState.escalationId, not the natural key, once a disambiguating suffix was claimed', () => {
+    const root = tempDir()
+    writePause(root, TASK, { round: 3, reason: 'ruling_posted' })
+    // Simulate a `PauseState` whose own escalation collided and was written
+    // to a suffixed slot — write the fixture there, not at the natural key.
+    const suffixedId = `${TASK}-3-abc123-2`
+    const raw = JSON.parse(readFileSync(join(taskDir(root, TASK), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    writeFileSync(
+      join(taskDir(root, TASK), 'pause-state.json'),
+      JSON.stringify({ ...raw, escalationId: suffixedId }),
+      'utf8'
+    )
+    writeEscalationFixture(root, TASK, suffixedId, {
+      version: 1,
+      kind: 'escalation',
+      task: TASK,
+      escalationId: suffixedId,
+      round: 3,
+      head: 'abc123',
+      branch: `task/issue-${TASK}`,
+      pr: 900,
+      runId: 'run-suffixed',
+      pid: 1,
+      host: 'box',
+      reason: 'ruling_posted',
+      attemptedRecovery: 'none required — the driver detected a mid-round ruling itself and paused for safety.',
+      requestedDecision: 'resume',
+      recipient: 'self',
+      briefHash: null,
+      objectivesVersion: null,
+      rulingOrdinal: 1,
+      policyDigest: 'policy-digest',
+      recordedAt: '2026-09-15T00:00:00.000Z'
+    })
+
+    const packet = readEscalationPacket(root, TASK)
+
+    expect(packet?.runIdentity).toEqual({ runId: 'run-suffixed', pid: 1, host: 'box' })
   })
 
   it('a dead driver lock never turns a genuinely fresh pause into a mid-round read', () => {

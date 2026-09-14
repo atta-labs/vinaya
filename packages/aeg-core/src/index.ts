@@ -397,6 +397,8 @@ export {
   TaskStartResultSchema,
   EscalationEvidenceSchema,
   EscalationInputsSchema,
+  EscalationInputVersionsSchema,
+  EscalationRunIdentitySchema,
   FreshnessSchema,
   NoResultSchema,
   ObservedSchema,
