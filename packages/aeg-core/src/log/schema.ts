@@ -1,10 +1,39 @@
 /**
- * The Vinaya Log's typed event schema (Linear "Tech spec — The Vinaya Log",
- * rev 4, §5). Three families ship so far — `dispatch`, `dev_review_loop`,
- * and `forge_write` — the other three (`gate`, `command`, `tokens`) are out
- * of scope; `kind` is a closed union of only these three.
+ * The Vinaya Log's typed event schema (Linear "Tech spec — The Vinaya Log").
+ * This module versions the envelope to `schema: 2` and widens `kind` past
+ * the first three families it originally shipped with.
  *
- * One deviation from the spec, decided in this task's brief: the spec's
+ * Three families shipped first — `dispatch`, `dev_review_loop`, and
+ * `forge_write`. This task adds six more — `gate`, `operation`,
+ * `usage`, `role_attempt`, `handoff`, `effect` — and extends the
+ * `dispatch` family's `verdict` outcome with severity-scale/policy-
+ * treatment/confidence fields on each finding (O3). `kind` remains a
+ * closed union; `command`/`tokens` stay out of scope (`command` folds into
+ * `operation` above, `tokens` into `usage`).
+ *
+ * `meta.schema` is now a discriminated union: `1` (unchanged from before
+ * this task — every field it ever had, still required, still meaning the
+ * same thing) or `2` (adds `event_id`, `process_id`, `lineage`,
+ * `input_versions`, `provenance` — O1's "task/run/attempt/parent lineage,
+ * producer sequence, opaque role and process identifiers, input versions
+ * and trust provenance"). `buildHeader` (`envelope.ts`) builds `2` for
+ * every event from this task forward; `1` exists so a line already on disk
+ * (or a fixture recorded before this task) keeps parsing, never a schema
+ * violation just because it predates these fields (O1's "compatible").
+ * Absent per-field data on a `2` header is `null`, never invented — the
+ * lineage/input-version identities declared here are a real producer's job
+ * to fill in later; this module ships the typed slot, honestly empty until
+ * then.
+ *
+ * `subject.role` keeps its EXISTING closed-`Role`-or-`'unattributed'`
+ * meaning unchanged — it is relied on outside this module (`dispatch.ts`,
+ * `commands/dispatch.ts`'s argv validation) and this task does not touch
+ * it. The new `meta.actor_id` (v2 only) is the opaque, unvalidated
+ * identifier O1 asks for: whatever the environment claims, never checked
+ * against `ROLE_VALUES` — the two are deliberately different fields with
+ * different trust levels, not a replacement of one by the other.
+ *
+ * One deviation from the spec, decided in a prior task's brief: the spec's
  * `subject.objectives_version` is `number`; the built form
  * (`vinaya-log-v1`'s own task 1, PR #423) hashes it to a `sha256` hex
  * string, so this schema types it `string`, superseding the spec.
@@ -45,19 +74,75 @@ export type Host = z.infer<typeof HostSchema>
  */
 const RUN_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/
 
-const HeaderMetaSchema = z
+const headerMetaCore = {
+  ts: z.string(),
+  run_id: z.string().regex(RUN_ID_PATTERN),
+  seq: z.number().int().nonnegative(),
+  repo: z.string().nullable(),
+  vinaya: z.string(),
+  doctrine: z.string(),
+  host: HostSchema,
+  machine: z.string()
+}
+
+const HeaderMetaV1Schema = z
   .object({
     schema: z.literal(1),
-    ts: z.string(),
-    run_id: z.string().regex(RUN_ID_PATTERN),
-    seq: z.number().int().nonnegative(),
-    repo: z.string().nullable(),
-    vinaya: z.string(),
-    doctrine: z.string(),
-    host: HostSchema,
-    machine: z.string()
+    ...headerMetaCore
   })
   .strict()
+
+/** Task/run/attempt/parent lineage (O1). Each identity is `null` until a real producer fills it in — declared here, enforced by a later producer. `task` is not repeated here — `subject.issue` already carries it. */
+const LineageSchema = z
+  .object({
+    run: z.string().nullable(),
+    attempt: z.number().int().nullable(),
+    parent: z.string().nullable()
+  })
+  .strict()
+
+/** Mirrors `review-input-manifest.ts`'s own field set (`briefHash`, `objectivesVersion`, `rulingOrdinal`, `policyDigest`) — the "input versions" O1 asks the envelope to carry, snake_cased to match every other envelope field. Independent of `subject.objectives_version` (kept, unchanged, for backward compatibility); a producer may set either, both, or neither. */
+const InputVersionsSchema = z
+  .object({
+    objectives_version: z.string().nullable(),
+    brief_hash: z.string().nullable(),
+    ruling_ordinal: z.number().int().nullable(),
+    policy_digest: z.string().nullable()
+  })
+  .strict()
+
+/**
+ * Trust ordering the spec names explicitly: parent-generated dispatch/effect
+ * attribution is stronger than worker-controlled environment correlation;
+ * self-reported "Cast by" text or shared-credential authorship proves no
+ * authorization. `'unavailable'` is the honest default — `buildHeader` is a
+ * pure function with no way to confirm WHO set an environment variable, so
+ * it never upgrades itself to `'parent_attributed'` on its own; a future
+ * caller that structurally knows it just spawned this exact child
+ * (`dispatch.ts`) is the one place that could honestly assert it.
+ */
+const ProvenanceSchema = z.enum(['parent_attributed', 'env_correlated', 'self_reported', 'unavailable'])
+
+const HeaderMetaV2Schema = z
+  .object({
+    schema: z.literal(2),
+    ...headerMetaCore,
+    event_id: z.string().min(1),
+    process_id: z.string().min(1),
+    actor_id: z.string().nullable(),
+    lineage: LineageSchema,
+    input_versions: InputVersionsSchema,
+    provenance: ProvenanceSchema
+  })
+  .strict()
+
+const HeaderMetaSchema = z.discriminatedUnion('schema', [HeaderMetaV1Schema, HeaderMetaV2Schema])
+export { HeaderMetaV1Schema, HeaderMetaV2Schema, LineageSchema, InputVersionsSchema, ProvenanceSchema }
+export type HeaderMetaV1 = z.infer<typeof HeaderMetaV1Schema>
+export type HeaderMetaV2 = z.infer<typeof HeaderMetaV2Schema>
+export type Lineage = z.infer<typeof LineageSchema>
+export type InputVersions = z.infer<typeof InputVersionsSchema>
+export type Provenance = z.infer<typeof ProvenanceSchema>
 
 const SubjectSchema = z
   .object({
@@ -91,6 +176,38 @@ const envelopeTail = {
 }
 
 // ---------------------------------------------------------------------------
+// Review finding metadata (O3) — `id` is this finding's identity AS
+// REPORTED in one round's comment; it is stable within that comment only.
+// A reviewer's own positional numbering (`F1`, `F2`, …) is NOT advertised
+// as stable across rounds by this schema — a caller comparing findings
+// across rounds needs its own reconciliation, never an assumption that the
+// same `id` string names the same finding two rounds apart (Traps to
+// avoid). `severity` is the value as reported — its meaning depends on
+// `severity_scale` (deliberately a free string, not a closed enum: this
+// doctrine already has two different scales, code-review's and security's,
+// and a third reviewer type should never require a schema change to name
+// its own). `policy_treatment` is a SEPARATE fact from `severity` — the
+// same reported severity can bind or not bind a verdict depending on the
+// effective review policy's threshold at review time; conflating the two
+// is exactly what left "review reconstruction lacks severity and
+// confidence data" (this task's own Boundary). `confidence` is optional,
+// self-reported, and never treated as calibrated correctness — capturing
+// it is not the same as trusting it.
+const ReviewFindingSchema = z
+  .object({
+    id: z.string(),
+    severity: z.string(),
+    state: z.string().optional(),
+    severity_scale: z.string().optional(),
+    policy_treatment: z.enum(['blocking', 'non_blocking', 'unavailable']).optional(),
+    confidence: z.number().min(0).max(1).optional(),
+    confidence_scale: z.string().optional(),
+    confidence_source: z.string().optional()
+  })
+  .strict()
+export type ReviewFinding = z.infer<typeof ReviewFindingSchema>
+
+// ---------------------------------------------------------------------------
 // `dispatch` family (§5.2)
 
 const DispatchOutcomeSchema = z.discriminatedUnion('type', [
@@ -110,7 +227,7 @@ const DispatchOutcomeSchema = z.discriminatedUnion('type', [
       head: z.string(),
       comment_id: z.number().int(),
       objectives: z.array(z.object({ id: z.string(), met: z.boolean() }).strict()),
-      findings: z.array(z.object({ id: z.string(), severity: z.string(), state: z.string().optional() }).strict())
+      findings: z.array(ReviewFindingSchema)
     })
     .strict(),
   z
@@ -352,7 +469,234 @@ export const ForgeWriteEventSchema = z.discriminatedUnion('event', [
 export type ForgeWriteEvent = z.infer<typeof ForgeWriteEventSchema>
 
 // ---------------------------------------------------------------------------
+// `gate` family (O2) — one gate runner's attempted check. `loop` (the
+// spec's "loop coordinator") is already typed by `dev_review_loop` above;
+// this task does not introduce a second loop schema for it.
 
-/** The three families shipped so far. `kind: 'gate' | 'command' | 'tokens'` is refused — out of scope. */
-export const LogEventSchema = z.union([DispatchEventSchema, DevReviewLoopEventSchema, ForgeWriteEventSchema])
+export const GateOutcomeSchema = z.enum([
+  'pass',
+  'fail',
+  'wait',
+  'skip',
+  'invalid_input',
+  'unavailable_dependency',
+  'timeout',
+  'cancelled'
+])
+export type GateOutcome = z.infer<typeof GateOutcomeSchema>
+
+const gateShared = {
+  meta: HeaderMetaSchema,
+  subject: SubjectSchema,
+  kind: z.literal('gate'),
+  ...envelopeTail,
+  check: z.string(),
+  check_version: z.string().nullable(),
+  policy_version: z.string().nullable(),
+  input_fingerprint: z.string().nullable()
+}
+
+export const GateEventSchema = z.discriminatedUnion('event', [
+  z
+    .object({
+      ...gateShared,
+      event: z.literal('checked'),
+      outcome: GateOutcomeSchema,
+      reason: z.string().optional()
+    })
+    .strict()
+])
+export type GateEvent = z.infer<typeof GateEventSchema>
+
+// ---------------------------------------------------------------------------
+// `operation` family (O2) — the spec's "command dispatcher": a normalized
+// operation/tool call, result and duration, never raw secret-bearing
+// arguments (`redact()` still runs over the full event regardless).
+
+export const OperationResultSchema = z.enum(['ok', 'error', 'refused', 'timeout', 'cancelled', 'unavailable'])
+export type OperationResult = z.infer<typeof OperationResultSchema>
+
+const operationShared = {
+  meta: HeaderMetaSchema,
+  subject: SubjectSchema,
+  kind: z.literal('operation'),
+  ...envelopeTail,
+  operation: z.string(),
+  target: z.string().nullable()
+}
+
+export const OperationEventSchema = z.discriminatedUnion('event', [
+  z
+    .object({
+      ...operationShared,
+      event: z.literal('completed'),
+      result: OperationResultSchema,
+      error_class: z.string().nullable()
+    })
+    .strict()
+])
+export type OperationEvent = z.infer<typeof OperationEventSchema>
+
+// ---------------------------------------------------------------------------
+// `usage` family (O2) — the spec's "usage collector". Every unit is
+// `nullable`, never defaulted to `0` — "unknown usage treated as zero" is
+// the exact bug the spec calls out to fix; a producer with nothing observed
+// reports `null` and, when it knows why, `unknown_reason`.
+
+const UsageUnitsSchema = z
+  .object({
+    input: z.number().nonnegative().nullable(),
+    output: z.number().nonnegative().nullable(),
+    cache: z.number().nonnegative().nullable()
+  })
+  .strict()
+export type UsageUnits = z.infer<typeof UsageUnitsSchema>
+
+const usageShared = {
+  meta: HeaderMetaSchema,
+  subject: SubjectSchema,
+  kind: z.literal('usage'),
+  ...envelopeTail,
+  model: z.string().nullable(),
+  source: z.string(),
+  semantics: z.enum(['cumulative', 'delta'])
+}
+
+export const UsageEventSchema = z.discriminatedUnion('event', [
+  z
+    .object({
+      ...usageShared,
+      event: z.literal('observed'),
+      units: UsageUnitsSchema,
+      unknown_reason: z.string().nullable()
+    })
+    .strict()
+])
+export type UsageEvent = z.infer<typeof UsageEventSchema>
+
+// ---------------------------------------------------------------------------
+// `role_attempt` family (O2) — the spec's "role executor": a role
+// ATTEMPT's own normalized outcome, distinct from the `dispatch` family's
+// parent-side view of dispatching one. `actor` is deliberately an opaque
+// string, never `RoleSchema` — this family, and the events it describes,
+// are not limited to the closed doctrine `Role` union (this task's own
+// title). Named `role_attempt`, not `role`, so it never collides with the
+// existing `Role`/`RoleSchema` export from this same module.
+
+export const RoleAttemptOutcomeSchema = z.enum([
+  'completed',
+  'incomplete',
+  'infrastructure_failed',
+  'cancelled',
+  'timed_out',
+  'capability_refused'
+])
+export type RoleAttemptOutcome = z.infer<typeof RoleAttemptOutcomeSchema>
+
+const roleAttemptShared = {
+  meta: HeaderMetaSchema,
+  subject: SubjectSchema,
+  kind: z.literal('role_attempt'),
+  ...envelopeTail,
+  actor: z.string().nullable(),
+  attempt: z.number().int().nullable()
+}
+
+export const RoleAttemptEventSchema = z.discriminatedUnion('event', [
+  z
+    .object({
+      ...roleAttemptShared,
+      event: z.literal('attempted'),
+      outcome: RoleAttemptOutcomeSchema,
+      usage: dispatchUsageField
+    })
+    .strict()
+])
+export type RoleAttemptEvent = z.infer<typeof RoleAttemptEventSchema>
+
+// ---------------------------------------------------------------------------
+// `handoff` family (O2) — a human handoff/escalation, raised and later
+// resolved. `class` reuses the same three-value severity the `dispatch`
+// family's `escalation` outcome already carries (`authority` / `strategy` /
+// `product`) rather than inventing a second name for the identical concept.
+
+const handoffShared = {
+  meta: HeaderMetaSchema,
+  subject: SubjectSchema,
+  kind: z.literal('handoff'),
+  ...envelopeTail,
+  class: z.enum(['authority', 'strategy', 'product']),
+  reason: z.string()
+}
+
+export const HandoffEventSchema = z.discriminatedUnion('event', [
+  z
+    .object({
+      ...handoffShared,
+      event: z.literal('raised'),
+      requested_decision: z.string().nullable()
+    })
+    .strict(),
+  z
+    .object({
+      ...handoffShared,
+      event: z.literal('resolved'),
+      resolution: z.string().nullable(),
+      resolved_by: z.string().nullable()
+    })
+    .strict()
+])
+export type HandoffEvent = z.infer<typeof HandoffEventSchema>
+
+// ---------------------------------------------------------------------------
+// `effect` family (O2) — the spec's "shared effect executor": a generic
+// external effect's attempted/observed/verified outcome, including failure
+// and uncertainty. This is additive to, and does not replace, the existing
+// `forge_write` family, which stays exactly as it was — a forge write is
+// one specific effect this schema does not yet generalize `forge_write`
+// into; "telemetry never substitutes for required intent" (the spec's own
+// words) is why this is fail-open observation, not a fail-closed control
+// store.
+
+const EffectTargetSchema = z
+  .object({
+    kind: z.string(),
+    ref: z.string()
+  })
+  .strict()
+
+const effectShared = {
+  meta: HeaderMetaSchema,
+  subject: SubjectSchema,
+  kind: z.literal('effect'),
+  ...envelopeTail,
+  effect_id: z.string(),
+  target: EffectTargetSchema
+}
+
+export const EffectEventSchema = z.discriminatedUnion('event', [
+  z.object({ ...effectShared, event: z.literal('attempted') }).strict(),
+  z
+    .object({ ...effectShared, event: z.literal('observed'), outcome: z.enum(['success', 'failure', 'uncertain']) })
+    .strict(),
+  z
+    .object({ ...effectShared, event: z.literal('verified'), outcome: z.enum(['success', 'failure', 'uncertain']) })
+    .strict()
+])
+export type EffectEvent = z.infer<typeof EffectEventSchema>
+
+// ---------------------------------------------------------------------------
+
+/** Every family shipped so far: the first three (`dispatch`, `dev_review_loop`, `forge_write`) plus this task's six (`gate`, `operation`, `usage`, `role_attempt`, `handoff`, `effect`). `kind: 'command' | 'tokens'` is still refused — `command` folds into `operation`, `tokens` into `usage`, so neither name is a separate family. */
+export const LogEventSchema = z.union([
+  DispatchEventSchema,
+  DevReviewLoopEventSchema,
+  ForgeWriteEventSchema,
+  GateEventSchema,
+  OperationEventSchema,
+  UsageEventSchema,
+  RoleAttemptEventSchema,
+  HandoffEventSchema,
+  EffectEventSchema
+])
 export type LogEvent = z.infer<typeof LogEventSchema>
