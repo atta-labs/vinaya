@@ -61,6 +61,7 @@ import {
   checkWorktreeStep0,
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
+  type DispatchBlockerClass,
   DOC_OWNERS_PATH,
   findTrancheSlug,
   type FrozenBriefCandidate,
@@ -210,12 +211,17 @@ export function extractLabels(args: string[]): string[] {
 // Refusal — the CheckError contract, one JSON line per finding on stderr.
 // ---------------------------------------------------------------------------
 
-/** Builds a well-formed `CheckError` with the current schema version. */
-export function makeCheckError(check: string, message: string, agentRecoveryPrompt: string): CheckError {
+/** Builds a well-formed `CheckError` with the current schema version. `severity` defaults to `'error'` — the one shape every existing call site already produced; a caller naming an informational finding (O2, `packages/aeg-core/src/dispatch-gate.ts`'s `depends-on-not-merged`/`conflicts-with` classes, folded by `validateRenderedBriefForIssue`) passes `'warning'` explicitly. */
+export function makeCheckError(
+  check: string,
+  message: string,
+  agentRecoveryPrompt: string,
+  severity: CheckError['severity'] = 'error'
+): CheckError {
   return {
     schema: CHECK_SCHEMA_VERSION,
     check,
-    severity: 'error',
+    severity,
     message,
     agent_recovery_prompt: agentRecoveryPrompt
   }
@@ -1381,6 +1387,21 @@ const CHECK_BRIEF_RENDER = 'brief-render'
 const CHECK_BRIEF_SHAPE_PREWRITE = 'brief-shape'
 
 /**
+ * O2 — the two dispatch-blocker classes that name a task's OWN edges, not a
+ * defect in the Issue being edited: an unmerged `Depends-on` or an open
+ * `Conflicts-with` PR are facts about the state of the FORGE right now, not
+ * about anything wrong with the brief this edit would render. `task run`
+ * (`dispatch-task.ts`, unchanged by this task) still refuses on either —
+ * this set exists ONLY to tell the write gate which of `renderBrief`'s
+ * `missing` entries to report as informational rather than as a refusal of
+ * the edit.
+ */
+const INFORMATIONAL_DISPATCH_BLOCKER_CLASSES: ReadonlySet<DispatchBlockerClass> = new Set([
+  'depends-on-not-merged',
+  'conflicts-with'
+])
+
+/**
  * **The write gate becomes the brief gate.** Renders the SAME twelve-section
  * brief `task brief`/`vinaya task brief` would produce from this draft —
  * never a second renderer, `assembleAndRenderBrief`/`assembleAndRenderBriefForIssue`
@@ -1449,6 +1470,19 @@ async function validateRenderedBriefForIssue(input: {
     })
   }
   if (!rendered.ok) {
+    // O2 — a `missing` entry that came out of a dispatch-blocker class this
+    // gate treats as informational (see `INFORMATIONAL_DISPATCH_BLOCKER_CLASSES`)
+    // is reported as a `warning`-severity finding, never one that refuses the
+    // edit: `checkDispatchReadiness`'s own blocker messages are exactly what
+    // `renderBrief` copied verbatim into `missing` (`gate.blockers` is
+    // `blockerDetails.map(b => b.message)`), so an exact-string match against
+    // `dispatchBlockerDetails` recovers the classification `missing` itself
+    // dropped, with no second call to `checkDispatchReadiness`.
+    const informationalMessages = new Set(
+      (rendered.dispatchBlockerDetails ?? [])
+        .filter((b) => INFORMATIONAL_DISPATCH_BLOCKER_CLASSES.has(b.class))
+        .map((b) => b.message)
+    )
     return rendered.missing.map((m) =>
       makeCheckError(
         CHECK_BRIEF_RENDER,
@@ -1456,7 +1490,8 @@ async function validateRenderedBriefForIssue(input: {
         nameTheFix(
           `brief-render: ${m}`,
           `Fix the named gap so this Issue renders a valid brief, then re-run \`${input.retryCommand}\`.`
-        )
+        ),
+        informationalMessages.has(m) ? 'warning' : 'error'
       )
     )
   }
@@ -1634,7 +1669,14 @@ export async function validateTaskIssue(
   }
 
   const errors = await collectTaskIssueErrors(body, title, labels, retryCommand, issueNumber, milestoneSource)
-  if (errors.length > 0) refuse(errors)
+  // O2 — a `warning`-severity finding (an unmerged Depends-on, an open
+  // Conflicts-with PR: `validateRenderedBriefForIssue`'s own fold, above) is
+  // reported but never refuses the edit on its own; only a real `error`
+  // finding does. A refusal still prints every finding, warnings included,
+  // so a genuine defect's context isn't stripped down to just the blockers.
+  const blocking = errors.filter((e) => e.severity !== 'warning')
+  if (blocking.length > 0) refuse(errors)
+  for (const e of errors) emitCheckError(e)
 }
 
 /**
