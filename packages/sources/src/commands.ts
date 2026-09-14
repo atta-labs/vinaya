@@ -195,6 +195,17 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'task-tools serve',
+    description: 'Run the task-operator MCP tool server over stdio — the command both runtime adapters register',
+    details: [
+      // AEG:CLAIM: apps/cli/src/lib/task-tools/server.ts contains:export async function serveTaskToolsStdio(
+      'Exposes the task-operator tool catalog (`packages/aeg-core/src/task-tools.ts`) to an agent runtime as one MCP server speaking newline-delimited JSON-RPC 2.0 (`initialize`/`tools/list`/`tools/call`). Claude registers it through the generated `.mcp.json`; Codex through its documented `~/.codex/config.toml` `[mcp_servers]` table — both point at this same command.',
+      'stdout carries JSON-RPC and nothing else: any stray write from the CLI (a forge-read warning) is redirected to stderr, so the protocol stream is never corrupted.',
+      '`task_status`/`task_escalation_read` read; `task_start` starts a run in attended mode only, requiring an authenticated caller from the invocation context (`VINAYA_MCP_CALLER`) and refusing without one — MCP is a transport, not authorization. `task_resume`/`task_cancel` still refuse (task 4). No unattended start until the worker-isolation boundary and a capability flag land.'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'pr create',
     description: 'Open a pull request after full brief-schema validation',
     flags: [

@@ -848,9 +848,9 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(284 exports — 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. Task 2 adds 25 more, net: the shared MCP server (`server.ts`, 10), the two runtime adapters (`adapters.ts`, 8), and the `task_start` handler (`start.ts`, 6), plus `ownVersion`/`MCP_JSON_PATH` on `artifacts.ts`; `taskStartHandler` moved off `handlers.ts` into `start.ts` as `defaultTaskStartHandler`. Task 2's read/handler files still front no `vinaya` subcommand each — but `vinaya task tools serve` (`commands/task-tools.ts`) now fronts the server, the one Commands-table row this surface gained. Type-only exports (`Observed`/`Page`, `TaskToolCallResult`, `CallerContext`/`ToolHandler`/`StartRecord` and the adapter/deps types) get no row, per this file's own rule.)
+(284 exports — 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. Task 2 adds 25 more, net: the shared MCP server (`server.ts`, 10), the two runtime adapters (`adapters.ts`, 8), and the `task_start` handler (`start.ts`, 6), plus `ownVersion`/`MCP_JSON_PATH` on `artifacts.ts`; `taskStartHandler` moved off `handlers.ts` into `start.ts` as `defaultTaskStartHandler`. Task 2's read/handler files still front no `vinaya` subcommand each — but `vinaya task-tools serve` (`commands/task-tools.ts`) now fronts the server, the one Commands-table row this surface gained. Type-only exports (`Observed`/`Page`, `TaskToolCallResult`, `CallerContext`/`ToolHandler`/`StartRecord` and the adapter/deps types) get no row, per this file's own rule.)
 
-## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
+## Commands — `apps/cli/src/commands` (45 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
 | Command | File | Entry function | In-scope calls today | Status | One lib function (compliant) / retirement target (exempt) |
 |---|---|---|---|---|---|
@@ -868,6 +868,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `task brief` | `task.ts` | `taskBriefCommand` | 1 | compliant | `prepareTaskOrIssue` |
 | `task run` | `task-run.ts` | `taskRunCommand` | 3 | exempt — see below | sharedCommandShell (target) |
 | `task status` | `task-status.ts` | `taskStatusCommand` | 5 | exempt — see below | taskStatus (target) |
+| `task-tools serve` | `task-tools.ts` | `taskToolsServeCommand` | 2 | exempt — see below | sharedCommandShell (target) |
 | `pr create` | `pr.ts` | `prCreateCommand` | 13 | exempt — see below | forgeWrite (target) |
 | `pr edit` | `pr.ts` | `prEditCommand` | 10 | exempt — see below | forgeWrite (target) |
 | `pr report` | `pr-report.ts` | `prReportCommand` | 5 | exempt — see below | collectTokens (target) |
@@ -944,6 +945,7 @@ Every non-compliant command from the table above, dated, with the count of disti
 | `dev-review-loop` | 2026-09-10 | 5 — lib: `loadConfig`, `isAgentVendor`, `devReviewLoop`, `printJson`, `colourLoopLine` | `sharedCommandShell` |
 | `task run` | 2026-09-11 | 3 — lib: `runTask`, `colourLoopLine`, `loadConfig` | `sharedCommandShell` |
 | `task status` | 2026-09-12 | 5 — lib: `printJson`, `gatherTaskStatusList`, `gatherSingleTaskStatus`, `loopLogPathFor`, `followLoopLog` | `taskStatus` |
+| `task-tools serve` | 2026-09-14 | 2 — lib: `serveTaskToolsStdio`, `ownVersion` | `sharedCommandShell` |
 
 `dispatchRole` retires no row today — its own command (`dispatch`) is new, not a retirement of an existing exempt row. `devReviewLoop` (this task) likewise retires no row today — it is itself a new named chokepoint (`## Effects` intro), and `dev-review-loop`'s own command calls it alongside the same three argv-plumbing calls `dispatch` already carries (`loadConfig`/`isAgentVendor`/`printJson`) — once `sharedCommandShell` absorbs those, this command is left calling only `devReviewLoop`, becoming compliant on its own rather than needing a second named target.
 

@@ -1,5 +1,5 @@
 /**
- * `vinaya task tools serve` — runs the shared task-tools MCP server
+ * `vinaya task-tools serve` — runs the shared task-tools MCP server
  * (`apps/cli/src/lib/task-tools/server.ts`) over stdio, the ONE command both
  * runtime adapters (`.mcp.json` for Claude, `[mcp_servers]` for Codex) register.
  * It speaks newline-delimited JSON-RPC 2.0 on stdin/stdout and nothing else —

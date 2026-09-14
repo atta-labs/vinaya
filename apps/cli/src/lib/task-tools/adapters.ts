@@ -15,7 +15,7 @@
  *     emits the exact TOML an operator adds; `self-hosting.md` records where it
  *     goes and the version it was verified against.
  *
- * Both point at `vinaya task tools serve` in whichever invocation shape the
+ * Both point at `vinaya task-tools serve` in whichever invocation shape the
  * repo needs — published `npx` (pinned to the exact installed version, same
  * `ownVersion()` source the workflows and hooks pin to) or the vendored
  * `node <bin>` shape — so the self-hosting boundary (`self-hosting.md`) covers
@@ -33,8 +33,8 @@ import { ownVersion } from '../artifacts.js'
 import type { VendoredVinaya } from '../self-host.js'
 import { MCP_PROTOCOL_VERSION, TASK_TOOLS_MCP_SERVER_NAME } from './server.js'
 
-/** The `vinaya task tools serve` subcommand argv — the one command both adapters register. */
-export const TASK_TOOLS_SERVE_ARGS = ['task', 'tools', 'serve'] as const
+/** The `vinaya task-tools serve` subcommand argv — the one command both adapters register. */
+export const TASK_TOOLS_SERVE_ARGS = ['task-tools', 'serve'] as const
 
 /** A launchable command: the program plus its argument vector, the shape both `.mcp.json` and Codex's TOML expect. */
 export type ServerInvocation = { command: string; args: string[] }

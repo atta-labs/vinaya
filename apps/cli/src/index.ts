@@ -248,18 +248,20 @@ try {
         await taskRunCommand(rest)
       } else if (subcommand === 'status') {
         await taskStatusCommand(rest)
-      } else if (subcommand === 'tools') {
-        const [sub2, ...rest2] = rest
-        if (sub2 === 'serve') {
-          await taskToolsServeCommand(rest2)
-        } else {
-          console.error(`Unknown 'task tools' subcommand: ${sub2 ?? '(none)'} (expected 'serve')`)
-          process.exit(2)
-        }
       } else {
         console.error(
-          `Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch', 'brief', 'run', 'status', or 'tools')`
+          `Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch', 'brief', 'run', or 'status')`
         )
+        process.exit(2)
+      }
+      break
+    }
+    case 'task-tools': {
+      const [subcommand, ...rest] = args
+      if (subcommand === 'serve') {
+        await taskToolsServeCommand(rest)
+      } else {
+        console.error(`Unknown 'task-tools' subcommand: ${subcommand ?? '(none)'} (expected 'serve')`)
         process.exit(2)
       }
       break
