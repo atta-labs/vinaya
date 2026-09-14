@@ -2489,6 +2489,120 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
   }, 20000)
 })
 
+/**
+ * Same as `writeFakeGh`, except the mechanical check-run named `ci` answers
+ * with TWO runs: an older `failure`, superseded by a newer `success` — the
+ * exact shape PR #600 hit (`driver-lifecycle-v1` task 2, `#607`, O1). If the
+ * driver's pause decision reads only the deduped, newest-per-name run, the
+ * gate reads green off this alone; a regression that fell back to reading
+ * the raw (undeduped) list would read this head as red and never reach round
+ * 1's reviewer dispatch at all.
+ */
+function writeFakeGhSupersededCiFailure(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  printf '%s\\n' '{"id":1,"name":"ci","status":"completed","conclusion":"failure","started_at":"2026-09-14T10:00:00Z"}'
+  printf '%s\\n' '{"id":2,"name":"ci","status":"completed","conclusion":"success","started_at":"2026-09-14T10:05:00Z"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+function setUpSupersededCiFailure(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeReviewerWritesNothingScenario(binDir)
+  writeFakeGhSupersededCiFailure(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe('devReviewLoop — a superseded check-run failure never pauses a healthy PR (driver-lifecycle-v1 task 2, #607, O1)', () => {
+  it('reads the gate green off the newer, deduped run and reaches round 1 reviewer dispatch — never a CI-red retry', () => {
+    const { home, cwd, path } = setUpSupersededCiFailure()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // The gate never read red: round 1's developer is dispatched exactly
+    // once — there is no second, CI-red-retry dev-prompt file — and the
+    // eventual pause is the reviewer-infrastructure case (security wrote
+    // nothing), never the gate-red case. A regression that fell back to the
+    // raw, undeduped check-run list would instead resume the developer with
+    // a "CI is red" prompt and never reach this point.
+    expect(existsSync(join(home, '.dev-prompt-2.txt'))).toBe(false)
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.round).toBe(1)
+    expect(pauseState.reason).toBe('infrastructure')
+    expect(pauseState.detail).toMatch(/security/)
+    expect(pauseState.detail).not.toMatch(/failing check-run/)
+  }, 20000)
+})
+
 // --- a findings.txt that still does not parse is infrastructure, never an
 // uncaught throw (review-validity-v1 task 8, #506, O6) ---
 
