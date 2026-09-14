@@ -28,7 +28,11 @@
  * candidate (`buildReviewerScratch`) — never the candidate itself, and never
  * each other's copy — so a reviewer that writes or runs its own toolchain
  * inside its own `cwd` can never mutate the shared snapshot or the sibling
- * role's context. Every function here is best-effort by design, matching
+ * role's context. Neither copy ever includes a symlink from the source tree
+ * (see `copyTree`'s own doc comment) — the developer's worktree is untrusted
+ * input, and a symlink surviving into a candidate/scratch tree would let a
+ * reviewer read, or a stray `chmod` reach, a path outside that tree
+ * entirely. Every function here is best-effort by design, matching
  * this file's sibling `persistManifestRecord`/`runEvidenceReport`: a
  * snapshot or scratch copy that could not be built degrades to `null` —
  * the caller then dispatches with no `cwd` override, exactly as before this
@@ -41,7 +45,7 @@
  */
 
 import { basename, join } from 'node:path'
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 
 export type ReviewerRole = 'reviewer' | 'security'
 
@@ -64,11 +68,34 @@ export function reviewerScratchDir(root: string, task: number, round: number, ro
 /** Never copied into a candidate or scratch tree: version-control internals and installed dependencies a reviewer never needs to read, and — for `.worktrees` specifically — every OTHER task's own worktree, were a stray one ever nested under the source directory. */
 const ISOLATION_COPY_EXCLUDES: ReadonlySet<string> = new Set(['.git', 'node_modules', '.worktrees'])
 
+/** `lstatSync` (never `statSync`) so a symlink is identified as itself, not as whatever it points to. Best-effort: an entry that vanishes between `readdirSync` and this call is treated as "not a symlink" — `cpSync`'s own read of the same path fails it out a moment later regardless. */
+function isSymlink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Never copies a symlink into a candidate or scratch tree (round 2 review,
+ * HIGH/MAJOR: a symlink copied verbatim by `cpSync`, then handed to
+ * `chmodTree`, lets `chmodSync` — which always follows a symlink on POSIX,
+ * there being no portable `lchmod` — change the permissions of whatever the
+ * link resolves to, a path that can sit entirely outside the tree this
+ * module exists to confine). The reviewed worktree is untrusted input; a
+ * reviewer needs to read source and test files, never a link to somewhere
+ * else on the host, so refusing every symlink outright costs nothing a
+ * review needs and closes both the read-outside-the-tree and the
+ * chmod-something-external vectors in one place, structurally, rather than
+ * naming this one incident and leaving the next symlink shape to be found
+ * the same way.
+ */
 function copyTree(src: string, dest: string): void {
   mkdirSync(dest, { recursive: true })
   cpSync(src, dest, {
     recursive: true,
-    filter: (source) => !ISOLATION_COPY_EXCLUDES.has(basename(source))
+    filter: (source) => !ISOLATION_COPY_EXCLUDES.has(basename(source)) && !isSymlink(source)
   })
 }
 
@@ -87,6 +114,14 @@ function chmodTree(dir: string, fileMode: number, dirMode: number): void {
   }
   for (const entry of entries) {
     const full = join(dir, entry.name)
+    if (entry.isSymbolicLink()) {
+      // Second, independent layer: `copyTree` should never have let a
+      // symlink reach this tree at all, but `chmodSync` dereferences one
+      // unconditionally — skipping it here means a regression in the copy
+      // step still can't turn into a permission change on an arbitrary
+      // external path.
+      continue
+    }
     if (entry.isDirectory()) {
       chmodTree(full, fileMode, dirMode)
     } else {
@@ -122,6 +157,17 @@ function removeIfPresent(dir: string): void {
  * same `(task, round)` (the loop's own resend-for-finding-ids path calls
  * `buildReviewerScratch` again, never this) replaces whatever was there
  * rather than leaving two candidates on disk.
+ *
+ * This function trusts `sourceDir`'s content wholesale — it has no way to
+ * know, from the filesystem alone, whether that worktree's own `HEAD` still
+ * matches the round's resolved candidate sha (round 2 review, MAJOR: a
+ * local worktree that has moved on between push and dispatch would
+ * otherwise be copied silently, handing both reviewers content that
+ * disagrees with the manifest's own `headSha` with nothing to catch the
+ * mismatch). The caller (`dev-review-loop.ts`) is the one that knows the
+ * round's resolved head and already reads the worktree's actual head for
+ * other purposes (`readWorktreeHead`) — it compares the two BEFORE calling
+ * this function, and passes a `sourceDir` at all only when they agree.
  */
 export function buildReviewerCandidate(root: string, task: number, round: number, sourceDir: string): string | null {
   if (!existsSync(sourceDir)) return null

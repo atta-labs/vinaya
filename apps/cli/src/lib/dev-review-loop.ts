@@ -2247,10 +2247,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // developer's own local worktree, so both roles judge byte-
           // identical content regardless of what that worktree does after
           // this copy is taken. `null` when no local worktree exists on
-          // this machine (a fresh attach with nothing dispatched here yet) —
-          // `dispatchReviewer` then omits `cwd` entirely, the same as every
-          // round before this task.
-          const candidateDir = buildReviewerCandidate(root, task, round, worktreePathForBranch())
+          // this machine (a fresh attach with nothing dispatched here yet)
+          // OR the local worktree's own head no longer matches the round's
+          // resolved candidate sha (round 2 review, MAJOR: a diverged local
+          // worktree copied blind would hand both reviewers content the
+          // manifest's `headSha` never actually pinned, with nothing else
+          // in this mechanism positioned to catch it) — `dispatchReviewer`
+          // then omits `cwd` entirely, the same as every round before this
+          // task.
+          const candidateSourceDir = worktreePathForBranch()
+          const candidateDir =
+            d.readWorktreeHead(candidateSourceDir) === head
+              ? buildReviewerCandidate(root, task, round, candidateSourceDir)
+              : null
           try {
             // O1/O2: the evidence report runs IN PARALLEL with both reviewer
             // dispatches, never before or after them — reviewers dispatch on

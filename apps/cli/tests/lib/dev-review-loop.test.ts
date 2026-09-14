@@ -111,6 +111,8 @@ const TASK = 9001
 const BRANCH = `task/dev-review-loop-v1/${TASK}`
 const HEAD_SHA = 'a'.repeat(40)
 const BASE_SHA = 'b'.repeat(40)
+/** A local worktree head that never equals `HEAD_SHA` — simulates one that has moved on since it was pushed (`#561` round 2 review, MAJOR). */
+const DIVERGED_LOCAL_HEAD_SHA = 'c'.repeat(40)
 
 /** Same exclusion `dispatch.test.ts` uses — this authoring machine has real claude/codex/gemini installed. */
 function pathWithoutRealVendors(): string {
@@ -1627,6 +1629,46 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
   echo "$PWD"
   exit 0
 fi
+if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
+  echo "${HEAD_SHA}"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+/** Same as `writeFakeGit`, except `-C <dir> rev-parse HEAD` answers `DIVERGED_LOCAL_HEAD_SHA`, never `HEAD_SHA` — simulates a local worktree that has moved on since it was pushed (`#561` round 2 review, MAJOR). */
+function writeFakeGitWorktreeHeadDiverged(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
+  echo "${DIVERGED_LOCAL_HEAD_SHA}"
+  exit 0
+fi
 if [ "$1" = "fetch" ]; then
   exit 0
 fi
@@ -1980,6 +2022,41 @@ describe('devReviewLoop — reviewers inspect one immutable candidate with isola
     expect(r.status).toBe(0)
     expect(existsSync(staleCandidate)).toBe(false)
     expect(existsSync(staleScratch)).toBe(false)
+  }, 20000)
+
+  it("a local worktree whose own head has diverged from the round's resolved candidate sha is never copied — no candidate, no scratch cwd (round 2 review, MAJOR)", () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaudeCapturingReviewerCwd(binDir)
+    writeFakeGh(binDir)
+    writeFakeGitWorktreeHeadDiverged(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    // The local worktree exists and carries content, but `git -C <dir>
+    // rev-parse HEAD` (faked above) answers a sha that is NOT this round's
+    // resolved head — the exact "pushed, then moved on locally" case.
+    const worktreeDir = join(cwd, '.worktrees', BRANCH)
+    mkdirSync(worktreeDir, { recursive: true })
+    writeFileSync(join(worktreeDir, 'candidate-marker.txt'), 'stale local content\n')
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    const taskDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
+    // No candidate was ever built from the diverged worktree.
+    expect(existsSync(join(taskDir, 'round-1-candidate'))).toBe(false)
+    expect(existsSync(join(taskDir, 'round-1-reviewer-scratch'))).toBe(false)
+    expect(existsSync(join(taskDir, 'round-1-security-scratch'))).toBe(false)
+    // Reviewers dispatched with no `cwd` override at all — never handed the
+    // stale worktree's own content as a substitute.
+    const reviewerCwd = readFileSync(join(taskDir, 'round-1-reviewer-work', 'cwd.txt'), 'utf8').trim()
+    expect(reviewerCwd).not.toMatch(/round-1-reviewer-scratch$/)
+    // The fake reviewer's `cat "$(pwd)/candidate-marker.txt" > ... || true`
+    // still creates its target file via shell redirection even when `cat`
+    // itself fails — so the assertion is an EMPTY file, never a missing one.
+    expect(readFileSync(join(taskDir, 'round-1-reviewer-work', 'candidate-marker-seen.txt'), 'utf8')).toBe('')
   }, 20000)
 })
 

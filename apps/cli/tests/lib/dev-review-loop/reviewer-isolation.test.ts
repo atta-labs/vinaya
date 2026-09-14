@@ -13,11 +13,14 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -132,6 +135,38 @@ describe('buildReviewerCandidate — O1, one shared read-only checkout per round
     const second = buildReviewerCandidate(root, 9001, 1, src) as string
     expect(second).toBe(first)
     expect(readFileSync(join(second, 'README.md'), 'utf8')).toBe('# updated\n')
+  })
+
+  it('never copies a symlink into the candidate (round 2 review, HIGH/MAJOR)', () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    const externalDir = tempDir('vinaya-riso-external-')
+    const externalTarget = join(externalDir, 'outside-the-tree.txt')
+    writeFileSync(externalTarget, 'not meant to be reachable\n')
+    symlinkSync(externalTarget, join(src, 'sneaky-link.txt'))
+
+    const dest = buildReviewerCandidate(root, 9001, 1, src) as string
+
+    expect(existsSync(join(dest, 'sneaky-link.txt'))).toBe(false)
+    // A real file at the same name (never a symlink) still copies normally.
+    expect(readFileSync(join(dest, 'README.md'), 'utf8')).toBe('# hello\n')
+  })
+
+  it("chmod'ing the candidate read-only never touches a symlink target's own permissions (round 2 review, HIGH/MAJOR)", () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    const externalDir = tempDir('vinaya-riso-external-')
+    const externalTarget = join(externalDir, 'outside-the-tree.txt')
+    writeFileSync(externalTarget, 'not meant to be reachable\n')
+    chmodSync(externalTarget, 0o644)
+    symlinkSync(externalTarget, join(src, 'sneaky-link.txt'))
+
+    buildReviewerCandidate(root, 9001, 1, src)
+
+    // `chmodTree`'s own `0o444` pass must never have followed the symlink
+    // through to this file — its mode is untouched.
+    expect(statSync(externalTarget).mode & 0o777).toBe(0o644)
+    expect(lstatSync(join(src, 'sneaky-link.txt')).isSymbolicLink()).toBe(true)
   })
 })
 
