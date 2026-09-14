@@ -1,8 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { reconcileLaunch, type ReconcileLaunchDeps } from '../../../src/lib/dev-review-loop/developer-dispatch'
-import type { LaunchRecord, ParsedLaunch } from '../../../src/lib/dispatch'
+import {
+  classifyChildLiveness,
+  reconcileLaunch,
+  type ReconcileLaunchDeps
+} from '../../../src/lib/dev-review-loop/developer-dispatch'
+import type { LaunchRecord, ParsedLaunch, ProcessSnapshot } from '../../../src/lib/dispatch'
+import { execFileSync } from 'node:child_process'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const THIS_HOST = 'test-host'
+
+const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+
+function tempDir(prefix: string): string {
+  return mkdtempSync(join(tmpdir(), prefix))
+}
+
+const PROMPT_FILE_CONTENT = 'do the thing'
 
 /** A launch record with sensible defaults; individual cases override only what they exercise. */
 function record(overrides: Partial<LaunchRecord> = {}): LaunchRecord {
@@ -18,6 +35,8 @@ function record(overrides: Partial<LaunchRecord> = {}): LaunchRecord {
     effectId: 'eff-1',
     dispatcherPid: 1000,
     childPid: 2000,
+    childStartedAt: null,
+    childCommand: null,
     host: THIS_HOST,
     startedAt: '2026-09-14T00:00:00.000Z',
     status: 'completed',
@@ -29,9 +48,26 @@ function record(overrides: Partial<LaunchRecord> = {}): LaunchRecord {
   }
 }
 
-/** Deps whose pid-liveness answer and hostname are fixed per case. */
-function deps(isAlive: boolean, host = THIS_HOST): ReconcileLaunchDeps {
-  return { isPidAlive: () => isAlive, hostname: () => host }
+/**
+ * Deps whose pid-liveness answer, hostname, and process-snapshot answer are
+ * fixed per case. `isAlive` drives BOTH `isPidAlive` (probed for the
+ * dispatcher pid by `classifyChildLiveness`) and whether `getProcessSnapshot`
+ * finds anything at all at the queried (child) pid — `snapshot` names what it
+ * finds when it does, defaulting to a child still parented to `record()`'s
+ * own default `dispatcherPid` (1000) so every pre-existing "live" case here
+ * keeps meaning what it always meant.
+ */
+function deps(
+  isAlive: boolean,
+  host = THIS_HOST,
+  snapshot: ProcessSnapshot = { ppid: 1000, startedAt: null, command: null }
+): ReconcileLaunchDeps {
+  return {
+    isPidAlive: () => isAlive,
+    hostname: () => host,
+    getProcessSnapshot: () => (isAlive ? snapshot : null),
+    terminateChild: () => {}
+  }
 }
 
 describe('reconcileLaunch (O3) — no prior launch', () => {
@@ -80,6 +116,155 @@ describe('reconcileLaunch (O3) — a live launch is found by identity', () => {
     }
     const out = reconcileLaunch(parsed, { requireContinuity: true }, deps(true))
     expect(out.kind).not.toBe('live')
+  })
+
+  it('a live pid with a live recorded parent still returns live — no regression on the duplicate-worker guard', () => {
+    const parsed: ParsedLaunch = {
+      status: 'ok',
+      record: record({ status: 'launched', resumeId: null, dispatcherPid: 1000, childPid: 2000 })
+    }
+    const out = reconcileLaunch(
+      parsed,
+      { requireContinuity: true },
+      deps(true, THIS_HOST, { ppid: 1000, startedAt: null, command: null })
+    )
+    expect(out.kind).toBe('live')
+  })
+})
+
+describe('reconcileLaunch (O2, Issue #605) — an orphaned child is a takeover, never live', () => {
+  it('a live pid whose PPID is 1 (reparented to init) never reads live — the driver that spawned it is gone', () => {
+    const parsed: ParsedLaunch = {
+      status: 'ok',
+      record: record({ status: 'launched', dispatcherPid: 1000, childPid: 2000, resumeId: 'sess-mid' })
+    }
+    const out = reconcileLaunch(
+      parsed,
+      { requireContinuity: true },
+      deps(true, THIS_HOST, { ppid: 1, startedAt: null, command: null })
+    )
+    expect(out.kind).not.toBe('live')
+    // Continuity was required and a session was already bound before the
+    // driver died — the orphan is a TAKEOVER (resume that exact session),
+    // never a block and never a silent fresh start.
+    expect(out.kind).toBe('resume')
+    if (out.kind === 'resume') expect(out.resumeId).toBe('sess-mid')
+  })
+
+  it('`classifyChildLiveness` names the orphan case directly, for the recovery wrapper to reap', () => {
+    const rec = record({ status: 'launched', dispatcherPid: 1000, childPid: 2000 })
+    const liveness = classifyChildLiveness(rec, deps(true, THIS_HOST, { ppid: 1, startedAt: null, command: null }))
+    expect(liveness).toBe('orphaned')
+  })
+
+  it('a reparented child whose OWN recorded dispatcher pid no longer answers is also orphaned, not live', () => {
+    const parsed: ParsedLaunch = {
+      status: 'ok',
+      record: record({ status: 'launched', dispatcherPid: 1000, childPid: 2000, resumeId: null })
+    }
+    // The child still shows its old dispatcher as parent (ppid matches),
+    // but that dispatcher pid itself no longer answers a liveness probe —
+    // still never live.
+    const out = reconcileLaunch(
+      parsed,
+      { requireContinuity: true },
+      {
+        isPidAlive: () => false,
+        hostname: () => THIS_HOST,
+        getProcessSnapshot: () => ({ ppid: 1000, startedAt: null, command: null }),
+        terminateChild: () => {}
+      }
+    )
+    expect(out.kind).not.toBe('live')
+  })
+})
+
+describe("reconcileLaunch (O3, Issue #605) — a recycled pid is never treated as this launch's child", () => {
+  it('a live pid whose recorded start time no longer matches is a DIFFERENT process — never live, never touched', () => {
+    const parsed: ParsedLaunch = {
+      status: 'ok',
+      record: record({
+        status: 'launched',
+        dispatcherPid: 1000,
+        childPid: 2000,
+        childStartedAt: 'Mon Sep 14 10:00:00 2026',
+        childCommand: 'claude',
+        resumeId: null
+      })
+    }
+    // Same pid, same live parent — but the OS has recycled it: a different
+    // process now answers at that pid, with a different start time.
+    const out = reconcileLaunch(
+      parsed,
+      { requireContinuity: true },
+      deps(true, THIS_HOST, { ppid: 1000, startedAt: 'Tue Sep 15 09:00:00 2026', command: 'claude' })
+    )
+    expect(out.kind).not.toBe('live')
+  })
+
+  it("a live pid whose recorded command no longer matches is likewise never this launch's child", () => {
+    const rec = record({
+      status: 'launched',
+      dispatcherPid: 1000,
+      childPid: 2000,
+      childStartedAt: null,
+      childCommand: 'claude'
+    })
+    const liveness = classifyChildLiveness(
+      rec,
+      deps(true, THIS_HOST, { ppid: 1000, startedAt: null, command: 'some-unrelated-process' })
+    )
+    expect(liveness).toBe('not-ours')
+  })
+
+  it('round 3 security review, MEDIUM: a captured field the LIVE snapshot cannot read back is never trusted as a match — fail closed, not silently skipped', () => {
+    // The record captured a real start time at spawn time (`childStartedAt`
+    // non-null) — but the live re-snapshot's own `ps` read of that field
+    // came back empty (a transient failure, a permissions hiccup, a race),
+    // never itself proof this is the same process. Before the fix, a `null`
+    // on either side skipped the comparison entirely and fell through to a
+    // bare ppid+liveness match — exactly the gap a recycled pid could hide
+    // behind whenever the live read happened to come back partial.
+    const rec = record({
+      status: 'launched',
+      dispatcherPid: 1000,
+      childPid: 2000,
+      childStartedAt: 'Mon Sep 14 10:00:00 2026',
+      childCommand: null
+    })
+    const liveness = classifyChildLiveness(rec, deps(true, THIS_HOST, { ppid: 1000, startedAt: null, command: null }))
+    expect(liveness).toBe('not-ours')
+  })
+
+  it('round 3 security review, MEDIUM: same fail-closed rule for a captured command the live snapshot cannot read back', () => {
+    const rec = record({
+      status: 'launched',
+      dispatcherPid: 1000,
+      childPid: 2000,
+      childStartedAt: null,
+      childCommand: 'claude'
+    })
+    const liveness = classifyChildLiveness(rec, deps(true, THIS_HOST, { ppid: 1000, startedAt: null, command: null }))
+    expect(liveness).toBe('not-ours')
+  })
+
+  it('with no identity ever recorded (a pre-this-task record), a live pid with a live parent is still trusted as live', () => {
+    // Backward compatibility: `childStartedAt`/`childCommand` are `null` on
+    // any launch record written before this task — there is nothing to
+    // compare, so identity is never the reason a genuinely live launch on a
+    // live host stops being found.
+    const rec = record({
+      status: 'launched',
+      dispatcherPid: 1000,
+      childPid: 2000,
+      childStartedAt: null,
+      childCommand: null
+    })
+    const liveness = classifyChildLiveness(
+      rec,
+      deps(true, THIS_HOST, { ppid: 1000, startedAt: 'whatever', command: 'whatever' })
+    )
+    expect(liveness).toBe('live')
   })
 })
 
@@ -133,4 +318,111 @@ describe('reconcileLaunch (O3) — a reviewer is never resumed for continuity', 
     expect(out.kind).toBe('finished')
     if (out.kind === 'finished') expect(out.outcome.status).toBe('incomplete')
   })
+})
+
+describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the reap step goes through ReconcileLaunchDeps, never dispatch.ts's terminateChildWithGrace directly", () => {
+  it('reaps a genuinely orphaned child through the INJECTED terminateChild — not a hardcoded real signal', () => {
+    // Proves the seam, not just the pure classifier: builds a REAL orphan
+    // (a subprocess that spawns a long-lived child via `dispatchRole`, writes
+    // the launch record, then exits — reparenting its child to init, exactly
+    // O2's "driver died without reaching shutdown" case) and calls
+    // `recoverDeveloperLaunch` with a `terminateChild` SPY that never sends a
+    // real signal. Before this fix, `recoverDeveloperLaunch` called
+    // `dispatch.ts`'s `terminateChildWithGrace` directly, ignoring whatever
+    // `terminateChild` a test injected — so a spy here would have been
+    // provably bypassed: the real process would have died anyway. This test
+    // fails on that old code (the process would already be gone by the time
+    // it checks) and passes only when the reap genuinely routes through
+    // `deps.terminateChild`.
+    const home = tempDir('vinaya-reconcile-home-')
+    const cwd = tempDir('vinaya-reconcile-cwd-')
+    const binDir = tempDir('vinaya-reconcile-bin-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    writeFileSync(
+      join(binDir, 'claude'),
+      `#!${process.execPath}\nprocess.stdin.resume()\nawait new Promise(() => {})\n`
+    )
+    chmodSync(join(binDir, 'claude'), 0o755)
+
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const orphanScript = join(cwd, 'make-orphan.ts')
+    writeFileSync(
+      orphanScript,
+      [
+        `import { dispatchRole, readLaunchRecord } from ${JSON.stringify(dispatchLib)}`,
+        `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 44 }`,
+        `void dispatchRole('developer', 'claude', 'p', opts)`,
+        'async function waitForChildPid(timeoutMs) {',
+        '  const start = Date.now()',
+        '  while (Date.now() - start < timeoutMs) {',
+        `    const parsed = readLaunchRecord('developer', 'claude', null, 44)`,
+        `    if (parsed.status === 'ok' && parsed.record.childPid !== null) return`,
+        '    await new Promise((r) => setTimeout(r, 50))',
+        '  }',
+        `  throw new Error('timed out waiting for the launch record to carry a childPid')`,
+        '}',
+        'await waitForChildPid(5000)',
+        // Exit WITHOUT terminating the child — this process's own death is
+        // what reparents it to init, the orphan condition under test.
+        'process.exit(0)'
+      ].join('\n')
+    )
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${process.env.PATH ?? ''}` }
+    delete spawnEnv.VINAYA_RUN_ID
+    execFileSync('bun', [orphanScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+
+    const developerDispatchLib = join(CLI_ROOT, 'src', 'lib', 'dev-review-loop', 'developer-dispatch.ts')
+    const reaperScript = join(cwd, 'reap-attempt.ts')
+    const resultPath = join(cwd, 'result.json')
+    writeFileSync(
+      reaperScript,
+      [
+        `import { writeFileSync } from 'node:fs'`,
+        `import { execFileSync } from 'node:child_process'`,
+        `import { hostname } from 'node:os'`,
+        `import { recoverDeveloperLaunch } from ${JSON.stringify(developerDispatchLib)}`,
+        `import { readLaunchRecord, getProcessSnapshot } from ${JSON.stringify(dispatchLib)}`,
+        `const before = readLaunchRecord('developer', 'claude', null, 44)`,
+        `const childPid = before.status === 'ok' ? before.record.childPid : null`,
+        'let spyCalledWith = null',
+        'const deps = {',
+        '  isPidAlive: (pid) => { try { process.kill(pid, 0); return true } catch { return false } },',
+        '  hostname: () => hostname(),',
+        '  getProcessSnapshot,',
+        '  terminateChild: (pid) => { spyCalledWith = pid }',
+        '}',
+        `const out = recoverDeveloperLaunch(44, 'claude', null, {}, deps)`,
+        'let stillAlive = false',
+        'if (childPid !== null) {',
+        `  try { execFileSync('ps', ['-p', String(childPid)], { stdio: ['ignore', 'ignore', 'ignore'] }); stillAlive = true } catch { stillAlive = false }`,
+        '}',
+        // Real cleanup — the spy never actually killed it.
+        "if (childPid !== null) { try { process.kill(childPid, 'SIGKILL') } catch {} }",
+        `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ childPid, spyCalledWith, stillAlive, kind: out.kind }))`,
+        'process.exit(0)'
+      ].join('\n')
+    )
+    execFileSync('bun', [reaperScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+
+    const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
+      childPid: number
+      spyCalledWith: number | null
+      stillAlive: boolean
+      kind: string
+    }
+    // The injected spy — not a real signal — is what actually reaped it.
+    expect(result.spyCalledWith).toBe(result.childPid)
+    // Because the spy is a no-op, the real process must still be alive: proof
+    // the call was routed through `deps.terminateChild`, not a hardcoded
+    // `terminateChildWithGrace` the test's own spy could never intercept.
+    expect(result.stillAlive).toBe(true)
+    // With no session ever bound, continuity required, and the record still
+    // reading 'launched': pause explicitly once the (fake) reap has run.
+    expect(result.kind).toBe('pause')
+
+    rmSync(home, { recursive: true, force: true })
+    rmSync(cwd, { recursive: true, force: true })
+    rmSync(binDir, { recursive: true, force: true })
+  }, 15_000)
 })
