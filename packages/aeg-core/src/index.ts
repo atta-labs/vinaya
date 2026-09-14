@@ -524,3 +524,37 @@ export type {
   UsageEvent,
   UsageUnits
 } from './log'
+export {
+  acquireOwnership,
+  appendTransition,
+  CONTROL_RECORD_VERSION,
+  defaultControlStoreDeps,
+  defaultIsPidAlive,
+  InvalidRunIdError,
+  migrateLegacyTask,
+  parseInputRecord,
+  parseOwnershipRecord,
+  parseRunRecord,
+  parseTransitionRecord,
+  readCurrentOwnership,
+  readInput,
+  readRun,
+  readTransitions,
+  StaleEpochWriteError,
+  writeInput,
+  writeRun
+} from './control-store'
+export type {
+  AcquireResult,
+  ControlRecord,
+  ControlStoreDeps,
+  InputInput,
+  InputRecord,
+  MigrationResult,
+  OwnershipRecord,
+  ParsedRecord,
+  RunInput,
+  RunRecord,
+  TransitionInput,
+  TransitionRecord
+} from './control-store'

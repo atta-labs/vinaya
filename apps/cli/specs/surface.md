@@ -360,8 +360,26 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `trancheSlugOf` | function | `packages/aeg-forge-state/src/labels.ts` |
 | `projectsFromBody` | function | `packages/aeg-forge-state/src/list-tasks.ts` |
 | `mapForgeFacts` | function | `packages/aeg-forge-state/src/map-forge-facts.ts` |
+| `CONTROL_RECORD_VERSION` | const | `packages/aeg-core/src/control-store/records.ts` |
+| `parseRunRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `parseInputRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `parseOwnershipRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `parseTransitionRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `defaultControlStoreDeps` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `StaleEpochWriteError` | class | `packages/aeg-core/src/control-store/local.ts` |
+| `InvalidRunIdError` | class | `packages/aeg-core/src/control-store/local.ts` |
+| `readCurrentOwnership` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `acquireOwnership` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `writeRun` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `readRun` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `writeInput` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `readInput` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `appendTransition` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `readTransitions` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `defaultIsPidAlive` | function | `packages/aeg-core/src/control-store/migration.ts` |
+| `migrateLegacyTask` | function | `packages/aeg-core/src/control-store/migration.ts` |
 
-(284 exports.)
+(302 exports.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
