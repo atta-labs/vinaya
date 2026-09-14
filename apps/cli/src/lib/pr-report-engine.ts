@@ -16,6 +16,7 @@ import { coreCheckRegistry } from '../checks/registry'
 import { buildCheckEnv } from '../checks/runner'
 import { ScanContext } from '../checks/scan-context'
 import { loadConfig } from './config'
+import { type DispatchTeeRecovery, realDispatchTeeRecoveryDeps, recoverUsageFromDispatchTee } from './dispatch.js'
 import { runBodyChecks } from './forge-write.js'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from './numstat'
 import { packageRoot } from './package-root.js'
@@ -861,8 +862,51 @@ export type TokensAddition = { collected: true; row: string } | { collected: fal
  * another `commands/*.ts` file outright; routing through this lib-layer
  * wrapper keeps that call inside `apps/cli/src/lib`, where it already lived.
  */
-export function resolveTokenReportCapability(): MeteringCapability {
-  return resolveMeteringCapability(realDeps())
+/**
+ * `resolveTokenReportCapabilityWith`'s I/O, injected the same way every
+ * other deps type in this file is — the merge logic below is otherwise
+ * untestable end to end (round-2 review, #608, MAJOR finding F1): the two
+ * halves — `resolveMeteringCapability` and `recoverUsageFromDispatchTee` —
+ * each had unit coverage in isolation, but nothing proved the merge itself
+ * (a `no-transcript-resolved` verdict plus a real recovered summary
+ * actually becoming `{capable: true, ...}`) without this seam.
+ */
+export type TokenReportCapabilityDeps = {
+  resolveMetering: (transcriptPath?: string) => MeteringCapability
+  recoverFromTee: () => DispatchTeeRecovery | null
+}
+
+/** Real, production deps — `resolveMeteringCapability(realDeps())` and `recoverUsageFromDispatchTee(realDispatchTeeRecoveryDeps())`, unchanged from before this seam existed. */
+export function realTokenReportCapabilityDeps(): TokenReportCapabilityDeps {
+  return {
+    resolveMetering: (transcriptPath) => resolveMeteringCapability(realDeps(), transcriptPath),
+    recoverFromTee: () => recoverUsageFromDispatchTee(realDispatchTeeRecoveryDeps())
+  }
+}
+
+/**
+ * O1 (#608): tries the real probe first, exactly as before; only when it
+ * comes back `no-transcript-resolved` (this session's own wiring — no
+ * pointer at all — never a resolved-but-broken one) does it also try
+ * `recoverUsageFromDispatchTee` before giving up. Every other verdict
+ * (capable, or incapable for a different reason) passes through unchanged —
+ * this never overrides a real wiring-defect diagnosis with a recovered
+ * number. The pure merge, deps-injected so a test can compose both halves
+ * with fakes and assert the actual branch taken.
+ */
+export function resolveTokenReportCapabilityWith(
+  deps: TokenReportCapabilityDeps,
+  transcriptPath?: string
+): MeteringCapability {
+  const capability = deps.resolveMetering(transcriptPath)
+  if (capability.capable || capability.reason !== 'no-transcript-resolved') return capability
+  const recovered = deps.recoverFromTee()
+  if (!recovered) return capability
+  return { capable: true, transcriptPath: recovered.teePath, summary: recovered.summary }
+}
+
+export function resolveTokenReportCapability(transcriptPath?: string): MeteringCapability {
+  return resolveTokenReportCapabilityWith(realTokenReportCapabilityDeps(), transcriptPath)
 }
 
 export function collectTokensAddition(opts: {
@@ -872,7 +916,7 @@ export function collectTokensAddition(opts: {
   transcriptPath?: string
   modelOverride?: string
 }): TokensAddition {
-  const capability = resolveMeteringCapability(realDeps(), opts.transcriptPath)
+  const capability = resolveTokenReportCapability(opts.transcriptPath)
   if (!capability.capable) {
     if (capability.reason === 'no-transcript-resolved') {
       return {

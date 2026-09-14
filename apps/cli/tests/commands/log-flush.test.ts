@@ -85,6 +85,17 @@ function ndjsonLine(runId: string, seq: number, issue: number): string {
 }
 
 /**
+ * A plain string existing-comment defaults to `daniboomerang` — this repo's
+ * hardcoded `PRINCIPAL_ALLOWLIST` fallback (`loadTrustAnchorConfig` returns
+ * `null` here: the stub has no `gh api repos/.../contents/vinaya.config.json`
+ * handler, an unhandled call the loader's own catch turns into that
+ * fallback) — so the existing "already posted" idempotency test keeps
+ * exercising a TRUSTED marker without change. Pass `{ body, author }`
+ * explicitly (e.g. `author: 'someone-else'`) to exercise an UNTRUSTED one.
+ */
+type ExistingComment = string | { body: string; author: string | null }
+
+/**
  * A `gh` stub handling `issue comment <n> --body-file <f>`, `pr comment <n>
  * --body-file <f>`, and `pr view <n> --json body`. Every posted body is
  * appended to `bodiesLogPath`, chunk-separated, so a test can inspect the
@@ -94,7 +105,13 @@ function ndjsonLine(runId: string, seq: number, issue: number): string {
  * comment combined) fail while every call up to and including the Nth
  * succeeds — the "chunk 1 succeeds, chunk 2 fails" story.
  */
-function stubGh(opts: { prBody?: string; failFlagPath?: string; failAfterNComments?: number }): {
+
+function stubGh(opts: {
+  prBody?: string
+  failFlagPath?: string
+  failAfterNComments?: number
+  existingComments?: ExistingComment[]
+}): {
   env: Record<string, string>
   bodiesLogPath: string
   callsLogPath: string
@@ -110,7 +127,13 @@ function stubGh(opts: { prBody?: string; failFlagPath?: string; failAfterNCommen
   writeFileSync(bodiesLogPath, '')
   writeFileSync(callsLogPath, '')
   writeFileSync(counterPath, '0')
-  writeFileSync(prBodyPath, JSON.stringify({ body: opts.prBody ?? '' }))
+  const comments = (opts.existingComments ?? []).map((c) => {
+    const { body, author } = typeof c === 'string' ? { body: c, author: 'daniboomerang' } : c
+    return { body, author: author === null ? null : { login: author } }
+  })
+  // Both `--json body` (issueFromPr) and `--json comments` (the idempotency
+  // read) read this same object; extra keys are harmless to either reader.
+  writeFileSync(prBodyPath, JSON.stringify({ body: opts.prBody ?? '', comments }))
   const gh = join(dir, 'gh')
   writeFileSync(
     gh,
@@ -126,6 +149,10 @@ if [ "$1$2" = "issuecomment" ] || [ "$1$2" = "prcomment" ]; then
     echo "simulated gh failure: rate limited" >&2
     exit 1
   fi
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  cat "${prBodyPath}"
+  exit 0
 fi
 if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
   n=$3
@@ -402,6 +429,45 @@ describe('vinaya log flush — defeat cases', () => {
     expect(lines[2].reason).toContain('rY')
   })
 
+  it("a seq gap inside chunk 1 (log-sink.ts's synchronous seq++ can consume a seq with no line ever written) never drops chunk 2's line when chunk 2 fails to post (code review MAJOR, round 2, Issue #562)", () => {
+    const cwd = tempDir('log-flush-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-flush-home-')
+    const gh = stubGh({ failAfterNComments: 1 })
+
+    // Chunk 1 (run rG) covers only 2 PHYSICAL lines (seq 0 and seq 2 — seq 1
+    // was consumed by the sink's seq++ but its line never landed) — its
+    // seqTo-seqFrom span is 3, one more than its true line count. Chunk 2
+    // (run rZ) is a single, unrelated line that fails to post. A
+    // `seqTo - seqFrom + 1`-based line count would overcount chunk 1 by one
+    // and truncate chunk 2's never-posted line right along with it.
+    const original = [ndjsonLine('rG', 0, 112), ndjsonLine('rG', 2, 112), ndjsonLine('rZ', 0, 112)]
+    seedOutbox(home, 112, original)
+
+    const r = runCli(['log', 'flush', '--issue', '112'], cwd, { HOME: home, ...gh.env })
+
+    expect(r.status).toBe(2)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('log-flush-gh-failed')
+    expect(finding.message).toContain('rZ')
+
+    const chunks = chunksOf(readFileSync(gh.bodiesLogPath, 'utf8'))
+    expect(chunks.length).toBe(1)
+    expect(chunks[0]).toContain('<!-- aeg:log:rG:0-2 -->')
+
+    const lines = readFileSync(outboxPath(home, 112), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+    // Chunk 1 (rG, both lines) truncated away; chunk 2 (rZ) — never
+    // confirmed posted — survives, exactly, plus the audit trail. A
+    // seq-based miscount would have silently dropped it here.
+    expect(lines[0]).toEqual(JSON.parse(original[2] as string))
+    expect(lines[1].event).toBe('validated')
+    expect(lines[2].event).toBe('refused')
+    expect(lines[2].reason).toContain('rZ')
+  })
+
   it('refuses a corrupt outbox line (fails full schema re-validation) without posting or truncating anything (security review MEDIUM 2, PR #439)', () => {
     const cwd = tempDir('log-flush-cwd-')
     initGitRepo(cwd)
@@ -456,6 +522,64 @@ describe('vinaya log flush — defeat cases', () => {
     const posted = readFileSync(gh.bodiesLogPath, 'utf8')
     expect(posted).not.toContain(secret)
     expect(posted).toContain('<redacted>')
+  })
+})
+
+describe('vinaya log flush — idempotency across a lost acknowledgement (task-log-v1 task 2, #562, O2)', () => {
+  it('a chunk whose marker already exists on the forge is acknowledged (truncated), never re-posted', () => {
+    const cwd = tempDir('log-flush-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-flush-home-')
+    // A prior attempt posted this chunk, then died before truncating: its
+    // marker is already on the Issue.
+    const gh = stubGh({ existingComments: ['<!-- aeg:log:rH:0-0 -->\n\n```ndjson\n{}\n```'] })
+
+    seedOutbox(home, 444, [ndjsonLine('rH', 0, 444)])
+
+    const r = runCli(['log', 'flush', '--issue', '444'], cwd, { HOME: home, ...gh.env })
+
+    expect(r.status).toBe(0)
+    // No comment was posted — the already-accepted chunk was skipped.
+    const calls = readFileSync(gh.callsLogPath, 'utf8')
+    expect(calls).toContain('issue view 444')
+    expect(calls).not.toContain('issue comment')
+    // Nothing was posted to the bodies log either.
+    expect(readFileSync(gh.bodiesLogPath, 'utf8').trim()).toBe('')
+
+    // The already-accepted original line was truncated; only this run's own
+    // validated/written audit lines remain.
+    const remaining = readFileSync(outboxPath(home, 444), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+    expect(remaining.map((l) => l.event)).toEqual(['validated', 'written'])
+    expect(remaining[remaining.length - 1].comment_ids).toEqual([])
+  })
+
+  it('a marker posted by a NON-principal is never trusted — the chunk is posted anyway, not silently truncated (security review, round 2)', () => {
+    const cwd = tempDir('log-flush-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-flush-home-')
+    // Anyone who can comment on the target can read a past chunk's plaintext
+    // run_id and forge its own `<!-- aeg:log:... -->` marker for the next
+    // unposted range. Only a marker from an allowlisted principal may be
+    // trusted as proof of a real prior post.
+    const gh = stubGh({
+      existingComments: [{ body: '<!-- aeg:log:rH:0-0 -->\n\n```ndjson\n{}\n```', author: 'someone-else' }]
+    })
+
+    seedOutbox(home, 445, [ndjsonLine('rH', 0, 445)])
+
+    const r = runCli(['log', 'flush', '--issue', '445'], cwd, { HOME: home, ...gh.env })
+
+    expect(r.status).toBe(0)
+    // The forged marker was ignored — the chunk was posted for real, not
+    // skipped as if it had already landed.
+    const calls = readFileSync(gh.callsLogPath, 'utf8')
+    expect(calls).toContain('issue comment')
+    const chunks = chunksOf(readFileSync(gh.bodiesLogPath, 'utf8'))
+    expect(chunks.length).toBe(1)
+    expect(chunks[0]).toContain('<!-- aeg:log:rH:0-0 -->')
   })
 })
 

@@ -113,6 +113,59 @@ describe('log-sink — defeat cases', () => {
     expect(fresh).toHaveLength(1)
   })
 
+  it('reports dropped identities via one stderr line when rotation overwrites an existing .1.ndjson backup', async () => {
+    const { dir, deps } = testDeps()
+    const outboxDir = join(dir, 'outbox', 'atta-labs-vinaya')
+    mkdirSync(outboxDir, { recursive: true })
+    const target = join(outboxDir, '404.ndjson')
+    const backup = join(outboxDir, '404.1.ndjson')
+    const existingLine = JSON.stringify({
+      meta: {
+        schema: 1,
+        ts: '2026-09-05T00:00:00.000Z',
+        run_id: 'priorRun',
+        seq: 7,
+        repo: null,
+        vinaya: '0.0.0',
+        doctrine: 'unknown',
+        host: 'cli',
+        machine: 'deadbeef'
+      },
+      subject: { issue: 404, role: 'developer' },
+      kind: 'forge_write',
+      event: 'validated',
+      payload: {},
+      op: 'issue.comment',
+      target: { issue: 404 }
+    })
+    writeFileSync(backup, `${existingLine}\n`)
+    writeFileSync(target, 'x'.repeat(OUTBOX_MAX_BYTES + 1))
+
+    const messages: string[] = []
+    const { log } = createLogSink({ ...deps, stderr: (m) => messages.push(m) })
+    log(DISPATCHED)
+    await flush()
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toContain('1 record(s) permanently lost')
+    expect(messages[0]).toContain('priorRun:7')
+  })
+
+  it('reports nothing on the first-ever rotation — there is no prior backup to lose', async () => {
+    const { dir, deps } = testDeps()
+    const outboxDir = join(dir, 'outbox', 'atta-labs-vinaya')
+    mkdirSync(outboxDir, { recursive: true })
+    const target = join(outboxDir, '404.ndjson')
+    writeFileSync(target, 'x'.repeat(OUTBOX_MAX_BYTES + 1))
+
+    const messages: string[] = []
+    const { log } = createLogSink({ ...deps, stderr: (m) => messages.push(m) })
+    log(DISPATCHED)
+    await flush()
+
+    expect(messages).toHaveLength(0)
+  })
+
   it('never throws when the outbox directory cannot be created — one stderr line, no exception', async () => {
     const { dir, deps } = testDeps()
     // A file where a directory needs to go: mkdirSync will fail with ENOTDIR.

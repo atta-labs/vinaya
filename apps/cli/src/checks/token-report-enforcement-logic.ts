@@ -40,10 +40,51 @@
  * bot's release PR, chief example) never carries a "develop" turn to
  * report at all and is not refused for a row it could never satisfy.
  */
-import { parseTokenReportEntries, type LedgerRow, type MeteringCapability } from '@attalabs/aeg-core'
+import {
+  parseTokenReportEntries,
+  type LedgerRow,
+  type MeteringCapability,
+  type MeteringIncapableReason
+} from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, type CheckError } from './contract'
 
 export type TokenReportEnforcementResult = { pass: true } | { pass: false; error: CheckError }
+
+/**
+ * Every reason `resolveMeteringCapability` (`claude-code-transcript.ts`, out
+ * of this task's surface) can ever emit — the closed vocabulary a row's
+ * Agent/Model cell must match to count as declared-unmetered, below.
+ */
+const KNOWN_INCAPABLE_REASONS: readonly MeteringIncapableReason[] = [
+  'no-transcript-resolved',
+  'pointer-unusable',
+  'transcript-unreadable',
+  'transcript-empty'
+]
+
+/**
+ * O2/O3 (#608): a row that HONESTLY declares itself unmetered — never a new
+ * sentinel, since neither row-writer (`commands/pr.ts`'s `tokenRowForOpen`,
+ * `pr-report-engine.ts`'s `collectTokensAddition`) is in this task's
+ * admitted surface to change. Both already write the exact `— (<reason>)`
+ * grammar in the Agent/Model cell for every incapable reason; this function
+ * is the only piece that needed to change to make that existing, already
+ * on-disk grammar machine-readable here too.
+ *
+ * A blank `Tokens in`/`Tokens out` pair next to this marker states a fact
+ * the writer's own probe actually established — "declared, not metered" —
+ * and is never invented; a blank pair next to anything else (a plain model
+ * name, an empty cell, unexplained silence) carries no such declaration and
+ * is "missing," which stays refused below. This check still does not verify
+ * the reason is TRUE (same bounded honesty as everywhere else in this
+ * file) — only that one of the four reasons the probe itself can ever
+ * produce is the one written, never an invented figure or a hard block on
+ * the sanctioned "no wiring of my own" case.
+ */
+function isDeclaredUnmeteredCell(agentModel: string): boolean {
+  const trimmed = agentModel.trim()
+  return KNOWN_INCAPABLE_REASONS.some((reason) => trimmed === `— (${reason})`)
+}
 
 function missingSectionError(checkName: string): CheckError {
   return {
@@ -70,12 +111,14 @@ function blankCellError(checkName: string, entry: LedgerRow): CheckError {
     severity: 'error',
     message:
       `token-report: this host is metering-capable, but a "Token report" entry (phase ` +
-      `"${entry.phase}") has a blank, missing, or non-numeric Tokens in/out cell — shape is checked ` +
-      'here, never whether the figure is correct. The Cost cell is exempt.',
+      `"${entry.phase}") has a blank, missing, or non-numeric Tokens in/out cell with no declared-` +
+      'unmetered marker in Agent/Model — shape is checked here, never whether the figure is correct. ' +
+      'The Cost cell is exempt.',
     agent_recovery_prompt:
       'Replace the blank/`—`/non-numeric Tokens in/out cell with the real figure this host reports, ' +
-      'then re-run `vinaya check token-report`. Never write `—` for a reason other than the host ' +
-      "genuinely exposing no usage figure at all — see roles/developer.md's token-reporting section."
+      'or, if usage genuinely cannot be recovered, write `— (<reason>)` in Agent/Model using one of the ' +
+      'reasons `resolveMeteringCapability` itself produces (e.g. `— (no-transcript-resolved)`) — never ' +
+      'an invented figure — then re-run `vinaya check token-report`.'
   }
 }
 
@@ -113,7 +156,15 @@ export function evaluateTokenReportEnforcement(
 
   if (!capability.capable) return { pass: true }
 
-  const badEntry = entries.find((e) => e.tokensIn === null || e.tokensOut === null)
+  // O2/O3 (#608): a blank cell next to a declared-unmetered Agent/Model
+  // marker is "not metered, declared" — accepted regardless of THIS check's
+  // own capability, since that capability describes this check's own
+  // resolution, never the row-writer's — and a row written earlier, in a
+  // different session or process, can be honestly unmetered even when this
+  // run resolves its own transcript fine.
+  const badEntry = entries.find(
+    (e) => (e.tokensIn === null || e.tokensOut === null) && !isDeclaredUnmeteredCell(e.agentModel)
+  )
   if (badEntry) return { pass: false, error: blankCellError(checkName, badEntry) }
 
   return { pass: true }

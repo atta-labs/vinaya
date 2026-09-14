@@ -52,13 +52,13 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto'
-import { accessSync, constants as fsConstants, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { accessSync, constants as fsConstants, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { chmodSync, createWriteStream } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname } from 'node:os'
-import { redact } from '@attalabs/aeg-core'
-import type { Role } from '@attalabs/aeg-core'
+import { redact, summarizeTranscript } from '@attalabs/aeg-core'
+import type { Role, TranscriptSummary } from '@attalabs/aeg-core'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
@@ -172,7 +172,8 @@ export type DispatchOpts = {
   roleLogPath?: string
 }
 
-export type DispatchFailureReason = 'timeout' | 'crash' | 'refused'
+/** `'signal'` (O1, Issue #605): the driver's own shutdown path terminated this launch's child on `SIGTERM`/`SIGINT` — distinct from `'crash'` (the child died on its own) so recovery can read it as a cancelled attempt, never an infrastructure failure of the child's own making. */
+export type DispatchFailureReason = 'timeout' | 'crash' | 'refused' | 'signal'
 
 export type DispatchHandle = {
   exitCode: number | null
@@ -825,6 +826,10 @@ export type LaunchRecord = {
   dispatcherPid: number
   /** The spawned vendor child's pid, set the moment `spawn` returns — the identity recovery probes to tell a still-live launch from a finished one (O3). `null` until the child is actually spawned (a pre-spawn refusal never sets it). */
   childPid: number | null
+  /** The child's own process start time, snapshotted (`getProcessSnapshot`) the instant `spawn` returns — O3, Issue #605. Compared back against the SAME pid's current start time at recovery time so a pid the OS has since recycled for an unrelated process is never mistaken for this launch's own child. `null` when the snapshot could not be taken (never blocks the dispatch). */
+  childStartedAt: string | null
+  /** The child's own command name, snapshotted alongside `childStartedAt` — the second identity signal O3 asks for ("start time and/or command line"). `null` when unavailable. */
+  childCommand: string | null
   host: string
   startedAt: string
   status: LaunchStatus
@@ -866,7 +871,10 @@ function coerceLaunchRecord(json: unknown): LaunchRecord | null {
         : 'launched'
   const num = (v: unknown): number | null => (typeof v === 'number' ? v : null)
   const failureReason =
-    o.failureReason === 'timeout' || o.failureReason === 'crash' || o.failureReason === 'refused'
+    o.failureReason === 'timeout' ||
+    o.failureReason === 'crash' ||
+    o.failureReason === 'refused' ||
+    o.failureReason === 'signal'
       ? o.failureReason
       : null
   return {
@@ -881,6 +889,10 @@ function coerceLaunchRecord(json: unknown): LaunchRecord | null {
     effectId: typeof o.effectId === 'string' ? o.effectId : '',
     dispatcherPid: num(o.dispatcherPid) ?? 0,
     childPid: num(o.childPid),
+    // Absent on any record written before this task — `null` is the honest
+    // "no identity captured" reading, never a fabricated match or mismatch.
+    childStartedAt: typeof o.childStartedAt === 'string' ? o.childStartedAt : null,
+    childCommand: typeof o.childCommand === 'string' ? o.childCommand : null,
     host: typeof o.host === 'string' ? o.host : '',
     startedAt: typeof o.startedAt === 'string' ? o.startedAt : typeof o.capturedAt === 'string' ? o.capturedAt : '',
     status,
@@ -988,6 +1000,206 @@ export function readResumeRecord(
   }
 }
 
+/** A pid's own identity facts, read fresh off the OS — never trusted from a launch record alone (O3, Issue #605): `ppid` is what tells recovery whether a still-alive child is still parented to the driver that spawned it (O2), `startedAt`/`command` are what tells it whether this pid is even the SAME process the launch record named, rather than one the OS has since recycled for something unrelated. */
+export type ProcessSnapshot = { ppid: number; startedAt: string | null; command: string | null }
+
+/** One `ps -o <format> -p <pid>` field, trimmed — `null` when `ps` refuses the pid (it doesn't exist) or prints nothing. `=` suffixes on every format string suppress the header row on both BSD (macOS) and GNU (Linux) `ps`, so a single blank/absent line unambiguously means "no such process." */
+function psField(pid: number, format: string): string | null {
+  try {
+    const out = execFileSync('ps', ['-p', String(pid), '-o', format], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    const line = out
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0)
+    return line ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * O3: a live snapshot of `pid`'s own identity — `null` when no process
+ * answers at that pid at all. `ppid`/`comm` are single-token fields, safe to
+ * read with their own `ps` call each; `lstart` carries embedded spaces (a
+ * full timestamp), so it is never combined with the others into one
+ * multi-field `-o` format that a naive whitespace split could misparse.
+ * Uses the system `ps` rather than a dependency: every supported platform
+ * (macOS, Linux) ships one.
+ */
+export function getProcessSnapshot(pid: number): ProcessSnapshot | null {
+  const ppidRaw = psField(pid, 'ppid=')
+  if (ppidRaw === null) return null
+  const ppid = Number.parseInt(ppidRaw, 10)
+  if (!Number.isFinite(ppid)) return null
+  return { ppid, startedAt: psField(pid, 'lstart='), command: psField(pid, 'comm=') }
+}
+
+/**
+ * O3 (Issue #605; round 4 security review, HIGH): does `snapshot` (a LIVE
+ * re-read of a pid) still match the identity `record` captured for that
+ * same pid at spawn time? The one identity guard both callers that ever
+ * treat a pid as this launch's own child now share — `dev-review-loop/
+ * developer-dispatch.ts`'s `classifyChildLiveness` (recovery, reading a
+ * PRIOR launch back) and `terminateLaunchedChildOnShutdown` below (the
+ * driver's own shutdown path, acting on a launch it is ENDING) — so a
+ * recycled pid is refused identically on both paths, never signaled just
+ * because the recovery-side check happens to live somewhere else. A field
+ * `record` DID capture must be read back and agree; one it never captured
+ * (any record written before this task) has nothing to check and is
+ * trusted as before — the `ppid`/liveness half of the decision is each
+ * caller's own concern, not this function's.
+ */
+export function matchesCapturedIdentity(
+  record: Pick<LaunchRecord, 'childStartedAt' | 'childCommand'>,
+  snapshot: ProcessSnapshot
+): boolean {
+  if (record.childStartedAt !== null) {
+    if (snapshot.startedAt === null || record.childStartedAt !== snapshot.startedAt) return false
+  }
+  if (record.childCommand !== null) {
+    if (snapshot.command === null || record.childCommand !== snapshot.command) return false
+  }
+  return true
+}
+
+/** Bounded grace between the two escalating signals `terminateChildWithGrace` sends — the same order of magnitude as `SIGKILL_GRACE_MS` (the dispatch timeout's own escalation), reused here for a driver-initiated termination rather than a child that overran its own ceiling. */
+const TERMINATE_GRACE_MS = 2_000
+
+function pidAliveHere(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Blocking, in-process sleep — the same `Atomics.wait` idiom `dev-review-loop/gate-reading.ts`'s own `sleepSyncMs` already uses, restated here rather than imported across that module boundary (its own doc comment: moved out of `dev-review-loop.ts` verbatim, kept self-contained). */
+function sleepSyncMs(ms: number): void {
+  if (ms <= 0) return
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * `SIGTERM`, a bounded grace period, then `SIGKILL` only if still alive —
+ * the same escalation `dispatchRole`'s own timeout path already applies to
+ * a child that overran its ceiling, reused here for a driver-initiated
+ * termination: the driver's own shutdown path (O1) terminating its
+ * dispatched child, and recovery (O2) reaping a child abandoned by a driver
+ * that died without reaching that shutdown path. Best-effort throughout: a
+ * pid already gone by either signal is silently treated as done, never an
+ * error — the goal (no orphan survives) is already met in that case.
+ */
+export function terminateChildWithGrace(pid: number, graceMs: number = TERMINATE_GRACE_MS): void {
+  try {
+    process.kill(pid, 'SIGTERM')
+  } catch {
+    return
+  }
+  sleepSyncMs(graceMs)
+  if (pidAliveHere(pid)) {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // Already gone between the check and the signal — fine.
+    }
+  }
+}
+
+/** How long `captureSettledChildSnapshot` polls for a spawned child's OWN exec chain to land before trusting its identity — bounded, same order of magnitude as `TERMINATE_GRACE_MS`. */
+const IDENTITY_SETTLE_BUDGET_MS = 1_000
+/** Poll interval within that budget. */
+const IDENTITY_SETTLE_POLL_MS = 20
+
+/**
+ * O3 (Issue #605, round N code review, MAJOR): `childCommand`/`childStartedAt`
+ * used to be captured from a single `getProcessSnapshot` read the instant
+ * `spawn()` returned. A vendor CLI installed through a typical npm shebang
+ * launcher (`#!/usr/bin/env node`) does not settle into its final image in
+ * that one kernel-triggered exec: the kernel execs `env` off the shebang
+ * line, and `env` itself then performs a SECOND, user-space `execve` into
+ * `node`. A read taken before that second exec lands can capture `env`'s own
+ * identity rather than the process that actually survives — precisely the
+ * two-hop race `writeIdentityStableFakeBinary`'s doc comment (in
+ * `dispatch.test.ts`) claimed only a synthetic test binary could hit; a real
+ * `#!/usr/bin/env node` install hits it too. A pid's start time is set once,
+ * at fork, and does not move across `execve` — only `comm` is unstable here
+ * — so this polls until two consecutive reads agree on `command`, or the
+ * budget elapses, and keeps the latest read either way. Never returns `null`
+ * once a live process has answered at least once; still returns the FIRST
+ * read if the process is gone by the next poll (a vendor CLI that exits
+ * within this budget is not the case this guards).
+ */
+function captureSettledChildSnapshot(pid: number): ProcessSnapshot | null {
+  let snapshot = getProcessSnapshot(pid)
+  if (snapshot === null) return null
+  const deadline = Date.now() + IDENTITY_SETTLE_BUDGET_MS
+  while (Date.now() < deadline) {
+    sleepSyncMs(IDENTITY_SETTLE_POLL_MS)
+    const next = getProcessSnapshot(pid)
+    if (next === null) return snapshot
+    if (next.command === snapshot.command) return next
+    snapshot = next
+  }
+  return snapshot
+}
+
+/**
+ * O1 (Issue #605): called by the driver's own `SIGTERM`/`SIGINT` handler,
+ * before it exits. A launch record still reading `'launched'` (a dispatch
+ * genuinely in flight when the signal arrived) has its child terminated —
+ * on this host, best-effort — and is patched to `'interrupted'`, so the
+ * next start finds a truthful record and no orphan left behind for it to
+ * trip over (the Defect this task closes). A record that already reads
+ * `'completed'`/`'interrupted'` (the dispatch's own exit handler in this
+ * same file already settled it before the signal arrived) is left
+ * untouched — there is nothing left to terminate or reclassify. A missing
+ * or corrupt record is likewise left alone: there is no in-flight launch to
+ * account for.
+ *
+ * Round 4 security review, HIGH: the signal handlers register early — a
+ * driver killed before it ever reaches its OWN recovery step still has this
+ * called on its next start's shutdown, against whatever record is on disk,
+ * which could be a stale one an EARLIER process instance left behind
+ * (itself `SIGKILL`ed before reaching this same path). `record.childPid` is
+ * therefore never signaled on identity alone: `getProcessSnapshot` re-reads
+ * the live pid and `matchesCapturedIdentity` — the SAME identity guard
+ * `classifyChildLiveness` applies on the recovery side — must agree before
+ * `terminateChildWithGrace` ever runs. No live process at that pid, or one
+ * that fails the identity match (the OS has recycled it for something
+ * unrelated), is left untouched: there is nothing of this launch's own left
+ * to terminate, and the record is patched exactly as if there had been.
+ */
+export function terminateLaunchedChildOnShutdown(
+  role: Role,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null,
+  task?: number,
+  pr?: number
+): void {
+  const parsed = readLaunchRecord(role, agent, repo, task, pr)
+  if (parsed.status !== 'ok') return
+  const record = parsed.record
+  if (record.status !== 'launched') return
+
+  if (record.childPid !== null && record.host === osHostname()) {
+    const snapshot = getProcessSnapshot(record.childPid)
+    if (snapshot !== null && matchesCapturedIdentity(record, snapshot)) {
+      terminateChildWithGrace(record.childPid)
+    }
+  }
+
+  writeLaunchRecord({
+    ...record,
+    status: 'interrupted',
+    finishedAt: new Date().toISOString(),
+    failureReason: 'signal'
+  })
+}
+
 /** The next per-scope attempt number — one past the prior launch record for this scope, or `1` when none exists or it is corrupt (a corrupt prior never blocks a fresh attempt from starting). */
 function nextAttempt(
   role: Role,
@@ -998,6 +1210,118 @@ function nextAttempt(
 ): number {
   const parsed = readLaunchRecord(role, agent, repo, task, pr)
   return parsed.status === 'ok' ? parsed.record.attempt + 1 : 1
+}
+
+/**
+ * `recoverUsageFromDispatchTee`'s I/O, injected the same way
+ * `MeteringCapabilityDeps` is (`claude-code-transcript.ts`) — a fixture
+ * stands in a fake env, a fake set of launch-record files, and fake tee
+ * bytes without touching this machine's real `~/.vinaya/`.
+ */
+export type DispatchTeeRecoveryDeps = {
+  env: Record<string, string | undefined>
+  /** Every launch-record JSON file path this machine currently holds, across every repo/agent/scope — `dispatch-resume`'s own two-level (repo segment, then filename) layout, already walked. */
+  listLaunchRecordPaths: () => string[]
+  readFile: (path: string) => string
+}
+
+/** Real `~/.vinaya/`-backed deps for production use — never throws; an unreadable/absent `dispatch-resume` directory degrades to an empty list, matching this module's "never throws" posture. */
+export function realDispatchTeeRecoveryDeps(): DispatchTeeRecoveryDeps {
+  return {
+    env: process.env,
+    listLaunchRecordPaths: () => {
+      const root = join(GLOBAL_VINAYA_HOME, 'dispatch-resume')
+      const out: string[] = []
+      let segments: string[]
+      try {
+        segments = readdirSync(root)
+      } catch {
+        return out
+      }
+      for (const seg of segments) {
+        const segDir = join(root, seg)
+        let files: string[]
+        try {
+          files = readdirSync(segDir)
+        } catch {
+          continue
+        }
+        for (const f of files) if (f.endsWith('.json')) out.push(join(segDir, f))
+      }
+      return out
+    },
+    readFile: (path: string) => readFileSync(path, 'utf8')
+  }
+}
+
+export type DispatchTeeRecovery = { summary: TranscriptSummary; teePath: string }
+
+/**
+ * O1 (#608): recovers a dispatched session's real usage from the
+ * coordinator's own tee'd copy of that session's stdout (`openOutputTee`),
+ * for the case its OWN transcript pointer never resolved at all — the
+ * sanctioned `no-transcript-resolved` case `resolveMeteringCapability`
+ * (`claude-code-transcript.ts`, out of this task's surface) already
+ * produces, unchanged. The tee holds the vendor's raw stream — for Claude,
+ * `--output-format stream-json`, the identical per-message
+ * `{type:"assistant", message:{id, usage}}` shape a real transcript file
+ * carries — so `summarizeTranscript` (aeg-core's already-shipped,
+ * already-tested dedup-by-message-id-then-sum reader) applies to it
+ * unchanged; this function's own job is only to find the right file.
+ *
+ * Matched by `VINAYA_RUN_ID` alone — the one identifier this process and
+ * its own dispatcher already agree on (set on the child's env at spawn,
+ * read back here) — never by guessing which repo or which vendor launched
+ * it. `null` on anything short of a full recovery: no run/role/task
+ * attribution in this process's own env, no launch record naming that
+ * exact run, no tee file, or a tee holding zero usable messages. Never
+ * estimates — a `null` here changes nothing about the caller's existing
+ * incapable verdict.
+ */
+export function recoverUsageFromDispatchTee(deps: DispatchTeeRecoveryDeps): DispatchTeeRecovery | null {
+  const runId = deps.env.VINAYA_RUN_ID
+  const role = deps.env.VINAYA_ROLE
+  const taskRaw = deps.env.VINAYA_TASK
+  if (!runId || !role || !taskRaw) return null
+  const task = Number(taskRaw)
+  if (!Number.isInteger(task)) return null
+
+  let effectId: string | null = null
+  for (const path of deps.listLaunchRecordPaths()) {
+    let raw: string
+    try {
+      raw = deps.readFile(path)
+    } catch {
+      continue
+    }
+    let json: unknown
+    try {
+      json = JSON.parse(raw)
+    } catch {
+      continue
+    }
+    const record = coerceLaunchRecord(json)
+    if (record && record.runId === runId && record.role === role && record.task === task && record.effectId) {
+      effectId = record.effectId
+      break
+    }
+  }
+  // Same shape the tee was refused for at write time (`openOutputTee`) — a
+  // launch record is this module's own, never untrusted input, but the
+  // `effectId` field still gets the same guard before it reaches a path
+  // join, on principle.
+  if (!effectId || !/^[A-Za-z0-9_-]{1,128}$/.test(effectId)) return null
+
+  const teePath = join(GLOBAL_VINAYA_HOME, 'dispatch-output', `${effectId}.log`)
+  let teeText: string
+  try {
+    teeText = deps.readFile(teePath)
+  } catch {
+    return null
+  }
+
+  const summary = summarizeTranscript(teeText)
+  return summary.messageCount > 0 ? { summary, teePath } : null
 }
 
 type VendorSpec = {
@@ -1384,6 +1708,8 @@ export async function dispatchRole(
     effectId,
     dispatcherPid: process.pid,
     childPid: null,
+    childStartedAt: null,
+    childCommand: null,
     host: osHostname(),
     startedAt: new Date(start).toISOString(),
     status: 'launched',
@@ -1487,11 +1813,27 @@ export async function dispatchRole(
       }
     })
 
-    // O1/O3: bind the child's own identity onto the launch record the instant
-    // `spawn` returns it — this is what recovery probes to tell a still-live
-    // launch from a finished one, so it must be durable even if the driver
-    // dies in the very next tick (a crash between spawn and session binding).
-    if (typeof child.pid === 'number') patchLaunch({ childPid: child.pid })
+    // O1/O3: bind the child's own identity onto the launch record right
+    // after `spawn` returns it — this is what recovery probes to tell a
+    // still-live launch from a finished one, so it must be durable even if
+    // the driver dies in the very next tick (a crash between spawn and
+    // session binding). The snapshot (O3, Issue #605) is taken via
+    // `captureSettledChildSnapshot`, not a single immediate read: a vendor
+    // CLI launched through a shebang (`#!/usr/bin/env node`) can still be
+    // mid-exec the instant `spawn` returns, and a snapshot taken right then
+    // can describe the launcher rather than the process that survives — see
+    // that function's own doc comment. Recovery compares a LATER snapshot of
+    // the same pid back against these two fields to tell this exact,
+    // settled process apart from whatever the OS has since recycled the pid
+    // for.
+    if (typeof child.pid === 'number') {
+      const snapshot = captureSettledChildSnapshot(child.pid)
+      patchLaunch({
+        childPid: child.pid,
+        childStartedAt: snapshot?.startedAt ?? null,
+        childCommand: snapshot?.command ?? null
+      })
+    }
 
     let settled = false
     let timedOut = false

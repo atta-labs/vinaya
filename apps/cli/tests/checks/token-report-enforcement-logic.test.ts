@@ -130,6 +130,58 @@ describe('evaluateTokenReportEnforcement', () => {
     }
   })
 
+  // O2/O3 (#608) — a row that honestly declares itself unmetered, in the
+  // SAME `— (<reason>)` grammar the row-writers already emit, is "declared,
+  // not missing" and is accepted even when THIS check's own capability is
+  // capable. Fixes the defect observed live on PR #604: a
+  // `— (no-transcript-resolved)` row was rejected outright.
+  describe('declared-unmetered rows (O2/O3, #608)', () => {
+    const declaredUnmeteredBody = `## Token report
+
+| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |
+| --- | --- | --- | --- | --- | --- | --- |
+| 3: develop | Developer | — (no-transcript-resolved) | — | — | — | 2026-09-14 |
+`
+
+    it('capable + a declared-unmetered row (no-transcript-resolved): passes — the exact PR #604 shape', () => {
+      expect(evaluateTokenReportEnforcement(CHECK_NAME, CAPABLE, declaredUnmeteredBody, true)).toEqual({
+        pass: true
+      })
+    })
+
+    it('capable + a declared-unmetered row for a wiring-defect reason: still passes here — token-collection-wired polices wiring, not this check', () => {
+      const body = `## Token report
+
+| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |
+| --- | --- | --- | --- | --- | --- | --- |
+| 3: develop | Developer | — (pointer-unusable) | — | — | — | 2026-09-14 |
+`
+      expect(evaluateTokenReportEnforcement(CHECK_NAME, CAPABLE, body, true)).toEqual({ pass: true })
+    })
+
+    it('capable + blank cells with a bare dash (no declared reason at all): still fails — genuinely missing', () => {
+      const body = `## Token report
+
+| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |
+| --- | --- | --- | --- | --- | --- | --- |
+| 3: develop | Developer | — | — | — | — | 2026-09-14 |
+`
+      const result = evaluateTokenReportEnforcement(CHECK_NAME, CAPABLE, body, true)
+      expect(result.pass).toBe(false)
+    })
+
+    it('capable + blank cells with an unrecognized parenthetical: still fails — not one of the four real reasons', () => {
+      const body = `## Token report
+
+| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |
+| --- | --- | --- | --- | --- | --- | --- |
+| 3: develop | Developer | — (made-up-reason) | — | — | — | 2026-09-14 |
+`
+      const result = evaluateTokenReportEnforcement(CHECK_NAME, CAPABLE, body, true)
+      expect(result.pass).toBe(false)
+    })
+  })
+
   // O1/O2 (task 10, #460) — the ledger-row refusal scopes to task pull
   // requests only. Both halves pinned so the word "task" cannot fall out
   // of the rule again unnoticed.
