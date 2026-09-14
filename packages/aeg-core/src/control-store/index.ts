@@ -1,5 +1,6 @@
 export {
   CONTROL_RECORD_VERSION,
+  parseEffectRecord,
   parseInputRecord,
   parseManifestRecord,
   parseOwnershipRecord,
@@ -8,6 +9,8 @@ export {
 } from './records'
 export type {
   ControlRecord,
+  EffectRecord,
+  EffectStatus,
   InputRecord,
   ManifestRecord,
   OwnershipRecord,
@@ -20,17 +23,28 @@ export {
   appendTransition,
   attemptEpochClaim,
   defaultControlStoreDeps,
+  InvalidEffectKeyError,
   InvalidRunIdError,
   readCurrentOwnership,
+  readEffect,
   readInput,
   readManifest,
   readRun,
   readTransitions,
   StaleEpochWriteError,
+  writeEffect,
   writeInput,
   writeManifest,
   writeRun
 } from './local'
-export type { AcquireResult, ControlStoreDeps, InputInput, ManifestInput, RunInput, TransitionInput } from './local'
+export type {
+  AcquireResult,
+  ControlStoreDeps,
+  EffectInput,
+  InputInput,
+  ManifestInput,
+  RunInput,
+  TransitionInput
+} from './local'
 export { defaultIsPidAlive, migrateLegacyTask } from './migration'
 export type { MigrationResult } from './migration'

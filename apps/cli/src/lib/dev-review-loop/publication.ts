@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   compareManifest,
+  defaultControlStoreDeps,
   type EchoedManifest,
   evaluateCodeReview,
   evaluateSecurityReview,
@@ -28,6 +29,8 @@ import {
   type VerdictExtraction
 } from '@attalabs/aeg-core'
 import { principalBodies } from '../../commands/review-post.js'
+import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../effects.js'
+import { reconcileGhComment } from '../forge-write.js'
 import { sh } from './gate-reading.js'
 import { markerComments, principalAllowlist } from './developer-dispatch.js'
 import { heldVerdictPath, readIfExists } from './reviewer-dispatch.js'
@@ -73,6 +76,32 @@ export function postForgeEffectOnce(root: string, task: number, key: string, pos
   const url = poster()
   writeForgeEffect(path, { effectId, status: 'posted', url })
   return url
+}
+
+/**
+ * Posts `body` on `prNumber` through the shared `EffectExecutor` (Issue
+ * #552), keyed by `key` — O1's "persist the effect identity before the
+ * write," O2's "reconcile against the remote before a retry," in place of
+ * `postForgeEffectOnce`'s own local `'posted'` flag, which cannot tell a
+ * confirmed post apart from one whose confirmation was lost to a crash.
+ * `inputVersion` is this round: a rerun of the SAME round posting the SAME
+ * body reduces to the SAME identity, so a genuine rerun still posts nothing
+ * twice, exactly as `postForgeEffectOnce` guaranteed.
+ */
+function postPrCommentOnce(task: number, round: number, key: string, prNumber: number, body: string): string {
+  const deps = defaultControlStoreDeps(controlStoreRoot)
+  const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
+  return executor.execute({
+    key,
+    identity: {
+      operation: 'pr-comment',
+      target: `pr:${prNumber}`,
+      inputVersion: round,
+      payloadDigest: sha256Hex(body)
+    },
+    poster: () => postPrComment(prNumber, body),
+    reconcile: reconcileGhComment('pr', String(prNumber))
+  })
 }
 
 /**
@@ -191,7 +220,7 @@ export function publishRound(root: string, input: PublishInput): void {
     )
   }
 
-  postForgeEffectOnce(root, task, `${round}-reviewer-verdict`, () => postPrComment(prNumber, reviewerBody))
+  postPrCommentOnce(task, round, `${round}-reviewer-verdict`, prNumber, reviewerBody)
   const postedReviewer = extractCodeReviewVerdict(fetchAllPrCommentBodies(prNumber))
   if (postedReviewer.danglingNote || postedReviewer.headSha !== expectedHead) {
     throw new Error(
@@ -219,7 +248,7 @@ export function publishRound(root: string, input: PublishInput): void {
     )
   }
 
-  postForgeEffectOnce(root, task, `${round}-security-verdict`, () => postPrComment(prNumber, securityBody))
+  postPrCommentOnce(task, round, `${round}-security-verdict`, prNumber, securityBody)
   const postedSecurity = extractSecurityReviewVerdict(fetchAllPrCommentBodies(prNumber))
   if (postedSecurity.danglingNote || postedSecurity.headSha !== expectedHead) {
     throw new Error(
@@ -247,5 +276,5 @@ export function publishRound(root: string, input: PublishInput): void {
       "publishRound: the rendered summary re-parses as a real verdict through the gate's own extractors — refusing to post it (a summary mistaken for a verdict decides a merge)."
     )
   }
-  postForgeEffectOnce(root, task, `${round}-summary`, () => postPrComment(prNumber, summary))
+  postPrCommentOnce(task, round, `${round}-summary`, prNumber, summary)
 }

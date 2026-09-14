@@ -367,9 +367,11 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `parseOwnershipRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
 | `parseTransitionRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
 | `parseManifestRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `parseEffectRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
 | `defaultControlStoreDeps` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `StaleEpochWriteError` | class | `packages/aeg-core/src/control-store/local.ts` |
 | `InvalidRunIdError` | class | `packages/aeg-core/src/control-store/local.ts` |
+| `InvalidEffectKeyError` | class | `packages/aeg-core/src/control-store/local.ts` |
 | `readCurrentOwnership` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `acquireOwnership` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `writeRun` | function | `packages/aeg-core/src/control-store/local.ts` |
@@ -380,6 +382,8 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `readTransitions` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `writeManifest` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `readManifest` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `writeEffect` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `readEffect` | function | `packages/aeg-core/src/control-store/local.ts` |
 | `defaultIsPidAlive` | function | `packages/aeg-core/src/control-store/migration.ts` |
 | `migrateLegacyTask` | function | `packages/aeg-core/src/control-store/migration.ts` |
 | `TASK_TOOL_ERROR_KINDS` | const | `packages/aeg-core/src/task-tools.ts` |
@@ -616,6 +620,11 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `sanitizePublicPauseDetail` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `writeDriverLock` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
 | `writePauseState` | function | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` |
+| `controlStoreRoot` | function | `apps/cli/src/lib/effects.ts` |
+| `createEffectExecutor` | function | `apps/cli/src/lib/effects.ts` |
+| `EffectExecutor` | class | `apps/cli/src/lib/effects.ts` |
+| `EffectRetryRefusedError` | class | `apps/cli/src/lib/effects.ts` |
+| `sha256Hex` | function | `apps/cli/src/lib/effects.ts` |
 | `changedLineRanges` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `fileDiffAgainst` | function | `apps/cli/src/lib/diff-evidence.ts` |
 | `findingsInThisDiff` | function | `apps/cli/src/lib/diff-evidence.ts` |
@@ -682,11 +691,13 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `ForgeArgError` | class | `apps/cli/src/lib/forge-write.ts` |
 | `locateBody` | function | `apps/cli/src/lib/forge-write.ts` |
 | `makeCheckError` | function | `apps/cli/src/lib/forge-write.ts` |
+| `markedCommentBody` | function | `apps/cli/src/lib/forge-write.ts` |
 | `parseIssueNumberFromRef` | function | `apps/cli/src/lib/forge-write.ts` |
 | `postMarkedComment` | function | `apps/cli/src/lib/forge-write.ts` |
 | `readDocOwnersContent` | function | `apps/cli/src/lib/forge-write.ts` |
 | `readProjectPaths` | function | `apps/cli/src/lib/forge-write.ts` |
 | `readSharedPackages` | function | `apps/cli/src/lib/forge-write.ts` |
+| `reconcileGhComment` | function | `apps/cli/src/lib/forge-write.ts` |
 | `refuse` | function | `apps/cli/src/lib/forge-write.ts` |
 | `refuseFrozenSectionChange` | function | `apps/cli/src/lib/forge-write.ts` |
 | `refuseUnlabeledTaskShapedBody` | function | `apps/cli/src/lib/forge-write.ts` |
