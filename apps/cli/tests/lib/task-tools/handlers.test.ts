@@ -3,7 +3,6 @@ import {
   taskCancelHandler,
   taskEscalationReadHandler,
   taskResumeHandler,
-  taskStartHandler,
   taskStatusHandler
 } from '../../../src/lib/task-tools/handlers.js'
 
@@ -55,16 +54,7 @@ describe('taskEscalationReadHandler', () => {
   })
 })
 
-describe('the three mutating stubs', () => {
-  it('task_start refuses with capability_unavailable for schema-valid input', () => {
-    const result = taskStartHandler({ tranche: 'task-operator-v1', id: '1' })
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.error.kind).toBe('capability')
-      expect(result.error.message).toContain('task_start')
-    }
-  })
-
+describe('the two remaining mutating stubs (task_start is real now — see start.test.ts)', () => {
   it('task_resume refuses with capability_unavailable for schema-valid input', () => {
     const result = taskResumeHandler({ task: { issue: NEVER_DISPATCHED_ISSUE } })
     expect(result.ok).toBe(false)
@@ -78,10 +68,6 @@ describe('the three mutating stubs', () => {
   })
 
   it('every stub still validates its input first — malformed input is validation, not capability', () => {
-    expect(taskStartHandler({}).ok).toBe(false)
-    const start = taskStartHandler({})
-    if (!start.ok) expect(start.error.kind).toBe('validation')
-
     const resume = taskResumeHandler({ task: { tranche: '', id: '' } })
     if (!resume.ok) expect(resume.error.kind).toBe('validation')
 
