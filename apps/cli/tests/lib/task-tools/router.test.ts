@@ -3,10 +3,10 @@ import {
   taskCancelHandler,
   taskEscalationReadHandler,
   taskResumeHandler,
-  taskStartHandler,
   taskStatusHandler
 } from '../../../src/lib/task-tools/handlers.js'
 import { routeTaskToolIntent } from '../../../src/lib/task-tools/router.js'
+import { defaultTaskStartHandler } from '../../../src/lib/task-tools/start.js'
 
 /**
  * Held-out prompts (O3) — none of these are the literal keywords the
@@ -59,7 +59,7 @@ describe('routeTaskToolIntent — unrecognized', () => {
 
 describe('routing never reaches the wrong handler', () => {
   const HANDLERS = {
-    task_start: taskStartHandler,
+    task_start: defaultTaskStartHandler,
     task_status: taskStatusHandler,
     task_escalation_read: taskEscalationReadHandler,
     task_resume: taskResumeHandler,
@@ -70,7 +70,7 @@ describe('routing never reaches the wrong handler', () => {
     const name = routeTaskToolIntent('check on the state of Issue 558')
     expect(name).toBe('task_status')
     expect(HANDLERS[name!]).toBe(taskStatusHandler)
-    expect(HANDLERS[name!]).not.toBe(taskStartHandler)
+    expect(HANDLERS[name!]).not.toBe(defaultTaskStartHandler)
     expect(HANDLERS[name!]).not.toBe(taskResumeHandler)
     expect(HANDLERS[name!]).not.toBe(taskCancelHandler)
   })
