@@ -1430,8 +1430,13 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # file named like a global bun flag (e.g. "--preload=path", which loads
   # and executes an arbitrary module before tests run) would otherwise be
   # forwarded as that flag rather than a literal test-file path — confirmed
-  # live against bun 1.2.14 without the separator.
-  echo "$VINAYA_SELECTED_TESTS" | xargs bun test -- || exit 1
+  # live against bun 1.2.14 without the separator. \`--timeout=30000\`
+  # matches this repo's own \`apps/cli/package.json\` \`test\` script — a bare
+  # \`bun test\` here would otherwise fall back to bun's 5-second default,
+  # tight enough that a CLI-invocation test doing real subprocess and
+  # filesystem work (a registered check's own gate observation, most
+  # recently) can lose the race under nothing worse than ordinary host load.
+  echo "$VINAYA_SELECTED_TESTS" | xargs bun test --timeout=30000 -- || exit 1
 fi`
 }
 
