@@ -10,7 +10,7 @@ import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
 import type { UpgradeDeps } from '../src/commands/upgrade.js'
 import { planRingsMigration, runUpgrade } from '../src/commands/upgrade.js'
-import { CHECKS_WORKFLOW_PATH, CONFIG_PATH, REVIEW_WORKFLOW_PATH } from '../src/lib/artifacts.js'
+import { CHECKS_WORKFLOW_PATH, CONFIG_PATH, MCP_JSON_PATH, REVIEW_WORKFLOW_PATH } from '../src/lib/artifacts.js'
 import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
 import { CLAUDE_SETTINGS_PATH, CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
@@ -226,6 +226,28 @@ describe('vinaya upgrade', () => {
     expect(rc).toBe(0)
     expect(existsSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH))).toBe(true)
     expect(readFileSync(join(root, CLAUDE_STOP_HOOK_SCRIPT_PATH), 'utf-8')).toContain('vinaya:managed:track-transcript')
+  })
+
+  it('recreates a task-tools .mcp.json a pre-feature manifest never recorded', async () => {
+    await runInit(['--yes'], initDeps())
+    // Simulate a repo initialised before `.mcp.json` existed: drop it from the
+    // manifest AND disk, so the `!owned && !exists` retrofit branch is what runs.
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.managed.files = (cfg.managed.files as string[]).filter((f) => f !== MCP_JSON_PATH)
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+    rmSync(join(root, MCP_JSON_PATH), { force: true })
+
+    let rc = -1
+    await captureStdout(async () => {
+      rc = await runUpgrade(['--yes'], upgradeDeps())
+    })
+    expect(rc).toBe(0)
+    expect(existsSync(join(root, MCP_JSON_PATH))).toBe(true)
+    const written = JSON.parse(readFileSync(join(root, MCP_JSON_PATH), 'utf-8'))
+    expect(written.mcpServers['vinaya-task-tools']).toBeDefined()
+    // Recorded back into the manifest, so a second upgrade is a no-op for it.
+    const after = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(after.managed.files).toContain(MCP_JSON_PATH)
   })
 
   it("never touches vinaya.config.json's adopter-owned keys (rings/checks/briefSchema)", async () => {

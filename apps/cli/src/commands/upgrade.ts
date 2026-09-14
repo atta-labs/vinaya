@@ -33,7 +33,14 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
-import { buildInitOps, CONFIG_PATH, type HookDir, type InitContext, TRACKED_HOOK_DIR } from '../lib/artifacts.js'
+import {
+  buildInitOps,
+  CONFIG_PATH,
+  type HookDir,
+  type InitContext,
+  MCP_JSON_PATH,
+  TRACKED_HOOK_DIR
+} from '../lib/artifacts.js'
 import { staleAgentSkillPaths } from '../lib/agents-skills-emitter.js'
 import {
   CLAUDE_SETTINGS_PATH,
@@ -450,6 +457,18 @@ export function planUpgrade(
         // like any other foreign file at a vinaya path.
         action = 'recreate'
         hasChanges = true
+      } else if (op.path === MCP_JSON_PATH && !owned && !exists) {
+        // Retrofit for the task-tools `.mcp.json`, same shape as
+        // CLAUDE_SETTINGS_PATH above: a repo that ran `init` before the `.mcp.json`
+        // existed never recorded it, so the generic `!owned` branch below would
+        // skip it forever as `not-installed`. It is emitted only when `claude`
+        // is a selected vendor (the op is absent otherwise), and strict JSON has
+        // no comment syntax to merge into — so write it only when nothing exists
+        // yet; an adopter who already has a `.mcp.json` falls through to the
+        // ordinary `!owned` branch and is refused/left untouched like any other
+        // foreign file at a vinaya path.
+        action = 'recreate'
+        hasChanges = true
       } else if (!owned) {
         action = exists ? 'refuse-foreign' : 'not-installed'
       } else if (!exists) {
@@ -543,6 +562,11 @@ function withClaudeStopHookRecorded(manifest: ManagedManifest, plan: UpgradePlan
     !files.includes(CLAUDE_SETTINGS_PATH)
   ) {
     files = [...files, CLAUDE_SETTINGS_PATH]
+  }
+
+  const mcpEntry = plan.entries.find((e) => e.kind === 'create-file' && e.op.path === MCP_JSON_PATH)
+  if (mcpEntry && mcpEntry.kind === 'create-file' && mcpEntry.action === 'recreate' && !files.includes(MCP_JSON_PATH)) {
+    files = [...files, MCP_JSON_PATH]
   }
 
   const blockEntry = plan.entries.find(
