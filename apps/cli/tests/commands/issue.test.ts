@@ -25,15 +25,21 @@ type CliResult = { status: number; stdout: string; stderr: string }
 // print its own `console.warn` retry line straight onto this process's
 // stderr — exactly the stream every assertion below parses as pure
 // `CheckError` JSON.
-const DEFAULT_TEST_ENV = { AEG_REPO: 'example/example' }
-
+//
+// `HOME` is pinned to the test's own already-unique `cwd` for the identical
+// reason `log-sink.ts`'s own tests isolate it: the same gate observation
+// writes to `GLOBAL_VINAYA_HOME` (`~/.vinaya/outbox`), a path shared by
+// every OTHER concurrent process on the machine (this file's own other
+// tests included). Without this, dozens of `vinaya issue` subprocesses
+// across this file append to the SAME real outbox files at once — pure
+// contention this test suite has no reason to invite on itself.
 function runCli(args: string[], cwd: string, env?: Record<string, string>): CliResult {
   try {
     const stdout = execFileSync('bun', [INDEX, ...args], {
       cwd,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...DEFAULT_TEST_ENV, ...env }
+      env: { ...process.env, AEG_REPO: 'example/example', HOME: cwd, ...env }
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {
