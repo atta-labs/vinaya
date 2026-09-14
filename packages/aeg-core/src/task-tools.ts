@@ -84,8 +84,8 @@ export function capabilityUnavailable(tool: TaskToolName, becauseOf: string): Ta
  * `apps/cli`).
  */
 export const TaskToolRefSchema = z.union([
-  z.object({ tranche: z.string().min(1), id: z.string().min(1) }),
-  z.object({ issue: z.number().int().positive() })
+  z.object({ tranche: z.string().min(1), id: z.string().min(1) }).strict(),
+  z.object({ issue: z.number().int().positive() }).strict()
 ])
 
 export type TaskToolRef = z.infer<typeof TaskToolRefSchema>
@@ -125,6 +125,7 @@ export const TaskStatusInputSchema = z
     task: TaskToolRefSchema.optional()
   })
   .merge(PageRequestSchema)
+  .strict()
 
 export type TaskStatusInput = z.infer<typeof TaskStatusInputSchema>
 
@@ -169,6 +170,7 @@ export const TaskEscalationReadInputSchema = z
     task: TaskToolRefSchema
   })
   .merge(PageRequestSchema)
+  .strict()
 
 export type TaskEscalationReadInput = z.infer<typeof TaskEscalationReadInputSchema>
 
@@ -197,10 +199,12 @@ export type TaskEscalationReadResult = z.infer<typeof TaskEscalationReadResultSc
 
 // --- task_start / task_resume / task_cancel (stubs — O3) ------------------
 
-export const TaskStartInputSchema = z.object({
-  tranche: z.string().min(1),
-  id: z.string().min(1)
-})
+export const TaskStartInputSchema = z
+  .object({
+    tranche: z.string().min(1),
+    id: z.string().min(1)
+  })
+  .strict()
 export type TaskStartInput = z.infer<typeof TaskStartInputSchema>
 
 /**
@@ -252,15 +256,19 @@ export function taskStartRequestIdentity(input: TaskStartRequestInput): string {
   return `req_${createHash('sha256').update(canonical).digest('hex').slice(0, 32)}`
 }
 
-export const TaskResumeInputSchema = z.object({
-  task: TaskToolRefSchema
-})
+export const TaskResumeInputSchema = z
+  .object({
+    task: TaskToolRefSchema
+  })
+  .strict()
 export type TaskResumeInput = z.infer<typeof TaskResumeInputSchema>
 
-export const TaskCancelInputSchema = z.object({
-  task: TaskToolRefSchema,
-  reason: z.string().min(1)
-})
+export const TaskCancelInputSchema = z
+  .object({
+    task: TaskToolRefSchema,
+    reason: z.string().min(1)
+  })
+  .strict()
 export type TaskCancelInput = z.infer<typeof TaskCancelInputSchema>
 
 /** No mutating tool below has a result shape yet — each one always refuses (O3) — so its schema is `z.never()`: a handler that ever resolves rather than refuses is a type error at the call site, not a silent success. */
