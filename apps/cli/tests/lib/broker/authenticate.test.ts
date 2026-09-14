@@ -33,7 +33,8 @@ describe('authenticateWorkerInvocation', () => {
       { VINAYA_ROLE: 'developer', VINAYA_TASK: '2', VINAYA_RUN_ID: 'run-abc' },
       REAL_DISPATCH
     )
-    expect(ctx).toEqual({ role: 'worker', task: 2 })
+    expect(ctx.role).toBe('worker')
+    expect(ctx.task).toBe(2)
   })
 
   it('refuses a role never dispatched as a child process at all (forged principal claim)', () => {
@@ -135,7 +136,8 @@ describe('authenticateWorkerInvocation', () => {
 describe('authenticateOperatorInvocation', () => {
   it('authenticates through VINAYA_MCP_CALLER, the same channel task-tools/server.ts already uses', () => {
     const ctx = authenticateOperatorInvocation({ VINAYA_MCP_CALLER: 'operator-session-1' }, 2)
-    expect(ctx).toEqual({ role: 'operator', task: 2 })
+    expect(ctx.role).toBe('operator')
+    expect(ctx.task).toBe(2)
   })
 
   it('refuses when no caller was authenticated on this invocation', () => {

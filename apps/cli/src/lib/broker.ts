@@ -37,6 +37,7 @@
  * Real credential minting stays future work, not yet assigned anywhere.
  */
 
+import { posix as posixPath } from 'node:path'
 import { acquireOwnership, type ControlStoreDeps, readEffect, type Role, ROLE_VALUES } from '@attalabs/aeg-core'
 import { type DispatchTeeRecoveryDeps, launchRecordMatchesRun, realDispatchTeeRecoveryDeps } from './dispatch.js'
 import { createEffectExecutor, type EffectReconciler, sha256Hex } from './effects.js'
@@ -70,9 +71,38 @@ export class ForgedInvocationError extends Error {
   }
 }
 
+/**
+ * Runtime brand, set only by `mintInvocationContext` below and read only by
+ * `assertAuthenticatedContext` — never exported, so no file outside this
+ * module can name the key at all, whether by typing an object literal as
+ * `InvocationContext`, casting one with `as`, or building the shape in
+ * plain JS with no TypeScript in the picture. `requestEffect` refuses any
+ * context missing a `true` value here before `context.role` is ever looked
+ * up in the grant table — a hand-declared `{ role: 'operator', task: N }`
+ * object, however it was typed, is never mistaken for an authenticated one.
+ */
+const CONTEXT_BRAND: unique symbol = Symbol('broker.InvocationContext')
+
 export type InvocationContext = {
   role: BrokerRole
   task: number
+  readonly [CONTEXT_BRAND]: true
+}
+
+/** The only place an `InvocationContext` is built — both `authenticate*Invocation` functions below call this, nothing else does. */
+function mintInvocationContext(role: BrokerRole, task: number): InvocationContext {
+  const context = { role, task } as InvocationContext
+  Object.defineProperty(context, CONTEXT_BRAND, { value: true, enumerable: false })
+  return context
+}
+
+/** Refuses a context that was never minted by `mintInvocationContext` — a hand-built `{role, task}` object, however it was typed or cast, carries no value at this key and is refused here before any grant is looked up. */
+function assertAuthenticatedContext(context: InvocationContext): void {
+  if (context[CONTEXT_BRAND] !== true) {
+    throw new ForgedInvocationError(
+      'invocation context was not produced by authenticateWorkerInvocation/authenticateOperatorInvocation'
+    )
+  }
 }
 
 function assertPositiveTaskId(task: number, raw: unknown): number {
@@ -135,7 +165,7 @@ export function authenticateWorkerInvocation(
       `no launch record names run ${JSON.stringify(runId)} as role ${JSON.stringify(role)} for task ${validTask} — the claimed task does not match what dispatchRole actually launched this child for`
     )
   }
-  return { role: mapped, task: validTask }
+  return mintInvocationContext(mapped, validTask)
 }
 
 /**
@@ -156,7 +186,7 @@ export function authenticateOperatorInvocation(
   if (callerId === undefined || callerId.trim().length === 0) {
     throw new ForgedInvocationError('no VINAYA_MCP_CALLER on this invocation — the Operator channel requires one')
   }
-  return { role: 'operator', task: assertPositiveTaskId(task, task) }
+  return mintInvocationContext('operator', assertPositiveTaskId(task, task))
 }
 
 // --- operations and the grant table (O2, O3) --------------------------------
@@ -270,8 +300,21 @@ export class ProtectedPathError extends Error {
   }
 }
 
+/**
+ * Resolves `.`/`..` segments and strips a leading `./` or `/` before the
+ * prefix check below runs, so `foo/../.github/workflows/ci.yml`,
+ * `./.github/x` and an absolute `/aeg-root/x` all normalize to the same
+ * string a plain `.github/x` or `aeg-root/x` would — a raw `startsWith`
+ * compare on the untouched path lets each of those three forms walk past
+ * the check a normalized compare catches.
+ */
+function normalizeTouchedPath(path: string): string {
+  return posixPath.normalize(path.replace(/\\/g, '/')).replace(/^\/+/, '')
+}
+
 function isProtectedAdminPath(path: string): boolean {
-  return PROTECTED_ADMIN_PATHS.some((prefix) => path === prefix || path.startsWith(prefix))
+  const normalized = normalizeTouchedPath(path)
+  return PROTECTED_ADMIN_PATHS.some((prefix) => normalized === prefix || normalized.startsWith(prefix))
 }
 
 function assertNoProtectedPaths(paths: readonly string[] | undefined): void {
@@ -362,6 +405,7 @@ export function requestEffect(
   context: InvocationContext,
   request: BrokerEffectRequest
 ): string {
+  assertAuthenticatedContext(context)
   assertGranted(context.role, request.operation)
   assertTargetScopedToTask(context.task, request.target)
   assertNoProtectedPaths(request.touchedPaths)

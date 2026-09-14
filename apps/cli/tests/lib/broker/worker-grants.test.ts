@@ -13,8 +13,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type ControlStoreDeps, defaultControlStoreDeps } from '@attalabs/aeg-core'
+import type { DispatchTeeRecoveryDeps } from '../../../src/lib/dispatch'
 import {
-  type InvocationContext,
+  authenticateWorkerInvocation,
   NEVER_GRANTED_OPERATIONS,
   requestEffect,
   scopeTarget,
@@ -34,7 +35,17 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-const worker: InvocationContext = { role: 'worker', task: 2 }
+/** A launch record naming exactly the (runId, role, task) triple `authenticateWorkerInvocation` below presents. */
+const WORKER_DISPATCH_DEPS: DispatchTeeRecoveryDeps = {
+  env: {},
+  listLaunchRecordPaths: () => ['launch-0.json'],
+  readFile: () => JSON.stringify({ runId: 'run-worker-grants', role: 'developer', agent: 'claude', task: 2 })
+}
+
+const worker = authenticateWorkerInvocation(
+  { VINAYA_ROLE: 'developer', VINAYA_TASK: '2', VINAYA_RUN_ID: 'run-worker-grants' },
+  WORKER_DISPATCH_DEPS
+)
 
 describe('Worker grant matrix', () => {
   for (const operation of WORKER_OPERATIONS) {

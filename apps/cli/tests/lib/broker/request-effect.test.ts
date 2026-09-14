@@ -10,9 +10,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type ControlStoreDeps, defaultControlStoreDeps, StaleEpochWriteError } from '@attalabs/aeg-core'
+import type { DispatchTeeRecoveryDeps } from '../../../src/lib/dispatch'
 import {
   acquireOwnership,
-  type InvocationContext,
+  authenticateWorkerInvocation,
   ProtectedPathError,
   ReplayedInputVersionError,
   requestEffect,
@@ -33,7 +34,17 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-const worker: InvocationContext = { role: 'worker', task: 2 }
+/** A launch record naming exactly the (runId, role, task) triple `authenticateWorkerInvocation` below presents — the same shape `dispatch.ts`'s own launcher would have durably written before spawning this child. */
+const WORKER_DISPATCH_DEPS: DispatchTeeRecoveryDeps = {
+  env: {},
+  listLaunchRecordPaths: () => ['launch-0.json'],
+  readFile: () => JSON.stringify({ runId: 'run-request-effect', role: 'developer', agent: 'claude', task: 2 })
+}
+
+const worker = authenticateWorkerInvocation(
+  { VINAYA_ROLE: 'developer', VINAYA_TASK: '2', VINAYA_RUN_ID: 'run-request-effect' },
+  WORKER_DISPATCH_DEPS
+)
 
 const neverReconcile = () => {
   throw new Error('reconcile should not be called for a fresh key')
@@ -136,6 +147,25 @@ describe('requestEffect', () => {
         key: 'push-1',
         payload: 'x',
         touchedPaths: ['vinaya.config.json'],
+        poster: () => 'https://example.com',
+        reconcile: neverReconcile
+      })
+    ).toThrow(ProtectedPathError)
+  })
+
+  it.each([
+    ['foo/../.github/workflows/ci.yml', 'a `..` segment that resolves back onto a protected prefix'],
+    ['./.github/x', 'a leading `./` that defeats a raw `startsWith` compare'],
+    ['/aeg-root/x', 'a leading `/` that makes the path look absolute']
+  ])('refuses a protected path disguised by %s (%s)', (path) => {
+    expect(() =>
+      requestEffect(deps, worker, {
+        operation: 'branch-push',
+        target: scopeTarget(2, 'task/worker-isolation-v1/2'),
+        inputVersion: 1,
+        key: `push-disguised-${path}`,
+        payload: 'x',
+        touchedPaths: [path],
         poster: () => 'https://example.com',
         reconcile: neverReconcile
       })

@@ -42,7 +42,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-const operator: InvocationContext = { role: 'operator', task: 4 }
+const operator = authenticateOperatorInvocation({ VINAYA_MCP_CALLER: 'operator-session-grants-test' }, 4)
 
 describe('Operator grant matrix', () => {
   for (const operation of OPERATOR_OPERATIONS) {
@@ -116,8 +116,8 @@ describe('forged role names (O3 denial test)', () => {
     expect(() => authenticateOperatorInvocation({ VINAYA_ROLE: 'developer' }, 4)).toThrow(ForgedInvocationError)
   })
 
-  it('a forged worker role reaching requestEffect directly (bypassing authenticate*) is still refused by the grant check for an operator-only operation', () => {
-    const forged: InvocationContext = { role: 'worker', task: 4 }
+  it('a hand-built context bypassing authenticate* entirely (no runtime brand) is refused before the grant table is ever consulted', () => {
+    const forged = { role: 'worker', task: 4 } as InvocationContext
     expect(() =>
       requestEffect(deps, forged, {
         operation: 'task-execute',
@@ -130,7 +130,7 @@ describe('forged role names (O3 denial test)', () => {
           throw new Error('reconcile should not be called for a fresh key')
         }
       })
-    ).toThrow(UngrantedOperationError)
+    ).toThrow(ForgedInvocationError)
   })
 })
 
