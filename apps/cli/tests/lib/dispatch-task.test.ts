@@ -405,6 +405,40 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
     expect(existingCheckCalled).toBe(false)
   })
 
+  // O2 (Issue #588) — the Issue write gate now folds a dependency/conflict
+  // dispatch blocker into `severity: 'warning'`, so an EDIT is no longer
+  // refused for it; `task run`/`prepareTask` never reads that classification
+  // field at all — it still refuses on a plain `ok: false`, exactly as
+  // before. `dispatchBlockerDetails` here is the SAME shape
+  // `assembleAndRenderBrief` now carries on a real dependency-not-merged
+  // gap (`brief-assembly.test.ts`), present to prove its mere presence
+  // changes nothing about dispatch's own refusal.
+  it('O2 (#588): still refuses, naming the dependency, when the render fails on an unmerged Depends-on — the new classification field changes nothing here', async () => {
+    let existingCheckCalled = false
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1 },
+        preparePostingDeps({
+          assembleAndRenderBrief: async () => ({
+            ok: false,
+            missing: ['dispatch-gate depends-on: task 1 depends on #999, whose PR is not merged yet.'],
+            dispatchBlockerDetails: [
+              {
+                class: 'depends-on-not-merged',
+                message: 'dispatch-gate depends-on: task 1 depends on #999, whose PR is not merged yet.'
+              }
+            ]
+          }),
+          findExistingFrozenBrief: () => {
+            existingCheckCalled = true
+            return null
+          }
+        })
+      )
+    ).rejects.toThrow(/depends on #999/)
+    expect(existingCheckCalled).toBe(false)
+  })
+
   it('refuses when a frozen brief already exists, naming the existing comment url — nothing posted', async () => {
     let postCalled = false
     await expect(

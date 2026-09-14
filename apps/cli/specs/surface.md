@@ -8,7 +8,7 @@ One command is one function, published and tested. `apps/cli/tests/surface-index
 
 A command is a function with argument parsing in front. Commands never call commands. One capability is one function.
 
-The tables below index exported functions/consts/classes only — a change that adds or removes none of those (a new field on an already-exported type, a new CLI flag on an already-listed command) needs no new row here and does not make this file stale. (`#548`: the O1 lock hand-over and O2 role-log trace are internal to `devReviewLoop`/`checkStaleDriver`, and `deriveLoopState`'s new third parameter is a new field on an already-exported function, not a new export — same rule, no new row. `DriverExitReason`/`DriverExitTrace`/`LoopLogLookup`, added to `task-status.ts`, are type-only exports; per this file's own scope line above ("functions/consts/classes only"), they get no row either — the same omission `MergeableState`/`PauseState` already have.)
+The tables below index exported functions/consts/classes only — a change that adds or removes none of those (a new field on an already-exported type, a new CLI flag on an already-listed command) needs no new row here and does not make this file stale. (`#548`: the O1 lock hand-over and O2 role-log trace are internal to `devReviewLoop`/`checkStaleDriver`, and `deriveLoopState`'s new third parameter is a new field on an already-exported function, not a new export — same rule, no new row. `DriverExitReason`/`DriverExitTrace`/`LoopLogLookup`, added to `task-status.ts`, are type-only exports; per this file's own scope line above ("functions/consts/classes only"), they get no row either — the same omission `MergeableState`/`PauseState` already have. `#588`: `AssembleAndRenderBriefResult`'s new `dispatchBlockerDetails` field and `makeCheckError`'s new fourth `severity` parameter are both new fields/parameters on already-exported symbols, not new exports — same rule, no new row.)
 
 Three layers:
 
@@ -201,14 +201,28 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `redact` | function | `packages/aeg-core/src/log/redact.ts` |
 | `DevReviewLoopEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `DispatchEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `EffectEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `ForgeOpSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `ForgeWriteEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `GateEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `GateOutcomeSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `HandoffEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `HeaderMetaV1Schema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `HeaderMetaV2Schema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `HeaderSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `HOST_VALUES` | const | `packages/aeg-core/src/log/schema.ts` |
 | `HostSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `InputVersionsSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `LineageSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `LogEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `OperationEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `OperationResultSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `ProvenanceSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `ROLE_VALUES` | const | `packages/aeg-core/src/log/schema.ts` |
+| `RoleAttemptEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `RoleAttemptOutcomeSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `RoleSchema` | const | `packages/aeg-core/src/log/schema.ts` |
+| `UsageEventSchema` | const | `packages/aeg-core/src/log/schema.ts` |
 | `checkMainBranchRefusal` | function | `packages/aeg-core/src/main-branch-refusal.ts` |
 | `checkManifestValidity` | function | `packages/aeg-core/src/manifest-validity.ts` |
 | `parseNoDocRules` | function | `packages/aeg-core/src/manifest-validity.ts` |
@@ -346,8 +360,26 @@ Every non-type export of the package barrel (`packages/aeg-core/src/index.ts`), 
 | `trancheSlugOf` | function | `packages/aeg-forge-state/src/labels.ts` |
 | `projectsFromBody` | function | `packages/aeg-forge-state/src/list-tasks.ts` |
 | `mapForgeFacts` | function | `packages/aeg-forge-state/src/map-forge-facts.ts` |
+| `CONTROL_RECORD_VERSION` | const | `packages/aeg-core/src/control-store/records.ts` |
+| `parseRunRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `parseInputRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `parseOwnershipRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `parseTransitionRecord` | function | `packages/aeg-core/src/control-store/records.ts` |
+| `defaultControlStoreDeps` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `StaleEpochWriteError` | class | `packages/aeg-core/src/control-store/local.ts` |
+| `InvalidRunIdError` | class | `packages/aeg-core/src/control-store/local.ts` |
+| `readCurrentOwnership` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `acquireOwnership` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `writeRun` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `readRun` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `writeInput` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `readInput` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `appendTransition` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `readTransitions` | function | `packages/aeg-core/src/control-store/local.ts` |
+| `defaultIsPidAlive` | function | `packages/aeg-core/src/control-store/migration.ts` |
+| `migrateLegacyTask` | function | `packages/aeg-core/src/control-store/migration.ts` |
 
-(284 exports.)
+(302 exports.)
 
 ## Effects — `apps/cli/src/lib` public exports
 
