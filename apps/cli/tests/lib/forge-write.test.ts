@@ -4,8 +4,10 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHECK_SCHEMA_VERSION, type CheckError } from '../../src/checks/contract'
+import { sha256Hex } from '../../src/lib/effects'
 import {
   collectTaskIssueErrors,
+  reconcileGhComment,
   runIssueChecks,
   type TaskIssueValidationDeps,
   validateForgeWrite,
@@ -595,5 +597,97 @@ describe('runIssueChecks returns findings rather than refusing (O1)', () => {
       retryCommand: 'vinaya issue create'
     })
     expect(errors).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// `reconcileGhComment` (security review, round 2, HIGH) — the `gh`-backed
+// `EffectReconciler` `apps/cli/src/lib/effects.ts`'s `EffectExecutor` calls
+// on recovery. A fake `gh` answers `{issue,pr} view --json comments` with a
+// fixed comment list; the trust-anchor `vinaya.config.json` fetch is left
+// unanswered (exits 1), so `loadTrustAnchorConfig` falls back to the real
+// `PRINCIPAL_ALLOWLIST` default (`['daniboomerang']`) — the same fallback
+// every other principal-gated path in this file already exercises.
+// ---------------------------------------------------------------------------
+
+describe('reconcileGhComment (security review, round 2, HIGH: principal-authored match only)', () => {
+  let cwd: string
+  let originalPath: string | undefined
+  let commentsFile: string
+
+  function writeComments(comments: { body: string; url?: string; author?: { login: string } }[]): void {
+    writeFileSync(commentsFile, JSON.stringify({ comments }), 'utf8')
+  }
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-reconcile-gh-comment-'))
+    commentsFile = join(cwd, 'comments.json')
+    writeComments([])
+
+    const gh = join(cwd, 'gh')
+    writeFileSync(
+      gh,
+      `#!/bin/sh
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  cat "${commentsFile}"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  cat "${commentsFile}"
+  exit 0
+fi
+echo "gh: not found" >&2
+exit 1
+`
+    )
+    execFileSync('chmod', ['+x', gh])
+
+    originalPath = process.env.PATH
+    process.env.PATH = `${cwd}:${process.env.PATH ?? ''}`
+  })
+
+  afterEach(() => {
+    process.env.PATH = originalPath
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  const identity = { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('the body') }
+
+  it('confirms a digest match authored by an allowlisted principal', () => {
+    writeComments([{ body: 'the body', url: 'https://example.com/c/1', author: { login: 'daniboomerang' } }])
+    const result = reconcileGhComment('pr', '1')(identity)
+    expect(result).toEqual({ outcome: 'confirmed', url: 'https://example.com/c/1' })
+  })
+
+  it('does NOT confirm a byte-identical body authored by a non-principal — a spoofed comment is not evidence the real post landed', () => {
+    writeComments([{ body: 'the body', url: 'https://example.com/c/1', author: { login: 'some-other-commenter' } }])
+    const result = reconcileGhComment('pr', '1')(identity)
+    expect(result).toEqual({ outcome: 'absent' })
+  })
+
+  it('does NOT confirm a digest match with no author at all', () => {
+    writeComments([{ body: 'the body', url: 'https://example.com/c/1' }])
+    const result = reconcileGhComment('pr', '1')(identity)
+    expect(result).toEqual({ outcome: 'absent' })
+  })
+
+  it('reports absent when a successful read carries no matching principal-authored body', () => {
+    writeComments([{ body: 'a different body', author: { login: 'daniboomerang' } }])
+    const result = reconcileGhComment('pr', '1')(identity)
+    expect(result).toEqual({ outcome: 'absent' })
+  })
+
+  it('reports ambiguous, never absent, when gh itself fails', () => {
+    const gh = join(cwd, 'gh')
+    writeFileSync(gh, `#!/bin/sh\necho "gh: network unreachable" >&2\nexit 1\n`)
+    execFileSync('chmod', ['+x', gh])
+    const result = reconcileGhComment('pr', '1')(identity)
+    expect(result.outcome).toBe('ambiguous')
+  })
+
+  it('reports ambiguous, never absent, when the JSON does not parse', () => {
+    writeFileSync(commentsFile, 'not json', 'utf8')
+    const result = reconcileGhComment('issue', '552')(identity)
+    expect(result.outcome).toBe('ambiguous')
   })
 })
