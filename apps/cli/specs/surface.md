@@ -816,6 +816,13 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `taskCancelHandler` | function | `apps/cli/src/lib/task-tools/handlers.ts` |
 | `routeTaskToolIntent` | function | `apps/cli/src/lib/task-tools/router.ts` |
 | `refuseUngrantedTool` | function | `apps/cli/src/lib/task-tools/router.ts` |
+| `DEFAULT_PACKET_BUDGET` | const | `apps/cli/src/lib/context-packet.ts` |
+| `parseContextPacket` | function | `apps/cli/src/lib/context-packet.ts` |
+| `renderContextPacket` | function | `apps/cli/src/lib/context-packet.ts` |
+| `validateContextPacket` | function | `apps/cli/src/lib/context-packet.ts` |
+| `compactPacket` | function | `apps/cli/src/lib/context-packet.ts` |
+| `continuationPacket` | function | `apps/cli/src/lib/context-packet.ts` |
+| `classifyOperatorRequest` | function | `apps/cli/src/lib/context-packet.ts` |
 | `discoverWorkspacePackages` | function | `apps/cli/src/lib/test-selector.ts` |
 | `extractImportSpecifiers` | function | `apps/cli/src/lib/test-selector.ts` |
 | `isTestFile` | function | `apps/cli/src/lib/test-selector.ts` |
@@ -826,7 +833,7 @@ Every exported function/const/class from each file under `apps/cli/src/lib/`. Th
 | `briefHash` | function | `packages/aeg-core/src/review-input-manifest.ts` |
 | `contentAfterTwoLines` | function | `packages/aeg-core/src/brief-validation.ts` |
 
-(261 exports — 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. None of the three files front a `vinaya` subcommand yet — the catalog they implement is an agent-facing tool surface, not a CLI command — so no Commands-table row exists for any of them; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule. 2 more added by `task-operator-v1` task 3 O2: `router.ts`'s `refuseUngrantedTool` (the router's grant gate) and `agents-skills-emitter.ts`'s `roleAllowedTools` (reads a role's `allowed-tools` frontmatter so the generated skill carries the same grant).)
+(268 exports — 11 added by `task-operator-v1` task 1: `apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` bind `task_status`/`task_escalation_read` to today's outbox and forge reads, and `router.ts` classifies a caller's free-text intent to one catalog tool name. None of the three files front a `vinaya` subcommand yet — the catalog they implement is an agent-facing tool surface, not a CLI command — so no Commands-table row exists for any of them; `Observed`/`Page` (`read.ts`) and `TaskToolCallResult` (`handlers.ts`) are type-only exports and get no row either, per this file's own rule. 2 more added by `task-operator-v1` task 3 O2: `router.ts`'s `refuseUngrantedTool` (the router's grant gate) and `agents-skills-emitter.ts`'s `roleAllowedTools` (reads a role's `allowed-tools` frontmatter so the generated skill carries the same grant); and 7 more by task 3 O3, all in `context-packet.ts` — the bounded context-packet model (`parseContextPacket`, `renderContextPacket`, `validateContextPacket`, `compactPacket`, `continuationPacket`, `classifyOperatorRequest`, `DEFAULT_PACKET_BUDGET`); its `ContextPacket`/`EvidenceEntry`/`PacketIssue`/`PacketIssueKind`/`RequestClassification`/`ContextPacketRole` are type-only and get no row.)
 
 ## Commands — `apps/cli/src/commands` (44 shipped rows, one per `packages/sources/src/commands.ts` entry with `status: 'shipped'`)
 
