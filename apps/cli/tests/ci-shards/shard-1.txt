@@ -48,3 +48,5 @@ tests/lib/task-tools/adapters.test.ts
 tests/lib/dispatch/reconcile-launch.test.ts
 tests/lib/dispatch/outcomes.test.ts
 tests/lib/dispatch/launch-intent.test.ts
+tests/lib/broker/authenticate.test.ts
+tests/lib/broker/worker-grants.test.ts
