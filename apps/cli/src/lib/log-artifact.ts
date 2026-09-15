@@ -37,6 +37,20 @@ function outboxRootDir(): string {
 }
 
 /**
+ * Orders `none.ndjson` (repo-level events, no issue) before every numbered
+ * issue bucket, then issue buckets ascending — `readdirSync` order is an OS
+ * implementation detail, not a contract, so without this the concatenated
+ * artifact's line order (and this function's own output) would vary by
+ * filesystem.
+ */
+function outboxFileSortKey(fileName: string): [number, number] {
+  const base = fileName.slice(0, -'.ndjson'.length)
+  if (base === 'none') return [0, 0]
+  const issue = Number(base)
+  return [1, Number.isFinite(issue) ? issue : Number.POSITIVE_INFINITY]
+}
+
+/**
  * Every `*.ndjson` outbox file under `<GLOBAL_VINAYA_HOME>/outbox/`,
  * bounded to two directory levels deep (`<repo-dir>/<issue-or-none>.ndjson`
  * — the exact shape `log-sink.ts`'s `outboxPathFor` writes). The task-path
@@ -49,7 +63,7 @@ function listOutboxFiles(): string[] {
   const root = outboxRootDir()
   if (!existsSync(root)) return []
   const files: string[] = []
-  for (const repoDir of readdirSync(root)) {
+  for (const repoDir of readdirSync(root).sort()) {
     const repoPath = join(root, repoDir)
     let stat: ReturnType<typeof statSync>
     try {
@@ -58,8 +72,14 @@ function listOutboxFiles(): string[] {
       continue
     }
     if (!stat.isDirectory()) continue
-    for (const entry of readdirSync(repoPath)) {
-      if (!entry.endsWith('.ndjson')) continue
+    const entries = readdirSync(repoPath)
+      .filter((entry) => entry.endsWith('.ndjson'))
+      .sort((a, b) => {
+        const [ak, an] = outboxFileSortKey(a)
+        const [bk, bn] = outboxFileSortKey(b)
+        return ak - bk || an - bn
+      })
+    for (const entry of entries) {
       files.push(join(repoPath, entry))
     }
   }
