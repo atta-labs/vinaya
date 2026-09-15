@@ -2425,7 +2425,27 @@ export async function dispatchRole(
               } catch {
                 // best-effort, same reasoning as above.
               }
-              return [relative(GLOBAL_VINAYA_HOME, outboxPath), relative(GLOBAL_VINAYA_HOME, resumePath)]
+              const files = [relative(GLOBAL_VINAYA_HOME, outboxPath), relative(GLOBAL_VINAYA_HOME, resumePath)]
+              // Round 6 review, security CRITICAL fix: `documentationLogHookScript`'s
+              // own `PostToolUse` hook (`writeDispatchSettings`, above) appends one
+              // line per `WebFetch` call to `documentation-log-<runId>.jsonl` inside
+              // `dispatch-settings` — but that whole directory sits in
+              // `vinayaHomeReadOnlySubdirs` below, read-only, since nothing else in
+              // it is ever rewritten by the confined child. Live-reproduced: a write
+              // into a read-only-granted directory fails `Operation not permitted`,
+              // so the hook's own `try/catch` silently swallows it — every WebFetch
+              // of a Documentation source goes unrecorded, `documentationStopHookScript`
+              // always reads it as unfetched, and the Stop hook refuses forever,
+              // exactly the fail-closed contract `roles/developer.md` describes but
+              // never resolvable, breaking O3 for any confined developer whose brief
+              // names a URL-shaped `## Documentation` source. Named here, alongside
+              // the outbox/resume-record files, as the one file in that otherwise
+              // read-only directory the confined child genuinely writes.
+              if (dispatchSettingsPath) {
+                const docLogPath = join(dirname(dispatchSettingsPath), `documentation-log-${runId}.jsonl`)
+                files.push(relative(GLOBAL_VINAYA_HOME, docLogPath))
+              }
+              return files
             })(),
             // Round 6 fix, live-reproduced: `extraVinayaWritableSubdirs`'s
             // own doc comment (above, on `DispatchOpts`) has the finding —
