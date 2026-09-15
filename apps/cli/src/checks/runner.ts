@@ -148,7 +148,7 @@ function inputFingerprintFor(spec: CheckSpec, opts: RunOptions, callerEnv: NodeJ
  * is set, regardless of scope/diff — see `RunOptions.localOnly`.
  */
 function shouldSkip(spec: CheckSpec, opts: RunOptions): { skip: boolean; reason?: string } {
-  if (opts.localOnly && spec.requiresOpenPr) return { skip: true }
+  if (opts.localOnly && spec.requiresOpenPr) return { skip: true, reason: 'requires-open-pr, local-only' }
   if (opts.skipFull && spec.scope === 'full') return { skip: true, reason: 'full-scope, pre-commit' }
   if (spec.scope !== 'diff') return { skip: false }
   if (!opts.diffOnly) return { skip: false }
@@ -156,7 +156,7 @@ function shouldSkip(spec: CheckSpec, opts: RunOptions): { skip: boolean; reason?
   if (!spec.include || spec.include.length === 0) return { skip: false }
   const regexes = spec.include.map(globToRegex)
   const matched = opts.changedFiles.some((f) => regexes.some((re) => re.test(f)))
-  return { skip: !matched }
+  return matched ? { skip: false } : { skip: true, reason: 'no-matching-include-glob' }
 }
 
 /** Grace period between SIGTERM and SIGKILL for a timed-out check. */
@@ -198,6 +198,12 @@ function installSignalForwarding(): void {
   signalForwardingInstalled = true
   const forward = (signal: NodeJS.Signals, exitCode: number): void => {
     for (const entry of activeChecks.values()) {
+      // A second SIGINT/SIGTERM arriving before the first one's
+      // `KILL_GRACE_MS` timer fires `process.exit` (a double Ctrl+C, or a
+      // supervisor sending TERM then INT/KILL) re-enters this loop while an
+      // entry from the FIRST call is still in `activeChecks` — skip it
+      // rather than logging the same attempt as `cancelled` twice.
+      if (entry.cancelled) continue
       // Marked BEFORE the kill below: `killTree('SIGTERM')` can make the
       // child's own `proc.on('close', …)` in `runOne` resolve before this
       // process actually exits, and `runOne` would otherwise carry on to

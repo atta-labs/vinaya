@@ -84,7 +84,18 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     expect(events).toHaveLength(1)
     const e = events[0] as Extract<LogEventInput, { kind: 'gate' }>
     expect(e.outcome).toBe('skip')
+    expect(e.reason).toBe('no-matching-include-glob')
     expect(e.duration_ms).toBe(0)
+  })
+
+  it('skip — requiresOpenPr under localOnly names its own reason', async () => {
+    const { events, log } = capture()
+    const spec = fullScope({ name: 'pr-only', run: PASSING, requiresOpenPr: true })
+    await runChecks([spec], { ...BASE_OPTS, localOnly: true, log })
+    expect(events).toHaveLength(1)
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate' }>
+    expect(e.outcome).toBe('skip')
+    expect(e.reason).toBe('requires-open-pr, local-only')
   })
 
   it('skip — skipFull names its own reason', async () => {

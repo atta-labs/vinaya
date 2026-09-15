@@ -51,4 +51,36 @@ describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelle
     expect(gateLines[0].outcome).toBe('cancelled')
     expect(gateLines[0].reason).toBe('signal:SIGINT')
   }, 10_000)
+
+  it('a second SIGINT before the kill-grace exit does not double-emit the cancelled observation', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'vinaya-gate-cancelled-double-'))
+    const wrapper = Bun.spawn(['bun', RUN_AND_HANG], {
+      stdio: ['ignore', 'ignore', 'ignore'],
+      env: { ...process.env, HOME: home, VINAYA_TASK: '905' }
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    // Two signals within the KILL_GRACE_MS window before `process.exit` fires
+    // — a double Ctrl+C, or a supervisor sending TERM then INT/KILL — must
+    // still yield exactly one `cancelled` gate observation per check.
+    wrapper.kill('SIGINT')
+    wrapper.kill('SIGINT')
+    await wrapper.exited
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+
+    const outboxDir = join(home, '.vinaya', 'outbox')
+    const repoDirs = readdirSync(outboxDir)
+    expect(repoDirs.length).toBeGreaterThan(0)
+    const path = join(outboxDir, repoDirs[0] as string, '905.ndjson')
+    const lines = readFileSync(path, 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+    const gateLines = lines.filter((l) => l.kind === 'gate')
+    expect(gateLines).toHaveLength(1)
+    expect(gateLines[0].check).toBe('hang')
+    expect(gateLines[0].outcome).toBe('cancelled')
+  }, 10_000)
 })
