@@ -423,8 +423,8 @@ describe('resolveWorkerBoundaryLaunch — bootstrapWritableSubpaths (round 2 rev
   })
 })
 
-describe('resolveWorkerBoundaryLaunch — GLOBAL_VINAYA_HOME narrowed (round 2 review, MAJOR)', () => {
-  it("vinayaHomeDir itself is read-only — a confined Worker cannot rewrite ~/.vinaya's own config.json", () => {
+describe('resolveWorkerBoundaryLaunch — GLOBAL_VINAYA_HOME narrowed (round 2 review, MAJOR; round 4 review, HIGH)', () => {
+  it("vinayaHomeDir itself is NOT exposed at all — a confined Worker cannot read or rewrite ~/.vinaya's own config.json", () => {
     const allowedDir = tempDir('vinaya-wb-allowed-')
     const homeDir = tempDir('vinaya-wb-home-')
     writeFileSync(join(homeDir, 'config.json'), '{}')
@@ -452,7 +452,12 @@ describe('resolveWorkerBoundaryLaunch — GLOBAL_VINAYA_HOME narrowed (round 2 r
       // `outbox`/`dispatch-resume` subpaths, which legitimately DO appear
       // here (the next test); a bare substring check would false-fail.
       expect(profile.slice(rwRuleIdx, rwRuleEnd)).not.toContain(`"${homeDir}"`)
-      expect(profile).toContain(`(allow file-read*\n    (subpath "${homeDir}")`)
+      // Round 4 review, HIGH fix: homeDir never appears as its own
+      // standalone `(subpath ...)` rule anywhere in the profile any more —
+      // previously it sat directly in `readOnlyDirs`, producing exactly
+      // this literal. Only its scoped `outbox`/`dispatch-resume` writable
+      // subpaths (longer strings, asserted by the next test) are exposed.
+      expect(profile).not.toContain(`(subpath "${homeDir}")`)
     } finally {
       result.launch.cleanup()
     }
@@ -723,6 +728,87 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
         )
         expect(spawnResult.status).not.toBe(0)
         expect(spawnResult.stderr).toMatch(/EPERM|EACCES|operation not permitted/i)
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+})
+
+describe('resolveWorkerBoundaryLaunch — repo-segment scoping (round 4 review, BLOCKER)', () => {
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'a confined Worker scoped to its own repo-segment can write there but not into a SIBLING repo-segment under the same GLOBAL_VINAYA_HOME subdir',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-scope-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-scope-home-')
+
+      // `outbox`/`dispatch-resume` already exist as long-lived top-level
+      // directories on any host that has dispatched before (this task's own
+      // authoring host included) — pre-created here, unsandboxed, to match
+      // that real precondition rather than testing a from-scratch machine
+      // that never existed in production.
+      mkdirSync(join(homeDir, 'outbox'), { recursive: true })
+      mkdirSync(join(homeDir, 'dispatch-resume'), { recursive: true })
+
+      const ownRepoFile = join(homeDir, 'outbox', 'owner-repoA', '1.ndjson')
+      const siblingRepoFile = join(homeDir, 'outbox', 'owner-repoB', '2.ndjson')
+
+      // The probe runs `fs.mkdirSync(dirname, { recursive: true })` —
+      // literally the SAME primitive `dispatch.ts`'s own `writeLaunchRecord`
+      // calls in production — not a shell `mkdir -p`, whose own step-by-step
+      // per-ancestor algorithm behaves differently under Seatbelt and would
+      // misrepresent what the real code path actually does. Lives inside
+      // `allowedDir` (full read+write already) so the runtime can read it;
+      // `binaryPath` is this same test runner's own interpreter, so its
+      // install dir is automatically exec/read-allowed as `runtimeDir`.
+      const probeScript = join(allowedDir, 'repo-scope-probe.js')
+      writeFileSync(
+        probeScript,
+        [
+          "const fs = require('node:fs')",
+          "const path = require('node:path')",
+          'const [ownPath, siblingPath] = process.argv.slice(2)',
+          'let ownWriteOk = true',
+          'try {',
+          '  fs.mkdirSync(path.dirname(ownPath), { recursive: true })',
+          "  fs.writeFileSync(ownPath, 'own')",
+          '} catch { ownWriteOk = false }',
+          'let siblingWriteBlocked = true',
+          'try {',
+          '  fs.mkdirSync(path.dirname(siblingPath), { recursive: true })',
+          "  fs.writeFileSync(siblingPath, 'sibling')",
+          '  siblingWriteBlocked = false',
+          '} catch { siblingWriteBlocked = true }',
+          'process.stdout.write(JSON.stringify({ ownWriteOk, siblingWriteBlocked }))'
+        ].join('\n')
+      )
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: process.execPath,
+          args: [probeScript, ownRepoFile, siblingRepoFile],
+          allowedDir,
+          vinayaHomeDir: homeDir,
+          // Exactly what `dispatch.ts` now computes: `dirname(outboxPath)`
+          // and `dirname(resumeRecordPathFor(...))`, scoped to ONE repo.
+          vinayaHomeWritableSubdirs: [join('outbox', 'owner-repoA'), join('dispatch-resume', 'owner-repoA')]
+        },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          encoding: 'utf8'
+        })
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        const parsed = JSON.parse(spawnResult.stdout) as { ownWriteOk: boolean; siblingWriteBlocked: boolean }
+        expect(parsed.ownWriteOk, "writing inside this dispatch's own repo-segment should succeed").toBe(true)
+        expect(
+          parsed.siblingWriteBlocked,
+          'writing into a SIBLING repo-segment under the same subdir should be blocked'
+        ).toBe(true)
       } finally {
         result.launch.cleanup()
       }

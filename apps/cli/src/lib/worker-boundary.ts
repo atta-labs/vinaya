@@ -171,6 +171,27 @@ function sbSubpathAllows(operations: string, dirs: readonly string[]): string {
 }
 
 /**
+ * `(literal ...)`, never `(subpath ...)` — round 4 review, BLOCKER fix: a
+ * directory a confined role must be able to TRAVERSE INTO (so the kernel
+ * can look up/create a specific already-known child path beneath it) but
+ * never list or read the contents of. `subpath` is recursive by
+ * construction (it would grant full read of every sibling entry
+ * underneath); `literal` matches only the exact given path — verified live
+ * on this host: with only this rule on a directory's own literal path, a
+ * confined child can `fs.mkdirSync`/`fs.writeFileSync` a NAMED child path
+ * beneath it (Node's own recursive `mkdirSync` needs no more), but `ls` on
+ * that directory and reading a DIFFERENT, sibling child's file both still
+ * fail with a real permission denial, not just "not found" — see
+ * `resolveWorkerBoundaryLaunch`'s own doc comment on `vinayaWritableDirs`
+ * for why this exists.
+ */
+function sbLiteralMetadataAllows(dirs: readonly string[]): string {
+  if (dirs.length === 0) return ''
+  const rules = dirs.map((d) => `(literal ${sbLiteral(d)})`).join('\n    ')
+  return `(allow file-read-metadata\n    ${rules})`
+}
+
+/**
  * Renders the real launch's Seatbelt profile — same `(deny default)` plus
  * `(import "system.sb")` baseline the probe's own fixture uses
  * (`isolation.md` §3, item 2), widened in exactly three places a real
@@ -235,24 +256,42 @@ function sbSubpathAllows(operations: string, dirs: readonly string[]): string {
  *    latter regardless of what `$HOME` merely says.
  *
  * `readOnlyDirs` (round 2 review, CRITICAL/MAJOR) is a directory the confined
- * role must be able to READ but never write: a round-1 Developer's own repo
- * root (it needs to read doctrine/code before its own `git worktree add` has
- * even run, but must never be able to rewrite `vinaya.config.json` — the
- * trusted Controller's own `loadConfig()` re-reads that file live, uncached,
- * on every later dispatch), and `GLOBAL_VINAYA_HOME` itself (its own
- * `config.json`, and every other task's/repo's state — a Worker's later
- * `vinaya` subcommands need to read it, never rewrite it wholesale).
- * `readWriteDirs` stays the narrower, per-purpose write surface: the
- * confined role's own EXCLUSIVE workspace (a post-bootstrap worktree, a
- * Reviewer's own scratch copy) or specific named subpaths a bootstrap
- * dispatch's own tooling needs to write (`.git`, `.worktrees` — never the
- * whole repo), plus the scratch tmp dir and `GLOBAL_VINAYA_HOME`'s own
- * caller-named log/resume subdirectories (never its `config.json`).
+ * role must be able to READ but never write: today, only a round-1
+ * Developer's own repo root (it needs to read doctrine/code before its own
+ * `git worktree add` has even run, but must never be able to rewrite
+ * `vinaya.config.json` — the trusted Controller's own `loadConfig()`
+ * re-reads that file live, uncached, on every later dispatch).
+ * `GLOBAL_VINAYA_HOME` is deliberately NOT a member of this list (round 4
+ * review, HIGH: it previously was, granting blanket `file-read*` over
+ * `config.json` plus every other task's and repo's state under it) — nothing
+ * inside the sandbox needs to read it wholesale; the controller's own
+ * global-config fallback in `loadConfig()` runs unsandboxed, before any
+ * child is ever spawned. `readWriteDirs` stays the narrower, per-purpose
+ * write surface: the confined role's own EXCLUSIVE workspace (a
+ * post-bootstrap worktree, a Reviewer's own scratch copy) or specific named
+ * subpaths a bootstrap dispatch's own tooling needs to write (`.git`,
+ * `.worktrees` — never the whole repo), plus the scratch tmp dir and
+ * `GLOBAL_VINAYA_HOME`'s own caller-scoped, repo-specific log/resume
+ * subpaths (round 4 review, BLOCKER: scoped to THIS dispatch's own repo,
+ * never a bare top-level name — see
+ * `WorkerBoundaryLaunchOpts.vinayaHomeWritableSubdirs`'s own doc comment;
+ * never `config.json`).
  */
 export function buildWorkerSandboxProfile(opts: {
   realHome: string
   readOnlyDirs: readonly string[]
   readWriteDirs: readonly string[]
+  /**
+   * Round 4 review, BLOCKER fix: the immediate parent of a NESTED
+   * `readWriteDirs` entry (e.g. `outbox/<repoSegment>`, two levels below
+   * `GLOBAL_VINAYA_HOME`) — granted `file-read-metadata` only (`(literal
+   * ...)`, never `(subpath ...)`), enough for the kernel to resolve/create
+   * the already-known child path beneath it without granting recursive read
+   * of whatever ELSE lives there (see `sbLiteralMetadataAllows`'s own doc
+   * comment). Optional — a caller whose `readWriteDirs` are all one level
+   * below an already-`readOnlyDirs`/`realHome`-adjacent ancestor needs none.
+   */
+  metadataOnlyDirs?: readonly string[]
   execAllowDirs: readonly string[]
   runtimeDir: string
   sshSockCanon: string
@@ -295,6 +334,7 @@ export function buildWorkerSandboxProfile(opts: {
     ';; and read+write for directories it actually owns or has a named write',
     ";; target inside (see this function's own doc comment on the two lists).",
     `(deny file-read* file-write*\n    (subpath ${sbLiteral(opts.realHome)}))`,
+    sbLiteralMetadataAllows(opts.metadataOnlyDirs ?? []),
     sbSubpathAllows('file-read*', opts.readOnlyDirs),
     sbSubpathAllows('file-read* file-write*', opts.readWriteDirs),
     '',
@@ -386,17 +426,23 @@ export type WorkerBoundaryLaunchOpts = {
   args: readonly string[]
   /** The role's own confined workspace — the target worktree (developer/operator) or the reviewer's own scratch copy (`reviewer-isolation.ts`). Read-only when `bootstrapWritableSubpaths` is given (see that field's own doc); otherwise read+write, the steady-state case. */
   allowedDir: string
-  /** `GLOBAL_VINAYA_HOME` (`config.ts`) — read-only itself (its own `config.json` must never be rewritable by a confined Worker, round 2 review, MAJOR); `vinayaHomeWritableSubdirs` are the only writable subpaths inside it. */
+  /** `GLOBAL_VINAYA_HOME` (`config.ts`) — NOT exposed to the confined role at all except through `vinayaHomeWritableSubdirs` (round 4 review, HIGH: this directory previously sat in `readOnlyDirs` wholesale, letting a confined Worker read `config.json` plus every other repo's and task's state under it — removed, not narrowed, since nothing inside the sandbox needs to read it: `loadConfig()`'s own global-fallback branch runs only in the TRUSTED, unsandboxed controller, never inside a dispatched child). */
   vinayaHomeDir: string
   /**
-   * Directory names, relative to `vinayaHomeDir`, a Worker's own later
-   * `vinaya` subcommand genuinely needs to WRITE (the driver's own log
-   * queue and its per-dispatch resume records — named by the caller, which
-   * already legitimately names both elsewhere, rather than duplicated here:
-   * this module stays a generic, reusable confinement primitive with no
-   * hardcoded opinion about `GLOBAL_VINAYA_HOME`'s own internal layout).
-   * Never `config.json`, never any other repo's/task's state wholesale —
-   * see `buildWorkerSandboxProfile`'s own doc comment.
+   * Subpaths, relative to `vinayaHomeDir`, a Worker's own later `vinaya`
+   * subcommand genuinely needs to READ and WRITE. Scoping these to exactly
+   * THIS dispatch's own repo is the CALLER's job (round 4 review, BLOCKER:
+   * a bare top-level name like `outbox` previously granted read+write over
+   * the ENTIRE `outbox`/`dispatch-resume` tree, spanning every repo and
+   * every task ever dispatched on the machine — a confined Worker could
+   * forge another task's audit log, or steal another task's live
+   * `resumeId` and resume its session directly, since the vendor binary
+   * sits in this same profile's own exec-allow list). This module stays a
+   * generic, reusable confinement primitive with no hardcoded opinion about
+   * `GLOBAL_VINAYA_HOME`'s own internal layout — the caller (`dispatch.ts`)
+   * derives the repo-scoped subpath from the SAME `outboxPathFor`/
+   * `resumeRecordPathFor` convention it already uses to locate its own
+   * files. Never `config.json`, never a bare top-level directory name.
    */
   vinayaHomeWritableSubdirs: readonly string[]
   /**
@@ -472,18 +518,45 @@ export function resolveWorkerBoundaryLaunch(
       ? opts.vinayaHomeWritableSubdirs.map((rel) => resolveExistingOrJoined(vinayaHomeDirReal as string, rel))
       : []
 
-    const readOnlyDirs = Array.from(
-      new Set([
-        ...(opts.bootstrapWritableSubpaths ? [allowedDirReal] : []),
-        ...(vinayaHomeDirReal ? [vinayaHomeDirReal] : [])
-      ])
-    )
+    // Round 4 review, HIGH: `vinayaHomeDirReal` is NEVER added here — only
+    // its caller-scoped `vinayaWritableDirs` (below) are exposed, via
+    // `readWriteDirs`. This previously granted blanket `file-read*` over
+    // the whole `vinayaHomeDir`, letting a confined role read `config.json`
+    // plus every other repo's/task's state; nothing inside the sandbox
+    // needs that (the controller's own global-config fallback runs
+    // unsandboxed, before any child is ever spawned).
+    const readOnlyDirs = Array.from(new Set(opts.bootstrapWritableSubpaths ? [allowedDirReal] : []))
     const readWriteDirs = Array.from(
       new Set([
         ...(opts.bootstrapWritableSubpaths ? bootstrapWriteDirs : [allowedDirReal]),
         scratchTmpDir,
         ...vinayaWritableDirs
       ])
+    )
+
+    // Round 4 review, BLOCKER fix: a `vinayaHomeWritableSubdirs` entry
+    // scoped to THIS dispatch's own repo (e.g. `outbox/<repoSegment>`) sits
+    // TWO levels below `vinayaHomeDir`, and `vinayaHomeDir` itself carries
+    // no grant at all any more (the HIGH fix, above) — verified live on
+    // this host: without SOMETHING on the immediate parent (`outbox`), even
+    // `writeLaunchRecord`'s own `mkdirSync(dirname(path), {recursive:true})`
+    // targeting the exact, already-granted child path is denied outright,
+    // regardless of whether that child pre-exists. `file-read-metadata` on
+    // the parent's own `(literal ...)` (never `(subpath ...)`, see
+    // `sbLiteralMetadataAllows`'s own doc comment) is the minimum that
+    // satisfies the kernel's lookup/create step without granting recursive
+    // read of whatever ELSE lives beside this dispatch's own child.
+    const vinayaWritableParents = Array.from(
+      new Set(
+        vinayaWritableDirs.map((d) => {
+          const parent = dirname(d)
+          try {
+            return realpathSync(parent)
+          } catch {
+            return parent
+          }
+        })
+      )
     )
 
     const gitExecPath = resolveGitExecPath()
@@ -502,6 +575,7 @@ export function resolveWorkerBoundaryLaunch(
       realHome,
       readOnlyDirs,
       readWriteDirs,
+      metadataOnlyDirs: vinayaWritableParents,
       execAllowDirs,
       runtimeDir,
       sshSockCanon: resolveSshSockCanon(),

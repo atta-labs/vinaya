@@ -70,7 +70,7 @@ import type { Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { buildWorkerEnv, resolveWorkerBoundaryLaunch, RUNTIME_CREDENTIAL_ENV_KEYS } from './worker-boundary.js'
 import { repoRoot } from './diff-evidence.js'
 
@@ -2136,13 +2136,31 @@ export async function dispatchRole(
             args: spawnArgs,
             allowedDir: boundaryAllowedDir,
             vinayaHomeDir: GLOBAL_VINAYA_HOME,
-            // Named here, not inside worker-boundary.ts (round 2 review,
-            // MAJOR fix): the two GLOBAL_VINAYA_HOME subdirectories a
-            // Worker's own later `vinaya` subcommand genuinely needs to
-            // write — this file's own outbox root (`outboxPathFor`, above)
-            // and its `dispatch-resume` convention (`resumeRecordPathFor`,
-            // below) — never its `config.json`.
-            vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume'],
+            // Round 4 review, BLOCKER: scoped to THIS dispatch's own repo,
+            // never the bare top-level directory name — a bare
+            // 'outbox'/'dispatch-resume' previously granted read+write over
+            // EVERY repo's and EVERY task's outbox line and resume record
+            // on the machine, letting a confined Worker forge another
+            // task's audit log or steal another task's live `resumeId` and
+            // resume its session directly (the vendor binary sits in this
+            // same profile's own exec-allow list). `dirname(outboxPath)`
+            // and `dirname(resumeRecordPathFor(...))` both resolve to
+            // `<subdir>/<repoSegment>` — the SAME repo-segment convention
+            // `outboxPathFor`/`resumeRecordPathFor` already use to locate
+            // this exact dispatch's own files, so nothing here duplicates
+            // their naming rule. Scoped to the repo-segment DIRECTORY, not
+            // the individual file: `writeLaunchRecord`'s own
+            // `mkdirSync(dirname(path), { recursive: true })` needs that
+            // directory itself to be a granted subpath the first time a
+            // given repo dispatches — a bare-file grant would deny the
+            // directory-create step, silently losing the resume record.
+            // This still fully closes the cross-repo exposure the finding
+            // demonstrated; a residual, narrower same-repo cross-task/role
+            // exposure remains (see the PR body's Decisions section).
+            vinayaHomeWritableSubdirs: [
+              relative(GLOBAL_VINAYA_HOME, dirname(outboxPath)),
+              relative(GLOBAL_VINAYA_HOME, dirname(resumeRecordPathFor(role, agent, repo, opts.task, opts.pr)))
+            ],
             ...(usingRepoRootFallback
               ? { bootstrapWritableSubpaths: role === 'developer' ? ['.git', '.worktrees'] : [] }
               : {})
