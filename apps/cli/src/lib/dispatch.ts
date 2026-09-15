@@ -220,6 +220,29 @@ export type DispatchOpts = {
    */
   unattended?: boolean
   /**
+   * Round 6 fix, live-reproduced: additional subpaths, relative to
+   * `GLOBAL_VINAYA_HOME`, this dispatch's own confined child needs to
+   * READ+WRITE beyond the outbox/resume-record files every unattended
+   * dispatch already gets — `dev-review-loop.ts`'s own reviewer/security
+   * dispatch is the one caller with a need today: it tells a reviewer,
+   * via its OWN prompt text, to write `findings.txt`/`report.txt`/
+   * `objectives.txt` into `reviewerWorkDir`'s own
+   * `outbox/dev-review-loop/<task>/round-<n>-<role>-work[-retry<n>]`
+   * directory (`reviewer-dispatch.ts`) — a path this module has no
+   * hardcoded opinion about, so the caller names it directly, the same
+   * "generic primitive, caller supplies the repo/dispatch-specific shape"
+   * posture `vinayaHomeWritableFiles` already takes. Found live: with no
+   * grant here, a confined reviewer/security dispatch on the declared
+   * supported host could not write its own findings — `dev-review-loop`'s
+   * own real fixture test hung waiting for a report file no confined
+   * dispatch had permission to create. Unlike the single-file outbox/resume
+   * grant, `reviewerWorkDir`'s own path is ALREADY uniquely scoped per
+   * task/round/role/attempt by its own naming convention, so a directory-
+   * level (`subpath`) grant here — not the narrower per-file `literal` one —
+   * carries no cross-task/cross-role exposure.
+   */
+  extraVinayaWritableSubdirs?: readonly string[]
+  /**
    * The objectives/brief/ruling/policy identity
    * this attempt is being judged against, when the caller already resolved
    * one (`dev-review-loop.ts`'s own `ReviewInputManifest`, for a reviewer
@@ -2404,7 +2427,12 @@ export async function dispatchRole(
               }
               return [relative(GLOBAL_VINAYA_HOME, outboxPath), relative(GLOBAL_VINAYA_HOME, resumePath)]
             })(),
-            vinayaHomeWritableSubdirs: [],
+            // Round 6 fix, live-reproduced: `extraVinayaWritableSubdirs`'s
+            // own doc comment (above, on `DispatchOpts`) has the finding —
+            // `dev-review-loop.ts`'s reviewer/security dispatch is the one
+            // caller today, naming its own `reviewerWorkDir`, already
+            // uniquely scoped per task/round/role/attempt.
+            vinayaHomeWritableSubdirs: opts.extraVinayaWritableSubdirs ?? [],
             // Round 4 review, BLOCKER: the confined child's own `--settings
             // <path>` argv (added above, before this resolution) points at
             // `writeDispatchSettings`'s `dispatch-settings` directory, which

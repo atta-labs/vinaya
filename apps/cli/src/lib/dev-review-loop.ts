@@ -44,7 +44,7 @@
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { z } from 'zod'
 import {
   assessRound,
@@ -1603,7 +1603,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           ...(scratchDir ? { cwd: scratchDir } : {}),
           // O1/O3 (task 3, #560): a Reviewer dispatched
           // by this driver is unattended the same way the Developer is.
-          unattended: true
+          unattended: true,
+          // Round 6 fix, live-reproduced: a confined reviewer writes
+          // findings.txt/report.txt/objectives.txt into workDir — see
+          // `extraVinayaWritableSubdirs`'s own doc comment (dispatch.ts).
+          extraVinayaWritableSubdirs: [join('outbox', relative(root, workDir))]
         })
       )
       await assertDispatchOrEscalate(handle, input.agent, false, false)
@@ -1672,7 +1676,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // O1/O3 (task 3, #560): a Reviewer
             // dispatched by this driver is unattended the same way the
             // Developer is.
-            unattended: true
+            unattended: true,
+            // Round 6 fix, live-reproduced: a confined reviewer writes
+            // findings.txt/report.txt/objectives.txt into workDir — see
+            // `extraVinayaWritableSubdirs`'s own doc comment (dispatch.ts).
+            extraVinayaWritableSubdirs: [join('outbox', relative(root, workDir))]
           })
         )
         await assertDispatchOrEscalate(handle, input.agent, false, false)
