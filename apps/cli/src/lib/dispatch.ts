@@ -2161,6 +2161,17 @@ export async function dispatchRole(
               relative(GLOBAL_VINAYA_HOME, dirname(outboxPath)),
               relative(GLOBAL_VINAYA_HOME, dirname(resumeRecordPathFor(role, agent, repo, opts.task, opts.pr)))
             ],
+            // Round 4 review, BLOCKER: the confined child's own `--settings
+            // <path>` argv (added above, before this resolution) points at
+            // `writeDispatchSettings`'s `dispatch-settings` directory, which
+            // was never carved into either list — a confined Claude dispatch
+            // could not read the settings file it was handed. Read-only:
+            // this directory is written by the trusted controller before
+            // this resolution runs, and nothing inside the sandbox ever
+            // needs to rewrite it.
+            vinayaHomeReadOnlySubdirs: dispatchSettingsPath
+              ? [relative(GLOBAL_VINAYA_HOME, dirname(dispatchSettingsPath))]
+              : [],
             ...(usingRepoRootFallback
               ? { bootstrapWritableSubpaths: role === 'developer' ? ['.git', '.worktrees'] : [] }
               : {})

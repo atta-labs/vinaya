@@ -370,6 +370,23 @@ export function buildWorkerSandboxProfile(opts: {
     '(allow network-outbound (remote tcp "*:80"))',
     `(deny network-outbound\n  (remote unix-socket (path-literal ${sbLiteral(opts.sshSockCanon)})))`,
     '',
+    ';; DNS resolution (round 4 review, BLOCKER): a hostname lookup never opens',
+    ';; a raw UDP/TCP socket itself — it goes through mDNSResponder over a',
+    ';; local unix-socket connection plus mach IPC. Verified LIVE on this host:',
+    ';; with only the two tcp port rules above and no route to the resolver, a',
+    ';; confined `curl https://example.com` fails at `getaddrinfo` with',
+    ';; `Could not resolve host` before it ever reaches the network-outbound',
+    ';; rule — no confined dispatch could resolve any model-runtime hostname.',
+    ';; Adding this restores resolution without widening the tcp allowlist:',
+    ';; the resolver process itself performs the actual DNS query on the',
+    ";; caller's behalf; the confined child only talks to it locally.",
+    '(allow network-outbound',
+    '  (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))',
+    '(allow mach-lookup',
+    '  (global-name "com.apple.dnssd")',
+    '  (global-name "com.apple.mDNSResponder")',
+    '  (global-name "com.apple.mDNSResponderUnix"))',
+    '',
     ';; Keychain: file access AND the mach-lookup route Keychain Services',
     ";; itself talks to securityd/trustd through — see this function's own doc",
     ';; comment, item 1, for why this alone (not the process-exec allowlist)',
@@ -448,6 +465,26 @@ export type WorkerBoundaryLaunchOpts = {
    */
   vinayaHomeWritableSubdirs: readonly string[]
   /**
+   * Round 4 review, BLOCKER fix: subpaths, relative to `vinayaHomeDir`, a
+   * confined dispatch must be able to READ but never write — today, exactly
+   * `writeDispatchSettings`'s own `dispatch-settings` directory
+   * (`dispatch.ts`), which the TRUSTED controller writes BEFORE resolving
+   * this launch and which the confined child then loads via its own
+   * `--settings <path>` flag. Found live: `vinayaHomeDir` itself carries no
+   * grant at all (the round-4 HIGH fix, above) and `dispatch-settings` was
+   * never a member of `vinayaHomeWritableSubdirs` either, so a confined
+   * Claude dispatch could not read the settings file it was handed on its
+   * own argv — the PreToolUse background-deny hook this task's own brief
+   * named a trap to preserve never actually loaded inside the boundary.
+   * Read-only, not read+write, deliberately: nothing inside the sandbox
+   * ever needs to rewrite this file, and granting write here would reopen
+   * the same persistent-tampering class of gap the round-2 CRITICAL fix
+   * closed for `vinaya.config.json` — a confined process could otherwise
+   * overwrite its own settings file to strip the hook for every later
+   * dispatch that reuses this shared, unscoped directory.
+   */
+  vinayaHomeReadOnlySubdirs?: readonly string[]
+  /**
    * Round-1 Developer bootstrap only (round 2 review, CRITICAL): when given
    * (as directory names relative to `allowedDir`, e.g. `['.git', '.worktrees']`),
    * `allowedDir` itself becomes READ-ONLY and these specific subpaths become
@@ -519,15 +556,20 @@ export function resolveWorkerBoundaryLaunch(
     const vinayaWritableDirs = vinayaHomeDirReal
       ? opts.vinayaHomeWritableSubdirs.map((rel) => resolveExistingOrJoined(vinayaHomeDirReal as string, rel))
       : []
+    const vinayaReadOnlyDirs = vinayaHomeDirReal
+      ? (opts.vinayaHomeReadOnlySubdirs ?? []).map((rel) => resolveExistingOrJoined(vinayaHomeDirReal as string, rel))
+      : []
 
     // Round 4 review, HIGH: `vinayaHomeDirReal` is NEVER added here — only
-    // its caller-scoped `vinayaWritableDirs` (below) are exposed, via
-    // `readWriteDirs`. This previously granted blanket `file-read*` over
-    // the whole `vinayaHomeDir`, letting a confined role read `config.json`
-    // plus every other repo's/task's state; nothing inside the sandbox
-    // needs that (the controller's own global-config fallback runs
-    // unsandboxed, before any child is ever spawned).
-    const readOnlyDirs = Array.from(new Set(opts.bootstrapWritableSubpaths ? [allowedDirReal] : []))
+    // its caller-scoped `vinayaWritableDirs`/`vinayaReadOnlyDirs` (below) are
+    // exposed. This previously granted blanket `file-read*` over the whole
+    // `vinayaHomeDir`, letting a confined role read `config.json` plus every
+    // other repo's/task's state; nothing inside the sandbox needs that (the
+    // controller's own global-config fallback runs unsandboxed, before any
+    // child is ever spawned).
+    const readOnlyDirs = Array.from(
+      new Set([...(opts.bootstrapWritableSubpaths ? [allowedDirReal] : []), ...vinayaReadOnlyDirs])
+    )
     const readWriteDirs = Array.from(
       new Set([
         ...(opts.bootstrapWritableSubpaths ? bootstrapWriteDirs : [allowedDirReal]),
