@@ -43,9 +43,16 @@ const CHECK_NAME = 'brief-shape'
 type IssueCommentsJson = { comments: Array<{ body: string; author?: { login?: string } | null }> }
 
 function fetchIssueComments(issueNumber: number): IssueCommentsJson {
+  // `maxBuffer` matches the same 32 MiB ceiling every other `gh`-reading
+  // `execFileSync` call in this codebase already declares (`patch-id.ts`,
+  // `pr-report-engine.ts`, `pr-verify-evidence.ts`) — Node's own 1 MiB
+  // default throws `ENOBUFS` well before a long-running task Issue's real
+  // comment count gets anywhere near this bound (reproduced live: a task
+  // Issue carrying dozens of round/escalation comments already exceeds it).
   const out = execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'comments'], {
     encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 32 * 1024 * 1024
   })
   return JSON.parse(out) as IssueCommentsJson
 }
