@@ -2251,8 +2251,20 @@ export async function dispatchRole(
     const baseArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
     // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
     // Codex/Gemini are not silently included.
-    const dispatchSettingsPath =
-      agent === 'claude' ? writeDispatchSettings(runId, documentationSourcesFromPrompt(role, prompt)) : null
+    const documentationSources = documentationSourcesFromPrompt(role, prompt)
+    if (agent !== 'claude' && documentationSources.some((s) => isDocumentationUrl(s.source))) {
+      // round 2 security review, LOW (Issue #625) — the PostToolUse/Stop hook
+      // pair below is Claude-only, same limitation `deny-background-bash.mjs`
+      // already has; unlike that hook, an unenforced Documentation obligation
+      // is silent otherwise, so this dispatch names it rather than leaving
+      // the operator to discover it only by a source never actually read.
+      writeLifecycle(
+        'vinaya dispatch-role: the Documentation read-gate (Issue #625, O2) is Claude-only — ' +
+          `agent '${agent}' gets no WebFetch log/Stop hook, so this brief's URL-shaped ` +
+          `'## Documentation' source(s) are not mechanically enforced for this dispatch.`
+      )
+    }
+    const dispatchSettingsPath = agent === 'claude' ? writeDispatchSettings(runId, documentationSources) : null
     const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
     const child = spawn(binaryPath, spawnArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
