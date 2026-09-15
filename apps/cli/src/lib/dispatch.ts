@@ -36,19 +36,27 @@
  *     recorded for every Gemini dispatch until a real reader exists for its
  *     own shape.
  *
- * **Known gap, disclosed rather than silently worked around (see this task's
- * PR body): `DispatchOutcomeSchema` (`packages/aeg-core/src/log/schema.ts`,
- * out of this task's surface) has no member representing "the process exited
- * cleanly with no specific, identifiable forge outcome" — every one of its
- * seven variants requires role/action-specific identifying data (a PR
- * number, a head sha, a comment id) this generic launcher cannot honestly
- * produce from an exit code and a vendor's own usage blob alone, and
- * fabricating one would violate the log's own stated invariant ("a
- * fabricated zero is not" a legal value — tech spec §5.1). Until the schema
- * gains a generic variant, a successful dispatch's `outcome_received` line
- * carries `{ type: 'plan', issues: [] }` — the one member satisfiable with no
- * invented identifier (an empty list asserts nothing false) — as an
- * explicitly labeled placeholder, never to be read as "a plan was cut."**
+ * **The generic "no specific, identifiable forge outcome" gap this module
+ * doc used to disclose is closed:**
+ * `DispatchOutcomeSchema`'s `completed` variant (`packages/aeg-core/src/log/schema.ts`)
+ * carries no invented identifier at all — a
+ * successful dispatch's `outcome_received` line now reports `{ type:
+ * 'completed' }` honestly, never the `{ type: 'plan', issues: [] }`
+ * placeholder borrowed from an unrelated variant this module used to emit.
+ *
+ * Every attempt also emits a `role_attempt`
+ * `'attempted'` line (`kind: 'role_attempt'`) — the run's own normalized
+ * outcome (`completed`/`incomplete`/`infrastructure_failed`/`timed_out`/
+ * `capability_refused`, from `classifyRoleAttemptOutcome`, below), its retry
+ * ordinal (`LaunchRecord.attempt`, the same per-scope counter this file
+ * already keeps for recovery), and the same `effect_id`/`model`/`usage`
+ * every `dispatch` line for the same attempt carries — and a `usage`
+ * `'observed'` line (`kind: 'usage'`) carrying input/output/cache broken out
+ * separately, `semantics: 'cumulative'` (one dispatch is one full vendor
+ * invocation; the parsed line already represents that invocation's own
+ * running total, never a delta between two observations), and an explicit
+ * `unknown_reason` string whenever a vendor's own stream gives this launcher
+ * nothing to report — never a bare `null` with no account of why.
  */
 
 import { randomUUID, createHash } from 'node:crypto'
@@ -58,7 +66,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname } from 'node:os'
 import { redact, summarizeTranscript } from '@attalabs/aeg-core'
-import type { Role, TranscriptSummary } from '@attalabs/aeg-core'
+import type { Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
@@ -182,6 +190,21 @@ export type DispatchOpts = {
    * unchanged for the developer role and every pre-existing dispatch site.
    */
   cwd?: string
+  /**
+   * The objectives/brief/ruling/policy identity
+   * this attempt is being judged against, when the caller already resolved
+   * one (`dev-review-loop.ts`'s own `ReviewInputManifest`, for a reviewer
+   * dispatch) — threaded straight into every line this call logs
+   * (`meta.input_versions`). Omitted by every caller with no such identity
+   * to give (the generic launcher never resolves one itself) — those lines
+   * carry the honest all-`null` default they always did.
+   */
+  inputVersions?: {
+    objectivesVersion?: string | null
+    briefHash?: string | null
+    rulingOrdinal?: number | null
+    policyDigest?: string | null
+  }
 }
 
 /** `'signal'` (O1, Issue #605): the driver's own shutdown path terminated this launch's child on `SIGTERM`/`SIGINT` — distinct from `'crash'` (the child died on its own) so recovery can read it as a cancelled attempt, never an infrastructure failure of the child's own making. */
@@ -196,6 +219,16 @@ export type DispatchHandle = {
   timedOut: boolean
   /** Set only when the dispatch did not reach a normal `outcome_received`. */
   failureReason?: DispatchFailureReason
+  /**
+   * The same `effect_id` this attempt's own `dispatch`/`role_attempt`/`usage`
+   * lines already carry — optional so a hand-built fixture value in an
+   * existing test keeps type-checking, but always set on a real return from
+   * `dispatchRole`. Lets a caller that only sees this handle (never the
+   * `log()` calls themselves) correlate a failure it detects downstream
+   * back to the exact attempt that produced it, rather than inventing a
+   * fresh, unjoinable id.
+   */
+  effectId?: string
 }
 
 /**
@@ -680,6 +713,105 @@ export function parseGeminiUsage(stdout: string): { input: number; output: numbe
     }
   }
   return null
+}
+
+/** The `usage` family's own richer shape — input/output/cache, each independently nullable, plus an explicit reason whenever nothing was observed. Never defaults an unread unit to `0`. */
+export type UsageObservation = {
+  units: { input: number | null; output: number | null; cache: number | null }
+  unknownReason: string | null
+}
+type UsageUnitsParser = (stdout: string) => UsageObservation
+
+const NO_USAGE_UNITS: UsageObservation['units'] = { input: null, output: null, cache: null }
+
+/**
+ * Same terminal-line scan as `parseClaudeUsage`, extended to also read the
+ * Anthropic Messages API's own cache fields — `cache_creation_input_tokens`/
+ * `cache_read_input_tokens`, present (0 when unused) on every real `usage`
+ * object this vendor emits, summed into one `cache` figure since the log's
+ * `usage` family carries one cache count, not the two-way creation/read
+ * split. Never a second scan of `stdout`: reads the exact JSON object
+ * `parseClaudeUsage` already parses, just more of its fields.
+ */
+export function parseClaudeUsageUnits(stdout: string): UsageObservation {
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as {
+        usage?: {
+          input_tokens?: unknown
+          output_tokens?: unknown
+          cache_creation_input_tokens?: unknown
+          cache_read_input_tokens?: unknown
+        }
+      }
+      const u = obj.usage
+      if (u && typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
+        const cacheCreation = typeof u.cache_creation_input_tokens === 'number' ? u.cache_creation_input_tokens : 0
+        const cacheRead = typeof u.cache_read_input_tokens === 'number' ? u.cache_read_input_tokens : 0
+        return {
+          units: { input: u.input_tokens, output: u.output_tokens, cache: cacheCreation + cacheRead },
+          unknownReason: null
+        }
+      }
+    } catch {
+      // not a JSON line — keep scanning backwards, never a guessed shape
+    }
+  }
+  return {
+    units: NO_USAGE_UNITS,
+    unknownReason: 'claude emitted no stream-json line carrying a `usage.input_tokens`/`usage.output_tokens` pair'
+  }
+}
+
+/**
+ * Codex's own `usage` object carries more than `input_tokens`/`output_tokens`
+ * (module doc above: "the same field names as Claude's… `usage: {
+ * input_tokens, output_tokens, … }`") — `cached_input_tokens`, when present,
+ * is read the same defensive way the other optional fields on this object
+ * already are: absent reads as "nothing cached," never as "unknown," since
+ * the object itself DID parse.
+ */
+export function parseCodexUsageUnits(stdout: string): UsageObservation {
+  const lines = stdout.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const raw = (lines[i] ?? '').trim()
+    if (!raw) continue
+    try {
+      const obj = JSON.parse(raw) as {
+        type?: unknown
+        usage?: { input_tokens?: unknown; output_tokens?: unknown; cached_input_tokens?: unknown }
+      }
+      if (obj.type === 'turn.completed' && obj.usage) {
+        const u = obj.usage
+        if (typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
+          const cache = typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : null
+          return { units: { input: u.input_tokens, output: u.output_tokens, cache }, unknownReason: null }
+        }
+      }
+    } catch {
+      // not a JSON line — Codex's own stdout is JSONL only, but never trust it blindly
+    }
+  }
+  return {
+    units: NO_USAGE_UNITS,
+    unknownReason: 'codex emitted no parseable `turn.completed` event carrying a usage pair'
+  }
+}
+
+/**
+ * Gemini's own confirmed-live shape (module doc above) is a per-model
+ * `stats.models.<model>.tokens` breakdown, never a single `{ input, output }`
+ * pair — this vendor's usage is always reported as explicitly unknown here,
+ * naming that confirmed shape, rather than guessing at field names inside
+ * `tokens` that were never verified against a real run.
+ */
+export function parseGeminiUsageUnits(_stdout: string): UsageObservation {
+  return {
+    units: NO_USAGE_UNITS,
+    unknownReason:
+      'gemini reports token usage per-model under stats.models.<model>.tokens, confirmed live to carry no single input/output pair — this launcher does not yet read that per-model shape'
+  }
 }
 
 export function parseClaudeResumeId(stdout: string): string | null {
@@ -1384,6 +1516,8 @@ type VendorSpec = {
   args: (model?: string) => string[]
   resumeArgs: (id: string, model?: string) => string[]
   parseUsage: UsageParser
+  /** The `usage` family's own richer read of the SAME stdout `parseUsage` scans — input/output/cache, honest `unknownReason` when nothing was observed. */
+  parseUsageUnits: UsageUnitsParser
   /** This vendor's own genuine receipt of which model ran (O2), or `null` when it emits none — never the requested `--model` value echoed back. */
   parseModel: ModelParser
   parseResumeId: (stdout: string) => string | null
@@ -1505,6 +1639,7 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
       ...(model ? ['--model', model] : [])
     ],
     parseUsage: parseClaudeUsage,
+    parseUsageUnits: parseClaudeUsageUnits,
     parseModel: parseClaudeModel,
     parseResumeId: parseClaudeResumeId,
     renderEvent: renderClaudeEvent,
@@ -1521,6 +1656,7 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
     args: (model) => ['exec', ...(model ? ['--model', model] : []), '--json', '-'],
     resumeArgs: (id, model) => ['exec', 'resume', id, ...(model ? ['--model', model] : []), '--json', '-'],
     parseUsage: parseCodexUsage,
+    parseUsageUnits: parseCodexUsageUnits,
     parseModel: parseCodexModel,
     parseResumeId: parseCodexResumeId,
     renderEvent: renderCodexEvent,
@@ -1549,6 +1685,7 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
       '--skip-trust'
     ],
     parseUsage: parseGeminiUsage,
+    parseUsageUnits: parseGeminiUsageUnits,
     parseModel: parseGeminiModel,
     parseResumeId: parseGeminiResumeId,
     renderEvent: renderGeminiEvent,
@@ -1609,6 +1746,31 @@ function resolveExecutable(binary: string): string | null {
 
 function promptHashOf(prompt: string): string {
   return `sha256:${createHash('sha256').update(prompt).digest('hex')}`
+}
+
+/**
+ * The generic launcher's own honest classification
+ * — never `@attalabs/aeg-core`'s `normalizeOutcome`, which requires
+ * `artifactsPresent`/`postconditionsMet` this generic function has no way to
+ * check (that verification is a per-role caller's own concern, e.g. the
+ * dev-review-loop's PR-open check — out of this file's boundary). Mirrors
+ * the SAME manner-of-death precedence `normalizeOutcome` documents (refused,
+ * then timed out, then crashed, take priority over a bare exit code), but
+ * stops at `completed`/`incomplete` on the two signals this file actually
+ * observes — a clean exit is `completed` here, the honest limit of what a
+ * generic launcher can say; a caller with a real postcondition to check
+ * reads this alongside its own, never as a replacement for it.
+ */
+export function classifyRoleAttemptOutcome(
+  refused: boolean,
+  timedOut: boolean,
+  crashed: boolean,
+  exitCode: number | null
+): RoleAttemptOutcome {
+  if (refused) return 'capability_refused'
+  if (timedOut) return 'timed_out'
+  if (crashed) return 'infrastructure_failed'
+  return exitCode === 0 ? 'completed' : 'incomplete'
 }
 
 /**
@@ -1708,7 +1870,8 @@ export async function dispatchRole(
       VINAYA_ROLE: role,
       VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
       VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined
-    })
+    }),
+    inputVersions: () => opts.inputVersions
   })
 
   // Mirrors `log()`'s own repo resolution so this file knows where to poll
@@ -1800,6 +1963,29 @@ export async function dispatchRole(
         usage: null,
         duration_ms: durationMs
       })
+      log({
+        kind: 'role_attempt',
+        event: 'attempted',
+        payload: {},
+        actor: agent,
+        attempt: launch.attempt,
+        effect_id: effectId,
+        model: resolvedModel,
+        outcome: classifyRoleAttemptOutcome(true, false, false, null),
+        usage: null,
+        duration_ms: durationMs
+      })
+      log({
+        kind: 'usage',
+        event: 'observed',
+        payload: {},
+        model: resolvedModel,
+        source: agent,
+        semantics: 'cumulative',
+        units: NO_USAGE_UNITS,
+        unknown_reason: 'dispatch refused before any vendor process started (model shape mismatch)',
+        duration_ms: durationMs
+      })
       writeLifecycle(
         `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — model '${opts.model}' is a ${foreignVendor} model; ` +
           `${agent} does not accept it. ${agent} accepts its own model names (never a ${foreignVendor} alias or a ` +
@@ -1807,7 +1993,15 @@ export async function dispatchRole(
       )
       patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
       await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
-      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
+      return {
+        exitCode: null,
+        durationMs,
+        usage: null,
+        resumeId: null,
+        timedOut: false,
+        failureReason: 'refused',
+        effectId
+      }
     }
   }
 
@@ -1827,9 +2021,40 @@ export async function dispatchRole(
       usage: null,
       duration_ms: durationMs
     })
+    log({
+      kind: 'role_attempt',
+      event: 'attempted',
+      payload: {},
+      actor: agent,
+      attempt: launch.attempt,
+      effect_id: effectId,
+      model: resolvedModel,
+      outcome: classifyRoleAttemptOutcome(true, false, false, null),
+      usage: null,
+      duration_ms: durationMs
+    })
+    log({
+      kind: 'usage',
+      event: 'observed',
+      payload: {},
+      model: resolvedModel,
+      source: agent,
+      semantics: 'cumulative',
+      units: NO_USAGE_UNITS,
+      unknown_reason: 'dispatch refused before any vendor process started (binary not resolvable on PATH)',
+      duration_ms: durationMs
+    })
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
-    return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
+    return {
+      exitCode: null,
+      durationMs,
+      usage: null,
+      resumeId: null,
+      timedOut: false,
+      failureReason: 'refused',
+      effectId
+    }
   }
 
   {
@@ -2056,12 +2281,35 @@ export async function dispatchRole(
         usage: null,
         duration_ms: durationMs
       })
+      log({
+        kind: 'role_attempt',
+        event: 'attempted',
+        payload: {},
+        actor: agent,
+        attempt: launch.attempt,
+        effect_id: effectId,
+        model: resolvedModel,
+        outcome: classifyRoleAttemptOutcome(false, false, true, null),
+        usage: null,
+        duration_ms: durationMs
+      })
+      log({
+        kind: 'usage',
+        event: 'observed',
+        payload: {},
+        model: resolvedModel,
+        source: agent,
+        semantics: 'cumulative',
+        units: NO_USAGE_UNITS,
+        unknown_reason: 'the vendor process errored before any output could be read',
+        duration_ms: durationMs
+      })
       // O1: an interrupted attempt keeps its intent record — patched, never
       // deleted; any session id already bound mid-stream is preserved by the
       // merge, so recovery can still resume it.
       patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'crash' })
       void finish(
-        { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'crash' },
+        { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'crash', effectId },
         'dispatch_failed',
         priorSize
       )
@@ -2086,6 +2334,13 @@ export async function dispatchRole(
       // honest "no figures" outcome the timeout/crash paths hardcoded
       // before, just no longer hardcoded when real figures ARE present.
       const usage = vendor.parseUsage(stdoutBuf)
+      // The SAME survives-the-manner-of-death
+      // treatment `usage` already gets, extended to the vendor's own model
+      // receipt and the richer `usage`-family units — read once here, from
+      // the same buffer, and reused by whichever branch below actually logs.
+      const reportedModel = vendor.parseModel(stdoutBuf)
+      const attemptModel = reportedModel ?? resolvedModel
+      const usageUnits = vendor.parseUsageUnits(stdoutBuf)
 
       if (timedOut) {
         const priorSize = sizeOfSafe(outboxPath)
@@ -2101,6 +2356,29 @@ export async function dispatchRole(
           usage,
           duration_ms: durationMs
         })
+        log({
+          kind: 'role_attempt',
+          event: 'attempted',
+          payload: {},
+          actor: agent,
+          attempt: launch.attempt,
+          effect_id: effectId,
+          model: attemptModel,
+          outcome: classifyRoleAttemptOutcome(false, true, false, code),
+          usage,
+          duration_ms: durationMs
+        })
+        log({
+          kind: 'usage',
+          event: 'observed',
+          payload: {},
+          model: attemptModel,
+          source: agent,
+          semantics: 'cumulative',
+          units: usageUnits.units,
+          unknown_reason: usageUnits.unknownReason,
+          duration_ms: durationMs
+        })
         // O1: keep the intent record, and bind whatever session the child did
         // report before the ceiling killed it (mid-stream, or a final line in
         // `stdoutBuf`) — an interrupted attempt no longer loses its session.
@@ -2111,7 +2389,7 @@ export async function dispatchRole(
           resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
         })
         void finish(
-          { exitCode: code, durationMs, usage, resumeId: null, timedOut: true, failureReason: 'timeout' },
+          { exitCode: code, durationMs, usage, resumeId: null, timedOut: true, failureReason: 'timeout', effectId },
           'dispatch_failed',
           priorSize
         )
@@ -2132,6 +2410,29 @@ export async function dispatchRole(
           usage,
           duration_ms: durationMs
         })
+        log({
+          kind: 'role_attempt',
+          event: 'attempted',
+          payload: {},
+          actor: agent,
+          attempt: launch.attempt,
+          effect_id: effectId,
+          model: attemptModel,
+          outcome: classifyRoleAttemptOutcome(false, false, true, code),
+          usage,
+          duration_ms: durationMs
+        })
+        log({
+          kind: 'usage',
+          event: 'observed',
+          payload: {},
+          model: attemptModel,
+          source: agent,
+          semantics: 'cumulative',
+          units: usageUnits.units,
+          unknown_reason: usageUnits.unknownReason,
+          duration_ms: durationMs
+        })
         // O1: same as the timeout path — interrupted, intent kept, session
         // bound from whatever the child managed to report before it crashed.
         patchLaunch({
@@ -2141,7 +2442,7 @@ export async function dispatchRole(
           resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
         })
         void finish(
-          { exitCode: code, durationMs, usage, resumeId: null, timedOut: false, failureReason: 'crash' },
+          { exitCode: code, durationMs, usage, resumeId: null, timedOut: false, failureReason: 'crash', effectId },
           'dispatch_failed',
           priorSize
         )
@@ -2170,23 +2471,48 @@ export async function dispatchRole(
       // a real observation once reported). Falls back to the pre-completion
       // request label (`resolvedModel`) only when this vendor emits no
       // receipt (Codex, always) or the payload didn't parse.
-      const reportedModel = vendor.parseModel(stdoutBuf)
       const priorSize = sizeOfSafe(outboxPath)
       log({
         kind: 'dispatch',
         event: 'outcome_received',
         payload: {},
         target_role: role,
-        model: reportedModel ?? resolvedModel,
+        model: attemptModel,
         ...roundField,
         effect_id: effectId,
-        // See module doc: placeholder pending a generic `DispatchOutcome`
-        // variant — never to be read as "a plan was cut."
-        outcome: { type: 'plan', issues: [] },
+        // O1: no invented forge identifier — see module doc.
+        outcome: { type: 'completed' },
         usage,
         duration_ms: durationMs
       })
-      void finish({ exitCode: code, durationMs, usage, resumeId, timedOut: false }, 'outcome_received', priorSize)
+      log({
+        kind: 'role_attempt',
+        event: 'attempted',
+        payload: {},
+        actor: agent,
+        attempt: launch.attempt,
+        effect_id: effectId,
+        model: attemptModel,
+        outcome: classifyRoleAttemptOutcome(false, false, false, code),
+        usage,
+        duration_ms: durationMs
+      })
+      log({
+        kind: 'usage',
+        event: 'observed',
+        payload: {},
+        model: attemptModel,
+        source: agent,
+        semantics: 'cumulative',
+        units: usageUnits.units,
+        unknown_reason: usageUnits.unknownReason,
+        duration_ms: durationMs
+      })
+      void finish(
+        { exitCode: code, durationMs, usage, resumeId, timedOut: false, effectId },
+        'outcome_received',
+        priorSize
+      )
     }
 
     // `exit`, never `close`: `close` waits for every stdio stream to see

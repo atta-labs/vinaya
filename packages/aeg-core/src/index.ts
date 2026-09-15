@@ -71,6 +71,7 @@ export {
   evaluateSecurityReview,
   isKnownSeverity,
   isProseLocation,
+  PROSE_CAP_SEVERITY,
   SECURITY_SEVERITY_ORDER,
   securityBlockingSeverities
 } from './review-policy'
