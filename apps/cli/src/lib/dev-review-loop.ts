@@ -3070,7 +3070,15 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
       err instanceof StaleEscalationError ||
       err instanceof ReplayedResolutionError
     ) {
-      throw new Error(`devReviewLoop --cancel: ${err.message}`)
+      // Mutate the message in place and rethrow the SAME instance — a caller
+      // (`task_cancel`'s handler) that needs `instanceof` to tell a replayed
+      // cancel apart from a wrong-target/stale one must still be able to,
+      // which a fresh `new Error(...)` here would silently lose (code review,
+      // MAJOR: this used to throw a plain `Error`, so `instanceof
+      // ReplayedResolutionError` downstream could never match a real
+      // duplicate cancel request going through this function).
+      err.message = `devReviewLoop --cancel: ${err.message}`
+      throw err
     }
     throw err
   }

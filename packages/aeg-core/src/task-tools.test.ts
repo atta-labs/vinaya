@@ -39,12 +39,10 @@ describe('TASK_TOOL_CATALOG', () => {
     }
   })
 
-  it('task_start and the two read tools are bound; task_resume/task_cancel are still stubs', () => {
-    expect(taskToolByName('task_start').handlerBinding.kind).toBe('bound')
-    expect(taskToolByName('task_resume').handlerBinding.kind).toBe('stub')
-    expect(taskToolByName('task_cancel').handlerBinding.kind).toBe('stub')
-    expect(taskToolByName('task_status').handlerBinding.kind).toBe('bound')
-    expect(taskToolByName('task_escalation_read').handlerBinding.kind).toBe('bound')
+  it('every catalog tool is bound to a real handler', () => {
+    for (const tool of TASK_TOOL_CATALOG) {
+      expect(taskToolByName(tool.name).handlerBinding.kind).toBe('bound')
+    }
   })
 
   it('taskToolByName throws for an unknown name', () => {
